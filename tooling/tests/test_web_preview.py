@@ -1,0 +1,1605 @@
+import importlib.util
+import io
+import json
+from pathlib import Path
+import tempfile
+import subprocess
+import os
+import re
+import shlex
+from types import SimpleNamespace
+import unittest
+from unittest.mock import patch
+
+
+SPEC = importlib.util.spec_from_file_location(
+    'web_preview', Path(__file__).resolve().parents[1] / 'web-preview.py'
+)
+preview = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(preview)
+
+
+def review_pr(number=9, base='main', base_sha='b' * 40):
+    return {
+        'number': number,
+        'state': 'open',
+        'base': {'ref': base, 'sha': base_sha},
+        'head': {'sha': 'a' * 40, 'repo': {'full_name': 'example/one'}},
+    }
+
+
+def build_run(pr):
+    return {
+        'event': 'pull_request',
+        'status': 'completed',
+        'conclusion': 'success',
+        'path': preview.WORKFLOW,
+        'head_repository': {'full_name': 'example/one'},
+        'head_sha': 'a' * 40,
+        'pull_requests': [pr],
+    }
+
+
+def cdn_responses(attempt=1):
+    identity = io.BytesIO(
+        json.dumps({'revision': 'a' * 40, 'run': 123, 'attempt': attempt}).encode()
+    )
+    html = io.BytesIO(b'<html><script src="./assets/main-Abc123.js"></script></html>')
+    html.status = 200
+    html.headers = {'Content-Type': 'text/html'}
+    asset = io.BytesIO(b'console.log("review")')
+    asset.headers = {'Content-Type': 'application/javascript'}
+    fidelity = io.BytesIO(b'{"cases": []}')
+    return [identity, html, asset, fidelity]
+
+
+def cdn_event():
+    return {
+        'deployment': {
+            'environment': 'cdn',
+            'task': 'upload-to-cdn',
+            'payload': {
+                'packageName': preview.PACKAGE,
+                'packageVersion': '0.1.0-123.commit-abcdef0',
+            },
+        },
+        'deployment_status': {'state': 'success'},
+    }
+
+
+class PreviewGitHub:
+    """External GitHub boundary with real resolve/report code above it."""
+
+    def __init__(self):
+        self.pr = review_pr()
+        self.run = {
+            **build_run(self.pr),
+            'run_attempt': 2,
+            'html_url': 'https://github.com/example/one/actions/runs/123',
+        }
+        self.comments = []
+        self.writes = []
+        self.run_reads = 0
+        self.supersede_on_read = None
+
+    def request(self, path, *, method='GET', body=None, **kwargs):
+        if method in ('POST', 'PATCH'):
+            self.writes.append(body['body'])
+            self.comments[:] = [
+                {'id': 5, 'user': {'login': 'github-actions[bot]'}, 'body': body['body']}
+            ]
+            return {}
+        if path.endswith('/actions/runs/123'):
+            self.run_reads += 1
+            if self.run_reads == self.supersede_on_read:
+                self.run = {**self.run, 'run_attempt': 3}
+            return self.run
+        if path.endswith('/pulls/9'):
+            return self.pr
+        if '/actions/runs/123/jobs?' in path:
+            return {'jobs': [{'name': 'UI reviewer', 'conclusion': 'success'}]}
+        if '/issues/9/comments?' in path:
+            return self.comments
+        if '/actions/workflows/web-previews.yml/runs?' in path:
+            return [{'id': 123, 'pull_requests': [self.pr]}]
+        raise AssertionError(f'Unexpected GitHub request: {method} {path}')
+
+
+class WebPreviewTests(unittest.TestCase):
+    def test_workflow_reports_successful_uploads_and_keeps_other_events_out(self):
+        workflow = (
+            Path(__file__).parents[2] / '.github/workflows/web-previews-publish.yml'
+        ).read_text()
+        jobs = dict(
+            re.findall(r'(?ms)^  (\w+):\n(.*?)(?=^  \w+:|\Z)', workflow.split('jobs:\n', 1)[1])
+        )
+        job = jobs['report']
+        guard = re.search(r'^    if: \$\{\{ (.+) \}\}$', job, re.M).group(1)
+        result = re.search(r'^          PUBLICATION_RESULT: \$\{\{ (.+) \}\}$', job, re.M).group(1)
+        for event, cancelled, enabled, reviewer, eligible, expected in (
+            ('pull_request', False, 'true', 'success', 'true', 'uploading'),
+            ('pull_request', False, 'true', 'failure', 'true', 'failure'),
+            ('pull_request', False, 'true', 'skipped', 'true', 'not eligible for publication'),
+            (
+                'pull_request',
+                False,
+                'false',
+                'success',
+                'true',
+                'disabled pending CDN base verification',
+            ),
+            ('pull_request', False, 'true', 'success', 'false', 'not eligible for publication'),
+            ('', False, 'true', 'success', 'true', None),
+            ('pull_request', True, 'true', 'success', 'true', None),
+        ):
+            with self.subTest(
+                event=event,
+                cancelled=cancelled,
+                enabled=enabled,
+                reviewer=reviewer,
+                eligible=eligible,
+            ):
+                context = {
+                    'github': SimpleNamespace(
+                        event=SimpleNamespace(workflow_run=SimpleNamespace(event=event))
+                    ),
+                    'needs': SimpleNamespace(
+                        source=SimpleNamespace(
+                            result='success', outputs=SimpleNamespace(publish=eligible)
+                        ),
+                        reviewer=SimpleNamespace(result=reviewer),
+                    ),
+                    'vars': SimpleNamespace(WEB_PREVIEW_REVIEWER_ENABLED=enabled),
+                    'cancelled': lambda: cancelled,
+                }
+
+                def evaluate(expression):
+                    expression = (
+                        expression.replace('&&', 'and')
+                        .replace('||', 'or')
+                        .replace('!cancelled()', 'not cancelled()')
+                    )
+                    return eval(expression, {'__builtins__': {}}, context)
+
+                if expected is None:
+                    self.assertFalse(evaluate(guard))
+                    continue
+                self.assertTrue(evaluate(guard))
+                state = evaluate(result)
+                self.assertEqual(state, expected)
+                if state == 'uploading':
+                    github = PreviewGitHub()
+                    with patch.object(preview, 'api', side_effect=github.request):
+                        preview.report('example/one', 123, '', state, expected_attempt=2)
+                    self.assertIn('Upload in progress', github.comments[0]['body'])
+                    self.assertIn(
+                        '/actions/workflows/web-previews-publish.yml', github.comments[0]['body']
+                    )
+
+    def test_publication_and_completion_use_the_workflow_commit_instead_of_a_moving_ref(self):
+        workflow = (
+            Path(__file__).parents[2] / '.github/workflows/web-previews-publish.yml'
+        ).read_text()
+        jobs = dict(
+            re.findall(r'(?ms)^  (\w+):\n(.*?)(?=^  \w+:|\Z)', workflow.split('jobs:\n', 1)[1])
+        )
+        github = SimpleNamespace(
+            workflow_sha='b' * 40,
+            event=SimpleNamespace(repository=SimpleNamespace(default_branch='main')),
+        )
+        for name in ('reviewer', 'cdn'):
+            with self.subTest(job=name):
+                ref = re.search(r'^          ref: \$\{\{ (.+) \}\}$', jobs[name], re.M).group(1)
+                self.assertEqual(eval(ref, {'__builtins__': {}}, {'github': github}), 'b' * 40)
+
+    def test_completion_retries_the_initial_receipt_and_posts_the_real_attempt(self):
+        github = PreviewGitHub()
+        responses = [
+            preview.HTTPError('https://cdn.example', 503, 'temporary', {}, None),
+            cdn_responses(attempt=2)[0],
+            *cdn_responses(attempt=2),
+        ]
+        with (
+            patch.object(preview, 'urlopen', side_effect=responses),
+            patch.object(preview, 'api', side_effect=github.request),
+            patch.object(preview.time, 'sleep') as sleep,
+        ):
+            preview.complete_cdn('example/one', cdn_event())
+        self.assertEqual(len(github.writes), 1)
+        self.assertIn('[Preview](https://cdn.decentraland.org/', github.writes[0])
+        sleep.assert_called_once_with(5)
+
+    def test_completion_retries_a_transient_resource_error_before_posting(self):
+        github = PreviewGitHub()
+        responses = [
+            cdn_responses(attempt=2)[0],
+            *cdn_responses(attempt=2)[:2],
+            preview.HTTPError('https://cdn.example', 503, 'temporary', {}, None),
+            *cdn_responses(attempt=2),
+        ]
+        with (
+            patch.object(preview, 'urlopen', side_effect=responses),
+            patch.object(preview, 'api', side_effect=github.request),
+            patch.object(preview.time, 'sleep') as sleep,
+        ):
+            preview.complete_cdn('example/one', cdn_event())
+        self.assertEqual(len(github.writes), 1)
+        self.assertIn('[Preview](', github.writes[0])
+        sleep.assert_called_once_with(5)
+
+    def test_an_unavailable_initial_receipt_exhausts_one_minute_without_posting(self):
+        clock = [0]
+        github = PreviewGitHub()
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        def unavailable(*args, **kwargs):
+            raise preview.HTTPError('https://cdn.example', 503, 'temporary', {}, None)
+
+        with (
+            patch.object(preview, 'urlopen', side_effect=unavailable),
+            patch.object(preview, 'api', side_effect=github.request),
+            patch.object(preview.time, 'monotonic', side_effect=lambda: clock[0]),
+            patch.object(preview.time, 'sleep', side_effect=sleep),
+        ):
+            with self.assertRaises(TimeoutError):
+                preview.complete_cdn('example/one', cdn_event())
+        self.assertEqual(clock[0], 60)
+        self.assertEqual(github.writes, [])
+
+    def test_late_upload_progress_preserves_the_verified_link_for_the_same_attempt(self):
+        github = PreviewGitHub()
+        with (
+            patch.object(preview, 'urlopen', side_effect=[cdn_responses(2)[0], *cdn_responses(2)]),
+            patch.object(preview, 'api', side_effect=github.request),
+        ):
+            preview.complete_cdn('example/one', cdn_event())
+            preview.report('example/one', 123, '', 'uploading', expected_attempt=2)
+        self.assertEqual(len(github.writes), 1)
+        self.assertIn('[Preview](', github.comments[0]['body'])
+
+    def test_new_attempt_upload_progress_replaces_the_previous_verified_link(self):
+        github = PreviewGitHub()
+        with (
+            patch.object(preview, 'urlopen', side_effect=[cdn_responses(2)[0], *cdn_responses(2)]),
+            patch.object(preview, 'api', side_effect=github.request),
+        ):
+            preview.complete_cdn('example/one', cdn_event())
+            github.run = {**github.run, 'run_attempt': 3}
+            preview.report('example/one', 123, '', 'uploading', expected_attempt=3)
+        self.assertEqual(len(github.writes), 2)
+        self.assertNotIn('[Preview](', github.comments[0]['body'])
+        self.assertIn('Upload in progress', github.comments[0]['body'])
+        self.assertIn('6-10 minutes', github.comments[0]['body'])
+        self.assertIn(
+            'https://github.com/example/one/actions/workflows/web-previews-publish.yml',
+            github.comments[0]['body'],
+        )
+
+    def test_completion_rechecks_the_real_source_attempt_immediately_before_writing(self):
+        github = PreviewGitHub()
+        github.supersede_on_read = 3
+        with (
+            patch.object(preview, 'urlopen', side_effect=[cdn_responses(2)[0], *cdn_responses(2)]),
+            patch.object(preview, 'api', side_effect=github.request),
+        ):
+            preview.complete_cdn('example/one', cdn_event())
+        self.assertEqual(github.writes, [])
+
+    def test_cdn_completion_cli_uses_the_event_without_a_source_run_environment(self):
+        event = cdn_event()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'event.json'
+            path.write_text(json.dumps(event))
+            with (
+                patch.object(preview.sys, 'argv', ['web-preview.py', 'complete-cdn']),
+                patch.dict(
+                    os.environ,
+                    {'GITHUB_REPOSITORY': 'example/one', 'GITHUB_EVENT_PATH': str(path)},
+                    clear=True,
+                ),
+                patch.object(preview, 'complete_cdn') as complete,
+            ):
+                preview.main()
+                complete.assert_called_once_with('example/one', event)
+
+    def test_all_cdn_requests_send_the_preview_user_agent(self):
+        with patch.object(preview, 'urlopen', side_effect=cdn_responses()) as fetch:
+            preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, timeout=0, attempt=1)
+        self.assertEqual(fetch.call_count, 4)
+        for call in fetch.call_args_list:
+            self.assertIsInstance(call.args[0], preview.Request)
+            self.assertEqual(call.args[0].get_header('User-agent'), preview.CDN_USER_AGENT)
+
+    def test_cdn_success_signal_verifies_and_reports_without_waiting_for_the_upload(self):
+        event = cdn_event()
+        # The upload may finish much later than the former five-minute publishing window.
+        event['deployment_status']['created_at'] = '2026-11-06T12:30:00Z'
+        pr = review_pr()
+        run = {**build_run(pr), 'run_attempt': 1, 'created_at': '2026-11-06T12:00:00Z'}
+        receipt = io.BytesIO(json.dumps({'revision': 'a' * 40, 'run': 123, 'attempt': 1}).encode())
+        with (
+            patch.object(preview, 'urlopen', side_effect=[receipt, *cdn_responses()]),
+            patch.object(preview, 'api', side_effect=[run, pr]),
+            patch.object(preview, 'report') as report,
+            patch.object(preview.time, 'sleep') as sleep,
+        ):
+            preview.complete_cdn('example/one', event)
+            report.assert_called_once_with(
+                'example/one',
+                123,
+                preview.cdn_url(event['deployment']['payload']['packageVersion'])
+                + '/dcl-ui-review/index.html',
+                'success',
+                expected_attempt=1,
+            )
+            sleep.assert_not_called()
+
+    def test_other_or_incomplete_cdn_deployments_do_not_probe_or_report(self):
+        changes = [
+            ('deployment_status', {'state': 'pending'}),
+            ('deployment_status', {'state': 'failure'}),
+            ('deployment_status', {}),
+            ('deployment', {**cdn_event()['deployment'], 'environment': 'zone'}),
+            ('deployment', {**cdn_event()['deployment'], 'task': 'deploy'}),
+            ('deployment', {**cdn_event()['deployment'], 'payload': {'packageName': 'other'}}),
+            ('deployment', {**cdn_event()['deployment'], 'payload': 'invalid'}),
+        ]
+        for field, value in changes:
+            with self.subTest(field=field, value=value), patch.object(preview, 'urlopen') as fetch:
+                preview.complete_cdn('example/one', {**cdn_event(), field: value})
+                fetch.assert_not_called()
+
+    def test_cdn_signal_cannot_link_a_closed_or_superseded_source_attempt(self):
+        receipt = {'revision': 'a' * 40, 'run': 123, 'attempt': 1}
+        pr = review_pr()
+        for run, current in (
+            ({**build_run(pr), 'run_attempt': 2}, pr),
+            ({**build_run(pr), 'run_attempt': 1}, {**pr, 'state': 'closed'}),
+            ({**build_run(pr), 'run_attempt': 1}, {**pr, 'head': {**pr['head'], 'sha': 'b' * 40}}),
+        ):
+            responses = [run] if run['run_attempt'] != 1 else [run, current]
+            with (
+                self.subTest(run=run, current=current),
+                patch.object(
+                    preview, 'urlopen', return_value=io.BytesIO(json.dumps(receipt).encode())
+                ) as fetch,
+                patch.object(preview, 'api', side_effect=responses),
+                patch.object(preview, 'report') as report,
+            ):
+                preview.complete_cdn('example/one', cdn_event())
+                report.assert_not_called()
+                self.assertEqual(fetch.call_count, 1)
+
+    def test_cdn_verification_retry_reuses_the_event_version_without_publishing(self):
+        event = cdn_event()
+        pr = review_pr()
+        run = {**build_run(pr), 'run_attempt': 1}
+        source = {'revision': 'a' * 40, 'run': 123, 'attempt': 1}
+        failed = iter(
+            [
+                io.BytesIO(json.dumps(source).encode()),
+                *cdn_responses()[:2],
+                preview.HTTPError('https://cdn.example', 404, 'propagating', {}, None),
+            ]
+        )
+        clock = [0]
+
+        def fetch_failed(*args, **kwargs):
+            response = next(failed)
+            if isinstance(response, Exception):
+                clock[0] = 60
+                raise response
+            return response
+
+        with (
+            patch.object(preview, 'urlopen', side_effect=fetch_failed),
+            patch.object(preview, 'api', side_effect=[run, pr]),
+            patch.object(preview, 'report') as report,
+            patch.object(preview.time, 'monotonic', side_effect=lambda: clock[0]),
+        ):
+            with self.assertRaises(TimeoutError):
+                preview.complete_cdn('example/one', event)
+            report.assert_not_called()
+        with (
+            patch.object(
+                preview,
+                'urlopen',
+                side_effect=[io.BytesIO(json.dumps(source).encode()), *cdn_responses()],
+            ) as fetch,
+            patch.object(preview, 'api', side_effect=[run, pr]),
+            patch.object(preview, 'report') as report,
+        ):
+            preview.complete_cdn('example/one', event)
+            self.assertEqual(
+                fetch.call_args_list[0].args[0].full_url,
+                preview.cdn_url(event['deployment']['payload']['packageVersion'])
+                + '/preview-source.json',
+            )
+            report.assert_called_once()
+
+    def test_bad_or_mismatched_cdn_receipts_never_link(self):
+        pr = review_pr()
+        source = {'revision': 'a' * 40, 'run': 123, 'attempt': 1}
+        for receipt in (
+            [],
+            {},
+            {**source, 'run': True},
+            {**source, 'attempt': 0},
+            {**source, 'attempt': None},
+            {**source, 'revision': None},
+        ):
+            with (
+                self.subTest(receipt=receipt),
+                patch.object(
+                    preview, 'urlopen', return_value=io.BytesIO(json.dumps(receipt).encode())
+                ),
+                patch.object(preview, 'api') as api,
+            ):
+                with self.assertRaisesRegex(ValueError, 'Invalid CDN source'):
+                    preview.complete_cdn('example/one', cdn_event())
+                api.assert_not_called()
+        with (
+            patch.object(
+                preview,
+                'urlopen',
+                return_value=io.BytesIO(json.dumps({**source, 'revision': 'b' * 40}).encode()),
+            ),
+            patch.object(preview, 'api', side_effect=[{**build_run(pr), 'run_attempt': 1}, pr]),
+            patch.object(preview, 'report') as report,
+        ):
+            with self.assertRaisesRegex(ValueError, 'does not match'):
+                preview.complete_cdn('example/one', cdn_event())
+            report.assert_not_called()
+
+    def test_ordering_does_not_compare_attempt_numbers_from_different_runs(self):
+        pr = review_pr()
+        candidate = {**build_run(pr), 'run_attempt': 1}
+        with (
+            patch.dict(os.environ, {'SOURCE_RUN_ATTEMPT': '2'}),
+            patch.object(
+                preview,
+                'api',
+                side_effect=[
+                    [{'id': 123}, {'id': 124}],
+                    {'jobs': [{'name': 'changes', 'conclusion': 'success'}]},
+                    candidate,
+                    pr,
+                ],
+            ),
+        ):
+            self.assertFalse(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
+
+    def test_products_are_selected_independently(self):
+        self.assertEqual(preview.products(['apps/sites/src/index.ts']), ['sites'])
+        self.assertEqual(preview.products(['library/ui/components/Button.tsx']), ['reviewer'])
+        self.assertEqual(
+            preview.products(['apps/sites/package.json', 'library/ui/package.json']),
+            ['sites', 'reviewer'],
+        )
+
+    def test_other_apps_and_api_contracts_do_not_trigger_previews(self):
+        self.assertEqual(
+            preview.products(
+                [
+                    'apps/ui3/src/index.ts',
+                    'library/catalyst-api/a.ts',
+                    'apps/dcl-scene-cli/src/main.rs',
+                    'README.md',
+                ]
+            ),
+            [],
+        )
+
+    def test_preview_pipeline_changes_select_both_products(self):
+        for path in [
+            'tooling/web-preview.py',
+            'tooling/tests/test_web_preview.py',
+            'tooling/web-preview-browser.mjs',
+            '.github/workflows/web-previews.yml',
+            '.github/workflows/web-previews-publish.yml',
+        ]:
+            with self.subTest(path=path):
+                self.assertEqual(preview.products([path]), ['sites', 'reviewer'])
+
+    def test_only_current_same_repository_pr_runs_can_publish(self):
+        run = {
+            'event': 'pull_request',
+            'status': 'completed',
+            'conclusion': 'success',
+            'head_sha': 'a' * 40,
+            'path': '.github/workflows/web-previews.yml',
+            'head_repository': {'full_name': 'example/one'},
+        }
+        pr = {'state': 'open', 'head': {'sha': 'a' * 40, 'repo': {'full_name': 'example/one'}}}
+        self.assertTrue(preview.publishable(run, pr, 'example/one'))
+        for key, value in [
+            ('event', 'push'),
+            ('conclusion', 'cancelled'),
+            ('status', 'in_progress'),
+            ('head_sha', 'b' * 40),
+            ('path', '.github/workflows/other.yml'),
+            ('head_repository', {'full_name': 'fork/one'}),
+        ]:
+            with self.subTest(key=key):
+                self.assertFalse(preview.publishable({**run, key: value}, pr, 'example/one'))
+        self.assertFalse(preview.publishable(run, {**pr, 'state': 'closed'}, 'example/one'))
+        self.assertFalse(
+            preview.publishable(run, {**pr, 'head': {**pr['head'], 'repo': None}}, 'example/one')
+        )
+
+    def test_static_package_contains_only_assets_and_trusted_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, target = root / 'input', root / 'output'
+            (source / 'dcl-ui-review').mkdir(parents=True)
+            (source / 'dcl-ui-review/index.html').write_text('<html></html>')
+            (source / 'assets').mkdir()
+            (source / 'assets/main.js').write_text('console.log("review")')
+            preview.package_reviewer(source, target, 'a' * 40, 123, 1)
+            metadata = json.loads((target / 'package.json').read_text())
+            self.assertEqual(metadata['name'], '@dcl-regenesislabs/dcl-one-ui-review')
+            self.assertEqual(
+                metadata['repository']['url'], 'git+https://github.com/decentraland/dcl-one.git'
+            )
+            self.assertNotIn('scripts', metadata)
+            self.assertEqual(
+                json.loads((target / 'preview-source.json').read_text()),
+                {'revision': 'a' * 40, 'run': 123, 'attempt': 1},
+            )
+            self.assertTrue((target / 'assets/main.js').is_file())
+
+    def test_reviewer_can_publish_when_sites_failed(self):
+        run = {
+            'event': 'pull_request',
+            'status': 'completed',
+            'conclusion': 'failure',
+            'head_sha': 'a' * 40,
+            'path': '.github/workflows/web-previews.yml',
+            'head_repository': {'full_name': 'example/one'},
+        }
+        pr = {'state': 'open', 'head': {'sha': 'a' * 40, 'repo': {'full_name': 'example/one'}}}
+        self.assertTrue(preview.publishable(run, pr, 'example/one'))
+
+    def test_only_a_successful_reviewer_job_and_artifact_can_publish(self):
+        job = {'name': 'UI reviewer', 'status': 'completed', 'conclusion': 'success'}
+        artifact = {'name': 'web-preview-reviewer', 'expired': False}
+        self.assertTrue(preview.reviewer_ready([job], [artifact]))
+        for conclusion in ['failure', 'cancelled', 'skipped', None]:
+            with self.subTest(conclusion=conclusion):
+                self.assertFalse(
+                    preview.reviewer_ready([{**job, 'conclusion': conclusion}], [artifact])
+                )
+        self.assertFalse(preview.reviewer_ready([job], []))
+        self.assertFalse(preview.reviewer_ready([job], [{**artifact, 'expired': True}]))
+        self.assertFalse(preview.reviewer_ready([], [artifact]))
+        self.assertFalse(preview.reviewer_ready([job, job], [artifact]))
+        self.assertFalse(preview.reviewer_ready([job], [artifact, artifact]))
+
+    def test_static_package_rejects_hidden_files_source_scripts_and_symlinks(self):
+        for name in ['.npmrc', 'package.json', 'server.ts', 'run.sh', 'source.map']:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / 'input/dcl-ui-review').mkdir(parents=True)
+                (root / 'input/dcl-ui-review/index.html').write_text('ok')
+                (root / 'input' / name).write_text('untrusted')
+                with self.assertRaises(ValueError):
+                    preview.package_reviewer(root / 'input', root / 'output', 'a' * 40, 123, 1)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'input/dcl-ui-review').mkdir(parents=True)
+            (root / 'input/dcl-ui-review/index.html').write_text('ok')
+            (root / 'input/link.js').symlink_to('/etc/passwd')
+            with self.assertRaises(ValueError):
+                preview.package_reviewer(root / 'input', root / 'output', 'a' * 40, 123, 1)
+
+    def test_static_package_requires_the_reviewer_entry_and_valid_source_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'input'
+            source.mkdir()
+            with self.assertRaises(ValueError):
+                preview.package_reviewer(source, root / 'output', 'a' * 40, 123, 1)
+            (source / 'dcl-ui-review').mkdir()
+            (source / 'dcl-ui-review/index.html').write_text('ok')
+            for sha, run in [('bad', 123), ('a' * 40, 0)]:
+                with self.subTest(sha=sha, run=run), self.assertRaises(ValueError):
+                    preview.package_reviewer(source, root / 'output', sha, run, 1)
+
+    def test_cdn_requires_the_expected_source_build(self):
+        response = io.BytesIO(json.dumps({'revision': 'b' * 40, 'run': 123}).encode())
+        with patch.object(preview, 'urlopen', return_value=response):
+            with self.assertRaisesRegex(ValueError, 'different source'):
+                preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, timeout=0, attempt=1)
+
+    def test_cdn_checks_the_html_entry_before_returning_a_link(self):
+        with patch.object(preview, 'urlopen', side_effect=cdn_responses()) as fetch:
+            self.assertEqual(
+                preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, timeout=0, attempt=1),
+                'https://cdn.decentraland.org/@dcl-regenesislabs/dcl-one-ui-review/'
+                '0.1.0-123.commit-abcdef0/dcl-ui-review/index.html',
+            )
+            self.assertTrue(
+                fetch.call_args_list[2]
+                .args[0]
+                .full_url.endswith('/dcl-ui-review/assets/main-Abc123.js')
+            )
+            self.assertTrue(
+                fetch.call_args_list[3].args[0].full_url.endswith('/dcl-ui-review/fidelity.json')
+            )
+
+    def test_cdn_rejects_non_html_entries_and_invalid_versions(self):
+        identity = io.BytesIO(json.dumps({'revision': 'a' * 40, 'run': 123, 'attempt': 1}).encode())
+        html = io.BytesIO(b'not html')
+        html.status = 200
+        html.headers = {'Content-Type': 'application/json'}
+        with patch.object(preview, 'urlopen', side_effect=[identity, html]):
+            with self.assertRaises(TimeoutError):
+                preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, timeout=0, attempt=1)
+        for version in ['../other', '0.1.0-123.commit-abcdef0\n', 'latest']:
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                preview.cdn_url(version)
+
+    def test_report_rechecks_the_head_before_posting(self):
+        run = {
+            'head_sha': 'a' * 40,
+            'run_attempt': 1,
+            'html_url': 'https://github.com/example/one/actions/runs/123',
+        }
+        pr = review_pr()
+        jobs = {'jobs': [{'name': 'UI reviewer', 'conclusion': 'success'}]}
+        with patch.object(preview, 'resolve', side_effect=[(run, pr), (run, None)]):
+            with patch.object(preview, 'api', side_effect=[jobs, []]) as api:
+                preview.report('example/one', 123, 'https://cdn.example/review', 'success')
+                self.assertEqual(api.call_count, 2)
+
+    def test_report_ignores_a_run_superseded_on_the_same_head(self):
+        run = {
+            'head_sha': 'a' * 40,
+            'run_attempt': 1,
+            'html_url': 'https://github.com/example/one/actions/runs/123',
+        }
+        pr = review_pr()
+        jobs = {'jobs': [{'name': 'UI reviewer', 'conclusion': 'success'}]}
+        comments = [
+            {
+                'id': 1,
+                'user': {'login': 'github-actions[bot]'},
+                'body': preview.MARKER + '\n<!-- source-run:123:2 -->',
+            }
+        ]
+        with patch.object(preview, 'resolve', return_value=(run, pr)):
+            with patch.object(preview, 'api', side_effect=[jobs, comments, [{'id': 124}]]) as api:
+                preview.report('example/one', 123, '', 'failure')
+                self.assertEqual(api.call_count, 3)
+
+    def test_dependabot_runs_cannot_publish(self):
+        run = {
+            'event': 'pull_request',
+            'status': 'completed',
+            'conclusion': 'success',
+            'path': preview.WORKFLOW,
+            'head_repository': {'full_name': 'example/one'},
+            'head_sha': 'a' * 40,
+        }
+        pr = {'state': 'open', 'head': {'sha': 'a' * 40, 'repo': {'full_name': 'example/one'}}}
+        for field in ('actor', 'triggering_actor'):
+            with self.subTest(field=field):
+                self.assertFalse(
+                    preview.publishable(
+                        {**run, field: {'login': 'dependabot[bot]'}}, pr, 'example/one'
+                    )
+                )
+
+    def test_cdn_accepts_bumped_package_versions(self):
+        self.assertTrue(
+            preview.cdn_url('0.1.1-123.commit-abcdef0').endswith('/0.1.1-123.commit-abcdef0')
+        )
+
+    def test_cdn_retries_transient_decode_and_transport_failures(self):
+        errors = [
+            json.JSONDecodeError('not JSON', '', 0),
+            ConnectionResetError(),
+            preview.http.client.IncompleteRead(b'partial'),
+            preview.http.client.RemoteDisconnected(),
+        ]
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                with (
+                    patch.object(preview, 'urlopen', side_effect=[error, *cdn_responses()]),
+                    patch.object(preview.time, 'sleep') as sleep,
+                ):
+                    self.assertTrue(
+                        preview.verify_cdn(
+                            '0.1.0-123.commit-abcdef0', 'a' * 40, 123, attempt=1
+                        ).endswith('index.html')
+                    )
+                    sleep.assert_called_once_with(5)
+
+    def test_resolve_uses_commit_fallback_and_skips_outdated_candidates(self):
+        pr = review_pr(2)
+        closed = {**review_pr(1), 'state': 'closed'}
+        run = {**build_run(pr), 'pull_requests': []}
+        with patch.object(preview, 'api', side_effect=[run, [closed, pr], closed, pr]) as api:
+            self.assertEqual(preview.resolve('example/one', 123), (run, pr))
+            self.assertTrue(api.call_args_list[1].kwargs['paginate'])
+
+    def test_resolve_rejects_cancelled_runs(self):
+        pr = review_pr()
+        run = {**build_run(pr), 'conclusion': 'cancelled'}
+        with patch.object(preview, 'api', side_effect=[run, pr]):
+            self.assertEqual(preview.resolve('example/one', 123), (run, None))
+
+    def test_report_posts_or_patches_current_comment(self):
+        run = {
+            'head_sha': 'a' * 40,
+            'run_attempt': 2,
+            'html_url': 'https://github.com/example/one/actions/runs/123',
+        }
+        pr = review_pr()
+        jobs = {'jobs': [{'name': 'UI reviewer', 'conclusion': 'success'}]}
+        for comments, method, path in [
+            ([], 'POST', 'repos/example/one/issues/9/comments'),
+            (
+                [
+                    {
+                        'id': 5,
+                        'user': {'login': 'github-actions[bot]'},
+                        'body': preview.MARKER + '\n<!-- source-run:999999999:99999 -->',
+                    }
+                ],
+                'PATCH',
+                'repos/example/one/issues/comments/5',
+            ),
+        ]:
+            with (
+                self.subTest(method=method),
+                patch.object(preview, 'resolve', return_value=(run, pr)),
+                patch.object(
+                    preview,
+                    'api',
+                    side_effect=[jobs, comments, [{'id': 123}], {}],
+                ) as api,
+            ):
+                preview.report('example/one', 123, 'https://cdn.example/review', 'success')
+                self.assertEqual(api.call_args.args[0], path)
+                self.assertEqual(api.call_args.kwargs['method'], method)
+                self.assertIn(
+                    '[Preview](https://cdn.example/review)', api.call_args.kwargs['body']['body']
+                )
+
+    def test_api_prints_error_details_before_raising(self):
+        result = subprocess.CompletedProcess(['gh'], 1, '', 'permission denied (HTTP 403)')
+        with (
+            patch.object(preview.subprocess, 'run', return_value=result),
+            patch('sys.stderr', new_callable=io.StringIO) as stderr,
+        ):
+            with self.assertRaises(subprocess.CalledProcessError):
+                preview.api('repos/example/one')
+            self.assertIn('permission denied', stderr.getvalue())
+
+    def test_cdn_rejects_root_absolute_assets_and_missing_bundles(self):
+        entry = preview.cdn_url('0.1.0-123.commit-abcdef0')
+        for html in [
+            '<script src="/dcl-ui-review/assets/main-Abc123.js"></script>',
+            '<html>not a reviewer bundle</html>',
+        ]:
+            with self.subTest(html=html), self.assertRaises(ValueError):
+                preview.verify_reviewer_resources(entry, entry + '/dcl-ui-review/index.html', html)
+
+    def test_cdn_rejects_asset_fallback_html(self):
+        responses = cdn_responses()
+        responses[2].headers = {'Content-Type': 'text/html'}
+        with (
+            patch.object(preview, 'urlopen', side_effect=responses),
+            self.assertRaises(TimeoutError),
+        ):
+            preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, timeout=0, attempt=1)
+
+    def test_cdn_retries_missing_fidelity_data(self):
+        failed = cdn_responses()[:3] + [
+            preview.HTTPError('https://cdn.example', 404, 'missing', {}, None)
+        ]
+        with (
+            patch.object(preview, 'urlopen', side_effect=failed + cdn_responses()),
+            patch.object(preview.time, 'sleep') as sleep,
+        ):
+            preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, attempt=1)
+            sleep.assert_called_once_with(5)
+
+    def test_workflow_key_guard_cli_scans_artifacts_and_rejects_secrets(self):
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / '.github/workflows/web-previews-publish.yml').read_text()
+        command = re.search(r'(node library/ui/figma/key-guard.mjs[^|]+) \| tee', workflow).group(1)
+        args = shlex.split(command.replace('\\\n', ''))
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = Path(directory) / 'index.html'
+            artifact.write_text('<html>review</html>')
+            args = [directory if arg == '.preview/input' else arg for arg in args]
+            env = {**os.environ, 'FIGMA_FILE_KEY': 'synthetic_preview_guard_key'}
+            clean = subprocess.run(args, cwd=root, env=env, capture_output=True, text=True)
+            self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
+            self.assertIn('check key: ran', clean.stdout)
+            artifact.write_text('synthetic_preview_guard_key')
+            leaked = subprocess.run(args, cwd=root, env=env, capture_output=True, text=True)
+            self.assertEqual(leaked.returncode, 1)
+            self.assertNotIn('synthetic_preview_guard_key', leaked.stdout + leaked.stderr)
+
+    def test_report_omits_skipped_products_and_reports_sites_as_pending(self):
+        run = {'head_sha': 'a' * 40, 'run_attempt': 1, 'html_url': 'https://github.com/example/run'}
+        pr = review_pr()
+        jobs = {
+            'jobs': [
+                {'name': 'UI reviewer', 'conclusion': 'skipped'},
+                {'name': 'Sites', 'conclusion': 'success'},
+            ]
+        }
+        with (
+            patch.object(preview, 'resolve', return_value=(run, pr)),
+            patch.object(preview, 'api', side_effect=[jobs, [], [{'id': 123}], {}]) as api,
+        ):
+            preview.report('example/one', 123, '', 'disabled')
+            body = api.call_args.kwargs['body']['body']
+            self.assertNotIn('| UI reviewer |', body)
+            self.assertIn('| Sites | success | SSR preview pending', body)
+
+    def test_report_links_failed_jobs_and_reports_disabled_publication(self):
+        run = {'head_sha': 'a' * 40, 'run_attempt': 1, 'html_url': 'https://github.com/example/run'}
+        pr = review_pr()
+        for conclusion, expected in [
+            ('failure', '[Build log](https://github.com/example/job)'),
+            ('success', 'Publication: disabled'),
+        ]:
+            jobs = {
+                'jobs': [
+                    {
+                        'name': 'UI reviewer',
+                        'conclusion': conclusion,
+                        'html_url': 'https://github.com/example/job',
+                    }
+                ]
+            }
+            with (
+                self.subTest(conclusion=conclusion),
+                patch.object(preview, 'resolve', return_value=(run, pr)),
+                patch.object(preview, 'api', side_effect=[jobs, [], [{'id': 123}], {}]) as api,
+            ):
+                preview.report('example/one', 123, '', 'disabled')
+                self.assertIn(expected, api.call_args.kwargs['body']['body'])
+
+    def test_no_selected_products_post_no_new_comment(self):
+        pr = review_pr()
+        run = {**build_run(pr), 'run_attempt': 1, 'html_url': 'https://github.com/example/run'}
+        jobs = {
+            'jobs': [
+                {'name': 'Sites', 'conclusion': 'skipped'},
+                {'name': 'UI reviewer', 'conclusion': 'skipped'},
+            ]
+        }
+        with (
+            patch.object(preview, 'resolve', return_value=(run, pr)),
+            patch.object(preview, 'api', side_effect=[jobs, []]) as api,
+        ):
+            preview.report('example/one', 123, '', 'skipped')
+            self.assertEqual(api.call_count, 2)
+
+    def test_resolve_cli_emits_github_output_contract(self):
+        run = {
+            'event': 'pull_request',
+            'status': 'completed',
+            'conclusion': 'success',
+            'path': preview.WORKFLOW,
+            'head_repository': {'full_name': 'example/one'},
+            'head_sha': 'a' * 40,
+        }
+        pr = {
+            'number': 9,
+            'state': 'open',
+            'head': {'sha': 'a' * 40, 'repo': {'full_name': 'example/one'}},
+        }
+        for selected, expected in [
+            (pr, 'pr=9\npublish=true\nreviewer=true\n'),
+            (None, 'pr=\npublish=false\nreviewer=true\n'),
+        ]:
+            with (
+                self.subTest(selected=selected),
+                patch.object(preview.sys, 'argv', ['web-preview.py', 'resolve']),
+                patch.dict(
+                    os.environ, {'GITHUB_REPOSITORY': 'example/one', 'SOURCE_RUN_ID': '123'}
+                ),
+                patch.object(preview, 'resolve', return_value=(run, selected)),
+                patch.object(preview, 'require_reviewer', return_value=True),
+                patch('sys.stdout', new_callable=io.StringIO) as stdout,
+            ):
+                preview.main()
+                self.assertEqual(stdout.getvalue(), expected)
+
+    def test_select_uses_cumulative_real_git_diff_on_a_later_docs_commit(self):
+        script = Path(preview.__file__).resolve()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def git(*args):
+                return subprocess.check_output(
+                    [
+                        'git',
+                        '-c',
+                        'user.name=Preview Test',
+                        '-c',
+                        'user.email=preview@example.invalid',
+                        '-c',
+                        'commit.gpgsign=false',
+                        *args,
+                    ],
+                    cwd=root,
+                    text=True,
+                ).strip()
+
+            git('init', '-q')
+            (root / 'README.md').write_text('base')
+            git('add', '.')
+            git('commit', '-qm', 'base')
+            base = git('rev-parse', 'HEAD')
+            (root / 'apps/sites').mkdir(parents=True)
+            (root / 'apps/sites/page.ts').write_text('web')
+            git('add', '.')
+            git('commit', '-qm', 'web change')
+            (root / 'README.md').write_text('later documentation')
+            git('add', '.')
+            git('commit', '-qm', 'docs change')
+            output = subprocess.check_output(
+                ['python3', str(script), 'select', '--base', base, '--head', 'HEAD'],
+                cwd=root,
+                text=True,
+            )
+            self.assertEqual(output, 'sites=true\nreviewer=false\n')
+
+    def test_run_resolves_its_own_pr_and_base_for_a_shared_head(self):
+        first = review_pr(9, 'main')
+        second = review_pr(10, 'feature/base', 'c' * 40)
+        for pr in (first, second):
+            run = build_run(pr)
+            with (
+                self.subTest(number=pr['number']),
+                patch.object(preview, 'api', side_effect=[run, pr]),
+            ):
+                self.assertEqual(preview.resolve('example/one', 123), (run, pr))
+
+    def test_resolve_rejects_changed_base_identity(self):
+        pr = review_pr()
+        run = build_run(pr)
+        for replacement in (review_pr(base='other'), {**pr, 'base': None}):
+            with (
+                self.subTest(base=replacement['base']),
+                patch.object(preview, 'api', side_effect=[run, replacement]),
+            ):
+                self.assertEqual(preview.resolve('example/one', 123), (run, None))
+
+    def test_ambiguous_commit_fallback_cannot_pick_an_arbitrary_pr(self):
+        first = review_pr(9)
+        second = review_pr(10, 'feature/base', 'c' * 40)
+        run = {**build_run(first), 'pull_requests': []}
+        with patch.object(preview, 'api', side_effect=[run, [first, second], first, second]):
+            self.assertEqual(preview.resolve('example/one', 123), (run, None))
+
+    def test_newest_run_is_scoped_to_the_same_pr_and_base(self):
+        pr = review_pr()
+        runs = [
+            {'id': 123, 'pull_requests': [pr]},
+            {'id': 124, 'pull_requests': [review_pr(10, 'feature/base')]},
+        ]
+        with patch.object(preview, 'api', return_value=runs):
+            self.assertTrue(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
+        runs.append({'id': 125, 'pull_requests': [pr]})
+        with patch.object(
+            preview,
+            'api',
+            side_effect=[runs, {'jobs': [{'name': 'changes', 'conclusion': 'success'}]}],
+        ):
+            self.assertFalse(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
+
+    def test_newest_run_without_pr_metadata_is_resolved_before_matching(self):
+        pr = review_pr()
+        runs = [{'id': 123}, {'id': 124}]
+        for candidate, expected in ((review_pr(10), True), (pr, False), (None, True)):
+            with (
+                self.subTest(candidate=candidate),
+                patch.object(
+                    preview,
+                    'api',
+                    side_effect=[runs, {'jobs': [{'name': 'changes', 'conclusion': 'success'}]}],
+                ),
+                patch.object(preview, 'resolve', return_value=({}, candidate)),
+            ):
+                self.assertEqual(
+                    preview.newest_run_for_pr('example/one', 123, build_run(pr), pr), expected
+                )
+
+    def test_failed_selection_replaces_a_previous_successful_preview(self):
+        pr = review_pr()
+        run = {
+            **build_run(pr),
+            'conclusion': 'failure',
+            'run_attempt': 1,
+            'html_url': 'https://github.com/example/run',
+        }
+        old = {
+            'id': 5,
+            'user': {'login': 'github-actions[bot]'},
+            'body': preview.MARKER + '\n[Preview](https://cdn.example/old)',
+        }
+        for selection in (
+            [
+                {
+                    'name': 'changes',
+                    'conclusion': 'failure',
+                    'html_url': 'https://github.com/example/selection',
+                }
+            ],
+            [],
+        ):
+            jobs = {
+                'jobs': selection
+                + [
+                    {'name': 'Sites', 'conclusion': 'skipped'},
+                    {'name': 'UI reviewer', 'conclusion': 'skipped'},
+                ]
+            }
+            with (
+                self.subTest(selection=selection),
+                patch.object(preview, 'resolve', return_value=(run, pr)),
+                patch.object(preview, 'api', side_effect=[jobs, [old], [{'id': 123}], {}]) as api,
+            ):
+                preview.report('example/one', 123, '', 'skipped')
+                self.assertEqual(api.call_args.kwargs['method'], 'PATCH')
+                body = api.call_args.kwargs['body']['body']
+                self.assertIn('| Preview selection | failure |', body)
+                self.assertNotIn('https://cdn.example/old', body)
+                expected = (
+                    'https://github.com/example/selection'
+                    if selection
+                    else 'https://github.com/example/run'
+                )
+                self.assertIn(expected, body)
+
+    def test_report_cannot_switch_pr_between_identity_checks(self):
+        pr = review_pr()
+        run = {**build_run(pr), 'run_attempt': 1, 'html_url': 'https://github.com/example/run'}
+        jobs = {'jobs': [{'name': 'Sites', 'conclusion': 'success'}]}
+        with (
+            patch.object(preview, 'resolve', side_effect=[(run, pr), (run, review_pr(10))]),
+            patch.object(preview, 'api', side_effect=[jobs, []]) as api,
+        ):
+            preview.report('example/one', 123, '', 'skipped')
+            self.assertEqual(api.call_count, 2)
+
+    def test_incomplete_pr_identity_cannot_match_a_run(self):
+        pr = review_pr()
+        for candidate in (
+            {},
+            {**pr, 'base': None},
+            {**pr, 'head': None},
+            {**pr, 'base': {'sha': 'b' * 40}},
+        ):
+            with self.subTest(candidate=candidate):
+                self.assertFalse(preview.same_pull_request(candidate, pr))
+
+    def test_ambiguous_run_metadata_cannot_pick_an_arbitrary_pr(self):
+        first = review_pr()
+        second = review_pr(10, 'feature/base')
+        run = {**build_run(first), 'pull_requests': [first, second]}
+        with patch.object(preview, 'api', side_effect=[run, first, second]):
+            self.assertEqual(preview.resolve('example/one', 123), (run, None))
+
+    def test_source_run_absent_from_latest_listing_cannot_replace_a_comment(self):
+        pr = review_pr()
+        with patch.object(preview, 'api', return_value=[]):
+            self.assertFalse(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
+
+    def test_reverted_web_changes_clear_the_existing_preview_comment(self):
+        pr = review_pr()
+        run = {**build_run(pr), 'run_attempt': 1, 'html_url': 'https://github.com/example/run'}
+        jobs = {
+            'jobs': [
+                {'name': 'Sites', 'conclusion': 'skipped'},
+                {'name': 'UI reviewer', 'conclusion': 'skipped'},
+            ]
+        }
+        old = {
+            'id': 5,
+            'user': {'login': 'github-actions[bot]'},
+            'body': preview.MARKER + '\n[Preview](https://cdn.example/old)',
+        }
+        with (
+            patch.object(preview, 'resolve', return_value=(run, pr)),
+            patch.object(preview, 'api', side_effect=[jobs, [old], [{'id': 123}], {}]) as api,
+        ):
+            preview.report('example/one', 123, '', 'skipped')
+            self.assertEqual(api.call_args.kwargs['method'], 'PATCH')
+            body = api.call_args.kwargs['body']['body']
+            self.assertIn('| Web previews | not selected |', body)
+            self.assertNotIn('https://cdn.example/old', body)
+            self.assertIn('Commit `aaaaaaa`', body)
+
+    def test_resolve_accepts_a_base_tip_advance_without_retargeting_the_pr(self):
+        original = review_pr()
+        live = review_pr(base_sha='c' * 40)
+        run = build_run(original)
+        with patch.object(preview, 'api', side_effect=[run, live]):
+            self.assertEqual(preview.resolve('example/one', 123), (run, live))
+
+    def test_newest_run_counts_the_same_pr_after_a_base_tip_advance(self):
+        pr = review_pr()
+        runs = [
+            {'id': 123},
+            {'id': 124, 'pull_requests': [review_pr(base_sha='c' * 40)]},
+        ]
+        with patch.object(
+            preview,
+            'api',
+            side_effect=[runs, {'jobs': [{'name': 'changes', 'conclusion': 'success'}]}],
+        ):
+            self.assertFalse(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
+
+    def test_other_bot_actors_and_pr_authors_cannot_publish(self):
+        pr = review_pr()
+        run = build_run(pr)
+        for account in (
+            {'login': 'renovate[bot]', 'type': 'Bot'},
+            {'login': 'other-app', 'type': 'Bot'},
+            {'login': 'other[bot]'},
+        ):
+            for field in ('actor', 'triggering_actor'):
+                with self.subTest(account=account, field=field):
+                    self.assertFalse(
+                        preview.publishable({**run, field: account}, pr, 'example/one')
+                    )
+            self.assertFalse(preview.publishable(run, {**pr, 'user': account}, 'example/one'))
+
+    def test_api_retries_transient_server_errors(self):
+        failure = subprocess.CompletedProcess(['gh'], 1, '', 'HTTP 502: Bad Gateway')
+        success = subprocess.CompletedProcess(['gh'], 0, '{"ok": true}', '')
+        for method in ('GET', 'PATCH'):
+            with (
+                self.subTest(method=method),
+                patch.object(preview.subprocess, 'run', side_effect=[failure, success]) as request,
+                patch.object(preview.time, 'sleep') as sleep,
+            ):
+                self.assertEqual(preview.api('repos/example/one', method=method), {'ok': True})
+                self.assertEqual(request.call_count, 2)
+                sleep.assert_called_once_with(1)
+
+    def test_api_does_not_retry_permanent_errors_or_comment_creation(self):
+        for method, status in (('GET', 404), ('GET', 403), ('POST', 503)):
+            failure = subprocess.CompletedProcess(['gh'], 1, '', f'HTTP {status}: error')
+            with (
+                self.subTest(method=method, status=status),
+                patch.object(preview.subprocess, 'run', return_value=failure) as request,
+                patch.object(preview.time, 'sleep') as sleep,
+            ):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    preview.api('repos/example/one', method=method)
+                self.assertEqual(request.call_count, 1)
+                sleep.assert_not_called()
+
+    def test_api_timeout_retries_are_bounded(self):
+        error = subprocess.TimeoutExpired(['gh'], 30)
+        with (
+            patch.object(preview.subprocess, 'run', side_effect=error) as request,
+            patch.object(preview.time, 'sleep') as sleep,
+        ):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                preview.api('repos/example/one')
+            self.assertEqual(request.call_count, 3)
+            self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
+
+    def test_api_retries_a_transient_invalid_json_response(self):
+        bad = subprocess.CompletedProcess(['gh'], 0, '<html>upstream error</html>', '')
+        good = subprocess.CompletedProcess(['gh'], 0, '[1, 2]', '')
+        with (
+            patch.object(preview.subprocess, 'run', side_effect=[bad, good]),
+            patch.object(preview.time, 'sleep') as sleep,
+        ):
+            self.assertEqual(preview.api('repos/example/one'), [1, 2])
+            sleep.assert_called_once_with(1)
+
+    def test_publication_requires_a_human_reviewer_and_no_admin_bypass(self):
+        reviewer = {'type': 'User', 'reviewer': {'type': 'User', 'login': 'maintainer'}}
+        environment = {
+            'can_admins_bypass': False,
+            'protection_rules': [
+                {
+                    'type': 'required_reviewers',
+                    'prevent_self_review': False,
+                    'reviewers': [reviewer],
+                }
+            ],
+            'deployment_branch_policy': {
+                'custom_branch_policies': True,
+                'protected_branches': False,
+            },
+        }
+        with patch.object(
+            preview,
+            'api',
+            side_effect=[
+                environment,
+                {'default_branch': 'main'},
+                {'total_count': 1, 'branch_policies': [{'name': 'main', 'type': 'branch'}]},
+            ],
+        ) as request:
+            preview.require_publication_environment('example/one')
+            self.assertEqual(
+                request.call_args_list[0].args[0], 'repos/example/one/environments/web-preview'
+            )
+        for invalid in (
+            {},
+            {**environment, 'can_admins_bypass': True},
+            {**environment, 'can_admins_bypass': None},
+            {**environment, 'protection_rules': []},
+            {**environment, 'protection_rules': [{'type': 'required_reviewers', 'reviewers': []}]},
+        ):
+            with (
+                self.subTest(environment=invalid),
+                patch.object(preview, 'api', return_value=invalid),
+            ):
+                with self.assertRaisesRegex(ValueError, 'human reviewer'):
+                    preview.require_publication_environment('example/one')
+        for invalid in (
+            {},
+            {'type': 'Team', 'reviewer': {'type': 'User', 'login': 'team'}},
+            {'type': 'User', 'reviewer': None},
+            {'type': 'User', 'reviewer': {'type': 'Bot', 'login': 'app'}},
+            {'type': 'User', 'reviewer': {'type': 'User', 'login': 'app[bot]'}},
+        ):
+            rules = [{'type': 'required_reviewers', 'reviewers': [invalid]}]
+            with (
+                self.subTest(reviewer=invalid),
+                patch.object(
+                    preview, 'api', return_value={**environment, 'protection_rules': rules}
+                ),
+            ):
+                with self.assertRaisesRegex(ValueError, 'human reviewer'):
+                    preview.require_publication_environment('example/one')
+
+    def test_missing_or_unreadable_environment_cannot_authorize_publication(self):
+        with patch.object(preview, 'api', side_effect=subprocess.CalledProcessError(1, ['gh'])):
+            with self.assertRaises(subprocess.CalledProcessError):
+                preview.require_publication_environment('example/one')
+
+    def test_environment_rejects_missing_branch_policy_tags_wildcards_and_other_branches(self):
+        environment = {
+            'can_admins_bypass': False,
+            'protection_rules': [
+                {
+                    'type': 'required_reviewers',
+                    'reviewers': [
+                        {'type': 'User', 'reviewer': {'type': 'User', 'login': 'maintainer'}},
+                    ],
+                }
+            ],
+        }
+        for policy in (None, {}, {'protected_branches': True}, {'custom_branch_policies': False}):
+            with (
+                self.subTest(policy=policy),
+                patch.object(
+                    preview,
+                    'api',
+                    return_value={
+                        **environment,
+                        'deployment_branch_policy': policy,
+                    },
+                ),
+            ):
+                with self.assertRaisesRegex(ValueError, 'restrict deployments'):
+                    preview.require_publication_environment('example/one')
+        environment['deployment_branch_policy'] = {
+            'custom_branch_policies': True,
+            'protected_branches': False,
+        }
+        for branches in (
+            [],
+            [{'name': '*', 'type': 'branch'}],
+            [{'name': 'main', 'type': 'tag'}],
+            [{'name': 'feature', 'type': 'branch'}],
+            [{}],
+            [{'name': 'main', 'type': 'branch'}, {'name': 'feature', 'type': 'branch'}],
+        ):
+            with (
+                self.subTest(branches=branches),
+                patch.object(
+                    preview,
+                    'api',
+                    side_effect=[
+                        environment,
+                        {'default_branch': 'main'},
+                        {'total_count': len(branches), 'branch_policies': branches},
+                    ],
+                ),
+            ):
+                with self.assertRaisesRegex(ValueError, 'allow only the default branch'):
+                    preview.require_publication_environment('example/one')
+
+    def test_pending_approval_replaces_a_previous_preview_without_claiming_publication(self):
+        pr = review_pr()
+        run = {**build_run(pr), 'run_attempt': 1, 'html_url': 'https://github.com/example/run'}
+        old = {
+            'id': 5,
+            'user': {'login': 'github-actions[bot]'},
+            'body': preview.MARKER + '\n[Preview](https://cdn.example/old)',
+        }
+        with (
+            patch.object(preview, 'resolve', return_value=(run, pr)),
+            patch.object(
+                preview,
+                'api',
+                side_effect=[
+                    {'jobs': [{'name': 'UI reviewer', 'conclusion': 'success'}]},
+                    [old],
+                    [{'id': 123}],
+                    {},
+                ],
+            ) as request,
+        ):
+            preview.report('example/one', 123, '', 'waiting for human approval')
+            body = request.call_args.kwargs['body']['body']
+            self.assertIn('Publication: waiting for human approval', body)
+            self.assertNotIn('https://cdn.example/old', body)
+            self.assertNotIn('<!-- source-run:', body)
+
+    def test_metadata_edit_keeps_the_existing_comment_when_selection_was_skipped(self):
+        pr = review_pr()
+        run = build_run(pr)
+        with (
+            patch.object(preview, 'resolve', return_value=(run, pr)),
+            patch.object(
+                preview,
+                'api',
+                return_value={
+                    'jobs': [{'name': 'changes', 'conclusion': 'skipped'}],
+                },
+            ) as request,
+        ):
+            preview.report('example/one', 123, '', 'skipped')
+            self.assertEqual(request.call_count, 1)
+
+    def test_metadata_edit_does_not_supersede_an_actual_build_on_the_same_head(self):
+        pr = review_pr()
+        runs = [
+            {'id': 123, 'pull_requests': [pr]},
+            {'id': 124, 'pull_requests': [pr]},
+        ]
+        for conclusion, expected in (('skipped', True), ('success', False), (None, False)):
+            with (
+                self.subTest(conclusion=conclusion),
+                patch.object(
+                    preview,
+                    'api',
+                    side_effect=[
+                        runs,
+                        {'jobs': [{'name': 'changes', 'conclusion': conclusion}]},
+                    ],
+                ),
+            ):
+                self.assertEqual(
+                    preview.newest_run_for_pr('example/one', 123, build_run(pr), pr), expected
+                )
+
+    def test_api_paginates_arrays_and_named_collections(self):
+        for pages, collection in (
+            ([[{'id': 1}], [{'id': 2}]], None),
+            ([{'workflow_runs': [{'id': 1}]}, {'workflow_runs': [{'id': 2}]}], 'workflow_runs'),
+        ):
+            result = subprocess.CompletedProcess(['gh'], 0, json.dumps(pages), '')
+            with (
+                self.subTest(collection=collection),
+                patch.object(preview.subprocess, 'run', return_value=result) as request,
+            ):
+                self.assertEqual(
+                    preview.api('repos/example/one', paginate=True, collection=collection),
+                    [{'id': 1}, {'id': 2}],
+                )
+                self.assertIn('--paginate', request.call_args.args[0])
+                self.assertIn('--slurp', request.call_args.args[0])
+
+    def test_many_metadata_runs_cannot_hide_the_source_run_or_trigger_resolve_calls(self):
+        pr = review_pr()
+        runs = [{'id': value, 'conclusion': 'skipped'} for value in range(250, 123, -1)]
+        runs.append({'id': 123, 'pull_requests': [pr]})
+        with (
+            patch.object(preview, 'api', return_value=runs) as request,
+            patch.object(preview, 'resolve') as resolve,
+        ):
+            self.assertTrue(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
+            request.assert_called_once()
+            self.assertTrue(request.call_args.kwargs['paginate'])
+            self.assertEqual(request.call_args.kwargs['collection'], 'workflow_runs')
+            resolve.assert_not_called()
+
+    def test_skipped_selection_is_checked_before_resolving_missing_pr_metadata(self):
+        pr = review_pr()
+        with (
+            patch.object(
+                preview,
+                'api',
+                side_effect=[
+                    [{'id': 123}, {'id': 124}],
+                    {'jobs': [{'name': 'changes', 'conclusion': 'skipped'}]},
+                ],
+            ),
+            patch.object(preview, 'resolve') as resolve,
+        ):
+            self.assertTrue(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
+            resolve.assert_not_called()
+
+    def test_cdn_retries_transient_fallback_assets_fidelity_and_invalid_utf8(self):
+        for scenario in ('mime', 'empty_asset', 'fidelity', 'utf8', 'missing_bundle'):
+            bad = cdn_responses()
+            if scenario == 'mime':
+                bad[2].headers = {'Content-Type': 'text/html'}
+                bad = bad[:3]
+            elif scenario == 'empty_asset':
+                bad[2] = io.BytesIO(b'')
+                bad[2].headers = {'Content-Type': 'application/javascript'}
+                bad = bad[:3]
+            elif scenario == 'fidelity':
+                bad[3] = io.BytesIO(b'null')
+            else:
+                bad[1] = io.BytesIO(b'\xff' if scenario == 'utf8' else b'<html>propagating</html>')
+                bad[1].status = 200
+                bad[1].headers = {'Content-Type': 'text/html'}
+                bad = bad[:2]
+            with (
+                self.subTest(scenario=scenario),
+                patch.object(preview, 'urlopen', side_effect=bad + cdn_responses()),
+                patch.object(preview.time, 'sleep') as sleep,
+            ):
+                self.assertTrue(
+                    preview.verify_cdn(
+                        '0.1.0-123.commit-abcdef0', 'a' * 40, 123, attempt=1
+                    ).endswith('index.html')
+                )
+                sleep.assert_called_once_with(5)
+
+    def test_cdn_does_not_retry_a_bundle_escaping_the_version_prefix(self):
+        responses = cdn_responses()
+        responses[1] = io.BytesIO(b'<script src="/assets/main-Abc123.js"></script>')
+        responses[1].status = 200
+        responses[1].headers = {'Content-Type': 'text/html'}
+        with (
+            patch.object(preview, 'urlopen', side_effect=responses),
+            patch.object(preview.time, 'sleep') as sleep,
+        ):
+            with self.assertRaisesRegex(ValueError, 'escapes'):
+                preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, attempt=1)
+            sleep.assert_not_called()
+
+    def test_cancelled_or_queued_newer_runs_do_not_block_a_successful_report(self):
+        pr = review_pr()
+        for candidate, responses in (
+            ({'id': 124, 'conclusion': 'cancelled'}, []),
+            ({'id': 124, 'status': 'queued'}, [{'jobs': []}]),
+        ):
+            runs = [{'id': 123}, candidate]
+            with (
+                self.subTest(candidate=candidate),
+                patch.object(preview, 'api', side_effect=[runs, *responses]),
+            ):
+                self.assertTrue(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
+
+    def test_api_retries_rate_limits_without_retrying_other_forbidden_errors(self):
+        success = subprocess.CompletedProcess(['gh'], 0, '{"ok": true}', '')
+        for error in (
+            'HTTP 429: Too many requests',
+            'HTTP 403: API rate limit exceeded',
+            'HTTP 403: secondary rate-limit',
+        ):
+            failure = subprocess.CompletedProcess(['gh'], 1, '', error)
+            with (
+                self.subTest(error=error),
+                patch.object(preview.subprocess, 'run', side_effect=[failure, success]),
+                patch.object(preview.time, 'sleep') as sleep,
+            ):
+                self.assertEqual(preview.api('repos/example/one'), {'ok': True})
+                sleep.assert_called_once_with(1)
+
+    def test_artifact_guard_rejects_links_and_oversized_files(self):
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / '.github/workflows/web-previews-publish.yml').read_text()
+        command = re.search(r'(node library/ui/figma/key-guard.mjs[^|]+) \| tee', workflow).group(1)
+        args = shlex.split(command.replace('\\\n', ''))
+        self.assertIn('--artifact', args)
+        for case in ('symlink', 'size'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                artifact = Path(directory) / 'asset.js'
+                if case == 'symlink':
+                    artifact.symlink_to('/etc/hosts')
+                else:
+                    with artifact.open('wb') as output:
+                        output.truncate(17 * 1024**2)
+                result = subprocess.run(
+                    [directory if arg == '.preview/input' else arg for arg in args],
+                    cwd=root,
+                    env={**os.environ, 'FIGMA_FILE_KEY': 'synthetic_preview_guard_key'},
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('FAIL artifact', result.stdout)
+
+    def test_rerun_cannot_reuse_an_earlier_attempts_publication_approval(self):
+        pr = review_pr()
+        run = {**build_run(pr), 'run_attempt': 2}
+        with (
+            patch.object(preview, 'api', return_value=run) as request,
+        ):
+            self.assertEqual(preview.resolve('example/one', 123, expected_attempt=1), (run, None))
+            request.assert_called_once()
+        with (
+            patch.object(preview, 'api', side_effect=[run, pr]),
+        ):
+            self.assertEqual(preview.resolve('example/one', 123, expected_attempt=2), (run, pr))
+
+    def test_build_summary_distinguishes_artifacts_and_live_publication(self):
+        for enabled, message in (
+            (False, 'CDN publication disabled'),
+            (True, 'Pending the separate publisher, source checks and human approval'),
+        ):
+            with self.subTest(enabled=enabled):
+                summary = preview.build_summary(
+                    'success', 'success', 'success', enabled, 'example/one', 123
+                )
+                self.assertIn(message, summary)
+                self.assertIn('SSR hosting integration is pending', summary)
+                self.assertIn('https://github.com/example/one/actions/runs/123', summary)
+                self.assertIn('must be installed on the default branch', summary)
+                self.assertNotIn('[Preview]', summary)
+
+    def test_build_summary_reports_failed_selection_and_failed_or_cancelled_products(self):
+        for selection, reviewer in (
+            ('failure', 'skipped'),
+            ('success', 'failure'),
+            ('success', 'cancelled'),
+        ):
+            with self.subTest(selection=selection, reviewer=reviewer):
+                summary = preview.build_summary(
+                    selection, reviewer, 'skipped', False, 'example/one', 123
+                )
+                if selection == 'failure':
+                    self.assertIn('| Preview selection | failure |', summary)
+                else:
+                    self.assertIn(
+                        'Unavailable: build or CDN-path validation did not succeed', summary
+                    )
+                self.assertNotIn('CDN publication disabled', summary)
+
+    def test_build_summary_reports_no_selected_products(self):
+        summary = preview.build_summary('success', 'skipped', 'skipped', False, 'example/one', 123)
+        self.assertIn('| Web previews | not selected |', summary)
+        self.assertNotIn('| UI reviewer |', summary)
+
+    def test_summary_cli_writes_the_github_job_summary_without_a_source_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'summary.md'
+            with (
+                patch.object(preview.sys, 'argv', ['web-preview.py', 'build-summary']),
+                patch.dict(
+                    os.environ,
+                    {
+                        'GITHUB_REPOSITORY': 'example/one',
+                        'GITHUB_RUN_ID': '123',
+                        'SELECTION_RESULT': 'success',
+                        'REVIEWER_RESULT': 'success',
+                        'SITES_RESULT': 'skipped',
+                        'GITHUB_STEP_SUMMARY': str(output),
+                    },
+                    clear=True,
+                ),
+            ):
+                preview.main()
+            self.assertIn('CDN publication disabled', output.read_text())
+
+
+if __name__ == '__main__':
+    unittest.main()
