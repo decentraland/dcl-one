@@ -133,6 +133,40 @@ describe('the in-world cart', () => {
     expect(reloaded.getSnapshot().map((l) => l.itemId).sort()).toEqual(['1', '2', '3'])
   })
 
+  it('shows and keeps a change storage didn’t take, after an earlier one it didn’t take was undone', async () => {
+    const shared = storage()
+    const refuse = { on: false }
+    const flakyStorage: CartStorage = {
+      getItem: shared.getItem,
+      setItem: (k, v) => {
+        if (refuse.on) throw new Error('full')
+        shared.setItem(k, v)
+      },
+      removeItem: (k) => {
+        if (refuse.on) throw new Error('full')
+        shared.removeItem(k)
+      }
+    }
+    const cart = createInWorldCart({ storage: () => flakyStorage, watch: () => () => {} })
+    cart.scopeTo(A)
+    refuse.on = true
+    await cart.add(item('1'))
+    expect(cart.getSnapshot().map((l) => l.itemId)).toEqual(['1'])
+    refuse.on = false
+    await cart.remove(item('1'))
+    expect(cart.getSnapshot()).toEqual([])
+    // A second change storage doesn't take, as many pending as the first had: its own shows.
+    refuse.on = true
+    await cart.add(item('2'))
+    expect(cart.getSnapshot().map((l) => l.itemId)).toEqual(['2'])
+    refuse.on = false
+    await cart.add(item('3'))
+    expect(cart.getSnapshot().map((l) => l.itemId)).toEqual(['2', '3'])
+    const reloaded = createInWorldCart({ storage: () => shared, watch: () => () => {} })
+    reloaded.scopeTo(A)
+    expect(reloaded.getSnapshot().map((l) => l.itemId)).toEqual(['2', '3'])
+  })
+
   it('takes a purchase out once while its write waits on storage, over another tab’s writes', async () => {
     const shared = storage()
     const lock = sharedLock()

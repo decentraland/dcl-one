@@ -173,8 +173,8 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
   const stored = new Map<string, { raw: string | null; record: CartRecord }>()
   /** This page's changes to a record that storage didn't take yet, replayed on what storage holds. */
   const pending = new Map<string, Change[]>()
-  /** The last view of each record (what storage holds, with this page's pending changes on it). */
-  const views = new Map<string, { base: CartRecord; changes: number; record: CartRecord }>()
+  /** The last view of each record: what storage held, with the very list of pending changes put on it. */
+  const views = new Map<string, { base: CartRecord; changes: readonly Change[]; record: CartRecord }>()
 
   /** The record as storage holds it now; what it last gave when it can't be read. */
   const fromStorage = (key: string): CartRecord => {
@@ -204,12 +204,13 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
   const read = (who: string | null): CartRecord => {
     const key = keyOf(who)
     const base = fromStorage(key)
-    const changes = pending.get(key) ?? []
-    if (changes.length === 0) return base
+    const changes = pending.get(key)
+    if (!changes || changes.length === 0) return base
+    // The same base and the same list (each change makes a new one), or it is put together again.
     const view = views.get(key)
-    if (view && view.base === base && view.changes === changes.length) return view.record
+    if (view && view.base === base && view.changes === changes) return view.record
     const record = changes.reduce((r, change) => change(r) ?? r, base)
-    views.set(key, { base, changes: changes.length, record })
+    views.set(key, { base, changes, record })
     return record
   }
   /** Writes the whole record in one go; false when storage didn't take it. */
@@ -241,6 +242,7 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
     if (!next) return false
     if (persist(key, next)) pending.delete(key)
     else pending.set(key, [...(pending.get(key) ?? []), change])
+    views.delete(key)
     return true
   }
   const notify = (): void => listeners.forEach((l) => l())
