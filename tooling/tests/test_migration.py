@@ -802,6 +802,13 @@ class AgainstPostgres(unittest.TestCase):
         CREATE TABLE blocked (wallet text PRIMARY KEY, created_at timestamp NOT NULL, updated_at timestamp NOT NULL);
     ''')
 
+    # The worlds storage-quota tables, for a schemas/ that predates them (a no-op once it has them).
+    QUOTA_BLOCKS = ('CREATE TABLE IF NOT EXISTS worlds.quota_blocks (wallet text PRIMARY KEY, '
+                    'created_at timestamp NOT NULL, updated_at timestamp NOT NULL);\n')
+    LIMIT_OVERRIDES = ('CREATE TABLE IF NOT EXISTS worlds.world_limit_overrides (world_name text PRIMARY KEY, '
+                       'max_parcels integer, max_size_bytes bigint, created_at timestamp NOT NULL DEFAULT now(), '
+                       'updated_at timestamp NOT NULL DEFAULT now());\n')
+
     def catalyst_db(self, name):
         """A fresh database holding schemas/, cloned from a template built once per class."""
         cls = type(self)
@@ -1047,10 +1054,10 @@ class AgainstPostgres(unittest.TestCase):
     def test_when_importing_quota_blocks_it_should_not_ban_the_wallet(self):
         src, tgt = self.wcs()
         self.sql(src, f"INSERT INTO blocked VALUES ('0x{'AB' * 20}', now(), now());\n")
+        self.sql(tgt, self.QUOTA_BLOCKS + 'ALTER TABLE worlds.quota_blocks RENAME TO quota_blocks_aside;\n')
         code, out = self.migrate('run', 'worlds-content-server', '--step', 'quota_block', sources_dir=migrate.SOURCES)
         self.assertEqual(code, 1, out)
-        self.sql(tgt, 'CREATE TABLE worlds.quota_blocks (wallet text PRIMARY KEY, created_at timestamp NOT NULL, '
-                      'updated_at timestamp NOT NULL);\n')
+        self.sql(tgt, 'ALTER TABLE worlds.quota_blocks_aside RENAME TO quota_blocks;\n')
         code, out = self.migrate('run', 'worlds-content-server', '--step', 'quota_block', '--restart',
                                  sources_dir=migrate.SOURCES)
         self.assertEqual(code, 0, out)
@@ -1062,9 +1069,8 @@ class AgainstPostgres(unittest.TestCase):
         node_first, upstream_first = f'0x{"a" * 40}', f'0x{"b" * 40}'
         self.sql(src, f"INSERT INTO blocked VALUES ('{node_first}', '2026-05-01', '2026-05-01'), "
                       f"('{upstream_first}', '2026-01-01', '2026-01-01');\n")
-        self.sql(tgt, 'CREATE TABLE worlds.quota_blocks (wallet text PRIMARY KEY, created_at timestamp NOT NULL, '
-                      'updated_at timestamp NOT NULL);\n'
-                      f"INSERT INTO worlds.quota_blocks VALUES ('{node_first}', '2026-03-01', '2026-06-01'), "
+        self.sql(tgt, self.QUOTA_BLOCKS
+                      + f"INSERT INTO worlds.quota_blocks VALUES ('{node_first}', '2026-03-01', '2026-06-01'), "
                       f"('{upstream_first}', '2026-03-01', '2026-03-01');\n")
         code, out = self.migrate('run', 'worlds-content-server', '--step', 'quota_block', sources_dir=migrate.SOURCES)
         self.assertEqual(code, 0, out)
@@ -1074,9 +1080,7 @@ class AgainstPostgres(unittest.TestCase):
 
     def test_when_seeding_limits_it_should_upsert_the_whitelist(self):
         _, tgt = self.wcs()
-        self.sql(tgt, 'CREATE TABLE worlds.world_limit_overrides (world_name text PRIMARY KEY, max_parcels integer, '
-                      'max_size_bytes bigint, created_at timestamp NOT NULL DEFAULT now(), '
-                      'updated_at timestamp NOT NULL DEFAULT now());\n')
+        self.sql(tgt, self.LIMIT_OVERRIDES)
         whitelist = self.tmp / 'whitelist.json'
         whitelist.write_text(json.dumps({'big.dcl.eth': {'max_parcels': 50, 'max_size_in_mb': 200}}))
         code, out = self.migrate('worlds-limits', str(whitelist), '--dry-run', sources_dir=migrate.SOURCES)
@@ -1089,10 +1093,8 @@ class AgainstPostgres(unittest.TestCase):
 
     def test_when_seeding_limits_again_it_should_keep_overrides_set_on_the_node(self):
         _, tgt = self.wcs()
-        self.sql(tgt, 'CREATE TABLE worlds.world_limit_overrides (world_name text PRIMARY KEY, max_parcels integer, '
-                      'max_size_bytes bigint, created_at timestamp NOT NULL DEFAULT now(), '
-                      'updated_at timestamp NOT NULL DEFAULT now());\n'
-                      "INSERT INTO worlds.world_limit_overrides VALUES ('node.dcl.eth', 7, 7, now(), now());\n")
+        self.sql(tgt, self.LIMIT_OVERRIDES
+                      + "INSERT INTO worlds.world_limit_overrides VALUES ('node.dcl.eth', 7, 7, now(), now());\n")
         whitelist = self.tmp / 'whitelist-again.json'
         entries = {'seeded.dcl.eth': {'max_parcels': 50, 'max_size_in_mb': 1},
                    'edited.dcl.eth': {'max_parcels': 50, 'max_size_in_mb': 1},
