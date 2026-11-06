@@ -231,24 +231,29 @@ async function fetchProfile(peer, profile) {
   return avatar;
 }
 
-// which of `urns` are emotes: hosts pass an emote item by urn (the shop does), and only the
-// catalyst knows what a urn names. Base avatars are wearables; anything the catalyst does not
-// answer for stays a wearable, as before.
-async function emoteUrns(peer, urns) {
-  const ask = urns.filter((u) => !/^urn:decentraland:off-chain:base-avatars:/i.test(u));
-  if (!ask.length) return new Set();
+// what the catalyst says `urns` are: emote or wearable, its category and the body shapes it has
+// a representation for. Hosts pass emote items by urn (the shop does), and only the catalyst knows
+// what a urn names; a urn it does not answer for stays a wearable, as before.
+async function describe(peer, urns) {
+  const found = new Map(); // lowercased pointer -> { isEmote, category, bodyShapes }
+  if (!urns.length) return found;
   try {
     const response = await fetch(`${peer}/content/entities/active`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pointers: ask }),
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pointers: urns }),
     });
-    if (!response.ok) return new Set();
-    const emotes = new Set();
+    if (!response.ok) return found;
     for (const entity of await response.json()) {
-      if (entity.type !== 'emote') continue;
-      for (const pointer of entity.pointers || []) emotes.add(pointer.toLowerCase());
+      const isEmote = entity.type === 'emote';
+      const data = isEmote ? entity.metadata?.emoteDataADR74 : entity.metadata?.data;
+      const info = {
+        isEmote,
+        category: data?.category ?? null,
+        bodyShapes: (data?.representations || []).flatMap((r) => r.bodyShapes || []),
+      };
+      for (const pointer of entity.pointers || []) found.set(pointer.toLowerCase(), info);
     }
-    return new Set(ask.filter((u) => emotes.has(u.toLowerCase())));
-  } catch { return new Set(); }
+  } catch { /* undescribed: wearables */ }
+  return found;
 }
 
 // a marketplace item (contract + item id) or NFT (contract + token id): its urn and category
@@ -312,7 +317,11 @@ function registerDefinition(def) {
         data: { tags: [], hides: [], replaces: [], ...def.data, representations: toNames(def.data?.representations) } };
   const urn = inlineUrn(def.id, isEmote);
   registerCollectible(isEmote ? 'emote' : 'wearable', urn, { ...metadata, id: urn }, files);
-  return { urn, isEmote };
+  const data = isEmote ? def.emoteDataADR74 : def.data;
+  return {
+    urn, isEmote, category: data?.category ?? null,
+    bodyShapes: (data?.representations || []).flatMap((r) => r.bodyShapes || []),
+  };
 }
 
 async function inlineDefinitions(o) {
@@ -339,22 +348,25 @@ async function resolveOutfit(o) {
   }
   // the items go first: the engine keeps the first wearable of each category, and an item takes
   // its category's slot from the profile's, as in the Unity renderer
-  const items = [];
-  if (item) {
-    if (item.category === 'emote') itemEmote = item.urn; else items.push(item.urn);
-  }
-  const urns = o.urns || [];
-  const emotes = await emoteUrns(peer, urns);
-  for (const urn of urns) {
-    if (emotes.has(urn)) itemEmote = itemEmote || urn; else items.push(urn);
-  }
-  for (const inline of await inlineDefinitions(o)) {
-    if (inline.isEmote) itemEmote = itemEmote || inline.urn; else items.push(inline.urn);
-  }
-  outfit.wearables = [...items, ...outfit.wearables];
+  const urns = [...(item ? [item.urn] : []), ...(o.urns || [])];
+  const described = await describe(peer, urns);
+  const items = urns.map((urn) => ({ urn, isEmote: false, category: null, bodyShapes: [],
+    ...described.get(urn.toLowerCase()), ...(urn === item?.urn && item.category === 'emote' ? { isEmote: true } : {}) }));
+  items.push(...await inlineDefinitions(o));
+  itemEmote = items.find((i) => i.isEmote)?.urn ?? null;
+  const wearables = items.filter((i) => !i.isEmote);
   outfit.bodyShape = outfit.bodyShape || BODY.female;
+  const fits = (i) => !i.bodyShapes.length || i.bodyShapes.some((b) => b.toLowerCase() === outfit.bodyShape.toLowerCase());
+  // the item view exists for one wearable on its own (an emote or several items only show worn),
+  // locked to it when the item has no representation for the avatar's body shape
+  const solo = modeOf(o) === 'marketplace' && !itemEmote && wearables.length === 1 ? wearables[0] : null;
+  const locked = !!solo && !fits(solo);
+  const worn = wearables.filter(fits);
+  outfit.wearables = [...worn.map((i) => i.urn), ...outfit.wearables];
+  // shown even where another wearable would hide it: the item is what the page is about
+  outfit.forceRender = [...new Set(worn.map((i) => i.category).filter(Boolean))];
   for (const k of ['skin', 'hair', 'eyes']) if (outfit[k] && !outfit[k].startsWith('#')) outfit[k] = '#' + outfit[k];
-  return { outfit, itemEmote };
+  return { outfit, itemEmote, solo, locked };
 }
 
 // an emote option: an item's urn, a base emote name, or nothing playable (idle). A named default
@@ -413,16 +425,40 @@ function cameraFrom(o) {
     op: 'camera',
     alpha: c.alpha, beta: c.beta, radius: c.radius, target: c.target,
     orthographic: o.projection === 'orthographic',
-    autoRotate: interactive && mode === 'marketplace' && !state.itemEmote && !o.disableAutoRotate,
+    autoRotate: autoRotateFor(o),
     autoRotateSpeed: o.autoRotateSpeed ?? 0.2,
     interactive,
     dragSpeed: ((mode === 'builder' ? 2 : 0.5) * Math.PI) / 180,
     lockAlpha: !!o.lockAlpha,
+    lockBeta: !!o.lockBeta,
     lockRadius: !!o.lockRadius,
     panning: o.panning !== false,
     wheelPrecision: o.wheelPrecision ?? 100,
     reset: true,
   };
+}
+
+// the Unity renderer's auto-rotation: the avatar turns on its own in marketplace mode when no
+// emote item plays; the item on its own turns in any interactive view
+function autoRotateFor(o) {
+  const mode = modeOf(o);
+  const interactive = o.camera !== 'static' && (mode === 'marketplace' || mode === 'builder');
+  if (!interactive || o.disableAutoRotate || o.lockAlpha) return false;
+  return state.view === 'item' || (mode === 'marketplace' && !state.itemEmote);
+}
+
+// --- the view: the item on its own, or tried on the avatar ---
+const FACIAL = ['eyes', 'eyebrows', 'mouth'];
+// the view the user last picked, as the Unity renderer keeps it (its PlayerPrefs) for the next page
+const AVATAR_SHOWN = 'PreviewAvatarShown';
+const savedAvatarShown = () => { try { return localStorage.getItem(AVATAR_SHOWN) === '1'; } catch { return false; } };
+const saveAvatarShown = (shown) => { try { localStorage.setItem(AVATAR_SHOWN, shown ? '1' : '0'); } catch { /* not kept */ } };
+
+function showView(o, item) {
+  state.view = item ? 'item' : 'avatar';
+  command({ op: 'view', item });
+  command({ op: 'camera', autoRotate: autoRotateFor(o) });
+  ui.switcher(o);
 }
 
 // the Unity renderer's modes; an unknown or missing one is marketplace, as the wrapper sends
@@ -445,12 +481,28 @@ async function apply() {
     state.loadSent = false;
     state.heldEvents = [];
     ui.loading(true, o);
-    const { outfit, itemEmote } = await resolveOutfit(o);
+    const { outfit, itemEmote, solo, locked } = await resolveOutfit(o);
     state.itemEmote = itemEmote;
+    state.solo = solo;
+    state.locked = locked;
+    state.lastBodyShape = outfit.bodyShape;
+    // the view the page asks for (`type`), else the one last picked, else the item, as Unity opens
+    const itemView = !!solo && (locked || (o.type === 'wearable' ? true : o.type === 'avatar' ? false : !savedAvatarShown()));
+    state.view = itemView ? 'item' : 'avatar';
     ui.configure(o);
     command(cameraFrom(o));
     command({ op: 'background', color: o.disableBackground ? null : (o.background ? (o.background.startsWith('#') ? o.background : '#' + o.background) : DEFAULT_BACKGROUND) });
     command(outfit);
+    command(solo
+      ? {
+          op: 'item', urn: solo.urn,
+          // locked: shown on its own in the body shape it was made for
+          bodyShape: locked ? solo.bodyShapes[0] : outfit.bodyShape,
+          skin: outfit.skin, hair: outfit.hair, eyes: outfit.eyes,
+          keepHead: FACIAL.includes(solo.category),
+        }
+      : { op: 'item', urn: null });
+    showView(o, itemView);
     const peer = o.peerUrl || (o.env === 'dev' ? PEER.dev : PEER.prod);
     const urn = itemEmote
       || (o.disableDefaultEmotes ? null : await emoteUrn(o.emote, modeOf(o) === 'builder', peer));
@@ -544,6 +596,18 @@ const ui = (() => {
   });
   const mute = $('mute');
   mute?.addEventListener('click', () => { state.muted = !state.muted; api.sound(); });
+  const showItem = $('show-item');
+  const showAvatar = $('show-avatar');
+  showItem?.addEventListener('click', () => {
+    if (state.view === 'item') return;
+    saveAvatarShown(false);
+    showView(options(), true);
+  });
+  showAvatar?.addEventListener('click', () => {
+    if (state.view === 'avatar' || state.locked) return;
+    saveAvatarShown(true);
+    showView(options(), false);
+  });
 
   const api = {
     loading(on, o) {
@@ -564,6 +628,16 @@ const ui = (() => {
       const label = playStop?.querySelector('.label');
       if (label) label.textContent = running ? 'STOP EMOTE' : 'PLAY EMOTE';
       body.classList.toggle('emote-sound', !!e.hasSound);
+    },
+    switcher(o) {
+      body.classList.toggle('switcher', !!state.solo && !o.disableSwitcher);
+      showItem?.classList.toggle('selected', state.view === 'item');
+      showAvatar?.classList.toggle('selected', state.view === 'avatar');
+      if (showAvatar) {
+        showAvatar.disabled = !!state.locked;
+        const shape = /female/i.test(state.lastBodyShape || '') ? 'Female' : 'Male';
+        showAvatar.title = state.locked ? `This wearable does not have a ${shape} representation` : 'Try On';
+      }
     },
     sound() {
       mute?.classList.toggle('muted', state.muted);

@@ -83,6 +83,25 @@ pub enum Command {
         skin: Option<String>,
         hair: Option<String>,
         eyes: Option<String>,
+        /// categories shown even where another wearable hides them (the items being previewed)
+        #[serde(default)]
+        force_render: Vec<String>,
+    },
+    /// The wearable shown on its own in the item view, or none: a second avatar that wears only
+    /// it, its body hidden (but the head, with `keepHead`, for a facial feature).
+    #[serde(rename_all = "camelCase")]
+    Item {
+        urn: Option<String>,
+        body_shape: Option<String>,
+        skin: Option<String>,
+        hair: Option<String>,
+        eyes: Option<String>,
+        #[serde(default)]
+        keep_head: bool,
+    },
+    /// Which subject is shown: the item alone, or the avatar wearing it.
+    View {
+        item: bool,
     },
     /// The orbit camera; every field optional, unset fields keep their value.
     #[serde(rename_all = "camelCase")]
@@ -106,6 +125,8 @@ pub enum Command {
         /// radians per pixel of drag
         drag_speed: Option<f32>,
         lock_alpha: Option<bool>,
+        /// the item view's vertical drag
+        lock_beta: Option<bool>,
         lock_radius: Option<bool>,
         panning: Option<bool>,
         wheel_precision: Option<f32>,
@@ -251,6 +272,14 @@ pub struct OrbitCamera {
     /// the target: set by `fit_to_bounds`, 1 and zero for an avatar of ordinary size
     pub fit: f32,
     pub fit_target: Vec3,
+    /// the item view: the item alone, at its own centre and distance (`fit_item`), and tilted by a
+    /// vertical drag that eases back, as the Unity renderer's item turns on both axes
+    pub item_view: bool,
+    pub item_target: Vec3,
+    pub item_distance: f32,
+    pub lock_beta: bool,
+    tilt: f32,
+    tilt_velocity: f32,
     dragging: bool,
     velocity: f32,
     since_drag: f32,
@@ -279,6 +308,12 @@ impl Default for OrbitCamera {
             pan: Vec2::ZERO,
             fit: 1.0,
             fit_target: Vec3::ZERO,
+            item_view: false,
+            item_target: Vec3::new(0.0, 0.95, 0.0),
+            item_distance: 4.6,
+            lock_beta: false,
+            tilt: 0.0,
+            tilt_velocity: 0.0,
             dragging: false,
             velocity: 0.0,
             since_drag: f32::MAX,
@@ -289,7 +324,20 @@ impl Default for OrbitCamera {
 impl OrbitCamera {
     /// Where the camera stands from the target, at the current zoom.
     pub fn distance(&self) -> f32 {
-        self.radius * self.fit / self.zoom
+        if self.item_view {
+            self.item_distance / self.zoom
+        } else {
+            self.radius * self.fit / self.zoom
+        }
+    }
+
+    /// The point the view orbits.
+    pub fn pivot(&self) -> Vec3 {
+        if self.item_view {
+            self.item_target
+        } else {
+            self.target + self.fit_target
+        }
     }
 
     /// The view as the camera command last set it, and the controls' drift dropped.
@@ -297,12 +345,32 @@ impl OrbitCamera {
         self.zoom = 1.0;
         self.pan = Vec2::ZERO;
         self.velocity = 0.0;
+        self.tilt = 0.0;
+        self.tilt_velocity = 0.0;
     }
 }
 
 /// The preview's camera.
 #[derive(Component)]
 pub struct PreviewCamera;
+
+/// The item view's subject: a second avatar wearing only the previewed wearable, its body hidden
+/// (but the head when `keep_head`), casting no shadow, held in its first pose.
+#[derive(Component)]
+pub struct PreviewItem {
+    keep_head: bool,
+}
+
+/// `load` waits until every subject the page asked for is framed: the avatar after an outfit
+/// (`fit_to_bounds`), and the item when there is one (`fit_item`).
+#[derive(Resource, Default)]
+pub struct LoadGate {
+    armed: bool,
+    avatar_framed: bool,
+    avatar_failed: bool,
+    item_wanted: bool,
+    item_framed: bool,
+}
 
 /// An outfit received before the avatar entity exists; `spawn_avatar_on_first_outfit` takes it.
 #[derive(Resource, Default)]
@@ -314,14 +382,19 @@ impl Plugin for HostPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<OrbitCamera>();
         app.init_resource::<PendingOutfit>();
+        app.init_resource::<LoadGate>();
         app.add_systems(
             Update,
             (
                 apply_commands,
                 orbit_input,
                 fit_to_bounds,
+                fit_item,
+                prepare_item,
+                show_view,
                 place_camera,
                 report_load,
+                send_load,
                 report_emotes,
             )
                 .chain(),
@@ -360,6 +433,7 @@ fn apply_commands(
         Res<Assets<Mesh>>,
         Res<Assets<SceneMaterial>>,
     ),
+    (items, mut gate): (Query<Entity, With<PreviewItem>>, ResMut<LoadGate>),
 ) {
     let queued: Vec<Command> = COMMANDS.with(|queue| queue.borrow_mut().drain(..).collect());
     let mut deferred = Vec::new();
@@ -377,7 +451,12 @@ fn apply_commands(
                 skin,
                 hair,
                 eyes,
+                force_render,
             } => {
+                // `load` follows once this outfit (and the item, if one comes) is framed
+                gate.armed = true;
+                gate.avatar_framed = false;
+                gate.avatar_failed = false;
                 let next = |current: Option<&PbAvatarShape>| PbAvatarShape {
                     id: "preview".to_owned(),
                     body_shape: body_shape
@@ -387,6 +466,7 @@ fn apply_commands(
                     skin_color: skin.as_deref().and_then(parse_hex),
                     hair_color: hair.as_deref().and_then(parse_hex),
                     eye_color: eyes.as_deref().and_then(parse_hex),
+                    force_render: force_render.clone(),
                     ..Default::default()
                 };
                 if avatars.is_empty() {
@@ -396,6 +476,62 @@ fn apply_commands(
                     let shape_next = next(Some(&selection.shape.0));
                     shape.0 = shape_next.clone();
                     selection.shape = AvatarShape(shape_next);
+                }
+            }
+            Command::Item {
+                urn,
+                body_shape,
+                skin,
+                hair,
+                eyes,
+                keep_head,
+            } => {
+                for item in items.iter() {
+                    commands.entity(item).despawn();
+                }
+                gate.item_wanted = urn.is_some();
+                gate.item_framed = false;
+                if let Some(urn) = urn {
+                    let shape = PbAvatarShape {
+                        id: "preview-item".to_owned(),
+                        body_shape,
+                        wearables: vec![urn],
+                        skin_color: skin.as_deref().and_then(parse_hex),
+                        hair_color: hair.as_deref().and_then(parse_hex),
+                        eye_color: eyes.as_deref().and_then(parse_hex),
+                        ..Default::default()
+                    };
+                    commands.spawn((
+                        AvatarShape(shape.clone()),
+                        AvatarSelection {
+                            scene: None,
+                            shape: AvatarShape(shape),
+                            automatic_delete: false,
+                            disable_dither: true,
+                        },
+                        common::structs::AvatarDynamicState::default(),
+                        // held in the idle's first pose: nothing animates the item on its own
+                        avatar::animate::EmoteControl {
+                            paused: true,
+                            seek: Some(0.0),
+                            ..default()
+                        },
+                        Transform::from_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
+                        if orbit.item_view {
+                            Visibility::Inherited
+                        } else {
+                            Visibility::Hidden
+                        },
+                        PreviewItem { keep_head },
+                    ));
+                }
+            }
+            Command::View { item } => {
+                if orbit.item_view != item {
+                    // a switch starts the view over, as the Unity renderer resets its rotator
+                    orbit.item_view = item;
+                    orbit.reset_view();
+                    orbit.alpha = 0.0;
                 }
             }
             Command::Camera {
@@ -410,6 +546,7 @@ fn apply_commands(
                 interactive,
                 drag_speed,
                 lock_alpha,
+                lock_beta,
                 lock_radius,
                 panning,
                 wheel_precision,
@@ -425,6 +562,9 @@ fn apply_commands(
                 }
                 if let Some(v) = lock_alpha {
                     orbit.lock_alpha = v;
+                }
+                if let Some(v) = lock_beta {
+                    orbit.lock_beta = v;
                 }
                 if let Some(v) = lock_radius {
                     orbit.lock_radius = v;
@@ -757,6 +897,23 @@ fn orbit_input(
     }
     orbit.dragging = turning;
 
+    // the item view also tilts on a vertical drag, with inertia, and eases back upright a second
+    // after the last drag, as the Unity renderer's item rotator does
+    if orbit.item_view && !orbit.lock_beta {
+        if buttons.pressed(MouseButton::Left) {
+            let step = -delta.y * orbit.drag_speed;
+            orbit.tilt = (orbit.tilt + step).clamp(-1.4, 1.4);
+            orbit.tilt_velocity = if dt > 0.0 { step / dt } else { 0.0 };
+            orbit.since_drag = 0.0;
+        } else {
+            orbit.tilt = (orbit.tilt + orbit.tilt_velocity * dt).clamp(-1.4, 1.4);
+            orbit.tilt_velocity *= 0.25f32.powf(dt);
+            if orbit.since_drag > 1.0 {
+                orbit.tilt *= 1.0 - (2.0 * dt).min(1.0);
+            }
+        }
+    }
+
     // right drag pans 1:1 with the cursor at the framed distance, within 2 m of the target
     if buttons.pressed(MouseButton::Right) && orbit.panning && delta != Vec2::ZERO {
         let height = windows
@@ -804,25 +961,13 @@ fn fit_to_bounds(
         ),
         With<PreviewAvatar>,
     >,
-    meshes: Query<(
-        &GlobalTransform,
-        &bevy::render::primitives::Aabb,
-        &InheritedVisibility,
-        Option<&bevy::render::mesh::skinning::SkinnedMesh>,
-        &Mesh3d,
-    )>,
-    joints: Query<&GlobalTransform>,
-    children: Query<&Children>,
+    surfaces: Surfaces,
     windows: Query<&Window, With<PrimaryWindow>>,
     (mut reports, mut emote_events): (
         EventReader<AvatarLoadReport>,
         EventReader<EmoteLifecycleEvent>,
     ),
-    (mesh_assets, bindposes, mut sound): (
-        Res<Assets<Mesh>>,
-        Res<Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>,
-        ResMut<crate::audio::PreviewSound>,
-    ),
+    (mut sound, mut gate): (ResMut<crate::audio::PreviewSound>, ResMut<LoadGate>),
     mut state: Local<FitState>,
 ) {
     let Ok((root, selection, emote, mut control)) = avatars.single_mut() else {
@@ -895,70 +1040,15 @@ fn fit_to_bounds(
     }
     // the avatar turns about the vertical axis through its root, as the Unity renderer's avatar
     // does: how far anything reaches from that axis matters whichever way it faces the camera
-    let axis = joints
-        .get(root)
-        .map(|t| t.translation())
-        .unwrap_or(Vec3::ZERO);
+    let axis = surfaces.origin(root);
     let fields = &mut *state;
     let (seen, reach) = (&mut fields.seen, &mut fields.reach);
-    let mut grow = |point: Vec3| {
+    surfaces.measure(root, true, &mut |point: Vec3| {
         let (min, max) = seen.get_or_insert((point, point));
         *min = min.min(point);
         *max = max.max(point);
         *reach = reach.max((point - axis).xz().length());
-    };
-    for entity in children.iter_descendants(root) {
-        let Ok((transform, aabb, visible, skin, mesh)) = meshes.get(entity) else {
-            continue;
-        };
-        if !visible.get() {
-            continue;
-        }
-        if let Some(skin) = skin {
-            // a skinned mesh's box is its rest pose in the space it was bound in: skin the
-            // vertices on the CPU instead, as the GPU will draw them in this pose
-            let skinned = mesh_assets
-                .get(&mesh.0)
-                .zip(bindposes.get(&skin.inverse_bindposes))
-                .map(|(data, inverse)| {
-                    let matrices: Vec<Mat4> = skin
-                        .joints
-                        .iter()
-                        .zip(inverse.iter())
-                        .map(|(joint, inverse)| {
-                            joints
-                                .get(*joint)
-                                .map(|joint| joint.compute_matrix() * *inverse)
-                                .unwrap_or(Mat4::ZERO)
-                        })
-                        .collect();
-                    skin_points(data, &matrices, &mut grow)
-                })
-                .unwrap_or(false);
-            if !skinned {
-                // no vertex data to skin: the skeleton, with a margin for the surface around it
-                const MARGIN: f32 = 0.35;
-                for joint in &skin.joints {
-                    if let Ok(joint) = joints.get(*joint) {
-                        let at = joint.translation();
-                        grow(at - Vec3::splat(MARGIN));
-                        grow(at + Vec3::splat(MARGIN));
-                    }
-                }
-            }
-            continue;
-        }
-        let (centre, half) = (Vec3::from(aabb.center), Vec3::from(aabb.half_extents));
-        for corner in 0..8 {
-            let sign = Vec3::new(
-                if corner & 1 == 0 { -1.0 } else { 1.0 },
-                if corner & 2 == 0 { -1.0 } else { 1.0 },
-                if corner & 4 == 0 { -1.0 } else { 1.0 },
-            );
-            // in the world, where the camera's target is
-            grow(transform.transform_point(centre + half * sign));
-        }
-    }
+    });
 
     // the whole clip, a pose at a time, short of its end (a one-shot at its end has finished)
     const SAMPLES: u32 = 20;
@@ -976,10 +1066,9 @@ fn fit_to_bounds(
     control.paused = paused;
     control.seek = Some(0.0);
     sound.held = held;
+    gate.avatar_framed = true;
+    gate.avatar_failed = state.failed;
     let Some((min, max)) = state.seen else {
-        if !state.failed {
-            emit(&Event::Load);
-        }
         return;
     };
     let reach = state.reach;
@@ -1008,8 +1097,227 @@ fn fit_to_bounds(
         orbit.fit = 1.0;
         orbit.fit_target = Vec3::ZERO;
     }
-    warn!(orbit.fit);
-    if !state.failed {
+}
+
+/// The meshes under an avatar, measured where they are drawn this frame.
+#[allow(clippy::type_complexity)]
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Surfaces<'w, 's> {
+    meshes: Query<
+        'w,
+        's,
+        (
+            &'static GlobalTransform,
+            &'static bevy::render::primitives::Aabb,
+            &'static InheritedVisibility,
+            Option<&'static bevy::render::mesh::skinning::SkinnedMesh>,
+            &'static Mesh3d,
+            Has<avatar::AvatarBodyMesh>,
+        ),
+    >,
+    joints: Query<'w, 's, &'static GlobalTransform>,
+    children: Query<'w, 's, &'static Children>,
+    mesh_assets: Res<'w, Assets<Mesh>>,
+    bindposes: Res<'w, Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>,
+}
+
+impl Surfaces<'_, '_> {
+    /// Where an avatar's root is.
+    fn origin(&self, root: Entity) -> Vec3 {
+        self.joints
+            .get(root)
+            .map(|t| t.translation())
+            .unwrap_or(Vec3::ZERO)
+    }
+
+    /// Grows a box by every visible mesh under `root` (its base body too, with `with_body`):
+    /// skinned meshes by their vertices in this frame's pose, the rest by their bounds' corners.
+    fn measure(&self, root: Entity, with_body: bool, grow: &mut impl FnMut(Vec3)) {
+        for entity in self.children.iter_descendants(root) {
+            let Ok((transform, aabb, visible, skin, mesh, body)) = self.meshes.get(entity) else {
+                continue;
+            };
+            if !visible.get() || (body && !with_body) {
+                continue;
+            }
+            if let Some(skin) = skin {
+                // a skinned mesh's box is its rest pose in the space it was bound in: skin the
+                // vertices on the CPU instead, as the GPU will draw them in this pose
+                let skinned = self
+                    .mesh_assets
+                    .get(&mesh.0)
+                    .zip(self.bindposes.get(&skin.inverse_bindposes))
+                    .map(|(data, inverse)| {
+                        let matrices: Vec<Mat4> = skin
+                            .joints
+                            .iter()
+                            .zip(inverse.iter())
+                            .map(|(joint, inverse)| {
+                                self.joints
+                                    .get(*joint)
+                                    .map(|joint| joint.compute_matrix() * *inverse)
+                                    .unwrap_or(Mat4::ZERO)
+                            })
+                            .collect();
+                        skin_points(data, &matrices, grow)
+                    })
+                    .unwrap_or(false);
+                if !skinned {
+                    // no vertex data to skin: the skeleton, with a margin for the surface around it
+                    const MARGIN: f32 = 0.35;
+                    for joint in &skin.joints {
+                        if let Ok(joint) = self.joints.get(*joint) {
+                            let at = joint.translation();
+                            grow(at - Vec3::splat(MARGIN));
+                            grow(at + Vec3::splat(MARGIN));
+                        }
+                    }
+                }
+                continue;
+            }
+            let (centre, half) = (Vec3::from(aabb.center), Vec3::from(aabb.half_extents));
+            for corner in 0..8 {
+                let sign = Vec3::new(
+                    if corner & 1 == 0 { -1.0 } else { 1.0 },
+                    if corner & 2 == 0 { -1.0 } else { 1.0 },
+                    if corner & 4 == 0 { -1.0 } else { 1.0 },
+                );
+                // in the world, where the camera's target is
+                grow(transform.transform_point(centre + half * sign));
+            }
+        }
+    }
+}
+
+/// Frames the item view once, before it is seen, as the Unity renderer centres and fits a
+/// wearable shown on its own: when the item has loaded, its surface (in the idle's first pose) is
+/// measured, the view centres on it, and the camera stands where its height, and its widest turn
+/// across, fit the panel.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn fit_item(
+    time: Res<Time>,
+    mut orbit: ResMut<OrbitCamera>,
+    items: Query<(Entity, Ref<AvatarSelection>), With<PreviewItem>>,
+    surfaces: Surfaces,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut reports: EventReader<AvatarLoadReport>,
+    mut gate: ResMut<LoadGate>,
+    mut state: Local<ItemFitState>,
+) {
+    let Ok((item, selection)) = items.single() else {
+        return;
+    };
+    let now = time.elapsed_secs();
+    if selection.is_added() || state.item != Some(item) {
+        *state = ItemFitState {
+            item: Some(item),
+            changed_at: now,
+            ..default()
+        };
+    }
+    for report in reports.read() {
+        if report.owner == item
+            && matches!(
+                report.state,
+                LoadingState::Finished | LoadingState::FinishedWithError
+            )
+        {
+            state.loaded = Some(now);
+        }
+    }
+    // the body is hidden and the pose held a moment after loading; a lost report gives up later
+    let settled = state.loaded.is_some_and(|at| now - at > 0.3);
+    if state.done || (!settled && now - state.changed_at < 10.0) {
+        return;
+    }
+    state.done = true;
+    gate.item_framed = true;
+    let mut seen: Option<(Vec3, Vec3)> = None;
+    surfaces.measure(item, false, &mut |point: Vec3| {
+        let (min, max) = seen.get_or_insert((point, point));
+        *min = min.min(point);
+        *max = max.max(point);
+    });
+    let Some((min, max)) = seen else {
+        return;
+    };
+    let aspect = windows
+        .single()
+        .map(|w| w.width() / w.height().max(1.0))
+        .unwrap_or(1.0);
+    let tan_v = (orbit.fov_degrees.to_radians() / 2.0).tan();
+    let tan_h = tan_v * aspect;
+    // its height, and across it the widest it can turn to (the circumradius of its footprint),
+    // with the Unity renderer's 5% margin
+    const MARGIN: f32 = 1.05;
+    let size = max - min;
+    let radius = 0.5 * size.xz().length();
+    orbit.item_target = (min + max) / 2.0;
+    orbit.item_distance = ((size.y / 2.0) / tan_v).max(radius / tan_h).max(0.1) * MARGIN;
+}
+
+/// What `fit_item` knows about the item it frames.
+#[derive(Default)]
+struct ItemFitState {
+    item: Option<Entity>,
+    changed_at: f32,
+    loaded: Option<f32>,
+    done: bool,
+}
+
+/// Hides the item's base body (but the head for a facial feature) and keeps it from casting a
+/// shadow: the item floats on its own, with nothing under it to cast onto.
+#[allow(clippy::type_complexity)]
+fn prepare_item(
+    mut commands: Commands,
+    items: Query<(Entity, &PreviewItem)>,
+    children: Query<&Children>,
+    mut bodies: Query<(&mut Visibility, Option<&Name>), With<avatar::AvatarBodyMesh>>,
+    casters: Query<(), (With<Mesh3d>, Without<bevy::pbr::NotShadowCaster>)>,
+) {
+    for (item, preview) in items.iter() {
+        for entity in children.iter_descendants(item) {
+            if let Ok((mut visibility, name)) = bodies.get_mut(entity) {
+                let head = name.is_some_and(|n| n.as_str().to_lowercase().contains("head"));
+                if !(preview.keep_head && head) {
+                    visibility.set_if_neq(Visibility::Hidden);
+                }
+            }
+            if casters.contains(entity) {
+                commands
+                    .entity(entity)
+                    .try_insert(bevy::pbr::NotShadowCaster);
+            }
+        }
+    }
+}
+
+/// Shows the subject the view asks for: the avatar, or the item on its own.
+fn show_view(
+    orbit: Res<OrbitCamera>,
+    mut avatars: Query<&mut Visibility, (With<PreviewAvatar>, Without<PreviewItem>)>,
+    mut items: Query<&mut Visibility, (With<PreviewItem>, Without<PreviewAvatar>)>,
+) {
+    let (avatar, item) = if orbit.item_view {
+        (Visibility::Hidden, Visibility::Inherited)
+    } else {
+        (Visibility::Inherited, Visibility::Hidden)
+    };
+    for mut visibility in avatars.iter_mut() {
+        visibility.set_if_neq(avatar);
+    }
+    for mut visibility in items.iter_mut() {
+        visibility.set_if_neq(item);
+    }
+}
+
+/// Sends `load` once every subject the page asked for is framed.
+fn send_load(mut gate: ResMut<LoadGate>) {
+    if !gate.armed || !gate.avatar_framed || (gate.item_wanted && !gate.item_framed) {
+        return;
+    }
+    gate.armed = false;
+    if !gate.avatar_failed {
         emit(&Event::Load);
     }
 }
@@ -1080,9 +1388,15 @@ fn place_camera(
     {
         orbit.alpha += orbit.auto_rotate_speed * dt;
     }
-    // the view orbits the avatar's own axis; the pan slides the camera across the screen
-    let pivot = orbit.target + orbit.fit_target;
-    let rotation = Quat::from_rotation_y(orbit.alpha) * Quat::from_rotation_x(-orbit.beta);
+    // the view orbits the avatar's own axis (or the item's centre); the pan slides the camera
+    // across the screen
+    let pivot = orbit.pivot();
+    let pitch = if orbit.item_view {
+        orbit.beta + orbit.tilt
+    } else {
+        orbit.beta
+    };
+    let rotation = Quat::from_rotation_y(orbit.alpha) * Quat::from_rotation_x(-pitch);
     let orbited =
         Transform::from_translation(pivot + rotation * Vec3::new(0.0, 0.0, orbit.distance()))
             .looking_at(pivot, Vec3::Y);

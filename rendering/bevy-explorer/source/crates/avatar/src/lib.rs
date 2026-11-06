@@ -514,6 +514,12 @@ fn update_base_avatar_shape(
     }
 }
 
+
+/// A mesh of the avatar's base body (head, torso, hands, legs, feet), as opposed to a wearable's.
+/// The avatar preview hides these to show a wearable on its own.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct AvatarBodyMesh;
+
 #[derive(Component)]
 pub struct AvatarSelection {
     /// the scene root that placed this avatar, if any (bounds and hash come from
@@ -1458,6 +1464,7 @@ fn process_avatar(
             }
 
             if let Some(h_mesh) = maybe_h_mesh {
+                commands.entity(scene_ent).try_insert(AvatarBodyMesh);
                 if def.hides.contains(&WearableCategory::BODY_SHAPE) {
                     commands.entity(scene_ent).try_insert(Visibility::Hidden);
                 }

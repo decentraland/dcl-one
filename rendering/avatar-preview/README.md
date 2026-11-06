@@ -68,8 +68,10 @@ Commands, as JSON objects with an `op`:
 
 | `op` | fields | effect |
 | --- | --- | --- |
-| `outfit` | `bodyShape`, `wearables[]`, `skin`, `hair`, `eyes` (`#rrggbb`) | the avatar; the first one spawns it |
-| `camera` | `alpha`, `beta` (radians), `radius` (m), `fov` (degrees), `orthographic`, `target[3]`, `autoRotate`, `autoRotateSpeed`, `interactive` | the orbit camera; unset fields keep their value |
+| `outfit` | `bodyShape`, `wearables[]`, `skin`, `hair`, `eyes` (`#rrggbb`), `forceRender[]` (categories no other wearable hides) | the avatar; the first one spawns it |
+| `item` | `urn` (or null), `bodyShape`, `skin`, `hair`, `eyes`, `keepHead` | the wearable shown on its own: a second avatar wearing only it, its body hidden (but the head, for a facial feature), framed once before `load` |
+| `view` | `item` | the item on its own, or the avatar wearing it; a switch starts the view over |
+| `camera` | `alpha`, `beta` (radians), `radius` (m), `fov` (degrees), `orthographic`, `target[3]`, `autoRotate`, `autoRotateSpeed`, `interactive`, `lockAlpha`, `lockBeta` (the item view's vertical drag), `lockRadius` | the orbit camera; unset fields keep their value |
 | `background` | `color` (`#rrggbb` or null for transparent) | the clear colour |
 | `emote` | `urn` (a urn or a base emote name), `loop` | plays on the avatar |
 | `stopEmote` | | |
@@ -94,7 +96,7 @@ The page speaks the `@dcl/schemas` preview protocol: options from the URL (`cont
 `bodyShape`, `urn`, `skin`, `hair`, `eyes`, `emote`, `camera`, `projection`, `zoom`,
 `zoomScale`, `offsetX/Y/Z`, `cameraX/Y/Z`, `autoRotateSpeed`, `disableAutoRotate`,
 `background`, `disableBackground`, `disableDefaultEmotes`, `peerUrl`, `marketplaceServerUrl`,
-`env`, `type`) and from
+`env`, `type`, `lockAlpha`, `lockBeta`, `lockRadius`, `disableSwitcher`) and from
 `update` messages; `ready` at boot, `load {renderer: "bevy"}`, `error`, `emote_event`
 (`animation_play`, `animation_end`); `controller_request` dispatched to `scene`
 (`getScreenshot`, `getMetrics`, `changeZoom`, `panCamera`, `changeCameraPosition`,
@@ -138,13 +140,20 @@ The target is the Unity renderer's behaviour, not only its look. In place so far
   and the emote, steps the paused emote through its clip, measures the skinned surface at each pose
   and sets the camera; `load` follows and the camera then moves only for the user. The fit raises or
   lowers the view but the avatar always turns about its own vertical axis.
+- its item view: one wearable on its own (not an emote, nor several items), shown alone with its
+  body hidden and no shadow, centred and fitted to its height and its widest turn with a 5% margin,
+  turning on both axes (the tilt eases back upright); the view switcher (`disableSwitcher` hides it)
+  and the view it opens on: `type`, else the one last picked (kept in the page's storage, as the
+  renderer keeps it), else the item. An item with no representation for the avatar's body shape
+  locks the view to it, shown in the body shape it was made for, with the renderer's tooltip. The
+  previewed items' categories are force-rendered on the avatar.
 
 A named default emote plays once in the marketplace, then the avatar idles; it loops in the
 builder.
 
-Still to come: the item view and its view switcher, builder mode's default wearables, profile,
-authentication and jesus modes, scene boundaries, sized screenshots rendered without the controls,
-social emotes, spring bones, and configurator mode.
+Still to come: builder mode's default wearables, profile, authentication and jesus modes, scene
+boundaries, sized screenshots rendered without the controls, social emotes, spring bones, and
+configurator mode.
 
 The emote controller follows the Unity renderer: `goTo` on a stopped emote starts it and holds
 it at that time, `play` resumes a paused one, and emote events wait for `load`.

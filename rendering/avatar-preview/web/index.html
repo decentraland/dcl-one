@@ -45,6 +45,16 @@
     #loader .icon { width: calc(64px * var(--s)); height: calc(64px * var(--s)); --img: url('ui/Spinner.png'); background-color: #fff;
       animation: spin 1s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    /* the view switcher: the item alone, or tried on the avatar */
+    #switcher { position: absolute; right: 0; top: 0; display: none; flex-direction: row; overflow: hidden;
+      width: calc(80px * var(--s)); height: calc(32px * var(--s)); border-radius: calc(8px * var(--s)); background: rgb(32,30,36); }
+    body.switcher #switcher { display: flex; }
+    #switcher button { flex: 1 1 0; background: transparent center / calc(20px * var(--s)) no-repeat; transition: background-color .1s; }
+    #switcher button:hover, #switcher button:active { transform: none; }
+    #switcher button.selected { background-color: rgb(231,63,78); }
+    #switcher button:disabled { background-color: rgb(128,128,128); cursor: default; }
+    #show-item { background-image: url('ui/UpperBodyIcon.png') !important; }
+    #show-avatar { background-image: url('ui/BodyIcon.png') !important; }
     #thumbnail-bounds { position: fixed; top: 0; bottom: 0; left: 25%; width: 50%; box-sizing: border-box;
       border: 2px solid rgb(115,110,125); display: none; pointer-events: none; }
     body.thumbnail-bounds #thumbnail-bounds { display: block; }
@@ -53,6 +63,10 @@
 <body>
   <div id="stage"><canvas id="preview-canvas"></canvas></div>
   <div class="ui">
+    <div id="switcher" role="group" aria-label="Preview view">
+      <button id="show-item" type="button" title="Wearable" aria-label="Wearable"></button>
+      <button id="show-avatar" type="button" title="Try On" aria-label="Try On"></button>
+    </div>
     <div id="emote-controls">
       <button id="play-stop" type="button"><span class="icon"></span><span class="label">STOP EMOTE</span></button>
       <button id="mute" type="button" aria-label="Mute"><span class="icon"></span></button>
