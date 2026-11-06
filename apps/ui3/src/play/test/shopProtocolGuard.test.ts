@@ -131,6 +131,28 @@ describe('the purchase wallet', () => {
     expect(g.wallet.requests.some((r) => r.method === 'eth_accounts')).toBe(true)
   })
 
+  it('checks the login again after the wallet answers with the account, and forwards nothing once it changed', async () => {
+    let valid = true
+    const g = setup({ current: () => valid })
+    const answer = g.wallet.request.bind(g.wallet)
+    g.wallet.request = async (args) => {
+      // A logout (or a renewal of the same account's login) while the wallet reads the account.
+      if (args.method === 'eth_accounts') valid = false
+      return answer(args)
+    }
+    await expect(sign(g, typed())).rejects.toMatchObject({ code: 4100 })
+    expect(g.forwarded()).toBe(0)
+  })
+
+  it('forwards nothing until the purchase is kept for the step', async () => {
+    const stages: string[] = []
+    const g = setup({ durable: (stage) => (stages.push(stage), false) })
+    await expect(sign(g, typed())).rejects.toMatchObject({ code: 4100 })
+    await expect(g.guarded.request({ method: 'eth_sendTransaction', params: [{ from: BUYER, to: MANAGER, data: encodeUseCredits(storeArgs()) }] })).rejects.toMatchObject({ code: 4100 })
+    expect(stages).toEqual(['authorized', 'handedOff'])
+    expect(g.forwarded()).toBe(0)
+  })
+
   it('refuses once the confirmed login is no longer current', async () => {
     const g = setup({ current: () => false })
     await expect(sign(g, typed())).rejects.toMatchObject({ code: 4100 })

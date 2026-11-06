@@ -42,6 +42,8 @@ export interface PurchaseIntent {
   sale: { venue: string; call: 'storeBuy' | 'accept' | 'acceptWithCoupon' }
   /** False once the login or the wallet changed since the buyer confirmed. */
   current(): boolean
+  /** Whether the purchase's progress is kept before signing (`authorized`) or handing off (`handedOff`). */
+  durable?(stage: 'authorized' | 'handedOff'): boolean
 }
 
 const STORE_BUY = getAbiItem({ abi: COLLECTION_STORE_ABI, name: 'buy' })
@@ -174,9 +176,15 @@ export async function assertWalletAccount(provider: Eip1193Provider, buyer: stri
 
 export function guardedProvider(provider: Eip1193Provider, intent: PurchaseIntent): Eip1193Provider {
   const chainHex = `0x${intent.chainId.toString(16)}`
-  const ready = async (): Promise<void> => {
-    if (!intent.current()) refuse('You signed in with another account meanwhile. Open the item again to buy it.')
+  const stillCurrent = (): void => {
+    if (!intent.current()) refuse('Your sign-in changed meanwhile. Open the item again to buy it.')
+  }
+  /** The login, then the wallet's account (awaited), then the login again: nothing awaits after it. */
+  const ready = async (stage: 'authorized' | 'handedOff'): Promise<void> => {
+    stillCurrent()
     await assertWalletAccount(provider, intent.buyer)
+    stillCurrent()
+    if (intent.durable && !intent.durable(stage)) refuse("This browser couldn't keep a record of the purchase, so it wasn't sent.")
   }
   return {
     async request({ method, params }) {
@@ -195,12 +203,12 @@ export function guardedProvider(provider: Eip1193Provider, intent: PurchaseInten
         }
         case 'eth_signTypedData_v4':
           checkMetaTransaction(args[0], args[1], intent)
-          await ready()
+          await ready('authorized')
           return provider.request({ method, params })
         case 'eth_sendTransaction':
           if (args.length !== 1) refuse('The Shop only sends its own purchases.')
           checkTransaction(args[0], intent)
-          await ready()
+          await ready('handedOff')
           return provider.request({ method, params })
         default:
           throw new WalletRefusal(`The Shop doesn't use ${method}.`, 4200)

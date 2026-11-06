@@ -9,6 +9,7 @@ import { createFakeWallet, type FakeWallet } from '../../shop/checkout/fakes'
 import type { CheckoutDeps, GroupResult } from '../../shop/checkout/purchase/executor'
 import type { CatalogItem } from '../../shop/discovery/lib/catalogItem'
 import type { UsdCents } from '../../shop/model/money'
+import type { GroupProgress } from '../../shop/model/purchase'
 import { BOOK, ITEM, storeMint } from '../../shop/payment/fixtures'
 import type { StoredLogin } from '../features/auth/sso'
 import { SHOP_EVENT, SHOP_PROTOCOL, type ShopOperation, type ShopOperationEvent } from '../lib/shopProtocol'
@@ -93,10 +94,13 @@ function setup(
     account?: string
     login?: () => StoredLogin | null
     run?: RunFn
-    watch?: () => Promise<GroupResult>
+    watch?: (deps: CheckoutDeps, progress: GroupProgress) => Promise<GroupResult>
     listing?: CatalogItem | null
-    storage?: Storage
+    /** Shared between two shells for a reload; a fresh one in memory by default; null for none at all. */
+    storage?: Storage | null
     manager?: typeof TRUSTED | null
+    /** How far the clock moves per watcher wait (the wait itself, by default). */
+    tick?: number
   } = {}
 ) {
   const shown: Shown[] = []
@@ -104,9 +108,10 @@ function setup(
   const provider: FakeWallet = createFakeWallet({ account: opts.account ?? BUYER })
   const wallet: ShellShopWallet | null = opts.wallet === undefined ? { kind: vi.fn(() => 'managed' as const), provider: vi.fn(() => provider) } : opts.wallet
   const run = vi.fn<RunFn>(opts.run ?? (async () => ({ status: 'confirmed', txHash: '0xabc' })))
-  const watch = vi.fn(opts.watch ?? (async (): Promise<GroupResult> => ({ status: 'pending', txHash: '0xabc' })))
+  const watch = vi.fn<(deps: CheckoutDeps, progress: GroupProgress) => Promise<GroupResult>>(opts.watch ?? (async () => ({ status: 'pending', txHash: '0xabc' })))
   const guard = vi.fn((p: Eip1193Provider, _intent: PurchaseIntent) => p)
   const cents = (opts.balanceCents ?? 7000) as UsdCents
+  const storage = opts.storage === undefined ? memoryStorage() : opts.storage
   let clock = 1_000_000
   let ids = 0
   const services: Partial<ShellShopServices> = {
@@ -121,10 +126,10 @@ function setup(
     watch,
     manager: () => (opts.manager === undefined ? TRUSTED : opts.manager),
     guard,
-    storage: () => opts.storage ?? null,
+    storage: () => storage,
     // The clock moves with each wait, and the wait yields, so a test can change what the watcher sees.
     sleep: async (ms) => {
-      clock += ms
+      clock += opts.tick ?? ms
       await new Promise((resolve) => setTimeout(resolve, 2))
     },
     now: () => clock,
@@ -253,7 +258,46 @@ describe('the shell purchase', () => {
     account = OTHER
     confirm.handlers.onConfirm?.()
     const { view } = await t.until('failed')
-    expect(view.step === 'failed' && view.message).toMatch(/another account/)
+    expect(view.step === 'failed' && view.message).toMatch(/sign-in changed/)
+    expect(t.run).not.toHaveBeenCalled()
+  })
+
+  it('refuses to pay when the sign-in is renewed while the wallet answers, even for the same account', async () => {
+    let held = login()
+    const t = setup({ login: () => held })
+    const answer = t.provider.request.bind(t.provider)
+    t.provider.request = async (args) => {
+      // The account read comes back for the buyer, but meanwhile the login was renewed.
+      if (args.method === 'eth_accounts') held = { ...held, identity: { ...held.identity, expiration: new Date(Date.now() + 7_200_000).toISOString() } }
+      return answer(args)
+    }
+    await t.buy()
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    const { view } = await t.until('failed')
+    expect(view.step === 'failed' && view.message).toMatch(/sign-in changed/)
+    expect(t.run).not.toHaveBeenCalled()
+  })
+
+  it('reserves nothing when this browser can’t keep the purchase', async () => {
+    const t = setup({ storage: null })
+    await t.buy()
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    const { view } = await t.until('failed')
+    expect(view.step === 'failed' && view.message).toMatch(/can't keep a record/)
+    expect(t.run).not.toHaveBeenCalled()
+  })
+
+  it('reserves nothing when the purchase’s first record doesn’t stick', async () => {
+    const storage = memoryStorage()
+    const write = storage.setItem.bind(storage)
+    storage.setItem = (key, value) => {
+      if (key.includes(':operations:') && value.includes('"processing"')) throw new DOMException('full', 'QuotaExceededError')
+      write(key, value)
+    }
+    const t = setup({ storage })
+    await t.buy()
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    await t.until('failed')
     expect(t.run).not.toHaveBeenCalled()
   })
 
@@ -332,6 +376,113 @@ describe('the shell purchase', () => {
     await vi.waitFor(() => expect(after.events.find((e) => e.operation === op.operation && e.state === 'succeeded')).toBeTruthy())
     expect(after.watch).toHaveBeenCalled()
     expect(after.run).not.toHaveBeenCalled()
+  })
+
+  it('watches, after a reload, a handed-off purchase whose checkout was never written', async () => {
+    const storage = memoryStorage()
+    const write = storage.setItem.bind(storage)
+    storage.setItem = (key, value) => {
+      if (key.includes('dcl-shop-checkout')) throw new DOMException('full', 'QuotaExceededError')
+      write(key, value)
+    }
+    const before = setup({
+      storage,
+      run: async (deps, group) => {
+        handedOff(deps, group)
+        return { status: 'pending', txHash: '0xabc' }
+      }
+    })
+    const op = await before.buy()
+    ;(await before.until('confirm')).handlers.onConfirm?.()
+    await before.until('pending')
+    const after = setup({ storage, watch: async () => ({ status: 'confirmed', txHash: '0xabc' }) })
+    await after.shop.request('shop.capabilities', undefined)
+    await vi.waitFor(() => expect(after.events.find((e) => e.operation === op.operation)?.state).toBe('succeeded'))
+    expect(after.events.some((e) => e.operation === op.operation && e.state === 'cancelled')).toBe(false)
+  })
+
+  it('never gives back the credit of a handed-off purchase whose checkout stopped at its reservation', async () => {
+    const storage = memoryStorage()
+    const write = storage.setItem.bind(storage)
+    let checkoutWrites = 0
+    storage.setItem = (key, value) => {
+      // The checkout keeps its reservation; every later checkout write is lost.
+      if (key.includes('dcl-shop-checkout') && ++checkoutWrites > 2) throw new DOMException('full', 'QuotaExceededError')
+      write(key, value)
+    }
+    const before = setup({
+      storage,
+      run: async (deps, group) => {
+        handedOff(deps, group)
+        return { status: 'pending', txHash: '0xabc' }
+      }
+    })
+    const op = await before.buy()
+    ;(await before.until('confirm')).handlers.onConfirm?.()
+    await before.until('pending')
+    let watched: GroupProgress | null = null
+    const after = setup({
+      storage,
+      watch: async (_deps, progress) => {
+        watched = progress
+        return { status: 'confirmed', txHash: '0xabc' }
+      }
+    })
+    await after.shop.request('shop.capabilities', undefined)
+    await vi.waitFor(() => expect(after.events.find((e) => e.operation === op.operation)?.state).toBe('succeeded'))
+    expect(watched).toMatchObject({ status: 'pending', txHash: '0xabc' })
+  })
+
+  it('shows the result in the pending dialog when it is still up: a late success', async () => {
+    let settledNow = false
+    const t = setup({
+      run: async (deps, group) => {
+        handedOff(deps, group)
+        return { status: 'pending', txHash: '0xabc' }
+      },
+      watch: async () => (settledNow ? { status: 'confirmed', txHash: '0xabc' } : { status: 'pending', txHash: '0xabc' })
+    })
+    await t.buy()
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    await t.until('pending')
+    settledNow = true
+    const { view } = await t.until('success')
+    expect(view).toMatchObject({ item: { name: 'Golden Armour' } })
+  })
+
+  it('shows the result in the pending dialog when it is still up: a late revert', async () => {
+    const t = setup({
+      run: async (deps, group) => {
+        handedOff(deps, group)
+        return { status: 'pending', txHash: '0xabc' }
+      },
+      watch: async () => ({ status: 'failed', failure: { kind: 'reverted', message: 'reverted' }, released: [] })
+    })
+    await t.buy()
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    const { view } = await t.until('failed')
+    expect(view).toMatchObject({ retry: false })
+    expect(view.step === 'failed' && view.message).toMatch(/failed on-chain/)
+  })
+
+  it('leaves another purchase’s dialog alone when a closed one settles', async () => {
+    let settledNow = false
+    const t = setup({
+      tick: 0,
+      run: async (deps, group) => {
+        handedOff(deps, group)
+        return { status: 'pending', txHash: '0xabc' }
+      },
+      watch: async () => (settledNow ? { status: 'confirmed', txHash: '0xabc' } : { status: 'pending', txHash: '0xabc' })
+    })
+    const first = await t.buy()
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    ;(await t.until('pending')).handlers.onClose()
+    await t.buy('8')
+    await t.until('confirm')
+    settledNow = true
+    await vi.waitFor(() => expect(t.events.find((e) => e.operation === first.operation && e.state === 'succeeded')).toBeTruthy())
+    expect(t.last().view.step).toBe('confirm')
   })
 
   it('cancels, after a reload, a purchase that reserved a credit and handed nothing off', async () => {

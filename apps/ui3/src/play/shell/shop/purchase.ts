@@ -23,7 +23,7 @@ import { liveResolvers, reviewCart, type SettlementResolvers } from '../../../sh
 import { releaseAuthorizing, runGroup, watchGroup, type CheckoutDeps, type GroupResult } from '../../../shop/checkout/purchase/executor'
 import type { RailContext } from '../../../shop/checkout/purchase/rail'
 import { createSpendGuard } from '../../../shop/checkout/purchase/spend-guard'
-import { getUsdBalance, type UsdBalance } from '../../../shop/credits/credits'
+import { fetchUserPurchases, getUsdBalance, type UsdBalance } from '../../../shop/credits/credits'
 import type { OfferSource } from '../../../shop/detail/offers'
 import { fetchShopListingForItem } from '../../../shop/detail/api'
 import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
@@ -31,7 +31,7 @@ import { fetchRemoteFlags, primeRemoteFlags } from '../../../shop/discovery/lib/
 import { parseEvmAddress } from '../../../shop/model/address'
 import { itemAsset } from '../../../shop/model/asset'
 import { creditsCeil, creditsFloor, type UsdCents } from '../../../shop/model/money'
-import type { CartLine, GroupProgress, PurchaseOffer } from '../../../shop/model/purchase'
+import type { CartLine, GroupProgress, GroupStatus, PurchaseOffer, PurchaseState } from '../../../shop/model/purchase'
 import type { Session } from '../../../shop/model/settlement'
 import { loginExpired, rootAddress, type StoredLogin } from '../../features/auth/sso'
 import type { ShopPurchaseItem, ShopPurchaseStep } from '../../features/shop/ui'
@@ -98,6 +98,8 @@ export interface ShellShopServices {
   primeFlags(): Promise<void>
   run(deps: CheckoutDeps, group: CartGroup, resolved: Resolved): Promise<GroupResult>
   watch(deps: CheckoutDeps, progress: GroupProgress): Promise<GroupResult>
+  /** The server's record of the buyer's purchases: whether this item was bought (settled) since `since`. */
+  bought(buyer: string, item: { contract: string; itemId: string }, since: number, client: ShopClient): Promise<boolean>
   /** The CreditsManager this deployment trusts on a chain (./config). */
   manager(chainId: number): TrustedManager | null
   /** The wallet bound to one confirmed purchase (./walletGuard). */
@@ -130,6 +132,10 @@ const FLAGS_TIMEOUT_MS = 3000
 /** How long a page keeps watching an unsettled purchase; a later page (a reload) carries on. */
 const WATCH_FOR_MS = 30 * 60_000
 const WATCH_BACKOFF_MS = [5_000, 10_000, 20_000, 40_000, 60_000]
+/** A purchase nothing records past this can no longer settle: its credit and its external call expire within a day. */
+const DEAD_AFTER_MS = 26 * 60 * 60_000
+/** How far each checkout state is along, to tell the newer of two copies when their clocks tie. */
+const RANK: Record<GroupStatus, number> = { idle: 0, authorizing: 1, submitted: 2, pending: 3, confirmed: 4, failed: 4, expired: 4 }
 
 function defaultStorage(): Storage | null {
   try {
@@ -149,6 +155,11 @@ const LIVE: ShellShopServices = {
   primeFlags: async () => primeRemoteFlags(await fetchRemoteFlags(AbortSignal.timeout(FLAGS_TIMEOUT_MS))),
   run: runGroup,
   watch: watchGroup,
+  bought: async (buyer, item, since, client) => {
+    const { items } = await fetchUserPurchases(buyer, { all: true, first: 50 }, client)
+    const ms = (t: number): number => (t < 1e12 ? t * 1000 : t)
+    return items.some((p) => p.status === 'SETTLED' && p.contractAddress?.toLowerCase() === item.contract && p.itemId === item.itemId && ms(p.createdAt) >= since - 5 * 60_000)
+  },
   manager: (chainId) => trustedCreditsManager(chainId),
   guard: guardedProvider,
   rail: () => ({}),
@@ -254,10 +265,10 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     ...(op.next ? { next: op.next } : {}),
     ...(op.txHash !== undefined ? { txHash: op.txHash } : {})
   })
-  const keep = (op: Operation): void => {
+  const keep = (op: Operation): boolean => {
     op.updatedAt = svc.now()
     const { store: _s, watching: _w, unwatchWallet: _u, ...record } = op
-    ledger.save(record)
+    return ledger.save(record)
   }
   const publish = (op: Operation): void => {
     keep(op)
@@ -297,6 +308,39 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     show(op, { step: 'failed', message, retry: retry != null }, { onClose: () => close(op, 'failed'), ...(retry ? { onRetry: retry } : {}) })
   }
   const showPending = (op: Operation): void => show(op, { step: 'pending' }, { onClose: () => hide(op) })
+  const showSuccess = (op: Operation): void => {
+    if (!op.display) {
+      hide(op)
+      return
+    }
+    show(op, { step: 'success', item: op.display }, {
+      onClose: () => hide(op),
+      onBackpack: () => {
+        hide(op)
+        op.next = 'backpack'
+        publish(op)
+      }
+    })
+  }
+  /** A watched purchase reached its end: its dialog, if it is the one up, says so. */
+  const settled = (op: Operation, state: 'succeeded' | 'failed' | 'cancelled', extra: Partial<Operation> = {}, message?: string): void => {
+    move(op, state, extra)
+    if (dialog !== op) return
+    if (state === 'succeeded') showSuccess(op)
+    else if (state === 'failed') show(op, { step: 'failed', message: message ?? "This purchase didn't go through. Nothing was bought.", retry: false }, { onClose: () => hide(op) })
+    else hide(op)
+  }
+
+  /**
+   * Whether the purchase's progress is safely kept before the next step: no failed write for it, and its
+   * record, read back from storage, holding the credit (`authorized`) or the hand-off (`handedOff`).
+   */
+  const durable = (op: Operation, stage: 'authorized' | 'handedOff'): boolean => {
+    if (!op.buyer || ledger.failed(op.id)) return false
+    const progress = ledger.saved(op.buyer, op.id)?.progress
+    if (!progress || progress.creditIds.length === 0) return false
+    return RANK[progress.status] >= (stage === 'authorized' ? RANK.authorizing : RANK.submitted) && progress.status !== 'failed' && progress.status !== 'expired'
+  }
 
   // ---- Following a purchase that was handed off -------------------------------------------------
 
@@ -306,7 +350,20 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     guard: createSpendGuard()
   })
 
-  /** Takes an operation found unsettled to its end, from its own checkout; never resubmits it. */
+  /** The newer of the checkout's own progress and the record's copy of it. */
+  const latest = (a: GroupProgress | null, b: GroupProgress | null): GroupProgress | null => {
+    if (!a || !b) return a ?? b
+    if (a.updatedAt !== b.updatedAt) return a.updatedAt > b.updatedAt ? a : b
+    return RANK[a.status] >= RANK[b.status] ? a : b
+  }
+
+  /**
+   * Takes an unsettled operation to its end and never resubmits it. A hand-off (a hash, a pending state,
+   * a submitted checkpoint) is only ever watched. A credit reserved with nothing handed off is given back:
+   * the purchase can't hand off without its checkpoint kept first (`durable`). With no checkpoint at all,
+   * nothing is inferred: the server's record of the buyer's purchases decides, or the day the purchase
+   * would have expired.
+   */
   const reconcile = async (op: Operation): Promise<void> => {
     if (op.watching || !op.buyer) return
     op.watching = true
@@ -314,39 +371,46 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       const store = (op.store ??= ledger.storeFor(op))
       const deadline = svc.now() + WATCH_FOR_MS
       for (let attempt = 0; ; attempt++) {
-        const checkout = store.getSnapshot().checkout
-        const progress = checkout?.groups[0]
-        if (!checkout || !progress) {
-          // Nothing was started for it: the dialog closed with the page.
-          move(op, 'cancelled')
+        const progress = latest(store.getSnapshot().checkout?.groups[0] ?? null, op.progress ?? null)
+        const handedOff = op.state === 'pending' || !!op.txHash || !!progress?.txHash || (progress != null && (progress.status === 'submitted' || progress.status === 'pending'))
+        if (progress?.status === 'confirmed') {
+          settled(op, 'succeeded', { txHash: progress.txHash ?? op.txHash ?? null })
           return
         }
-        if (progress.status === 'confirmed') {
-          move(op, 'succeeded', { txHash: progress.txHash ?? op.txHash ?? null })
+        if (progress && (progress.status === 'failed' || progress.status === 'expired')) {
+          settled(op, 'failed', {}, progress.failure?.message)
           return
         }
-        if (progress.status === 'authorizing') {
-          // A credit was reserved and nothing was handed off before the page went: give it back.
-          await releaseAuthorizing(watchDeps(op, store), checkout)
-          move(op, 'cancelled')
+        if (!progress) {
+          const bought = await svc.bought(op.buyer, op.item, op.createdAt, client()).catch(() => false)
+          if (bought) {
+            settled(op, 'succeeded')
+            return
+          }
+          if (svc.now() - op.createdAt > DEAD_AFTER_MS) {
+            settled(op, 'failed', {}, "This purchase couldn't be confirmed, and it can no longer go through.")
+            return
+          }
+        } else if (!handedOff) {
+          // Reserved, or not even that, and provably not handed off: give the credit back.
+          if (progress.status === 'authorizing') {
+            const state: PurchaseState = store.getSnapshot().checkout ?? { id: op.id, account: op.buyer, groups: [progress], createdAt: op.createdAt }
+            await releaseAuthorizing(watchDeps(op, store), { ...state, groups: [progress] })
+          }
+          settled(op, 'cancelled')
           return
-        }
-        if (progress.status === 'idle') {
-          move(op, 'cancelled')
-          return
-        }
-        if (progress.status !== 'submitted' && progress.status !== 'pending') {
-          move(op, 'failed')
-          return
-        }
-        const result = await svc.watch(watchDeps(op, store), progress).catch((): GroupResult => ({ status: 'pending', txHash: progress.txHash ?? null }))
-        if (result.status === 'confirmed') {
-          move(op, 'succeeded', { txHash: result.txHash })
-          return
-        }
-        if (result.status === 'failed') {
-          move(op, 'failed')
-          return
+        } else {
+          const following: GroupProgress =
+            progress.status === 'submitted' || progress.status === 'pending' ? progress : { ...progress, status: op.txHash || progress.txHash ? 'pending' : 'submitted', txHash: progress.txHash ?? op.txHash ?? null }
+          const result = await svc.watch(watchDeps(op, store), following).catch((): GroupResult => ({ status: 'pending', txHash: following.txHash }))
+          if (result.status === 'confirmed') {
+            settled(op, 'succeeded', { txHash: result.txHash })
+            return
+          }
+          if (result.status === 'failed') {
+            settled(op, 'failed', {}, result.failure.kind === 'reverted' ? 'The transaction failed on-chain. Nothing was bought and your Credits were returned.' : result.failure.message)
+            return
+          }
         }
         if (svc.now() >= deadline) return
         await svc.sleep(WATCH_BACKOFF_MS[Math.min(attempt, WATCH_BACKOFF_MS.length - 1)])
@@ -434,6 +498,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       category: listing.category === 'emote' ? 'emote' : (listing.wearableCategory ?? listing.category),
       credits: creditsCeil(group.total.charged)
     }
+    op.display = item
     return { login: loginKey(login), buyer, kind, session, client: c, line, offer, group, item, balance: balance.credits }
   }
 
@@ -485,7 +550,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     }
     const wallet = deps.wallet?.provider(quote.buyer)
     if (!wallet || !current()) {
-      fail(op, quote.stale ?? 'You signed in with another account meanwhile. Open the item again to buy it with this one.')
+      fail(op, quote.stale ?? 'Your sign-in changed meanwhile. Open the item again to buy it.')
       return
     }
     const chainId = quote.group.key.chainId
@@ -503,17 +568,44 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       return
     }
     if (op.state !== 'reviewing' || dialog !== op) return
+    // The login may have changed while the wallet answered.
+    if (!current()) {
+      fail(op, quote.stale ?? 'Your sign-in changed meanwhile. Open the item again to buy it.')
+      return
+    }
+    // A purchase that can't be kept can't be followed after a reload: nothing is reserved without it.
+    if (!ledger.writable()) {
+      fail(op, "This browser can't keep a record of the purchase right now (its storage is full or blocked), so nothing was bought.", again)
+      return
+    }
     const intent: PurchaseIntent = {
       buyer: quote.buyer,
       chainId,
       manager,
       item: req.item,
       sale: { venue: quote.group.key.contract.toLowerCase(), call },
-      current
+      current,
+      durable: (stage) => durable(op, stage)
     }
     move(op, 'processing')
+    if (ledger.failed(op.id) || ledger.saved(op.buyer ?? '', op.id)?.state !== 'processing') {
+      op.state = 'reviewing'
+      publish(op)
+      fail(op, "This browser can't keep a record of the purchase right now (its storage is full or blocked), so nothing was bought.", again)
+      return
+    }
     show(op, { step: 'processing', balance: quote.balance }, { onClose: () => {} })
     const store = (op.store ??= ledger.storeFor(op))
+    // The relay gets the signed purchase only once its hand-off is kept; refused here, it was never sent.
+    const rail = svc.rail()
+    const send = rail.fetchImpl ?? ((...a: Parameters<typeof fetch>) => fetch(...a))
+    const relay = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      if ((init?.method ?? 'GET').toUpperCase() === 'POST' && !durable(op, 'handedOff')) {
+        return new Response(JSON.stringify({ ok: false, message: "This browser couldn't keep a record of the purchase, so it wasn't sent." }), { status: 409, headers: { 'content-type': 'application/json' } })
+      }
+      return send(input, init)
+    }) as typeof fetch
+    let unmirror = (): void => {}
     let result: GroupResult
     try {
       const review = await reviewCart([{ line: quote.line, offer: quote.offer }], quote.session, quote.buyer, svc.resolvers(quote.client))
@@ -526,16 +618,27 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         return
       }
       store.startCheckout([quote.group])
+      // Every step the executor writes to the checkout is copied into the operation's record.
+      const mirror = (): void => {
+        const group = store.getSnapshot().checkout?.groups[0]
+        if (!group) return
+        op.progress = { ...group }
+        keep(op)
+      }
+      mirror()
+      unmirror = store.subscribe(mirror)
       result = await svc.run(
         {
-          ctx: { buyer: quote.buyer, provider: svc.guard(wallet, intent), reader: svc.reader(), client: quote.client, walletKind: quote.kind, ...svc.rail() },
+          ctx: { buyer: quote.buyer, provider: svc.guard(wallet, intent), reader: svc.reader(), client: quote.client, walletKind: quote.kind, ...rail, fetchImpl: relay },
           store,
           guard: createSpendGuard()
         },
         quote.group,
         resolved
       )
+      unmirror()
     } catch (e) {
+      unmirror()
       // The executor answers every hand-off itself; a throw here came before any.
       console.warn('[shell/shop] the purchase could not start', e)
       op.state = 'reviewing'
@@ -546,14 +649,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     switch (result.status) {
       case 'confirmed':
         move(op, 'succeeded', { txHash: result.txHash })
-        show(op, { step: 'success', item: quote.item }, {
-          onClose: () => hide(op),
-          onBackpack: () => {
-            hide(op)
-            op.next = 'backpack'
-            publish(op)
-          }
-        })
+        showSuccess(op)
         return
       case 'pending':
         move(op, 'pending', { txHash: result.txHash })

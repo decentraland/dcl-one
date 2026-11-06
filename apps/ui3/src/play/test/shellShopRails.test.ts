@@ -39,7 +39,25 @@ const LISTING = {
   available: 10
 } as unknown as CatalogItem
 
-function rails(opts: { trusted: string; kind: 'managed' | 'web3'; gasless?: boolean }) {
+/** A Storage in memory; `refuse` makes chosen writes throw, as a full or blocked storage does. */
+function memoryStorage(refuse: (key: string, value: string) => boolean = () => false): Storage {
+  const map = new Map<string, string>()
+  return {
+    get length() {
+      return map.size
+    },
+    clear: () => map.clear(),
+    getItem: (k) => map.get(k) ?? null,
+    key: (i) => [...map.keys()][i] ?? null,
+    removeItem: (k) => void map.delete(k),
+    setItem: (k, v) => {
+      if (refuse(k, v)) throw new DOMException('full', 'QuotaExceededError')
+      map.set(k, v)
+    }
+  }
+}
+
+function rails(opts: { trusted: string; kind: 'managed' | 'web3'; gasless?: boolean; storage?: Storage }) {
   const chain = createFakeChain()
   const relay = createFakeRelay({ chain, confirm: 'success' })
   const shop = createFakeShop({
@@ -58,6 +76,7 @@ function rails(opts: { trusted: string; kind: 'managed' | 'web3'; gasless?: bool
       return hash
     }
   })
+  const storage = opts.storage ?? memoryStorage()
   const shown: { view: ShellPurchaseView; handlers: ShellPurchaseHandlers }[] = []
   const events: ShopOperationEvent[] = []
   let clock = 0
@@ -83,7 +102,7 @@ function rails(opts: { trusted: string; kind: 'managed' | 'web3'; gasless?: bool
         gasless: opts.gasless ?? true,
         wait: { timeoutMs: 30, pollMs: 10, now: () => clock, sleep: async (ms) => void (clock += ms) }
       }),
-      storage: () => null
+      storage: () => storage
     }
   })
   const until = async (step: ShellPurchaseView['step']) => {
@@ -127,6 +146,30 @@ describe('the shell purchase on the real rails', () => {
     expect(r.wallet.requests.some((q) => q.method === 'eth_signTypedData_v4')).toBe(false)
     expect(r.relay.posts).toHaveLength(0)
     expect(r.shop.log.find((q) => q.name === 'cancelCreditAuthorizations')?.body).toEqual({ salts: [`0x${'a1'.repeat(32)}`] })
+  })
+
+  it('signs nothing when the checkout can’t be kept', async () => {
+    const r = rails({ trusted: DEDICATED, kind: 'managed', storage: memoryStorage((key) => key.includes('dcl-shop-checkout')) })
+    await r.buy()
+    await r.until('failed')
+    expect(r.wallet.requests.some((q) => q.method === 'eth_signTypedData_v4')).toBe(false)
+    expect(r.relay.posts).toHaveLength(0)
+  })
+
+  it('relays nothing when the hand-off isn’t kept: the signed purchase never leaves the browser', async () => {
+    // Everything is kept until the record says the purchase was handed off.
+    const r = rails({ trusted: DEDICATED, kind: 'managed', storage: memoryStorage((key, value) => key.includes(':operations:') && value.includes('"status":"submitted"')) })
+    await r.buy()
+    await r.until('failed')
+    expect(r.wallet.requests.some((q) => q.method === 'eth_signTypedData_v4')).toBe(true)
+    expect(r.relay.posts).toHaveLength(0)
+  })
+
+  it('sends nothing directly when the hand-off isn’t kept', async () => {
+    const r = rails({ trusted: DEDICATED, kind: 'web3', gasless: false, storage: memoryStorage((key, value) => key.includes(':operations:') && value.includes('"status":"submitted"')) })
+    await r.buy()
+    await r.until('failed')
+    expect(r.wallet.sent).toHaveLength(0)
   })
 
   it('refuses to sign once the wallet moved to another account mid-purchase', async () => {
