@@ -1128,7 +1128,7 @@ fn append_unified_filters(
 /// The chains this deployment sells on, each (chain, marketplace, coupon
 /// manager) pairing of them: a coupon is redeemable only by the marketplace
 /// version its manager is wired into, on the chain it was signed for.
-fn coupon_pairings() -> Vec<(i64, String, String)> {
+pub(crate) fn coupon_pairings() -> Vec<(i64, String, String)> {
     use super::listings::{offchain_marketplace_v2, offchain_marketplace_v3};
     use crate::coupons::contracts::{CouponMarketplace, coupon_contracts};
     let served = [
@@ -1189,7 +1189,7 @@ fn coupon_join() -> String {
              AND lower(mv.contract_address) = ANY(c.collections) \
              AND NOT COALESCE(cs.cancelled, false) AND NOT COALESCE(cs.revoked, false) \
              AND COALESCE(cs.uses, 0) < (c.checks->>'uses')::numeric \
-           ORDER BY c.discount_ppm DESC, c.expires_at ASC \
+           ORDER BY c.discount_ppm DESC, c.expires_at ASC, c.id ASC \
            LIMIT 1 \
          ) cp ON true"
     )
