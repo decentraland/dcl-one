@@ -2032,6 +2032,22 @@ impl IpfsIo {
                 }
             }
 
+            // `data:` and `blob:` urls (files of an entity registered inline, such as an unpublished
+            // item a page supplies) are the page's own: the http client refuses their schemes, the
+            // browser serves them without a request slot
+            #[cfg(target_arch = "wasm32")]
+            if remote.starts_with("data:") || remote.starts_with("blob:") {
+                return match web_cache::fetch_local(&remote).await {
+                    Ok(bytes) => {
+                        ipfs_io_read_state.send_cached(bytes.len());
+                        Ok(Box::new(VecReader::new(bytes)))
+                    }
+                    Err(e) => ipfs_io_read_state.send_failure(Err(AssetReaderError::Io(Arc::new(
+                        std::io::Error::other(format!("failed to read `{remote}`: {e}")),
+                    )))),
+                };
+            }
+
             if let Some(fail_time) = fail_time {
                 // wait 10 secs before retrying failed assets
                 if self.is_preview
