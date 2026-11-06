@@ -1057,7 +1057,7 @@ async fn a_local_scene_deploy_without_a_land_rights_source_is_undecidable_never_
         .unwrap_err();
     assert!(matches!(err, DeployFailure::Unavailable(_)), "{err:?}");
     assert!(
-        err.errors()[0].starts_with("Error checking parcel access: no LAND rights source"),
+        err.errors()[0] == crate::validator::checker::PARCEL_ACCESS_UNDECIDED,
         "{err:?}"
     );
 

@@ -1963,7 +1963,7 @@ async fn deploys_the_node_cannot_decide_are_given_back() {
         assert!(
             json_of(&body)["errors"][0]
                 .as_str()
-                .is_some_and(|e| e.starts_with("Error checking parcel access")),
+                .is_some_and(|e| e == crate::validator::checker::PARCEL_ACCESS_UNDECIDED),
             "{body:?}"
         );
         assert!(headers.contains_key(header::RETRY_AFTER));

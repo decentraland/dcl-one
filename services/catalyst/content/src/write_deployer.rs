@@ -640,7 +640,10 @@ impl WriteDeployer {
         let decisions = crate::land_authz::can_deploy_batch(land, &coords, signer)
             .await
             .map_err(|e| {
-                DeployFailure::Unavailable(vec![format!("Error checking parcel access: {e}")])
+                warn!(entity_id = %entity.id, error = %e, "LAND rights could not be checked");
+                DeployFailure::Unavailable(vec![
+                    super::validator::checker::PARCEL_ACCESS_UNDECIDED.to_string(),
+                ])
             })?;
         let errors: Vec<String> = coords
             .iter()
