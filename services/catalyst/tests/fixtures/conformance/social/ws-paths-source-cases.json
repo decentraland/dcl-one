@@ -1,0 +1,867 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
+  },
+  "runtime": {
+    "node": "v26.12.0"
+  },
+  "scope": "Actual verifyWsIdentity / verifyWsAuthChain and crypto middleware with freshly generated source test identities. Header variants are supplied in the auth bag; the source verifiers take an explicit protocol path, independently of mounted URLs or x-original-path. No keys or signed envelopes retained.",
+  "cases": [
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/",
+      "original_path": null,
+      "accepted": true
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/",
+      "original_path": "/social-rpc",
+      "accepted": true
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/",
+      "original_path": "/social-rpc/?x=1",
+      "accepted": true
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc",
+      "original_path": "/social-rpc",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc",
+      "original_path": "/social-rpc/?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc/",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc/",
+      "original_path": "/social-rpc",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc/",
+      "original_path": "/social-rpc/?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc//",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc//",
+      "original_path": "/social-rpc",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc//",
+      "original_path": "/social-rpc/?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/edge/social-rpc",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/edge/social-rpc",
+      "original_path": "/social-rpc",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/edge/social-rpc",
+      "original_path": "/social-rpc/?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/v1/stream",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/v1/stream",
+      "original_path": "/social-rpc",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/v1/stream",
+      "original_path": "/social-rpc/?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc/v1/stream",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc/v1/stream",
+      "original_path": "/social-rpc",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc/v1/stream",
+      "original_path": "/social-rpc/?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/edge/v1/stream",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/edge/v1/stream",
+      "original_path": "/social-rpc",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/edge/v1/stream",
+      "original_path": "/social-rpc/?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/v1/stream/",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/v1/stream/",
+      "original_path": "/social-rpc",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "rpc",
+      "mode": "first_frame",
+      "signed_path": "/v1/stream/",
+      "original_path": "/social-rpc/?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/",
+      "original_path": "/social-rpc/v1/stream",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/",
+      "original_path": "/edge/v1/stream?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc",
+      "original_path": "/social-rpc/v1/stream",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc",
+      "original_path": "/edge/v1/stream?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc/",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc/",
+      "original_path": "/social-rpc/v1/stream",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc/",
+      "original_path": "/edge/v1/stream?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc//",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc//",
+      "original_path": "/social-rpc/v1/stream",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc//",
+      "original_path": "/edge/v1/stream?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/edge/social-rpc",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/edge/social-rpc",
+      "original_path": "/social-rpc/v1/stream",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/edge/social-rpc",
+      "original_path": "/edge/v1/stream?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/v1/stream",
+      "original_path": null,
+      "accepted": true
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/v1/stream",
+      "original_path": "/social-rpc/v1/stream",
+      "accepted": true
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/v1/stream",
+      "original_path": "/edge/v1/stream?x=1",
+      "accepted": true
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc/v1/stream",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc/v1/stream",
+      "original_path": "/social-rpc/v1/stream",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/social-rpc/v1/stream",
+      "original_path": "/edge/v1/stream?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/edge/v1/stream",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/edge/v1/stream",
+      "original_path": "/social-rpc/v1/stream",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/edge/v1/stream",
+      "original_path": "/edge/v1/stream?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/v1/stream/",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/v1/stream/",
+      "original_path": "/social-rpc/v1/stream",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "first_frame",
+      "signed_path": "/v1/stream/",
+      "original_path": "/edge/v1/stream?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/",
+      "original_path": "/social-rpc/v1/stream",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/",
+      "original_path": "/edge/v1/stream?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/social-rpc",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/social-rpc",
+      "original_path": "/social-rpc/v1/stream",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/social-rpc",
+      "original_path": "/edge/v1/stream?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/social-rpc/",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/social-rpc/",
+      "original_path": "/social-rpc/v1/stream",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/social-rpc/",
+      "original_path": "/edge/v1/stream?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/social-rpc//",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/social-rpc//",
+      "original_path": "/social-rpc/v1/stream",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/social-rpc//",
+      "original_path": "/edge/v1/stream?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/edge/social-rpc",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/edge/social-rpc",
+      "original_path": "/social-rpc/v1/stream",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/edge/social-rpc",
+      "original_path": "/edge/v1/stream?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/v1/stream",
+      "original_path": null,
+      "accepted": true
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/v1/stream",
+      "original_path": "/social-rpc/v1/stream",
+      "accepted": true
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/v1/stream",
+      "original_path": "/edge/v1/stream?x=1",
+      "accepted": true
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/social-rpc/v1/stream",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/social-rpc/v1/stream",
+      "original_path": "/social-rpc/v1/stream",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/social-rpc/v1/stream",
+      "original_path": "/edge/v1/stream?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/edge/v1/stream",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/edge/v1/stream",
+      "original_path": "/social-rpc/v1/stream",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/edge/v1/stream",
+      "original_path": "/edge/v1/stream?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/v1/stream/",
+      "original_path": null,
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/v1/stream/",
+      "original_path": "/social-rpc/v1/stream",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    },
+    {
+      "protocol": "json",
+      "mode": "headers",
+      "signed_path": "/v1/stream/",
+      "original_path": "/edge/v1/stream?x=1",
+      "accepted": false,
+      "error": {
+        "name": "RequestError",
+        "status": 401
+      }
+    }
+  ]
+}

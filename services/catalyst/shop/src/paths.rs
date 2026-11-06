@@ -323,14 +323,17 @@ mod tests {
             },
             None,
         ));
-        let mana = Arc::new(mana::State::new(
-            pool,
-            http,
-            market.clone(),
-            signatures.clone(),
-            mana::Settings::default(),
-            None,
-        ));
+        let mana = Arc::new(
+            mana::State::new(
+                pool,
+                http,
+                market.clone(),
+                signatures.clone(),
+                mana::Settings::default(),
+                None,
+            )
+            .expect("the production book"),
+        );
         let economy_routes = || {
             evm::router(economy.clone())
                 .merge(checkout::router(economy.clone()))

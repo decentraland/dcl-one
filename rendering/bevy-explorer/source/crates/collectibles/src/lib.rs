@@ -317,6 +317,7 @@ pub fn request_collectibles<T: CollectibleType>(
     if let Some((mut task, mut requested_entities)) = active_task.take() {
         match task.complete() {
             Some(Ok(entities)) => {
+                ipfas.ipfs().record_attachment_batch(entities.len());
                 debug!("got results: {:?}", entities.len());
 
                 for entity in entities {
@@ -416,10 +417,14 @@ pub fn request_collectibles<T: CollectibleType>(
 
         if !pointers.is_empty() {
             debug!("requesting: {:?} ({:?})", requested, pointers);
+            // ask the catalyst the entities' files are fetched from (`base_url` above), not the
+            // realm's content server: a realm on another environment resolves the same pointer
+            // to a hash that catalyst doesn't have
             *active_task = Some((
-                ipfas
-                    .ipfs()
-                    .active_entities(ipfs::ActiveEntitiesRequest::Pointers(pointers), None),
+                ipfas.ipfs().active_entities(
+                    ipfs::ActiveEntitiesRequest::Pointers(pointers),
+                    Some(base_wearables::base_url().as_str()),
+                ),
                 requested,
             ));
         }

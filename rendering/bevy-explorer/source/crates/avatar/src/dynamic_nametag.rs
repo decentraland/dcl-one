@@ -3,7 +3,13 @@ use std::collections::VecDeque;
 use bevy::{math::FloatOrd, prelude::*, render::primitives::Aabb};
 use common::{sets::PostUpdateSets, structs::AttachPoints};
 
-use crate::ghost::AvatarGhost;
+use crate::{attach::AvatarAttachment, ghost::AvatarGhost};
+use bevy_console::ConsoleCommand;
+use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
+use dcl_component::proto_components::sdk::components::AvatarAnchorPointType;
+use scene_runner::{
+    initialize_scene::SuperUserScene, update_world::scene_ui::UiCanvas, SceneEntity,
+};
 
 /// where the nametag sits while a player's ghost stands in for their avatar
 const GHOST_NAMETAG_HEIGHT: f32 = 2.0;
@@ -20,6 +26,78 @@ impl Plugin for DynamicNametagPlugin {
         );
 
         app.add_observer(add_nametag_height_history);
+        app.insert_resource(NametagsVisible(true))
+            .add_console_command::<Nametags, _>(nametags_command)
+            .add_debug_section(DebugSection {
+                title: "Nametags",
+                query: "/nametags",
+                fields: &[],
+                actions: &[],
+                inputs: &[DebugInput {
+                    label: "Show nametags",
+                    field: "visible",
+                    command: "/nametags {value}",
+                    kind: DebugInputKind::Toggle,
+                }],
+            })
+            .add_systems(
+                Update,
+                sync_nametag_visibility
+                    .run_if(|visible: Res<NametagsVisible>| !visible.0 || visible.is_changed()),
+            );
+    }
+}
+
+#[derive(Resource)]
+struct NametagsVisible(bool);
+
+/// Read or set visibility of the HUD's world-space nametags.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/nametags")]
+struct Nametags {
+    visible: Option<bool>,
+}
+
+fn nametags_command(mut cmd: ConsoleCommand<Nametags>, mut visible: ResMut<NametagsVisible>) {
+    let Some(Ok(request)) = cmd.take() else {
+        return;
+    };
+    if let Some(value) = request.visible {
+        visible.0 = value;
+    }
+    cmd.reply_ok(serde_json::json!({"visible": visible.0}).to_string());
+}
+
+#[derive(Component)]
+struct HiddenNametag(Visibility);
+
+/// The HUD's label is a UiCanvas plane immediately beneath its name-tag anchor.
+/// Hide only that plane. SDK attachments share the anchor on the avatar skeleton.
+fn sync_nametag_visibility(
+    mut commands: Commands,
+    visible: Res<NametagsVisible>,
+    hud: Query<(), With<SuperUserScene>>,
+    attachments: Query<(&AvatarAttachment, &SceneEntity)>,
+    mut canvases: Query<
+        (Entity, &ChildOf, &mut Visibility, Option<&HiddenNametag>),
+        With<UiCanvas>,
+    >,
+) {
+    for (entity, parent, mut visibility, hidden) in &mut canvases {
+        let hide = !visible.0
+            && attachments.get(parent.parent()).is_ok_and(|(a, scene)| {
+                a.0.anchor_point_id() == AvatarAnchorPointType::AaptNameTag
+                    && hud.contains(scene.root)
+            });
+        if hide {
+            if hidden.is_none() {
+                commands.entity(entity).insert(HiddenNametag(*visibility));
+            }
+            visibility.set_if_neq(Visibility::Hidden);
+        } else if let Some(hidden) = hidden {
+            *visibility = hidden.0;
+            commands.entity(entity).remove::<HiddenNametag>();
+        }
     }
 }
 

@@ -1,0 +1,669 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+    "sources": [
+      {
+        "path": "src/adapters/pg.ts",
+        "sha256": "612c1c5539ef3873a5a4417052934b277a22b69dccb479ff851cafd495e6ccc8"
+      },
+      {
+        "path": "src/adapters/referral-db.ts",
+        "sha256": "ff70fd3508826ced642c9877f642989c5b14cb6da8b677678ed6bcbef824f5ce"
+      },
+      {
+        "path": "src/logic/referral/referral.ts",
+        "sha256": "b0020c89a7e69b428771c2fbe3902a5254ec822b2bf40bcb6e5c0777a8edf466"
+      },
+      {
+        "path": "src/controllers/handlers/http/create-referral-handler.ts",
+        "sha256": "0cf0f1aef613cf942b9fee0e2702db2e868911b2990d066e3de669f1a31ab866"
+      },
+      {
+        "path": "node_modules/@well-known-components/env-config-provider/dist/index.js",
+        "sha256": "c5239206baf3abc57e9819d0ffee617ed39cb31434f2dccb9daecaacaaab6883"
+      },
+      {
+        "path": "node_modules/@dcl/http-commons/dist/controllers/handlers/error-handler.js",
+        "sha256": "84112c8c373079258b92cf355a10a5ff329b8c9b4e5bcae4f21dcb76c0ceefaf"
+      }
+    ]
+  },
+  "runtime": {
+    "node": "v26.12.0"
+  },
+  "scope": "Actual source numeric config, referral domain, DB adapter, translating PG wrapper and create-handler/error middleware execute against PostgreSQL TEMP relations. Login-day cache and outbound effects are injected. Startup rejection text is recorded, not a claim that Clap formats startup diagnostics identically.",
+  "referrer": "0xa711111111111111111111111111111111111111",
+  "invited": [
+    "0xa800000000000000000000000000000000000001",
+    "0xa800000000000000000000000000000000000002",
+    "0xa800000000000000000000000000000000000003"
+  ],
+  "cases": [
+    {
+      "kind": "max",
+      "raw": "2tail",
+      "number": "2",
+      "steps": [
+        {
+          "response": {
+            "status": 204
+          },
+          "rows": [
+            "pending"
+          ]
+        },
+        {
+          "response": {
+            "status": 204
+          },
+          "rows": [
+            "pending",
+            "pending"
+          ]
+        },
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invited user has already reached the maximum number of 2 referrals from the same IP: 192.0.2.1"
+            }
+          },
+          "rows": [
+            "pending",
+            "pending",
+            "rejected_ip_match"
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "max",
+      "raw": "2.5",
+      "number": "2.5",
+      "steps": [
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invalid identifier"
+            }
+          },
+          "rows": []
+        },
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invalid identifier"
+            }
+          },
+          "rows": []
+        },
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invalid identifier"
+            }
+          },
+          "rows": []
+        }
+      ]
+    },
+    {
+      "kind": "max",
+      "raw": "Infinity",
+      "number": "Infinity",
+      "steps": [
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invalid identifier"
+            }
+          },
+          "rows": []
+        },
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invalid identifier"
+            }
+          },
+          "rows": []
+        },
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invalid identifier"
+            }
+          },
+          "rows": []
+        }
+      ]
+    },
+    {
+      "kind": "max",
+      "raw": "-Infinity",
+      "number": "-Infinity",
+      "steps": [
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invalid identifier"
+            }
+          },
+          "rows": []
+        },
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invalid identifier"
+            }
+          },
+          "rows": []
+        },
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invalid identifier"
+            }
+          },
+          "rows": []
+        }
+      ]
+    },
+    {
+      "kind": "max",
+      "raw": "0",
+      "number": "0",
+      "steps": [
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invited user has already reached the maximum number of 0 referrals from the same IP: 192.0.2.1"
+            }
+          },
+          "rows": [
+            "rejected_ip_match"
+          ]
+        },
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invited user has already reached the maximum number of 0 referrals from the same IP: 192.0.2.1"
+            }
+          },
+          "rows": [
+            "rejected_ip_match",
+            "rejected_ip_match"
+          ]
+        },
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invited user has already reached the maximum number of 0 referrals from the same IP: 192.0.2.1"
+            }
+          },
+          "rows": [
+            "rejected_ip_match",
+            "rejected_ip_match",
+            "rejected_ip_match"
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "max",
+      "raw": "-1",
+      "number": "-1",
+      "steps": [
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invited user has already reached the maximum number of -1 referrals from the same IP: 192.0.2.1"
+            }
+          },
+          "rows": [
+            "rejected_ip_match"
+          ]
+        },
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invited user has already reached the maximum number of -1 referrals from the same IP: 192.0.2.1"
+            }
+          },
+          "rows": [
+            "rejected_ip_match",
+            "rejected_ip_match"
+          ]
+        },
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invited user has already reached the maximum number of -1 referrals from the same IP: 192.0.2.1"
+            }
+          },
+          "rows": [
+            "rejected_ip_match",
+            "rejected_ip_match",
+            "rejected_ip_match"
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "max",
+      "raw": "1e20",
+      "number": "100000000000000000000",
+      "steps": [
+        {
+          "response": {
+            "status": 500,
+            "body": {
+              "message": "value \"100000000000000000000\" is out of range for type bigint"
+            }
+          },
+          "rows": []
+        },
+        {
+          "response": {
+            "status": 500,
+            "body": {
+              "message": "value \"100000000000000000000\" is out of range for type bigint"
+            }
+          },
+          "rows": []
+        },
+        {
+          "response": {
+            "status": 500,
+            "body": {
+              "message": "value \"100000000000000000000\" is out of range for type bigint"
+            }
+          },
+          "rows": []
+        }
+      ]
+    },
+    {
+      "kind": "max",
+      "raw": "1e21",
+      "number": "1e+21",
+      "steps": [
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invalid identifier"
+            }
+          },
+          "rows": []
+        },
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invalid identifier"
+            }
+          },
+          "rows": []
+        },
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invalid identifier"
+            }
+          },
+          "rows": []
+        }
+      ]
+    },
+    {
+      "kind": "max",
+      "raw": "1e-7",
+      "number": "1e-7",
+      "steps": [
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invalid identifier"
+            }
+          },
+          "rows": []
+        },
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invalid identifier"
+            }
+          },
+          "rows": []
+        },
+        {
+          "response": {
+            "status": 400,
+            "body": {
+              "error": "Bad request",
+              "message": "Invalid identifier"
+            }
+          },
+          "rows": []
+        }
+      ]
+    },
+    {
+      "kind": "max",
+      "raw": "NaN",
+      "startup_error": "Configuration: config \"REFERRAL_MAX_IP_MATCHES\" should be a number, got string (NaN) instead",
+      "steps": []
+    },
+    {
+      "kind": "min",
+      "raw": "2.5days",
+      "number": "2.5",
+      "steps": [
+        {
+          "day": "2026-01-01",
+          "row": {
+            "status": "pending",
+            "tier_granted": false
+          },
+          "days": [
+            "2026-01-01"
+          ]
+        },
+        {
+          "day": "2026-01-02",
+          "row": {
+            "status": "pending",
+            "tier_granted": false
+          },
+          "days": [
+            "2026-01-01",
+            "2026-01-02"
+          ]
+        },
+        {
+          "day": "2026-01-03",
+          "row": {
+            "status": "pending",
+            "tier_granted": false
+          },
+          "days": [
+            "2026-01-01",
+            "2026-01-02",
+            "2026-01-03"
+          ]
+        },
+        {
+          "day": "2026-01-04",
+          "row": {
+            "status": "tier_granted",
+            "tier_granted": true
+          },
+          "days": []
+        },
+        {
+          "day": "2026-01-05",
+          "row": {
+            "status": "tier_granted",
+            "tier_granted": true
+          },
+          "days": []
+        }
+      ]
+    },
+    {
+      "kind": "min",
+      "raw": "0",
+      "number": "0",
+      "steps": [
+        {
+          "day": "2026-01-01",
+          "row": {
+            "status": "tier_granted",
+            "tier_granted": true
+          },
+          "days": []
+        },
+        {
+          "day": "2026-01-02",
+          "row": {
+            "status": "tier_granted",
+            "tier_granted": true
+          },
+          "days": []
+        },
+        {
+          "day": "2026-01-03",
+          "row": {
+            "status": "tier_granted",
+            "tier_granted": true
+          },
+          "days": []
+        },
+        {
+          "day": "2026-01-04",
+          "row": {
+            "status": "tier_granted",
+            "tier_granted": true
+          },
+          "days": []
+        },
+        {
+          "day": "2026-01-05",
+          "row": {
+            "status": "tier_granted",
+            "tier_granted": true
+          },
+          "days": []
+        }
+      ]
+    },
+    {
+      "kind": "min",
+      "raw": "-1",
+      "number": "-1",
+      "steps": [
+        {
+          "day": "2026-01-01",
+          "row": {
+            "status": "tier_granted",
+            "tier_granted": true
+          },
+          "days": []
+        },
+        {
+          "day": "2026-01-02",
+          "row": {
+            "status": "tier_granted",
+            "tier_granted": true
+          },
+          "days": []
+        },
+        {
+          "day": "2026-01-03",
+          "row": {
+            "status": "tier_granted",
+            "tier_granted": true
+          },
+          "days": []
+        },
+        {
+          "day": "2026-01-04",
+          "row": {
+            "status": "tier_granted",
+            "tier_granted": true
+          },
+          "days": []
+        },
+        {
+          "day": "2026-01-05",
+          "row": {
+            "status": "tier_granted",
+            "tier_granted": true
+          },
+          "days": []
+        }
+      ]
+    },
+    {
+      "kind": "min",
+      "raw": "Infinity",
+      "number": "Infinity",
+      "steps": [
+        {
+          "day": "2026-01-01",
+          "row": {
+            "status": "pending",
+            "tier_granted": false
+          },
+          "days": [
+            "2026-01-01"
+          ]
+        },
+        {
+          "day": "2026-01-02",
+          "row": {
+            "status": "pending",
+            "tier_granted": false
+          },
+          "days": [
+            "2026-01-01",
+            "2026-01-02"
+          ]
+        },
+        {
+          "day": "2026-01-03",
+          "row": {
+            "status": "pending",
+            "tier_granted": false
+          },
+          "days": [
+            "2026-01-01",
+            "2026-01-02",
+            "2026-01-03"
+          ]
+        },
+        {
+          "day": "2026-01-04",
+          "row": {
+            "status": "pending",
+            "tier_granted": false
+          },
+          "days": [
+            "2026-01-01",
+            "2026-01-02",
+            "2026-01-03",
+            "2026-01-04"
+          ]
+        },
+        {
+          "day": "2026-01-05",
+          "row": {
+            "status": "pending",
+            "tier_granted": false
+          },
+          "days": [
+            "2026-01-01",
+            "2026-01-02",
+            "2026-01-03",
+            "2026-01-04",
+            "2026-01-05"
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "min",
+      "raw": "-Infinity",
+      "number": "-Infinity",
+      "steps": [
+        {
+          "day": "2026-01-01",
+          "row": {
+            "status": "tier_granted",
+            "tier_granted": true
+          },
+          "days": []
+        },
+        {
+          "day": "2026-01-02",
+          "row": {
+            "status": "tier_granted",
+            "tier_granted": true
+          },
+          "days": []
+        },
+        {
+          "day": "2026-01-03",
+          "row": {
+            "status": "tier_granted",
+            "tier_granted": true
+          },
+          "days": []
+        },
+        {
+          "day": "2026-01-04",
+          "row": {
+            "status": "tier_granted",
+            "tier_granted": true
+          },
+          "days": []
+        },
+        {
+          "day": "2026-01-05",
+          "row": {
+            "status": "tier_granted",
+            "tier_granted": true
+          },
+          "days": []
+        }
+      ]
+    },
+    {
+      "kind": "min",
+      "raw": "NaN",
+      "startup_error": "Configuration: config \"REFERRAL_MIN_LOGIN_DAYS\" should be a number, got string (NaN) instead",
+      "steps": []
+    }
+  ]
+}

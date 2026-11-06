@@ -13,7 +13,8 @@
 //! procedures (`rpc::service`, `SocialError::WritesDisabled`).
 //!
 //! Admission and presence are not user authority: the LiveKit token mints
-//! (`/get-scene-adapter`, `/get-server-scene-adapter`), the Pulse room
+//! (`/get-scene-adapter`, `/get-server-scene-adapter`, the world comms mints
+//! and the shared-secret attempt throttle they keep), the Pulse room
 //! authority (`/internal/pulse/room-authority/v1`) and the media server's
 //! webhook stay open, as does `/translate` (a cached read of an external
 //! engine) and the two operator routes that change no durable state
@@ -72,6 +73,9 @@ pub fn refused_response(refusal: &Refusal) -> Response {
         [
             (header::CONTENT_TYPE, "application/json"),
             (header::RETRY_AFTER, "3600"),
+            // The gate wraps each router outside its own layers (the Social
+            // API's CORS among them), so its refusal sets this itself.
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         ],
         body.to_string(),
     )
@@ -133,6 +137,28 @@ mod tests {
             .await
             .unwrap();
         (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// The refusal leaves before the Social API's CORS layer, and still
+    /// carries nosniff, on the root mount and under `/social-api`.
+    #[tokio::test]
+    async fn a_write_disabled_refusal_carries_nosniff() {
+        let app = app(false);
+        for path in ["/v1/communities", "/social-api/v1/communities"] {
+            let res = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE, "{path}");
+            assert_eq!(res.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff", "{path}");
+        }
     }
 
     #[test]

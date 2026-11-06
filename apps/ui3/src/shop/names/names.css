@@ -19,8 +19,15 @@
 .shop-names-browse__toolbar {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  /* Top-aligned: the price range's error line grows its box downward without lifting the row. */
+  align-items: flex-start;
   gap: 8px 12px;
+}
+.shop-names-browse__toolbar > .shop-land-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
 }
 .shop-names-browse__toolbar input[type="search"],
 .shop-names-browse__toolbar select {
@@ -173,4 +180,33 @@
 }
 .shop-namebuy__progress progress {
   width: 100%;
+}
+
+.shop-names-browse__price {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin: 0;
+  font-size: var(--fs-13);
+  color: var(--ink-6);
+}
+.shop-names-browse__price input {
+  width: 96px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--fill-1);
+  color: var(--text);
+  font: inherit;
+}
+.shop-names-browse__price input[aria-invalid="true"] {
+  border-color: var(--error);
+}
+.shop-names-browse__price-error {
+  flex-basis: 100%;
+  margin: 0;
+  font-weight: 600;
+  color: var(--error);
 }

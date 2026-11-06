@@ -10,7 +10,7 @@
 //! - `island` sends no request to Decentraland or any third party: no sync,
 //!   mirror, index, poll, relay or fallback, and the map URLs are its own.
 //! - `journey` is the scratch-database test stack: an island with every
-//!   write domain open and no restore stamp.
+//!   write domain open, no restore stamp and no chain access checks.
 
 use std::fmt::Write as _;
 
@@ -79,6 +79,9 @@ enum Value {
     Is(&'static str),
     /// Left unset: the binary derives this node's own URL (the text says which).
     Own(&'static str),
+    /// Left unset: the binary's default for every posture that dials outside
+    /// hosts (the text says which).
+    Default(&'static str),
     /// Computed from the environment (and the keys expanded before it); the
     /// text is what `show` prints. `None` leaves the key unset.
     From(&'static str, fn(&Lookup) -> Option<String>),
@@ -132,10 +135,9 @@ const fn same(family: &'static str, key: &'static str, value: &'static str) -> R
     row(family, key, Is(value), Is(value), Is(value))
 }
 
-use Value::{From, Is, Own};
+use Value::{Default, From, Is, Own};
 
 const DCL_PEERS: &str = "https://peer.decentraland.org/content,https://peer-eu1.decentraland.org/content,https://peer.dclnodes.io/content";
-const DCL_RPC: &str = "https://rpc.decentraland.org";
 /// The Polygon CreditsManager the credits usage index reads (mainnet).
 const CREDITS_MANAGER_MAINNET: &str = "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5";
 const PROFILE_IMAGES_CACHE_BYTES: &str = "5368709120";
@@ -147,14 +149,6 @@ fn set(lookup: &Lookup, key: &str) -> Option<String> {
 /// The chain endpoints and contracts the mirror preset knows are mainnet's.
 fn mainnet(lookup: &Lookup) -> bool {
     lookup("ETH_NETWORK").is_none_or(|n| n.trim().is_empty() || n.trim() == "mainnet")
-}
-
-fn eth_rpc(lookup: &Lookup) -> Option<String> {
-    mainnet(lookup).then(|| format!("{DCL_RPC}/mainnet"))
-}
-
-fn polygon_rpc(lookup: &Lookup) -> Option<String> {
-    mainnet(lookup).then(|| format!("{DCL_RPC}/polygon"))
 }
 
 fn credits_manager(lookup: &Lookup) -> Option<String> {
@@ -249,6 +243,17 @@ const ROWS: &[Row] = &[
     ),
     upstream(
         "mirrors",
+        "FF_URL",
+        "https://feature-flags.decentraland.org",
+    ),
+    upstream("social analytics", "ANALYTICS_API_URL", ""),
+    upstream(
+        "community compliance",
+        "OPENAI_BASE_URL",
+        "https://api.openai.com/v1",
+    ),
+    upstream(
+        "mirrors",
         "EXPLORER_MAP_SOURCE_URL",
         "https://api.decentraland.org",
     ),
@@ -280,6 +285,37 @@ const ROWS: &[Row] = &[
         "MARKETPLACE_SUBGRAPH_URL",
         "https://subgraph.decentraland.org/marketplace",
     ),
+    upstream(
+        "mirrors",
+        "NFT_WORKER_BASE_URL",
+        "https://nfts.decentraland.org",
+    ),
+    // lamb2's explorer backpack lists chain-owned tokens only: a mirror
+    // answers the same; island and journey also list this node's escrow grants.
+    row(
+        "lambdas",
+        "EXPLORER_ESCROW_GRANTS_ENABLED",
+        Is("false"),
+        Is("true"),
+        Is("true"),
+    ),
+    // lamb2's `/collections/wearables` takes `collectionId`, `wearableId`
+    // and `textSearch` only: a mirror answers the same; island and journey
+    // also take this node's extended filters.
+    row(
+        "lambdas",
+        "LAMBDAS_CATALOG_EXTENSIONS_ENABLED",
+        Is("false"),
+        Is("true"),
+        Is("true"),
+    ),
+    // lamb2's LAND subgraph: parcel operators and permissions until the
+    // land-authz index is published.
+    upstream(
+        "mirrors",
+        "LAND_SUBGRAPH_URL",
+        "https://subgraph.decentraland.org/land-manager",
+    ),
     mirrored("indexes", "MARKETPLACE_NFT_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED"),
     // The MANA transfer walk stays an operator's opt-in under every posture.
@@ -307,25 +343,28 @@ const ROWS: &[Row] = &[
         "PRICE_FALLBACK_SOURCES",
         "coinbase=https://api.coinbase.com,binance=https://api.binance.com,kraken=https://api.kraken.com",
     ),
+    // The binary's default for every node outside island and journey
+    // (`Config::default_rpc_urls`).
     row(
         "upstreams",
         "ETH_RPC_URL",
-        From("https://rpc.decentraland.org/mainnet on mainnet", eth_rpc),
+        Default(
+            "https://rpc.decentraland.org/<mainnet|sepolia>?project=catalyst-content by ETH_NETWORK",
+        ),
         Is(""),
         Is(""),
     ),
     row(
         "upstreams",
         "RPC_ENDPOINT_POLYGON",
-        From(
-            "https://rpc.decentraland.org/polygon on mainnet",
-            polygon_rpc,
+        Default(
+            "https://rpc.decentraland.org/<polygon|amoy>?project=catalyst-content by ETH_NETWORK",
         ),
         Is(""),
         Is(""),
     ),
     // Derived once the secret files are read (RPC_ENDPOINT_POLYGON_FILE):
-    // `derive_after_secret_files`.
+    // `Config::derive_trade_rpc_urls`.
     row(
         "upstreams",
         "TRADE_RPC_URLS",
@@ -374,6 +413,16 @@ const ROWS: &[Row] = &[
         "upstreams",
         "PROFILE_IMAGES_ORIGIN_URL",
         "https://profile-images.decentraland.org",
+    ),
+    // lamb2's default snapshot base: a mirror's profiles name Decentraland's
+    // profile images, as the Catalyst it replaces does; island and journey
+    // name their own `/profile-images`.
+    row(
+        "upstreams",
+        "PROFILE_CDN_BASE_URL",
+        Is("https://profile-images.decentraland.org"),
+        Own("<PUBLIC_URL>/profile-images"),
+        Own("<PUBLIC_URL>/profile-images"),
     ),
     upstream(
         "upstreams",
@@ -428,10 +477,11 @@ const ROWS: &[Row] = &[
         "MAP_SATELLITE_BASE_URL",
         "https://genesis.city/map/latest",
     ),
+    // lamb2's /about parcel view; island and journey draw their own minimap.
     row(
         "map",
         "MAP_PARCEL_VIEW_URL",
-        Own("<PUBLIC_URL>/api/v1/minimap.png"),
+        Is("https://api.decentraland.org/v1/minimap.png"),
         Own("<PUBLIC_URL>/api/v1/minimap.png"),
         Own("<PUBLIC_URL>/api/v1/minimap.png"),
     ),
@@ -442,10 +492,12 @@ const ROWS: &[Row] = &[
         Own("<PUBLIC_URL>/api/v1/estatemap.png"),
         Own("<PUBLIC_URL>/api/v1/estatemap.png"),
     ),
+    // The image lamb2's `/lands` answers is the marketplace subgraph's
+    // `nft.image`, under Decentraland's map API.
     row(
         "map",
         "LAND_IMAGE_BASE_URL",
-        Own("<PUBLIC_URL>/api"),
+        Is("https://api.decentraland.org"),
         Own("<PUBLIC_URL>/api"),
         Own("<PUBLIC_URL>/api"),
     ),
@@ -462,6 +514,14 @@ const ROWS: &[Row] = &[
     write("SOCIAL_WRITES_ENABLED"),
     write("WORLDS_WRITES_ENABLED"),
     write("OPS_WRITES_ENABLED"),
+    // The journey stack reads no chain, so its local deploys skip the chain checks.
+    row(
+        "writes",
+        "IGNORE_BLOCKCHAIN_ACCESS_CHECKS",
+        Is("false"),
+        Is("false"),
+        Is("true"),
+    ),
     // PRESENCE_COLLECTOR_ENABLED stays unset: the headcount archive writes
     // to the database, so it follows DATA_WRITES_ENABLED.
 ];
@@ -489,7 +549,7 @@ pub fn expand(posture: Posture, env: &Lookup) -> Expansion {
         };
         let value = match row.value(posture) {
             Is(v) => Some(v.to_string()),
-            Own(_) => None,
+            Own(_) | Default(_) => None,
             From(_, f) => f(&seen),
         };
         if let Some(value) = value {
@@ -500,7 +560,8 @@ pub fn expand(posture: Posture, env: &Lookup) -> Expansion {
 }
 
 /// Reads `NODE_POSTURE` and returns it with the variables it adds; `None`
-/// when unset (the binary's own defaults, every upstream and write off).
+/// when unset (the binary's own defaults: every write and every upstream but
+/// the chain RPCs off).
 pub fn resolve(env: &Lookup) -> anyhow::Result<Option<(Posture, Expansion)>> {
     let Some(raw) = env(ENV).filter(|v| !v.trim().is_empty()) else {
         return Ok(None);
@@ -541,6 +602,7 @@ pub fn show(posture: Posture) -> String {
         let _ = match row.value(posture) {
             Is(v) => writeln!(out, "{}={v}", row.key),
             Own(how) => writeln!(out, "# {} unset: this node's own {how}", row.key),
+            Default(how) => writeln!(out, "# {} unset: the binary's default, {how}", row.key),
             From(how, _) => writeln!(out, "{}=<{how}>", row.key),
         };
     }
@@ -576,7 +638,7 @@ pub fn startup_line(config: &Config) -> String {
         .map(Posture::parse)
     {
         None => format!(
-            "{ENV} is unset: no preset, so every upstream is off unless set explicitly \
+            "{ENV} is unset: no preset, so every upstream but the chain RPCs is off unless set explicitly \
              (`catalyst posture show mirror` lists them)"
         ),
         Some(Ok(posture)) => format!("{ENV}={}: {}", posture.name(), posture.summary()),
@@ -610,6 +672,9 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
     let Some(posture) = posture else {
         return Ok(());
     };
+    if posture == Posture::Mirror {
+        refuse_unfiltered_profiles(config)?;
+    }
     if posture != Posture::Mirror {
         let name = posture.name();
         for (key, value) in [
@@ -660,6 +725,44 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
                 if open.len() == 1 { "is" } else { "are" },
             );
         }
+    }
+    if posture == Posture::Mirror {
+        refuse_chain_read_third_party(config)?;
+    }
+    Ok(())
+}
+
+/// A mirror replaces a Catalyst whose lambdas always check the profiles'
+/// items and names against their owner: the collections and marketplace
+/// subgraphs the posture names may not be blanked (an island, with no
+/// ownership source, serves the items as deployed).
+fn refuse_unfiltered_profiles(config: &Config) -> anyhow::Result<()> {
+    let upstreams = &config.market_upstreams;
+    let blank: Vec<&str> = [
+        (
+            "ETH_COLLECTIONS_SUBGRAPH_URL",
+            &upstreams.eth_collections_subgraph_url,
+        ),
+        (
+            "MATIC_COLLECTIONS_SUBGRAPH_URL",
+            &upstreams.matic_collections_subgraph_url,
+        ),
+        (
+            "MARKETPLACE_SUBGRAPH_URL",
+            &upstreams.marketplace_subgraph_url,
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(key, value)| Config::non_empty(value).is_none().then_some(key))
+    .collect();
+    if !blank.is_empty() {
+        anyhow::bail!(
+            "{ENV}=mirror checks every profile's wearables, emotes and names against their owner, \
+             but {} {} empty: unset {} to read Decentraland's subgraphs",
+            blank.join(", "),
+            if blank.len() == 1 { "is" } else { "are" },
+            if blank.len() == 1 { "it" } else { "them" },
+        );
     }
     Ok(())
 }
@@ -717,6 +820,19 @@ fn refuse_followers(posture: Posture, env: &Lookup) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A mirror serves the public third-party routes, which lamb2 answers from
+/// the NFT worker: without `NFT_WORKER_BASE_URL` the chain path leaves an
+/// open mapping's tokens out, so a mirror may not blank it.
+fn refuse_chain_read_third_party(config: &Config) -> anyhow::Result<()> {
+    if Config::non_empty(&config.market_upstreams.nft_worker_base_url).is_none() {
+        anyhow::bail!(
+            "{ENV}=mirror answers the third-party wearables from the NFT worker, as lamb2 does, \
+             but NFT_WORKER_BASE_URL is empty: unset it to read Decentraland's worker"
+        );
+    }
+    Ok(())
+}
+
 /// The worlds federation's peer file: set, the node polls every peer it names.
 const FED_PEERS_FILE: &str = "WORLDS_FED_PEERS_FILE";
 
@@ -729,6 +845,7 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("PUBLIC_URL", "this node's own address"),
     ("HTTP_SERVER_HOST", "the address it listens on"),
     ("ACCOUNT_BASE_URL", LINK),
+    ("PROFILE_URL", LINK),
     ("MARKETPLACE_BASE_URL", LINK),
     ("SHOP_BASE_URL", LINK),
     ("SHOP_ITEM_BASE_URL", LINK),
@@ -738,12 +855,14 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("BADGES_PUBLIC_ASSET_BASE_URL", LINK),
     ("PROFILE_CDN_BASE_URL", LINK),
     ("COMMUNITIES_CDN_URL", LINK),
+    ("SERVICE_BASE_URL", LINK),
     ("FIRST_WEAR_IMAGE_BASE", LINK),
     ("MAP_EXTERNAL_BASE_URL", LINK),
     ("MAP_IMAGE_BASE_URL", LINK),
     ("CAMERA_REEL_API_URL", LINK),
     ("CAMERA_REEL_BUCKET_URL", LINK),
     ("BFF_URL", LINK),
+    ("BUILDER_URL", LINK),
 ];
 const DATABASE: &str = "this node's own database";
 const LINK: &str = "a link clients follow; the node never dials it";
@@ -941,7 +1060,58 @@ pub fn refuse_remote_secrets(config: &mut Config) -> anyhow::Result<()> {
 /// The secrets that switch on a client of a fixed third-party API, with the
 /// key that can point it elsewhere (then held to loopback above) and the API.
 const THIRD_PARTY_SECRETS: &[(&str, Option<&str>, &str)] = &[
+    (
+        "OPEN_AI_API_KEY",
+        Some("OPENAI_BASE_URL"),
+        "community compliance Responses API",
+    ),
     ("SENDGRID_API_KEY", None, "SendGrid's mail API"),
+    ("SLACK_BOT_TOKEN", None, "Slack Web API"),
+    (
+        "ANALYTICS_API_TOKEN",
+        Some("ANALYTICS_API_URL"),
+        "Social Analytics API",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_5",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_10",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_20",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_25",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_30",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_50",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_60",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_75",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
     (
         "TURNSTILE_SECRET_KEY",
         None,

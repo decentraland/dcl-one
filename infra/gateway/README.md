@@ -6,6 +6,15 @@ The exact `/places/place?position=...` and `/places/world?name=...` endpoints, i
 
 The exact `/events/assets/event-default.webp` path serves Catalyst's bundled event image. Event image links use the node's `PUBLIC_URL` plus the `/events` mount; `EVENTS_BASE_URL` remains the website URL used by sitemaps.
 
+Referral quotas use the backend TCP peer by default. Configure
+`HTTP_TRUSTED_PROXY_CIDRS` on the API process with the direct backend proxy
+networks, and ensure those proxies overwrite a single valid `X-Real-IP`. An
+empty setting trusts no forwarded header and therefore buckets traffic behind
+a gateway under that gateway's peer address. Missing or malformed X-Real-IP
+from a trusted peer fails closed. This API-side setting is separate from
+`GATEWAY_TRUSTED_PROXY_CIDRS`, which controls the gateway's upstream CDN trust.
+Verify the deployed trust chain and client bucket separation before cutover.
+
 Set `PUBLIC_URL` to the externally reachable node base URL, including any deployment prefix. Without it, the node uses its bind address (for example `http://0.0.0.0:<port>`), which is only a local fallback and cannot provide public image or notification links. See [event client and deployment guidance](../../services/catalyst/docs/events.md).
 
 ```sh

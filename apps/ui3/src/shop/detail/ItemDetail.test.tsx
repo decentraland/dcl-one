@@ -403,7 +403,7 @@ describe("latest sales and owners", () => {
     itemPage({ overrides: answers(seen, { sales: 7, owners: 1 }) });
     const sales = await screen.findByTestId("latest-sales");
     expect(within(sales).getAllByTestId("sale-row")).toHaveLength(5);
-    expect(within(sales).getByText("1 / 2")).toBeTruthy();
+    expect(within(sales).getByRole("button", { name: "1" }).getAttribute("aria-current")).toBe("page");
     fireEvent.click(within(sales).getByRole("button", { name: "Next" }));
     await waitFor(() => expect(within(screen.getByTestId("latest-sales")).getAllByTestId("sale-row")).toHaveLength(2));
     expect(seen.sales.at(-1)!.searchParams.get("skip")).toBe("5");
@@ -427,7 +427,7 @@ describe("latest sales and owners", () => {
     fireEvent.click(within(owners).getByRole("button", { name: "Next" }));
     await waitFor(() => expect(seen.owners.at(-1)!.searchParams.get("skip")).toBe("5"));
     fireEvent.click(within(screen.getByTestId("item-owners")).getByRole("button", { name: "Previous" }));
-    await waitFor(() => expect(within(screen.getByTestId("item-owners")).getByText("1 / 2")).toBeTruthy());
+    await waitFor(() => expect(within(screen.getByTestId("item-owners")).getByRole("button", { name: "1" }).getAttribute("aria-current")).toBe("page"));
   });
 
   it("keeps the pager when a later page comes back empty, so the first page is still reachable", async () => {

@@ -1257,6 +1257,32 @@ mod world_mint {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
+        // A world without a row is 404 (WCS InvalidWorldError), not a retryable 503.
+        let unknown = world();
+        for path in [
+            format!("/worlds/{}/comms", unknown.display()),
+            format!("/worlds/{}/scenes/bafyany/comms", unknown.display()),
+        ] {
+            let (status, body, _) = post(&app, &visitor, &path, "{}").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body}");
+            assert_eq!(
+                body["message"],
+                format!("World \"{}\" is invalid or blocked.", unknown.display())
+            );
+        }
+        // Blocked (operator disable): 404 at once.
+        let blocked = world();
+        sqlx::query(
+            "INSERT INTO worlds.worlds (name, blocked_since) VALUES ($1, timezone('UTC', now()))",
+        )
+        .bind(blocked.key())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let blocked_path = format!("/worlds/{}/comms", blocked.display());
+        state.presence.complete_empty_fixture();
+        let (status, body, _) = post(&app, &visitor, &blocked_path, "{}").await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "blocked: {body}");
         let (status, body, _) = post(&app, &visitor, "/get-comms-adapter/scene-x", handshake).await;
         assert_eq!(
             (status, body["message"].as_str().or(body["error"].as_str())),
@@ -1332,15 +1358,19 @@ mod world_mint {
         let hash = bcrypt::hash("open sesame", 4).unwrap();
         sqlx::query("INSERT INTO worlds.worlds (name, access_type, access_secret_hash) VALUES ($1, 'shared-secret', $2)").bind(secret.key()).bind(&hash).execute(&pool).await.unwrap();
         let path = format!("/worlds/{}/comms", secret.display());
-        for attempt in 0..2 {
+        // WCS: three wrong secrets answer 403, the next attempt 429.
+        for attempt in 0..3 {
             let (status, _, _) = post(&app, &visitor, &path, r#"{"secret":"wrong"}"#).await;
             assert_eq!(status, StatusCode::FORBIDDEN, "attempt {attempt}");
         }
-        let (status, _, retry) = post(&app, &visitor, &path, r#"{"secret":"wrong"}"#).await;
+        // The count lives in Postgres: another replica's state sees it.
+        let replica = Arc::new(mint_state(&pool, Arc::new(Presence::new())));
+        let (status, _, retry) =
+            post(&router(replica), &visitor, &path, r#"{"secret":"wrong"}"#).await;
         assert_eq!(
             (status, retry.as_deref()),
             (StatusCode::TOO_MANY_REQUESTS, Some("60")),
-            "the third wrong secret"
+            "the fourth attempt, on another replica"
         );
         let (status, _, _) = post(&app, &visitor, &path, r#"{"secret":"open sesame"}"#).await;
         assert_eq!(

@@ -261,6 +261,10 @@ def client(args):
                        body=b"x" * (1024 * 1024 + 1))
     assert deployed[0] == 200, ("worlds deploy body cap", deployed)
     assert json.loads(deployed[1])["path"] == "/worlds-content-server/entities", deployed
+    for path in ["/world/w.dcl.eth/settings", "/worlds-content-server/world/w.dcl.eth/settings"]:
+        updated = request(public, path, vhost="worlds-content-server.example.test" if path.startswith("/world/")
+                          else "example.test", method="PUT", body=b"x" * (1024 * 1024 + 1))
+        assert updated[0] == 200, ("worlds settings body cap", path, updated)
     for _ in range(40):
         if request(late, "/about")[0] == 200:
             break

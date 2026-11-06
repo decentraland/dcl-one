@@ -36,3 +36,23 @@ jobs:
         if: success() || failure()
         working-directory: tooling/shop-parity
         run: node --test lib/*.test.mts
+      # No install either: the settings parser needs only Node. The wallet's tests need viem (README).
+      - name: Test the shop trade journey's settings
+        if: success() || failure()
+        working-directory: tooling/shop-trade-journey
+        run: node --test lib/env.test.mts
+  # Advisory until its default-branch run history supports required-check promotion.
+  social-service-contracts:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Standard-library checks only: no upstream checkout, packages, services or secrets.
+      - name: Validate the social-service inventory and pinned schemas
+        run: python3 tooling/social-service-parity.py
+      - name: Test the social-service inventory rejection cases
+        if: success() || failure()
+        run: python3 -m unittest discover -s tooling/tests -p test_social_service_parity.py -v
+      - name: Validate the social-service metric inventory
+        if: success() || failure()
+        run: python3 tooling/social-service-metrics.py

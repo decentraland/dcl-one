@@ -72,6 +72,8 @@ export type ShopListingFilters = {
   itemIds?: string[];
   itemId?: string;
   creator?: string;
+  /** Any of these creators (the browse page's creators filter); wins over `creator`. */
+  creators?: string[];
   rarities?: string[];
   wearableCategories?: string[];
   wearableGenders?: string[];
@@ -160,7 +162,8 @@ function shopQuery(params: ShopListingFilters): QueryParams {
   else if (params.contractAddress) q.contractAddress = params.contractAddress;
   if (params.itemIds?.length) q.items = params.itemIds.join(",");
   if (params.itemId != null) q.itemId = params.itemId;
-  if (params.creator) q.creator = params.creator;
+  if (params.creators?.length) q.creator = params.creators.join(",");
+  else if (params.creator) q.creator = params.creator;
   if (params.rarities?.length) q.rarity = params.rarities.join(",");
   if (params.wearableCategories?.length) q.wearableCategory = params.wearableCategories.join(",");
   if (params.wearableGenders?.length) q.wearableGender = params.wearableGenders.join(",");
@@ -316,6 +319,8 @@ export type CatalogItemsFilters = {
   skip?: number;
   category?: string;
   creator?: string;
+  /** Any of these creators (the browse page's creators filter); wins over `creator`. */
+  creators?: string[];
   contractAddress?: string;
   contractAddresses?: string[];
   rarities?: string[];
@@ -360,6 +365,7 @@ export async function fetchCatalogItems(
     skip = 0,
     category,
     creator,
+    creators,
     contractAddress,
     contractAddresses,
     rarities,
@@ -377,7 +383,8 @@ export async function fetchCatalogItems(
 ): Promise<ItemsPage> {
   const q: QueryParams = { first, skip, includeSocialEmotes: "false" };
   if (category === "wearable" || category === "emote") q.category = category;
-  if (creator) q.creator = creator;
+  if (creators?.length) q.creator = creators;
+  else if (creator) q.creator = creator;
   if (contractAddresses) q.contractAddress = contractAddresses.length ? contractAddresses : [ZERO_ADDRESS];
   else if (contractAddress) q.contractAddress = contractAddress;
   if (rarities?.length) q.rarity = rarities;
@@ -465,6 +472,16 @@ export async function fetchCollection(contractAddress: string, opts?: Opts): Pro
   const json = await c(opts).market.collections<DataTotal<RawCollection>>({ contractAddress, first: 1 }, o(opts));
   const row = json.data?.[0];
   return row && row.contractAddress ? toCollection(row) : null;
+}
+
+/** Collections whose name matches `search` (the newest first without one), for the browse page's collection filter. */
+export async function searchCollections(search: string, { onSale, first = 10 }: { onSale?: boolean; first?: number } = {}, opts?: Opts): Promise<CollectionSummary[]> {
+  const term = search.trim();
+  const json = await c(opts).market.collections<DataTotal<RawCollection>>(
+    { ...(term ? { search: term } : { sortBy: "newest" }), first, ...(onSale ? { isOnSale: "true" } : {}) },
+    o(opts),
+  );
+  return (json.data ?? []).filter((row) => row.contractAddress).map(toCollection);
 }
 
 export type ShopCreatorRank = { id: string; volumeWei?: string; sales: number; totalSales?: number; collections?: number; items?: number };

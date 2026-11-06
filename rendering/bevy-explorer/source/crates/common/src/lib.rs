@@ -3,6 +3,7 @@ pub mod autopilot;
 pub mod base_domain;
 pub mod bounds_calc;
 pub mod dynamics;
+pub mod gateway;
 pub mod gpu_time;
 pub mod inputs;
 pub mod memory;
@@ -32,3 +33,5 @@ macro_rules! debug_panic {
         }
     };
 }
+
+pub mod client_login;

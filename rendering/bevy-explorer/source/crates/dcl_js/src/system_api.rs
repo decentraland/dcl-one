@@ -368,6 +368,20 @@ pub async fn op_get_home_scene(state: Rc<RefCell<impl State>>) -> Result<HomeSce
     rx.await.map_err(|e| anyhow::anyhow!(e))
 }
 
+pub async fn op_get_service_urls(
+    state: Rc<RefCell<impl State>>,
+) -> Result<Vec<(String, String)>, anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetServiceUrls(sx))
+        .unwrap();
+
+    rx.await.map_err(|e| anyhow::anyhow!(e))
+}
+
 pub async fn op_get_welcome(state: Rc<RefCell<impl State>>) -> Result<WelcomeState, anyhow::Error> {
     let (sx, rx) = RpcResultSender::channel();
 

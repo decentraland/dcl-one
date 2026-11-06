@@ -11,8 +11,8 @@
 //! (a banned wallet has no member row; a re-ban reactivates), the admin
 //! bearer and the global-moderator allow-list. The federation envelopes each
 //! write route also accepts, the federation log and its content routes are
-//! `fed` (over `crate::fed`). A banned or kicked member of a private
-//! community leaves its voice room ([`State::evict_from_private_community_voice`]
+//! `fed` (over `crate::fed`). A member who leaves, is banned or is kicked from a
+//! private community leaves its voice room ([`State::evict_from_private_community_voice`]
 //! through the [`VoiceEviction`] the comms module attaches in `main`). What
 //! did not come along, and why, is listed in `README.md`'s deviations; in
 //! short: the archipelago presence probe, which is configured explicitly and
@@ -26,6 +26,7 @@ pub mod auth;
 pub mod copies;
 pub mod cors;
 pub mod dto;
+pub mod features;
 pub mod fed;
 pub mod friendship;
 pub mod http;
@@ -33,6 +34,7 @@ pub mod mirror;
 pub mod presence;
 pub mod profiles;
 pub mod queries;
+pub mod ranking;
 pub mod standing;
 pub mod thumbnail;
 pub mod validate;
@@ -43,12 +45,14 @@ pub mod admin;
     reason = "named after v1 rest/handlers/communities.rs, the file its `from:` header maps"
 )]
 mod communities;
+pub mod compliance;
 mod friends;
 mod members;
 mod mutes;
 mod places;
 mod posts;
-mod referral;
+pub mod referral;
+mod referral_slack;
 mod requests;
 pub(crate) mod voice;
 mod write_support;
@@ -78,6 +82,7 @@ use profiles::ProfilesCache;
 /// from `Config`; every field maps to one env name (in the doc of each).
 #[derive(Clone, Debug)]
 pub struct Settings {
+    pub http_max_request_body_bytes: usize,
     /// `COMMUNITIES_ADMIN_TOKEN` (the old service's `API_ADMIN_TOKEN`):
     /// bearer of the admin listing/suspend routes, the managed-communities
     /// and member-communities-by-ids lookups and the privacy bypass of the
@@ -86,6 +91,8 @@ pub struct Settings {
     /// `COMMUNITIES_GLOBAL_MODERATORS`: comma-separated wallets allowed on
     /// `GET /v1/moderation/communities`.
     pub global_moderators: Vec<Address>,
+    pub features: features::Settings,
+    pub compliance: compliance::Settings,
     /// `RESTRICTED_NAMES`: comma-separated community names refused on
     /// create/rename, compared through `validate::fold_name_for_comparison`
     /// (stored here already folded).
@@ -108,6 +115,7 @@ pub struct Settings {
     /// `COMMUNITIES_MIRROR_INTERVAL_SECS` (3600): a copy is stale after
     /// twice it (`as_of::stale_after`).
     pub mirror_interval: std::time::Duration,
+    pub referral: referral::Settings,
 }
 
 impl Settings {
@@ -137,14 +145,18 @@ impl Settings {
 
     pub fn for_tests() -> Self {
         Self {
+            http_max_request_body_bytes: 1024 * 1024,
             admin_token: None,
             global_moderators: Vec::new(),
+            features: features::Settings::default(),
+            compliance: compliance::Settings::default(),
             restricted_names: Vec::new(),
             cdn_url: "http://cdn.test".to_string(),
             faces: profiles::FaceUrls::new(None, "http://127.0.0.1:9/profile-images/", false),
             archipelago_stats_url: None,
-            places_ownership_check: false,
+            places_ownership_check: true,
             mirror_interval: std::time::Duration::from_secs(3600),
+            referral: referral::Settings::for_tests(),
         }
     }
 }
@@ -157,7 +169,12 @@ pub struct State {
     /// `None` reads such chains as unverifiable.
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
     pub profiles: ProfilesCache,
+    pub referral: referral::Referral,
     pub presence: Presence,
+    /// One DAPPS document shared by moderator, compliance and referral decisions.
+    pub flags: Arc<crate::explore::api::feature_flags::Snapshot>,
+    analytics: std::sync::OnceLock<crate::analytics::Analytics>,
+    compliance: std::sync::OnceLock<Result<compliance::Adapter, String>>,
     /// `POST /v1/friends/{peer}/messages`: 60 sends per signer per minute,
     /// the old service's `RateLimiter::new(60, 60s)`; past it the route
     /// answers 429 before touching the database.
@@ -169,6 +186,9 @@ pub struct State {
     /// The social RPC's fan-out, attached in `serve`: membership changes and
     /// deletions reach the open community-member connectivity streams.
     pub updates: std::sync::OnceLock<crate::rpc::pubsub::PubSub>,
+    /// The process's shared chain reader, attached by `serve`. Profile claims
+    /// are user-authored and cannot establish NAME ownership.
+    pub chain_index: std::sync::OnceLock<Arc<crate::chain_index::ChainIndex>>,
     /// The communities mirror's upstream, set when its job is attached: the
     /// listing then answers that mirror's copy ([`copies`]).
     pub mirror_source: std::sync::OnceLock<String>,
@@ -182,6 +202,9 @@ pub struct State {
 /// Removes a wallet from a community's voice room (the old gatekeeper's
 /// `DELETE /community-voice-chat/{id}/users/{address}`).
 pub trait VoiceEviction: Send + Sync {
+    fn presence_config(&self) -> crate::comms::gatekeeper::voice::db::VoiceDbConfig {
+        Default::default()
+    }
     fn evict<'a>(
         &'a self,
         community_id: CommunityId,
@@ -192,6 +215,9 @@ pub trait VoiceEviction: Send + Sync {
 /// The gatekeeper's eviction (upstream #482): the same removal as its
 /// `DELETE /community-voice-chat/{id}/users/{address}`.
 impl VoiceEviction for crate::comms::gatekeeper::CommsState {
+    fn presence_config(&self) -> crate::comms::gatekeeper::voice::db::VoiceDbConfig {
+        crate::comms::gatekeeper::voice::rooms::VoiceRooms::presence_config(self)
+    }
     fn evict<'a>(
         &'a self,
         community_id: CommunityId,
@@ -238,6 +264,8 @@ impl State {
         explore: crate::explore::SharedState,
     ) -> Self {
         let profiles = ProfilesCache::new(pool.clone(), settings.faces.clone());
+        let referral =
+            referral::Referral::new(pool.clone(), http.clone(), settings.referral.clone());
         let presence = Presence::new(http.raw().clone(), settings.archipelago_stats_url.clone());
         let dm_limiter = RateLimiter::new(DM_SENDS_PER_MINUTE, std::time::Duration::from_secs(60));
         Self {
@@ -246,11 +274,16 @@ impl State {
             settings,
             eip1654,
             profiles,
+            referral,
             presence,
+            flags: Arc::new(crate::explore::api::feature_flags::Snapshot::empty()),
+            analytics: std::sync::OnceLock::new(),
+            compliance: std::sync::OnceLock::new(),
             dm_limiter,
             voice: std::sync::OnceLock::new(),
             worlds: std::sync::OnceLock::new(),
             updates: std::sync::OnceLock::new(),
+            chain_index: std::sync::OnceLock::new(),
             mirror_source: std::sync::OnceLock::new(),
             pass_markers: copies::Markers::new(copies::MARKER_TTL),
             sources: copies::Sources::bounded(copies::MARKER_TTL, copies::SOURCES_CAP),
@@ -267,6 +300,17 @@ impl State {
             crate::explore::Settings::for_tests(),
             None,
         ))
+    }
+
+    /// One configured analytics adapter shared with voice through this State.
+    pub fn set_analytics(&self, analytics: crate::analytics::Analytics) {
+        let _ = self.analytics.set(analytics);
+    }
+
+    pub(crate) fn fire_analytics(&self, event: &str, properties: serde_json::Value) {
+        if let Some(analytics) = self.analytics.get() {
+            analytics.fire_event(event, properties);
+        }
     }
 
     /// Records the communities mirror's upstream (once).
@@ -298,6 +342,10 @@ impl State {
 
     pub fn is_global_moderator(&self, address: &Address) -> bool {
         self.settings.global_moderators.iter().any(|m| m == address)
+            || self
+                .flags
+                .variant_values("dapps", features::GLOBAL_MODERATORS)
+                .is_some_and(|values| values.iter().any(|value| value == address.as_str()))
     }
 
     pub fn thumbnail_url(&self, id: CommunityId) -> String {
@@ -307,6 +355,30 @@ impl State {
     /// Attaches the comms module's voice-room kick (once).
     pub fn set_voice_eviction(&self, voice: Arc<dyn VoiceEviction>) {
         let _ = self.voice.set(voice);
+    }
+
+    pub(crate) fn voice_presence_config(
+        &self,
+    ) -> crate::comms::gatekeeper::voice::db::VoiceDbConfig {
+        self.voice
+            .get()
+            .map(|voice| voice.presence_config())
+            .unwrap_or_default()
+    }
+
+    pub fn set_chain_index(&self, index: Arc<crate::chain_index::ChainIndex>) {
+        let _ = self.chain_index.set(index);
+    }
+
+    pub(crate) async fn has_owned_name(&self, wallet: &Address) -> Result<bool, CommError> {
+        let index = self.chain_index.get().ok_or(CommError::Internal)?;
+        crate::chain_index::graph::owned_names(index, wallet.as_str())
+            .await
+            .map(|names| !names.is_empty())
+            .map_err(|error| {
+                tracing::error!(%error, %wallet, "NAME ownership lookup failed");
+                CommError::Internal
+            })
     }
 
     /// Attaches the worlds module's re-admission (once).
@@ -371,10 +443,8 @@ impl State {
         }
     }
 
-    /// Upstream #482's ban-side half: a ban or kick landing after the join
-    /// must find the seat in the private community's voice room and remove
-    /// it. As the old service did, a failure is logged and never fails the
-    /// request that banned or kicked.
+    /// A leave, ban or kick removes the wallet's seat in a private community's
+    /// voice room. A failure is logged and never fails the membership request.
     pub async fn evict_from_private_community_voice(
         &self,
         community_id: CommunityId,
@@ -436,17 +506,13 @@ impl State {
         if let (Some(m), serde_json::Value::Object(extra)) = (metadata.as_object_mut(), extra) {
             m.extend(extra);
         }
-        crate::notifications::community::notify(
-            &self.pool,
-            crate::notifications::community::CommunityEvent {
-                kind,
-                key,
-                community_id,
-                metadata,
-            },
-            audience,
-        )
-        .await;
+        let event = crate::notifications::community::CommunityEvent {
+            kind,
+            key,
+            community_id,
+            metadata,
+        };
+        crate::notifications::community::notify(&self.pool, event, audience).await;
     }
 
     /// The old `PLACES_API_URL` `/api/destinations` ownership check as a
@@ -509,31 +575,7 @@ pub(crate) fn signed_path(original: &OriginalUri, local: impl Into<String>) -> S
 /// document. Nested under `/social-api` only: the root `/health/*` belong to
 /// the node.
 pub fn health_router() -> Router {
-    const PASS: &str = r#"{"details":{"httpServer":{"status":"pass"}},"status":"pass"}"#;
-    let pass = || async {
-        (
-            [(
-                axum::http::header::CONTENT_TYPE,
-                "application/health+json; charset=utf-8",
-            )],
-            PASS,
-        )
-    };
-    Router::new()
-        .route(
-            "/health/live",
-            get(|| async {
-                (
-                    [(
-                        axum::http::header::CONTENT_TYPE,
-                        "text/plain; charset=utf-8",
-                    )],
-                    "alive",
-                )
-            }),
-        )
-        .route("/health/ready", get(pass))
-        .route("/health/startup", get(pass))
+    crate::shared::health::status_checks_router()
         .layer(axum::middleware::from_fn(cors::social_api_cors))
 }
 
@@ -636,6 +678,7 @@ pub fn router(state: SharedState) -> Router {
                 .patch(referral::update_referral_signed_up),
         )
         .route("/v1/referral-email", post(referral::add_referral_email))
+        .route("/v1/client-login", post(referral::client_login))
         .route(
             "/v1/moderation/communities",
             get(admin::get_moderation_communities),
@@ -680,7 +723,11 @@ pub fn router(state: SharedState) -> Router {
             state.clone(),
             copies::gate,
         ))
-        .layer(DefaultBodyLimit::max(512 * 1024))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::gateway_preauth,
+        ))
+        .layer(DefaultBodyLimit::max(1024 * 1024))
         .layer(axum::middleware::from_fn(cors::social_api_cors))
         .with_state(state)
 }

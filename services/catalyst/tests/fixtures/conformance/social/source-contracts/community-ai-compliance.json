@@ -1,0 +1,2036 @@
+{
+  "source": "decentraland/social-service-ea",
+  "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+  "path": "src/adapters/ai-compliance.ts",
+  "node": "v26.12.0",
+  "openai": "5.23.2",
+  "transport": "real installed SDK with mock fetch; no network",
+  "cases": [
+    {
+      "name": "text",
+      "environment": "prd",
+      "dev": true,
+      "model": "gpt-5-nano",
+      "request": {
+        "name": "A community",
+        "description": "A description"
+      },
+      "providerRequest": {
+        "model": "gpt-5-nano",
+        "instructions": "You are Decentraland's compliance expert. Analyze proposed community content against:\n• Code of Ethics (conduct, law, business integrity, confidentiality/privacy, no violence, drugs/alcohol limits, equal opportunity, conflicts of interest, KYC/legitimacy, reputational/legal risk).\n• Content Policy (no illegality: piracy/terrorism/obscenity/child sexual abuse, no IP infringement, no hate/harassment, no false/misleading/libel/privacy invasion, no data-privacy violations; gambling must be licensed & geo-blocked; age-restricted content (intense violence/gambling/sexual) must be 18+ with warnings).\n\nIMPORTANT:\n1) Analyze each field INDEPENDENTLY (do NOT infer issues across fields).\n2) Be strict but fair. Return concise issue tags (≤25 chars) per field. Max 3 per field.\n3) Output ONLY JSON that matches the provided schema.",
+        "input": "Analyze this community content:\nName: \"A community\"\nDescription: \"A description\"\nReturn JSON matching the schema.",
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "ComplianceValidationResult",
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "isCompliant",
+                "issues",
+                "confidence"
+              ],
+              "properties": {
+                "isCompliant": {
+                  "type": "boolean"
+                },
+                "issues": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "description",
+                    "image"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "description": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "image": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "providerResponse": {
+        "object": "response",
+        "output": [
+          {
+            "type": "message",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"isCompliant\":true,\"issues\":{\"name\":[],\"description\":[],\"image\":[]},\"confidence\":0.9}"
+              }
+            ]
+          }
+        ]
+      },
+      "providerStatus": 200,
+      "network": false,
+      "attempts": 1,
+      "result": {
+        "ok": {
+          "isCompliant": true,
+          "issues": {
+            "name": [],
+            "description": [],
+            "image": []
+          },
+          "confidence": 0.9
+        }
+      },
+      "httpResult": {
+        "status": 200
+      },
+      "cacheKey": "ai-compliance:gpt-5-nano:f63888864594a77c1f28feb628760a6b74516af27e445cf8a957f5b2ba497de4",
+      "cachedPut": {
+        "isCompliant": true,
+        "issues": {
+          "name": [],
+          "description": [],
+          "image": []
+        },
+        "confidence": 0.9
+      }
+    },
+    {
+      "name": "image",
+      "environment": "prd",
+      "dev": true,
+      "model": "gpt-5-nano",
+      "request": {
+        "thumbnailBuffer": "/9j/",
+        "thumbnailMime": "image/jpeg"
+      },
+      "providerRequest": {
+        "model": "gpt-5-nano",
+        "instructions": "You are Decentraland's compliance expert. Analyze proposed community content against:\n• Code of Ethics (conduct, law, business integrity, confidentiality/privacy, no violence, drugs/alcohol limits, equal opportunity, conflicts of interest, KYC/legitimacy, reputational/legal risk).\n• Content Policy (no illegality: piracy/terrorism/obscenity/child sexual abuse, no IP infringement, no hate/harassment, no false/misleading/libel/privacy invasion, no data-privacy violations; gambling must be licensed & geo-blocked; age-restricted content (intense violence/gambling/sexual) must be 18+ with warnings).\n\nIMPORTANT:\n1) Analyze each field INDEPENDENTLY (do NOT infer issues across fields).\n2) Be strict but fair. Return concise issue tags (≤25 chars) per field. Max 3 per field.\n3) Output ONLY JSON that matches the provided schema.",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Analyze this community content:\nReturn JSON matching the schema."
+              },
+              {
+                "type": "input_image",
+                "image_url": "data:image/jpeg;base64,/9j/",
+                "detail": "auto"
+              }
+            ]
+          }
+        ],
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "ComplianceValidationResult",
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "isCompliant",
+                "issues",
+                "confidence"
+              ],
+              "properties": {
+                "isCompliant": {
+                  "type": "boolean"
+                },
+                "issues": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "description",
+                    "image"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "description": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "image": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "providerResponse": {
+        "object": "response",
+        "output": [
+          {
+            "type": "message",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"isCompliant\":true,\"issues\":{\"name\":[],\"description\":[],\"image\":[]},\"confidence\":0.9}"
+              }
+            ]
+          }
+        ]
+      },
+      "providerStatus": 200,
+      "network": false,
+      "attempts": 1,
+      "result": {
+        "ok": {
+          "isCompliant": true,
+          "issues": {
+            "name": [],
+            "description": [],
+            "image": []
+          },
+          "confidence": 0.9
+        }
+      },
+      "httpResult": {
+        "status": 200
+      },
+      "cacheKey": "ai-compliance:gpt-5-nano:72ca18747b7cb76ad51d0a9f134754e995b8ec6b60dc8d6c2ffd597edd8d3471",
+      "cachedPut": {
+        "isCompliant": true,
+        "issues": {
+          "name": [],
+          "description": [],
+          "image": []
+        },
+        "confidence": 0.9
+      }
+    },
+    {
+      "name": "name-only",
+      "environment": "prd",
+      "dev": true,
+      "model": "gpt-5-nano",
+      "request": {
+        "name": "Name"
+      },
+      "providerRequest": {
+        "model": "gpt-5-nano",
+        "instructions": "You are Decentraland's compliance expert. Analyze proposed community content against:\n• Code of Ethics (conduct, law, business integrity, confidentiality/privacy, no violence, drugs/alcohol limits, equal opportunity, conflicts of interest, KYC/legitimacy, reputational/legal risk).\n• Content Policy (no illegality: piracy/terrorism/obscenity/child sexual abuse, no IP infringement, no hate/harassment, no false/misleading/libel/privacy invasion, no data-privacy violations; gambling must be licensed & geo-blocked; age-restricted content (intense violence/gambling/sexual) must be 18+ with warnings).\n\nIMPORTANT:\n1) Analyze each field INDEPENDENTLY (do NOT infer issues across fields).\n2) Be strict but fair. Return concise issue tags (≤25 chars) per field. Max 3 per field.\n3) Output ONLY JSON that matches the provided schema.",
+        "input": "Analyze this community content:\nName: \"Name\"\nReturn JSON matching the schema.",
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "ComplianceValidationResult",
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "isCompliant",
+                "issues",
+                "confidence"
+              ],
+              "properties": {
+                "isCompliant": {
+                  "type": "boolean"
+                },
+                "issues": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "description",
+                    "image"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "description": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "image": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "providerResponse": {
+        "object": "response",
+        "output": [
+          {
+            "type": "message",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"isCompliant\":true,\"issues\":{\"name\":[],\"description\":[],\"image\":[]},\"confidence\":0.9}"
+              }
+            ]
+          }
+        ]
+      },
+      "providerStatus": 200,
+      "network": false,
+      "attempts": 1,
+      "result": {
+        "ok": {
+          "isCompliant": true,
+          "issues": {
+            "name": [],
+            "description": [],
+            "image": []
+          },
+          "confidence": 0.9
+        }
+      },
+      "httpResult": {
+        "status": 200
+      },
+      "cacheKey": "ai-compliance:gpt-5-nano:2c63aa57c4e0a550866421b2fd1f89cb01e37ae92978cc5b06fb048505ae529f",
+      "cachedPut": {
+        "isCompliant": true,
+        "issues": {
+          "name": [],
+          "description": [],
+          "image": []
+        },
+        "confidence": 0.9
+      }
+    },
+    {
+      "name": "description-only",
+      "environment": "prd",
+      "dev": true,
+      "model": "gpt-5-nano",
+      "request": {
+        "description": "Description"
+      },
+      "providerRequest": {
+        "model": "gpt-5-nano",
+        "instructions": "You are Decentraland's compliance expert. Analyze proposed community content against:\n• Code of Ethics (conduct, law, business integrity, confidentiality/privacy, no violence, drugs/alcohol limits, equal opportunity, conflicts of interest, KYC/legitimacy, reputational/legal risk).\n• Content Policy (no illegality: piracy/terrorism/obscenity/child sexual abuse, no IP infringement, no hate/harassment, no false/misleading/libel/privacy invasion, no data-privacy violations; gambling must be licensed & geo-blocked; age-restricted content (intense violence/gambling/sexual) must be 18+ with warnings).\n\nIMPORTANT:\n1) Analyze each field INDEPENDENTLY (do NOT infer issues across fields).\n2) Be strict but fair. Return concise issue tags (≤25 chars) per field. Max 3 per field.\n3) Output ONLY JSON that matches the provided schema.",
+        "input": "Analyze this community content:\n\nDescription: \"Description\"\nReturn JSON matching the schema.",
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "ComplianceValidationResult",
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "isCompliant",
+                "issues",
+                "confidence"
+              ],
+              "properties": {
+                "isCompliant": {
+                  "type": "boolean"
+                },
+                "issues": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "description",
+                    "image"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "description": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "image": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "providerResponse": {
+        "object": "response",
+        "output": [
+          {
+            "type": "message",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"isCompliant\":true,\"issues\":{\"name\":[],\"description\":[],\"image\":[]},\"confidence\":0.9}"
+              }
+            ]
+          }
+        ]
+      },
+      "providerStatus": 200,
+      "network": false,
+      "attempts": 1,
+      "result": {
+        "ok": {
+          "isCompliant": true,
+          "issues": {
+            "name": [],
+            "description": [],
+            "image": []
+          },
+          "confidence": 0.9
+        }
+      },
+      "httpResult": {
+        "status": 200
+      },
+      "cacheKey": "ai-compliance:gpt-5-nano:30155f7cc4df3a8f4f11c8fc5d3aa5861642d2eeac6c80757b2dbadd6a356e24",
+      "cachedPut": {
+        "isCompliant": true,
+        "issues": {
+          "name": [],
+          "description": [],
+          "image": []
+        },
+        "confidence": 0.9
+      }
+    },
+    {
+      "name": "noncompliant",
+      "environment": "prd",
+      "dev": true,
+      "model": "gpt-5-nano",
+      "request": {
+        "name": "Rejected"
+      },
+      "providerRequest": {
+        "model": "gpt-5-nano",
+        "instructions": "You are Decentraland's compliance expert. Analyze proposed community content against:\n• Code of Ethics (conduct, law, business integrity, confidentiality/privacy, no violence, drugs/alcohol limits, equal opportunity, conflicts of interest, KYC/legitimacy, reputational/legal risk).\n• Content Policy (no illegality: piracy/terrorism/obscenity/child sexual abuse, no IP infringement, no hate/harassment, no false/misleading/libel/privacy invasion, no data-privacy violations; gambling must be licensed & geo-blocked; age-restricted content (intense violence/gambling/sexual) must be 18+ with warnings).\n\nIMPORTANT:\n1) Analyze each field INDEPENDENTLY (do NOT infer issues across fields).\n2) Be strict but fair. Return concise issue tags (≤25 chars) per field. Max 3 per field.\n3) Output ONLY JSON that matches the provided schema.",
+        "input": "Analyze this community content:\nName: \"Rejected\"\nReturn JSON matching the schema.",
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "ComplianceValidationResult",
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "isCompliant",
+                "issues",
+                "confidence"
+              ],
+              "properties": {
+                "isCompliant": {
+                  "type": "boolean"
+                },
+                "issues": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "description",
+                    "image"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "description": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "image": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "providerResponse": {
+        "object": "response",
+        "output": [
+          {
+            "type": "message",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"isCompliant\":false,\"issues\":{\"name\":[\"hate\"],\"description\":[],\"image\":[]},\"confidence\":0.8}"
+              }
+            ]
+          }
+        ]
+      },
+      "providerStatus": 200,
+      "network": false,
+      "attempts": 1,
+      "result": {
+        "ok": {
+          "isCompliant": false,
+          "issues": {
+            "name": [
+              "hate"
+            ],
+            "description": [],
+            "image": []
+          },
+          "confidence": 0.8
+        }
+      },
+      "httpResult": {
+        "status": 400,
+        "body": {
+          "error": "Community not compliant",
+          "message": "Community content violates Decentraland's Code of Ethics",
+          "data": {
+            "issues": {
+              "name": [
+                "hate"
+              ],
+              "description": [],
+              "image": []
+            }
+          }
+        }
+      },
+      "cacheKey": "ai-compliance:gpt-5-nano:946d0178fd655b0743e748ad71c3567843d99922e422e005c51a864721651f13",
+      "cachedPut": {
+        "isCompliant": false,
+        "issues": {
+          "name": [
+            "hate"
+          ],
+          "description": [],
+          "image": []
+        },
+        "confidence": 0.8
+      }
+    },
+    {
+      "name": "empty-output",
+      "environment": "prd",
+      "dev": true,
+      "model": "gpt-5-nano",
+      "request": {
+        "name": "No output"
+      },
+      "providerRequest": {
+        "model": "gpt-5-nano",
+        "instructions": "You are Decentraland's compliance expert. Analyze proposed community content against:\n• Code of Ethics (conduct, law, business integrity, confidentiality/privacy, no violence, drugs/alcohol limits, equal opportunity, conflicts of interest, KYC/legitimacy, reputational/legal risk).\n• Content Policy (no illegality: piracy/terrorism/obscenity/child sexual abuse, no IP infringement, no hate/harassment, no false/misleading/libel/privacy invasion, no data-privacy violations; gambling must be licensed & geo-blocked; age-restricted content (intense violence/gambling/sexual) must be 18+ with warnings).\n\nIMPORTANT:\n1) Analyze each field INDEPENDENTLY (do NOT infer issues across fields).\n2) Be strict but fair. Return concise issue tags (≤25 chars) per field. Max 3 per field.\n3) Output ONLY JSON that matches the provided schema.",
+        "input": "Analyze this community content:\nName: \"No output\"\nReturn JSON matching the schema.",
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "ComplianceValidationResult",
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "isCompliant",
+                "issues",
+                "confidence"
+              ],
+              "properties": {
+                "isCompliant": {
+                  "type": "boolean"
+                },
+                "issues": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "description",
+                    "image"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "description": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "image": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "providerResponse": {
+        "object": "response",
+        "output": []
+      },
+      "providerStatus": 200,
+      "network": false,
+      "attempts": 1,
+      "result": {
+        "error": "No content received from OpenAI API"
+      },
+      "httpResult": {
+        "status": 400,
+        "body": {
+          "error": "Community content validation unavailable",
+          "message": "No content received from OpenAI API",
+          "communityContentValidationUnavailable": true
+        }
+      },
+      "cacheKey": "ai-compliance:gpt-5-nano:d223f3c83108dacc05e872f72d02ba62335d19985851a89780d9e85580c05d2c"
+    },
+    {
+      "name": "invalid-json",
+      "environment": "prd",
+      "dev": true,
+      "model": "gpt-5-nano",
+      "request": {
+        "name": "Invalid JSON"
+      },
+      "providerRequest": {
+        "model": "gpt-5-nano",
+        "instructions": "You are Decentraland's compliance expert. Analyze proposed community content against:\n• Code of Ethics (conduct, law, business integrity, confidentiality/privacy, no violence, drugs/alcohol limits, equal opportunity, conflicts of interest, KYC/legitimacy, reputational/legal risk).\n• Content Policy (no illegality: piracy/terrorism/obscenity/child sexual abuse, no IP infringement, no hate/harassment, no false/misleading/libel/privacy invasion, no data-privacy violations; gambling must be licensed & geo-blocked; age-restricted content (intense violence/gambling/sexual) must be 18+ with warnings).\n\nIMPORTANT:\n1) Analyze each field INDEPENDENTLY (do NOT infer issues across fields).\n2) Be strict but fair. Return concise issue tags (≤25 chars) per field. Max 3 per field.\n3) Output ONLY JSON that matches the provided schema.",
+        "input": "Analyze this community content:\nName: \"Invalid JSON\"\nReturn JSON matching the schema.",
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "ComplianceValidationResult",
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "isCompliant",
+                "issues",
+                "confidence"
+              ],
+              "properties": {
+                "isCompliant": {
+                  "type": "boolean"
+                },
+                "issues": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "description",
+                    "image"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "description": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "image": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "providerResponse": {
+        "object": "response",
+        "output": [
+          {
+            "type": "message",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "not-json"
+              }
+            ]
+          }
+        ]
+      },
+      "providerStatus": 200,
+      "network": false,
+      "attempts": 1,
+      "result": {
+        "error": "Invalid JSON response from OpenAI API: Unexpected token 'o', \"not-json\" is not valid JSON"
+      },
+      "httpResult": {
+        "status": 400,
+        "body": {
+          "error": "Community content validation unavailable",
+          "message": "Invalid JSON response from OpenAI API: Unexpected token 'o', \"not-json\" is not valid JSON",
+          "communityContentValidationUnavailable": true
+        }
+      },
+      "cacheKey": "ai-compliance:gpt-5-nano:1298215702e033ba69707764224ccbc15a265d6b5b28077b2484e88d02d454c0"
+    },
+    {
+      "name": "invalid-structure",
+      "environment": "prd",
+      "dev": true,
+      "model": "gpt-5-nano",
+      "request": {
+        "name": "Bad structure"
+      },
+      "providerRequest": {
+        "model": "gpt-5-nano",
+        "instructions": "You are Decentraland's compliance expert. Analyze proposed community content against:\n• Code of Ethics (conduct, law, business integrity, confidentiality/privacy, no violence, drugs/alcohol limits, equal opportunity, conflicts of interest, KYC/legitimacy, reputational/legal risk).\n• Content Policy (no illegality: piracy/terrorism/obscenity/child sexual abuse, no IP infringement, no hate/harassment, no false/misleading/libel/privacy invasion, no data-privacy violations; gambling must be licensed & geo-blocked; age-restricted content (intense violence/gambling/sexual) must be 18+ with warnings).\n\nIMPORTANT:\n1) Analyze each field INDEPENDENTLY (do NOT infer issues across fields).\n2) Be strict but fair. Return concise issue tags (≤25 chars) per field. Max 3 per field.\n3) Output ONLY JSON that matches the provided schema.",
+        "input": "Analyze this community content:\nName: \"Bad structure\"\nReturn JSON matching the schema.",
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "ComplianceValidationResult",
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "isCompliant",
+                "issues",
+                "confidence"
+              ],
+              "properties": {
+                "isCompliant": {
+                  "type": "boolean"
+                },
+                "issues": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "description",
+                    "image"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "description": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "image": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "providerResponse": {
+        "object": "response",
+        "output": [
+          {
+            "type": "message",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"isCompliant\":true,\"issues\":{\"name\":[],\"description\":[],\"image\":[]},\"confidence\":0.9,\"extra\":true}"
+              }
+            ]
+          }
+        ]
+      },
+      "providerStatus": 200,
+      "network": false,
+      "attempts": 1,
+      "result": {
+        "error": "Invalid response structure from OpenAI API"
+      },
+      "httpResult": {
+        "status": 400,
+        "body": {
+          "error": "Community content validation unavailable",
+          "message": "Invalid response structure from OpenAI API",
+          "communityContentValidationUnavailable": true
+        }
+      },
+      "cacheKey": "ai-compliance:gpt-5-nano:3c25f69af046bc28a8ec0cdfd37d11b84ec639344ca76a7aa3647f8df3455049"
+    },
+    {
+      "name": "invalid-confidence",
+      "environment": "prd",
+      "dev": true,
+      "model": "gpt-5-nano",
+      "request": {
+        "name": "Bad confidence"
+      },
+      "providerRequest": {
+        "model": "gpt-5-nano",
+        "instructions": "You are Decentraland's compliance expert. Analyze proposed community content against:\n• Code of Ethics (conduct, law, business integrity, confidentiality/privacy, no violence, drugs/alcohol limits, equal opportunity, conflicts of interest, KYC/legitimacy, reputational/legal risk).\n• Content Policy (no illegality: piracy/terrorism/obscenity/child sexual abuse, no IP infringement, no hate/harassment, no false/misleading/libel/privacy invasion, no data-privacy violations; gambling must be licensed & geo-blocked; age-restricted content (intense violence/gambling/sexual) must be 18+ with warnings).\n\nIMPORTANT:\n1) Analyze each field INDEPENDENTLY (do NOT infer issues across fields).\n2) Be strict but fair. Return concise issue tags (≤25 chars) per field. Max 3 per field.\n3) Output ONLY JSON that matches the provided schema.",
+        "input": "Analyze this community content:\nName: \"Bad confidence\"\nReturn JSON matching the schema.",
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "ComplianceValidationResult",
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "isCompliant",
+                "issues",
+                "confidence"
+              ],
+              "properties": {
+                "isCompliant": {
+                  "type": "boolean"
+                },
+                "issues": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "description",
+                    "image"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "description": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "image": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "providerResponse": {
+        "object": "response",
+        "output": [
+          {
+            "type": "message",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"isCompliant\":true,\"issues\":{\"name\":[],\"description\":[],\"image\":[]},\"confidence\":1.01}"
+              }
+            ]
+          }
+        ]
+      },
+      "providerStatus": 200,
+      "network": false,
+      "attempts": 1,
+      "result": {
+        "error": "Invalid response structure from OpenAI API"
+      },
+      "httpResult": {
+        "status": 400,
+        "body": {
+          "error": "Community content validation unavailable",
+          "message": "Invalid response structure from OpenAI API",
+          "communityContentValidationUnavailable": true
+        }
+      },
+      "cacheKey": "ai-compliance:gpt-5-nano:4b81b6c814f97896d9085fd5667c1aa8cfecc8aedd4ce84d5af8c19d60f96713"
+    },
+    {
+      "name": "invalid-issue-count",
+      "environment": "prd",
+      "dev": true,
+      "model": "gpt-5-nano",
+      "request": {
+        "name": "Too many issues"
+      },
+      "providerRequest": {
+        "model": "gpt-5-nano",
+        "instructions": "You are Decentraland's compliance expert. Analyze proposed community content against:\n• Code of Ethics (conduct, law, business integrity, confidentiality/privacy, no violence, drugs/alcohol limits, equal opportunity, conflicts of interest, KYC/legitimacy, reputational/legal risk).\n• Content Policy (no illegality: piracy/terrorism/obscenity/child sexual abuse, no IP infringement, no hate/harassment, no false/misleading/libel/privacy invasion, no data-privacy violations; gambling must be licensed & geo-blocked; age-restricted content (intense violence/gambling/sexual) must be 18+ with warnings).\n\nIMPORTANT:\n1) Analyze each field INDEPENDENTLY (do NOT infer issues across fields).\n2) Be strict but fair. Return concise issue tags (≤25 chars) per field. Max 3 per field.\n3) Output ONLY JSON that matches the provided schema.",
+        "input": "Analyze this community content:\nName: \"Too many issues\"\nReturn JSON matching the schema.",
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "ComplianceValidationResult",
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "isCompliant",
+                "issues",
+                "confidence"
+              ],
+              "properties": {
+                "isCompliant": {
+                  "type": "boolean"
+                },
+                "issues": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "description",
+                    "image"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "description": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "image": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "providerResponse": {
+        "object": "response",
+        "output": [
+          {
+            "type": "message",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"isCompliant\":true,\"issues\":{\"name\":[\"a\",\"b\",\"c\",\"d\"],\"description\":[],\"image\":[]},\"confidence\":0.9}"
+              }
+            ]
+          }
+        ]
+      },
+      "providerStatus": 200,
+      "network": false,
+      "attempts": 1,
+      "result": {
+        "error": "Invalid response structure from OpenAI API"
+      },
+      "httpResult": {
+        "status": 400,
+        "body": {
+          "error": "Community content validation unavailable",
+          "message": "Invalid response structure from OpenAI API",
+          "communityContentValidationUnavailable": true
+        }
+      },
+      "cacheKey": "ai-compliance:gpt-5-nano:3957eae0bbdaeebb45a0068fc79f89252b8f237e9ef95f4010f51d6fae71f310"
+    },
+    {
+      "name": "unicode-issue-boundary",
+      "environment": "prd",
+      "dev": true,
+      "model": "gpt-5-nano",
+      "request": {
+        "name": "Unicode boundary"
+      },
+      "providerRequest": {
+        "model": "gpt-5-nano",
+        "instructions": "You are Decentraland's compliance expert. Analyze proposed community content against:\n• Code of Ethics (conduct, law, business integrity, confidentiality/privacy, no violence, drugs/alcohol limits, equal opportunity, conflicts of interest, KYC/legitimacy, reputational/legal risk).\n• Content Policy (no illegality: piracy/terrorism/obscenity/child sexual abuse, no IP infringement, no hate/harassment, no false/misleading/libel/privacy invasion, no data-privacy violations; gambling must be licensed & geo-blocked; age-restricted content (intense violence/gambling/sexual) must be 18+ with warnings).\n\nIMPORTANT:\n1) Analyze each field INDEPENDENTLY (do NOT infer issues across fields).\n2) Be strict but fair. Return concise issue tags (≤25 chars) per field. Max 3 per field.\n3) Output ONLY JSON that matches the provided schema.",
+        "input": "Analyze this community content:\nName: \"Unicode boundary\"\nReturn JSON matching the schema.",
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "ComplianceValidationResult",
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "isCompliant",
+                "issues",
+                "confidence"
+              ],
+              "properties": {
+                "isCompliant": {
+                  "type": "boolean"
+                },
+                "issues": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "description",
+                    "image"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "description": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "image": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "providerResponse": {
+        "object": "response",
+        "output": [
+          {
+            "type": "message",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"isCompliant\":true,\"issues\":{\"name\":[\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"],\"description\":[],\"image\":[]},\"confidence\":0.9}"
+              }
+            ]
+          }
+        ]
+      },
+      "providerStatus": 200,
+      "network": false,
+      "attempts": 1,
+      "result": {
+        "ok": {
+          "isCompliant": true,
+          "issues": {
+            "name": [
+              "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+            ],
+            "description": [],
+            "image": []
+          },
+          "confidence": 0.9
+        }
+      },
+      "httpResult": {
+        "status": 200
+      },
+      "cacheKey": "ai-compliance:gpt-5-nano:d22e0c9ad18a7f8b11138bc9c0db718644110d1e0a9f06edcf7d263a93472798",
+      "cachedPut": {
+        "isCompliant": true,
+        "issues": {
+          "name": [
+            "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+          ],
+          "description": [],
+          "image": []
+        },
+        "confidence": 0.9
+      }
+    },
+    {
+      "name": "invalid-issue-length",
+      "environment": "prd",
+      "dev": true,
+      "model": "gpt-5-nano",
+      "request": {
+        "name": "Issue too long"
+      },
+      "providerRequest": {
+        "model": "gpt-5-nano",
+        "instructions": "You are Decentraland's compliance expert. Analyze proposed community content against:\n• Code of Ethics (conduct, law, business integrity, confidentiality/privacy, no violence, drugs/alcohol limits, equal opportunity, conflicts of interest, KYC/legitimacy, reputational/legal risk).\n• Content Policy (no illegality: piracy/terrorism/obscenity/child sexual abuse, no IP infringement, no hate/harassment, no false/misleading/libel/privacy invasion, no data-privacy violations; gambling must be licensed & geo-blocked; age-restricted content (intense violence/gambling/sexual) must be 18+ with warnings).\n\nIMPORTANT:\n1) Analyze each field INDEPENDENTLY (do NOT infer issues across fields).\n2) Be strict but fair. Return concise issue tags (≤25 chars) per field. Max 3 per field.\n3) Output ONLY JSON that matches the provided schema.",
+        "input": "Analyze this community content:\nName: \"Issue too long\"\nReturn JSON matching the schema.",
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "ComplianceValidationResult",
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "isCompliant",
+                "issues",
+                "confidence"
+              ],
+              "properties": {
+                "isCompliant": {
+                  "type": "boolean"
+                },
+                "issues": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "description",
+                    "image"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "description": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "image": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "providerResponse": {
+        "object": "response",
+        "output": [
+          {
+            "type": "message",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"isCompliant\":true,\"issues\":{\"name\":[\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"],\"description\":[],\"image\":[]},\"confidence\":0.9}"
+              }
+            ]
+          }
+        ]
+      },
+      "providerStatus": 200,
+      "network": false,
+      "attempts": 1,
+      "result": {
+        "error": "Invalid response structure from OpenAI API"
+      },
+      "httpResult": {
+        "status": 400,
+        "body": {
+          "error": "Community content validation unavailable",
+          "message": "Invalid response structure from OpenAI API",
+          "communityContentValidationUnavailable": true
+        }
+      },
+      "cacheKey": "ai-compliance:gpt-5-nano:1bafe5e0ff20b75236dc949ddefe997e45893bba5cbae70b5c1aefedebf1018e"
+    },
+    {
+      "name": "invalid-nested-extra",
+      "environment": "prd",
+      "dev": true,
+      "model": "gpt-5-nano",
+      "request": {
+        "name": "Nested extra"
+      },
+      "providerRequest": {
+        "model": "gpt-5-nano",
+        "instructions": "You are Decentraland's compliance expert. Analyze proposed community content against:\n• Code of Ethics (conduct, law, business integrity, confidentiality/privacy, no violence, drugs/alcohol limits, equal opportunity, conflicts of interest, KYC/legitimacy, reputational/legal risk).\n• Content Policy (no illegality: piracy/terrorism/obscenity/child sexual abuse, no IP infringement, no hate/harassment, no false/misleading/libel/privacy invasion, no data-privacy violations; gambling must be licensed & geo-blocked; age-restricted content (intense violence/gambling/sexual) must be 18+ with warnings).\n\nIMPORTANT:\n1) Analyze each field INDEPENDENTLY (do NOT infer issues across fields).\n2) Be strict but fair. Return concise issue tags (≤25 chars) per field. Max 3 per field.\n3) Output ONLY JSON that matches the provided schema.",
+        "input": "Analyze this community content:\nName: \"Nested extra\"\nReturn JSON matching the schema.",
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "ComplianceValidationResult",
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "isCompliant",
+                "issues",
+                "confidence"
+              ],
+              "properties": {
+                "isCompliant": {
+                  "type": "boolean"
+                },
+                "issues": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "description",
+                    "image"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "description": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "image": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "providerResponse": {
+        "object": "response",
+        "output": [
+          {
+            "type": "message",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"isCompliant\":true,\"issues\":{\"name\":[],\"description\":[],\"image\":[],\"other\":[]},\"confidence\":0.9}"
+              }
+            ]
+          }
+        ]
+      },
+      "providerStatus": 200,
+      "network": false,
+      "attempts": 1,
+      "result": {
+        "error": "Invalid response structure from OpenAI API"
+      },
+      "httpResult": {
+        "status": 400,
+        "body": {
+          "error": "Community content validation unavailable",
+          "message": "Invalid response structure from OpenAI API",
+          "communityContentValidationUnavailable": true
+        }
+      },
+      "cacheKey": "ai-compliance:gpt-5-nano:415a3dd307b7919b6f6f52cf76747ce784d8bfd6010b5f87ceec88d34dfeb929"
+    },
+    {
+      "name": "provider-rate-limit",
+      "environment": "prd",
+      "dev": true,
+      "model": "gpt-5-nano",
+      "request": {
+        "name": "Rate limit"
+      },
+      "providerRequest": {
+        "model": "gpt-5-nano",
+        "instructions": "You are Decentraland's compliance expert. Analyze proposed community content against:\n• Code of Ethics (conduct, law, business integrity, confidentiality/privacy, no violence, drugs/alcohol limits, equal opportunity, conflicts of interest, KYC/legitimacy, reputational/legal risk).\n• Content Policy (no illegality: piracy/terrorism/obscenity/child sexual abuse, no IP infringement, no hate/harassment, no false/misleading/libel/privacy invasion, no data-privacy violations; gambling must be licensed & geo-blocked; age-restricted content (intense violence/gambling/sexual) must be 18+ with warnings).\n\nIMPORTANT:\n1) Analyze each field INDEPENDENTLY (do NOT infer issues across fields).\n2) Be strict but fair. Return concise issue tags (≤25 chars) per field. Max 3 per field.\n3) Output ONLY JSON that matches the provided schema.",
+        "input": "Analyze this community content:\nName: \"Rate limit\"\nReturn JSON matching the schema.",
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "ComplianceValidationResult",
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "isCompliant",
+                "issues",
+                "confidence"
+              ],
+              "properties": {
+                "isCompliant": {
+                  "type": "boolean"
+                },
+                "issues": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "description",
+                    "image"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "description": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "image": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "providerResponse": {
+        "error": {
+          "message": "quota exhausted"
+        }
+      },
+      "providerStatus": 429,
+      "network": false,
+      "attempts": 3,
+      "result": {
+        "error": "Unexpected error during compliance validation: 429 quota exhausted"
+      },
+      "httpResult": {
+        "status": 400,
+        "body": {
+          "error": "Community content validation unavailable",
+          "message": "Unexpected error during compliance validation: 429 quota exhausted",
+          "communityContentValidationUnavailable": true
+        }
+      },
+      "cacheKey": "ai-compliance:gpt-5-nano:2a5930a25d68066c7d5fe7545b89e782875fe970bbb22e000c98afba6a669dc1"
+    },
+    {
+      "name": "provider-error",
+      "environment": "prd",
+      "dev": true,
+      "model": "gpt-5-nano",
+      "request": {
+        "name": "Provider failure"
+      },
+      "providerRequest": {
+        "model": "gpt-5-nano",
+        "instructions": "You are Decentraland's compliance expert. Analyze proposed community content against:\n• Code of Ethics (conduct, law, business integrity, confidentiality/privacy, no violence, drugs/alcohol limits, equal opportunity, conflicts of interest, KYC/legitimacy, reputational/legal risk).\n• Content Policy (no illegality: piracy/terrorism/obscenity/child sexual abuse, no IP infringement, no hate/harassment, no false/misleading/libel/privacy invasion, no data-privacy violations; gambling must be licensed & geo-blocked; age-restricted content (intense violence/gambling/sexual) must be 18+ with warnings).\n\nIMPORTANT:\n1) Analyze each field INDEPENDENTLY (do NOT infer issues across fields).\n2) Be strict but fair. Return concise issue tags (≤25 chars) per field. Max 3 per field.\n3) Output ONLY JSON that matches the provided schema.",
+        "input": "Analyze this community content:\nName: \"Provider failure\"\nReturn JSON matching the schema.",
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "ComplianceValidationResult",
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "isCompliant",
+                "issues",
+                "confidence"
+              ],
+              "properties": {
+                "isCompliant": {
+                  "type": "boolean"
+                },
+                "issues": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "description",
+                    "image"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "description": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "image": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "providerResponse": {
+        "error": {
+          "message": "provider unavailable"
+        }
+      },
+      "providerStatus": 500,
+      "network": false,
+      "attempts": 3,
+      "result": {
+        "error": "Unexpected error during compliance validation: 500 provider unavailable"
+      },
+      "httpResult": {
+        "status": 400,
+        "body": {
+          "error": "Community content validation unavailable",
+          "message": "Unexpected error during compliance validation: 500 provider unavailable",
+          "communityContentValidationUnavailable": true
+        }
+      },
+      "cacheKey": "ai-compliance:gpt-5-nano:7e48264e28ba267b8513dc0c26e8d13af0ed00415dcbc6c16f193d8d9e788f0c"
+    },
+    {
+      "name": "network-error",
+      "environment": "prd",
+      "dev": true,
+      "model": "gpt-5-nano",
+      "request": {
+        "name": "Network failure"
+      },
+      "providerRequest": {
+        "model": "gpt-5-nano",
+        "instructions": "You are Decentraland's compliance expert. Analyze proposed community content against:\n• Code of Ethics (conduct, law, business integrity, confidentiality/privacy, no violence, drugs/alcohol limits, equal opportunity, conflicts of interest, KYC/legitimacy, reputational/legal risk).\n• Content Policy (no illegality: piracy/terrorism/obscenity/child sexual abuse, no IP infringement, no hate/harassment, no false/misleading/libel/privacy invasion, no data-privacy violations; gambling must be licensed & geo-blocked; age-restricted content (intense violence/gambling/sexual) must be 18+ with warnings).\n\nIMPORTANT:\n1) Analyze each field INDEPENDENTLY (do NOT infer issues across fields).\n2) Be strict but fair. Return concise issue tags (≤25 chars) per field. Max 3 per field.\n3) Output ONLY JSON that matches the provided schema.",
+        "input": "Analyze this community content:\nName: \"Network failure\"\nReturn JSON matching the schema.",
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "ComplianceValidationResult",
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "isCompliant",
+                "issues",
+                "confidence"
+              ],
+              "properties": {
+                "isCompliant": {
+                  "type": "boolean"
+                },
+                "issues": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "description",
+                    "image"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "description": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "image": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "providerStatus": 200,
+      "network": true,
+      "attempts": 3,
+      "result": {
+        "error": "Unexpected error during compliance validation: Connection error."
+      },
+      "httpResult": {
+        "status": 400,
+        "body": {
+          "error": "Community content validation unavailable",
+          "message": "Unexpected error during compliance validation: Connection error.",
+          "communityContentValidationUnavailable": true
+        }
+      },
+      "cacheKey": "ai-compliance:gpt-5-nano:27e5a5a6f2485ad70e854d01b79639073eeb68c8b15c07c05e2744e182a364e8"
+    },
+    {
+      "name": "non-production-disabled",
+      "environment": "dev",
+      "dev": false,
+      "model": "gpt-5-nano",
+      "request": {
+        "name": "No provider"
+      },
+      "providerStatus": 200,
+      "network": false,
+      "attempts": 0,
+      "result": {
+        "ok": {
+          "isCompliant": true,
+          "issues": {
+            "name": [],
+            "description": [],
+            "image": []
+          },
+          "confidence": 1
+        }
+      },
+      "httpResult": {
+        "status": 200
+      }
+    },
+    {
+      "name": "non-production-enabled",
+      "environment": "dev",
+      "dev": true,
+      "model": "gpt-5-nano",
+      "request": {
+        "name": "Dev provider"
+      },
+      "providerRequest": {
+        "model": "gpt-5-nano",
+        "instructions": "You are Decentraland's compliance expert. Analyze proposed community content against:\n• Code of Ethics (conduct, law, business integrity, confidentiality/privacy, no violence, drugs/alcohol limits, equal opportunity, conflicts of interest, KYC/legitimacy, reputational/legal risk).\n• Content Policy (no illegality: piracy/terrorism/obscenity/child sexual abuse, no IP infringement, no hate/harassment, no false/misleading/libel/privacy invasion, no data-privacy violations; gambling must be licensed & geo-blocked; age-restricted content (intense violence/gambling/sexual) must be 18+ with warnings).\n\nIMPORTANT:\n1) Analyze each field INDEPENDENTLY (do NOT infer issues across fields).\n2) Be strict but fair. Return concise issue tags (≤25 chars) per field. Max 3 per field.\n3) Output ONLY JSON that matches the provided schema.",
+        "input": "Analyze this community content:\nName: \"Dev provider\"\nReturn JSON matching the schema.",
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "ComplianceValidationResult",
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "isCompliant",
+                "issues",
+                "confidence"
+              ],
+              "properties": {
+                "isCompliant": {
+                  "type": "boolean"
+                },
+                "issues": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "description",
+                    "image"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "description": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "image": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "providerResponse": {
+        "object": "response",
+        "output": [
+          {
+            "type": "message",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"isCompliant\":true,\"issues\":{\"name\":[],\"description\":[],\"image\":[]},\"confidence\":0.9}"
+              }
+            ]
+          }
+        ]
+      },
+      "providerStatus": 200,
+      "network": false,
+      "attempts": 1,
+      "result": {
+        "ok": {
+          "isCompliant": true,
+          "issues": {
+            "name": [],
+            "description": [],
+            "image": []
+          },
+          "confidence": 0.9
+        }
+      },
+      "httpResult": {
+        "status": 200
+      },
+      "cacheKey": "ai-compliance:gpt-5-nano:50e4104483144fad2779478a8b215bb6d22bd272775a7693ff7494f9b79d4b79",
+      "cachedPut": {
+        "isCompliant": true,
+        "issues": {
+          "name": [],
+          "description": [],
+          "image": []
+        },
+        "confidence": 0.9
+      }
+    },
+    {
+      "name": "cached-rejection",
+      "environment": "prd",
+      "dev": true,
+      "model": "gpt-5-nano",
+      "request": {
+        "name": "Cached rejection"
+      },
+      "providerStatus": 200,
+      "network": false,
+      "cached": {
+        "isCompliant": false,
+        "issues": {
+          "name": [
+            "cached"
+          ],
+          "description": [],
+          "image": []
+        },
+        "confidence": 0.9
+      },
+      "attempts": 0,
+      "result": {
+        "ok": {
+          "isCompliant": false,
+          "issues": {
+            "name": [
+              "cached"
+            ],
+            "description": [],
+            "image": []
+          },
+          "confidence": 0.9
+        }
+      },
+      "httpResult": {
+        "status": 400,
+        "body": {
+          "error": "Community not compliant",
+          "message": "Community content violates Decentraland's Code of Ethics",
+          "data": {
+            "issues": {
+              "name": [
+                "cached"
+              ],
+              "description": [],
+              "image": []
+            }
+          }
+        }
+      },
+      "cacheKey": "ai-compliance:gpt-5-nano:97d7b4535069177deeabd4e4c8cba061ddd40e958f7fda5fc4bdc62558cbb2bc"
+    },
+    {
+      "name": "model-key",
+      "environment": "prd",
+      "dev": true,
+      "model": "fixture-model",
+      "request": {
+        "name": "Other model"
+      },
+      "providerRequest": {
+        "model": "fixture-model",
+        "instructions": "You are Decentraland's compliance expert. Analyze proposed community content against:\n• Code of Ethics (conduct, law, business integrity, confidentiality/privacy, no violence, drugs/alcohol limits, equal opportunity, conflicts of interest, KYC/legitimacy, reputational/legal risk).\n• Content Policy (no illegality: piracy/terrorism/obscenity/child sexual abuse, no IP infringement, no hate/harassment, no false/misleading/libel/privacy invasion, no data-privacy violations; gambling must be licensed & geo-blocked; age-restricted content (intense violence/gambling/sexual) must be 18+ with warnings).\n\nIMPORTANT:\n1) Analyze each field INDEPENDENTLY (do NOT infer issues across fields).\n2) Be strict but fair. Return concise issue tags (≤25 chars) per field. Max 3 per field.\n3) Output ONLY JSON that matches the provided schema.",
+        "input": "Analyze this community content:\nName: \"Other model\"\nReturn JSON matching the schema.",
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "ComplianceValidationResult",
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "isCompliant",
+                "issues",
+                "confidence"
+              ],
+              "properties": {
+                "isCompliant": {
+                  "type": "boolean"
+                },
+                "issues": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "description",
+                    "image"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "description": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    },
+                    "image": {
+                      "type": "array",
+                      "maxItems": 3,
+                      "items": {
+                        "type": "string",
+                        "maxLength": 25
+                      }
+                    }
+                  }
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      },
+      "providerResponse": {
+        "object": "response",
+        "output": [
+          {
+            "type": "message",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"isCompliant\":true,\"issues\":{\"name\":[],\"description\":[],\"image\":[]},\"confidence\":0.9}"
+              }
+            ]
+          }
+        ]
+      },
+      "providerStatus": 200,
+      "network": false,
+      "attempts": 1,
+      "result": {
+        "ok": {
+          "isCompliant": true,
+          "issues": {
+            "name": [],
+            "description": [],
+            "image": []
+          },
+          "confidence": 0.9
+        }
+      },
+      "httpResult": {
+        "status": 200
+      },
+      "cacheKey": "ai-compliance:fixture-model:05434cf961411e82aa7131eec86f49052b20cafc1c7e1e7f10ab995e3f8468d4",
+      "cachedPut": {
+        "isCompliant": true,
+        "issues": {
+          "name": [],
+          "description": [],
+          "image": []
+        },
+        "confidence": 0.9
+      }
+    }
+  ]
+}

@@ -1,0 +1,1626 @@
+{
+  "source": "https://github.com/decentraland/social-service-ea",
+  "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+  "runtime": "v26.12.0",
+  "postgres": "18.6",
+  "scope": "Actual members/bans HTTP handlers, components and SQL adapter execute against disposable minimal PostgreSQL tables. Local registry profiles exercise response mapping. V1 signed aliases retain strings or SQL null; anonymous members and V2 omit them. No claim about external deployments or unrelated DTO families.",
+  "seed": {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "viewer": "0x1111111111111111111111111111111111111111",
+    "peer": "0x2222222222222222222222222222222222222222"
+  },
+  "sources": [
+    {
+      "path": "src/adapters/communities-db.ts",
+      "sha256": "0748e0d7f408e5565a89ff87975eea64fd84ff9c2213bb1038149a3473f0ad8a"
+    },
+    {
+      "path": "src/adapters/pg.ts",
+      "sha256": "612c1c5539ef3873a5a4417052934b277a22b69dccb479ff851cafd495e6ccc8"
+    },
+    {
+      "path": "src/logic/queries.ts",
+      "sha256": "9f689b2f019c87aa32550c91ae6bbc3d1a0619e0d09b6cc517140bf0688e38a1"
+    },
+    {
+      "path": "src/logic/community/members.ts",
+      "sha256": "b0dc7df3813564faeb11e7cd6e2d187b436cc79af8df0542e3968c57ce5160d1"
+    },
+    {
+      "path": "src/logic/community/bans.ts",
+      "sha256": "915b2cbc7c886e39b08150681a2bcd31c2a8a0494c8d1b310dd5475a5bf6e72d"
+    },
+    {
+      "path": "src/logic/community/utils.ts",
+      "sha256": "43d548b3d69a378bf9b629125805bc6f9aa6f966185dbd0235ca26c03e5b9f31"
+    },
+    {
+      "path": "src/logic/profiles.ts",
+      "sha256": "3856e67cd3fcc10b9e4e40c5b775b93a2714cdd10bd1484996cd1aff501333ff"
+    },
+    {
+      "path": "src/logic/friends/friends.ts",
+      "sha256": "fc63e9642e5aaab3e70a28dcc8bd9e895797d02096e794738fa40816df114d0a"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-community-members-handlers.ts",
+      "sha256": "d268d59023df85b25d2d0d4d5faef984c1ea97ec51c4222040c0993ca69c1936"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-community-members-v2-handler.ts",
+      "sha256": "087af4fad0cf831ba7ec3cbd8af9f2aab5c45c49b466840b8ea118eaf04cf2db"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-banned-members-handler.ts",
+      "sha256": "0dbe05a18a075310854e5e1223e7534c4335da38eae223600113ed79fa6f6d55"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-banned-members-v2-handler.ts",
+      "sha256": "486ef6067fbbf4f2889e0e1fb8bd5e2d451333e0e53c7df3815c6924d579241d"
+    }
+  ],
+  "cases": [
+    {
+      "phase": "accepted",
+      "path": "/v1/communities/:id/members",
+      "handler": "getCommunityMembersHandler",
+      "anonymous": false,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "role": "owner",
+                "joinedAt": "2024-01-01T00:00:00.000Z",
+                "lastFriendshipAction": null,
+                "actingUser": null,
+                "profilePictureUrl": "bafkface",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "nameColor": {
+                  "r": 0.5,
+                  "g": 0.25,
+                  "b": 1
+                },
+                "friendshipStatus": 7
+              },
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "role": "member",
+                "joinedAt": "2024-01-01T00:00:01.000Z",
+                "lastFriendshipAction": "accept",
+                "actingUser": "0x2222222222222222222222222222222222222222",
+                "profilePictureUrl": "bafkface",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "nameColor": {
+                  "r": 0.5,
+                  "g": 0.25,
+                  "b": 1
+                },
+                "friendshipStatus": 3
+              }
+            ],
+            "total": 2,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT EXISTS (\n          SELECT 1 FROM communities\n          WHERE id = $1 AND active = true\n      ) AS \"exists\"",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT cm.member_address AS \"memberAddress\", cm.role AS \"role\"\n        FROM community_members cm\n        WHERE cm.community_id = $1\n          AND cm.member_address = ANY($2)\n          AND EXISTS (\n            SELECT 1\n            FROM communities c\n            WHERE c.id = cm.community_id\n              AND c.active = true\n          )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            [
+              "0x1111111111111111111111111111111111111111"
+            ]
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\", lfa.action AS \"lastFriendshipAction\", lfa.acting_user AS \"actingUser\" FROM community_members cm LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cm.member_address WHERE cm.community_id = $5 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(cm.member_address) \n          FROM community_members cm\n          WHERE cm.community_id = $1\n              AND EXISTS (\n                  SELECT 1 \n                  FROM communities c \n                  WHERE c.id = cm.community_id \n                  AND c.active = true\n              )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "accepted",
+      "path": "/v2/communities/:id/members",
+      "handler": "getCommunityMembersV2Handler",
+      "anonymous": false,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "role": "owner",
+                "joinedAt": "2024-01-01T00:00:00.000Z",
+                "friendshipStatus": 7
+              },
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "role": "member",
+                "joinedAt": "2024-01-01T00:00:01.000Z",
+                "friendshipStatus": 3
+              }
+            ],
+            "total": 2,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT EXISTS (\n          SELECT 1 FROM communities\n          WHERE id = $1 AND active = true\n      ) AS \"exists\"",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT cm.member_address AS \"memberAddress\", cm.role AS \"role\"\n        FROM community_members cm\n        WHERE cm.community_id = $1\n          AND cm.member_address = ANY($2)\n          AND EXISTS (\n            SELECT 1\n            FROM communities c\n            WHERE c.id = cm.community_id\n              AND c.active = true\n          )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            [
+              "0x1111111111111111111111111111111111111111"
+            ]
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\", lfa.action AS \"lastFriendshipAction\", lfa.acting_user AS \"actingUser\" FROM community_members cm LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cm.member_address WHERE cm.community_id = $5 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(cm.member_address) \n          FROM community_members cm\n          WHERE cm.community_id = $1\n              AND EXISTS (\n                  SELECT 1 \n                  FROM communities c \n                  WHERE c.id = cm.community_id \n                  AND c.active = true\n              )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "accepted",
+      "path": "/v1/communities/:id/bans",
+      "handler": "getBannedMembersHandler",
+      "anonymous": false,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "bannedAt": "2024-01-01T00:00:00.000Z",
+                "lastFriendshipAction": "accept",
+                "actingUser": "0x2222222222222222222222222222222222222222",
+                "profilePictureUrl": "bafkface",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "nameColor": {
+                  "r": 0.5,
+                  "g": 0.25,
+                  "b": 1
+                },
+                "friendshipStatus": 3
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT banned_address as member_address FROM community_bans WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\n\n        SELECT \n          cb.community_id AS \"communityId\",\n          cb.banned_address AS \"memberAddress\",\n          cb.banned_at AS \"bannedAt\",\n          lfa.action AS \"lastFriendshipAction\",\n          lfa.acting_user AS \"actingUser\"\n        FROM community_bans cb\n        LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cb.banned_address\n        WHERE cb.community_id = $5\n          AND cb.active = true\n        ORDER BY cb.banned_at ASC\n       LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(banned_address) \n        FROM community_bans\n        WHERE community_id = $1\n          AND active = true\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "accepted",
+      "path": "/v2/communities/:id/bans",
+      "handler": "getBannedMembersV2Handler",
+      "anonymous": false,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "bannedAt": "2024-01-01T00:00:00.000Z",
+                "friendshipStatus": 3
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT banned_address as member_address FROM community_bans WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\n\n        SELECT \n          cb.community_id AS \"communityId\",\n          cb.banned_address AS \"memberAddress\",\n          cb.banned_at AS \"bannedAt\",\n          lfa.action AS \"lastFriendshipAction\",\n          lfa.acting_user AS \"actingUser\"\n        FROM community_bans cb\n        LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cb.banned_address\n        WHERE cb.community_id = $5\n          AND cb.active = true\n        ORDER BY cb.banned_at ASC\n       LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(banned_address) \n        FROM community_bans\n        WHERE community_id = $1\n          AND active = true\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "accepted",
+      "path": "/v1/communities/:id/members",
+      "handler": "getCommunityMembersHandler",
+      "anonymous": true,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "role": "owner",
+                "joinedAt": "2024-01-01T00:00:00.000Z",
+                "profilePictureUrl": "bafkface",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "nameColor": {
+                  "r": 0.5,
+                  "g": 0.25,
+                  "b": 1
+                },
+                "friendshipStatus": 7
+              },
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "role": "member",
+                "joinedAt": "2024-01-01T00:00:01.000Z",
+                "profilePictureUrl": "bafkface",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "nameColor": {
+                  "r": 0.5,
+                  "g": 0.25,
+                  "b": 1
+                },
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 2,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT EXISTS (\n          SELECT 1 FROM communities\n          WHERE id = $1 AND active = true\n       AND private <> true) AS \"exists\"",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members)\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\" FROM community_members cm WHERE cm.community_id = $2 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $3 OFFSET $4",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(cm.member_address) \n          FROM community_members cm\n          WHERE cm.community_id = $1\n              AND EXISTS (\n                  SELECT 1 \n                  FROM communities c \n                  WHERE c.id = cm.community_id \n                  AND c.active = true\n              )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "accepted",
+      "path": "/v2/communities/:id/members",
+      "handler": "getCommunityMembersV2Handler",
+      "anonymous": true,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "role": "owner",
+                "joinedAt": "2024-01-01T00:00:00.000Z",
+                "friendshipStatus": 7
+              },
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "role": "member",
+                "joinedAt": "2024-01-01T00:00:01.000Z",
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 2,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT EXISTS (\n          SELECT 1 FROM communities\n          WHERE id = $1 AND active = true\n       AND private <> true) AS \"exists\"",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members)\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\" FROM community_members cm WHERE cm.community_id = $2 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $3 OFFSET $4",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(cm.member_address) \n          FROM community_members cm\n          WHERE cm.community_id = $1\n              AND EXISTS (\n                  SELECT 1 \n                  FROM communities c \n                  WHERE c.id = cm.community_id \n                  AND c.active = true\n              )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "request-sent",
+      "path": "/v1/communities/:id/members",
+      "handler": "getCommunityMembersHandler",
+      "anonymous": false,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "role": "owner",
+                "joinedAt": "2024-01-01T00:00:00.000Z",
+                "lastFriendshipAction": null,
+                "actingUser": null,
+                "profilePictureUrl": "bafkface",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "nameColor": {
+                  "r": 0.5,
+                  "g": 0.25,
+                  "b": 1
+                },
+                "friendshipStatus": 7
+              },
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "role": "member",
+                "joinedAt": "2024-01-01T00:00:01.000Z",
+                "lastFriendshipAction": "request",
+                "actingUser": "0x1111111111111111111111111111111111111111",
+                "profilePictureUrl": "bafkface",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "nameColor": {
+                  "r": 0.5,
+                  "g": 0.25,
+                  "b": 1
+                },
+                "friendshipStatus": 0
+              }
+            ],
+            "total": 2,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT EXISTS (\n          SELECT 1 FROM communities\n          WHERE id = $1 AND active = true\n      ) AS \"exists\"",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT cm.member_address AS \"memberAddress\", cm.role AS \"role\"\n        FROM community_members cm\n        WHERE cm.community_id = $1\n          AND cm.member_address = ANY($2)\n          AND EXISTS (\n            SELECT 1\n            FROM communities c\n            WHERE c.id = cm.community_id\n              AND c.active = true\n          )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            [
+              "0x1111111111111111111111111111111111111111"
+            ]
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\", lfa.action AS \"lastFriendshipAction\", lfa.acting_user AS \"actingUser\" FROM community_members cm LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cm.member_address WHERE cm.community_id = $5 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(cm.member_address) \n          FROM community_members cm\n          WHERE cm.community_id = $1\n              AND EXISTS (\n                  SELECT 1 \n                  FROM communities c \n                  WHERE c.id = cm.community_id \n                  AND c.active = true\n              )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "request-sent",
+      "path": "/v2/communities/:id/members",
+      "handler": "getCommunityMembersV2Handler",
+      "anonymous": false,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "role": "owner",
+                "joinedAt": "2024-01-01T00:00:00.000Z",
+                "friendshipStatus": 7
+              },
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "role": "member",
+                "joinedAt": "2024-01-01T00:00:01.000Z",
+                "friendshipStatus": 0
+              }
+            ],
+            "total": 2,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT EXISTS (\n          SELECT 1 FROM communities\n          WHERE id = $1 AND active = true\n      ) AS \"exists\"",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT cm.member_address AS \"memberAddress\", cm.role AS \"role\"\n        FROM community_members cm\n        WHERE cm.community_id = $1\n          AND cm.member_address = ANY($2)\n          AND EXISTS (\n            SELECT 1\n            FROM communities c\n            WHERE c.id = cm.community_id\n              AND c.active = true\n          )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            [
+              "0x1111111111111111111111111111111111111111"
+            ]
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\", lfa.action AS \"lastFriendshipAction\", lfa.acting_user AS \"actingUser\" FROM community_members cm LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cm.member_address WHERE cm.community_id = $5 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(cm.member_address) \n          FROM community_members cm\n          WHERE cm.community_id = $1\n              AND EXISTS (\n                  SELECT 1 \n                  FROM communities c \n                  WHERE c.id = cm.community_id \n                  AND c.active = true\n              )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "request-sent",
+      "path": "/v1/communities/:id/bans",
+      "handler": "getBannedMembersHandler",
+      "anonymous": false,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "bannedAt": "2024-01-01T00:00:00.000Z",
+                "lastFriendshipAction": "request",
+                "actingUser": "0x1111111111111111111111111111111111111111",
+                "profilePictureUrl": "bafkface",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "nameColor": {
+                  "r": 0.5,
+                  "g": 0.25,
+                  "b": 1
+                },
+                "friendshipStatus": 0
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT banned_address as member_address FROM community_bans WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\n\n        SELECT \n          cb.community_id AS \"communityId\",\n          cb.banned_address AS \"memberAddress\",\n          cb.banned_at AS \"bannedAt\",\n          lfa.action AS \"lastFriendshipAction\",\n          lfa.acting_user AS \"actingUser\"\n        FROM community_bans cb\n        LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cb.banned_address\n        WHERE cb.community_id = $5\n          AND cb.active = true\n        ORDER BY cb.banned_at ASC\n       LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(banned_address) \n        FROM community_bans\n        WHERE community_id = $1\n          AND active = true\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "request-sent",
+      "path": "/v2/communities/:id/bans",
+      "handler": "getBannedMembersV2Handler",
+      "anonymous": false,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "bannedAt": "2024-01-01T00:00:00.000Z",
+                "friendshipStatus": 0
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT banned_address as member_address FROM community_bans WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\n\n        SELECT \n          cb.community_id AS \"communityId\",\n          cb.banned_address AS \"memberAddress\",\n          cb.banned_at AS \"bannedAt\",\n          lfa.action AS \"lastFriendshipAction\",\n          lfa.acting_user AS \"actingUser\"\n        FROM community_bans cb\n        LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cb.banned_address\n        WHERE cb.community_id = $5\n          AND cb.active = true\n        ORDER BY cb.banned_at ASC\n       LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(banned_address) \n        FROM community_bans\n        WHERE community_id = $1\n          AND active = true\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "request-received",
+      "path": "/v1/communities/:id/members",
+      "handler": "getCommunityMembersHandler",
+      "anonymous": false,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "role": "owner",
+                "joinedAt": "2024-01-01T00:00:00.000Z",
+                "lastFriendshipAction": null,
+                "actingUser": null,
+                "profilePictureUrl": "bafkface",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "nameColor": {
+                  "r": 0.5,
+                  "g": 0.25,
+                  "b": 1
+                },
+                "friendshipStatus": 7
+              },
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "role": "member",
+                "joinedAt": "2024-01-01T00:00:01.000Z",
+                "lastFriendshipAction": "request",
+                "actingUser": "0x2222222222222222222222222222222222222222",
+                "profilePictureUrl": "bafkface",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "nameColor": {
+                  "r": 0.5,
+                  "g": 0.25,
+                  "b": 1
+                },
+                "friendshipStatus": 1
+              }
+            ],
+            "total": 2,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT EXISTS (\n          SELECT 1 FROM communities\n          WHERE id = $1 AND active = true\n      ) AS \"exists\"",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT cm.member_address AS \"memberAddress\", cm.role AS \"role\"\n        FROM community_members cm\n        WHERE cm.community_id = $1\n          AND cm.member_address = ANY($2)\n          AND EXISTS (\n            SELECT 1\n            FROM communities c\n            WHERE c.id = cm.community_id\n              AND c.active = true\n          )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            [
+              "0x1111111111111111111111111111111111111111"
+            ]
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\", lfa.action AS \"lastFriendshipAction\", lfa.acting_user AS \"actingUser\" FROM community_members cm LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cm.member_address WHERE cm.community_id = $5 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(cm.member_address) \n          FROM community_members cm\n          WHERE cm.community_id = $1\n              AND EXISTS (\n                  SELECT 1 \n                  FROM communities c \n                  WHERE c.id = cm.community_id \n                  AND c.active = true\n              )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "request-received",
+      "path": "/v2/communities/:id/members",
+      "handler": "getCommunityMembersV2Handler",
+      "anonymous": false,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "role": "owner",
+                "joinedAt": "2024-01-01T00:00:00.000Z",
+                "friendshipStatus": 7
+              },
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "role": "member",
+                "joinedAt": "2024-01-01T00:00:01.000Z",
+                "friendshipStatus": 1
+              }
+            ],
+            "total": 2,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT EXISTS (\n          SELECT 1 FROM communities\n          WHERE id = $1 AND active = true\n      ) AS \"exists\"",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT cm.member_address AS \"memberAddress\", cm.role AS \"role\"\n        FROM community_members cm\n        WHERE cm.community_id = $1\n          AND cm.member_address = ANY($2)\n          AND EXISTS (\n            SELECT 1\n            FROM communities c\n            WHERE c.id = cm.community_id\n              AND c.active = true\n          )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            [
+              "0x1111111111111111111111111111111111111111"
+            ]
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\", lfa.action AS \"lastFriendshipAction\", lfa.acting_user AS \"actingUser\" FROM community_members cm LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cm.member_address WHERE cm.community_id = $5 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(cm.member_address) \n          FROM community_members cm\n          WHERE cm.community_id = $1\n              AND EXISTS (\n                  SELECT 1 \n                  FROM communities c \n                  WHERE c.id = cm.community_id \n                  AND c.active = true\n              )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "request-received",
+      "path": "/v1/communities/:id/bans",
+      "handler": "getBannedMembersHandler",
+      "anonymous": false,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "bannedAt": "2024-01-01T00:00:00.000Z",
+                "lastFriendshipAction": "request",
+                "actingUser": "0x2222222222222222222222222222222222222222",
+                "profilePictureUrl": "bafkface",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "nameColor": {
+                  "r": 0.5,
+                  "g": 0.25,
+                  "b": 1
+                },
+                "friendshipStatus": 1
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT banned_address as member_address FROM community_bans WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\n\n        SELECT \n          cb.community_id AS \"communityId\",\n          cb.banned_address AS \"memberAddress\",\n          cb.banned_at AS \"bannedAt\",\n          lfa.action AS \"lastFriendshipAction\",\n          lfa.acting_user AS \"actingUser\"\n        FROM community_bans cb\n        LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cb.banned_address\n        WHERE cb.community_id = $5\n          AND cb.active = true\n        ORDER BY cb.banned_at ASC\n       LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(banned_address) \n        FROM community_bans\n        WHERE community_id = $1\n          AND active = true\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "request-received",
+      "path": "/v2/communities/:id/bans",
+      "handler": "getBannedMembersV2Handler",
+      "anonymous": false,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "bannedAt": "2024-01-01T00:00:00.000Z",
+                "friendshipStatus": 1
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT banned_address as member_address FROM community_bans WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\n\n        SELECT \n          cb.community_id AS \"communityId\",\n          cb.banned_address AS \"memberAddress\",\n          cb.banned_at AS \"bannedAt\",\n          lfa.action AS \"lastFriendshipAction\",\n          lfa.acting_user AS \"actingUser\"\n        FROM community_bans cb\n        LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cb.banned_address\n        WHERE cb.community_id = $5\n          AND cb.active = true\n        ORDER BY cb.banned_at ASC\n       LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(banned_address) \n        FROM community_bans\n        WHERE community_id = $1\n          AND active = true\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "none",
+      "path": "/v1/communities/:id/members",
+      "handler": "getCommunityMembersHandler",
+      "anonymous": false,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "role": "owner",
+                "joinedAt": "2024-01-01T00:00:00.000Z",
+                "lastFriendshipAction": null,
+                "actingUser": null,
+                "profilePictureUrl": "bafkface",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "nameColor": {
+                  "r": 0.5,
+                  "g": 0.25,
+                  "b": 1
+                },
+                "friendshipStatus": 7
+              },
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "role": "member",
+                "joinedAt": "2024-01-01T00:00:01.000Z",
+                "lastFriendshipAction": null,
+                "actingUser": null,
+                "profilePictureUrl": "bafkface",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "nameColor": {
+                  "r": 0.5,
+                  "g": 0.25,
+                  "b": 1
+                },
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 2,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT EXISTS (\n          SELECT 1 FROM communities\n          WHERE id = $1 AND active = true\n      ) AS \"exists\"",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT cm.member_address AS \"memberAddress\", cm.role AS \"role\"\n        FROM community_members cm\n        WHERE cm.community_id = $1\n          AND cm.member_address = ANY($2)\n          AND EXISTS (\n            SELECT 1\n            FROM communities c\n            WHERE c.id = cm.community_id\n              AND c.active = true\n          )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            [
+              "0x1111111111111111111111111111111111111111"
+            ]
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\", lfa.action AS \"lastFriendshipAction\", lfa.acting_user AS \"actingUser\" FROM community_members cm LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cm.member_address WHERE cm.community_id = $5 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(cm.member_address) \n          FROM community_members cm\n          WHERE cm.community_id = $1\n              AND EXISTS (\n                  SELECT 1 \n                  FROM communities c \n                  WHERE c.id = cm.community_id \n                  AND c.active = true\n              )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "none",
+      "path": "/v2/communities/:id/members",
+      "handler": "getCommunityMembersV2Handler",
+      "anonymous": false,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "role": "owner",
+                "joinedAt": "2024-01-01T00:00:00.000Z",
+                "friendshipStatus": 7
+              },
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "role": "member",
+                "joinedAt": "2024-01-01T00:00:01.000Z",
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 2,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT EXISTS (\n          SELECT 1 FROM communities\n          WHERE id = $1 AND active = true\n      ) AS \"exists\"",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT cm.member_address AS \"memberAddress\", cm.role AS \"role\"\n        FROM community_members cm\n        WHERE cm.community_id = $1\n          AND cm.member_address = ANY($2)\n          AND EXISTS (\n            SELECT 1\n            FROM communities c\n            WHERE c.id = cm.community_id\n              AND c.active = true\n          )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            [
+              "0x1111111111111111111111111111111111111111"
+            ]
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\", lfa.action AS \"lastFriendshipAction\", lfa.acting_user AS \"actingUser\" FROM community_members cm LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cm.member_address WHERE cm.community_id = $5 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(cm.member_address) \n          FROM community_members cm\n          WHERE cm.community_id = $1\n              AND EXISTS (\n                  SELECT 1 \n                  FROM communities c \n                  WHERE c.id = cm.community_id \n                  AND c.active = true\n              )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "none",
+      "path": "/v1/communities/:id/bans",
+      "handler": "getBannedMembersHandler",
+      "anonymous": false,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "bannedAt": "2024-01-01T00:00:00.000Z",
+                "lastFriendshipAction": null,
+                "actingUser": null,
+                "profilePictureUrl": "bafkface",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "nameColor": {
+                  "r": 0.5,
+                  "g": 0.25,
+                  "b": 1
+                },
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT banned_address as member_address FROM community_bans WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\n\n        SELECT \n          cb.community_id AS \"communityId\",\n          cb.banned_address AS \"memberAddress\",\n          cb.banned_at AS \"bannedAt\",\n          lfa.action AS \"lastFriendshipAction\",\n          lfa.acting_user AS \"actingUser\"\n        FROM community_bans cb\n        LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cb.banned_address\n        WHERE cb.community_id = $5\n          AND cb.active = true\n        ORDER BY cb.banned_at ASC\n       LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(banned_address) \n        FROM community_bans\n        WHERE community_id = $1\n          AND active = true\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "none",
+      "path": "/v2/communities/:id/bans",
+      "handler": "getBannedMembersV2Handler",
+      "anonymous": false,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "bannedAt": "2024-01-01T00:00:00.000Z",
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT banned_address as member_address FROM community_bans WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\n\n        SELECT \n          cb.community_id AS \"communityId\",\n          cb.banned_address AS \"memberAddress\",\n          cb.banned_at AS \"bannedAt\",\n          lfa.action AS \"lastFriendshipAction\",\n          lfa.acting_user AS \"actingUser\"\n        FROM community_bans cb\n        LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cb.banned_address\n        WHERE cb.community_id = $5\n          AND cb.active = true\n        ORDER BY cb.banned_at ASC\n       LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(banned_address) \n        FROM community_bans\n        WHERE community_id = $1\n          AND active = true\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "empty-history",
+      "path": "/v1/communities/:id/members",
+      "handler": "getCommunityMembersHandler",
+      "anonymous": false,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "role": "owner",
+                "joinedAt": "2024-01-01T00:00:00.000Z",
+                "lastFriendshipAction": null,
+                "actingUser": null,
+                "profilePictureUrl": "bafkface",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "nameColor": {
+                  "r": 0.5,
+                  "g": 0.25,
+                  "b": 1
+                },
+                "friendshipStatus": 7
+              },
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "role": "member",
+                "joinedAt": "2024-01-01T00:00:01.000Z",
+                "lastFriendshipAction": null,
+                "actingUser": null,
+                "profilePictureUrl": "bafkface",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "nameColor": {
+                  "r": 0.5,
+                  "g": 0.25,
+                  "b": 1
+                },
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 2,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT EXISTS (\n          SELECT 1 FROM communities\n          WHERE id = $1 AND active = true\n      ) AS \"exists\"",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT cm.member_address AS \"memberAddress\", cm.role AS \"role\"\n        FROM community_members cm\n        WHERE cm.community_id = $1\n          AND cm.member_address = ANY($2)\n          AND EXISTS (\n            SELECT 1\n            FROM communities c\n            WHERE c.id = cm.community_id\n              AND c.active = true\n          )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            [
+              "0x1111111111111111111111111111111111111111"
+            ]
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\", lfa.action AS \"lastFriendshipAction\", lfa.acting_user AS \"actingUser\" FROM community_members cm LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cm.member_address WHERE cm.community_id = $5 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(cm.member_address) \n          FROM community_members cm\n          WHERE cm.community_id = $1\n              AND EXISTS (\n                  SELECT 1 \n                  FROM communities c \n                  WHERE c.id = cm.community_id \n                  AND c.active = true\n              )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "empty-history",
+      "path": "/v2/communities/:id/members",
+      "handler": "getCommunityMembersV2Handler",
+      "anonymous": false,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "role": "owner",
+                "joinedAt": "2024-01-01T00:00:00.000Z",
+                "friendshipStatus": 7
+              },
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "role": "member",
+                "joinedAt": "2024-01-01T00:00:01.000Z",
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 2,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT EXISTS (\n          SELECT 1 FROM communities\n          WHERE id = $1 AND active = true\n      ) AS \"exists\"",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "\n        SELECT cm.member_address AS \"memberAddress\", cm.role AS \"role\"\n        FROM community_members cm\n        WHERE cm.community_id = $1\n          AND cm.member_address = ANY($2)\n          AND EXISTS (\n            SELECT 1\n            FROM communities c\n            WHERE c.id = cm.community_id\n              AND c.active = true\n          )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            [
+              "0x1111111111111111111111111111111111111111"
+            ]
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\", lfa.action AS \"lastFriendshipAction\", lfa.acting_user AS \"actingUser\" FROM community_members cm LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cm.member_address WHERE cm.community_id = $5 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(cm.member_address) \n          FROM community_members cm\n          WHERE cm.community_id = $1\n              AND EXISTS (\n                  SELECT 1 \n                  FROM communities c \n                  WHERE c.id = cm.community_id \n                  AND c.active = true\n              )\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "empty-history",
+      "path": "/v1/communities/:id/bans",
+      "handler": "getBannedMembersHandler",
+      "anonymous": false,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "bannedAt": "2024-01-01T00:00:00.000Z",
+                "lastFriendshipAction": null,
+                "actingUser": null,
+                "profilePictureUrl": "bafkface",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "nameColor": {
+                  "r": 0.5,
+                  "g": 0.25,
+                  "b": 1
+                },
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT banned_address as member_address FROM community_bans WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\n\n        SELECT \n          cb.community_id AS \"communityId\",\n          cb.banned_address AS \"memberAddress\",\n          cb.banned_at AS \"bannedAt\",\n          lfa.action AS \"lastFriendshipAction\",\n          lfa.acting_user AS \"actingUser\"\n        FROM community_bans cb\n        LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cb.banned_address\n        WHERE cb.community_id = $5\n          AND cb.active = true\n        ORDER BY cb.banned_at ASC\n       LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(banned_address) \n        FROM community_bans\n        WHERE community_id = $1\n          AND active = true\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "empty-history",
+      "path": "/v2/communities/:id/bans",
+      "handler": "getBannedMembersV2Handler",
+      "anonymous": false,
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "bannedAt": "2024-01-01T00:00:00.000Z",
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n       $1 as role FROM communities c WHERE c.id = $2 AND c.active = true",
+          "values": [
+            "none",
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        },
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT banned_address as member_address FROM community_bans WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\n\n        SELECT \n          cb.community_id AS \"communityId\",\n          cb.banned_address AS \"memberAddress\",\n          cb.banned_at AS \"bannedAt\",\n          lfa.action AS \"lastFriendshipAction\",\n          lfa.acting_user AS \"actingUser\"\n        FROM community_bans cb\n        LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cb.banned_address\n        WHERE cb.community_id = $5\n          AND cb.active = true\n        ORDER BY cb.banned_at ASC\n       LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        },
+        {
+          "text": "\n        SELECT COUNT(banned_address) \n        FROM community_bans\n        WHERE community_id = $1\n          AND active = true\n      ",
+          "values": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      ]
+    }
+  ]
+}
