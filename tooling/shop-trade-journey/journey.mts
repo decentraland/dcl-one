@@ -19,6 +19,7 @@ import { generatePrivateKey } from "viem/accounts";
 import { polygonAmoy } from "viem/chains";
 import type { Browser, BrowserContext, Page, Response } from "playwright-core";
 import { launch } from "./lib/browser.mts";
+import { AMOY_CREDITS_MANAGER } from "./lib/contracts.mts";
 import { journeyEnv, parseDiscount, parseItem, parseToken, parseTopup } from "./lib/env.mts";
 import { signedPost } from "./lib/signed.mts";
 import { chargedMana, collectionInRoot, couponData, couponProofs, settledCall, soldItem } from "./lib/settlement.mts";
@@ -40,10 +41,9 @@ const AMOY_TRADE_CONTRACTS = [
   "0x4b66eab79cc03a96fb6275cfcdf23c0db431606d", // BidV2
   "0xe36abc9ec616c83caaa386541380829106149d68", // CollectionStore
 ];
-// The primary loop's other destinations: ending a discount calls the CouponManager V3, and a credits
-// purchase goes through the CreditsManager (both under `amoy` in addresses.json).
+// The primary loop's other destinations: ending a discount calls the CouponManager V3 (under `amoy` in
+// addresses.json), and a credits purchase goes through dcl-one's own CreditsManager (./lib/contracts.mts).
 const AMOY_COUPON_MANAGER = "0x6c956587d9fe70032781edcdc626310648575382";
-const AMOY_CREDITS_MANAGER = "0x8052a560e6e6ac86eeb7e711a4497f639b322fb3" as const;
 const CREDITS_SIGNER_ROLE = keccak256(toHex("CREDITS_SIGNER_ROLE"));
 const COLLECTION_ABI = parseAbi(["function creator() view returns (address)", "function name() view returns (string)", "function balanceOf(address) view returns (uint256)"]);
 const ROLES_ABI = parseAbi(["function hasRole(bytes32, address) view returns (bool)"]);
@@ -589,7 +589,7 @@ async function primary(seller: Actor, buyer: Actor, buyerKey: Hex, s: Funds, b: 
       await discountButton(seller.page, collectionName);
     });
   }
-  // Credits: the stack signs them only with a key holding CREDITS_SIGNER_ROLE on Amoy's CreditsManager,
+  // Credits: the stack signs them only with a key holding CREDITS_SIGNER_ROLE on dcl-one's CreditsManager,
   // and only once its usage index has caught up (README, "Credits").
   let creditsProblem: string | null = null;
   await step("stack can sign credits on Amoy", buyer, async () => {
@@ -600,12 +600,12 @@ async function primary(seller: Actor, buyer: Actor, buyerKey: Hex, s: Funds, b: 
     }
     const st = (await res.json()) as CreditsStatus;
     const signer = env.E2E_CREDITS_SIGNER;
-    if (st.contract?.toLowerCase() !== AMOY_CREDITS_MANAGER || st.chainId !== 80002) creditsProblem = `the stack's credits contract is ${st.contract ?? "unset"} on ${st.chainId}, not Amoy's CreditsManager`;
+    if (st.contract?.toLowerCase() !== AMOY_CREDITS_MANAGER || st.chainId !== 80002) creditsProblem = `the stack's credits contract is ${st.contract ?? "unset"} on ${st.chainId}, not dcl-one's CreditsManager on Amoy (${AMOY_CREDITS_MANAGER})`;
     else if (!st.authorizeEnabled) creditsProblem = "the stack signs no credits: put its signer key in .cache/dev/credits-signer.key and restart it";
     else if (!st.ready) creditsProblem = "the stack's credits usage index has not caught up yet";
     else if (signer && !isAddress(signer)) creditsProblem = "E2E_CREDITS_SIGNER is not an address";
     else if (signer && !(await amoy.readContract({ address: AMOY_CREDITS_MANAGER, abi: ROLES_ABI, functionName: "hasRole", args: [CREDITS_SIGNER_ROLE, signer as Hex] }))) {
-      creditsProblem = `${signer} does not hold CREDITS_SIGNER_ROLE on Amoy's CreditsManager`;
+      creditsProblem = `${signer} does not hold CREDITS_SIGNER_ROLE on the CreditsManager`;
     }
     if (creditsProblem && !preflightOnly) throw new Error(creditsProblem);
     return creditsProblem ? `not yet: ${creditsProblem}` : "ready";

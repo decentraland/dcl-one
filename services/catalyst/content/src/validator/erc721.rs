@@ -16,12 +16,18 @@ use crate::errors::AppError;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Erc721Trait {
     pub trait_type: String,
-    pub value: String,
+    /// `None` only for an item without a category: upstream still lists the
+    /// trait, and `JSON.stringify` drops the undefined `value`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Erc721Metadata {
     pub id: String,
+    /// Left out when the item has no `i18n` entry, as `JSON.stringify` drops
+    /// upstream's undefined `name`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub description: String,
     pub language: String,
@@ -69,16 +75,19 @@ pub fn format_erc721_entity(
         })
         .map(|s| s.to_string());
 
-    let rarity = metadata
-        .and_then(|m| m.get("rarity"))
-        .and_then(|r| r.as_str())
-        .unwrap_or("");
+    let rarity = match metadata.and_then(|m| m.get("rarity")) {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+        None => String::new(),
+    };
 
-    let description = match emission {
-        Some(em) => {
-            let total = rarity_emission(rarity).unwrap_or(0);
-            format!("DCL Wearable {em}/{total}")
-        }
+    // Upstream interpolates `RARITIES_EMISSIONS[rarity]`, `undefined` for an
+    // unknown rarity, and treats an empty `emission` as none.
+    let description = match emission.filter(|em| !em.is_empty()) {
+        Some(em) => match rarity_emission(&rarity) {
+            Some(total) => format!("DCL Wearable {em}/{total}"),
+            None => format!("DCL Wearable {em}/undefined"),
+        },
         None => String::new(),
     };
 
@@ -92,32 +101,25 @@ pub fn format_erc721_entity(
     let mut attributes = Vec::new();
     attributes.push(Erc721Trait {
         trait_type: "Rarity".to_string(),
-        value: rarity.to_string(),
+        value: Some(rarity),
     });
-
-    let category = extract_item_category(metadata);
-    if let Some(cat) = category {
-        attributes.push(Erc721Trait {
-            trait_type: "Category".to_string(),
-            value: cat,
-        });
-    }
+    attributes.push(Erc721Trait {
+        trait_type: "Category".to_string(),
+        value: extract_item_category(metadata),
+    });
 
     let tags = extract_item_tags(metadata);
     for tag in tags {
         attributes.push(Erc721Trait {
             trait_type: "Tag".to_string(),
-            value: tag,
+            value: Some(tag),
         });
     }
 
-    let body_shapes = extract_body_shapes(metadata);
-    for shape in body_shapes {
-        attributes.push(Erc721Trait {
-            trait_type: "Body Shape".to_string(),
-            value: shape,
-        });
-    }
+    // No `Body Shape` traits: upstream looks each shape up with
+    // `BodyShape[BodyShape.MALE]` on a string enum, which is `undefined`, so
+    // none ever matches; the production peer lists none for a wearable with
+    // both representations (`captures/content-sync/CS-16-erc721-wearable.json`).
 
     Erc721Metadata {
         id: urn.to_string(),
@@ -142,18 +144,25 @@ fn find_content_hash(entity: &Entity, field_name: &str) -> Option<String> {
         .map(|c| c.hash.clone())
 }
 
+/// The item's data, upstream's `emoteDataADR74 ?? data`: an emote's ADR-74
+/// block first.
+fn item_data(metadata: Option<&serde_json::Value>) -> Option<&serde_json::Value> {
+    let metadata = metadata?;
+    metadata
+        .get("emoteDataADR74")
+        .filter(|d| !d.is_null())
+        .or_else(|| metadata.get("data"))
+}
+
 fn extract_item_category(metadata: Option<&serde_json::Value>) -> Option<String> {
-    metadata?
-        .get("data")
-        .or_else(|| metadata?.get("emoteDataADR74"))
+    item_data(metadata)
         .and_then(|d| d.get("category"))
         .and_then(|c| c.as_str())
         .map(|s| s.to_string())
 }
 
 fn extract_item_tags(metadata: Option<&serde_json::Value>) -> Vec<String> {
-    metadata
-        .and_then(|m| m.get("data").or_else(|| m.get("emoteDataADR74")))
+    item_data(metadata)
         .and_then(|d| d.get("tags"))
         .and_then(|t| t.as_array())
         .map(|arr| {
@@ -162,37 +171,6 @@ fn extract_item_tags(metadata: Option<&serde_json::Value>) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-fn extract_body_shapes(metadata: Option<&serde_json::Value>) -> Vec<String> {
-    let data = metadata.and_then(|m| m.get("data").or_else(|| m.get("emoteDataADR74")));
-
-    let representations = data
-        .and_then(|d| d.get("representations"))
-        .and_then(|r| r.as_array());
-
-    let mut shapes = std::collections::BTreeSet::new();
-    if let Some(reps) = representations {
-        for rep in reps {
-            if let Some(body_shapes) = rep.get("bodyShapes").and_then(|b| b.as_array()) {
-                for shape in body_shapes {
-                    if let Some(s) = shape.as_str() {
-                        match s {
-                            "urn:decentraland:off-chain:base-avatars:BaseMale" | "BaseMale" => {
-                                shapes.insert("BaseMale".to_string());
-                            }
-                            "urn:decentraland:off-chain:base-avatars:BaseFemale" | "BaseFemale" => {
-                                shapes.insert("BaseFemale".to_string());
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    shapes.into_iter().collect()
 }
 
 fn get_urn_protocol(chain_id: u64) -> Option<&'static str> {
@@ -297,6 +275,10 @@ pub async fn get_erc721_entity(
     Path(params): Path<Erc721Params>,
 ) -> Result<Json<Erc721Metadata>, AppError> {
     let invalid_chain = || AppError::invalid(format!("Invalid chainId '{}'", params.chain_id));
+    // Upstream's `/^\d+$/`: no sign, no blank.
+    if params.chain_id.is_empty() || !params.chain_id.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(invalid_chain());
+    }
     let chain_id: u64 = params.chain_id.parse().map_err(|_| invalid_chain())?;
     let protocol = get_urn_protocol(chain_id).ok_or_else(invalid_chain)?;
     let pointer = build_urn(protocol, &params.contract, &params.option);
@@ -313,8 +295,16 @@ pub async fn get_erc721_entity(
     let entity_value = doc
         .to_value()
         .ok_or_else(|| AppError::Internal("unparseable entity document".to_string()))?;
-    let metadata = entity_value.get("metadata").ok_or_else(not_found)?;
-    if metadata.get("rarity").is_none() {
+    // Upstream: a falsy `metadata` is a 404, a falsy `rarity` (absent, null,
+    // `""`) a 400.
+    let metadata = entity_value
+        .get("metadata")
+        .filter(|m| crate::queries::js_truthy(m))
+        .ok_or_else(not_found)?;
+    if !metadata
+        .get("rarity")
+        .is_some_and(crate::queries::js_truthy)
+    {
         return Err(AppError::invalid("Wearable is not standard."));
     }
     let entity = value_to_entity(&entity_value)
@@ -374,13 +364,88 @@ mod tests {
             result
                 .attributes
                 .iter()
-                .any(|a| a.trait_type == "Rarity" && a.value == "epic")
+                .any(|a| a.trait_type == "Rarity" && a.value.as_deref() == Some("epic"))
         );
         assert!(
             result
                 .attributes
                 .iter()
-                .any(|a| a.trait_type == "Category" && a.value == "hat")
+                .any(|a| a.trait_type == "Category" && a.value.as_deref() == Some("hat"))
+        );
+    }
+
+    fn wearable(metadata: serde_json::Value) -> Entity {
+        Entity {
+            id: "bafkrei".to_string(),
+            entity_type: EntityType::Wearable,
+            pointers: vec!["urn:decentraland:matic:collections-v2:0xabc:0".to_string()],
+            timestamp: 1700000000000,
+            content: vec![],
+            version: "v3".to_string(),
+            metadata: Some(metadata),
+        }
+    }
+
+    /// CS-17: an unknown rarity reads `/undefined`, an item without `i18n`
+    /// has no `name` key, and an emote's `emoteDataADR74` wins over `data`.
+    #[test]
+    fn edge_values_follow_upstream() {
+        let urn = "urn:decentraland:matic:collections-v2:0xabc:0";
+        let base = "https://peer.decentraland.org/content";
+        let result = format_erc721_entity(
+            urn,
+            &wearable(serde_json::json!({
+                "i18n": [],
+                "rarity": "exotic",
+                "data": {"category": "hat", "tags": ["from-data"], "representations": []},
+                "emoteDataADR74": {"category": "dance", "tags": ["from-emote"], "representations": []}
+            })),
+            base,
+            Some("3"),
+        );
+        assert_eq!(result.description, "DCL Wearable 3/undefined");
+        let json = serde_json::to_value(&result).unwrap();
+        assert!(json.get("name").is_none(), "{json}");
+        assert_eq!(
+            json["attributes"],
+            serde_json::json!([
+                {"trait_type": "Rarity", "value": "exotic"},
+                {"trait_type": "Category", "value": "dance"},
+                {"trait_type": "Tag", "value": "from-emote"}
+            ])
+        );
+    }
+
+    /// Upstream always lists the `Category` trait, second, and leaves out its
+    /// `value` when the item has no category (`logic/entities/component.ts:89-94`).
+    #[test]
+    fn a_missing_category_keeps_the_trait_without_a_value() {
+        let entity = Entity {
+            id: "bafkrei".to_string(),
+            entity_type: EntityType::Wearable,
+            pointers: vec!["urn:decentraland:matic:collections-v2:0xabc:0".to_string()],
+            timestamp: 1700000000000,
+            content: vec![],
+            version: "v3".to_string(),
+            metadata: Some(serde_json::json!({
+                "i18n": [{"code": "en", "text": "Cool Hat"}],
+                "rarity": "epic",
+                "data": {"tags": ["cool"], "representations": []}
+            })),
+        };
+        let result = format_erc721_entity(
+            "urn:decentraland:matic:collections-v2:0xabc:0",
+            &entity,
+            "https://peer.decentraland.org/content",
+            None,
+        );
+        assert_eq!(
+            serde_json::to_value(&result.attributes).unwrap(),
+            serde_json::json!([
+                {"trait_type": "Rarity", "value": "epic"},
+                {"trait_type": "Category"},
+                {"trait_type": "Tag", "value": "cool"}
+            ])
         );
     }
 }

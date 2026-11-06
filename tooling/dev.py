@@ -392,13 +392,26 @@ def testnet_env():
         # (manaUsdAggregatorTolerance()), so the node checks the same age before it converts.
         'MANA_USD_AGGREGATOR_ADDRESS': '0xdcf00f5f60b62b07e668a84c0cedaf6f453d416e',
         'USD_PEGGED_ORACLE_MAX_AGE_SECS': '27',
-        # Credits settle through Amoy's CreditsManager (contracts.decentraland.org, `amoy`). The usage index
-        # reads its CreditUsed events over RPC_ENDPOINT_POLYGON on COLLECTIONS_CHAIN_ID; POST /credits/authorize
-        # signs only while that index is ready. Mock card top-ups grant test credits with no charge.
-        'CREDITS_MANAGER_CONTRACT': '0x8052a560e6e6ac86eeb7e711a4497f639b322fb3',
+        # Credits settle through dcl-one's own CreditsManagerPolygon on Amoy. The settlement gate refuses the
+        # shared upstream manager (0x8052…2fb3 in contracts.decentraland.org's `amoy` list), so this one is
+        # ours: not paused, primary sales on, secondary sales off, no NAME executor allowlisted, funded with
+        # test MANA, and CREDITS_SIGNER_ROLE held by the testnet stack's credits signer (a stack whose key lacks
+        # it is refused at authorization). The usage index reads its CreditUsed events over RPC_ENDPOINT_POLYGON
+        # on COLLECTIONS_CHAIN_ID; POST /credits/authorize signs only while that index is ready. Mock card
+        # top-ups grant test credits with no charge.
+        # The relay doesn't admit this manager yet: it takes the contracts CONTRACT_ADDRESSES_URL lists (Amoy's
+        # entry is the shared one) and verified collections. So a self-custody wallet buys with Credits through
+        # its own transaction (the checkout falls back to it, paying its own gas); an in-app (managed) wallet,
+        # which can only relay, can't buy with Credits on this profile until the relay admits the manager.
+        'CREDITS_MANAGER_CONTRACT': '0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c',
+        # The same manager, for the Sites build: the in-world Shop's shell refuses a credit signed for any other.
+        'VITE_SHOP_CREDITS_MANAGER': '0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c',
         'CREDITS_USAGE_INDEX_ENABLED': 'true',
-        # Free test credits. With the signer key below they are spent through Amoy's shared CreditsManager, which
-        # pays testnet MANA only. This profile sets the mock card on Amoy alone, and the stack listens on 127.0.0.1.
+        # The index replays from the block that deployed the manager. Unset, it starts where the shared one was
+        # deployed (block 20612932), over 31 million blocks before this manager existed.
+        'CREDITS_USAGE_START_BLOCK': '52152027',
+        # Free test credits. With the signer key below they are spent through that manager, which pays testnet
+        # MANA only. This profile sets the mock card on Amoy alone, and the stack listens on 127.0.0.1.
         'CREDITS_MOCK_CARD': 'true',
         **credits_signer_env(),
     }
@@ -408,7 +421,8 @@ def credits_signer_env():
     """On-chain credit authorization, when the stack's state holds a signer key.
 
     The operator places the key in the gitignored stack state (credits-signer.key). It has to hold
-    CREDITS_SIGNER_ROLE on Amoy's CreditsManager, or the contract rejects every credit it signs."""
+    CREDITS_SIGNER_ROLE on the profile's CreditsManager (CREDITS_MANAGER_CONTRACT), or the contract rejects
+    every credit it signs; the manager's admin grants it."""
     key = STATE / 'credits-signer.key'
     # An empty file reads as no key on the server, so it must not turn authorization on.
     if not key.is_file() or not key.read_text().strip():
