@@ -938,9 +938,6 @@ fn fit_to_bounds(
     // a little room around a big avatar, as the Unity renderer's fit keeps
     const MARGIN: f32 = 1.06;
     let fit = (needs(min, max) * MARGIN / ordinary).max(1.0);
-    if state.done {
-        warn!("FITDBG min={min} max={max} fit={fit}");
-    }
     let ordinary_centre = (AVATAR_BOX_MIN + AVATAR_BOX_MAX) / 2.0;
     // only the height moves: the turn axis stays on the avatar however its wearables reach out
     let fit_target = if fit > 1.0 {

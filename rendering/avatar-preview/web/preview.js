@@ -316,10 +316,8 @@ async function resolveOutfit(o) {
   const peer = o.peerUrl || (o.env === 'dev' ? PEER.dev : PEER.prod);
   const outfit = { op: 'outfit', bodyShape: o.bodyShape || null, wearables: [], skin: o.skin, hair: o.hair, eyes: o.eyes };
   let itemEmote = null;
-  if (o.contractAddress && (o.itemId || o.tokenId)) {
-    const item = await fetchItem(o);
-    if (item.category === 'emote') itemEmote = item.urn; else outfit.wearables.push(item.urn);
-  }
+  // looked up first, added after the profile, which replaces the outfit's wearables
+  const item = o.contractAddress && (o.itemId || o.tokenId) ? await fetchItem(o) : null;
   if (o.profile) {
     const avatar = await fetchProfile(peer, o.profile);
     outfit.bodyShape = o.bodyShape || avatar.bodyShape || null;
@@ -328,14 +326,21 @@ async function resolveOutfit(o) {
     outfit.hair = o.hair || (avatar.hair?.color ? hex(avatar.hair.color) : null);
     outfit.eyes = o.eyes || (avatar.eyes?.color ? hex(avatar.eyes.color) : null);
   }
+  // the items go first: the engine keeps the first wearable of each category, and an item takes
+  // its category's slot from the profile's, as in the Unity renderer
+  const items = [];
+  if (item) {
+    if (item.category === 'emote') itemEmote = item.urn; else items.push(item.urn);
+  }
   const urns = o.urns || [];
   const emotes = await emoteUrns(peer, urns);
   for (const urn of urns) {
-    if (emotes.has(urn)) itemEmote = itemEmote || urn; else outfit.wearables.push(urn);
+    if (emotes.has(urn)) itemEmote = itemEmote || urn; else items.push(urn);
   }
-  for (const item of await inlineDefinitions(o)) {
-    if (item.isEmote) itemEmote = itemEmote || item.urn; else outfit.wearables.push(item.urn);
+  for (const inline of await inlineDefinitions(o)) {
+    if (inline.isEmote) itemEmote = itemEmote || inline.urn; else items.push(inline.urn);
   }
+  outfit.wearables = [...items, ...outfit.wearables];
   outfit.bodyShape = outfit.bodyShape || BODY.female;
   for (const k of ['skin', 'hair', 'eyes']) if (outfit[k] && !outfit[k].startsWith('#')) outfit[k] = '#' + outfit[k];
   return { outfit, itemEmote };
