@@ -44,3 +44,14 @@ pub fn internal_server_error() -> Response {
         "Internal Server Error",
     )
 }
+
+/// lamb2's `FetcherError` (`errorHandler.ts`): the 502 a lambdas elements
+/// route answers when its configured source failed for `key` (the address,
+/// or the name for the name owner), `Cannot fetch elements for <key>`.
+pub fn fetcher_error(key: &str) -> Response {
+    lambdas_error(
+        StatusCode::BAD_GATEWAY,
+        "The requested items cannot be fetched right now",
+        &format!("Cannot fetch elements for {key}"),
+    )
+}

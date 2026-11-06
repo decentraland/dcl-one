@@ -290,6 +290,25 @@ const ROWS: &[Row] = &[
         "NFT_WORKER_BASE_URL",
         "https://nfts.decentraland.org",
     ),
+    // lamb2's explorer backpack lists chain-owned tokens only: a mirror
+    // answers the same; island and journey also list this node's escrow grants.
+    row(
+        "lambdas",
+        "EXPLORER_ESCROW_GRANTS_ENABLED",
+        Is("false"),
+        Is("true"),
+        Is("true"),
+    ),
+    // lamb2's `/collections/wearables` takes `collectionId`, `wearableId`
+    // and `textSearch` only: a mirror answers the same; island and journey
+    // also take this node's extended filters.
+    row(
+        "lambdas",
+        "LAMBDAS_CATALOG_EXTENSIONS_ENABLED",
+        Is("false"),
+        Is("true"),
+        Is("true"),
+    ),
     // lamb2's LAND subgraph: parcel operators and permissions until the
     // land-authz index is published.
     upstream(
@@ -473,10 +492,12 @@ const ROWS: &[Row] = &[
         Own("<PUBLIC_URL>/api/v1/estatemap.png"),
         Own("<PUBLIC_URL>/api/v1/estatemap.png"),
     ),
+    // The image lamb2's `/lands` answers is the marketplace subgraph's
+    // `nft.image`, under Decentraland's map API.
     row(
         "map",
         "LAND_IMAGE_BASE_URL",
-        Own("<PUBLIC_URL>/api"),
+        Is("https://api.decentraland.org"),
         Own("<PUBLIC_URL>/api"),
         Own("<PUBLIC_URL>/api"),
     ),
@@ -705,6 +726,9 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
             );
         }
     }
+    if posture == Posture::Mirror {
+        refuse_chain_read_third_party(config)?;
+    }
     Ok(())
 }
 
@@ -791,6 +815,19 @@ fn refuse_followers(posture: Posture, env: &Lookup) -> anyhow::Result<()> {
             "{ENV}={} reads from no Decentraland or third-party host, but {FED_PEERS_FILE} names \
              worlds federation peers to poll: unset it or use {ENV}=mirror",
             posture.name()
+        );
+    }
+    Ok(())
+}
+
+/// A mirror serves the public third-party routes, which lamb2 answers from
+/// the NFT worker: without `NFT_WORKER_BASE_URL` the chain path leaves an
+/// open mapping's tokens out, so a mirror may not blank it.
+fn refuse_chain_read_third_party(config: &Config) -> anyhow::Result<()> {
+    if Config::non_empty(&config.market_upstreams.nft_worker_base_url).is_none() {
+        anyhow::bail!(
+            "{ENV}=mirror answers the third-party wearables from the NFT worker, as lamb2 does, \
+             but NFT_WORKER_BASE_URL is empty: unset it to read Decentraland's worker"
         );
     }
     Ok(())
