@@ -127,9 +127,12 @@ The target is the Unity renderer's behaviour, not only its look. In place so far
   panel's aspect, then leaves the camera to the user; the fit raises or lowers the view but the
   avatar always turns about its own vertical axis.
 
-Still to come: the item view and its view switcher, builder mode's default wearables and looping
-emote, profile, authentication and jesus modes, scene boundaries, sized screenshots rendered
-without the controls, social emotes, spring bones, and configurator mode.
+A named default emote plays once in the marketplace, then the avatar idles; it loops in the
+builder.
+
+Still to come: the item view and its view switcher, builder mode's default wearables, profile,
+authentication and jesus modes, scene boundaries, sized screenshots rendered without the controls,
+social emotes, spring bones, and configurator mode.
 
 The emote controller follows the Unity renderer: `goTo` on a stopped emote starts it and holds
 it at that time, `play` resumes a paused one, and emote events wait for `load`.

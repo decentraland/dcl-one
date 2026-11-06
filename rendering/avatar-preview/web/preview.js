@@ -38,10 +38,7 @@ const BASE_EMOTES = {
 };
 // wearable-preview's poses that are its own files, not catalyst emotes: shipped in web/emotes/ and
 // registered with the engine under this collection the first time they are asked for
-const POSE_EMOTES = {
-  fashion: true, 'fashion-2': true, 'fashion-3': true, 'fashion-4': true,
-  walk: true, run: true, love: false, jump: false, // name: loops
-};
+const POSE_EMOTES = ['fashion', 'fashion-2', 'fashion-3', 'fashion-4', 'walk', 'run', 'love', 'jump'];
 // the engine accepts off-chain urns in its known collections only; an inline registration replaces
 // the catalyst lookup for that exact urn, so these names never reach the content server
 const POSE_COLLECTION = 'urn:decentraland:off-chain:base-emotes';
@@ -269,14 +266,16 @@ function registerCollectible(kind, urn, metadata, files) {
   command({ op: 'collectible', kind, urn, definition, files });
 }
 
-function registerPose(name) {
-  const urn = `${POSE_COLLECTION}:preview-${name}`;
+// as the Unity renderer plays its default emote: once in the marketplace, then the idle; looping
+// in the builder
+function registerPose(name, loop) {
+  const urn = `${POSE_COLLECTION}:preview-${name}${loop ? '-loop' : ''}`;
   const file = `${name}.glb`;
   registerCollectible('emote', urn, {
     id: urn, name, description: '', thumbnail: '',
     emoteDataADR74: {
       representations: [{ bodyShapes: [BODY.male, BODY.female], mainFile: file, contents: [file] }],
-      loop: POSE_EMOTES[name],
+      loop,
     },
   }, { [file]: new URL(`./emotes/${file}`, import.meta.url).href });
   return urn;
@@ -342,14 +341,34 @@ async function resolveOutfit(o) {
   return { outfit, itemEmote };
 }
 
-// an emote option: an item's urn, a base emote name, or nothing playable (idle)
-function emoteUrn(name) {
+// an emote option: an item's urn, a base emote name, or nothing playable (idle). A named default
+// loops as the Unity renderer's does: once in the marketplace, then the idle; looping in the builder
+async function emoteUrn(name, loop, peer) {
   if (!name) return null;
   if (name.startsWith('urn:')) return name;
-  if (BASE_EMOTES[name]) return BASE_EMOTES[name];
-  if (name in POSE_EMOTES) return registerPose(name);
+  if (BASE_EMOTES[name]) return baseEmote(BASE_EMOTES[name], loop, peer);
+  if (POSE_EMOTES.includes(name)) return registerPose(name, loop);
   if (name !== 'idle') console.warn(`emote "${name}" is unknown; idling`);
   return null;
+}
+
+// a catalyst base emote as a default: its own metadata says whether it loops (dance, money and clap
+// do), so it is registered again under a preview urn with the mode's loop and the catalyst's files
+async function baseEmote(id, loop, peer) {
+  const urn = `${POSE_COLLECTION}:${id}`;
+  try {
+    const response = await fetch(`${peer}/content/entities/active`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pointers: [urn] }),
+    });
+    const [entity] = response.ok ? await response.json() : [];
+    const data = entity?.metadata?.emoteDataADR74;
+    if (!data) return id;
+    if (!!data.loop === loop) return urn;
+    const files = Object.fromEntries((entity.content || []).map((c) => [c.file, `${peer}/content/contents/${c.hash}`]));
+    const copy = `${POSE_COLLECTION}:preview-${id}${loop ? '-loop' : '-once'}`;
+    registerCollectible('emote', copy, { ...entity.metadata, id: copy, emoteDataADR74: { ...data, loop } }, files);
+    return copy;
+  } catch { return id; }
 }
 
 // wearable-preview's zoom: 1..100 to a factor of 1..2.8 on the camera distance
@@ -416,7 +435,9 @@ async function apply() {
     command(cameraFrom(o));
     command({ op: 'background', color: o.disableBackground ? null : (o.background ? (o.background.startsWith('#') ? o.background : '#' + o.background) : DEFAULT_BACKGROUND) });
     command(outfit);
-    const urn = itemEmote || (o.disableDefaultEmotes ? null : emoteUrn(o.emote));
+    const peer = o.peerUrl || (o.env === 'dev' ? PEER.dev : PEER.prod);
+    const urn = itemEmote
+      || (o.disableDefaultEmotes ? null : await emoteUrn(o.emote, modeOf(o) === 'builder', peer));
     if (urn) {
       state.emote.urn = urn;
       command({ op: 'emote', urn, loop: false });
