@@ -13,11 +13,11 @@ describe('sidebar parity', () => {
     expect(button.querySelector('span[aria-hidden="true"]')).not.toBeNull()
   })
 
-  it('Shop opens the shop with the web client utm source, between Backpack and Gallery', async () => {
+  it('Shop opens the shop with the web client utm source, between Backpack and Camera', async () => {
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
     render(<Sidebar session={fakeSession()} />)
     const labels = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))
-    expect(labels.slice(labels.indexOf('Backpack'), labels.indexOf('Gallery') + 1)).toEqual(['Backpack', 'Shop', 'Gallery'])
+    expect(labels.slice(labels.indexOf('Backpack'), labels.indexOf('Camera') + 1)).toEqual(['Backpack', 'Shop', 'Camera'])
     await userEvent.click(screen.getByRole('button', { name: 'Shop' }))
     expect(open).toHaveBeenCalledWith('https://decentraland.org/shop?utm_source=bevy-web-client', '_blank', 'noopener')
   })
