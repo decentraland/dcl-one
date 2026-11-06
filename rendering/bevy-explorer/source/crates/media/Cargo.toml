@@ -7,7 +7,7 @@ edition = "2024"
 workspace = true
 
 [features]
-ffmpeg = ["dep:ffmpeg-next"]
+uuav = ["dep:uuav", "dep:metal"]
 html = ["dep:web-sys"]
 
 [dependencies]
@@ -27,7 +27,26 @@ urlencoding = { workspace = true }
 reqwest = { workspace = true }
 
 kira = { workspace = true }
-ffmpeg-next = { version = "6.0.0", optional = true }
+wgpu = { workspace = true }
+uuav = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+metal = { workspace = true, optional = true }
+
+# the D3D11 decode device the uuav client captures, its fence, and the import of its
+# presentation textures into a DX12 or Vulkan renderer (platform_windows.rs)
+[target.'cfg(windows)'.dependencies]
+ash = { workspace = true }
+windows = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Direct3D12",
+  "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_Security",
+  "Win32_System_Threading",
+] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 futures-channel = { workspace = true }
