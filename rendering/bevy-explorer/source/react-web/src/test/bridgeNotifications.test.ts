@@ -118,6 +118,51 @@ describe('bridge notifications poll', () => {
     errors.mockRestore()
   })
 
+  it('drops a poll answer that was in flight across an account switch, even with no cursor', async () => {
+    const h = fakeCtx()
+    identity.observe('0xa')
+    signed.mockResolvedValueOnce({ notifications: [] })
+    await h.req({ kind: 'getNotifications' })
+    let answerA!: (v: unknown) => void
+    signed.mockReturnValueOnce(new Promise((r) => (answerA = r)))
+    await h.tick(POLL_INTERVAL_S) // A's poll is now out
+    identity.observe('0xb')
+    signed.mockResolvedValueOnce({ notifications: [] })
+    await h.req({ kind: 'getNotifications' }) // B is armed again, cursor still empty
+    answerA({ notifications: [raw('a-only', '9000')] })
+    await h.tick(0)
+    expect(news(h.sent)).toEqual([])
+  })
+
+  it('an account switch resets the backoff, so the next account polls on the normal interval', async () => {
+    const h = fakeCtx()
+    identity.observe('0xa')
+    signed.mockResolvedValueOnce({ notifications: [] })
+    await h.req({ kind: 'getNotifications' })
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    signed.mockRejectedValue(new Error('HTTP 503'))
+    await h.tick(POLL_INTERVAL_S)
+    await h.tick(POLL_INTERVAL_S * 2)
+    await h.tick(POLL_INTERVAL_S * 4) // waiting 40 s now
+    const before = polls().length
+    identity.observe('0xb')
+    signed.mockResolvedValue({ notifications: [] })
+    await h.req({ kind: 'getNotifications' })
+    await h.tick(POLL_INTERVAL_S)
+    expect(polls()).toHaveLength(before + 1)
+    errors.mockRestore()
+  })
+
+  it('polls anyway, with no cursor, when the first list fetch fails', async () => {
+    const h = fakeCtx()
+    signed.mockRejectedValueOnce(new Error('HTTP 503'))
+    await expect(h.req({ kind: 'getNotifications' })).rejects.toThrow('HTTP 503')
+    signed.mockResolvedValueOnce({ notifications: [raw('n', '7000')] })
+    await h.tick(POLL_INTERVAL_S)
+    expect(polls()).toEqual(['https://notifications.decentraland.org/notifications?onlyUnread=true&limit=50'])
+    expect(news(h.sent)).toEqual([['n']])
+  })
+
   it('an account switch stops the poll until the new account fetches its list', async () => {
     const h = fakeCtx()
     identity.observe('0xa')

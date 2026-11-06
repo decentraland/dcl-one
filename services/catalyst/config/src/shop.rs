@@ -16,7 +16,9 @@ pub struct MarketUpstreamsConfig {
     #[arg(long, env = "MATIC_COLLECTIONS_SUBGRAPH_URL")]
     pub matic_collections_subgraph_url: Option<String>,
 
-    /// L1 marketplace subgraph (names); unset answers empty names.
+    /// L1 marketplace subgraph (names, and LAND before the indexes publish);
+    /// `NODE_POSTURE=mirror` sets lamb2's default. Unset, `/lambdas` names
+    /// and lands answer the 503 envelope; profiles and outfits claim no name.
     #[arg(long, env = "MARKETPLACE_SUBGRAPH_URL")]
     pub marketplace_subgraph_url: Option<String>,
 
@@ -48,15 +50,28 @@ pub struct MarketUpstreamsConfig {
     pub trades_serve_partial: bool,
 
     /// Avatar snapshots become `<base>/entities/<id>/{face,body}.png` when
-    /// set; unset they point at this node's `contents/<hash>`.
+    /// set; unset they point at this node's `/profile-images`.
     #[arg(long, env = "PROFILE_CDN_BASE_URL")]
     pub profile_cdn_base_url: Option<String>,
 
     /// NFT ownership indexer (`POST <base>/wallets/<owner>/networks/<network>/nfts`)
     /// for an owner's third-party holdings; unset, they are read over each
     /// network's JSON-RPC (`TRADE_RPC_URLS`, `ETH_RPC_URL`, `RPC_ENDPOINT_POLYGON`).
+    /// `NODE_POSTURE=mirror` refuses to start with it empty.
     #[arg(long, env = "NFT_WORKER_BASE_URL")]
     pub nft_worker_base_url: Option<String>,
+
+    /// Merge this node's active escrow grants (`shop.usage_grants`) into the
+    /// explorer backpack's on-chain items. lamb2 lists chain-owned tokens
+    /// only, so the mirror posture turns it off.
+    #[arg(long, env = "EXPLORER_ESCROW_GRANTS_ENABLED", default_value_t = true, action = clap::ArgAction::Set)]
+    pub explorer_escrow_grants_enabled: bool,
+
+    /// Take this node's extended filters on `/lambdas/collections/wearables`
+    /// (`collectionType`, `category`, `rarity`, `name`, `orderBy`,
+    /// `direction`). lamb2 ignores them, so the mirror posture turns it off.
+    #[arg(long, env = "LAMBDAS_CATALOG_EXTENSIONS_ENABLED", default_value_t = true, action = clap::ArgAction::Set)]
+    pub lambdas_catalog_extensions_enabled: bool,
 }
 
 /// The marketplace: the collections and items mirrors, the trade ownership RPCs, the
@@ -339,6 +354,16 @@ pub struct ShopConfig {
     #[arg(long, env = "MANA_PRICE_MAX_STALENESS_SECS", default_value_t = DEFAULT_MANA_PRICE_MAX_STALENESS_SECS)]
     pub mana_price_max_staleness_secs: i64,
 
+    /// The oldest round of a marketplace's MANA/USD feed a credit for a
+    /// USD-pegged trade is sized at; the marketplace's own tolerance applies
+    /// too, and the stricter wins. Past it the authorization is refused (503).
+    #[arg(
+        long,
+        env = "CREDITS_USD_PEGGED_FEED_MAX_AGE_SECS",
+        default_value_t = 3600
+    )]
+    pub credits_usd_pegged_feed_max_age_secs: u64,
+
     /// primary (the legacy secondary | auto run as primary: credits pay for
     /// CollectionStore mints only, SHOP.md).
     #[arg(long, env = "CHECKOUT_FULFILLMENT_MODE", default_value = "primary")]
@@ -380,7 +405,7 @@ pub struct ShopConfig {
     pub credits_ttl_seconds: u64,
 
     /// The signed value over the group's quoted MANA need, in percent, 100..=150 (upstream USD_CREDIT_CAP_HEADROOM_PCT).
-    #[arg(long, env = "CREDITS_CAP_HEADROOM_PCT", default_value_t = 150)]
+    #[arg(long, env = "CREDITS_CAP_HEADROOM_PCT", default_value_t = 100)]
     pub credits_cap_headroom_pct: u32,
 
     /// The oracle buffer inside the credit sizing, in basis points, at most 1000 (upstream USD_CREDIT_BUFFER_BPS).
@@ -676,5 +701,26 @@ mod tests {
             ),
             (30, 50)
         );
+    }
+
+    #[test]
+    fn the_credit_cap_adds_no_headroom_by_default_and_keeps_an_explicit_one() {
+        let c = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
+        assert_eq!(
+            (
+                c.shop.credits_cap_headroom_pct,
+                c.shop.credits_oracle_buffer_bps
+            ),
+            (100, 200)
+        );
+        let c = parse(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--credits-cap-headroom-pct",
+            "150",
+        ])
+        .unwrap();
+        assert_eq!(c.shop.credits_cap_headroom_pct, 150);
     }
 }

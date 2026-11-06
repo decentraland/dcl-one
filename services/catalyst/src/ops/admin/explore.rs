@@ -799,19 +799,24 @@ pub async fn event_create(
         Ok(e) => e,
         Err(resp) => return resp,
     };
-    let (answer, id) =
-        match event_moderation::create(&explore.pool, &typed, session.address(), &explore.settings)
-            .await
-        {
-            Ok(id) => match explore.events.get(&id).await {
-                Ok(event) => (
-                    Json(json!({ "ok": true, "data": event })).into_response(),
-                    Some(id),
-                ),
-                Err(e) => (e.into_response(), Some(id)),
-            },
-            Err(e) => (e.into_response(), None),
-        };
+    let (answer, id) = match event_moderation::create(
+        &explore.pool,
+        &typed,
+        session.address(),
+        &explore.settings,
+        Some(&explore.places),
+    )
+    .await
+    {
+        Ok(id) => match explore.events.get(&id).await {
+            Ok(event) => (
+                Json(json!({ "ok": true, "data": event })).into_response(),
+                Some(id),
+            ),
+            Err(e) => (e.into_response(), Some(id)),
+        },
+        Err(e) => (e.into_response(), None),
+    };
     let mut call = Call::new(&session, DOMAIN, "events.create").detail(create_body);
     if let Some(id) = id {
         call = call.target(id);

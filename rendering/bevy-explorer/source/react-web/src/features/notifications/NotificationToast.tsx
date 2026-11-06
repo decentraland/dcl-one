@@ -65,23 +65,19 @@ export function NotificationToastHost({
   }
   return (
     <div className={styles.host} aria-live="polite">
-      <div
+      <button
         key={n.id}
+        type="button"
         className={styles.toast}
-        role="button"
-        tabIndex={0}
         aria-label={body != null ? `${title}. ${body}` : title}
         onClick={open}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') open()
-        }}
       >
-        <div className={styles.thumb}>{image ? <img className={styles.img} src={image} alt="" /> : <span className={styles.dot} />}</div>
-        <div className={styles.info}>
+        <span className={styles.thumb}>{image ? <img className={styles.img} src={image} alt="" /> : <span className={styles.dot} />}</span>
+        <span className={styles.info}>
           <span className={styles.title}>{title}</span>
           {body && <span className={styles.body}>{body}</span>}
-        </div>
-      </div>
+        </span>
+      </button>
     </div>
   )
 }

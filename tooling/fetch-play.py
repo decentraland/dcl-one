@@ -98,8 +98,13 @@ def current_pr():
     if os.environ.get('GITHUB_EVENT_NAME') != 'pull_request':
         return None
     event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
-    return {'number': event['number'], 'head': event['pull_request']['head']['sha'],
-            'base': event['pull_request']['base']['sha'], 'merge': os.environ['GITHUB_SHA']}
+    merge, head = os.environ['GITHUB_SHA'], event['pull_request']['head']['sha']
+    # The base bevy-ci.py selected the lanes with, so engine_changed() agrees with them.
+    spec = importlib.util.spec_from_file_location('bevy_ci', Path(__file__).with_name('bevy-ci.py'))
+    ci = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ci)
+    return {'number': event['number'], 'head': head,
+            'base': ci.tested_base(merge, head, event['pull_request']['base']['sha']), 'merge': merge}
 
 
 def inputs_at(revision):

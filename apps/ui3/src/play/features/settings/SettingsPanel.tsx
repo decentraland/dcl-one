@@ -10,12 +10,13 @@ import type { Setting } from '../../engine/protocol'
 import type { BindingsState, ProfileState, SettingsState } from '../session/useEngineSession'
 import { KeyBindingsTab } from './KeyBindingsTab'
 import { clearAutoTranslate, setAutoTranslateDefault, useTranslationPrefs } from '../chat/translation'
+import { PING_MODES, clearPingMode, setPingDefault, usePingPrefs, type PingMode } from '../chat/ping'
 import styles from './SettingsPanel.module.css'
 
 // Appended after the engine-derived categories: bindings are (action, keys[]) rows from the
 // bindings relay, not numeric engine settings, so they get their own tab + body.
 const KEY_BINDINGS_TAB = 'Key Bindings'
-// The HUD's own chat settings (translation) join the engine's in this tab.
+// The HUD's own chat settings (translation, the notification ping) join the engine's in this tab.
 const CHAT_TAB = 'Chat'
 
 function humanize(s: string): string {
@@ -94,10 +95,12 @@ const SettingField = memo(
   (prev, next) => prev.s.name === next.s.name && prev.s.value === next.s.value && prev.onSet === next.onSet
 )
 
-/** Chat translation, kept by the HUD rather than the engine. The language is the engine's
- *  Language setting, in the same tab. */
-function TranslationFields(): React.JSX.Element {
+/** The chat settings kept by the HUD rather than the engine: translation (the language is the
+ *  engine's Language setting, in the same tab) and the notification ping's default, which a
+ *  conversation's own menu can override. */
+function ChatFields(): React.JSX.Element {
   const prefs = useTranslationPrefs()
+  const ping = usePingPrefs()
   return (
     <>
       <div className={styles.field}>
@@ -105,6 +108,20 @@ function TranslationFields(): React.JSX.Element {
           <span className={styles.label}>Auto-Translate New Conversations</span>
         </div>
         <Toggle checked={prefs.autoDefault} onChange={setAutoTranslateDefault} aria-label="Auto-Translate New Conversations" />
+      </div>
+      <div className={styles.field}>
+        <div className={styles.fieldHead}>
+          <Tooltip label="The sound for a chat line landing in a conversation; each conversation's menu can choose otherwise." side="bottom" multiline className={styles.hint}>
+            <span className={styles.label}>Notification Ping</span>
+          </Tooltip>
+        </div>
+        <Select
+          variant="light"
+          value={ping.default}
+          options={PING_MODES.map((m) => ({ value: m.mode, label: m.label }))}
+          onChange={(v) => setPingDefault(v as PingMode)}
+          aria-label="Notification Ping"
+        />
       </div>
     </>
   )
@@ -144,6 +161,8 @@ export function SettingsPanel({
     if (activeTab === CHAT_TAB) {
       setAutoTranslateDefault(false)
       clearAutoTranslate()
+      setPingDefault('all')
+      clearPingMode()
     }
   }
 
@@ -176,7 +195,7 @@ export function SettingsPanel({
             {items.map((s) => (
               <SettingField key={s.name} s={s} onSet={settings.set} />
             ))}
-            {activeTab === CHAT_TAB && <TranslationFields />}
+            {activeTab === CHAT_TAB && <ChatFields />}
           </div>
         )}
       </div>

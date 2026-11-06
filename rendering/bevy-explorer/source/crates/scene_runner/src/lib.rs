@@ -70,7 +70,7 @@ use self::{
 };
 use dcl_component::ComponentNameRegistry;
 
-mod asset_preload;
+pub mod asset_preload;
 pub mod automatic_testing;
 /// Region decomposition, in `common` so `comms` can reach it too; re-exported here because this is
 /// where it has always lived for callers.
