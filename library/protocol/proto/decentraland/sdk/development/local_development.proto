@@ -20,10 +20,32 @@ message UpdateModel {
   UpdateModelType type = 4;
 }
 
+// Progress and outcome of the preview server's background texture import
+// (GLB/glTF textures converted to UASTC KTX2). Sent while a run encodes
+// (RUNNING, at most every ~500 ms), then once when it ends (READY or FAILED);
+// a run that changes nothing sends nothing. READY means new optimized files
+// are in place: the scene picks them up on its next reload.
+message TextureOptimization {
+  enum State {
+    TOS_RUNNING = 0;
+    TOS_READY = 1;
+    TOS_FAILED = 2;
+  }
+  string scene_id = 1;
+  State state = 2;
+  uint32 done = 3;         // textures processed in this run (encoded, cached or kept)
+  uint32 total = 4;        // textures in this run
+  uint32 failed = 5;       // kept original because they could not be optimized
+  uint64 bytes_before = 6; // source bytes of the converted images
+  uint64 bytes_after = 7;  // KTX2 bytes (distinct)
+  bool enabled = 8;        // whether the project serves/deploys the optimized files
+}
+
 message WsSceneMessage {
   oneof message {
     // direction: scene -> explorer
     UpdateScene update_scene = 1;
     UpdateModel update_model = 2;
+    TextureOptimization texture_optimization = 3;
   }
 }

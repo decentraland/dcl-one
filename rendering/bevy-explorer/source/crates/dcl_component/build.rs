@@ -150,6 +150,7 @@ fn gen_sdk_components() -> Result<()> {
         "UpdateScene",
         "UpdateModel",
         "UpdateModelType",
+        "TextureOptimization",
         "VideoTracksActiveStreamsResponse",
         "VideoTracksActiveStreamsData",
     ];
