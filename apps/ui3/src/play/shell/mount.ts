@@ -7,7 +7,7 @@ import { authLoginUrl, authReturnUrl } from '../features/auth/sso'
 import { ANALYTICS_SESSION_PARAM, ANON_USER_ID_PARAM, dropAttributionParams } from '../lib/analytics'
 import { AUTH_RETURN_PARAM } from '../lib/entryParams'
 import { migratePrefs } from '../lib/prefs'
-import { heldLogin, request } from './login'
+import { currentLogin, request } from './login'
 import { onInWorld } from './googleTag'
 import { PAGE_DIR } from '../lib/publicUrl'
 import { siteUrl } from '../lib/baseDomain'
@@ -24,9 +24,10 @@ import type { ShellShop, ShellShopWallet } from './shop/purchase'
 let shellMounted = false
 
 export interface PlayShellOptions {
-  /** The buyer's wallet for the in-world Shop's purchases, as the host page resolves it. Without one the
-   *  Shop can't buy here (its dialog says so). */
-  shopWallet?: ShellShopWallet | null
+  /** Loads the buyer's wallet for the in-world Shop's purchases, as the host page resolves it, on the
+   *  app's first shop request (with the purchase code, and like it loaded again after a failed load).
+   *  Without one the Shop can't buy here (its dialog says so). */
+  shopWallet?: () => Promise<ShellShopWallet | null>
 }
 
 export function mountPlayShell(options: PlayShellOptions = {}): void {
@@ -90,10 +91,14 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
   // The in-world Shop's purchases (shop/purchase), loaded on the app's first shop.* request: this page
   // holds the login and the wallet, shows the buyer the purchase dialog over the app and signs.
   const shellShop: () => Promise<ShellShop> = loadOnce(() =>
-    Promise.all([import('./shop/purchase'), import('./shop/overlay')]).then(([purchase, overlay]) =>
+    Promise.all([
+      import('./shop/purchase'),
+      import('./shop/overlay'),
+      options.shopWallet?.() ?? null
+    ]).then(([purchase, overlay, wallet]) =>
       purchase.createShellShop({
-        login: heldLogin,
-        wallet: options.shopWallet ?? null,
+        login: currentLogin,
+        wallet,
         ui: overlay.createShopOverlay(() => frame?.focus()),
         post: (event) => frame?.contentWindow?.postMessage(event, location.origin),
         openExternal: (url) => void window.open(url, '_blank', 'noopener'),

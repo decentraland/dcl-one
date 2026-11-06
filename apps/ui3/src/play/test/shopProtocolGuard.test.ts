@@ -8,6 +8,7 @@ import { createFakeWallet, creatorTrade } from '../../shop/checkout/fakes'
 import { buildStoreUseCreditsArgs, buildUseCreditsArgs, encodeUseCredits, type SpendableCredit, type StoreItemToBuy, type UseCreditsArgs } from '../../shop/checkout/purchase/encoding'
 import { BOOK, ITEM } from '../../shop/payment/fixtures'
 import { parseBuyRequest, parseOperationEvent, SHOP_EVENT } from '../lib/shopProtocol'
+import { AMOY_ADD_PARAMS } from '../../shop/wallet/chain'
 import { guardedProvider, type PurchaseIntent } from '../shell/shop/walletGuard'
 
 const BUYER = BOOK.buyer.toLowerCase()
@@ -185,5 +186,32 @@ describe('the purchase wallet', () => {
     for (const method of ['personal_sign', 'eth_sign', 'eth_signTypedData', 'wallet_watchAsset']) {
       await expect(g.guarded.request({ method, params: [] })).rejects.toMatchObject({ code: 4200 })
     }
+  })
+
+  it('switches and adds the network with what this page knows of it, never the caller’s endpoints', async () => {
+    const g = setup()
+    await g.guarded.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x89', rpcUrls: ['https://rpc.example'] }] })
+    expect(g.wallet.requests.at(-1)).toEqual({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x89' }] })
+    // Polygon is every wallet's; only Amoy is ever added, from this page's own parameters.
+    await expect(g.guarded.request({ method: 'wallet_addEthereumChain', params: [{ chainId: '0x89' }] })).rejects.toMatchObject({ code: 4100 })
+    const amoy = setup({ chainId: 80002 })
+    await amoy.guarded.request({ method: 'wallet_addEthereumChain', params: [{ chainId: '0x13882', rpcUrls: ['https://rpc.example'], blockExplorerUrls: ['https://scan.example'] }] }).catch(() => {})
+    expect(amoy.wallet.requests.at(-1)).toEqual({ method: 'wallet_addEthereumChain', params: [AMOY_ADD_PARAMS] })
+  })
+
+  it('sends directly only while the wallet is on the purchase’s network', async () => {
+    const g = setup()
+    const tx = { from: BUYER, to: MANAGER, data: encodeUseCredits(storeArgs()) }
+    g.wallet.chainId = 1
+    await expect(g.guarded.request({ method: 'eth_sendTransaction', params: [tx] })).rejects.toMatchObject({ code: 4100 })
+    expect(g.wallet.sent).toEqual([])
+    g.wallet.chainId = CHAIN
+    await expect(g.guarded.request({ method: 'eth_sendTransaction', params: [tx] })).resolves.toMatch(/^0x/)
+  })
+
+  it('signs with exactly the two parameters it asks for', async () => {
+    const g = setup()
+    await expect(g.guarded.request({ method: 'eth_signTypedData_v4', params: [BUYER, JSON.stringify(typed()), 'extra'] })).rejects.toMatchObject({ code: 4100 })
+    expect(g.forwarded()).toBe(0)
   })
 })

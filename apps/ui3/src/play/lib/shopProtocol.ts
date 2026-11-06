@@ -52,9 +52,12 @@ export interface ShopBuyRequest {
  * reviewing: the dialog is open (loading, confirming, or short of credits); processing: signing or
  * waiting for the chain; pending: handed off and not confirmed yet; then succeeded, failed or cancelled.
  */
-export type ShopOperationState = 'reviewing' | 'processing' | 'pending' | 'succeeded' | 'failed' | 'cancelled'
+export const OPERATION_STATES = ['reviewing', 'processing', 'pending', 'succeeded', 'failed', 'cancelled'] as const
+export type ShopOperationState = (typeof OPERATION_STATES)[number]
 
+export type ShopTerminalState = 'succeeded' | 'failed' | 'cancelled'
 export const TERMINAL_STATES: readonly ShopOperationState[] = ['succeeded', 'failed', 'cancelled']
+export const isTerminal = (state: ShopOperationState): state is ShopTerminalState => TERMINAL_STATES.includes(state)
 
 export interface ShopOperation {
   v: typeof SHOP_PROTOCOL
@@ -113,7 +116,7 @@ export function parseOperationRef(params: unknown): string {
 export function parseOperationEvent(message: Record<string, unknown>): ShopOperation | null {
   if (message.type !== SHOP_EVENT || message.v !== SHOP_PROTOCOL) return null
   const { operation, state, item, next, txHash } = message
-  if (typeof operation !== 'string' || typeof state !== 'string' || !['reviewing', 'processing', 'pending', 'succeeded', 'failed', 'cancelled'].includes(state)) return null
+  if (typeof operation !== 'string' || typeof state !== 'string' || !(OPERATION_STATES as readonly string[]).includes(state)) return null
   const it = object(item)
   if (!it || typeof it.contract !== 'string' || typeof it.itemId !== 'string') return null
   return {

@@ -6,7 +6,7 @@
 // web Shop instead.
 
 import { queryOptions, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
 import { inShell, onShellMessage, shellRequest } from '../../lib/shell'
 import {
@@ -19,22 +19,31 @@ import {
   type ShopCapabilities,
   type ShopOperation
 } from '../../lib/shopProtocol'
+import type { PressedWith } from './ui/pressedWith'
 
 /** Reading the balance signs a request in the shell; give it longer than an identity answer. */
 const BALANCE_TIMEOUT_MS = 15_000
+/** The shell loads its purchase code on the first shop request; give BUY that long too. */
+const BUY_TIMEOUT_MS = 30_000
+
+/** A shell answer in this protocol's version; another version's is no answer this HUD can read. */
+function versioned<T extends { v: number } | null>(answer: T): T {
+  if (answer != null && answer.v !== SHOP_PROTOCOL) throw new Error(`the shell answered shop protocol ${String(answer.v)}`)
+  return answer
+}
 
 export const purchaseQueries = {
   capabilities: () =>
     queryOptions({
       queryKey: ['shop', 'purchase', 'capabilities'] as const,
-      queryFn: () => shellRequest<ShopCapabilities>(SHOP_METHODS.capabilities),
+      queryFn: () => shellRequest<ShopCapabilities>(SHOP_METHODS.capabilities).then(versioned),
       staleTime: 30_000,
       enabled: inShell
     }),
   balance: (buyer: string | null) =>
     queryOptions({
       queryKey: ['shop', 'credits', buyer] as const,
-      queryFn: () => shellRequest<ShopBalance | null>(SHOP_METHODS.balance, undefined, BALANCE_TIMEOUT_MS),
+      queryFn: () => shellRequest<ShopBalance | null>(SHOP_METHODS.balance, undefined, BALANCE_TIMEOUT_MS).then(versioned),
       staleTime: 30_000,
       enabled: inShell && buyer != null
     })
@@ -53,16 +62,16 @@ export function useCreditsBalance(buyer: string | null): number | undefined {
 export interface ShopPurchase {
   /** Whether purchases run here (in the web shell). */
   available: boolean
-  /** The last operation the shell reported, until another starts. */
-  operation: ShopOperation | null
-  /** Opens the shell's purchase dialog for `item`; `input` is how BUY was pressed. */
-  buy(item: CatalogItem, creatorName?: string, input?: 'pointer' | 'keyboard'): void
+  /**
+   * Opens the shell's purchase dialog for `item`; `input` is how BUY was pressed. False when it couldn't
+   * (the shell refused or didn't answer), for the page to offer the web Shop instead.
+   */
+  buy(item: CatalogItem, creatorName?: string, input?: PressedWith): Promise<boolean>
 }
 
 /** Buying through the shell; `onBackpack` runs when the buyer leaves the success dialog for the Backpack. */
 export function useShopPurchase(onBackpack: () => void): ShopPurchase {
   const queryClient = useQueryClient()
-  const [operation, setOperation] = useState<ShopOperation | null>(null)
   const toBackpack = useRef(onBackpack)
   toBackpack.current = onBackpack
   const last = useRef<ShopOperation | null>(null)
@@ -73,10 +82,7 @@ export function useShopPurchase(onBackpack: () => void): ShopPurchase {
     shellRequest<ShopOperation[]>(SHOP_METHODS.status, {})
       .then((list) => {
         const newest = Array.isArray(list) ? list[0] : undefined
-        if (newest && last.current == null) {
-          last.current = newest
-          setOperation(newest)
-        }
+        if (newest?.v === SHOP_PROTOCOL && last.current == null) last.current = newest
       })
       .catch(() => {})
     return onShellMessage(SHOP_EVENT, (message) => {
@@ -84,7 +90,6 @@ export function useShopPurchase(onBackpack: () => void): ShopPurchase {
       if (!event) return
       const prev = last.current
       last.current = event
-      setOperation(event)
       // Bought: the balance and the listings' supply changed. Once, as the purchase succeeds.
       if (event.state === 'succeeded' && !(prev?.operation === event.operation && prev.state === 'succeeded')) {
         void queryClient.invalidateQueries({ queryKey: ['shop', 'credits'] })
@@ -94,8 +99,8 @@ export function useShopPurchase(onBackpack: () => void): ShopPurchase {
       if (event.next === 'backpack' && prev?.next !== 'backpack') toBackpack.current()
     })
   }, [queryClient])
-  const buy = useCallback((item: CatalogItem, creatorName?: string, input?: 'pointer' | 'keyboard') => {
-    if (!inShell || item.itemId == null) return
+  const buy = useCallback(async (item: CatalogItem, creatorName?: string, input?: PressedWith): Promise<boolean> => {
+    if (!inShell || item.itemId == null) return false
     const request: ShopBuyRequest = {
       v: SHOP_PROTOCOL,
       item: { contract: item.contractAddress, itemId: String(item.itemId) },
@@ -103,9 +108,13 @@ export function useShopPurchase(onBackpack: () => void): ShopPurchase {
       ...(creatorName ? { creatorName } : {}),
       ...(input ? { input } : {})
     }
-    shellRequest<ShopOperation>(SHOP_METHODS.buy, request)
-      .then(setOperation)
-      .catch((e: unknown) => console.warn('[shop] the purchase could not open', e))
+    try {
+      versioned(await shellRequest<ShopOperation>(SHOP_METHODS.buy, request, BUY_TIMEOUT_MS))
+      return true
+    } catch (e) {
+      console.warn('[shop] the purchase could not open', e)
+      return false
+    }
   }, [])
-  return { available: inShell, operation, buy }
+  return { available: inShell, buy }
 }

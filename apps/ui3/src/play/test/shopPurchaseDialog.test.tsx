@@ -3,6 +3,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { ShopPurchaseDialog, type ShopPurchaseStep } from '../features/shop/ui'
+import { ARM_MS } from '../features/shop/ui/ShopPurchaseDialog'
 import { createShopOverlay } from '../shell/shop/overlay'
 
 const item = { name: 'Golden Armor', creator: 'Aurora', rarity: 'epic', credits: 500 }
@@ -15,14 +16,20 @@ function show(view: ShopPurchaseStep) {
 
 describe('the purchase dialog', () => {
   it('Buy Item: the balance, the item and its price, then CANCEL or BUY ITEM', () => {
+    vi.useFakeTimers()
     const h = show({ step: 'confirm', item, balance: 700 })
     const dialog = screen.getByRole('dialog', { name: 'Buy Item' })
     expect(dialog.textContent).toContain('Your Credits Balance:700')
     expect(dialog.textContent).toContain('Golden Armor')
     expect(dialog.textContent).toContain('Aurora')
     expect(dialog.textContent).toContain('500')
+    // A click the moment it appears (meant for what was there before) spends nothing.
     fireEvent.click(screen.getByRole('button', { name: 'Buy item' }))
-    expect(h.onConfirm).toHaveBeenCalled()
+    expect(h.onConfirm).not.toHaveBeenCalled()
+    act(() => void vi.advanceTimersByTime(ARM_MS))
+    fireEvent.click(screen.getByRole('button', { name: 'Buy item' }))
+    vi.useRealTimers()
+    expect(h.onConfirm).toHaveBeenCalledTimes(1)
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(h.onClose).toHaveBeenCalled()
   })
@@ -104,6 +111,25 @@ describe('the purchase dialog over the app', () => {
       document.body.innerHTML = ''
     }
     focus.mockRestore()
+  })
+
+  it('takes the focus in again when a view of the same step drops the focused button', async () => {
+    const ui = createShopOverlay(vi.fn())
+    await act(async () => ui.show({ step: 'failed', message: 'The wallet could not sign.', retry: true }, { onClose: vi.fn(), onRetry: vi.fn() }))
+    screen.getByRole('button', { name: 'Try again' }).focus()
+    await act(async () => ui.show({ step: 'failed', message: 'This purchase didn’t go through.', retry: false }, { onClose: vi.fn() }))
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    expect(document.activeElement?.textContent).toBe('Close')
+  })
+
+  it('leaves the page under it, the app’s frame included, inert while it shows', async () => {
+    const app = document.createElement('div')
+    document.body.appendChild(app)
+    const ui = createShopOverlay(vi.fn())
+    await act(async () => ui.show({ step: 'confirm', item, balance: 700 }, { onClose: vi.fn(), onConfirm: vi.fn() }))
+    expect(app.inert).toBe(true)
+    await act(async () => ui.hide())
+    expect(app.inert).toBe(false)
   })
 
   it('keeps Escape from closing a purchase that is processing', async () => {

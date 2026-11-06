@@ -4,6 +4,7 @@
 // sign-in request aren't drawn in the design; they use the same dialog. Presentational: whoever shows it
 // (the web Explorer's shell, which signs the purchase) decides the step and acts on the choice.
 
+import { useEffect, useState } from 'react'
 import { formatCredits, formatCreditsFull } from '../../../../shop/checkout/lib/currency'
 import { Button, Spinner } from '../../../design'
 import balanceIcon from '../../../assets/shop/modal/balance-credit.svg'
@@ -60,6 +61,26 @@ export interface ShopPurchaseDialogProps {
   onSignIn?: () => void
 }
 
+/** How long BUY ITEM is up before it answers. */
+export const ARM_MS = 500
+
+/**
+ * BUY ITEM, answering only once it has been up a moment: it appears where the loading step's disabled
+ * button was, and a click meant for that, or for the card behind, must not spend a credit.
+ */
+function ArmedButton({ onClick, children }: { onClick?: () => void; children: React.ReactNode }): React.JSX.Element {
+  const [armed, setArmed] = useState(false)
+  useEffect(() => {
+    const timer = setTimeout(() => setArmed(true), ARM_MS)
+    return () => clearTimeout(timer)
+  }, [])
+  return (
+    <Button size="modal" onClick={armed ? onClick : undefined} aria-disabled={armed ? undefined : true}>
+      {children}
+    </Button>
+  )
+}
+
 export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onBackpack, onRetry, onSignIn }: ShopPurchaseDialogProps): React.JSX.Element {
   const cancel = (
     <Button variant="dark" size="modal" onClick={onClose}>
@@ -78,7 +99,7 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
       )
     case 'confirm':
       return (
-        <ShopModal label="Buy Item" actions={<>{cancel}<Button size="modal" onClick={onConfirm}>Buy item</Button></>}>
+        <ShopModal label="Buy Item" actions={<>{cancel}<ArmedButton onClick={onConfirm}>Buy item</ArmedButton></>}>
           <h2 className={styles.title}>Buy Item</h2>
           <Balance credits={view.balance} />
           <ShopModalGap count={2} />

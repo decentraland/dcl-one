@@ -14,7 +14,7 @@
 
 import { CART_KEY_PREFIX, CHECKOUT_KEY_PREFIX, createCartStore, type CartStorage, type CartStore } from '../../../shop/cart/store'
 import type { GroupProgress, GroupStatus } from '../../../shop/model/purchase'
-import type { ShopOperationState } from '../../lib/shopProtocol'
+import { OPERATION_STATES, TERMINAL_STATES, type ShopOperationState } from '../../lib/shopProtocol'
 
 /** What a purchase's dialog shows of its item. */
 export interface PurchaseDisplay {
@@ -54,7 +54,6 @@ const KEEP = 20
 
 // What storage hands back is checked whole (another version of this page, or anything on the origin,
 // may have written it): a record that doesn't match is skipped, never half-trusted.
-const STATES: readonly ShopOperationState[] = ['reviewing', 'processing', 'pending', 'succeeded', 'failed', 'cancelled']
 const GROUP_STATUSES: readonly GroupStatus[] = ['idle', 'authorizing', 'submitted', 'pending', 'confirmed', 'failed', 'expired']
 const ADDRESS = /^0x[0-9a-f]{40}$/
 const HASH = /^0x[0-9a-fA-F]{64}$/
@@ -110,7 +109,7 @@ function isRecord(v: unknown, buyer: string): v is OperationRecord {
     ADDRESS.test(item.contract) &&
     typeof item.itemId === 'string' &&
     UINT.test(item.itemId) &&
-    STATES.includes(v.state as ShopOperationState) &&
+    OPERATION_STATES.includes(v.state as ShopOperationState) &&
     (v.next === undefined || v.next === 'backpack') &&
     (v.txHash === undefined || isHash(v.txHash)) &&
     (v.chainId === undefined || isChain(v.chainId)) &&
@@ -214,7 +213,7 @@ export function createLedger(storage: () => Storage | null): Ledger {
       // Settled operations beyond KEEP go, oldest first; an unsettled one, or this one, is never dropped.
       try {
         const list = read(record.buyer)
-        const settled = list.filter((r) => r.id !== record.id && (r.state === 'succeeded' || r.state === 'failed' || r.state === 'cancelled')).sort((a, b) => a.updatedAt - b.updatedAt)
+        const settled = list.filter((r) => r.id !== record.id && TERMINAL_STATES.includes(r.state)).sort((a, b) => a.updatedAt - b.updatedAt)
         for (let count = list.length; count > KEEP && settled.length > 0; count--) forget(s, settled.shift()!)
       } catch {
         // A record left over is no harm.

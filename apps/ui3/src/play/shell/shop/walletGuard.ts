@@ -20,6 +20,7 @@ import { COLLECTION_STORE_ABI, CREDITS_MANAGER_ABI, MARKETPLACE_ABI } from '../.
 import { chainIdSalt, DOMAIN_TYPE, metaTxType } from '../../../shop/checkout/chain/metatx'
 import { ASSET_TYPE } from '../../../shop/checkout/purchase/encoding'
 import type { ChainId } from '../../../shop/model/chain'
+import { AMOY_ADD_PARAMS } from '../../../shop/wallet/chain'
 import type { TrustedManager } from './config'
 
 /** A refused request, in EIP-1193's terms: 4100 unauthorized, 4200 unsupported. */
@@ -188,18 +189,27 @@ export function guardedProvider(provider: Eip1193Provider, intent: PurchaseInten
           return [intent.buyer]
         case 'eth_chainId':
           return provider.request({ method, params })
-        case 'wallet_switchEthereumChain':
+        // Only to the purchase's own chain, with what this page knows of it: never the caller's endpoints.
+        case 'wallet_switchEthereumChain': {
+          if (args.length !== 1 || lower((args[0] as { chainId?: unknown } | undefined)?.chainId) !== chainHex) refuse('The Shop only switches your wallet to its own network.')
+          return provider.request({ method, params: [{ chainId: chainHex }] })
+        }
         case 'wallet_addEthereumChain': {
-          if (lower((args[0] as { chainId?: unknown } | undefined)?.chainId) !== chainHex) refuse('The Shop only switches your wallet to its own network.')
-          return provider.request({ method, params })
+          if (args.length !== 1 || lower((args[0] as { chainId?: unknown } | undefined)?.chainId) !== chainHex || AMOY_ADD_PARAMS.chainId !== chainHex) {
+            refuse('The Shop only adds its own network to your wallet.')
+          }
+          return provider.request({ method, params: [AMOY_ADD_PARAMS] })
         }
         case 'eth_signTypedData_v4':
+          if (args.length !== 2) refuse('The Shop only signs its own purchases.')
           checkMetaTransaction(args[0], args[1], intent)
           await ready('authorized')
           return provider.request({ method, params })
         case 'eth_sendTransaction':
           if (args.length !== 1) refuse('The Shop only sends its own purchases.')
           checkTransaction(args[0], intent)
+          // A wallet on another network would spend gas there and leave the purchase pending.
+          if (lower(await provider.request({ method: 'eth_chainId' })) !== chainHex) refuse('Your wallet is on another network. Switch it to the Shop’s and try again.')
           await ready('handedOff')
           return provider.request({ method, params })
         default:

@@ -2,7 +2,7 @@
 // it signs, for whom, what it tells the HUD, and how it follows a purchase that outlives its dialog. The
 // Shop's reads, the executor and its watcher are fakes here (shellShopRails runs the real ones); the cart
 // partition, review and the per-operation ledger are the real ones.
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Eip1193Provider } from '../../data/auth/wallet'
 import type { CartGroup } from '../../shop/cart/partition'
 import { createFakeWallet, type FakeWallet } from '../../shop/checkout/fakes'
@@ -88,6 +88,15 @@ function handedOff(deps: CheckoutDeps, group: CartGroup, txHash = TX): void {
 }
 
 type Shown = { view: ShellPurchaseView; handlers: ShellPurchaseHandlers }
+
+/** Operation ids, unique across every shell (two tabs never make the same one). */
+let opIds = 0
+
+/** Each test's shells, stopped when it ends: a watcher reads an unsettled purchase for as long as its page lives. */
+const pages: Array<() => void> = []
+afterEach(() => {
+  for (const close of pages.splice(0)) close()
+})
 type RunFn = (deps: CheckoutDeps, group: CartGroup) => Promise<GroupResult>
 
 function setup(
@@ -126,12 +135,24 @@ function setup(
   const creditRecord = vi.fn<ShellShopServices['creditRecord']>(opts.creditRecord ?? (async () => 'open'))
   /** Each client's signer, in the order the shell made them (the quote's is the first after shop.buy). */
   const signers: Array<() => unknown> = []
+  /** The credits the shell gave back (the salts of each cancel). */
+  const cancels: string[][] = []
+  /** Every wait the watcher asked for, in ms. */
+  const sleeps: number[] = []
   let clock = 1_000_000
-  let ids = 0
+  let closed = false
+  pages.push(() => (closed = true))
   const services: Partial<ShellShopServices> = {
     client: (signer) => {
       signers.push(signer)
-      return {} as never
+      return {
+        authorizations: {
+          cancel: async ({ salts }: { salts: string[] }) => {
+            cancels.push(salts)
+            return { released: salts.length }
+          }
+        }
+      } as never
     },
     fetchItem: async () => (opts.listing === undefined ? LISTING : opts.listing),
     offers: () => async (queries, session) => Object.fromEntries(queries.map((q) => [q.key, storeMint(session)])),
@@ -152,11 +173,13 @@ function setup(
     storage: () => storage,
     // The clock moves with each wait, and the wait yields, so a test can change what the watcher sees.
     sleep: async (ms) => {
+      if (closed) throw new Error('the page is gone')
+      sleeps.push(ms)
       clock += opts.tick ?? ms
       await new Promise((resolve) => setTimeout(resolve, 2))
     },
     now: () => clock,
-    newId: () => `0f0e0d0c-0000-4000-8000-${String(++ids).padStart(12, '0')}`,
+    newId: () => `0f0e0d0c-0000-4000-8000-${String(++opIds).padStart(12, '0')}`,
     creditsUrl: () => 'https://decentraland.example/shop/credits',
     creatorName: opts.creatorName ?? (async () => 'Aurora'),
     claim: opts.claim ?? (async () => () => {}),
@@ -179,7 +202,7 @@ function setup(
   }
   const buy = (itemId = String(ITEM)) => shop.request('shop.buy', { v: SHOP_PROTOCOL, item: { contract: CONTRACT, itemId }, method: 'credits', creatorName: 'Aurora' }) as Promise<ShopOperation>
   const states = (): string[] => events.map((e) => e.state)
-  return { shop, deps, shown, events, run, watch, guard, provider, wallet, last, until, buy, states, signers, creditRecord }
+  return { shop, deps, shown, events, run, watch, guard, provider, wallet, last, until, buy, states, signers, creditRecord, cancels, sleeps }
 }
 
 /**
@@ -849,6 +872,114 @@ describe('the shell purchase', () => {
     expect(quote()).not.toBeNull()
     held = { ...held, identity: { ...held.identity, expiration: new Date(Date.now() + 7_200_000).toISOString() } }
     expect(quote()).toBeNull()
+  })
+
+  it('lets go of an operation’s lock once it is cancelled, or once it failed', async () => {
+    const browser = locks()
+    const cancelled = setup({ claim: browser.tab('first') })
+    const a = await cancelled.buy()
+    expect(browser.holds(a.operation)).toBe('first')
+    ;(await cancelled.until('confirm')).handlers.onClose()
+    expect(browser.holds(a.operation)).toBeUndefined()
+    const failing = setup({ claim: browser.tab('second'), run: async () => ({ status: 'failed', failure: { kind: 'error', message: 'The wallet could not sign.' }, released: [] }) })
+    const b = await failing.buy()
+    ;(await failing.until('confirm')).handlers.onConfirm?.()
+    ;(await failing.until('failed')).handlers.onClose()
+    expect(failing.states().at(-1)).toBe('failed')
+    expect(browser.holds(b.operation)).toBeUndefined()
+  })
+
+  it('ends what a closed tab left open: a dialog it was reviewing, a credit it reserved and never sent', async () => {
+    const storage = memoryStorage()
+    const browser = locks()
+    const CREDIT = '0x' + 'a1'.repeat(32)
+    const reviewing = setup({ storage, claim: browser.tab('reviewing') })
+    const a = await reviewing.buy()
+    await reviewing.until('confirm')
+    const reserving = setup({
+      storage,
+      claim: browser.tab('reserving'),
+      run: (deps, group) => {
+        deps.store.dispatch(group.keyId, { type: 'authorize' })
+        deps.store.dispatch(group.keyId, { type: 'authorized', creditIds: [CREDIT] })
+        return new Promise<never>(() => {})
+      }
+    })
+    const b = await reserving.buy('8')
+    ;(await reserving.until('confirm')).handlers.onConfirm?.()
+    await reserving.until('processing')
+    const other = setup({ storage, claim: browser.tab('other') })
+    await other.shop.request('shop.capabilities', undefined)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(other.events).toEqual([])
+    // Both tabs close: the third, queued for their locks, ends both, and gives the reserved credit back.
+    browser.close('reviewing')
+    browser.close('reserving')
+    await vi.waitFor(() => expect(other.events.filter((e) => e.state === 'cancelled').map((e) => e.operation).sort()).toEqual([a.operation, b.operation].sort()))
+    expect(other.cancels).toEqual([[CREDIT]])
+    expect(other.watch).not.toHaveBeenCalled()
+  })
+
+  it('takes over another tab’s purchase only for the buyer it was made for', async () => {
+    const storage = memoryStorage()
+    const browser = locks()
+    const first = setup({
+      storage,
+      claim: browser.tab('first'),
+      run: async (deps, group) => {
+        handedOff(deps, group)
+        return { status: 'pending', txHash: TX }
+      }
+    })
+    const op = await first.buy()
+    ;(await first.until('confirm')).handlers.onConfirm?.()
+    await first.until('pending')
+    let account = BUYER
+    const second = setup({ storage, claim: browser.tab('second'), login: () => login(account), watch: async () => ({ status: 'confirmed', txHash: TX }) })
+    await second.shop.request('shop.capabilities', undefined)
+    // Another account signs in here before the first tab goes: its lock comes and is let go untouched.
+    account = OTHER
+    browser.close('first')
+    await new Promise((r) => setTimeout(r, 20))
+    expect(browser.holds(op.operation)).toBeUndefined()
+    expect(second.watch).not.toHaveBeenCalled()
+    // Back as the buyer, the next request takes it over.
+    account = BUYER
+    await second.shop.request('shop.status', {})
+    await vi.waitFor(() => expect(second.events.find((e) => e.operation === op.operation && e.state === 'succeeded')).toBeTruthy())
+  })
+
+  it('keeps reading an unsettled purchase past its first half hour, every five minutes', async () => {
+    const t = setup({
+      run: async (deps, group) => {
+        handedOff(deps, group)
+        return { status: 'pending', txHash: TX }
+      }
+    })
+    await t.buy()
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    ;(await t.until('pending')).handlers.onClose()
+    await vi.waitFor(() => expect(t.sleeps.filter((ms) => ms === 5 * 60_000).length).toBeGreaterThanOrEqual(3))
+    const reads = t.watch.mock.calls.length
+    await vi.waitFor(() => expect(t.watch.mock.calls.length).toBeGreaterThan(reads))
+    expect(t.states().at(-1)).toBe('pending')
+  })
+
+  it('reads an expired credit twice, the window starting again after it reads open', async () => {
+    const answers: Array<'expired' | 'open'> = ['expired', 'open']
+    const t = setup({
+      run: async (deps, group) => {
+        handedOff(deps, group)
+        return { status: 'pending', txHash: TX }
+      },
+      creditRecord: async () => answers.shift() ?? 'expired',
+      tick: 5 * 60_000
+    })
+    const op = await t.buy()
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    await vi.waitFor(() => expect(t.events.find((e) => e.operation === op.operation && e.state === 'failed')).toBeTruthy())
+    // Expired at 0, open at 5, then expired from 10: it fails at 25, fifteen minutes after that.
+    expect(t.creditRecord).toHaveBeenCalledTimes(6)
   })
 
   it('runs no purchase it can’t hold to this tab', async () => {

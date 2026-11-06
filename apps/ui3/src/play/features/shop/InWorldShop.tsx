@@ -145,6 +145,9 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   const capabilities = useShopCapabilities()
   const credits = useCreditsBalance(shop.open ? (capabilities?.buyer ?? null) : null)
   const purchase = useShopPurchase(() => onNavigate('backpack'))
+  // The panel shows the selected item as the listings now read it (its stock after a purchase), and its
+  // own copy only while no listing holds it.
+  const shown = selected == null ? null : ([...items, ...(trending.data ?? []), ...(newest.data ?? [])].find((i) => i.id === selected.id) ?? selected)
 
   // Only a preview this page made is undone: the Backpack shares the preview avatar.
   const previewing = useRef(false)
@@ -253,7 +256,8 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   }
   // In the web shell the purchase dialog opens over the page; anywhere else the web Shop sells it.
   const buy = (item: CatalogItem, creatorName: string, input: PressedWith): void => {
-    if (purchase.available) purchase.buy(item, creatorName, input)
+    // A purchase that couldn't open here (the shell refused it or didn't answer) is offered on the web.
+    if (purchase.available) void purchase.buy(item, creatorName, input).then((opened) => (opened ? undefined : openOnWeb(item)))
     else void openOnWeb(item)
   }
   const select = (item: CatalogItem): void => {
@@ -402,7 +406,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                 </div>
                 <ScrollThumb target={homeScroller} length={THUMB_LENGTH} className={styles.thumb} />
                 </div>
-                {selected != null && <SelectedItemPanel key={selected.id} item={selected} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(selected)} onBuy={(name, input) => buy(selected, name, input)} />}
+                {shown != null && <SelectedItemPanel key={shown.id} item={shown} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(shown)} onBuy={(name, input) => buy(shown, name, input)} />}
               </div>
             ) : (
             <>
@@ -482,7 +486,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
               </div>
               <ScrollThumb target={scroller} length={THUMB_LENGTH} className={styles.thumb} />
               </div>
-              {selected != null && <SelectedItemPanel key={selected.id} item={selected} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(selected)} onBuy={(name, input) => buy(selected, name, input)} />}
+              {shown != null && <SelectedItemPanel key={shown.id} item={shown} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(shown)} onBuy={(name, input) => buy(shown, name, input)} />}
             </div>
             </>
             )}

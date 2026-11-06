@@ -26,8 +26,13 @@ export function sitesWalletKind(
   facts: { inApp: ThirdwebSession | null; injected: boolean },
 ): WalletKind | null {
   if (!identity) return null;
-  if (facts.inApp && facts.inApp.address.toLowerCase() === identity.signer.toLowerCase()) return "managed";
+  if (inAppSessionFor(identity.signer, facts.inApp)) return "managed";
   return facts.injected ? "web3" : "managed";
+}
+
+/** Whether this browser's in-app (thirdweb) session is `account`'s. */
+export function inAppSessionFor(account: string, session: ThirdwebSession | null = getThirdwebSession()): boolean {
+  return session != null && session.address.toLowerCase() === account.toLowerCase();
 }
 
 export function browserProvider(): Eip1193Provider | null {
@@ -72,8 +77,7 @@ export function managedShopProvider(account: string, sign: (typedData: TypedData
  */
 export function playShopWallet(): ShellShopWallet {
   const kind = (account: string): WalletKind | null => {
-    const inApp = getThirdwebSession();
-    if (inApp && inApp.address.toLowerCase() === account.toLowerCase()) return "managed";
+    if (inAppSessionFor(account)) return "managed";
     return hasWallet() ? "web3" : null;
   };
   return {

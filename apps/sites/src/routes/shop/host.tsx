@@ -17,7 +17,7 @@ import type { AuthIdentity } from "@ui/data/auth/identity";
 
 import { useAuth } from "@/data/lib/auth/index";
 import { getIdentity } from "@/data/lib/auth/session";
-import { browserProvider, managedShopProvider, sitesWalletKind } from "@/data/lib/auth/shop-wallet";
+import { browserProvider, inAppSessionFor, managedShopProvider, sitesWalletKind } from "@/data/lib/auth/shop-wallet";
 import { getThirdwebSession } from "@/data/lib/auth/thirdweb/session";
 import { hasWallet } from "@/data/lib/auth/wallet";
 import { openSignIn } from "@/features/components/auth/signin-store";
@@ -29,11 +29,6 @@ export function installSitesShopClient(): void {
   if (installed || typeof window === "undefined") return;
   installed = true;
   setShopClient(createShopClient({ signer: () => identitySigner(getIdentity() as AuthIdentity | null) }));
-}
-
-function inAppFor(identity: Pick<AuthIdentity, "signer">): boolean {
-  const inApp = getThirdwebSession();
-  return !!inApp && inApp.address.toLowerCase() === identity.signer.toLowerCase();
 }
 
 const noSubscription = () => () => {};
@@ -59,7 +54,7 @@ export function useSitesShopHost(): ShopWalletHost {
       provider:
         walletKind === "web3"
           ? browserProvider
-          : identity && inAppFor(identity)
+          : identity && inAppSessionFor(identity.signer)
             ? () => managedShopProvider(identity.signer)
             : null,
       onSignIn: signIn,

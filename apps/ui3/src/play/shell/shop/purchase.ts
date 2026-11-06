@@ -43,6 +43,7 @@ import {
   SHOP_EVENT,
   SHOP_METHODS,
   SHOP_PROTOCOL,
+  isTerminal,
   TERMINAL_STATES,
   type ShopBalance,
   type ShopBuyRequest,
@@ -139,8 +140,10 @@ export interface ShellShopDeps {
 }
 
 const FLAGS_TIMEOUT_MS = 3000
-/** How long a page keeps watching an unsettled purchase; a later page (a reload) carries on. */
+/** How long a page reads an unsettled purchase often (backing off); then every WATCH_SLOW_MS. */
 const WATCH_FOR_MS = 30 * 60_000
+/** How often a purchase still unsettled after WATCH_FOR_MS is read again. */
+const WATCH_SLOW_MS = 5 * 60_000
 const WATCH_BACKOFF_MS = [5_000, 10_000, 20_000, 40_000, 60_000]
 
 /**
@@ -285,7 +288,7 @@ type Operation = OperationRecord & {
   store?: CartStore
   watching?: boolean
   unwatchWallet?: () => void
-  input?: 'pointer' | 'keyboard'
+  input?: ShopBuyRequest['input']
   /** This page's hold on the operation (its Web Lock), released once it settles. */
   release?: () => void
   /** Held by another live page: shown, never changed here. */
@@ -321,6 +324,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     ...(op.txHash !== undefined ? { txHash: op.txHash } : {})
   })
   const keep = (op: Operation): boolean => {
+    // Only the page holding an operation writes it while it is unsettled (its end is anyone's to keep).
+    if (!op.release && !TERMINAL_STATES.includes(op.state)) return false
     op.updatedAt = svc.now()
     const { store: _s, watching: _w, unwatchWallet: _u, input: _i, release: _r, foreign: _f, expiredSince: _e, ...record } = op
     return ledger.save(record)
@@ -427,12 +432,85 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     return RANK[a.status] >= RANK[b.status] ? a : b
   }
 
+  /** One look at an unsettled operation: true once it settled. Anything it can't read is for the next look. */
+  const check = async (op: Operation & { buyer: string }, store: CartStore): Promise<boolean> => {
+    const progress = latest(store.getSnapshot().checkout?.groups[0] ?? null, op.progress ?? null)
+    const handedOff = op.state === 'pending' || !!op.txHash || !!progress?.txHash || (progress != null && (progress.status === 'submitted' || progress.status === 'pending'))
+    if (progress?.status === 'confirmed') {
+      settled(op, 'succeeded', { txHash: progress.txHash ?? op.txHash ?? null })
+      return true
+    }
+    if (progress && (progress.status === 'failed' || progress.status === 'expired')) {
+      settled(op, 'failed', {}, progress.failure?.message)
+      return true
+    }
+    if (!progress) {
+      if (!handedOff) {
+        settled(op, 'cancelled')
+        return true
+      }
+      // A hand-off known only by its hash (the checkpoint is gone): its receipt on its chain decides.
+      if (op.txHash && op.chainId) {
+        const receipt = await svc
+          .reader()
+          .receipt(op.chainId as Parameters<ChainReader['receipt']>[0], op.txHash)
+          .catch(() => null)
+        if (receipt?.status === 'success') {
+          settled(op, 'succeeded', { txHash: op.txHash })
+          return true
+        }
+        if (receipt?.status === 'reverted') {
+          settled(op, 'failed', {}, 'The transaction failed on-chain. Nothing was bought.')
+          return true
+        }
+      }
+    } else if (!handedOff) {
+      // Reserved, or not even that, and provably not handed off: give the credit back.
+      if (progress.status === 'authorizing') {
+        const state: PurchaseState = store.getSnapshot().checkout ?? { id: op.id, account: op.buyer, groups: [progress], createdAt: op.createdAt }
+        await releaseAuthorizing(watchDeps(op, store), { ...state, groups: [progress] })
+      }
+      settled(op, 'cancelled')
+      return true
+    } else {
+      const following: GroupProgress =
+        progress.status === 'submitted' || progress.status === 'pending' ? progress : { ...progress, status: op.txHash || progress.txHash ? 'pending' : 'submitted', txHash: progress.txHash ?? op.txHash ?? null }
+      const result = await svc.watch(watchDeps(op, store), following).catch((): GroupResult => ({ status: 'pending', txHash: following.txHash }))
+      if (result.status === 'confirmed') {
+        settled(op, 'succeeded', { txHash: result.txHash })
+        return true
+      }
+      if (result.status === 'failed') {
+        settled(op, 'failed', {}, result.failure.kind === 'reverted' ? 'The transaction failed on-chain. Nothing was bought and your Credits were returned.' : result.failure.message)
+        return true
+      }
+      // A hash with no receipt may have been dropped or replaced: the server's record of the credit
+      // itself says whether it was spent. Expired unused (read twice, past the index's lag) means it
+      // can no longer be: an expired credit reverts useCredits.
+      if (following.txHash && following.creditIds.length > 0) {
+        const record = await svc.creditRecord(op.buyer, following.creditIds, client(op.buyer)).catch(() => 'open' as const)
+        if (record === 'settled') {
+          settled(op, 'succeeded')
+          return true
+        }
+        if (record === 'expired') {
+          op.expiredSince ??= svc.now()
+          if (svc.now() - op.expiredSince >= EXPIRY_CONFIRM_MS) {
+            settled(op, 'failed', {}, 'This purchase never went through, and its Credits expired unused: nothing was bought.')
+            return true
+          }
+        } else op.expiredSince = undefined
+      }
+    }
+    return false
+  }
+
   /**
    * Takes an unsettled operation to its end and never resubmits it. It settles only on authoritative
    * evidence: the checkout's own confirmed or failed state, the executor's watcher (the receipt of the
    * hash, or the server's record of the operation's own credit), or a known hash's receipt on its chain.
-   * Anything unknown (an unreadable answer, no receipt yet) stays unsettled and is read again; no timer
-   * ends it.
+   * Anything unknown (an unreadable answer, no receipt yet, a read that fails) stays unsettled and is
+   * read again, for as long as the page lives; no timer ends it.
    *
    * Nothing is ever signed or sent before the operation's record holds its checkpoint (`durable`, read
    * back from storage): signing needs the credit kept, the hand-off needs `submitted` kept. So a record
@@ -445,79 +523,19 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     op.watching = true
     try {
       const store = (op.store ??= ledger.storeFor(op))
-      const deadline = svc.now() + WATCH_FOR_MS
+      // Read often at first, then every few minutes for as long as the page lives: an unsettled
+      // purchase is never left unwatched while this page holds it.
+      const slowAfter = svc.now() + WATCH_FOR_MS
       for (let attempt = 0; ; attempt++) {
-        const progress = latest(store.getSnapshot().checkout?.groups[0] ?? null, op.progress ?? null)
-        const handedOff = op.state === 'pending' || !!op.txHash || !!progress?.txHash || (progress != null && (progress.status === 'submitted' || progress.status === 'pending'))
-        if (progress?.status === 'confirmed') {
-          settled(op, 'succeeded', { txHash: progress.txHash ?? op.txHash ?? null })
-          return
+        try {
+          if (await check(op as Operation & { buyer: string }, store)) return
+        } catch (e) {
+          console.warn('[shell/shop] could not check a purchase; reading it again later', e)
         }
-        if (progress && (progress.status === 'failed' || progress.status === 'expired')) {
-          settled(op, 'failed', {}, progress.failure?.message)
-          return
-        }
-        if (!progress) {
-          if (!handedOff) {
-            settled(op, 'cancelled')
-            return
-          }
-          // A hand-off known only by its hash (the checkpoint is gone): its receipt on its chain decides.
-          if (op.txHash && op.chainId) {
-            const receipt = await svc
-              .reader()
-              .receipt(op.chainId as Parameters<ChainReader['receipt']>[0], op.txHash)
-              .catch(() => null)
-            if (receipt?.status === 'success') {
-              settled(op, 'succeeded', { txHash: op.txHash })
-              return
-            }
-            if (receipt?.status === 'reverted') {
-              settled(op, 'failed', {}, 'The transaction failed on-chain. Nothing was bought.')
-              return
-            }
-          }
-        } else if (!handedOff) {
-          // Reserved, or not even that, and provably not handed off: give the credit back.
-          if (progress.status === 'authorizing') {
-            const state: PurchaseState = store.getSnapshot().checkout ?? { id: op.id, account: op.buyer, groups: [progress], createdAt: op.createdAt }
-            await releaseAuthorizing(watchDeps(op, store), { ...state, groups: [progress] })
-          }
-          settled(op, 'cancelled')
-          return
-        } else {
-          const following: GroupProgress =
-            progress.status === 'submitted' || progress.status === 'pending' ? progress : { ...progress, status: op.txHash || progress.txHash ? 'pending' : 'submitted', txHash: progress.txHash ?? op.txHash ?? null }
-          const result = await svc.watch(watchDeps(op, store), following).catch((): GroupResult => ({ status: 'pending', txHash: following.txHash }))
-          if (result.status === 'confirmed') {
-            settled(op, 'succeeded', { txHash: result.txHash })
-            return
-          }
-          if (result.status === 'failed') {
-            settled(op, 'failed', {}, result.failure.kind === 'reverted' ? 'The transaction failed on-chain. Nothing was bought and your Credits were returned.' : result.failure.message)
-            return
-          }
-          // A hash with no receipt may have been dropped or replaced: the server's record of the credit
-          // itself says whether it was spent. Expired unused (read twice, past the index's lag) means it
-          // can no longer be: an expired credit reverts useCredits.
-          if (following.txHash && following.creditIds.length > 0) {
-            const record = await svc.creditRecord(op.buyer, following.creditIds, client(op.buyer)).catch(() => 'open' as const)
-            if (record === 'settled') {
-              settled(op, 'succeeded')
-              return
-            }
-            if (record === 'expired') {
-              op.expiredSince ??= svc.now()
-              if (svc.now() - op.expiredSince >= EXPIRY_CONFIRM_MS) {
-                settled(op, 'failed', {}, 'This purchase never went through, and its Credits expired unused: nothing was bought.')
-                return
-              }
-            } else op.expiredSince = undefined
-          }
-        }
-        if (svc.now() >= deadline) return
-        await svc.sleep(WATCH_BACKOFF_MS[Math.min(attempt, WATCH_BACKOFF_MS.length - 1)])
+        await svc.sleep(svc.now() >= slowAfter ? WATCH_SLOW_MS : WATCH_BACKOFF_MS[Math.min(attempt, WATCH_BACKOFF_MS.length - 1)])
       }
+    } catch {
+      // The page is going (its waits refused): nothing else to do here.
     } finally {
       op.watching = false
     }
@@ -565,7 +583,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     if (known && was !== op.state) {
       // Another tab moved it on: this page's app hears of it, and its dialog, if up, says how it ended.
       deps.post({ type: SHOP_EVENT, ...snapshot(op) })
-      if (op.state === 'succeeded' || op.state === 'failed' || op.state === 'cancelled') settled(op, op.state)
+      if (isTerminal(op.state)) settled(op, op.state)
     }
     if (foreign) queueFor(buyer, op.id)
     if (!release) return
