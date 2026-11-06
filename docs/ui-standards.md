@@ -28,8 +28,7 @@ guessing. The first standard defined here is styling.
 
 ## Relation to the contributor guides
 
-The current contributor guides reflect the standards in production. This
-document defines the new standards for One.
+The current contributor guides reflect the standards in production. This document defines the new standards for One. State, data fetching and structure are in [web app architecture standards](web-app-standards.md), and tests in [frontend testing standards](frontend-testing.md).
 
 ## Styling: CSS Modules
 
@@ -199,10 +198,10 @@ the shared foundations and components. The app itself, under `apps/<app>`,
 keeps its pages, routes and data wiring and imports its UI from there. Until
 `library/ui` is implemented, app-specific UI stays where it is in the app.
 
-Until `library/ui` is implemented, Sites already imports `apps/ui3` source
-through the `@ui/*` alias (`apps/sites/tsconfig.json`), so an `apps/ui3`
-component that Sites imports is used by more than one app. Verify a change to
-it in every app that imports it.
+Until `library/ui` is implemented, Sites imports some UI source through the
+`@ui/*` alias (`apps/sites/tsconfig.json`, resolving to `apps/ui3/src`). Verify the
+actual importing surfaces of a component before assuming it has more than one
+consumer, and verify a change to it in every app that imports it.
 
 - Follow the same CSS Modules, accessibility, migration and verification rules
   as shared UI.

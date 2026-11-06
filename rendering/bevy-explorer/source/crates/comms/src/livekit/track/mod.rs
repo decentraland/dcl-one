@@ -115,9 +115,10 @@ struct AudioStreamingHandle {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[derive(Component, Deref, DerefMut)]
+#[derive(Component)]
 struct VideoFrameReceiver {
     receiver: mpsc::Receiver<I420Buffer>,
+    last_received: f64,
 }
 
 /// A track's page video element, adopted into the media host; dropping this releases it.
