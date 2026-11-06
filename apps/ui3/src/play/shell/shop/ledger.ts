@@ -7,6 +7,10 @@
 // Writes are observable: the web Shop's cart store swallows a failed write, so every write here goes
 // through a wrapper that remembers which operation it failed for, and `saved` reads an operation back
 // from storage. The purchase requires both before it lets anything reach the wallet or the relay.
+//
+// Each operation's record is a key of its own, written only by the tab that holds the operation's lock
+// (./purchase): tabs running different purchases never write the same key, so neither can undo the
+// other's checkpoint. A buyer's operations are found by their keys' prefix.
 
 import { CART_KEY_PREFIX, CHECKOUT_KEY_PREFIX, createCartStore, type CartStorage, type CartStore } from '../../../shop/cart/store'
 import type { GroupProgress, GroupStatus } from '../../../shop/model/purchase'
@@ -40,9 +44,11 @@ export interface OperationRecord {
 }
 
 const NS = 'dcl-inworld-shop'
-const indexKey = (buyer: string): string => `${NS}:operations:v1:${buyer}`
+const recordPrefix = (buyer: string): string => `${NS}:record:v1:${buyer}:`
+const recordKey = (buyer: string, id: string): string => recordPrefix(buyer) + id
 const opPrefix = (id: string): string => `${NS}:operation:v1:${id}:`
-const PROBE = `${NS}:probe`
+/** Each ledger probes its own key, so two tabs probing at once don't answer for each other. */
+const probeKey = (): string => `${NS}:probe:${Math.random().toString(36).slice(2)}`
 /** Operations kept per buyer; the oldest settled ones go first. */
 const KEEP = 20
 
@@ -131,11 +137,32 @@ export interface Ledger {
 
 export function createLedger(storage: () => Storage | null): Ledger {
   const failures = new Set<string>()
+  const PROBE = probeKey()
+  /** The record under `key`, if it is `buyer`'s operation `id` in the shape this page writes. */
+  const parse = (s: Storage, key: string, buyer: string, id: string): OperationRecord | null => {
+    try {
+      const raw = s.getItem(key)
+      const v = raw ? (JSON.parse(raw) as unknown) : null
+      return isRecord(v, buyer) && v.id === id ? v : null
+    } catch {
+      return null
+    }
+  }
+  /** `buyer`'s operations, oldest first. */
   const read = (buyer: string): OperationRecord[] => {
     try {
-      const raw = storage()?.getItem(indexKey(buyer))
-      const list = raw ? (JSON.parse(raw) as unknown) : []
-      return Array.isArray(list) ? list.filter((r): r is OperationRecord => isRecord(r, buyer)) : []
+      const s = storage()
+      if (!s) return []
+      const prefix = recordPrefix(buyer)
+      const keys: string[] = []
+      for (let i = 0; i < s.length; i++) {
+        const key = s.key(i)
+        if (key?.startsWith(prefix)) keys.push(key)
+      }
+      return keys
+        .map((key) => parse(s, key, buyer, key.slice(prefix.length)))
+        .filter((r): r is OperationRecord => r !== null)
+        .sort((a, b) => a.createdAt - b.createdAt)
     } catch {
       return []
     }
@@ -143,6 +170,7 @@ export function createLedger(storage: () => Storage | null): Ledger {
   const forget = (s: Storage, record: OperationRecord): void => {
     const p = opPrefix(record.id)
     for (const key of [CART_KEY_PREFIX + record.buyer, CHECKOUT_KEY_PREFIX + record.buyer]) s.removeItem(p + key)
+    if (record.buyer) s.removeItem(recordKey(record.buyer, record.id))
   }
   /** The operation's prefix over storage, remembering a write that throws (the cart store hides it). */
   const watched = (s: Storage, id: string): CartStorage => {
@@ -177,25 +205,25 @@ export function createLedger(storage: () => Storage | null): Ledger {
         return false
       }
       try {
-        const list = read(record.buyer).filter((r) => r.id !== record.id)
-        list.push({ ...record })
-        // Settled operations beyond KEEP go, oldest first; an unsettled one is never dropped.
-        const settled = list.filter((r) => r.state === 'succeeded' || r.state === 'failed' || r.state === 'cancelled').sort((a, b) => a.updatedAt - b.updatedAt)
-        while (list.length > KEEP && settled.length > 0) {
-          const old = settled.shift()!
-          list.splice(list.indexOf(old), 1)
-          forget(s, old)
-        }
-        s.setItem(indexKey(record.buyer), JSON.stringify(list))
-        return true
+        s.setItem(recordKey(record.buyer, record.id), JSON.stringify(record))
       } catch (e) {
         failures.add(record.id)
         console.warn('[shell/shop] could not keep the purchase record', e)
         return false
       }
+      // Settled operations beyond KEEP go, oldest first; an unsettled one, or this one, is never dropped.
+      try {
+        const list = read(record.buyer)
+        const settled = list.filter((r) => r.id !== record.id && (r.state === 'succeeded' || r.state === 'failed' || r.state === 'cancelled')).sort((a, b) => a.updatedAt - b.updatedAt)
+        for (let count = list.length; count > KEEP && settled.length > 0; count--) forget(s, settled.shift()!)
+      } catch {
+        // A record left over is no harm.
+      }
+      return true
     },
     saved(buyer, id) {
-      return read(buyer).find((r) => r.id === id) ?? null
+      const s = storage()
+      return s ? parse(s, recordKey(buyer, id), buyer, id) : null
     },
     writable() {
       const s = storage()

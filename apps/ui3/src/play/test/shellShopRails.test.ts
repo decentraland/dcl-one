@@ -95,6 +95,9 @@ function rails(opts: { trusted: string; kind: 'managed' | 'web3'; gasless?: bool
       resolvers: () => ({ trade: async () => null, store: async () => ({ priceWei: '2300000000000000000', available: 10 }) }),
       reader: () => chain,
       primeFlags: async () => {},
+      // One tab: every operation's lock is this page's.
+      claim: async () => () => {},
+      creatorName: async () => null,
       manager: (chainId) => ({ chainId, address: opts.trusted, name: 'Decentraland Credits', version: '1.0.0' }),
       rail: () => ({
         relayerUrl: 'https://node.test/transactions-api/v1',
@@ -158,7 +161,7 @@ describe('the shell purchase on the real rails', () => {
 
   it('relays nothing when the hand-off isn’t kept: the signed purchase never leaves the browser', async () => {
     // Everything is kept until the record says the purchase was handed off.
-    const r = rails({ trusted: DEDICATED, kind: 'managed', storage: memoryStorage((key, value) => key.includes(':operations:') && value.includes('"status":"submitted"')) })
+    const r = rails({ trusted: DEDICATED, kind: 'managed', storage: memoryStorage((key, value) => key.includes(':record:') && value.includes('"status":"submitted"')) })
     await r.buy()
     await r.until('failed')
     expect(r.wallet.requests.some((q) => q.method === 'eth_signTypedData_v4')).toBe(true)
@@ -166,7 +169,7 @@ describe('the shell purchase on the real rails', () => {
   })
 
   it('sends nothing directly when the hand-off isn’t kept', async () => {
-    const r = rails({ trusted: DEDICATED, kind: 'web3', gasless: false, storage: memoryStorage((key, value) => key.includes(':operations:') && value.includes('"status":"submitted"')) })
+    const r = rails({ trusted: DEDICATED, kind: 'web3', gasless: false, storage: memoryStorage((key, value) => key.includes(':record:') && value.includes('"status":"submitted"')) })
     await r.buy()
     await r.until('failed')
     expect(r.wallet.sent).toHaveLength(0)

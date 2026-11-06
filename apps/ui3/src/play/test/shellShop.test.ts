@@ -14,6 +14,7 @@ import { BOOK, ITEM, storeMint } from '../../shop/payment/fixtures'
 import type { StoredLogin } from '../features/auth/sso'
 import { SHOP_EVENT, SHOP_PROTOCOL, type ShopOperation, type ShopOperationEvent } from '../lib/shopProtocol'
 import { claimLock, createShellShop, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices, type ShellShopWallet } from '../shell/shop/purchase'
+import { createLedger, type OperationRecord } from '../shell/shop/ledger'
 import type { PurchaseIntent } from '../shell/shop/walletGuard'
 
 const BUYER = BOOK.buyer.toLowerCase()
@@ -181,19 +182,35 @@ function setup(
   return { shop, deps, shown, events, run, watch, guard, provider, wallet, last, until, buy, states, signers, creditRecord }
 }
 
-/** Web Locks as one browser holds them across its tabs: one holder per name, until it lets go or its tab goes. */
+/**
+ * Web Locks as one browser holds them across its tabs: one holder per name, until it lets go or its tab
+ * goes, and then the next tab queued for it.
+ */
 function locks() {
   const held = new Map<string, string>()
+  const queued = new Map<string, Array<{ tab: string; grant: (release: () => void) => void }>>()
+  const releaser = (id: string, tab: string) => () => {
+    if (held.get(id) !== tab) return
+    held.delete(id)
+    const next = queued.get(id)?.shift()
+    if (!next) return
+    held.set(id, next.tab)
+    next.grant(releaser(id, next.tab))
+  }
   return {
-    tab: (name: string): ShellShopServices['claim'] => async (id) => {
-      if (held.has(id)) return null
-      held.set(id, name)
-      return () => {
-        if (held.get(id) === name) held.delete(id)
-      }
-    },
+    tab:
+      (name: string): ShellShopServices['claim'] =>
+      async (id, wait) => {
+        if (held.has(id)) {
+          if (!wait) return null
+          return new Promise((grant) => queued.set(id, [...(queued.get(id) ?? []), { tab: name, grant }]))
+        }
+        held.set(id, name)
+        return releaser(id, name)
+      },
     close(name: string): void {
-      for (const [id, tab] of [...held]) if (tab === name) held.delete(id)
+      for (const list of queued.values()) for (let i = list.length - 1; i >= 0; i--) if (list[i].tab === name) list.splice(i, 1)
+      for (const [id, tab] of [...held]) if (tab === name) releaser(id, tab)()
     },
     holds: (id: string): string | undefined => held.get(id)
   }
@@ -336,7 +353,7 @@ describe('the shell purchase', () => {
     const storage = memoryStorage()
     const write = storage.setItem.bind(storage)
     storage.setItem = (key, value) => {
-      if (key.includes(':operations:') && value.includes('"processing"')) throw new DOMException('full', 'QuotaExceededError')
+      if (key.includes(':record:') && value.includes('"processing"')) throw new DOMException('full', 'QuotaExceededError')
       write(key, value)
     }
     const t = setup({ storage })
@@ -481,7 +498,7 @@ describe('the shell purchase', () => {
   /** A record as an earlier page left it, with no checkout: only its own fields. */
   function recorded(storage: Storage, record: Record<string, unknown>): string {
     const id = '0f0e0d0c-0000-4000-8000-00000000abcd'
-    storage.setItem(`dcl-inworld-shop:operations:v1:${BUYER}`, JSON.stringify([{ id, buyer: BUYER, item: { contract: CONTRACT, itemId: '7' }, createdAt: 1, updatedAt: 1, ...record }]))
+    storage.setItem(`dcl-inworld-shop:record:v1:${BUYER}:${id}`, JSON.stringify({ id, buyer: BUYER, item: { contract: CONTRACT, itemId: '7' }, createdAt: 1, updatedAt: 1, ...record }))
     return id
   }
 
@@ -515,6 +532,42 @@ describe('the shell purchase', () => {
     }
   })
 
+  it('reads a record again once it holds its lock: the tab that had it may have ended it meanwhile', async () => {
+    const storage = memoryStorage()
+    const id = recorded(storage, { state: 'pending', txHash: TX, chainId: 137 })
+    const release = vi.fn()
+    const t = setup({
+      storage,
+      // The tab that held it settles it and lets go just before this one takes the lock.
+      claim: async () => {
+        recorded(storage, { state: 'succeeded', txHash: TX, chainId: 137, updatedAt: 2 })
+        return release
+      }
+    })
+    expect(await t.shop.request('shop.status', { operation: id })).toMatchObject({ state: 'succeeded' })
+    expect(release).toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(t.events.some((e) => e.operation === id)).toBe(false)
+  })
+
+  it('never rebuilds, under its lock, a record that went from storage meanwhile', async () => {
+    const storage = memoryStorage()
+    const id = recorded(storage, { state: 'pending', txHash: TX, chainId: 137 })
+    const release = vi.fn()
+    const t = setup({
+      storage,
+      claim: async () => {
+        storage.removeItem(`dcl-inworld-shop:record:v1:${BUYER}:${id}`)
+        return release
+      }
+    })
+    expect(await t.shop.request('shop.status', { operation: id })).toBeNull()
+    expect(release).toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(t.events.some((e) => e.operation === id)).toBe(false)
+    expect(storage.getItem(`dcl-inworld-shop:record:v1:${BUYER}:${id}`)).toBeNull()
+  })
+
   it('settles a hand-off known only by its hash from its receipt on its chain', async () => {
     for (const [status, state] of [['success', 'succeeded'], ['reverted', 'failed']] as const) {
       const storage = memoryStorage()
@@ -538,7 +591,7 @@ describe('the shell purchase', () => {
     const write = storage.setItem.bind(storage)
     let refuse = true
     storage.setItem = (key, value) => {
-      if (refuse && key.includes(':operations:') && value.includes('"processing"')) throw new DOMException('full', 'QuotaExceededError')
+      if (refuse && key.includes(':record:') && value.includes('"processing"')) throw new DOMException('full', 'QuotaExceededError')
       write(key, value)
     }
     const t = setup({ storage })
@@ -693,11 +746,13 @@ describe('the shell purchase', () => {
     await first.until('success')
     expect(first.states()).toEqual(['reviewing', 'processing', 'succeeded'])
     expect(browser.holds(op.operation)).toBeUndefined()
-    // Asked again, the second tab learns how it ended: its app hears of it, and its dialog says so.
-    await second.shop.request('shop.status', {})
-    expect(second.events.at(-1)).toMatchObject({ operation: op.operation, state: 'succeeded' })
+    // The second tab, queued for its lock, learns how it ended unasked: its app hears of it, and its
+    // dialog says so.
+    await vi.waitFor(() => expect(second.events.at(-1)).toMatchObject({ operation: op.operation, state: 'succeeded' }))
     expect(second.last().view.step).toBe('success')
     expect(second.run).not.toHaveBeenCalled()
+    expect(second.watch).not.toHaveBeenCalled()
+    expect(browser.holds(op.operation)).toBeUndefined()
   })
 
   it('takes over a hand-off once the tab that held it is gone', async () => {
@@ -718,9 +773,9 @@ describe('the shell purchase', () => {
     await second.shop.request('shop.capabilities', undefined)
     await new Promise((r) => setTimeout(r, 50))
     expect(second.watch).not.toHaveBeenCalled()
-    // The first tab closes: its locks go with it, and the second follows the purchase to its end.
+    // The first tab closes: its locks go with it, and the second, queued for it, follows the purchase to
+    // its end unasked.
     browser.close('first')
-    await second.shop.request('shop.status', {})
     await vi.waitFor(() => expect(second.events.find((e) => e.operation === op.operation && e.state === 'succeeded')).toBeTruthy())
     expect(second.run).not.toHaveBeenCalled()
     expect(browser.holds(op.operation)).toBeUndefined()
@@ -796,6 +851,15 @@ describe('the shell purchase', () => {
     expect(quote()).toBeNull()
   })
 
+  it('runs no purchase it can’t hold to this tab', async () => {
+    const t = setup({ claim: async () => null })
+    await t.buy()
+    const { view } = await t.until('failed')
+    expect(view).toMatchObject({ retry: false, message: expect.stringMatching(/can't keep the purchase to this tab/) })
+    expect(t.run).not.toHaveBeenCalled()
+    expect(t.provider.requests).toEqual([])
+  })
+
   it('runs one dialog at a time', async () => {
     const t = setup()
     await t.buy()
@@ -825,13 +889,21 @@ describe('an operation’s lock', () => {
   /** Web Locks as the browser grants them: one holder per name, released when its callback's promise settles. */
   function webLocks(): LockManager {
     const held = new Set<string>()
+    const queues = new Map<string, Promise<void>>()
     const request = async (name: string, options: LockOptions, granted: LockGrantedCallback<unknown>): Promise<unknown> => {
       if (options.ifAvailable && held.has(name)) return granted(null)
+      // Without ifAvailable, after whoever holds it or is queued before.
+      const before = queues.get(name) ?? Promise.resolve()
+      let done = (): void => {}
+      const mine = new Promise<void>((resolve) => (done = resolve))
+      queues.set(name, before.then(() => mine))
+      await before
       held.add(name)
       try {
         return await granted({ name, mode: 'exclusive' } as Lock)
       } finally {
         held.delete(name)
+        done()
       }
     }
     return { request, query: async () => ({ held: [], pending: [] }) } as unknown as LockManager
@@ -848,7 +920,56 @@ describe('an operation’s lock', () => {
     expect(await claimLock(locks, 'op-1')).toBeTypeOf('function')
   })
 
-  it('takes this page for the only one without Web Locks', async () => {
-    expect(await claimLock(undefined, 'op-1')).toBeTypeOf('function')
+  it('is queued for, when asked, until its holder lets go', async () => {
+    const locks = webLocks()
+    const release = await claimLock(locks, 'op-1')
+    let granted: (() => void) | null = null
+    void claimLock(locks, 'op-1', true).then((r) => (granted = r))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(granted).toBeNull()
+    release!()
+    await vi.waitFor(() => expect(granted).toBeTypeOf('function'))
+  })
+
+  it('is never taken without Web Locks: nothing proves this page is the only one', async () => {
+    expect(await claimLock(undefined, 'op-1')).toBeNull()
+  })
+})
+
+describe('the purchase ledger over one storage, from two tabs', () => {
+  const record = (id: string, state: OperationRecord['state'], at: number): OperationRecord => ({
+    id,
+    buyer: BUYER,
+    item: { contract: CONTRACT, itemId: '7' },
+    state,
+    createdAt: at,
+    updatedAt: at
+  })
+
+  it('never loses one tab’s operation to the other’s write', () => {
+    const storage = memoryStorage()
+    const first = createLedger(() => storage)
+    const second = createLedger(() => storage)
+    const a = '0f0e0d0c-0000-4000-8000-00000000000a'
+    const b = '0f0e0d0c-0000-4000-8000-00000000000b'
+    expect(first.save(record(a, 'processing', 1))).toBe(true)
+    // Each tab reads what is there, then both write their own, interleaved.
+    expect(first.load(BUYER).map((r) => r.id)).toEqual([a])
+    expect(second.save(record(b, 'processing', 2))).toBe(true)
+    expect(first.save({ ...record(a, 'pending', 1), updatedAt: 3 })).toBe(true)
+    expect(second.save({ ...record(b, 'pending', 2), updatedAt: 4 })).toBe(true)
+    for (const ledger of [first, second]) expect(ledger.load(BUYER).map((r) => [r.id, r.state])).toEqual([[a, 'pending'], [b, 'pending']])
+  })
+
+  it('keeps every unsettled operation, dropping only the oldest settled ones past its bound', () => {
+    const storage = memoryStorage()
+    const ledger = createLedger(() => storage)
+    const id = (n: number): string => `0f0e0d0c-0000-4000-8000-${String(n).padStart(12, '0')}`
+    for (let n = 1; n <= 25; n++) ledger.save(record(id(n), n <= 3 ? 'pending' : 'succeeded', n))
+    const kept = ledger.load(BUYER).map((r) => r.id)
+    expect(kept).toHaveLength(20)
+    expect(kept.slice(0, 3)).toEqual([id(1), id(2), id(3)])
+    expect(kept).not.toContain(id(4))
+    expect(kept).toContain(id(25))
   })
 })

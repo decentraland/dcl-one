@@ -106,9 +106,10 @@ export interface ShellShopServices {
   creatorName(address: string): Promise<string | null>
   /**
    * Takes the operation's lock for this page (Web Locks), held until the returned release or until the
-   * page goes; null when another live page holds it. A page touches only operations it holds.
+   * page goes; null when another live page holds it (or, with `wait`, once it lets go). A page touches
+   * only operations it holds.
    */
-  claim(id: string): Promise<(() => void) | null>
+  claim(id: string, wait?: boolean): Promise<(() => void) | null>
   /** The CreditsManager this deployment trusts on a chain (./config). */
   manager(chainId: number): TrustedManager | null
   /** The wallet bound to one confirmed purchase (./walletGuard). */
@@ -143,15 +144,16 @@ const WATCH_FOR_MS = 30 * 60_000
 const WATCH_BACKOFF_MS = [5_000, 10_000, 20_000, 40_000, 60_000]
 
 /**
- * The operation's Web Lock, taken only if free (`ifAvailable`) and held until the returned release, or
- * until the page goes (the browser lets a closed or crashed page's locks go). Null when another page
- * holds it. Without Web Locks (no current browser lacks them), this page is taken as the only one.
+ * The operation's Web Lock, held until the returned release, or until the page goes (the browser lets a
+ * closed or crashed page's locks go). Taken only if free, null when another page holds it; with `wait`,
+ * queued until that page lets go. Without Web Locks nothing proves this page is the only one running the
+ * purchase, so the answer is null: no purchase runs.
  */
-export function claimLock(locks: LockManager | undefined, id: string): Promise<(() => void) | null> {
+export function claimLock(locks: LockManager | undefined, id: string, wait = false): Promise<(() => void) | null> {
   return new Promise((resolve) => {
-    if (!locks) return resolve(() => {})
+    if (!locks) return resolve(null)
     locks
-      .request(`dcl-inworld-shop:operation:${id}`, { ifAvailable: true }, (lock) => {
+      .request(`dcl-inworld-shop:operation:${id}`, wait ? {} : { ifAvailable: true }, (lock) => {
         if (!lock) {
           resolve(null)
           return undefined
@@ -196,7 +198,7 @@ const LIVE: ShellShopServices = {
     const name = avatar?.name?.trim()
     return name ? name.charAt(0).toUpperCase() + name.slice(1) : null
   },
-  claim: (id) => claimLock(typeof navigator !== 'undefined' ? navigator.locks : undefined, id),
+  claim: (id, wait) => claimLock(typeof navigator !== 'undefined' ? navigator.locks : undefined, id, wait),
   manager: (chainId) => trustedCreditsManager(chainId),
   guard: guardedProvider,
   rail: () => ({}),
@@ -307,6 +309,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   let starting = false
   /** Restores run one after another, so one page never asks twice for a lock it is taking. */
   let restoring: Promise<void> = Promise.resolve()
+  /** Other tabs' operations whose lock this page is queued for. */
+  const awaiting = new Set<string>()
 
   const snapshot = (op: Operation): ShopOperation => ({
     v: SHOP_PROTOCOL,
@@ -524,26 +528,65 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
    * page went). An open dialog didn't survive its page; a hand-off is followed. An operation another live
    * page holds (another tab mid-purchase) is only shown, as it stands in storage, and never changed here.
    */
-  const restore = (buyer: string): Promise<void> => (restoring = restoring.then(() => adopt(buyer)).catch(() => {}))
+  const restore = (buyer: string): Promise<void> => inTurn(() => adopt(buyer))
+  const inTurn = (step: () => Promise<void> | void): Promise<void> => (restoring = restoring.then(step).catch(() => {}))
   const adopt = async (buyer: string): Promise<void> => {
-    for (const record of ledger.load(buyer)) {
-      const known = operations.get(record.id)
+    for (const listed of ledger.load(buyer)) {
+      const known = operations.get(listed.id)
       if (known && !known.foreign) continue
-      const release = TERMINAL_STATES.includes(record.state) ? undefined : await svc.claim(record.id)
-      // Updated in place: a dialog this page shows for it keeps following the same operation.
-      const op: Operation = known ?? { ...record }
-      const was = known?.state
-      Object.assign(op, record, { foreign: !TERMINAL_STATES.includes(record.state) && !release, release: release ?? undefined })
-      operations.set(op.id, op)
-      if (known && was !== op.state) {
-        // Another tab moved it on: this page's app hears of it, and its dialog, if up, says how it ended.
-        deps.post({ type: SHOP_EVENT, ...snapshot(op) })
-        if (op.state === 'succeeded' || op.state === 'failed' || op.state === 'cancelled') settled(op, op.state)
-      }
-      if (op.foreign || !release) continue
-      if (op.state === 'reviewing') move(op, 'cancelled')
-      else void reconcile(op)
+      take(buyer, listed, TERMINAL_STATES.includes(listed.state) ? null : await svc.claim(listed.id))
     }
+  }
+
+  /**
+   * A stored operation as this page now holds it. With its lock (`release`): read again under it (the tab
+   * that held it may have moved it on, or ended it, meanwhile), then taken over. Without: another live
+   * tab's, shown as it stands, and its lock waited for.
+   */
+  const take = (buyer: string, listed: OperationRecord, held: (() => void) | null): void => {
+    const known = operations.get(listed.id)
+    let release = held
+    let record: OperationRecord | null = listed
+    if (release) {
+      record = ledger.saved(buyer, listed.id)
+      if (!record || TERMINAL_STATES.includes(record.state)) {
+        release()
+        release = null
+      }
+      // Gone from storage: nothing to take over, and never rebuilt from an older read.
+      if (!record) return
+    }
+    const foreign = !TERMINAL_STATES.includes(record.state) && !release
+    // Updated in place: a dialog this page shows for it keeps following the same operation.
+    const op: Operation = known ?? { ...record }
+    const was = known?.state
+    Object.assign(op, record, { foreign, release: release ?? undefined })
+    operations.set(op.id, op)
+    if (known && was !== op.state) {
+      // Another tab moved it on: this page's app hears of it, and its dialog, if up, says how it ended.
+      deps.post({ type: SHOP_EVENT, ...snapshot(op) })
+      if (op.state === 'succeeded' || op.state === 'failed' || op.state === 'cancelled') settled(op, op.state)
+    }
+    if (foreign) queueFor(buyer, op.id)
+    if (!release) return
+    if (op.state === 'reviewing') move(op, 'cancelled')
+    else void reconcile(op)
+  }
+
+  /** Queues for another tab's operation's lock, granted once that tab ends the operation or goes. */
+  const queueFor = (buyer: string, id: string): void => {
+    if (awaiting.has(id)) return
+    awaiting.add(id)
+    void svc.claim(id, true).then((release) => {
+      awaiting.delete(id)
+      if (!release) return
+      void inTurn(() => {
+        // Taken over only for the buyer still signed in here; otherwise left for a later restore.
+        const known = operations.get(id)
+        if (known?.foreign && signedIn()?.buyer === buyer) take(buyer, known, release)
+        else release()
+      })
+    })
   }
 
   // ---- Reading the terms and confirming ---------------------------------------------------------
@@ -591,6 +634,11 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           deps.signIn()
         }
       })
+      return
+    }
+    // Only the tab that holds the operation runs it.
+    if (!op.release) {
+      fail(op, "This browser can't keep the purchase to this tab, so it can't run here. You can still buy it on the website.")
       return
     }
     const kind = deps.wallet?.kind(who.buyer) ?? null
