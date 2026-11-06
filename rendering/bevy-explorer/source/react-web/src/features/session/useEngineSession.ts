@@ -22,7 +22,7 @@ import { DEFAULT_REALM } from '../../lib/baseDomain'
 import { checkRealm, realmCheckMessage } from '../../lib/realmCheck'
 import { entryRealm } from '../../lib/entryParams'
 import { color3ToHex, hexToColor3 } from '../../lib/color'
-import { closeTopPopup, hasOpenPopup, subscribePopups } from '../../design'
+import { closeTopPopup, hasOpenPopup, subscribePopups, topPopupOrder } from '../../design'
 import { requestDebugPanel } from '../debug/useDebugPanel'
 import { emitFriendEvent } from '../friends/friendEvents'
 import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
@@ -377,6 +377,8 @@ export interface FriendsState {
   blocked: string[]
   /** The blocked accounts with their profiles (display); `blocked` stays the address set. */
   blockedUsers: BlockedUser[]
+  /** Lowercased addresses of users who have blocked the local user. */
+  blockedBy: string[]
   /** Signed in, social service still starting. */
   loading: boolean
   open: boolean
@@ -1012,8 +1014,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     sent: FriendRequest[]
     blocked: string[]
     blockedUsers: BlockedUser[]
+    blockedBy: string[]
     loading: boolean
-  }>({ available: false, friends: [], received: [], sent: [], blocked: [], blockedUsers: [], loading: false })
+  }>({ available: false, friends: [], received: [], sent: [], blocked: [], blockedUsers: [], blockedBy: [], loading: false })
   const [friendsOpen, setFriendsOpen] = useState(false)
   // In-flight friend actions as `op:address`, so their buttons disable until the service answers.
   const [friendPending, setFriendPending] = useState<ReadonlySet<string>>(new Set())
@@ -1451,6 +1454,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             sent: msg.sent,
             blocked: msg.blocked,
             blockedUsers: msg.blockedUsers ?? [],
+            blockedBy: msg.blockedBy ?? [],
             loading: msg.loading === true
           })
           seedProfiles([...msg.friends, ...msg.received, ...msg.sent])
@@ -3564,12 +3568,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     if ((window as EngineFocusWindow).__engineTextFocus) return
     if (EDITOR_BUILD && !hudActsOn(editorMode, action)) return
     // 'Cancel' is the one action handled even with a popup open: the engine resolved the
-    // cancel key or gamepad button, and this is the single layered close — topmost popup
-    // first, else the topmost registered leaf layer (lightbox, open dropdown — see
-    // cancelLayers), else any open panels. One layer per press.
+    // cancel key or gamepad button, and this is the single layered close — the most recent of
+    // the topmost popup and the topmost registered leaf layer (lightbox, open dropdown, a menu
+    // inside a popup — see cancelLayers) first, else any open panels. One layer per press.
     if (action === 'Cancel') {
+      if (dispatchCancelLayer(topPopupOrder())) return
       if (hasOpenPopup()) closeTopPopup()
-      else if (dispatchCancelLayer()) return
       // the lobby sits under the panels it opens: close those first, then the lobby
       else if (anyPanelOpenExceptLobby) panelSetters.forEach((set) => set(false))
       else setLobbyOpen(false)
@@ -3690,6 +3694,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       sent: friendsData.sent,
       blocked: friendsData.blocked,
       blockedUsers: friendsData.blockedUsers,
+      blockedBy: friendsData.blockedBy,
       loading: friendsData.loading,
       open: friendsOpen,
       toggle: toggleFriends,

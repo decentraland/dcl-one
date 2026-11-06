@@ -8,7 +8,8 @@
 // (badges/info/mutuals) by address; the 2D picture is the fallback meanwhile.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Avatar, Button, ColorPicker, EmptyState, EquippedItemCard, Icon, Pencil, Spinner, Tabs, Tooltip, showConfirm, type EquippedItemCardProps, type TabItem } from '../../design'
+import { Avatar, BlockUserIcon, Button, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, Pencil, ReportFlag, Spinner, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem } from '../../design'
+import { registerCancelLayer } from '../../lib/cancelLayers'
 import { fetchCreations, marketplaceUrl, type CreationItem, type Creations } from '../shop/shopApi'
 import { nativeProfileImage } from '../../lib/baseDomain'
 import { CategoryIcon } from '../backpack/categoryIcons'
@@ -307,6 +308,7 @@ export interface PassportEditing {
 export function ProfilePassport({
   profile,
   relationship = 'none',
+  blockedBy = false,
   isSelf = false,
   editing,
   onAddFriend,
@@ -315,12 +317,17 @@ export function ProfilePassport({
   onCancelRequest,
   onAcceptRequest,
   onUnblock,
+  onBlock,
+  onReport,
   onClose,
   onDirtyChange
 }: {
   profile: Profile
   /** Relationship of the local user to this profile — drives the header friendship button. */
   relationship?: Relationship
+  /** This user has blocked you. As in the reference client, the passport then offers neither CHAT
+   *  nor a friendship button; Block and Report stay in the options menu. */
+  blockedBy?: boolean
   /** Your own passport — hides the friend action (you can't friend yourself). */
   isSelf?: boolean
   /** Own-profile edit mode. Only offered when this is your passport. */
@@ -332,6 +339,8 @@ export function ProfilePassport({
   onCancelRequest?: (address: string) => void
   onAcceptRequest?: (address: string) => void
   onUnblock?: (address: string) => void
+  onBlock?: (address: string) => void
+  onReport?: (address: string) => void
   onClose: () => void
   /** Announce unsaved edits, so the popup layer can refuse to close on a stray backdrop click. */
   onDirtyChange?: (dirty: boolean) => void
@@ -346,6 +355,32 @@ export function ProfilePassport({
   const selectedTier = selectedBadge?.tiers?.some((t) => t.id === picked.tier) ? picked.tier : selectedBadge != null ? defaultTier(selectedBadge) : undefined
   const [editMode, setEditMode] = useState(false)
   const canEdit = isSelf && editing != null
+  // Someone you blocked stays "blocked" even if they blocked you too: UNBLOCK is still yours to use.
+  const theyBlockedYou = blockedBy && relationship !== 'blocked'
+  const [menuOpen, setMenuOpen] = useState(false)
+  // The options menu (⋯), as in the reference client: Block (unless already blocked) and Report.
+  const options: ContextMenuItem[] = []
+  const pick = (fn: (address: string) => void) => (): void => {
+    setMenuOpen(false)
+    fn(profile.address)
+  }
+  if (!isSelf && relationship !== 'blocked' && onBlock != null) {
+    options.push({ label: 'Block', icon: <BlockUserIcon />, danger: true, onClick: pick(onBlock) })
+  }
+  if (!isSelf && onReport != null) options.push({ label: 'Report', icon: <ReportFlag />, danger: true, onClick: pick(onReport) })
+  const menuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDown = (e: MouseEvent): void => {
+      if (menuRef.current != null && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    const off = registerCancelLayer(() => setMenuOpen(false))
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      off()
+    }
+  }, [menuOpen])
   // SAVE sits in the header rather than at the end of the form: the form is taller than the panel,
   // so a footer button is below the fold and easy to miss entirely.
   const saveRef = useRef<(() => void) | null>(null)
@@ -439,12 +474,13 @@ export function ProfilePassport({
             )}
           </div>
           <div className={styles.headActions}>
-            {!isSelf && relationship !== 'blocked' && onMessage != null && (
+            {!isSelf && relationship !== 'blocked' && !theyBlockedYou && onMessage != null && (
               <button type="button" className={styles.headBtn} onClick={() => onMessage(profile.address)}>
                 CHAT
               </button>
             )}
             {!isSelf &&
+              !theyBlockedYou &&
               (relationship === 'friend' ? (
                 <button type="button" className={`${styles.headBtn} ${styles.headBtnSwap}`} onClick={() => onUnfriend?.(profile.address)}>
                   <span className={styles.idle}>FRIEND</span>
@@ -467,6 +503,18 @@ export function ProfilePassport({
                   ADD FRIEND
                 </button>
               ))}
+            {options.length > 0 && (
+              <div ref={menuRef} className={styles.menuWrap}>
+                <ControlButton variant="faint" aria-label="More options" aria-haspopup="menu" aria-expanded={menuOpen} aria-pressed={undefined} active={menuOpen} onClick={() => setMenuOpen((o) => !o)}>
+                  <Kebab size={18} r={2} />
+                </ControlButton>
+                {menuOpen && (
+                  <div className={styles.menu}>
+                    <ContextMenu items={options} />
+                  </div>
+                )}
+              </div>
+            )}
             {canEdit && editMode && (
               <Button variant="primary" disabled={!editStatus.canSave} onClick={() => saveRef.current?.()}>
                 {editing.saving ? 'SAVING…' : 'SAVE'}
