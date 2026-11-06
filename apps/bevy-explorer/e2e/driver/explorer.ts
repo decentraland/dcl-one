@@ -393,7 +393,7 @@ export class Explorer {
     return this.json<ScreenPosition>(`/entity_screen_position ${entity}${options.bounds ? ' --bounds' : ''}`)
   }
 
-  /** Aims the pointer at an entity and reports what it hovers; a failed diagnosis rejects. */
+  /** Aims the pointer at an entity and reports what it hovers; a blocked or beyond outcome resolves with `diagnosis` set; a refusal rejects. */
   hoverEntity(entity: string | number, options: { bounds?: boolean; frames?: number; timeoutFrames?: number } = {}): Promise<PointerReport> {
     let line = `/hover_entity ${entity}`
     if (options.bounds) line += ' --bounds'

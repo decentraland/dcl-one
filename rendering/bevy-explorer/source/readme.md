@@ -202,6 +202,11 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   entity by id through the pointer pipeline, on native and web alike, and answer with the hit, the
   hover entries, the scene's pointer events and a diagnosis (`docs/guidelines/running.md`). A hover
   lasts at most 1800 frames (`--frames`) and is never cut short by `--timeout-frames`.
+- Raycasts: `/raycast_stats` (`budgetMs`, `ran`, `deferred`, `spentMs` of the last frame) and
+  `/raycast_budget [ms]` (0 to 10, 2 by default). On the web, these and the two pointer commands go
+  to the engine through `engine_console_command` and write Bevy input events, unlike `/press_key`
+  and `/click_at`, which need a DevTools client for real input. `docs/guidelines/interaction.md`
+  has the options, replies and diagnoses.
 - The preview-only commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
 
 **The loopback console.** Every native build, the headless client mode included, carries a JSON-RPC
