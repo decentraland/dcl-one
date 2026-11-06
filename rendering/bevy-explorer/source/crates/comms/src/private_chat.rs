@@ -55,7 +55,7 @@ use crate::{
     NetworkMessageRecipient,
 };
 
-/// The router rejects reaction message ids longer than this.
+/// Reactions with a longer message id are dropped by the receiving client.
 const MAX_REACTION_MESSAGE_ID_LEN: usize = 96;
 
 pub struct PrivateChatPlugin;

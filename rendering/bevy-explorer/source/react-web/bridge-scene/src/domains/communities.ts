@@ -98,7 +98,9 @@ async function channel(c: CommunityRaw): Promise<CommunityChannel> {
 }
 
 // The communities the user is a member of, 100 a call. The page count is capped so a server that
-// ignores `offset` cannot keep this going.
+// ignores `offset` cannot keep this going. An answer without a results list is a failed read, not
+// an empty page: the caller drops a community missing from the list, so an empty one from a
+// malformed answer would delete its history.
 const MEMBER_OF_PAGE = 100
 const MEMBER_OF_PAGES = 10
 async function memberOf(): Promise<CommunityChannel[]> {
@@ -107,7 +109,8 @@ async function memberOf(): Promise<CommunityChannel[]> {
   for (let page = 0; page < MEMBER_OF_PAGES; page++) {
     const offset = page * MEMBER_OF_PAGE
     const res = await signed<{ results?: CommunityRaw[]; total?: number }>(`${b}?onlyMemberOf=true&limit=${MEMBER_OF_PAGE}&offset=${offset}`)
-    const rows = res?.results ?? []
+    const rows = res?.results
+    if (!Array.isArray(rows)) throw new Error('member-of answer has no results list')
     raw.push(...rows)
     if (rows.length < MEMBER_OF_PAGE || (res?.total != null && raw.length >= res.total)) break
   }
