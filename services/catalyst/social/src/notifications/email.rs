@@ -407,14 +407,15 @@ impl EmailSender {
                 data.insert(key.into(), v.clone());
             }
         }
-        // The user's name and the link come from metadata: HTML-escaped like
-        // the confirmation's, and a non-http(s) link drops the button.
+        // The user's name and the link come from metadata. The name is HTML-escaped;
+        // the link only percent-encodes attribute-breaking characters, so it reads
+        // the same under `{{ }}` and `{{{ }}}`, and a non-http(s) link drops the button.
         if let Some(Json::String(name)) = data.get("titleHighlight").cloned() {
             data.insert("titleHighlight".into(), json!(html_escape(&name)));
         }
         if let Some(Json::String(link)) = data.get("actionButtonLink").cloned() {
             if is_http_link(&link) {
-                data.insert("actionButtonLink".into(), json!(html_escape(&link)));
+                data.insert("actionButtonLink".into(), json!(attribute_safe_link(&link)));
             } else if !link.is_empty() {
                 data.remove("actionButtonLink");
                 data.remove("actionButtonText");
@@ -458,6 +459,23 @@ impl EmailSender {
         });
         self.send_generic(to, data, custom_args).await.map(|_| ())
     }
+}
+
+/// Percent-encodes what could leave a quoted `href` or start markup (quotes,
+/// angle brackets, backtick, whitespace and controls); `&`, `=`, `?` stay raw.
+fn attribute_safe_link(link: &str) -> String {
+    let mut out = String::with_capacity(link.len());
+    for c in link.chars() {
+        if matches!(c, '"' | '\'' | '<' | '>' | '`') || c.is_whitespace() || c.is_control() {
+            let mut buf = [0u8; 4];
+            for b in c.encode_utf8(&mut buf).bytes() {
+                out.push_str(&format!("%{b:02X}"));
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// An absolute `http`/`https` URL.
@@ -839,9 +857,16 @@ mod tests {
         let d = data(json!({"userName": "<b>x</b>", "link": "https://market.example/a?b=1&c=2"}));
         assert_eq!(d["titleHighlight"], "&lt;b&gt;x&lt;/b&gt;");
         assert_eq!(
-            d["actionButtonLink"],
-            "https://market.example/a?b&#x3D;1&amp;c&#x3D;2"
+            d["actionButtonLink"], "https://market.example/a?b=1&c=2",
+            "a query string survives unchanged (no HTML escaping to double)"
         );
+        let d = data(json!({"userName": "u", "link": "https://x.example/a?q=\"><script>`'\n b"}));
+        let link = d["actionButtonLink"].as_str().unwrap();
+        assert_eq!(
+            link,
+            "https://x.example/a?q=%22%3E%3Cscript%3E%60%27%0A%20b"
+        );
+        assert!(!link.contains(['"', '\'', '<', '>', '`', ' ']), "{link}");
         for bad in ["javascript:alert(1)", "data:text/html,x", "/relative"] {
             let d = data(json!({"userName": "u", "link": bad}));
             assert!(d.get("actionButtonLink").is_none(), "{bad}");
