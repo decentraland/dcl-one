@@ -221,6 +221,22 @@ The HUD and input:
   as the typing left it. The page's side is `react-web/src/lib/hudAutomation.ts`.
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and
   `/click_at <x> <y> [--button left|right|middle]`.
+- `/hover_entity <entity> [--bounds] [--frames N] [--timeout-frames N]`, `/hover_entity --clear`
+  and `/click_entity <entity> [--bounds] [--button pointer|primary|secondary] [--event
+  click|down|up] [--timeout-frames N]`: hover or click a scene entity of the active scene by id
+  through the pointer pipeline, on native and web alike. The pointer ray is aimed from the camera
+  at the entity, and a click presses the key or mouse button bound to the action. The reply is
+  JSON: `hit` (`entity`, `container`, `scene`, `playerDistance`, `cameraDistance`, or `null`), the
+  hover `entries`, the pointer `events` the scene got (`event`, `button`, `tick`) and a `diagnosis`
+  (`null`, `blocked by entity <id>`, `beyond 100 m`, `entity not live`, `input held by the HUD`,
+  `timed out waiting for target|hover|tick|release`). `--event down` keeps the press
+  held until `--event up` or `/hover_entity --clear`; other pointer commands are refused meanwhile
+  (`src/automation/pointer.rs`). `--frames` is at most 1800, and a hover's deadline is never
+  shorter than its frames plus 3, whatever `--timeout-frames` says.
+  A blocked or beyond outcome is a resolved reply with `diagnosis` set, not a failure.
+  [Interaction](interaction.md) has every option and reply field.
+- `/raycast_stats` (JSON: `budgetMs`, `ran`, `deferred`, `spentMs` for the last frame that had scene raycasts to cast)
+  and `/raycast_budget [ms]` (show or set the per-frame budget, 0 to 10, 2 by default).
 
 The accepted design makes these commands the client's agent surface in every build,
 so agents and tests share the same interface. Its native implementation asks the page where
@@ -233,6 +249,10 @@ which prove the HUD's handlers but not the browser's input path, and give a page
 lacks. `/hud_click` and `/hud_fill` say which in `"input"`: `trusted` or `synthetic`. Arguments
 are split on whitespace, so runs of spaces in a name or a text collapse to one. The preview-only
 commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
+
+On the web, `/hover_entity`, `/click_entity`, `/raycast_stats` and `/raycast_budget` go to the engine
+through `engine_console_command` and write Bevy input events, unlike `/press_key` and `/click_at`,
+which go through the page's trusted input; they need no DevTools client.
 
 **The loopback console contract.** The design requires every native build, including headless client mode, to carry a
 JSON-RPC server that runs console commands from outside the process, off unless the client is

@@ -216,6 +216,26 @@ describe('Explorer', () => {
     assert.deepEqual(fake.lines, ['/press_key KeyB', '/press_key ShiftLeft --state down', '/press_key Escape', '/click_at 1 2', '/click_at 1 2 --button right'])
   })
 
+  test('hoverEntity, clickEntity, raycast and scene log commands compose the lines', async () => {
+    const report = JSON.stringify({ hit: null, entries: [], events: [], diagnosis: 'beyond 100 m' })
+    const fake = new FakeConsole({ hover_entity: report, click_entity: report, raycast_stats: JSON.stringify({ budgetMs: 2, ran: 1, deferred: 0, spentMs: 0.1 }), raycast_budget: 'raycast budget: 0 ms', scene_logs: '[1.00] Info: a\n[2.00] Info: b' })
+    const explorer = new Explorer(fake)
+    assert.equal((await explorer.hoverEntity(512, { bounds: true, frames: 10 })).diagnosis, 'beyond 100 m')
+    await explorer.clickEntity('512', { button: 'primary', event: 'down', timeoutFrames: 60 })
+    await explorer.clearPointer()
+    assert.equal((await explorer.raycastStats()).budgetMs, 2)
+    assert.equal(await explorer.raycastBudget(0), 0)
+    assert.deepEqual(await explorer.sceneLogs(50), ['[1.00] Info: a', '[2.00] Info: b'])
+    assert.deepEqual(fake.lines, [
+      '/hover_entity 512 --bounds --frames 10',
+      '/click_entity 512 --button primary --event down --timeout-frames 60',
+      '/hover_entity --clear',
+      '/raycast_stats',
+      '/raycast_budget 0',
+      '/scene_logs 50'
+    ])
+  })
+
   test('a long reply is cut in the record, not in the result', async () => {
     const fake = new FakeConsole({ screenshot: Buffer.alloc(9000, 1).toString('base64') })
     const explorer = new Explorer(fake)
