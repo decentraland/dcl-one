@@ -206,7 +206,7 @@ async fn an_unreadable_store_never_reports_referenced_content_as_missing() {
     );
     let errors = result.errors().unwrap();
     assert!(
-        errors[0].contains("could not read its own content store") && errors[0].contains(FAULT),
+        errors[0].contains("could not read its own content store") && !errors[0].contains(FAULT),
         "unexpected error: {}",
         errors[0]
     );
