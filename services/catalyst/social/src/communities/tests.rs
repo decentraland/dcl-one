@@ -45,7 +45,7 @@ mod referral_lifecycle;
 mod registry_errors;
 mod request_lifecycle;
 mod selected_community;
-mod sns_parity;
+mod native_notifications;
 mod social_api_parity;
 mod upstream_rules;
 mod upstream_writes;

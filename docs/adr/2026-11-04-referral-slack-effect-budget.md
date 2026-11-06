@@ -1,6 +1,9 @@
 # ADR: Bounded referral Slack effects
 
-- Status: Proposed
+- Status: Partially superseded
+- Superseded by: [Native social events](2026-11-04-native-social-events.md), for native login milestone ordering only.
+- Retained scope: provider time/retry bounds and awaited attribution alerts.
+- Status changed: 2026-11-05
 - Date: 2026-11-04
 
 ## Context

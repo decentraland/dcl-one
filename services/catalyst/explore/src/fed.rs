@@ -703,22 +703,24 @@ mod tests {
             body["data"]["id"],
             json!(schedule_id(&wallet, "MVMF", &schedule.nonce))
         );
-        let (status, _) = call(
+        // Plain schedule bodies use the legacy signed-fetch path, which
+        // authenticates before parsing authoring fields.
+        let (status, body) = call(
             &app,
             "POST",
             "/api/schedules",
             Some(json!({ "name": "unsigned" })),
         )
         .await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
-        let (status, _) = call(
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+        let (status, body) = call(
             &app,
             "POST",
             "/api/schedules",
-            Some(json!({"domain": {}, "message": {}, "signature": "0x"})),
+            Some(json!({ "domain": {}, "message": {}, "signature": "invalid" })),
         )
         .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 
         let mine = sign(
             &key,

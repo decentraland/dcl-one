@@ -362,6 +362,17 @@ impl Admission {
             .get(&address.to_lowercase())
             .map_or(0, |s| s.sockets.len())
     }
+
+    /// Observe the server's close decision before the transport is dropped.
+    #[cfg(test)]
+    pub fn newest_socket_close(&self, address: &str) -> Option<Arc<SocketClose>> {
+        self.inner
+            .lock()
+            .connected
+            .get(&address.to_lowercase())
+            .and_then(|state| state.sockets.back())
+            .map(|(close, _)| close.clone())
+    }
 }
 
 #[cfg(test)]

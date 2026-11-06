@@ -89,7 +89,9 @@ pub async fn world_active_scene(
     row.map(|r| world_row(world, &r)).transpose()
 }
 
-/// A named scene of a world, when deployed there.
+/// A named scene of a world, when deployed there or retired within
+/// `SCENE_EVICTION_TTL_MS` (WCS resolves recently undeployed scenes' comms);
+/// a retired scene has no identity, so no storage scope.
 pub async fn world_scene(
     pool: &PgPool,
     world: &WorldName,
@@ -98,7 +100,10 @@ pub async fn world_scene(
     let row = sqlx::query(concat!(
         "SELECT entity_id, parcels, entity #>> '{metadata,scene,base}' AS base, entity #>> '{metadata,display,title}' AS title, mirror_source, ",
         identity_column!(),
-        " FROM worlds.world_scenes s WHERE world_name = $1 AND entity_id = $2",
+        " FROM worlds.world_scenes s WHERE world_name = $1 AND entity_id = $2 \
+         UNION ALL SELECT entity_id, parcels, entity #>> '{metadata,scene,base}', entity #>> '{metadata,display,title}', mirror_source, NULL::uuid \
+         FROM worlds.retired_world_scenes WHERE world_name = $1 AND entity_id = $2 \
+         LIMIT 1",
     ))
     .bind(world.key())
     .bind(scene)
@@ -266,7 +271,7 @@ pub async fn classify_room(
         let Some((world, scene)) = crate::comms::rooms::decode_world_scene_room(room) else {
             return Ok(refused_room(room, R::Malformed));
         };
-        // Identity is reversible, but authority requires this exact current tuple.
+        // Identity is reversible, but authority requires this exact current (or retained) tuple.
         let current = tokio::time::timeout(
             std::time::Duration::from_secs(2),
             world_scene(pool, &world, &scene),

@@ -8,9 +8,10 @@ pub(crate) use net::ENV_LOCK;
 
 pub(crate) use net::{
     DocAnswer, ProgressState, UploadDestination, UploadEntity, UploadProgress, VERBOSE_HINT,
-    client, denied_parcels_in, deployment_permission_in_doc, entity_content_hashes, entity_title,
-    host_of, parse_world_scenes, read_server_message, refusal, send_text, stored_cids,
-    unreachable_server, upload_entity_to, with_headers,
+    all_world_scene_pages, client, denied_parcels_in, deployment_permission_in_doc,
+    entity_content_hashes, entity_title, host_of, parse_world_scenes, read_server_message, refusal,
+    send_text, stored_cids, unreachable_server, upload_entity_to, with_headers,
+    world_scenes_page_url,
 };
 pub use net::{
     PermissionGate, Reuse, WORLDS_CONTENT_SERVER, WorldScene, build_delete_payload,

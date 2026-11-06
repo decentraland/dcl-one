@@ -9,14 +9,20 @@
   },
   "response": {
     "status": 200,
-    "headers": {"content-type": "application/json"},
+    "headers": {
+      "content-type": "application/json"
+    },
     "body_json": {
       "version": "PLACEHOLDER",
       "currentTime": 0,
       "commitHash": "PLACEHOLDER"
     }
   },
-  "captured_from": "hand-authored from handler source (lambdas.rs::lambdas_status)",
+  "captured_from": "hand-authored from lamb2 02a37f5 src/controllers/handlers/status-handler.ts; dcl-one shop/src/market/mod.rs::lambdas_status",
   "captured_at": "2026-05-23T20:00:00Z",
-  "volatile_paths": ["response.body_json.version", "response.body_json.currentTime", "response.body_json.commitHash"]
+  "volatile_paths": [
+    "response.body_json.version",
+    "response.body_json.currentTime",
+    "response.body_json.commitHash"
+  ]
 }
