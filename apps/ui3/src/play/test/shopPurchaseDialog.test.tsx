@@ -185,6 +185,23 @@ describe('the purchase dialog over the app', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
+  it('reaches a success row that scrolls with Tab, after the first focus lands on CONTINUE SHOPPING', async () => {
+    const ui = createShopOverlay(vi.fn())
+    const many = Array.from({ length: 5 }, (_, i) => ({ ...item, name: `Item ${i + 1}` }))
+    await act(async () => ui.show({ step: 'success', items: many }, { onClose: vi.fn(), onBackpack: vi.fn() }))
+    const row = screen.getByRole('list', { name: '5 items bought' })
+    expect(screen.getAllByRole('listitem').map((el) => el.getAttribute('aria-label'))).toEqual(['Item 1', 'Item 2', 'Item 3', 'Item 4', 'Item 5'])
+    expect(document.activeElement?.textContent).toBe('Continue shopping')
+    const visited: (string | null)[] = []
+    for (let i = 0; i < 3; i++) {
+      fireEvent.keyDown(document.activeElement!, { key: 'Tab' })
+      visited.push(document.activeElement === row ? 'row' : document.activeElement?.textContent ?? null)
+    }
+    // The order is the dialog's: the row (it comes first), then the buttons again.
+    expect(visited).toContain('row')
+    expect(new Set(visited)).toEqual(new Set(['row', 'Continue shopping', 'Go to backpack']))
+  })
+
   it('keeps Tab within the dialog', async () => {
     const ui = createShopOverlay(vi.fn())
     await act(async () => ui.show({ step: 'confirm', items: [item], balance: 700 }, { onClose: vi.fn(), onConfirm: vi.fn() }))

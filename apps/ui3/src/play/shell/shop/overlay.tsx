@@ -26,6 +26,8 @@ function toStep(view: ShellPurchaseView): ShopPurchaseStep {
 }
 
 const FOCUSABLE = 'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+/** The buttons a step's first focus goes to (a scrolling row may come before them, and is reached by Tab). */
+const BUTTONS = 'button:not([disabled])'
 
 function Overlay({ view, handlers, quiet }: { view: ShellPurchaseView; handlers: ShellPurchaseHandlers; quiet: boolean }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
@@ -42,8 +44,8 @@ function Overlay({ view, handlers, quiet }: { view: ShellPurchaseView; handlers:
   useEffect(() => {
     if (shownStep.current === view.step && ref.current?.contains(document.activeElement)) return
     shownStep.current = view.step
-    const buttons = ref.current?.querySelectorAll<HTMLElement>(FOCUSABLE)
-    const target = buttons && buttons.length > 0 ? buttons[0] : ref.current
+    const buttons = ref.current?.querySelectorAll<HTMLElement>(BUTTONS)
+    const target = buttons && buttons.length > 0 ? buttons[0] : (ref.current?.querySelector<HTMLElement>(FOCUSABLE) ?? ref.current)
     if (first.current && quiet) target?.focus({ focusVisible: false } as FocusOptions)
     else target?.focus()
     first.current = false

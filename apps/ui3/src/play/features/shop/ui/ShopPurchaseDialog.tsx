@@ -253,10 +253,23 @@ function BoughtTiles({ items }: { items: ShopPurchaseItem[] }): React.JSX.Elemen
     <span className={`${styles.bought} ${items.length > 1 ? styles.boughtMany : ''} ${scrolls ? styles.boughtScrolls : ''}`.trim()}>
       <img className={styles.boughtGlow} src={successGlow} alt="" aria-hidden="true" />
       <img className={styles.boughtSpark} src={successSpark} alt="" aria-hidden="true" />
-      <span ref={row} className={styles.boughtRow} role={scrolls ? 'list' : undefined} aria-label={scrolls ? `${items.length} items bought` : undefined}>
-        {items.map((item, i) => (
-          <ShopItemTile key={i} thumbnail={item.thumbnail} rarity={item.rarity} categoryIcon={item.categoryIcon} isNew />
-        ))}
+      {/* A row that scrolls takes the focus (Tab reaches it; the arrow keys scroll it). */}
+      <span
+        ref={row}
+        className={styles.boughtRow}
+        role={scrolls ? 'list' : undefined}
+        aria-label={scrolls ? `${items.length} items bought` : undefined}
+        tabIndex={scrolls ? 0 : undefined}
+      >
+        {items.map((item, i) =>
+          scrolls ? (
+            <span key={i} role="listitem" aria-label={item.name} className={styles.boughtItem}>
+              <ShopItemTile thumbnail={item.thumbnail} rarity={item.rarity} categoryIcon={item.categoryIcon} isNew />
+            </span>
+          ) : (
+            <ShopItemTile key={i} thumbnail={item.thumbnail} rarity={item.rarity} categoryIcon={item.categoryIcon} isNew />
+          )
+        )}
       </span>
       {scrolls && <ScrollThumb target={row} length={LIST_THUMB} axis="x" className={styles.boughtThumb} />}
     </span>
