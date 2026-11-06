@@ -1,14 +1,20 @@
 //! Whether the local user can DM a given wallet, and why not. Mirrors unity-explorer's
-//! `PrivateConversationUserStateService.ChatUserState`, resolved in the same order.
+//! `PrivateConversationUserStateService.ChatUserState`, resolved in the same order. The same
+//! stream answers for a community channel: whether a community message can go anywhere (the
+//! private chat room is joined and the server's message router is in it).
 
 use alloy_core::primitives::Address;
 use bevy::{ecs::system::SystemParam, prelude::*};
 use bevy_console::ConsoleCommand;
 use common::{rpc::RpcStreamSender, structs::DmPrivacy, util::AsH160};
 use comms::{
+    community_chat::community_id,
     global_crdt::ForeignPlayer,
     livekit::{participant::ParticipantIndex, room::Connected},
-    private_chat::{PrivateChatPresenceChanged, PrivateChatPrivacy, PrivateChatRoom},
+    private_chat::{
+        router_in_room, PrivateChatPresenceChanged, PrivateChatPrivacy, PrivateChatRoom,
+        PrivateChatRouterChanged,
+    },
 };
 use social::{FriendshipState, SocialClient, SocialStateChanged};
 use system_bridge::{DmUserStateData, SystemApi};
@@ -31,6 +37,9 @@ pub enum DmUserState {
     /// In the world through a client without DM support (seen in a realm room but not the
     /// private chat room).
     OtherClient,
+    /// A community channel only: the server's message router is not in the private chat room,
+    /// so a community message has nowhere to go.
+    NoRouter,
 }
 
 impl DmUserState {
@@ -43,6 +52,7 @@ impl DmUserState {
             Self::PrivateMessagesBlocked => "privateMessagesBlocked",
             Self::Disconnected => "disconnected",
             Self::OtherClient => "otherClient",
+            Self::NoRouter => "noRouter",
         }
     }
 }
@@ -125,11 +135,38 @@ impl DmUserStates<'_, '_> {
         };
         DmUserStatus { online, state }
     }
+
+    /// Community chat as a whole: connected while the room is joined and the router is in it.
+    pub fn resolve_community(&self) -> DmUserStatus {
+        if self.connected_rooms.is_empty() {
+            return DmUserStatus {
+                online: false,
+                state: DmUserState::NotConnected,
+            };
+        }
+        let router = self.rooms.single().is_ok_and(router_in_room);
+        DmUserStatus {
+            online: router,
+            state: if router {
+                DmUserState::Connected
+            } else {
+                DmUserState::NoRouter
+            },
+        }
+    }
 }
 
-/// One HUD subscription to a recipient's DM state.
+/// What a HUD subscription follows: a DM partner, or community chat as a whole.
+enum DmStateTarget {
+    Wallet(Address),
+    Community,
+}
+
+/// One HUD subscription to a recipient's DM state, or to community chat's.
 pub struct DmUserStateStream {
-    address: Address,
+    /// The key as the HUD asked for it, echoed on every emit.
+    key: String,
+    target: DmStateTarget,
     sender: RpcStreamSender<DmUserStateData>,
     /// What was last sent; `None` until the first emit.
     last: Option<DmUserStatus>,
@@ -144,6 +181,7 @@ pub fn pipe_dm_user_state_to_scene(
     mut streams: Local<Vec<DmUserStateStream>>,
     mut social_changed: EventReader<SocialStateChanged>,
     mut presence_changed: EventReader<PrivateChatPresenceChanged>,
+    mut router_changed: EventReader<PrivateChatRouterChanged>,
     connected: Query<(), (With<PrivateChatRoom>, Added<Connected>)>,
     mut disconnected: RemovedComponents<Connected>,
     mut room_gone: RemovedComponents<PrivateChatRoom>,
@@ -152,20 +190,29 @@ pub fn pipe_dm_user_state_to_scene(
     states: DmUserStates,
 ) {
     for request in requests.read() {
-        if let SystemApi::GetDmUserStateStream(address, sender) = request {
-            match address.as_h160() {
-                Some(address) => streams.push(DmUserStateStream {
-                    address,
+        if let SystemApi::GetDmUserStateStream(key, sender) = request {
+            let target = if community_id(key).is_some() {
+                Some(DmStateTarget::Community)
+            } else {
+                key.as_h160().map(DmStateTarget::Wallet)
+            };
+            match target {
+                Some(target) => streams.push(DmUserStateStream {
+                    key: key.clone(),
+                    target,
                     sender: sender.clone(),
                     last: None,
                 }),
-                None => warn!("dm user state stream: `{address}` is not a wallet address"),
+                None => warn!(
+                    "dm user state stream: `{key}` is not a wallet address or a community channel"
+                ),
             }
         }
     }
     // drain the signals even with no subscribers, so a later one does not see stale ones
     let social_changed = social_changed.read().count() > 0;
     let presence_changed: Vec<Address> = presence_changed.read().map(|e| e.address).collect();
+    let router_changed = router_changed.read().count() > 0;
     let room_changed = !connected.is_empty()
         || room_gone.read().count() > 0
         || disconnected
@@ -183,20 +230,33 @@ pub fn pipe_dm_user_state_to_scene(
     let changed_players: Vec<Address> = players_changed.iter().map(|p| p.address).collect();
 
     for stream in streams.iter_mut() {
-        if !(stream.last.is_none()
-            || inputs_changed
-            || changed_players.contains(&stream.address)
-            || presence_changed.contains(&stream.address))
-        {
-            continue;
-        }
-        let status = states.resolve(stream.address);
+        let status = match stream.target {
+            DmStateTarget::Wallet(address) => {
+                if !(stream.last.is_none()
+                    || inputs_changed
+                    || changed_players.contains(&address)
+                    || presence_changed.contains(&address))
+                {
+                    continue;
+                }
+                states.resolve(address)
+            }
+            DmStateTarget::Community => {
+                if !(stream.last.is_none() || room_changed || router_changed) {
+                    continue;
+                }
+                states.resolve_community()
+            }
+        };
         if stream.last == Some(status) {
             continue;
         }
         stream.last = Some(status);
         let _ = stream.sender.send(DmUserStateData {
-            address: format!("{:#x}", stream.address),
+            address: match stream.target {
+                DmStateTarget::Wallet(address) => format!("{address:#x}"),
+                DmStateTarget::Community => stream.key.clone(),
+            },
             state: status.state.name().to_owned(),
             online: status.online,
         });

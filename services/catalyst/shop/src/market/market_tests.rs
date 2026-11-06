@@ -1167,6 +1167,42 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         body["data"][1]["tradeId"].as_str(),
         Some(resale_id.as_str())
     );
+    // `/v1/nfts` gives a token with no legacy order its open v3 listing,
+    // but only one its current owner signed.
+    let resold_token = format!(
+        "{}",
+        alloy_primitives::U256::from(2u64) << 216u32 | alloy_primitives::U256::from(7u64)
+    );
+    let wanted = |owner: &str| {
+        vec![(
+            "matic".to_string(),
+            c_nft.to_ascii_lowercase(),
+            resold_token.clone(),
+            owner.to_string(),
+        )]
+    };
+    let listed = super::orders::open_trade_orders(&state, &wanted(WALLET_A))
+        .await
+        .unwrap();
+    let order = listed
+        .get(&(
+            "matic".to_string(),
+            c_nft.to_ascii_lowercase(),
+            resold_token.clone(),
+        ))
+        .expect("the owner's open listing");
+    assert_eq!(
+        (order.id.as_str(), order.trade_id.as_deref()),
+        (resale_id.as_str(), Some(resale_id.as_str()))
+    );
+    assert_eq!(order.price, "3000000000000000000");
+    assert!(
+        super::orders::open_trade_orders(&state, &wanted(CREATOR))
+            .await
+            .unwrap()
+            .is_empty(),
+        "a listing its signer no longer owns is not the token's order"
+    );
     assert_eq!(body["data"][1]["issuedId"], "7");
     let (status, body) = get(app(), &format!("/v1/orders/open-by-items?item={c_nft}-2")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
