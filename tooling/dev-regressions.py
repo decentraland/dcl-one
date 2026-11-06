@@ -12,7 +12,7 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
 SELECTION = "--workspace --exclude dcl-scene-cli --exclude dcl-scene-authoring --exclude dcl-scene-build --exclude dcl-preview-tunnel --exclude dcl-preview-tunnel-protocol"
-BROAD = "cd services/catalyst && cargo test --locked " + SELECTION
+BROAD = "tooling/catalyst-test.sh " + SELECTION
 VENDOR = "cargo test --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --lib"
 VENDOR_CHECK = "cargo check --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --all-features --all-targets"
 BEVY = "cargo test --all --profile ci-test --locked -- --test-threads=1"

@@ -18,7 +18,7 @@ foundation-dev wait ${startup[@]+"${startup[@]}"} --timeout "${FOUNDATION_DEV_ST
 eval "$(foundation-dev env)"
 for suite in "${suites[@]}"; do
   case "$suite" in
-    # Each test holds a scratch database with its own pools; the cluster allows 40 connections.
+    # Each test binary holds a scratch database with its own pools; the cluster allows 400 connections.
     rust)
       test_database_url="${FOUNDATION_DEV_TEST_DATABASE_URL:-}"
       if [ -z "${test_database_url//[[:space:]]/}" ]; then

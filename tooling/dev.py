@@ -541,7 +541,7 @@ def postgres(config):
         raise RuntimeError('PostgreSQL major version changed. Data preserved; migrate it before restarting.')
     os.execvpe('postgres', ['postgres', '-D', str(data), '-h', '127.0.0.1',
                            '-p', str(config['port'] + 3), '-k', '',
-                           '-c', 'max_connections=40', '-c', 'shared_buffers=64MB'], env)
+                           '-c', 'max_connections=400', '-c', 'shared_buffers=64MB'], env)
 
 
 def ensure_collation(config, database='catalyst'):

@@ -130,14 +130,14 @@ class InventoryTests(unittest.TestCase):
         for invocation in [guard.BROAD.replace("--workspace", "-p catalyst-comms"),
                            guard.BROAD + " --exclude catalyst", guard.BROAD + " case_name",
                            guard.BROAD + " -- --skip required", guard.BROAD + " -- --ignored",
-                           guard.BROAD.replace("cargo test", "cargo test --test unrelated")]:
+                           guard.BROAD.replace("catalyst-test.sh", "catalyst-test.sh --test unrelated")]:
             with self.subTest(invocation=invocation), self.assertRaises(ValueError):
                 guard.validate_invocation(invocation, {})
         with self.assertRaises(ValueError):
             guard.validate_invocation(guard.BROAD, {"MAKEFLAGS": "NODE_CRATES=-p catalyst-comms"})
 
     def test_catalyst_inventory_compiles_the_runtime_selection(self):
-        runtime = guard.BROAD.split(" && ")[1].split()
+        runtime = ["cargo", "test", "--locked", *guard.SELECTION.split()]
         manifest = '{"catalyst": {"required": ["case"]}, "unix": {}}'
         with (
             mock.patch.object(guard, "run", side_effect=[guard.BROAD, ""]) as execute,
