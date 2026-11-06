@@ -110,12 +110,19 @@ pub const ALL_KINDS: [&str; 7] = [
 
 /// A parcel's resolved subject: whose parcel it is (the estate's owner when
 /// it sits in one), which registry decides, and the two per-token legs.
+/// `operator` and `update_operator` are what the land-manager subgraph
+/// answers: `None` for a leg never set, the zero address for one cleared
+/// on chain. `deploy_update_operator` is the update operator the deploy
+/// check reads, where a cleared leg is no leg (the chain cannot tell the
+/// two apart), so a parcel's cleared update operator falls back to its
+/// estate's.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParcelSubject {
     pub owner: String,
     pub registry: String,
     pub operator: Option<String>,
     pub update_operator: Option<String>,
+    pub deploy_update_operator: Option<String>,
     pub belongs_to_estate: bool,
 }
 
@@ -411,12 +418,12 @@ pub async fn can_deploy_batch(
         let source = DecisionSource::Index {
             folded_block: cursor.folded_block.unwrap_or(cursor.last_block),
         };
-        let rights = state.store().rights_batch(parcels).await?;
+        let rights = state.store().deploy_rights_batch(parcels).await?;
         return Ok(rights
             .into_iter()
             .map(|r| match r {
                 Some(rights) => {
-                    let flags = rights.flags_for(actor);
+                    let flags = rights.deploy_flags_for(actor);
                     let verdict = flags
                         .granting_leg()
                         .map_or(Verdict::Denied, Verdict::Granted);
