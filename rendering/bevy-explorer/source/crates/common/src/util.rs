@@ -576,6 +576,12 @@ impl std::ops::DerefMut for SceneSpawnerPlus<'_, '_> {
 }
 
 impl SceneSpawnerPlus<'_, '_> {
+    /// This frame's instantiation deadline ([`SceneSpawner::set_spawn_deadline`]); `None` means
+    /// no limit.
+    pub fn spawn_deadline(&self) -> Option<bevy::platform::time::Instant> {
+        self.scene_spawner.spawn_deadline()
+    }
+
     pub fn instance_is_really_ready(&self, instance: InstanceId) -> bool {
         if !self.scene_spawner.instance_is_ready(instance) {
             return false;

@@ -1,13 +1,14 @@
-//! Bevy's scene spawner writes queued scene instances (glTF models, avatar parts) an entity at a
-//! time and stops a few milliseconds after it starts each frame; the rest waits for the next frame.
-//! Behind the loading backdrop and on headless it spawns them whole.
+//! Instantiation each frame stops a few milliseconds after bevy's scene spawner starts: the
+//! spawner writes queued scene instances (glTF models, avatar parts) an entity at a time, then
+//! `update_ready_gltfs` processes spawned glTFs a node at a time, both until the same deadline;
+//! the rest waits for the next frame. Behind the loading backdrop and on headless both run whole.
 
 use std::time::Duration;
 
 use bevy::{platform::time::Instant, prelude::*, scene::SceneSpawner};
 use common::structs::{NoRenderApp, OutOfWorld, PrimaryUser};
 
-/// How long the scene spawner writes each frame.
+/// How long spawning and glTF processing run together each frame.
 pub const SCENE_SPAWN_SLICE: Duration = Duration::from_millis(4);
 
 /// Runs in `SpawnScene`, just before bevy's `scene_spawner_system`.

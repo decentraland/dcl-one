@@ -5,6 +5,7 @@ use std::{
     collections::BTreeMap,
     f32::consts::{PI, TAU},
     hash::{Hash, Hasher},
+    time::Duration,
 };
 
 use bevy::{
@@ -12,7 +13,10 @@ use bevy::{
     asset::{LoadState, RenderAssetTransferPriority},
     gltf::{Gltf, GltfExtras, GltfLoaderSettings},
     pbr::{ExtendedMaterial, NotShadowCaster},
-    platform::collections::{HashMap, HashSet},
+    platform::{
+        collections::{HashMap, HashSet},
+        time::Instant,
+    },
     prelude::*,
     render::{
         mesh::{skinning::SkinnedMesh, Indices, VertexAttributeValues},
@@ -227,6 +231,19 @@ pub struct GltfProcessed {
     pub named_nodes: HashMap<String, Entity>,
 }
 
+/// A glTF instance `update_ready_gltfs` has processed part of: it resumes on the next frame, and
+/// the instance stays hidden until it is done.
+#[derive(Component, Default)]
+struct GltfProcessing {
+    /// The instance's entities, of which the first `processed` are done.
+    nodes: Vec<Entity>,
+    processed: usize,
+    /// Collider indices handed out so far, per collider name.
+    collider_counter: HashMap<Option<String>, u32>,
+    has_animations: bool,
+    named_nodes: HashMap<String, Entity>,
+}
+
 #[derive(Deserialize)]
 struct DclNodeExtras {
     dcl_collision_mask: Option<u32>,
@@ -266,9 +283,13 @@ fn despawn_instance_non_recursive(commands: &mut Commands, entities: impl Iterat
 }
 
 fn on_gltf_container_removed(trigger: Trigger<OnRemove, GltfDefinition>, mut commands: Commands) {
-    commands
-        .entity(trigger.target())
-        .try_remove::<(GltfLoaded, GltfProcessed, GltfReady, GltfAssetFailed)>();
+    commands.entity(trigger.target()).try_remove::<(
+        GltfLoaded,
+        GltfProcessed,
+        GltfProcessing,
+        GltfReady,
+        GltfAssetFailed,
+    )>();
 }
 
 // assets are keyed by path and the first load's settings win, so every gltf that might
@@ -361,6 +382,7 @@ fn update_gltf(
             .entity(ent)
             .remove::<GltfLoaded>()
             .remove::<GltfProcessed>()
+            .remove::<GltfProcessing>()
             .remove::<GltfAssetFailed>();
 
         if let Some(GltfLoaded(Some(instance_id))) = maybe_loaded {
@@ -513,9 +535,13 @@ fn retry_repaired_gltfs(
         }
 
         debug!("retrying repaired gltf for {}", scene_ent.id);
-        commands
-            .entity(ent)
-            .try_remove::<(GltfLoaded, GltfProcessed, GltfReady, GltfAssetFailed)>();
+        commands.entity(ent).try_remove::<(
+            GltfLoaded,
+            GltfProcessed,
+            GltfProcessing,
+            GltfReady,
+            GltfAssetFailed,
+        )>();
 
         if let Ok(mut context) = contexts.get_mut(scene_ent.root) {
             context.update_crdt(
@@ -552,13 +578,14 @@ pub struct SceneResourceLookup {
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_ready_gltfs(
     mut commands: Commands,
-    ready_gltfs: Query<
+    mut ready_gltfs: Query<
         (
             Entity,
             &SceneEntity,
             &GltfLoaded,
             &GltfDefinition,
             &GltfHandle,
+            Option<&mut GltfProcessing>,
         ),
         Without<GltfProcessed>,
     >,
@@ -605,26 +632,46 @@ fn update_ready_gltfs(
     // sources are dropped after the loop: `gltf` is borrowed from `gltfs` throughout it
     let mut drop_sources = Vec::default();
 
-    'outer: for (bevy_scene_entity, dcl_scene_entity, loaded, definition, h_gltf) in
-        ready_gltfs.iter()
-    {
+    // nodes are processed until the frame's instantiation deadline, at least one a frame; the
+    // rest resume next frame, instances already in progress first
+    let deadline = scene_spawner.spawn_deadline();
+    let has_time = |processed_any: bool| {
+        !processed_any || deadline.is_none_or(|deadline| Instant::now() < deadline)
+    };
+    let mut processed_any = false;
+    let mut slowest: Option<(Duration, usize, String)> = None;
+    let mut order: Vec<_> = ready_gltfs
+        .iter()
+        .map(|(entity, .., processing)| (processing.is_none(), entity))
+        .collect();
+    order.sort();
+
+    'outer: for (_, container) in order {
+        if !has_time(processed_any) {
+            break;
+        }
+        let Ok((bevy_scene_entity, dcl_scene_entity, loaded, definition, h_gltf, mut processing)) =
+            ready_gltfs.get_mut(container)
+        else {
+            continue;
+        };
         if loaded.0.is_none() {
             // nothing to process
             commands
                 .entity(bevy_scene_entity)
                 .try_insert(GltfProcessed::default())
-                .try_remove::<GltfReady>();
+                .try_remove::<(GltfReady, GltfProcessing)>();
             continue;
         }
-        let instance = loaded.0.as_ref().unwrap();
-        if scene_spawner.instance_is_really_ready(*instance) {
+        let instance = *loaded.0.as_ref().unwrap();
+        if scene_spawner.instance_is_really_ready(instance) {
             let Some(gltf) = gltfs.get(h_gltf.0.id()) else {
                 commands
                     .entity(bevy_scene_entity)
                     .try_insert(GltfProcessed::default())
-                    .try_remove::<GltfReady>();
+                    .try_remove::<(GltfReady, GltfProcessing)>();
                 error!("gltf was unloaded mysteriously. this shouldn't happen and things will be broken as a result.");
-                reveal(&mut commands, *instance);
+                reveal(&mut commands, instance);
                 continue;
             };
 
@@ -647,25 +694,33 @@ fn update_ready_gltfs(
             // - PbGltfContainer.create_pointer_colliders && name != *collider -> mask |= CL_POINTERS (switch on pointers bit)
             // - if mask != 0 create collider
 
-            // create a counter per name so we can make unique collider handles
-            let mut collider_counter: HashMap<_, u32> = HashMap::new();
-
-            // track if any animations exist
-            let mut has_animations = false;
-
             let Ok((mut context, mut resource_lookup, mut tracker)) =
                 contexts.get_mut(dcl_scene_entity.root)
             else {
                 continue;
             };
 
-            let mut named_nodes = HashMap::new();
+            // resume where the last frame stopped; the collider counter (unique collider handles
+            // per name), the animation flag and the named nodes carry over
+            let mut progress = match processing.as_deref_mut() {
+                Some(progress) => std::mem::take(progress),
+                None => GltfProcessing {
+                    nodes: scene_spawner.iter_instance_entities(instance).collect(),
+                    ..Default::default()
+                },
+            };
+            let slice_started = Instant::now();
+            let processed_before = progress.processed;
 
-            for spawned_ent in scene_spawner.iter_instance_entities(*instance) {
+            while progress.processed < progress.nodes.len() && has_time(processed_any) {
+                let spawned_ent = progress.nodes[progress.processed];
+                progress.processed += 1;
+                processed_any = true;
+
                 // delete any base materials
                 commands
                     .entity(spawned_ent)
-                    .remove::<(MeshMaterial3d<StandardMaterial>,)>();
+                    .try_remove::<(MeshMaterial3d<StandardMaterial>,)>();
 
                 // add a container node so other systems can reference the root
                 commands.entity(spawned_ent).try_insert(ContainerEntity {
@@ -737,7 +792,7 @@ fn update_ready_gltfs(
                             }
                             ptr = parent.parent();
                         }
-                        named_nodes.insert(name, spawned_ent);
+                        progress.named_nodes.insert(name, spawned_ent);
                     }
 
                     // children of root nodes -> rotate
@@ -761,7 +816,7 @@ fn update_ready_gltfs(
                         if let Some(name) = maybe_name {
                             debug!("animator found on {name} node of {}", definition.0.src);
                             // animation_roots.try_insert((spawned_ent, name.clone()));
-                            has_animations = true;
+                            progress.has_animations = true;
                             commands.entity(spawned_ent).remove::<AnimationPlayer>();
                             *tracker.0.entry("embedded://animations").or_default() += 1;
                         }
@@ -1077,8 +1132,9 @@ fn update_ready_gltfs(
                         let collider_bits = collider_bits.unwrap_or(
                             ColliderLayer::ClPhysics as u32 | ColliderLayer::ClPointer as u32,
                         );
-                        let index = collider_counter
-                            .entry(collider_base_name.to_owned())
+                        let index = progress
+                            .collider_counter
+                            .entry(collider_base_name.map(ToOwned::to_owned))
                             .or_default();
                         *index += 1u32;
 
@@ -1101,8 +1157,9 @@ fn update_ready_gltfs(
 
                     if is_trigger && collider_bits != Some(0) {
                         let collider_bits = collider_bits.unwrap_or(ColliderLayer::ClPlayer as u32);
-                        let index = collider_counter
-                            .entry(collider_base_name.to_owned())
+                        let index = progress
+                            .collider_counter
+                            .entry(collider_base_name.map(ToOwned::to_owned))
                             .or_default();
                         *index += 1u32;
 
@@ -1124,6 +1181,38 @@ fn update_ready_gltfs(
                     }
                 }
             }
+
+            let slice = slice_started.elapsed();
+            if slowest
+                .as_ref()
+                .is_none_or(|(longest, ..)| slice > *longest)
+            {
+                slowest = Some((
+                    slice,
+                    progress.processed - processed_before,
+                    definition.0.src.clone(),
+                ));
+            }
+            if progress.processed < progress.nodes.len() {
+                // out of time: the rest waits for the next frame
+                match processing {
+                    Some(mut processing) => *processing = progress,
+                    None => {
+                        commands.entity(bevy_scene_entity).try_insert(progress);
+                    }
+                }
+                continue;
+            }
+            if processing.is_some() {
+                commands
+                    .entity(bevy_scene_entity)
+                    .try_remove::<GltfProcessing>();
+            }
+            let GltfProcessing {
+                named_nodes,
+                has_animations,
+                ..
+            } = progress;
 
             // names for the loading-state message; extracted once, then the source is
             // dropped after this loop (see GltfNames)
@@ -1160,12 +1249,12 @@ fn update_ready_gltfs(
             );
             commands.entity(bevy_scene_entity).try_insert((
                 GltfProcessed {
-                    instance_id: Some(*instance),
+                    instance_id: Some(instance),
                     named_nodes,
                 },
-                GltfReady(*instance),
+                GltfReady(instance),
             ));
-            reveal(&mut commands, *instance);
+            reveal(&mut commands, instance);
             if has_animations && !gltf.animations.is_empty() {
                 let mut graph = AnimationGraph::new();
                 let animation_clips = Clips {
@@ -1204,8 +1293,10 @@ fn update_ready_gltfs(
     }
 
     for (bevy_scene_entity, instance) in failed {
-        commands.entity(bevy_scene_entity).remove::<()>();
-        scene_spawner.despawn_instance(*instance);
+        commands
+            .entity(bevy_scene_entity)
+            .try_remove::<GltfProcessing>();
+        scene_spawner.despawn_instance(instance);
     }
 
     // now that nothing borrows `gltfs`, release the parsed documents + GLB blobs whose
@@ -1215,6 +1306,16 @@ fn update_ready_gltfs(
         if let Some(gltf) = gltfs.get_mut(id) {
             gltf.source = None;
         }
+    }
+
+    if let Some((slice, nodes, src)) =
+        slowest.filter(|(slice, ..)| *slice >= Duration::from_millis(1))
+    {
+        debug!(
+            target: "spawn_timing",
+            "slowest glTF processing this frame: {:.1} ms for {nodes} nodes of {src}",
+            slice.as_secs_f64() * 1000.0
+        );
     }
 }
 
@@ -2309,7 +2410,7 @@ fn update_gltf_linked_visibility(
 }
 
 #[cfg(test)]
-mod reveal_tests;
+mod processing_tests;
 
 #[cfg(test)]
 mod tests {

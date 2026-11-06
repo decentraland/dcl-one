@@ -134,7 +134,8 @@ across workers:
   - `spawn_as_child_hidden` keeps an instance hidden after it has spawned, until
     `reveal_instance_sync`.
   - The explorer sets the deadline each frame (`scene_runner::scene_spawn_slice`) and spawns glTF
-    containers hidden until `update_ready_gltfs` has processed them.
+    containers hidden until `update_ready_gltfs` has processed them, a node at a time until the
+    same deadline.
 - `mark_dirty_trees` keys its early-out on this run's tick, so transform propagation can run
   twice per frame (the explorer's early pass plus bevy's own).
 - `GlobalTransform::from(Transform)` and `mul_transform` sanitise the affine: a zero scale
