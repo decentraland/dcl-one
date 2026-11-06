@@ -6,7 +6,11 @@
 
 use axum::Router;
 use axum::extract::Request;
-use axum::http::header::{ALLOW, CONTENT_TYPE};
+use axum::http::header::{
+    ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
+    ACCESS_CONTROL_EXPOSE_HEADERS, ACCESS_CONTROL_MAX_AGE, ACCESS_CONTROL_REQUEST_HEADERS, ALLOW,
+    CONTENT_TYPE, ORIGIN, VARY, X_CONTENT_TYPE_OPTIONS,
+};
 use axum::http::{HeaderValue, Method, StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -165,6 +169,69 @@ fn upstream_allow_value(allow: &str) -> String {
     out.join(", ")
 }
 
+/// Upstream's preflight methods (`decentraland/catalyst:src/components.ts:492-505`).
+const UPSTREAM_CORS_METHODS: &str = "GET,HEAD,POST,OPTIONS";
+
+/// The CORS rule of the content server under `/content/`, as upstream
+/// configures `@dcl/http-server` (`decentraland/catalyst:src/components.ts:492-505`;
+/// `CR-11-preflight.json`, `CR-11-get-with-origin.json`): any origin as `*`
+/// without credentials, every header exposed (a handler's own list kept),
+/// and a preflight that allows `GET,HEAD,POST,OPTIONS`, reflects the requested
+/// headers, lasts 600 s and varies on `Access-Control-Request-Headers`. A
+/// request without `Origin` gets no CORS header, as captured.
+///
+/// The root mounts, the lambdas routes in this router and this node's own
+/// routes under `/content/`, which upstream does not serve (`scenes`, whose
+/// `DELETE` the upstream preflight would refuse, and the `forwarding`
+/// operator API), keep the shared rule. `every_route_outside_upstreams_cors_methods_is_exempt`
+/// fails when a content route takes another method without an exemption.
+pub(crate) async fn content_cors(req: Request, next: Next) -> Response {
+    if !upstream_cors_path(req.uri().path()) {
+        return crate::cors::cors_middleware(req, next).await;
+    }
+    let has_origin = req.headers().contains_key(ORIGIN);
+    if req.method() == Method::OPTIONS {
+        let mut res = StatusCode::NO_CONTENT.into_response();
+        let requested = req.headers().get(ACCESS_CONTROL_REQUEST_HEADERS).cloned();
+        let h = res.headers_mut();
+        if has_origin {
+            h.insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+            h.insert(ACCESS_CONTROL_EXPOSE_HEADERS, HeaderValue::from_static("*"));
+        }
+        h.insert(
+            ACCESS_CONTROL_ALLOW_METHODS,
+            HeaderValue::from_static(UPSTREAM_CORS_METHODS),
+        );
+        if let Some(requested) = requested {
+            h.insert(ACCESS_CONTROL_ALLOW_HEADERS, requested);
+        }
+        h.insert(ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("600"));
+        h.insert(
+            VARY,
+            HeaderValue::from_static("Access-Control-Request-Headers"),
+        );
+        h.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+        return res;
+    }
+    let mut res = next.run(req).await;
+    let h = res.headers_mut();
+    if has_origin {
+        h.insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+        if !h.contains_key(ACCESS_CONTROL_EXPOSE_HEADERS) {
+            h.insert(ACCESS_CONTROL_EXPOSE_HEADERS, HeaderValue::from_static("*"));
+        }
+    }
+    h.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    res
+}
+
+pub(crate) fn upstream_cors_path(path: &str) -> bool {
+    path.strip_prefix(CONTENT_PREFIX).is_some_and(|rest| {
+        let first = rest.split('/').next().unwrap_or("");
+        !first.eq_ignore_ascii_case("scenes") && !first.eq_ignore_ascii_case("forwarding")
+    })
+}
+
 /// `POST /entities/active`'s body cap, upstream's `MAX_ACTIVE_ENTITIES_BODY_SIZE`
 /// default (`decentraland/catalyst:src/Environment.ts:79`).
 pub(crate) const MAX_ACTIVE_ENTITIES_BODY_BYTES: usize = 10 * 1024 * 1024;
@@ -253,5 +320,68 @@ mod tests {
         assert_eq!(upstream_allow_value("GET,HEAD,POST"), "HEAD, GET, POST");
         assert_eq!(upstream_allow_value("POST"), "POST");
         assert_eq!(upstream_allow_value("DELETE"), "DELETE");
+    }
+
+    fn cors_app() -> Router {
+        use axum::routing::get;
+        Router::new()
+            .fallback(get(|| async { "ok" }).delete(|| async { "gone" }))
+            .layer(middleware::from_fn(content_cors))
+    }
+
+    async fn cors_headers(method: Method, path: &str, origin: bool) -> axum::http::HeaderMap {
+        use tower::ServiceExt;
+        let mut req = Request::builder().method(method).uri(path);
+        if origin {
+            req = req
+                .header(ORIGIN, "https://example.org")
+                .header(ACCESS_CONTROL_REQUEST_HEADERS, "x-identity-auth-chain-0");
+        }
+        let res = cors_app()
+            .oneshot(req.body(axum::body::Body::empty()).unwrap())
+            .await
+            .unwrap();
+        res.headers().clone()
+    }
+
+    /// CR-11: under `/content/` upstream's rule, as captured.
+    #[tokio::test]
+    async fn content_paths_answer_upstreams_cors() {
+        let h = cors_headers(Method::GET, "/content/status", true).await;
+        assert_eq!(h[ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+        assert_eq!(h[ACCESS_CONTROL_EXPOSE_HEADERS], "*");
+        assert!(h.get("access-control-allow-credentials").is_none());
+        assert!(h.get(VARY).is_none());
+
+        let h = cors_headers(Method::GET, "/content/status", false).await;
+        assert!(h.get(ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+        assert!(h.get(ACCESS_CONTROL_EXPOSE_HEADERS).is_none());
+
+        let h = cors_headers(Method::OPTIONS, "/content/entities/active", true).await;
+        assert_eq!(h[ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+        assert_eq!(h[ACCESS_CONTROL_ALLOW_METHODS], "GET,HEAD,POST,OPTIONS");
+        assert_eq!(h[ACCESS_CONTROL_ALLOW_HEADERS], "x-identity-auth-chain-0");
+        assert_eq!(h[ACCESS_CONTROL_MAX_AGE], "600");
+        assert_eq!(h[VARY], "Access-Control-Request-Headers");
+    }
+
+    /// The root mounts and this node's `DELETE /content/scenes/{coord}` keep
+    /// the shared rule, whose preflight allows `DELETE`.
+    #[tokio::test]
+    async fn other_paths_keep_the_shared_cors() {
+        for path in ["/status", "/content/scenes/0,0", "/content/Forwarding"] {
+            let h = cors_headers(Method::OPTIONS, path, true).await;
+            assert_eq!(
+                h[ACCESS_CONTROL_ALLOW_ORIGIN], "https://example.org",
+                "{path}"
+            );
+            assert!(
+                h[ACCESS_CONTROL_ALLOW_METHODS]
+                    .to_str()
+                    .unwrap()
+                    .contains("DELETE"),
+                "{path}"
+            );
+        }
     }
 }

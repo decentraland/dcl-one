@@ -109,6 +109,18 @@ fn unwrap_metadata(metadata: Option<&Value>) -> Option<Value> {
     metadata.and_then(|m| m.get("v").cloned())
 }
 
+/// Whether JavaScript reads a JSON value as true: everything but `null`,
+/// `false`, `0` and `""`.
+pub(crate) fn js_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_f64() != Some(0.0),
+        Value::String(s) => !s.is_empty(),
+        Value::Array(_) | Value::Object(_) => true,
+    }
+}
+
 /// An active entity in the key order the production peer answers
 /// `POST /entities/active` with: `id,type,pointers,content,version,timestamp,metadata`
 /// (`conformance/content-lambdas/captures/content-reads/CR-14-active-entity-key-order.json`).
@@ -372,6 +384,9 @@ pub struct DeploymentQueryOptions {
     pub to: Option<i64>,
     pub only_currently_pointed: Option<bool>,
     pub fields: Vec<String>,
+    /// The `fields` the client listed, `None` for the defaults; `next`
+    /// carries them only then.
+    pub requested_fields: Option<Vec<String>>,
     pub sorting_field: Option<String>,
     pub sorting_order: Option<String>,
     pub offset: Option<i64>,
@@ -635,7 +650,9 @@ pub async fn get_deployments(
                 deployed_by: d.deployer_address,
                 pointers: Some(d.entity_pointers),
                 content: Some(content_items),
-                metadata: unwrap_metadata(d.entity_metadata.as_ref()),
+                // Upstream sends `metadata` only when it is truthy
+                // (`get-deployments-handler.ts:151-153`).
+                metadata: unwrap_metadata(d.entity_metadata.as_ref()).filter(js_truthy),
                 audit_info: Some(AuditInfo {
                     version: d.version,
                     auth_chain: d.auth_chain.unwrap_or_else(|| Value::Array(vec![])),
@@ -827,7 +844,13 @@ pub async fn get_pointer_changes(
     })
 }
 
-/// `limit: None` returns every row (the unpaginated legacy answer).
+/// `limit: None` returns every row (the unpaginated legacy answer). Rows come
+/// in table order, as upstream's cache is filled from an unordered `SELECT`
+/// at start and then in report order; this node has no report sequence, so
+/// a re-reported failure moves where the update puts its row. A page
+/// (`limit: Some`) is ordered by `failure_time, entity_id` instead: a
+/// retry's `ON CONFLICT DO UPDATE` moves a row's `ctid`, which would make
+/// `offset` paging skip and repeat rows.
 pub async fn failed_deployments(
     pool: &PgPool,
     offset: i64,
@@ -838,30 +861,33 @@ pub async fn failed_deployments(
         entity_id: String,
         entity_type: String,
         failure_timestamp: f64,
-        reason: String,
         auth_chain: Value,
         error_description: String,
         snapshot_hash: String,
         retry_count: i32,
         next_retry_at: f64,
     }
-    let rows: Vec<Row> = sqlx::query_as(
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         r#"
         SELECT
             entity_id,
             entity_type,
             date_part('epoch', failure_time) * 1000 AS failure_timestamp,
-            reason,
             auth_chain,
             error_description,
             snapshot_hash,
             retry_count,
             date_part('epoch', next_retry_at) * 1000 AS next_retry_at
         FROM content.failed_deployments
-        ORDER BY failure_time, entity_id
+        ORDER BY {}
         OFFSET $1 LIMIT $2
         "#,
-    )
+        if limit.is_some() {
+            "failure_time, entity_id"
+        } else {
+            "ctid"
+        }
+    )))
     .bind(offset.max(0))
     .bind(limit.map(|l| l.max(0)))
     .fetch_all(pool)
@@ -872,14 +898,12 @@ pub async fn failed_deployments(
             entity_id: r.entity_id,
             entity_type: r.entity_type,
             failure_timestamp: r.failure_timestamp as i64,
-            // The wire keeps the reference reasons; the description says which kind.
-            reason: match r.reason.as_str() {
-                "No entity" => r.reason,
-                _ => "Deployment error".to_string(),
-            },
+            // Upstream's only reason; the description says which kind.
+            reason: "Deployment error".to_string(),
             auth_chain: r.auth_chain,
             error_description: r.error_description,
-            snapshot_hash: r.snapshot_hash,
+            // Upstream leaves the key out for a failure outside a snapshot.
+            snapshot_hash: Some(r.snapshot_hash).filter(|h| !h.is_empty()),
             retry_count: r.retry_count,
             next_retry_at: r.next_retry_at as i64,
         })
@@ -1091,6 +1115,17 @@ mod tests {
             std::str::from_utf8(&doc.json).unwrap(),
             r#"{"id":"bafy","type":"scene","pointers":["0,0"],"content":[{"file":"a","hash":"h"}],"version":"v3","timestamp":1700000000000,"metadata":{"k":1}}"#
         );
+    }
+
+    /// CS-22: `/deployments` leaves out a falsy `metadata`.
+    #[test]
+    fn js_truthy_reads_as_javascript() {
+        for falsy in [json!(null), json!(false), json!(0), json!(0.0), json!("")] {
+            assert!(!js_truthy(&falsy), "{falsy}");
+        }
+        for truthy in [json!({}), json!([]), json!(1), json!("x"), json!(true)] {
+            assert!(js_truthy(&truthy), "{truthy}");
+        }
     }
 
     #[test]

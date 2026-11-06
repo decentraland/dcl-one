@@ -501,9 +501,9 @@ async fn a_pass_reuses_regenerates_prunes_and_rekeys() {
     );
 
     // An entity of the year window overwritten after the pass: the outdated
-    // probe sees active late arrivals only, so a pass keeps the window; the
-    // rebuild (the console's regenerate) rewrites every window, and only the
-    // year's CID moves.
+    // probe sees active late arrivals only, and the row is younger than a
+    // month, so a pass keeps the window; the rebuild (the console's
+    // regenerate) rewrites every window, and only the year's CID moves.
     sqlx::query("UPDATE content.deployments SET deleter_deployment = 0 WHERE entity_id = 'bafkreiprofile000001'")
         .execute(&db.pool)
         .await
@@ -542,6 +542,76 @@ async fn a_pass_reuses_regenerates_prunes_and_rekeys() {
         .collect();
     let want: Vec<&str> = rows.iter().map(|r| r.hash.as_str()).collect();
     assert_eq!(hashes, want);
+
+    db.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Upstream's inactive-entities check: a window whose row is over a month
+/// (four weeks) old and lists more entities than are active now is
+/// regenerated with the old hash in `replacedSnapshotHashes`; a month-old
+/// row whose entities are all active, or a younger row with an overwritten
+/// entity, is reused.
+#[tokio::test]
+async fn a_month_old_window_listing_an_overwritten_entity_is_regenerated() {
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    sqlx::raw_sql(SEED).execute(&db.pool).await.unwrap();
+    let root = temp_dir("inactive");
+    let state = content_state(&db.pool, &root).await;
+    let generator = SnapshotGenerator::new(state.clone(), false, settings(1000));
+    let (end, golden) = golden_pass(0);
+    let year = golden[0].range;
+    let (first, _) = generator.generate(end).await.unwrap();
+    assert_eq!(first[0].hash, golden[0].hash);
+
+    // The year row as if generated one hour after the seed's local_timestamp
+    // (so the outdated probe stays quiet), and a pass four weeks and a day
+    // later: the year window is unchanged by the later division.
+    let generated = sqlx::query_scalar::<_, chrono::NaiveDateTime>(
+        "UPDATE content.snapshots SET generation_time = '2021-01-07 07:00'
+         WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'
+         RETURNING generation_time",
+    )
+    .bind(year.init_timestamp as f64)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap()
+    .and_utc()
+    .timestamp_millis();
+    let month = 28 * DAY;
+    let year_row =
+        |rows: &[SnapshotMetadata]| rows.iter().find(|r| r.time_range == year).cloned().unwrap();
+
+    // Every listed entity still active: the month-old row is reused.
+    let (rows, _) = generator.generate(generated + month + DAY).await.unwrap();
+    let kept = year_row(&rows);
+    assert_eq!(kept.hash, golden[0].hash);
+    assert_eq!(kept.generation_timestamp, generated);
+
+    // An entity overwritten, the row younger than a month: still reused.
+    sqlx::query("UPDATE content.deployments SET deleter_deployment = 0 WHERE entity_id = 'bafkreiprofile000001'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (rows, _) = generator.generate(generated + month - DAY).await.unwrap();
+    assert_eq!(year_row(&rows), kept);
+
+    // Over a month old with fewer active entities than it lists: regenerated.
+    let (rows, _) = generator.generate(generated + month + DAY).await.unwrap();
+    let rebuilt = year_row(&rows);
+    assert_eq!(rebuilt.number_of_entities, golden[0].entities - 1);
+    assert_ne!(rebuilt.hash, kept.hash);
+    assert_eq!(
+        rebuilt.replaced_snapshot_hashes.as_deref(),
+        Some(&[kept.hash.clone()][..])
+    );
+    assert!(rebuilt.generation_timestamp > generated);
+
+    // The new row is younger than a month: the next pass reuses it.
+    let (rows, _) = generator.generate(generated + month + DAY).await.unwrap();
+    assert_eq!(year_row(&rows), rebuilt);
 
     db.teardown().await;
     let _ = std::fs::remove_dir_all(root);
