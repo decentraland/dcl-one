@@ -10,17 +10,18 @@ import { useState } from "react";
 import { Link } from "react-router";
 
 import Button from "../../../atoms/Button";
-import { CHAIN, type ChainId } from "../../model/chain";
+import type { ChainId } from "../../model/chain";
 import { CENTS_PER_CREDIT, formatUsd, usdCents } from "../../model/money";
 import { shopPath } from "../../routes";
 import { useShopProvider, useWalletBlock, useWrite, WriteStatus } from "../../market/components/kit";
 import { createPrimaryUsdPeggedListing, ensureMinter } from "../../market/lib/trades";
 import type { PublishableItem } from "../lib/builder";
 import { postListingWithRetry } from "../lib/import";
+import { settlementChainId } from "../../checkout/chain/config";
 
 const SIX_MONTHS_MS = 1000 * 60 * 60 * 24 * 182;
 
-export function PrimaryListForm({ item, chainId = CHAIN.POLYGON, onClose, now = Date.now }: { item: PublishableItem; chainId?: ChainId; onClose: () => void; now?: () => number }) {
+export function PrimaryListForm({ item, chainId = settlementChainId(), onClose, now = Date.now }: { item: PublishableItem; chainId?: ChainId; onClose: () => void; now?: () => number }) {
   const qc = useQueryClient();
   const provider = useShopProvider();
   const block = useWalletBlock("Putting an item on sale");

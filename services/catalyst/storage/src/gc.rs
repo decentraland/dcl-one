@@ -12,9 +12,11 @@
 //! content lists, the asset-pack catalogue) plus the global scenes the
 //! configuration names, so memory holds a chunk, never the corpus. A scene
 //! whose content list cannot be read exactly aborts the run, a candidate
-//! is re-checked right before it is unlinked (a deployment may reuse a
-//! stored blob), an empty reference set with candidates is refused unless
-//! asked for, and the dry run reports without deleting.
+//! is re-checked (references and age) right before it is unlinked, under
+//! the exclusive store lock that a world scene deploy takes shared (other
+//! domains rely on the age floor alone), an empty reference set with
+//! candidates is refused unless asked for, and the dry run reports without
+//! deleting.
 //!
 //! `catalog_is_complete` (the test below) walks the schema: every column
 //! whose name says hash, cid, entity id, thumbnail or image must be listed
@@ -31,6 +33,67 @@ use sqlx::PgPool;
 use super::{Storage, StorageError};
 
 pub const MIN_ORPHAN_AGE: Duration = Duration::from_secs(3600);
+
+/// Advisory lock key shared by publishes (shared) and unlink batches (exclusive).
+pub const STORE_LOCK_KEY: i64 = 0x5354_4f52_455f_4743;
+
+/// Advisory lock key held for the length of one collector run.
+pub const GC_RUN_LOCK_KEY: i64 = 0x5354_4f52_455f_5255;
+
+/// How long an unlink batch waits for in-flight publishes before deferring.
+pub const STORE_LOCK_TIMEOUT: &str = "30s";
+
+/// Taken by a world scene deploy before it checks that the keys it names exist: an unlink batch
+/// re-checks references and unlinks under the exclusive lock, so either the deploy sees the file
+/// gone or the batch sees the committed reference. Other domains do not take it.
+pub async fn lock_store_shared(conn: &mut sqlx::PgConnection) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock_shared($1)")
+        .bind(STORE_LOCK_KEY)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// The exclusive side of [`lock_store_shared`], held by the returned transaction until it ends.
+pub async fn lock_store_exclusive(
+    pool: &PgPool,
+) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, GcError> {
+    let mut tx = pool.begin().await?;
+    // The batch unlinks files with the transaction idle: exempt it from the pool's idle timeout.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT set_config('lock_timeout', '{STORE_LOCK_TIMEOUT}', true), \
+         set_config('idle_in_transaction_session_timeout', '0', true)"
+    )))
+    .execute(&mut *tx)
+    .await?;
+    match sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(STORE_LOCK_KEY)
+        .execute(&mut *tx)
+        .await
+    {
+        Ok(_) => Ok(tx),
+        Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("55P03") => {
+            Err(GcError::LockTimeout)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// One run at a time across the fleet: `None` while another run holds it.
+pub async fn try_lock_run(
+    pool: &PgPool,
+) -> Result<Option<sqlx::Transaction<'static, sqlx::Postgres>>, GcError> {
+    let mut tx = pool.begin().await?;
+    // Held idle for the whole walk: exempt it from the pool's idle timeout.
+    sqlx::query("SET LOCAL idle_in_transaction_session_timeout = 0")
+        .execute(&mut *tx)
+        .await?;
+    let held: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1)")
+        .bind(GC_RUN_LOCK_KEY)
+        .fetch_one(&mut *tx)
+        .await?;
+    Ok(held.then_some(tx))
+}
 
 /// Every plain column (`schema.table.column`) holding store keys. A chunk
 /// of candidates is checked against each with `column = ANY($1)`.
@@ -51,6 +114,7 @@ pub const REFERENCE_SOURCES: &[&str] = &[
     "worlds.worlds.thumbnail_hash",
     "worlds.federation_worlds.thumbnail_hash",
     "worlds.world_scenes.entity_id",
+    "worlds.retired_world_scenes.entity_id",
     "social.community_thumbnails.thumbnail_hash",
     "social.community_contents.cid",
     "social.player_report_evidence.content_hash",
@@ -239,7 +303,11 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
 /// JSON documents that embed store keys, read by [`reference_set`] beside
 /// the plain sources: the world scene entities' `content[].hash` and the
 /// asset-pack catalogue's thumbnails and asset contents.
-pub const JSON_SOURCES: &[&str] = &["worlds.world_scenes.entity", "builder.asset_catalog.packs"];
+pub const JSON_SOURCES: &[&str] = &[
+    "worlds.world_scenes.entity",
+    "worlds.retired_world_scenes.entity",
+    "builder.asset_catalog.packs",
+];
 
 /// The age floor: at least an hour, and at least the widest store-then-row
 /// gap (a multipart upload plus its processing).
@@ -267,6 +335,8 @@ pub enum GcError {
         "refusing to collect: no domain names any stored key, which usually means the database is empty or misconfigured; re-run with allow_empty_reference_set to collect anyway"
     )]
     EmptyReferenceSet,
+    #[error("publishes kept the store lock busy; retry later")]
+    LockTimeout,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -283,9 +353,12 @@ pub struct GcReport {
     pub scanned: usize,
     pub candidates: usize,
     pub removed: usize,
+    pub removed_bytes: u64,
     pub failed: usize,
     /// Aged files kept because a domain names them.
     pub references: usize,
+    /// Candidates kept because they were stored again during the run.
+    pub refreshed: usize,
     pub min_age_seconds: u64,
 }
 
@@ -386,7 +459,8 @@ fn split_source(source: &str) -> (&str, &str) {
 /// exactly (a caller deletes what the references do not name).
 async fn check_json_sources(pool: &PgPool) -> Result<(), GcError> {
     let bad: Option<String> = sqlx::query_scalar(
-        "SELECT entity_id FROM worlds.world_scenes s \
+        "SELECT entity_id FROM (SELECT entity_id, entity FROM worlds.world_scenes \
+           UNION ALL SELECT entity_id, entity FROM worlds.retired_world_scenes) s \
          WHERE jsonb_typeof(s.entity) <> 'object' \
             OR jsonb_typeof(s.entity -> 'content') NOT IN ('array', 'null') \
             OR (jsonb_typeof(s.entity -> 'content') = 'array' AND EXISTS ( \
@@ -455,8 +529,49 @@ async fn any_reference(pool: &PgPool) -> Result<bool, GcError> {
 }
 
 /// The keys among `keys` some domain names: one `= ANY` probe per source
-/// (index-served on the large tables) and the world scenes' content lists.
+/// (index-served on the large tables) and the world scenes' content lists,
+/// retired ones included until evicted.
 pub async fn referenced_among(pool: &PgPool, keys: &[String]) -> Result<HashSet<String>, GcError> {
+    let mut conn = pool.acquire().await?;
+    referenced_among_on(&mut conn, keys).await
+}
+
+/// [`referenced_among`] on one connection (the unlink batch's, under its lock).
+pub async fn referenced_among_on(
+    conn: &mut sqlx::PgConnection,
+    keys: &[String],
+) -> Result<HashSet<String>, GcError> {
+    references_written_within(conn, keys, i64::from(i32::MAX)).await
+}
+
+/// The oldest transaction a scan started now might not see: rows it misses were written at or after it.
+async fn scene_fence(pool: &PgPool) -> Result<i64, GcError> {
+    Ok(
+        sqlx::query_scalar("SELECT pg_snapshot_xmin(pg_current_snapshot())::text::bigint")
+            .fetch_one(pool)
+            .await?,
+    )
+}
+
+/// [`referenced_among_on`], reading only world scenes written at or after `fence`.
+async fn referenced_since(
+    conn: &mut sqlx::PgConnection,
+    keys: &[String],
+    fence: i64,
+) -> Result<HashSet<String>, GcError> {
+    // Assigning this transaction an id pins `age()` to it.
+    let current: i64 = sqlx::query_scalar("SELECT pg_current_xact_id()::text::bigint")
+        .fetch_one(&mut *conn)
+        .await?;
+    references_written_within(conn, keys, (current - fence).max(0)).await
+}
+
+/// The keys among `keys` referenced, counting only world scene rows at most `max_age` transactions old.
+async fn references_written_within(
+    conn: &mut sqlx::PgConnection,
+    keys: &[String],
+    max_age: i64,
+) -> Result<HashSet<String>, GcError> {
     let mut found = HashSet::new();
     for source in REFERENCE_SOURCES {
         let (table, column) = split_source(source);
@@ -464,17 +579,19 @@ pub async fn referenced_among(pool: &PgPool, keys: &[String]) -> Result<HashSet<
             "SELECT DISTINCT {column} FROM {table} WHERE {column} = ANY($1)"
         )))
         .bind(keys)
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await?;
         found.extend(rows);
     }
     let rows: Vec<String> = sqlx::query_scalar(
-        "SELECT DISTINCT e ->> 'hash' FROM worlds.world_scenes s \
+        "SELECT DISTINCT e ->> 'hash' FROM (SELECT entity FROM worlds.world_scenes WHERE age(xmin) <= $2 \
+           UNION ALL SELECT entity FROM worlds.retired_world_scenes WHERE age(xmin) <= $2) s \
          CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(s.entity -> 'content') = 'array' THEN s.entity -> 'content' ELSE '[]'::jsonb END) e \
          WHERE e ->> 'hash' = ANY($1)",
     )
     .bind(keys)
-    .fetch_all(pool)
+    .bind(max_age)
+    .fetch_all(&mut *conn)
     .await?;
     found.extend(rows);
     Ok(found)
@@ -591,21 +708,65 @@ pub async fn collect(
         return Err(GcError::EmptyReferenceSet);
     }
     if !options.dry_run {
-        for batch in orphans.chunks(CHUNK) {
-            let referenced_now = referenced_among(pool, batch).await?;
-            for id in batch.iter().filter(|id| !referenced_now.contains(*id)) {
-                match storage.delete_strict(id).await {
-                    Ok(()) => report.removed += 1,
-                    Err(e) => {
-                        report.failed += 1;
-                        tracing::warn!(key = %id, error = %e, "blob store collector: could not remove an unreferenced file");
-                    }
-                }
-            }
-        }
+        unlink_collected(pool, storage, &orphans, options.min_age, &mut report).await?;
     }
     tracing::info!(?report, "blob store collection finished");
     Ok(report)
+}
+
+/// Unlinks each candidate still unreferenced and still aged, under the exclusive store lock.
+async fn unlink_collected(
+    pool: &PgPool,
+    storage: &Storage,
+    orphans: &[String],
+    min_age: Duration,
+    report: &mut GcReport,
+) -> Result<(), GcError> {
+    for batch in orphans.chunks(CHUNK) {
+        // The full scan runs unlocked; the lock re-checks only what was written since.
+        let fence = scene_fence(pool).await?;
+        let unlocked = referenced_among(pool, batch).await?;
+        let survivors: Vec<String> = batch
+            .iter()
+            .filter(|id| !unlocked.contains(*id))
+            .cloned()
+            .collect();
+        if survivors.is_empty() {
+            continue;
+        }
+        let mut lock = lock_store_exclusive(pool).await?;
+        let referenced_now = referenced_since(&mut lock, &survivors, fence).await?;
+        for id in survivors.iter().filter(|id| !referenced_now.contains(*id)) {
+            // A blob stored again since the walk is young again: keep it.
+            let meta = match super::resolve_file_path(storage.root(), id) {
+                Ok(path) => tokio::fs::metadata(path).await.ok(),
+                Err(_) => None,
+            };
+            let Some(meta) = meta else { continue };
+            if !meta
+                .modified()
+                .ok()
+                .and_then(|m| SystemTime::now().duration_since(m).ok())
+                .is_some_and(|age| age >= min_age)
+            {
+                report.refreshed += 1;
+                continue;
+            }
+            let size = meta.len();
+            match storage.delete_strict(id).await {
+                Ok(()) => {
+                    report.removed += 1;
+                    report.removed_bytes += size;
+                }
+                Err(e) => {
+                    report.failed += 1;
+                    tracing::warn!(key = %id, error = %e, "blob store collector: could not remove an unreferenced file");
+                }
+            }
+        }
+        lock.commit().await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -684,6 +845,121 @@ mod tests {
             .expect("every source statement runs against the schema");
     }
 
+    /// An unlink batch waits for a publish holding the shared lock, and only one run holds the run lock.
+    #[tokio::test]
+    async fn unlink_batches_wait_for_publishes_and_runs_are_exclusive() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let mut publish = pool.begin().await.unwrap();
+        lock_store_shared(&mut publish).await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), lock_store_exclusive(&pool))
+                .await
+                .is_err(),
+            "the batch waits while a publish holds the shared lock"
+        );
+        publish.commit().await.unwrap();
+        let batch = tokio::time::timeout(Duration::from_secs(5), lock_store_exclusive(&pool))
+            .await
+            .expect("the batch proceeds once the publish ends")
+            .unwrap();
+        batch.commit().await.unwrap();
+
+        let run = try_lock_run(&pool).await.unwrap().expect("first run");
+        assert!(try_lock_run(&pool).await.unwrap().is_none());
+        run.commit().await.unwrap();
+        assert!(try_lock_run(&pool).await.unwrap().is_some());
+    }
+
+    /// Under the lock only scenes written since the fence are read; the full check sees all.
+    #[tokio::test]
+    async fn the_locked_recheck_reads_only_scenes_written_since_the_fence() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let world = format!("gc{}.dcl.eth", uuid::Uuid::new_v4().simple());
+        let (old, new) = (format!("old-{world}"), format!("new-{world}"));
+        sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1)")
+            .bind(&world)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let insert_scene = |entity_id: &'static str, hash: String| {
+            let (pool, world) = (pool.clone(), world.clone());
+            async move {
+                sqlx::query_scalar::<_, i64>(
+                    "INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size) \
+                     VALUES ($1, $2, '[]'::json, $3, '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '{\"0,0\"}', 1) \
+                     RETURNING xmin::text::bigint",
+                )
+                .bind(&world)
+                .bind(entity_id)
+                .bind(json!({ "content": [{ "file": "a", "hash": hash }] }))
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let written = insert_scene("bafyold", old.clone()).await;
+        assert!(scene_fence(&pool).await.unwrap() > 0);
+        let fence = written + 1;
+        insert_scene("bafynew", new.clone()).await;
+        let keys = vec![old.clone(), new.clone()];
+
+        let mut lock = lock_store_exclusive(&pool).await.unwrap();
+        assert_eq!(
+            referenced_since(&mut lock, &keys, fence).await.unwrap(),
+            HashSet::from([new.clone()])
+        );
+        assert_eq!(
+            referenced_among_on(&mut lock, &keys).await.unwrap(),
+            HashSet::from([old, new])
+        );
+        lock.rollback().await.unwrap();
+        sqlx::query("DELETE FROM worlds.world_scenes WHERE world_name = $1")
+            .bind(&world)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// A candidate stored again after the walk is young again under the lock and stays.
+    #[tokio::test]
+    async fn a_candidate_stored_again_since_the_walk_stays() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let dir =
+            std::env::temp_dir().join(format!("catalyst-gc-{}", uuid::Uuid::new_v4().simple()));
+        let storage = Storage::from_config(&dir).await.unwrap();
+        let mut keys = Vec::new();
+        for bytes in [&b"aged orphan"[..], b"stored again"] {
+            let key = crate::auth::hash::hash_bytes_v1(bytes);
+            storage
+                .store(&key, Bytes::from(bytes.to_vec()))
+                .await
+                .unwrap();
+            keys.push(key);
+        }
+        let aged = storage.file_path(&keys[0]).await.unwrap().unwrap();
+        std::fs::File::open(aged)
+            .unwrap()
+            .set_times(
+                std::fs::FileTimes::new()
+                    .set_modified(SystemTime::now() - Duration::from_secs(7200)),
+            )
+            .unwrap();
+        let mut report = GcReport::default();
+        unlink_collected(&pool, &storage, &keys, MIN_ORPHAN_AGE, &mut report)
+            .await
+            .unwrap();
+        assert_eq!((report.removed, report.refreshed), (1, 1));
+        assert!(!storage.exist(&keys[0]).await.unwrap());
+        assert!(storage.exist(&keys[1]).await.unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// On a database of its own: an aged unreferenced file goes, a
     /// referenced one (a content file, a poster, a scene's content, a global
     /// scene) and a fresh one stay; the dry run deletes nothing; an empty
@@ -734,6 +1010,7 @@ mod tests {
         let orphan = put(b"orphan".to_vec()).await;
         let poster = put(b"poster".to_vec()).await;
         let scene_file = put(b"scene file".to_vec()).await;
+        let retired_file = put(b"retired scene file".to_vec()).await;
         let global_file = put(b"global file".to_vec()).await;
         let fresh = put(b"fresh".to_vec()).await;
         let global = put(json!({ "content": [{ "file": "a", "hash": global_file }] })
@@ -741,7 +1018,14 @@ mod tests {
             .into_bytes())
         .await;
         let two_hours_ago = SystemTime::now() - Duration::from_secs(7200);
-        for key in [&orphan, &poster, &scene_file, &global, &global_file] {
+        for key in [
+            &orphan,
+            &poster,
+            &scene_file,
+            &retired_file,
+            &global,
+            &global_file,
+        ] {
             let path = storage.file_path(key).await.unwrap().unwrap();
             std::fs::File::open(path)
                 .unwrap()
@@ -779,9 +1063,18 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        // A replaced scene's content stays referenced until it is evicted.
+        sqlx::query(
+            "INSERT INTO worlds.retired_world_scenes (world_name, entity_id, entity, parcels) \
+             VALUES ('gc.dcl.eth', 'bafkreiretired', $1, '{\"0,0\"}')",
+        )
+        .bind(json!({ "content": [{ "file": "a.glb", "hash": retired_file }] }))
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let dry = collect(&pool, &storage, &globals, options).await.unwrap();
-        assert_eq!((dry.scanned, dry.candidates, dry.removed), (6, 1, 0));
+        assert_eq!((dry.scanned, dry.candidates, dry.removed), (7, 1, 0));
         assert!(
             storage.exist(&orphan).await.unwrap(),
             "the dry run deletes nothing"
@@ -799,7 +1092,14 @@ mod tests {
         .unwrap();
         assert_eq!((wet.candidates, wet.removed, wet.failed), (1, 1, 0));
         assert!(!storage.exist(&orphan).await.unwrap());
-        for key in [&poster, &scene_file, &global, &global_file, &fresh] {
+        for key in [
+            &poster,
+            &scene_file,
+            &retired_file,
+            &global,
+            &global_file,
+            &fresh,
+        ] {
             assert!(storage.exist(key).await.unwrap(), "{key} stays");
         }
         pool.close().await;

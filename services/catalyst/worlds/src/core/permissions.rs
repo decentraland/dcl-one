@@ -21,7 +21,7 @@ use crate::shared::identity::{Address, PermissionDecision};
 use crate::shared::signed_fetch::SignedPath;
 
 use super::auth::{PERMISSIONS_METADATA_KEYS, map_auth_error_api, require_verified};
-use super::http::ApiError;
+use super::http::{ApiError, QueryPairs, js_parse_int, pagination, query_param};
 use super::store::{
     self, AccessSetting, AllowListEdit, AllowListEditOutcome, MAX_ACCESS_COMMUNITIES,
     MAX_ACCESS_WALLETS,
@@ -83,14 +83,15 @@ pub async fn get_permissions(
         .as_ref()
         .map(|w| w.access.clone())
         .unwrap_or_default();
-    // The old GET resolved an unknown owner by NAME through squid (memoized
-    // 5 min); v2 has no by-name reader, so the field is the row's owner or
-    // the personal rule (policy.rs, "known_owner").
+    // The live holder; unknown while the authority cannot answer.
     let owner = state
         .policy
-        .personal_worlds()
-        .owner_of(&world)
-        .or_else(|| record.as_ref().and_then(|w| w.owner.clone()));
+        .current_owner(&world)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(%world, error = %e, "world owner unresolved");
+            None
+        });
 
     let mut deployment_wallets = Vec::new();
     let mut streaming_wallets = Vec::new();
@@ -139,7 +140,7 @@ struct OwnerCheck {
 }
 
 fn not_owner(world: &WorldName) -> ApiError {
-    ApiError::forbidden(format!(
+    ApiError::unauthorized(format!(
         "Your wallet does not own \"{}\", you can not set access control lists for it.",
         world.display()
     ))
@@ -584,45 +585,6 @@ pub async fn delete_permission_parcels(
     Ok(StatusCode::NO_CONTENT)
 }
 
-type QueryPairs = Vec<(String, String)>;
-
-fn query_param<'a>(q: &'a QueryPairs, key: &str) -> Option<&'a str> {
-    q.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
-}
-
-/// JS `parseInt(s, 10)`: leading whitespace, an optional sign, then the
-/// leading digits (saturating); `None` where JS gives `NaN`.
-fn js_parse_int(s: &str) -> Option<i64> {
-    let t = s.trim_start();
-    let (negative, rest) = match t.as_bytes().first() {
-        Some(b'-') => (true, &t[1..]),
-        Some(b'+') => (false, &t[1..]),
-        _ => (false, t),
-    };
-    let digits = &rest[..rest.bytes().take_while(u8::is_ascii_digit).count()];
-    if digits.is_empty() {
-        return None;
-    }
-    let n = digits.parse::<i64>().unwrap_or(i64::MAX);
-    Some(if negative { -n } else { n })
-}
-
-const MAX_PAGE_LIMIT: i64 = 100;
-
-/// `getPaginationParams` of @dcl/http-commons: an absent, invalid or
-/// out-of-range limit is 100; an invalid or negative offset is 0.
-fn pagination(q: &QueryPairs) -> (i64, i64) {
-    let limit = query_param(q, "limit")
-        .and_then(js_parse_int)
-        .filter(|l| (1..=MAX_PAGE_LIMIT).contains(l))
-        .unwrap_or(MAX_PAGE_LIMIT);
-    let offset = query_param(q, "offset")
-        .and_then(js_parse_int)
-        .filter(|o| *o >= 0)
-        .unwrap_or(0);
-    (limit, offset)
-}
-
 fn bounding_box(q: &QueryPairs) -> Result<Option<(i32, i32, i32, i32)>, ApiError> {
     let params = ["x1", "y1", "x2", "y2"].map(|k| query_param(q, k));
     if params.iter().all(Option::is_none) {
@@ -774,7 +736,7 @@ async fn apply_allow_list_edit(
     match store::modify_allow_list_access(&state.pool, world, edit).await? {
         AllowListEditOutcome::Applied => Ok(()),
         AllowListEditOutcome::NotAllowList => Err(ApiError::bad_request(format!(
-            "World \"{}\" does not have allow-list access type.",
+            "World \"{}\" does not have allow-list access type. Cannot add or remove wallets.",
             world.display()
         ))),
         AllowListEditOutcome::CapExceeded => Err(cap_error()),
@@ -873,37 +835,6 @@ mod tests {
         raw.iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
-    }
-
-    #[test]
-    fn pagination_falls_back_like_http_commons() {
-        assert_eq!(pagination(&pairs(&[])), (100, 0));
-        assert_eq!(
-            pagination(&pairs(&[("limit", "5"), ("offset", "7")])),
-            (5, 7)
-        );
-        assert_eq!(pagination(&pairs(&[("limit", "1000")])), (100, 0));
-        assert_eq!(pagination(&pairs(&[("limit", "0")])), (100, 0));
-        assert_eq!(
-            pagination(&pairs(&[("limit", "-1"), ("offset", "-3")])),
-            (100, 0)
-        );
-        assert_eq!(
-            pagination(&pairs(&[("limit", "abc"), ("offset", "x")])),
-            (100, 0)
-        );
-        assert_eq!(
-            pagination(&pairs(&[("limit", ""), ("offset", "")])),
-            (100, 0)
-        );
-        assert_eq!(
-            pagination(&pairs(&[("limit", "7.9"), ("offset", "3px")])),
-            (7, 3)
-        );
-        assert_eq!(
-            pagination(&pairs(&[("limit", "2"), ("limit", "50")])),
-            (2, 0)
-        );
     }
 
     #[test]

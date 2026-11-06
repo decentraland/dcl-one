@@ -53,6 +53,26 @@ struct Fixture {
 /// owner rule are covered there.
 /// `forward_to`: the publishes are queued for that (loopback) upstream.
 async fn fixture_with(personal: PersonalWorldsPolicy, forward_to: Option<&str>) -> Option<Fixture> {
+    fixture_full(personal, forward_to, None).await
+}
+
+/// ENS worlds on, over a fake chain with an ENS cap of `ens_cap` bytes.
+async fn fixture_with_ens(ens_cap: i64) -> Option<(Fixture, crate::ens::test_support::FakeEns)> {
+    let (resolver, ens) = crate::ens::test_support::resolver().await;
+    let f = fixture_full(
+        PersonalWorldsPolicy::disabled(),
+        None,
+        Some((resolver, ens_cap)),
+    )
+    .await?;
+    Some((f, ens))
+}
+
+async fn fixture_full(
+    personal: PersonalWorldsPolicy,
+    forward_to: Option<&str>,
+    ens: Option<(Arc<crate::ens::EnsResolver>, i64)>,
+) -> Option<Fixture> {
     let pool = crate::db::scratch::pool(8).await?;
     let (market, names) = index_with_names().await;
     let dir = std::env::temp_dir().join(format!(
@@ -61,7 +81,10 @@ async fn fixture_with(personal: PersonalWorldsPolicy, forward_to: Option<&str>) 
         Uuid::new_v4().simple()
     ));
     let storage = Arc::new(Storage::from_config(&dir).await.unwrap());
-    let policy = Policy::new(pool.clone(), personal, Some(market.clone()));
+    let mut policy = Policy::new(pool.clone(), personal, Some(market.clone()));
+    if let Some((resolver, cap)) = ens {
+        policy = policy.with_ens(Some(resolver), cap);
+    }
     let forwarder = forward_to.map(|target| {
         forward::test_support::forwarder(
             pool.clone(),
@@ -227,11 +250,13 @@ async fn deployment_at(
 ) -> Deployment {
     let thumb_hash = hash_bytes_v1(thumb);
     let entity = json!({
+        "version": "v3",
         "type": "scene",
         "timestamp": timestamp,
         "pointers": pointers,
         "content": [{ "file": nav_thumb, "hash": thumb_hash }],
         "metadata": {
+            "main": "bin/index.js",
             "display": { "title": title, "navmapThumbnail": nav_thumb },
             "worldConfiguration": { "name": world.display() },
             "scene": { "base": base, "parcels": pointers }
@@ -321,6 +346,12 @@ async fn grant_parcels(pool: &PgPool, world: &WorldName, address: &Address, parc
     }
 }
 
+fn no_permission(world: &str) -> String {
+    format!(
+        "Deployment failed: Deployment failed: Your wallet has no permission to publish this scene because it does not have permission to deploy under \"{world}\". Check scene.json to select a name that either you own or you were given permission to deploy."
+    )
+}
+
 fn parcels(raw: &[&str]) -> ParcelSet {
     ParcelSet::parse(raw).unwrap()
 }
@@ -361,6 +392,13 @@ async fn deploy(
     footprint: &[&str],
     replacement: &Deploy,
 ) -> Result<(), super::http::ApiError> {
+    // deploy_scene requires the entity blob; seed it for canonical ids.
+    if crate::auth::is_canonical_cid(entity_id) {
+        f.storage
+            .store(entity_id, bytes::Bytes::from(entity.to_string()))
+            .await
+            .unwrap();
+    }
     store::deploy_scene(
         &f.pool,
         &f.storage,
@@ -378,6 +416,7 @@ async fn deploy(
         },
     )
     .await
+    .map(drop)
 }
 
 async fn entity_ids(f: &Fixture, world: &WorldName) -> Vec<String> {
@@ -417,8 +456,6 @@ async fn acl_deployer_cannot_take_over_an_existing_world_owner() {
     )
     .await;
 
-    f.names.forget(&name_owner.address);
-
     let d = deployment(&acl_deployer, &world, "ACL World", "0,0", &["0,0", "0,1"]).await;
     post_entity(&f.app, &d, 200).await;
     assert_eq!(
@@ -448,7 +485,7 @@ async fn acl_deployer_cannot_take_over_an_existing_world_owner() {
         Case::new("post", &path)
             .signed_meta(&acl_deployer, &meta)
             .await,
-        403,
+        401,
     )
     .await;
 }
@@ -469,16 +506,62 @@ async fn first_deploy_seeds_the_resolved_name_owner() {
     let stranger = Wallet::random();
     let other = world_name();
     let d = deployment(&stranger, &other, "Nope", "0,0", &["0,0"]).await;
-    let body = post_entity(&f.app, &d, 403).await;
-    assert_eq!(
-        body["errors"][0],
-        format!(
-            "The signer {} is not authorized to deploy to the world {}",
-            stranger.address.as_str(),
-            other.key()
-        )
-    );
+    let body = post_entity(&f.app, &d, 400).await;
+    assert_eq!(body["message"], no_permission(other.display()));
     assert!(deployed_entity_ids(&f.pool, &other).await.is_empty());
+}
+
+/// A grantee's publish refreshes `worlds.owner` to the live NAME holder, and
+/// is refused when nobody holds the NAME.
+#[tokio::test]
+async fn a_grantee_publish_refreshes_the_owner_to_the_live_name_holder() {
+    let Some(f) = fixture().await else { return };
+    let world = world_name();
+    let (old, new, grantee) = (Wallet::random(), Wallet::random(), Wallet::random());
+    f.names.set(&old.address, world.label());
+    post_entity(
+        &f.app,
+        &deployment(&old, &world, "Before", "0,0", &["0,0"]).await,
+        200,
+    )
+    .await;
+    let path = format!("/world/{}/permissions/deployment", world.display());
+    let meta = json!({ "type": "allow-list", "wallets": [grantee.display()] }).to_string();
+    expect(
+        &f.app,
+        Case::new("post", &path).signed_meta(&old, &meta).await,
+        204,
+    )
+    .await;
+
+    f.names.forget(&old.address);
+    f.market.graph.name_owner.clear();
+    let body = post_entity(
+        &f.app,
+        &deployment(&grantee, &world, "Orphan", "0,0", &["0,0"]).await,
+        400,
+    )
+    .await;
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .ends_with("owner address could not be resolved."),
+        "{body}"
+    );
+
+    f.names.set(&new.address, world.label());
+    f.market.graph.name_owner.clear();
+    post_entity(
+        &f.app,
+        &deployment(&grantee, &world, "Grantee", "0,0", &["0,0"]).await,
+        200,
+    )
+    .await;
+    assert_eq!(
+        stored_owner(&f.pool, &world).await.as_deref(),
+        Some(new.address.as_str())
+    );
 }
 
 /// A NAME transfer: the previous holder loses the publish and every owner
@@ -508,23 +591,16 @@ async fn a_name_transfer_moves_ownership_on_the_next_publish() {
     let body = post_entity(
         &f.app,
         &deployment(&old, &world, "Stale", "0,0", &["0,0"]).await,
-        403,
+        400,
     )
     .await;
-    assert_eq!(
-        body["errors"][0],
-        format!(
-            "The signer {} is not authorized to deploy to the world {}",
-            old.address.as_str(),
-            world.key()
-        )
-    );
+    assert_eq!(body["message"], no_permission(world.display()));
     let path = format!("/world/{}/permissions/deployment", world.display());
     let meta = json!({ "type": "allow-list", "wallets": [] }).to_string();
     expect(
         &f.app,
         Case::new("post", &path).signed_meta(&old, &meta).await,
-        403,
+        401,
     )
     .await;
     assert_eq!(
@@ -588,7 +664,7 @@ async fn an_owner_publish_converts_a_mirrored_world_to_local() {
     post_entity(
         &f.app,
         &deployment(&stranger, &world, "Nope", "0,0", &["0,0"]).await,
-        403,
+        400,
     )
     .await;
     let rows: Vec<(String, Option<String>)> = sqlx::query_as(
@@ -700,7 +776,7 @@ async fn a_parcel_scoped_grant_authorizes_only_its_own_parcels() {
     grant_parcels(&f.pool, &world, &grantee.address, &["0,0"]).await;
 
     let outside = deployment(&grantee, &world, "Outside", "0,0", &["0,0", "0,1"]).await;
-    post_entity(&f.app, &outside, 403).await;
+    post_entity(&f.app, &outside, 400).await;
     assert!(
         !deployed_entity_ids(&f.pool, &world)
             .await
@@ -731,7 +807,7 @@ async fn replacing_a_scene_requires_authority_over_its_whole_footprint() {
     grant_parcels(&f.pool, &world, &grantee.address, &["0,0"]).await;
 
     let partial = deployment(&grantee, &world, "Partial", "0,0", &["0,0"]).await;
-    post_entity(&f.app, &partial, 403).await;
+    post_entity(&f.app, &partial, 400).await;
     let mut ids = deployed_entity_ids(&f.pool, &world).await;
     ids.sort();
     let mut expected = vec![existing.entity_id.clone(), untouched.entity_id.clone()];
@@ -760,13 +836,9 @@ async fn a_scene_may_not_declare_a_base_parcel_outside_itself() {
 
     let liar = deployment(&owner, &world, "Liar", "50,50", &["0,0", "0,1"]).await;
     let body = post_entity(&f.app, &liar, 400).await;
-    let errors = body["errors"].as_array().expect("errors array");
-    assert!(
-        errors.iter().any(|e| e.as_str()
-            == Some(
-                "The scene base parcel [50,50] must be included in the scene parcels [0,0, 0,1]."
-            )),
-        "expected the base-not-in-parcels error, got {errors:?}"
+    assert_eq!(
+        body["message"],
+        "Deployment failed: metadata.scene.parcels must contain at least 1 valid item(s)"
     );
     assert!(deployed_entity_ids(&f.pool, &world).await.is_empty());
 
@@ -789,7 +861,7 @@ async fn unpublishing_requires_authority_over_the_whole_scene_footprint() {
     expect(
         &f.app,
         Case::new("delete", &path).signed(&grantee).await,
-        403,
+        401,
     )
     .await;
     assert_eq!(
@@ -1326,7 +1398,7 @@ async fn publishing_an_older_entity_answers_400_and_keeps_the_newer_scene() {
     let body = post_entity(&f.app, &older, 400).await;
     assert_eq!(
         body,
-        json!({ "errors": ["Deployment failed: a newer scene is already deployed on one or more of these parcels."] })
+        json!({ "error": "Bad request", "message": "Deployment failed: a newer scene is already deployed on one or more of these parcels." })
     );
     assert_eq!(
         deployed_entity_ids(&f.pool, &world).await,
@@ -1382,7 +1454,7 @@ async fn a_disabled_world_refuses_publishes_until_enabled() {
     )
     .await;
     assert!(
-        refused["errors"][0]
+        refused["message"]
             .as_str()
             .unwrap()
             .contains("is disabled and does not accept deployments"),
@@ -1508,6 +1580,240 @@ async fn undeploy_scene_removes_only_the_authorized_identities() {
         1
     );
     assert!(entity_ids(&f, &world).await.is_empty());
+}
+
+async fn stored_spawn(f: &Fixture, world: &WorldName) -> Option<String> {
+    sqlx::query_scalar("SELECT spawn_coordinates FROM worlds.worlds WHERE name = $1")
+        .bind(world.key())
+        .fetch_one(&f.pool)
+        .await
+        .unwrap()
+}
+
+async fn set_spawn(f: &Fixture, world: &WorldName, spawn: &str) {
+    sqlx::query("UPDATE worlds.worlds SET spawn_coordinates = $2 WHERE name = $1")
+        .bind(world.key())
+        .bind(spawn)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+}
+
+/// WCS `undeployScene`/`undeployWorld`: a spawn left outside the remaining
+/// scenes' rectangle moves to its floored centre; none left clears it.
+#[tokio::test]
+async fn undeploys_recentre_or_clear_the_spawn() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = (world_name(), Wallet::random().address);
+    for (id, parcels) in [
+        ("bafyspawna", &["0,0", "1,0"][..]),
+        ("bafyspawnb", &["-3,-1", "-2,-1"][..]),
+        ("bafyspawnc", &["5,5"][..]),
+    ] {
+        deploy(
+            &f,
+            &world,
+            &owner,
+            id,
+            &scene_at(1000, parcels),
+            parcels,
+            &Deploy::Owner,
+        )
+        .await
+        .unwrap();
+    }
+    set_spawn(&f, &world, "-2,-1").await;
+    let version = |f: &Fixture| {
+        let pool = f.pool.clone();
+        let key = world.key().to_string();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT settings_version FROM worlds.worlds WHERE name = $1",
+            )
+            .bind(key)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let before = version(&f).await;
+    store::undeploy_scene(&f.pool, &world, Parcel::parse("5,5").unwrap(), None)
+        .await
+        .unwrap();
+    assert_eq!(stored_spawn(&f, &world).await.as_deref(), Some("-2,-1"));
+    assert_eq!(
+        version(&f).await,
+        before,
+        "an unchanged spawn bumps nothing"
+    );
+
+    store::undeploy_scene(&f.pool, &world, Parcel::parse("0,0").unwrap(), None)
+        .await
+        .unwrap();
+    assert_eq!(stored_spawn(&f, &world).await.as_deref(), Some("-2,-1"));
+    set_spawn(&f, &world, "0,0").await;
+    deploy(
+        &f,
+        &world,
+        &owner,
+        "bafyspawnd",
+        &scene_at(1000, &["9,9"]),
+        &["9,9"],
+        &Deploy::Owner,
+    )
+    .await
+    .unwrap();
+    store::undeploy_scene(&f.pool, &world, Parcel::parse("9,9").unwrap(), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        stored_spawn(&f, &world).await.as_deref(),
+        Some("-3,-1"),
+        "outside -3..-2 x -1: the centre, floored"
+    );
+    assert_eq!(version(&f).await, before + 1);
+
+    store::undeploy_world(&f.pool, &world).await.unwrap();
+    assert_eq!(stored_spawn(&f, &world).await, None);
+}
+
+async fn retired_ids(f: &Fixture, world: &WorldName) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT entity_id FROM worlds.retired_world_scenes WHERE world_name = $1 ORDER BY entity_id",
+    )
+    .bind(world.key())
+    .fetch_all(&f.pool)
+    .await
+    .unwrap()
+}
+
+/// Replaced and undeployed scenes are retired, not deleted: their content
+/// stays referenced and their scene comms resolve (no storage scope) until
+/// the eviction removes them; active readers never see them.
+#[tokio::test]
+async fn replaced_and_undeployed_scenes_are_retained_until_evicted() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = (world_name(), Wallet::random().address);
+    deploy(
+        &f,
+        &world,
+        &owner,
+        "bafyretold",
+        &scene_at(1000, &["0,0"]),
+        &["0,0"],
+        &Deploy::Owner,
+    )
+    .await
+    .unwrap();
+    deploy(
+        &f,
+        &world,
+        &owner,
+        "bafyretnew",
+        &scene_at(2000, &["0,0"]),
+        &["0,0"],
+        &Deploy::Owner,
+    )
+    .await
+    .unwrap();
+    assert_eq!(deployed_entity_ids(&f.pool, &world).await, ["bafyretnew"]);
+    assert_eq!(retired_ids(&f, &world).await, ["bafyretold"]);
+    let old = SceneId::parse("bafyretold").unwrap();
+    let resolved = rooms::world_scene(&f.pool, &world, &old)
+        .await
+        .unwrap()
+        .expect("a just-replaced scene still resolves");
+    assert!(resolved.namespace.is_none(), "no storage scope");
+    assert!(
+        store::active_content_keys(&f.pool)
+            .await
+            .unwrap()
+            .contains("bafyretold")
+    );
+
+    store::undeploy_world(&f.pool, &world).await.unwrap();
+    assert_eq!(retired_ids(&f, &world).await, ["bafyretnew", "bafyretold"]);
+    // A re-publish of a retired entity makes it active only.
+    deploy(
+        &f,
+        &world,
+        &owner,
+        "bafyretnew",
+        &scene_at(2000, &["0,0"]),
+        &["0,0"],
+        &Deploy::Owner,
+    )
+    .await
+    .unwrap();
+    assert_eq!(retired_ids(&f, &world).await, ["bafyretold"]);
+
+    let week = std::time::Duration::from_secs(7 * 24 * 3600);
+    store::evict_retired_scenes(&f.pool, week).await.unwrap();
+    assert_eq!(retired_ids(&f, &world).await, ["bafyretold"]);
+    sqlx::query(
+        "UPDATE worlds.retired_world_scenes SET retired_at = retired_at - interval '8 days' WHERE world_name = $1",
+    )
+    .bind(world.key())
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    assert!(store::evict_retired_scenes(&f.pool, week).await.unwrap() >= 1);
+    assert!(retired_ids(&f, &world).await.is_empty());
+    assert!(
+        rooms::world_scene(&f.pool, &world, &old)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+/// `GET /worlds` search: full-text (stemmed), escaped ILIKE wildcards.
+#[tokio::test]
+async fn the_worlds_search_matches_full_text_and_escapes_wildcards() {
+    let Some(f) = fixture().await else { return };
+    let owner = Wallet::random().address;
+    let (plain, percent) = (world_name(), world_name());
+    for (world, id, title) in [
+        (&plain, "bafysearcha", "Moonlight festival"),
+        (&percent, "bafysearchb", "Sale 100% off"),
+    ] {
+        let mut scene = scene_at(1000, &["0,0"]);
+        scene["metadata"]["display"] = json!({ "title": title });
+        deploy(&f, world, &owner, id, &scene, &["0,0"], &Deploy::Owner)
+            .await
+            .unwrap();
+    }
+    let search = |term: &str| {
+        let filters = WorldsListFilters {
+            authorized_deployer: Some(owner.as_str().to_string()),
+            search: Some(term.to_string()),
+            has_deployed_scenes: None,
+        };
+        let pool = f.pool.clone();
+        async move {
+            let options = WorldsListOptions {
+                limit: 50,
+                offset: 0,
+                order_by: WorldsOrderBy::Name,
+                order_direction: OrderDirection::Asc,
+            };
+            store::list_worlds_public(&pool, &filters, &options)
+                .await
+                .unwrap()
+                .0
+                .into_iter()
+                .map(|w| w.name)
+                .collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(
+        search("festivals").await,
+        [plain.key()],
+        "stemmed full-text"
+    );
+    assert_eq!(search("%").await, [percent.key()], "a literal %");
+    assert_eq!(search("0_%").await, Vec::<String>::new(), "a literal _");
+    assert_eq!(search("100%").await, [percent.key()]);
 }
 
 /// `(identity, parcels, active)` of a world's storage identities, oldest first.
@@ -3076,9 +3382,20 @@ async fn active_content_keys_names_every_referenced_blob_and_fails_closed_on_an_
         assert!(keys.contains(expected), "missing active key {expected}");
     }
     for replaced in ["bafyoldscene", "bafyoldthumb"] {
+        assert!(keys.contains(replaced), "retired scene dropped: {replaced}");
+    }
+    sqlx::query("DELETE FROM worlds.retired_world_scenes WHERE world_name = $1")
+        .bind(world.key())
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let keys = store::active_content_keys(&f.pool)
+        .await
+        .expect("active keys");
+    for replaced in ["bafyoldscene", "bafyoldthumb"] {
         assert!(
             !keys.contains(replaced),
-            "replaced scene still active: {replaced}"
+            "evicted scene still referenced: {replaced}"
         );
     }
 
@@ -3290,11 +3607,11 @@ async fn every_route_answers_its_contract() {
     )
     .await;
     let published = post_entity(app, &good, 200).await;
-    assert!(
-        published["message"]
-            .as_str()
-            .unwrap()
-            .contains(&good.entity_id)
+    assert_eq!(
+        published["message"],
+        format!(
+            "Your scene was deployed to World \"{w}\" at parcels: 0,0, 0,1!\nAccess world: https://play.decentraland.org/?realm=https%3A%2F%2Fworlds.example%2Fworld%2F{w}&position=0%2C0"
+        )
     );
     assert!(
         f.storage.exist(&good.thumb_hash).await.unwrap(),
@@ -3327,12 +3644,7 @@ async fn every_route_answers_its_contract() {
     f.names.set(&owner.address, banned.label());
     let denied = deployment(&owner, &banned, "Denied", "0,0", &["0,0"]).await;
     let body = post_entity(app, &denied, 400).await;
-    assert!(
-        body["errors"][0]
-            .as_str()
-            .unwrap()
-            .contains("name deny list")
-    );
+    assert!(body["message"].as_str().unwrap().contains("name deny list"));
     f.state.names.seed(Vec::new());
 
     expect(app, Case::new("get", "/worlds"), 200).await;
@@ -3432,7 +3744,7 @@ async fn every_route_answers_its_contract() {
         Case::new("post", &deploy_perm_path)
             .signed_meta(&stranger, &meta)
             .await,
-        403,
+        401,
     )
     .await;
 
@@ -3685,8 +3997,8 @@ async fn every_route_answers_its_contract() {
         200,
     )
     .await;
-    expect(app, Case::new("get", "/admin/worlds"), 403).await;
-    expect(app, Case::new("post", "/admin/gc?dry_run=true"), 403).await;
+    expect(app, Case::new("get", "/admin/worlds"), 401).await;
+    expect(app, Case::new("post", "/admin/gc?dry_run=true"), 401).await;
     let gc = expect(
         app,
         Case::new("post", "/gc?dry_run=true").bearer(ADMIN_TOKEN),
@@ -3702,6 +4014,28 @@ async fn every_route_answers_its_contract() {
         gc["minAgeSeconds"].as_u64().unwrap() >= 3600,
         "the floor holds"
     );
+    assert!(
+        gc["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Garbage collection")
+    );
+    let unauthorized = expect(app, Case::new("post", "/gc").bearer("wrong"), 401).await;
+    assert_eq!(unauthorized["message"], "Invalid authorization header");
+    let running = catalyst_storage::gc::try_lock_run(&f.pool)
+        .await
+        .unwrap()
+        .expect("no other run");
+    let request = Request::builder()
+        .method("POST")
+        .uri("/gc?dry_run=true")
+        .header(header::AUTHORIZATION, format!("Bearer {ADMIN_TOKEN}"))
+        .body(Body::empty())
+        .unwrap();
+    let busy = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(busy.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(busy.headers()[header::RETRY_AFTER], "60");
+    running.commit().await.unwrap();
     let detail = expect(
         app,
         Case::new("get", format!("/admin/worlds/{w}")).bearer(ADMIN_TOKEN),
@@ -3742,7 +4076,7 @@ async fn every_route_answers_its_contract() {
             "get",
             format!("/admin/worlds/{w}/ban-status?address={}", owner.display()),
         ),
-        403,
+        401,
     )
     .await;
     expect(
@@ -3776,7 +4110,7 @@ async fn every_route_answers_its_contract() {
         200,
     )
     .await;
-    expect(app, Case::new("post", &blocked_path), 403).await;
+    expect(app, Case::new("post", &blocked_path), 401).await;
     assert_eq!(
         f.state
             .policy
@@ -3813,7 +4147,7 @@ async fn every_route_answers_its_contract() {
             .iter()
             .any(|b| b["wallet"] == stranger.address.as_str())
     );
-    expect(app, Case::new("get", "/admin/blocked"), 403).await;
+    expect(app, Case::new("get", "/admin/blocked"), 401).await;
     expect(
         app,
         Case::new("delete", &blocked_path).bearer(ADMIN_TOKEN),
@@ -3845,14 +4179,14 @@ async fn every_route_answers_its_contract() {
     )
     .await;
     assert_eq!(log["entries"][0]["worldName"], world.key());
-    expect(app, Case::new("get", "/admin/access-log"), 403).await;
+    expect(app, Case::new("get", "/admin/access-log"), 401).await;
 
     expect(
         app,
         Case::new("delete", format!("/world/{w}/scenes/0,0"))
             .signed(&outsider)
             .await,
-        403,
+        401,
     )
     .await;
     expect(
@@ -3863,24 +4197,44 @@ async fn every_route_answers_its_contract() {
         200,
     )
     .await;
-    expect(
+    // Nothing left standing there still answers 200 with the same message.
+    let again = expect(
         app,
         Case::new("delete", format!("/world/{w}/scenes/0,0"))
             .signed(&owner)
             .await,
-        404,
+        200,
+    )
+    .await;
+    assert_eq!(
+        again,
+        json!({ "message": "Scene at parcel 0,0 undeployed successfully" })
+    );
+    expect(
+        app,
+        Case::new("delete", format!("/world/{w}/scenes/1,x"))
+            .signed(&owner)
+            .await,
+        400,
     )
     .await;
     post_entity(app, &good, 200).await;
-    expect(
+    let refused = expect(
         app,
         Case::new("delete", format!("/entities/{w}"))
             .signed(&outsider)
             .await,
-        403,
+        400,
     )
     .await;
-    expect(
+    assert_eq!(
+        refused,
+        json!({
+            "error": "Bad request",
+            "message": "Invalid request. You must have world-wide deployment permission to undeploy the entire world."
+        })
+    );
+    let undeployed = expect(
         app,
         Case::new("delete", format!("/entities/{w}"))
             .signed(&owner)
@@ -3888,6 +4242,7 @@ async fn every_route_answers_its_contract() {
         200,
     )
     .await;
+    assert_eq!(undeployed, json!({}));
     assert!(deployed_entity_ids(&f.pool, &world).await.is_empty());
 }
 
@@ -4201,7 +4556,7 @@ async fn local_publishes_are_forwarded_unchanged_and_replaced_ones_superseded() 
     expect(
         &f.app,
         Case::new("get", format!("/admin/forwarding/{}", first.entity_id)),
-        403,
+        401,
     )
     .await;
     expect(
@@ -4252,7 +4607,7 @@ async fn local_publishes_are_forwarded_unchanged_and_replaced_ones_superseded() 
     let report = forwarder.run_pass(&CancellationToken::new()).await.unwrap();
     assert_eq!((report.rejected, report.total()), (1, 1));
     let retry = format!("/admin/forwarding/{}/retry", other.entity_id);
-    expect(&f.app, Case::new("post", retry.clone()), 403).await;
+    expect(&f.app, Case::new("post", retry.clone()), 401).await;
     let record = expect(&f.app, Case::new("post", retry).bearer(ADMIN_TOKEN), 200).await;
     assert_eq!(
         (&record["status"], &record["attempts"], &record["worldName"]),
@@ -4770,5 +5125,987 @@ async fn available_content_under_the_worlds_prefix_reports_deployed_files() {
     assert_eq!(
         preflight.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
         "https://creator.example.org"
+    );
+}
+
+async fn served(app: &Router, method: &str, path: &str) -> (StatusCode, Option<String>, Vec<u8>) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let ty = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .map(|v| v.to_str().unwrap().to_string());
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, ty, body.to_vec())
+}
+
+/// WCS answers `/contents` (and `/ipfs`) with a sniffed Content-Type and
+/// also under a thumbnail's legacy SHA-256 hex key.
+#[tokio::test]
+async fn worlds_contents_sniff_and_answer_legacy_sha256_keys() {
+    let Some(f) = fixture().await else { return };
+    let app = served_app(&f).await;
+    let png = bytes::Bytes::from([&PNG_MAGIC[..], Uuid::new_v4().as_bytes()].concat());
+    let png_cid = hash_bytes_v1(&png);
+    f.storage.store(&png_cid, png.clone()).await.unwrap();
+    // sha256("abc"), stored under the raw-leaf CIDv1 a deploy or import gives it.
+    let abc_hex = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    f.storage
+        .store(&hash_bytes_v1(b"abc"), bytes::Bytes::from_static(b"abc"))
+        .await
+        .unwrap();
+
+    for prefix in ["contents", "ipfs"] {
+        for method in ["GET", "HEAD"] {
+            let path = format!("{NEST}/{prefix}/{png_cid}");
+            let (status, ty, _) = served(&app, method, &path).await;
+            assert_eq!(status, StatusCode::OK, "{method} {path}");
+            assert_eq!(ty.as_deref(), Some("image/png"), "{method} {path}");
+            let path = format!("{NEST}/{prefix}/{abc_hex}");
+            let (status, _, _) = served(&app, method, &path).await;
+            assert_eq!(status, StatusCode::OK, "{method} {path}");
+        }
+    }
+    let (_, _, body) = served(&app, "GET", &format!("{NEST}/contents/{abc_hex}")).await;
+    assert_eq!(body, b"abc");
+    let (status, _, _) = served(
+        &app,
+        "GET",
+        &format!("{NEST}/contents/{}", abc_hex.to_uppercase()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// WCS's status checks answer under the worlds prefix.
+#[tokio::test]
+async fn worlds_health_probes_answer_under_the_prefix() {
+    let Some(f) = fixture().await else { return };
+    let app = served_app(&f).await;
+    let (status, _, body) = served(&app, "GET", &format!("{NEST}/health/live")).await;
+    assert_eq!((status, body.as_slice()), (StatusCode::OK, &b"alive"[..]));
+    for probe in ["ready", "startup"] {
+        let (status, ty, body) = served(&app, "GET", &format!("{NEST}/health/{probe}")).await;
+        assert_eq!(status, StatusCode::OK, "{probe}");
+        assert_eq!(
+            ty.as_deref(),
+            Some("application/health+json; charset=utf-8")
+        );
+        assert_eq!(body, crate::shared::health::PASS.as_bytes());
+    }
+    let (status, _, _) = served(&app, "GET", "/health/live").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+fn cid(tag: char) -> String {
+    format!("ba{}", tag.to_string().repeat(57))
+}
+
+#[tokio::test]
+async fn world_scenes_page_filter_and_count_like_the_old_listing() {
+    let Some(f) = fixture().await else { return };
+    let app = served_app(&f).await;
+    let (world, owner, stranger) = (world_name(), Wallet::random(), Wallet::random());
+    let w = world.display().to_string();
+    let (a, b, c) = (cid('a'), cid('b'), cid('c'));
+    for (i, (id, footprint)) in [
+        (&a, &["0,0"][..]),
+        (&b, &["5,5", "5,6"][..]),
+        (&c, &["-3,2"][..]),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        deploy(
+            &f,
+            &world,
+            &owner.address,
+            id,
+            &scene_at(1000 + i as i64, footprint),
+            footprint,
+            &Deploy::Owner,
+        )
+        .await
+        .unwrap();
+    }
+    let ids = |body: &Value| -> Vec<String> {
+        body["scenes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["entityId"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let list = |query: &str| Case::new("get", format!("/world/{w}/scenes{query}"));
+
+    let page = expect(&app, list("?limit=2"), 200).await;
+    assert_eq!(
+        (ids(&page), page["total"].clone()),
+        (vec![a.clone(), b.clone()], json!(3))
+    );
+    let page = expect(&app, list("?limit=2&offset=2"), 200).await;
+    assert_eq!(
+        (ids(&page), page["total"].clone()),
+        (vec![c.clone()], json!(3))
+    );
+    let page = expect(&app, list("?limit=abc&offset=-1"), 200).await;
+    assert_eq!(ids(&page).len(), 3);
+    assert!(
+        page["scenes"][0]["createdAt"]
+            .as_str()
+            .unwrap()
+            .ends_with('Z')
+    );
+
+    let page = expect(&app, list("?x1=6&x2=4&y1=4&y2=6"), 200).await;
+    assert_eq!(
+        (ids(&page), page["total"].clone()),
+        (vec![b.clone()], json!(1))
+    );
+    assert_eq!(
+        expect(&app, list("?x1=1"), 400).await,
+        json!({ "error": "Bad request", "message": "Bounding box requires all of x1, x2, y1, y2 to be provided." })
+    );
+    let page = expect(&app, list(&format!("?entity_id={c}")), 200).await;
+    assert_eq!(ids(&page), vec![c.clone()]);
+    expect(&app, list("?entity_id=Qm1"), 400).await;
+    expect(&app, list("?authorized_deployer=0x12"), 400).await;
+
+    let by = |who: &Wallet| list(&format!("?authorized_deployer={}", who.display()));
+    assert_eq!(expect(&app, by(&owner), 200).await["total"], json!(3));
+    assert_eq!(expect(&app, by(&stranger), 200).await["total"], json!(0));
+    grant_parcels(&f.pool, &world, &stranger.address, &["9,9"]).await;
+    assert_eq!(expect(&app, by(&stranger), 200).await["total"], json!(3));
+
+    let post = |body: Value| Case::new("post", format!("/world/{w}/scenes")).json(&body);
+    let page = expect(&app, post(json!({ "coordinates": ["5,06", "-3,2"] })), 200).await;
+    assert_eq!(
+        (ids(&page), page["total"].clone()),
+        (vec![b.clone(), c.clone()], json!(2))
+    );
+    let page = expect(
+        &app,
+        Case::new("post", format!("/world/{w}/scenes?limit=1&offset=1"))
+            .json(&json!({ "coordinates": ["0,0", "5,5"] })),
+        200,
+    )
+    .await;
+    assert_eq!((ids(&page), page["total"].clone()), (vec![b], json!(2)));
+    expect(&app, post(json!({ "coordinates": [] })), 400).await;
+    expect(
+        &app,
+        Case::new("post", format!("/world/{w}/scenes")).body(b"{}".to_vec(), "text/plain"),
+        415,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn wallet_contribute_lists_the_signer_grants() {
+    let Some(f) = fixture().await else { return };
+    let (scoped, wide, contributor) = (world_name(), world_name(), Wallet::random());
+    grant_parcels(&f.pool, &scoped, &contributor.address, &["0,0", "0,1"]).await;
+    grant_parcels(&f.pool, &wide, &contributor.address, &[]).await;
+    sqlx::query(
+        "INSERT INTO worlds.world_permissions (world_name, permission, address) VALUES ($1, 'streaming', $2)",
+    )
+    .bind(wide.key())
+    .bind(&contributor.address)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+
+    expect(&f.app, Case::new("get", "/wallet/contribute"), 400).await;
+    let body = expect(
+        &f.app,
+        Case::new("get", "/wallet/contribute")
+            .signed(&contributor)
+            .await,
+        200,
+    )
+    .await;
+    assert_eq!(body["count"], json!(2));
+    let mut domains = body["domains"].as_array().unwrap().clone();
+    domains.sort_by_key(|d| d["name"].as_str().unwrap().to_string());
+    let expected = |w: &WorldName, perms: Value, parcels: i64| json!({ "name": w.key(), "user_permissions": perms, "size": "0", "owner": null, "parcelCount": parcels });
+    let mut want = vec![
+        expected(&scoped, json!(["deployment"]), 2),
+        expected(&wide, json!(["deployment", "streaming"]), 0),
+    ];
+    want.sort_by_key(|d| d["name"].as_str().unwrap().to_string());
+    assert_eq!(domains, want);
+}
+
+#[tokio::test]
+async fn wallet_stats_report_names_space_and_block() {
+    let Some(f) = fixture().await else { return };
+    let (held, other, owner) = (world_name(), world_name(), Wallet::random());
+    f.names.set(&owner.address, held.label());
+    f.names.set(&owner.address, other.label());
+    deploy(
+        &f,
+        &held,
+        &owner.address,
+        &cid('d'),
+        &scene_at(1, &["0,0"]),
+        &["0,0"],
+        &Deploy::Owner,
+    )
+    .await
+    .unwrap();
+    let path = format!("/wallet/{}/stats", owner.address.as_str());
+    let body = expect(&f.app, Case::new("get", &path), 200).await;
+    let cap = crate::policy::MAX_WORLD_SIZE_BYTES;
+    assert_eq!(
+        body,
+        json!({
+            "wallet": owner.address.as_str(),
+            "dclNames": [{ "name": held.key(), "size": "1" }],
+            "ensNames": [],
+            "usedSpace": "1",
+            "maxAllowedSpace": (2 * cap).to_string(),
+        })
+    );
+    sqlx::query("INSERT INTO worlds.blocked_wallets (wallet) VALUES ($1)")
+        .bind(&owner.address)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let body = expect(&f.app, Case::new("get", &path), 200).await;
+    assert!(body["blockedSince"].as_str().unwrap().ends_with('Z'));
+    assert_eq!(
+        expect(&f.app, Case::new("get", "/wallet/0x12/stats"), 400).await,
+        json!({ "error": "Bad request", "message": "Invalid request. Missing or invalid wallet in request url param." })
+    );
+}
+
+#[tokio::test]
+async fn permissions_owner_falls_back_to_the_name_holder() {
+    let Some(f) = fixture().await else { return };
+    let (world, unheld, holder) = (world_name(), world_name(), Wallet::random());
+    f.names.set(&holder.address, world.label());
+    let body = expect(
+        &f.app,
+        Case::new("get", format!("/world/{}/permissions", world.display())),
+        200,
+    )
+    .await;
+    assert_eq!(body["owner"], json!(holder.address.as_str()));
+    let body = expect(
+        &f.app,
+        Case::new("get", format!("/world/{}/permissions", unheld.display())),
+        200,
+    )
+    .await;
+    assert_eq!(body["owner"], Value::Null);
+}
+
+#[tokio::test]
+async fn worlds_listing_pages_leniently_with_millisecond_timestamps() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = (world_name(), Wallet::random().address);
+    deploy(
+        &f,
+        &world,
+        &owner,
+        &cid('e'),
+        &scene_at(1, &["0,0"]),
+        &["0,0"],
+        &Deploy::Owner,
+    )
+    .await
+    .unwrap();
+    let path = format!("/worlds?limit=abc&offset=-4&search={}", world.label());
+    let body = expect(&f.app, Case::new("get", path), 200).await;
+    assert_eq!(body["total"], json!(1));
+    let at = body["worlds"][0]["last_deployed_at"].as_str().unwrap();
+    assert!(
+        at.ends_with('Z') && at.len() == "2026-01-01T00:00:00.000Z".len(),
+        "{at}"
+    );
+    expect(&f.app, Case::new("get", "/worlds?limit=5000"), 200).await;
+}
+
+/// A signed publish of `entity` uploading the entity file and `files`.
+async fn signed_deployment(wallet: &Wallet, entity: &Value, files: &[&[u8]]) -> Deployment {
+    let entity_bytes = serde_json::to_vec(entity).unwrap();
+    let entity_id = hash_bytes_v1(&entity_bytes);
+    let chain = serde_json::to_string(&wallet.chain(&entity_id).await).unwrap();
+    let names: Vec<String> = (0..files.len()).map(|i| format!("f{i}")).collect();
+    let mut parts: Vec<(&str, Option<&str>, &[u8])> = vec![
+        ("entityId", None, entity_id.as_bytes()),
+        ("authChain", None, chain.as_bytes()),
+        ("entity.json", Some("entity.json"), &entity_bytes),
+    ];
+    for (name, file) in names.iter().zip(files) {
+        parts.push((name, Some(name), file));
+    }
+    let (body, content_type) = multipart_body(&parts);
+    Deployment {
+        body,
+        content_type,
+        entity_id,
+        thumb_hash: String::new(),
+    }
+}
+
+/// A valid scene entity of `world` on `parcels`, listing `content`.
+fn publish_entity(world: &WorldName, parcels: &[&str], content: Value) -> Value {
+    json!({
+        "version": "v3",
+        "type": "scene",
+        "timestamp": chrono::Utc::now().timestamp_millis(),
+        "pointers": parcels,
+        "content": content,
+        "metadata": {
+            "main": "bin/index.js",
+            "worldConfiguration": { "name": world.display() },
+            "scene": { "base": parcels[0], "parcels": parcels }
+        }
+    })
+}
+
+async fn refused(app: &Router, owner: &Wallet, entity: Value, files: &[&[u8]], message: &str) {
+    let d = signed_deployment(owner, &entity, files).await;
+    let body = post_entity(app, &d, 400).await;
+    assert_eq!(body["error"], "Bad request");
+    assert_eq!(body["message"], message, "{entity}");
+}
+
+#[tokio::test]
+async fn a_publish_answers_the_first_failed_check_in_the_old_words() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = (world_name(), Wallet::random());
+    f.names.set(&owner.address, world.label());
+    let file: &[u8] = b"a content file";
+    let hash = hash_bytes_v1(file);
+    let listed = json!([{ "file": "a.bin", "hash": hash }]);
+    let app = &f.app;
+
+    let mut no_version = publish_entity(&world, &["0,0"], listed.clone());
+    no_version.as_object_mut().unwrap().remove("version");
+    let message = "Deployment failed: must have required property 'version'";
+    refused(app, &owner, no_version, &[file], message).await;
+
+    let mut no_main = publish_entity(&world, &["0,0"], listed.clone());
+    no_main["metadata"].as_object_mut().unwrap().remove("main");
+    let message = "Deployment failed: metadata must have required property 'main'";
+    refused(app, &owner, no_main, &[file], message).await;
+
+    let mut profile = publish_entity(&world, &["0,0"], listed.clone());
+    profile["type"] = json!("profile");
+    let message = "Deployment failed: Entity type profile is not supported.";
+    refused(app, &owner, profile, &[file], message).await;
+
+    let five = ["0,0", "0,1", "0,2", "0,3", "0,4"];
+    let message = "Deployment failed: Max allowed scene dimensions is 4 parcels.";
+    refused(
+        app,
+        &owner,
+        publish_entity(&world, &five, listed.clone()),
+        &[file],
+        message,
+    )
+    .await;
+
+    let extra: &[u8] = b"not listed";
+    let message = format!(
+        "Deployment failed: Extra file detected {}",
+        hash_bytes_v1(extra)
+    );
+    let entity = publish_entity(&world, &["0,0"], listed.clone());
+    refused(app, &owner, entity, &[file, extra], &message).await;
+
+    let message = format!(
+        "Deployment failed: The file {hash} (a.bin) is neither present in the storage or in the provided entity"
+    );
+    let entity = publish_entity(&world, &["0,0"], listed.clone());
+    refused(app, &owner, entity, &[], &message).await;
+
+    let mut minimap = publish_entity(&world, &["0,0"], listed.clone());
+    minimap["metadata"]["worldConfiguration"]["miniMapConfig"] = json!({ "dataImage": "map.png" });
+    let message = "Deployment failed: The file map.png is not present in the entity.";
+    refused(app, &owner, minimap, &[file], message).await;
+
+    let mut skybox = publish_entity(&world, &["0,0"], listed.clone());
+    skybox["metadata"]["worldConfiguration"]["skyboxConfig"] = json!({ "textures": ["sky.png"] });
+    let message = "Deployment failed: The texture file sky.png is not present in the entity.";
+    refused(app, &owner, skybox, &[file], message).await;
+
+    let max = super::deploy::DEFAULT_MAX_FILE_COUNT;
+    let many = Value::Array(vec![listed[0].clone(); max + 1]);
+    let message = format!(
+        "Deployment failed: The deployment has too many files. The maximum allowed is {max} but the deployment has {}.",
+        max + 1
+    );
+    refused(
+        app,
+        &owner,
+        publish_entity(&world, &["0,0"], many),
+        &[file],
+        &message,
+    )
+    .await;
+    assert!(deployed_entity_ids(&f.pool, &world).await.is_empty());
+
+    let mut ok = publish_entity(&world, &["0,0"], listed.clone());
+    ok["metadata"]["worldConfiguration"]["miniMapConfig"] = json!({ "dataImage": "a.bin" });
+    ok["metadata"]["worldConfiguration"]["skyboxConfig"] = json!({ "textures": ["a.bin"] });
+    let d = signed_deployment(&owner, &ok, &[file]).await;
+    post_entity(app, &d, 200).await;
+    assert_eq!(
+        deployed_entity_ids(&f.pool, &world).await,
+        vec![d.entity_id]
+    );
+}
+
+async fn set_limit_override(
+    pool: &PgPool,
+    world: &WorldName,
+    parcels: Option<i32>,
+    size: Option<i64>,
+) {
+    sqlx::query(
+        "INSERT INTO worlds.world_limit_overrides (world_name, max_parcels, max_size_bytes) VALUES ($1, $2, $3) \
+         ON CONFLICT (world_name) DO UPDATE SET max_parcels = $2, max_size_bytes = $3",
+    )
+    .bind(world.key())
+    .bind(parcels)
+    .bind(size)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+fn limits_case(world: &WorldName, query: &str) -> Case {
+    Case::new("get", format!("/world/{}/limits{query}", world.display()))
+}
+
+#[tokio::test]
+async fn world_limits_report_what_a_publish_is_checked_against() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = (world_name(), Wallet::random());
+    f.names.set(&owner.address, world.label());
+    let app = &f.app;
+
+    assert_eq!(
+        expect(app, limits_case(&world, ""), 200).await,
+        json!({ "maxSceneSizeInBytes": crate::policy::MAX_WORLD_SIZE_BYTES.to_string(), "maxParcels": 4 })
+    );
+    expect(app, limits_case(&world, "?parcels=0,0&parcels=1,0"), 200).await;
+    for bad in [
+        "?parcels=0,0&parcels=0,0",
+        "?parcels=00,1",
+        "?parcels=151,0",
+        "?parcels=",
+    ] {
+        expect(app, limits_case(&world, bad), 400).await;
+    }
+
+    let bare = WorldName::parse(world.label()).unwrap();
+    expect(app, limits_case(&bare, ""), 404).await;
+
+    let unowned = world_name();
+    expect(app, limits_case(&unowned, ""), 404).await;
+    // A bare `foo` is not owned by the holder of `foo.dcl.eth`.
+    let bare = WorldName::parse(world.owner_label().unwrap()).unwrap();
+    expect(app, limits_case(&bare, ""), 404).await;
+    set_limit_override(&f.pool, &unowned, None, Some(1234)).await;
+    assert_eq!(
+        expect(app, limits_case(&unowned, ""), 200).await,
+        json!({ "maxSceneSizeInBytes": "1234", "maxParcels": 4 }),
+        "an override's size needs no owner"
+    );
+
+    // A publish reads the same limits.
+    set_limit_override(&f.pool, &world, Some(5), Some(10)).await;
+    assert_eq!(
+        expect(app, limits_case(&world, ""), 200).await,
+        json!({ "maxSceneSizeInBytes": "10", "maxParcels": 5 })
+    );
+    let file: &[u8] = b"twelve bytes";
+    let five = ["0,0", "0,1", "0,2", "0,3", "0,4"];
+    let content = json!([{ "file": "a.bin", "hash": hash_bytes_v1(file) }]);
+    let entity = publish_entity(&world, &five, content);
+    let message = "Deployment failed: The deployment is too big. The maximum total size allowed is 10 bytes for scenes. You can upload up to 10 bytes but you tried to upload 12.";
+    refused(app, &owner, entity.clone(), &[file], message).await;
+    set_limit_override(&f.pool, &world, Some(5), None).await;
+    post_entity(app, &signed_deployment(&owner, &entity, &[file]).await, 200).await;
+
+    f.state.names.seed(vec![world.label().to_string()]);
+    let denied = expect(app, limits_case(&world, ""), 404).await;
+    assert_eq!(
+        denied["message"],
+        format!("World \"{}\" not found.", world.key())
+    );
+    f.state.names.seed(Vec::new());
+}
+
+#[tokio::test]
+async fn an_oversized_deploy_body_answers_413() {
+    let Some(f) = fixture().await else { return };
+    let mut case =
+        Case::new("post", "/entities").body(Vec::new(), "multipart/form-data; boundary=x");
+    case = case.header(
+        "content-length",
+        &(super::deploy::MAX_UPLOAD_WIRE_SIZE_BYTES + 1).to_string(),
+    );
+    let body = expect(&f.app, case, 413).await;
+    assert_eq!(
+        body,
+        json!({ "error": "Payload Too Large", "message": "The multipart request is too large." })
+    );
+}
+
+async fn wait_spool_empty(f: &Fixture) {
+    let root = super::upload_spool::spool_root(&f.storage);
+    for _ in 0..200 {
+        let empty = match std::fs::read_dir(&root) {
+            Ok(mut entries) => entries.next().is_none(),
+            Err(_) => true,
+        };
+        if empty {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!(
+        "the upload spool under {} was not cleaned up",
+        root.display()
+    );
+}
+
+#[tokio::test]
+async fn deploy_parts_are_spooled_to_disk_and_removed_after_success_and_failure() {
+    let Some(f) = fixture().await else { return };
+    let world = world_name();
+    let owner = Wallet::random();
+    f.names.set(&owner.address, world.label());
+
+    let d = deployment(&owner, &world, "Spooled", "0,0", &["0,0"]).await;
+    post_entity(&f.app, &d, 200).await;
+    assert!(f.storage.exist(&d.entity_id).await.unwrap());
+    assert!(f.storage.exist(&d.thumb_hash).await.unwrap());
+    wait_spool_empty(&f).await;
+
+    let stranger = Wallet::random();
+    let refused = deployment(&stranger, &world, "Refused", "0,0", &["0,0"]).await;
+    let (status, _) = hit(
+        &f.app,
+        Case::new("post", "/entities").body(refused.body.clone(), &refused.content_type),
+    )
+    .await;
+    assert!(status.is_client_error(), "{status}");
+    assert!(!f.storage.exist(&refused.entity_id).await.unwrap());
+    wait_spool_empty(&f).await;
+}
+
+#[tokio::test]
+async fn a_source_past_its_concurrent_uploads_gets_429() {
+    let Some(f) = fixture().await else { return };
+    let world = world_name();
+    let owner = Wallet::random();
+    f.names.set(&owner.address, world.label());
+    let ip = format!("198.51.100.{}", rand::random::<u8>());
+    let limits = &f.state.settings.upload_limits;
+    let held: Vec<_> = (0..limits.max_concurrent_uploads_per_source)
+        .map(|_| {
+            super::upload_limits::try_acquire_source(
+                &ip,
+                1,
+                limits.max_concurrent_uploads_per_source,
+                limits.max_in_flight_upload_bytes_per_source,
+            )
+            .expect("under the source cap")
+        })
+        .collect();
+
+    let d = deployment(&owner, &world, "Throttled", "0,0", &["0,0"]).await;
+    let case = || {
+        Case::new("post", "/entities")
+            .body(d.body.clone(), &d.content_type)
+            .header("x-real-ip", &ip)
+    };
+    let body = expect(&f.app, case(), 429).await;
+    assert_eq!(
+        body,
+        json!({ "error": "Too Many Requests", "message": "Too many uploads in progress from this client, please retry shortly." })
+    );
+    drop(held);
+    expect(&f.app, case(), 200).await;
+}
+
+#[tokio::test]
+async fn a_deploy_reusing_a_blob_the_collector_removed_is_deferred_under_the_store_lock() {
+    let Some(f) = fixture().await else { return };
+    let world = world_name();
+    let owner = Wallet::random();
+    f.names.set(&owner.address, world.label());
+    let reused = hash_bytes_v1(b"an aged, unreferenced blob");
+    f.storage
+        .store(
+            &reused,
+            bytes::Bytes::from_static(b"an aged, unreferenced blob"),
+        )
+        .await
+        .unwrap();
+    let entity = scene_entity(&world, "Reuse", &reused, "0,0", &["0,0"]);
+    let entity_bytes = serde_json::to_vec(&entity).unwrap();
+    let entity_id = hash_bytes_v1(&entity_bytes);
+    f.storage
+        .store(&entity_id, bytes::Bytes::from(entity_bytes))
+        .await
+        .unwrap();
+
+    // The collector's batch holds the exclusive side; the publish waits on the shared side.
+    let batch = catalyst_storage::gc::lock_store_exclusive(&f.pool)
+        .await
+        .unwrap();
+    let publish = tokio::spawn({
+        let (pool, storage, world, owner, entity, entity_id) = (
+            f.pool.clone(),
+            f.storage.clone(),
+            world.clone(),
+            owner.address.clone(),
+            entity.clone(),
+            entity_id.clone(),
+        );
+        async move {
+            store::deploy_scene(
+                &pool,
+                &storage,
+                SceneDeployment {
+                    world: &world,
+                    name_owner: Some(&owner),
+                    entity_id: &entity_id,
+                    deployer: &owner,
+                    deployment_auth_chain: &json!([]),
+                    entity: &entity,
+                    parcels: &parcels(&["0,0"]),
+                    size: 1,
+                    replacement: &Deploy::Owner,
+                    forward_to: None,
+                },
+            )
+            .await
+        }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(!publish.is_finished(), "the publish waits for the batch");
+    f.storage.delete_strict(&reused).await.unwrap();
+    batch.commit().await.unwrap();
+
+    let err = publish.await.unwrap().expect_err("the blob is gone");
+    assert_eq!(err.status(), 503, "retryable, not a client error: {err:?}");
+    assert!(
+        err.public_message().contains(&reused) && err.public_message().contains("retry"),
+        "{}",
+        err.public_message()
+    );
+    assert!(entity_ids(&f, &world).await.is_empty());
+}
+
+/// Two first publishes of one world by different holders serialize: the
+/// second sees the first's owner and reports it replaced.
+#[tokio::test]
+async fn concurrent_first_publishes_by_different_holders_report_the_replaced_owner() {
+    let Some(f) = fixture().await else { return };
+    let world = world_name();
+    let mut held = f.pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(store::publish_lock_key(&world))
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let mut publishes = Vec::new();
+    for (i, base) in ["0,0", "5,5"].into_iter().enumerate() {
+        let owner = Wallet::random().address;
+        let thumb = hash_bytes_v1(b"race thumb");
+        f.storage
+            .store(&thumb, bytes::Bytes::from_static(b"race thumb"))
+            .await
+            .unwrap();
+        let entity = scene_entity(&world, &format!("Race {i}"), &thumb, base, &[base]);
+        let entity_bytes = serde_json::to_vec(&entity).unwrap();
+        let entity_id = hash_bytes_v1(&entity_bytes);
+        f.storage
+            .store(&entity_id, bytes::Bytes::from(entity_bytes))
+            .await
+            .unwrap();
+        let (pool, storage, world) = (f.pool.clone(), f.storage.clone(), world.clone());
+        publishes.push(tokio::spawn(async move {
+            store::deploy_scene(
+                &pool,
+                &storage,
+                SceneDeployment {
+                    world: &world,
+                    name_owner: Some(&owner),
+                    entity_id: &entity_id,
+                    deployer: &owner,
+                    deployment_auth_chain: &json!([]),
+                    entity: &entity,
+                    parcels: &parcels(&[base]),
+                    size: 1,
+                    replacement: &Deploy::Owner,
+                    forward_to: None,
+                },
+            )
+            .await
+            .map(|previous| (owner, previous))
+        }));
+    }
+    // Both publishes queue on the world's lock before either reads the owner.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted \
+               AND ((classid::bigint << 32) | objid::bigint) = hashtextextended($1, 0)",
+        )
+        .bind(store::publish_lock_key(&world))
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+        if waiting == 2 {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "both publishes wait on the world's publish lock"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    held.commit().await.unwrap();
+    let mut outcomes = Vec::new();
+    for publish in publishes {
+        outcomes.push(publish.await.unwrap().unwrap());
+    }
+    let replaced: Vec<&Address> = outcomes.iter().filter_map(|(_, p)| p.as_ref()).collect();
+    assert_eq!(replaced.len(), 1, "{outcomes:?}");
+    let (first, _) = outcomes.iter().find(|(_, p)| p.is_none()).unwrap();
+    assert_eq!(replaced[0], first);
+}
+
+fn ens_world_name() -> WorldName {
+    WorldName::parse(&format!(
+        "e{}.eth",
+        &Uuid::new_v4().simple().to_string()[..12]
+    ))
+    .unwrap()
+}
+
+/// The reconcile job rewrites a stale `worlds.owner` from the authority and
+/// re-decides the previous holder in the live rooms; a name the authority
+/// cannot answer for keeps its stored owner.
+#[tokio::test]
+async fn the_owner_reconcile_follows_a_name_transfer() {
+    let Some((f, ens)) = fixture_with_ens(1 << 20).await else {
+        return;
+    };
+    let recorded = Arc::new(RecordedRevocations::default());
+    f.state.add_revocation_sink(recorded.clone());
+    let world = world_name();
+    let (old, new) = (Wallet::random(), Wallet::random());
+    f.names.set(&old.address, world.label());
+    post_entity(
+        &f.app,
+        &deployment(&old, &world, "Before", "0,0", &["0,0"]).await,
+        200,
+    )
+    .await;
+    sqlx::query("UPDATE worlds.worlds SET access_type = 'allow-list' WHERE name = $1")
+        .bind(world.key())
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    f.names.forget(&old.address);
+    f.names.set(&new.address, world.label());
+    f.market.graph.names.clear();
+    f.market.graph.name_owner.clear();
+
+    let unresolved = ens_world_name();
+    let ens_owner = Wallet::random();
+    deploy(
+        &f,
+        &unresolved,
+        &ens_owner.address,
+        "bafyensreconcile",
+        &bare_scene("0,0", &["0,0"]),
+        &["0,0"],
+        &Deploy::Owner,
+    )
+    .await
+    .unwrap();
+    let sceneless = world_name();
+    sqlx::query("INSERT INTO worlds.worlds (name, owner) VALUES ($1, $2)")
+        .bind(sceneless.key())
+        .bind(old.address.as_str())
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    f.names.set(&new.address, sceneless.label());
+    ens.set_down(true);
+
+    let report = super::owners::reconcile_owners(&f.state).await.unwrap();
+    assert!(report.updated >= 1 && report.unresolved >= 1, "{report:?}");
+    assert_eq!(
+        stored_owner(&f.pool, &world).await.as_deref(),
+        Some(new.address.as_str())
+    );
+    assert_eq!(
+        stored_owner(&f.pool, &unresolved).await.as_deref(),
+        Some(ens_owner.address.as_str()),
+        "an unresolved name keeps its stored owner"
+    );
+    assert_eq!(
+        stored_owner(&f.pool, &sceneless).await.as_deref(),
+        Some(old.address.as_str()),
+        "a world without a local scene is not asked about"
+    );
+    assert!(
+        f.market
+            .graph
+            .name_owner
+            .get_fresh(&sceneless.owner_label().unwrap().to_string())
+            .is_none()
+    );
+    assert!(recorded.take().contains(&super::Revocation::Address {
+        world: world.clone(),
+        address: old.address.clone(),
+    }));
+
+    super::owners::reconcile_owners(&f.state).await.unwrap();
+    assert!(
+        !recorded
+            .take()
+            .iter()
+            .any(|r| matches!(r, super::Revocation::Address { world: w, .. } if *w == world)),
+        "a current row is left alone"
+    );
+}
+
+/// `ALLOW_ENS_DOMAINS`: an ENS world publishes for its registry holder under
+/// `ENS_MAX_SIZE`, which an override row replaces; off, `.eth` is refused.
+#[tokio::test]
+async fn an_ens_world_publishes_for_its_holder_under_the_ens_cap() {
+    let Some((f, ens)) = fixture_with_ens(10).await else {
+        return;
+    };
+    let (world, owner, stranger) = (ens_world_name(), Wallet::random(), Wallet::random());
+    ens.register(world.key(), &owner.address);
+    let app = &f.app;
+    assert_eq!(
+        expect(app, limits_case(&world, ""), 200).await,
+        json!({ "maxSceneSizeInBytes": "10", "maxParcels": 4 })
+    );
+    let file: &[u8] = b"twelve bytes";
+    let content = json!([{ "file": "a.bin", "hash": hash_bytes_v1(file) }]);
+    let entity = publish_entity(&world, &["0,0"], content);
+    refused(
+        app,
+        &stranger,
+        entity.clone(),
+        &[file],
+        &no_permission(world.display()),
+    )
+    .await;
+    let message = "Deployment failed: The deployment is too big. The maximum total size allowed is 10 bytes for scenes. You can upload up to 10 bytes but you tried to upload 12.";
+    refused(app, &owner, entity.clone(), &[file], message).await;
+    set_limit_override(&f.pool, &world, None, Some(1000)).await;
+    refused(app, &owner, entity.clone(), &[file], message).await;
+    assert_eq!(
+        expect(app, limits_case(&world, ""), 200).await,
+        json!({ "maxSceneSizeInBytes": "10", "maxParcels": 4 }),
+        "ENS_MAX_SIZE wins over an override, as upstream"
+    );
+    let file: &[u8] = b"tiny";
+    let content = json!([{ "file": "a.bin", "hash": hash_bytes_v1(file) }]);
+    let entity = publish_entity(&world, &["0,0"], content);
+    post_entity(app, &signed_deployment(&owner, &entity, &[file]).await, 200).await;
+    assert_eq!(
+        stored_owner(&f.pool, &world).await.as_deref(),
+        Some(owner.address.as_str())
+    );
+    let meta = json!({ "type": "allow-list", "wallets": [] }).to_string();
+    let path = format!("/world/{}/permissions/deployment", world.display());
+    expect(
+        app,
+        Case::new("post", &path).signed_meta(&owner, &meta).await,
+        204,
+    )
+    .await;
+
+    let Some(off) = fixture().await else { return };
+    let other = ens_world_name();
+    let entity = publish_entity(&other, &["0,0"], json!([]));
+    let message = format!(
+        "Deployment failed: Only .dcl.eth world names are supported for publishing (got \"{}\")",
+        other.display()
+    );
+    refused(&off.app, &owner, entity, &[], &message).await;
+}
+
+/// A new holder's publish rewrites `worlds.owner` and re-decides the previous
+/// holder at once; the reconcile that follows finds nothing left to change.
+#[tokio::test]
+async fn a_new_holder_publishes_then_the_reconcile_finds_nothing_to_change() {
+    let Some(f) = fixture().await else { return };
+    let recorded = Arc::new(RecordedRevocations::default());
+    f.state.add_revocation_sink(recorded.clone());
+    let world = world_name();
+    let (old, new) = (Wallet::random(), Wallet::random());
+    f.names.set(&old.address, world.label());
+    post_entity(
+        &f.app,
+        &deployment(&old, &world, "Before", "0,0", &["0,0"]).await,
+        200,
+    )
+    .await;
+    sqlx::query("UPDATE worlds.worlds SET access_type = 'allow-list' WHERE name = $1")
+        .bind(world.key())
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert!(recorded.take().is_empty());
+
+    f.names.forget(&old.address);
+    f.names.set(&new.address, world.label());
+    f.market.graph.names.clear();
+    post_entity(
+        &f.app,
+        &deployment(&new, &world, "After", "0,0", &["0,0"]).await,
+        200,
+    )
+    .await;
+    assert_eq!(
+        stored_owner(&f.pool, &world).await.as_deref(),
+        Some(new.address.as_str())
+    );
+    assert!(
+        recorded.take().contains(&super::Revocation::Address {
+            world: world.clone(),
+            address: old.address.clone(),
+        }),
+        "the previous holder is re-decided on the publish"
+    );
+
+    let report = super::owners::reconcile_owners(&f.state).await.unwrap();
+    assert_eq!(report.updated, 0, "{report:?}");
+    assert!(
+        !recorded
+            .take()
+            .iter()
+            .any(|r| matches!(r, super::Revocation::Address { world: w, .. } if *w == world))
     );
 }

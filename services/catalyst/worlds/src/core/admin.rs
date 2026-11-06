@@ -7,11 +7,13 @@
 //! domain's references) with the old query and answer shape. The age floor
 //! is at least an hour and the upload window; like every POST here it is
 //! behind `WORLDS_WRITES_ENABLED`, and it runs without the 30 s request
-//! deadline (a full store walk).
+//! deadline (a full store walk). One run at a time (503 + `Retry-After`
+//! otherwise); a bad or missing bearer is 401, as upstream.
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use chrono::SecondsFormat;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -24,6 +26,7 @@ use crate::shared::identity::Address;
 use super::SharedState;
 use super::auth::authorize_admin;
 use super::http::{ApiError, clamp_limit};
+use super::metrics;
 use super::permissions::parse_world;
 use super::store;
 
@@ -63,12 +66,30 @@ pub struct GcQuery {
     pub allow_empty_active_set: Option<bool>,
 }
 
-/// POST /gc, /admin/gc: the blob store collector.
+/// Retry hint when a run is already going or publishes keep the store lock busy, as upstream.
+pub const GC_DEFERRED_RETRY_AFTER_SECONDS: u64 = 60;
+
+pub const GC_IN_PROGRESS_MESSAGE: &str = "A garbage collection run is already in progress.";
+
+fn gc_deferred(message: &str) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(
+            axum::http::header::RETRY_AFTER,
+            GC_DEFERRED_RETRY_AFTER_SECONDS.to_string(),
+        )],
+        Json(json!({ "error": "Service Unavailable", "message": message })),
+    )
+        .into_response()
+}
+
+/// POST /gc, /admin/gc: the blob store collector. One run at a time across the fleet (503 +
+/// Retry-After otherwise); the run is detached, so a client hanging up does not cut it short.
 pub async fn garbage_collect(
     State(state): State<SharedState>,
     headers: HeaderMap,
     Query(q): Query<GcQuery>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Response, ApiError> {
     admin(&state, &headers)?;
     let limits = &state.settings.upload_limits;
     let floor = catalyst_storage::gc::orphan_age_floor(
@@ -85,24 +106,55 @@ pub async fn garbage_collect(
         min_age,
         allow_empty_reference_set: q.allow_empty_active_set.unwrap_or(false),
     };
-    let report = match catalyst_storage::gc::collect(
-        &state.pool,
-        &state.storage,
-        &state.settings.global_scenes_urn,
-        options,
-    )
-    .await
-    {
-        Ok(report) => report,
+    let Some(run_lock) = catalyst_storage::gc::try_lock_run(&state.pool)
+        .await
+        .map_err(|e| ApiError::internal(format!("gc run lock: {e}")))?
+    else {
+        return Ok(gc_deferred(GC_IN_PROGRESS_MESSAGE));
+    };
+    let started = std::time::Instant::now();
+    let run = {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let result = catalyst_storage::gc::collect(
+                &state.pool,
+                &state.storage,
+                &state.settings.global_scenes_urn,
+                options,
+            )
+            .await;
+            if let Err(e) = run_lock.commit().await {
+                tracing::warn!(error = %e, "releasing the gc run lock");
+            }
+            result
+        })
+    };
+    let result = run
+        .await
+        .map_err(|e| ApiError::internal(format!("gc task: {e}")))?;
+    let elapsed = started.elapsed();
+    let report = match result {
+        Ok(report) => {
+            metrics::gc_run("success", elapsed, report.removed, report.removed_bytes);
+            report
+        }
+        Err(catalyst_storage::gc::GcError::LockTimeout) => {
+            metrics::gc_run("deferred", elapsed, 0, 0);
+            return Ok(gc_deferred(
+                "Garbage collection deferred: deployments kept the content lock busy.",
+            ));
+        }
         Err(catalyst_storage::gc::GcError::EmptyReferenceSet) => {
+            metrics::gc_run("error", elapsed, 0, 0);
             return Err(ApiError::bad_request(
                 "Refusing to collect: no domain names any stored content, which usually means the database is empty or misconfigured. Re-run with allow_empty_active_set=true to collect anyway.",
             ));
         }
         Err(e) => {
-            tracing::error!(error = %e, "garbage collection aborted; nothing was deleted");
+            metrics::gc_run("error", elapsed, 0, 0);
+            tracing::error!(error = %e, "garbage collection aborted");
             return Err(ApiError::internal(
-                "Garbage collection aborted; nothing was deleted",
+                "Garbage collection aborted; nothing more was deleted",
             ));
         }
     };
@@ -118,12 +170,14 @@ pub async fn garbage_collect(
         "message": message,
         "dryRun": report.dry_run,
         "removed": report.removed,
+        "removedBytes": report.removed_bytes,
         "failed": report.failed,
         "candidates": report.candidates,
         "scanned": report.scanned,
         "activeKeys": report.references,
         "minAgeSeconds": report.min_age_seconds,
-    })))
+    }))
+    .into_response())
 }
 
 /// GET /admin/worlds
