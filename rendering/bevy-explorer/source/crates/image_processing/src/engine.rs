@@ -107,16 +107,9 @@ struct ImgReprocessStats {
     swapped: usize,
 }
 
-/// Frees a `.ktx2` transcode the loader stashed when its cache write is not going to happen
-/// (uncacheable or unhashable paths), so the stash holds queued work only. Anything missed here
-/// is evicted by `ktx2_loader::evict_stale_results`.
-fn drop_ktx2_result(ty: ProcessingAssetType, path: &AssetPath) {
-    if matches!(ty, ProcessingAssetType::Ktx2Cache) {
-        if let Ok(mut results) = crate::ktx2_loader::KTX2_RESULTS.lock() {
-            results.remove(&path.to_string());
-        }
-    }
-}
+/// An asset waiting for its cache path, with a `.ktx2`'s transcode (`Ktx2Cache` only) to carry
+/// into its `AssetForProcessing`.
+type QueuedAsset = (ProcessingAssetType, IpfsPath, AssetPath<'static>, Option<Vec<u8>>);
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn check_assets(
@@ -125,7 +118,7 @@ fn check_assets(
     images: Res<Assets<Image>>,
     mut w: EventWriter<AssetForProcessing>,
     ipfas: IpfsAssetServer,
-    mut assets_to_process: Local<Vec<(ProcessingAssetType, IpfsPath, AssetPath)>>,
+    mut assets_to_process: Local<Vec<QueuedAsset>>,
     mut paths_processed: Local<HashSet<IpfsPath>>,
     mut stats: ResMut<ImgReprocessStats>,
     mut task: Local<Option<Task<(usize, usize, Vec<AssetForProcessing>)>>>,
@@ -153,24 +146,28 @@ fn check_assets(
                 stats.skip_unloaded += 1;
                 continue;
             };
-            let Some(image) = images.get(*id) else {
-                // skip unloaded
-                stats.skip_unloaded += 1;
-                continue;
-            };
             // a `.ktx2` loads compressed already; when the loader transcoded it, the dds is
-            // waiting in `KTX2_RESULTS` to be written over the cached ktx2 bytes. a cached
-            // or bc7 ktx2 has nothing waiting and is left as it is
+            // waiting in `KTX2_RESULTS` to be written over the cached ktx2 bytes. it is taken
+            // out here and travels with the queued `Ktx2Cache` request, so a write waiting
+            // behind slow repairs can't lose it to the stash's eviction. a skip below just
+            // drops it. a cached or bc7 ktx2 has nothing waiting and is left as it is
             let ktx2 = asset_path.label().is_none()
                 && asset_path
                     .path()
                     .extension()
                     .is_some_and(|ext| ext.eq_ignore_ascii_case("ktx2"));
+            let ktx2_dds = if ktx2 {
+                crate::ktx2_loader::take_result(&asset_path.to_string())
+            } else {
+                None
+            };
+            let Some(image) = images.get(*id) else {
+                // skip unloaded
+                stats.skip_unloaded += 1;
+                continue;
+            };
             if ktx2 {
-                let waiting = crate::ktx2_loader::KTX2_RESULTS
-                    .lock()
-                    .is_ok_and(|results| results.contains_key(&asset_path.to_string()));
-                if !waiting {
+                if ktx2_dds.is_none() {
                     stats.already_compressed += 1;
                     continue;
                 }
@@ -217,12 +214,11 @@ fn check_assets(
                 // skip ... ?
                 debug!("skip unknown {asset_path:?}");
                 stats.skip_unknown += 1;
-                drop_ktx2_result(ty, &asset_path);
                 continue;
             };
 
             if paths_processed.contains(&ipfs_path) {
-                // a stashed transcode is kept: it can be the one the queued write is waiting for
+                // a transcode taken above is dropped: a write queued earlier carries its own
                 stats.total -= 1;
                 continue;
             }
@@ -231,11 +227,10 @@ fn check_assets(
             if let Ok(None) = ipfs_path.context_free_hash() {
                 // skip unhashable
                 stats.skip_unhashable += 1;
-                drop_ktx2_result(ty, &asset_path);
                 continue;
             }
 
-            assets_to_process.push((ty, ipfs_path, asset_path.to_owned()));
+            assets_to_process.push((ty, ipfs_path, asset_path, ktx2_dds));
         }
     }
 
@@ -270,7 +265,12 @@ fn check_assets(
         }
 
         stats.total += 1;
-        assets_to_process.push((ProcessingAssetType::UnloadableGltf, ipfs_path, asset_path));
+        assets_to_process.push((
+            ProcessingAssetType::UnloadableGltf,
+            ipfs_path,
+            asset_path,
+            None,
+        ));
     }
 
     if task.is_none() && !assets_to_process.is_empty() {
@@ -285,10 +285,9 @@ fn check_assets(
 
             let results = assets_to_process
                 .into_iter()
-                .flat_map(|(ty, ipfs_path, base_path)| {
+                .flat_map(|(ty, ipfs_path, base_path, ktx2_dds)| {
                     let Some(hash) = ipfs_path.hash(&ctx) else {
                         skip_unhashable += 1;
-                        drop_ktx2_result(ty, &base_path);
                         return None;
                     };
 
@@ -307,7 +306,6 @@ fn check_assets(
                             .join_relative(hash)
                             .map(|p| p.to_string_lossy().into_owned())
                         else {
-                            drop_ktx2_result(ty, &base_path);
                             return None;
                         };
 
@@ -315,7 +313,6 @@ fn check_assets(
                         let Ok(cache_path) = url
                         else {
                             skip_unhashable += 1;
-                            drop_ktx2_result(ty, &base_path);
                             return None;
                         };
 
@@ -323,10 +320,10 @@ fn check_assets(
                             cache_path,
                             base_path,
                             ty,
+                            ktx2_dds,
                         })
                     } else {
                         skip_shouldnt_cache += 1;
-                        drop_ktx2_result(ty, &base_path);
                         None
                     }
                 })

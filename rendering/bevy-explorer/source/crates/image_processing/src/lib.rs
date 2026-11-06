@@ -21,8 +21,9 @@ pub enum ProcessingAssetType {
     // success it is reloaded in place
     UnloadableGltf,
     Image,
-    // the dds a `.ktx2` load produced (`ktx2_loader::KTX2_RESULTS`), to be written over the
-    // cached ktx2 bytes so the next load skips the transcode. nothing is reprocessed or reloaded
+    // the dds a `.ktx2` load produced (carried in `AssetForProcessing::ktx2_dds`), to be
+    // written over the cached ktx2 bytes so the next load skips the transcode. nothing is
+    // reprocessed or reloaded
     Ktx2Cache,
 }
 
@@ -31,6 +32,10 @@ pub struct AssetForProcessing {
     pub cache_path: String,
     pub base_path: AssetPath<'static>,
     pub ty: ProcessingAssetType,
+    /// For `Ktx2Cache`, the dds to write, taken out of `ktx2_loader::KTX2_RESULTS` when the
+    /// request is queued so it can't be evicted while the write waits behind repairs. `None`
+    /// for every other type, and once the processor has taken it for the write.
+    pub ktx2_dds: Option<Vec<u8>>,
 }
 
 #[cfg(target_arch = "wasm32")]
