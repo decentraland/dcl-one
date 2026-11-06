@@ -105,9 +105,9 @@ pub(crate) async fn process_events(
     }
 }
 
-/// The dds `Ktx2Loader` stashed for `req.base_path`, removed from the stash.
+/// The dds `ktx2::transcode_ktx2_image` stashed for `req.base_path`, removed from the stash.
 fn take_ktx2_result(req: &AssetForProcessing) -> Option<Vec<u8>> {
-    crate::ktx2_loader::KTX2_RESULTS
+    crate::ktx2::KTX2_RESULTS
         .lock()
         .ok()?
         .remove(&req.base_path.to_string())
@@ -730,18 +730,6 @@ mod tests {
         let dds = Dds::read(&mut std::io::Cursor::new(bytes)).unwrap();
         assert_eq!(dds.get_dxgi_format(), Some(DxgiFormat::BC7_UNorm));
         (dds.get_width(), dds.get_height())
-    }
-
-    #[test]
-    fn embedded_ktx2_is_transcoded_for_the_gltf_loader() {
-        let (dds, mime_type) = crate::transcode_gltf_image(UASTC_8, "image/ktx2").unwrap();
-        assert_eq!(mime_type, "image/vnd-ms.dds");
-        assert_eq!(dds_size(&dds), (8, 8));
-        // recognised by its magic when the mime type is missing or wrong
-        assert!(crate::transcode_gltf_image(UASTC_8, "application/octet-stream").is_some());
-        // everything else is left to the loader
-        assert!(crate::transcode_gltf_image(&png_bytes(8, 8), "image/png").is_none());
-        assert!(crate::transcode_gltf_image(b"not a ktx2", "image/ktx2").is_none());
     }
 
     #[test]

@@ -9,7 +9,7 @@ use bevy_reflect::TypePath;
 #[cfg(feature = "bevy_reflect")]
 use bevy_reflect::{std_traits::ReflectDefault, Reflect};
 
-use bevy_asset::{Asset, RenderAssetTransferPriority, RenderAssetUsages};
+use bevy_asset::{Asset, AssetPath, RenderAssetTransferPriority, RenderAssetUsages};
 use bevy_color::{Color, ColorToComponents, Gray, LinearRgba, Srgba, Xyza};
 use bevy_math::{AspectRatio, UVec2, UVec3, Vec2};
 use core::hash::Hash;
@@ -932,10 +932,82 @@ impl Image {
 
     /// Load a bytes buffer in a [`Image`], according to type `image_type`, using the `image`
     /// crate
+    ///
+    /// KTX2 bytes decode as KTX2 whatever `image_type` says, through the host's transcoder when
+    /// one is set (`set_ktx2_transcoder`).
     pub fn from_buffer(
         #[cfg(all(debug_assertions, feature = "dds"))] name: String,
         buffer: &[u8],
         image_type: ImageType,
+        supported_compressed_formats: CompressedImageFormats,
+        is_srgb: bool,
+        image_sampler: ImageSampler,
+        asset_usage: RenderAssetUsages,
+    ) -> Result<Image, TextureError> {
+        Self::from_buffer_at(
+            #[cfg(all(debug_assertions, feature = "dds"))]
+            name,
+            buffer,
+            image_type,
+            supported_compressed_formats,
+            is_srgb,
+            image_sampler,
+            asset_usage,
+            None,
+        )
+    }
+
+    /// [`Image::from_buffer`] for an asset read from `asset_path`, which the host's KTX2
+    /// transcoder is given (see [`Ktx2Transcoder`](crate::Ktx2Transcoder)).
+    ///
+    /// The KTX2 magic wins over `image_type`, and a DDS where a KTX2 was declared decodes as
+    /// DDS: a host that caches its transcode over the KTX2 bytes reads it back from the same
+    /// path.
+    #[expect(clippy::too_many_arguments, reason = "from_buffer's arguments and the path")]
+    pub(crate) fn from_buffer_at(
+        #[cfg(all(debug_assertions, feature = "dds"))] name: String,
+        buffer: &[u8],
+        image_type: ImageType,
+        supported_compressed_formats: CompressedImageFormats,
+        is_srgb: bool,
+        image_sampler: ImageSampler,
+        asset_usage: RenderAssetUsages,
+        asset_path: Option<&AssetPath<'_>>,
+    ) -> Result<Image, TextureError> {
+        #[cfg(feature = "ktx2")]
+        let format = if buffer.starts_with(KTX2_MAGIC) {
+            ImageFormat::Ktx2
+        } else {
+            image_type.to_image_format()?
+        };
+        #[cfg(not(feature = "ktx2"))]
+        let format = image_type.to_image_format()?;
+        #[cfg(all(feature = "ktx2", feature = "dds"))]
+        let format = match format {
+            ImageFormat::Ktx2 if buffer.starts_with(b"DDS ") => ImageFormat::Dds,
+            format => format,
+        };
+        Self::decode_buffer(
+            #[cfg(all(debug_assertions, feature = "dds"))]
+            name,
+            buffer,
+            format,
+            supported_compressed_formats,
+            is_srgb,
+            image_sampler,
+            asset_usage,
+            asset_path,
+            true,
+        )
+    }
+
+    /// Decodes `buffer` as `format`. A KTX2 goes to the host's transcoder first when
+    /// `host_transcoder` is set; what the transcoder returns is decoded without it.
+    #[expect(clippy::too_many_arguments, reason = "from_buffer's arguments and the path")]
+    fn decode_buffer(
+        #[cfg(all(debug_assertions, feature = "dds"))] name: String,
+        buffer: &[u8],
+        format: ImageFormat,
         #[cfg_attr(
             not(any(feature = "basis-universal", feature = "dds", feature = "ktx2")),
             expect(unused_variables, reason = "only used with certain features")
@@ -944,9 +1016,17 @@ impl Image {
         is_srgb: bool,
         image_sampler: ImageSampler,
         asset_usage: RenderAssetUsages,
+        #[cfg_attr(
+            not(feature = "ktx2"),
+            expect(unused_variables, reason = "only used with ktx2")
+        )]
+        asset_path: Option<&AssetPath<'_>>,
+        #[cfg_attr(
+            not(feature = "ktx2"),
+            expect(unused_variables, reason = "only used with ktx2")
+        )]
+        host_transcoder: bool,
     ) -> Result<Image, TextureError> {
-        let format = image_type.to_image_format()?;
-
         // Load the image in the expected format.
         // Some formats like PNG allow for R or RG textures too, so the texture
         // format needs to be determined. For RGB textures an alpha channel
@@ -968,7 +1048,32 @@ impl Image {
             )?,
             #[cfg(feature = "ktx2")]
             ImageFormat::Ktx2 => {
-                ktx2_buffer_to_image(buffer, supported_compressed_formats, is_srgb)?
+                let transcoded = if host_transcoder {
+                    host_ktx2_transcode(buffer, asset_path)
+                } else {
+                    None
+                };
+                match transcoded {
+                    Some(transcoded) => {
+                        let (bytes, format) = transcoded?;
+                        let mut image = Self::decode_buffer(
+                            #[cfg(all(debug_assertions, feature = "dds"))]
+                            name,
+                            &bytes,
+                            format,
+                            supported_compressed_formats,
+                            is_srgb,
+                            image_sampler.clone(),
+                            asset_usage,
+                            None,
+                            false,
+                        )?;
+                        // the compressed decodes (dds, ktx2) leave the default usage
+                        image.asset_usage = asset_usage;
+                        image
+                    }
+                    None => ktx2_buffer_to_image(buffer, supported_compressed_formats, is_srgb)?,
+                }
             }
             #[expect(
                 clippy::allow_attributes,
