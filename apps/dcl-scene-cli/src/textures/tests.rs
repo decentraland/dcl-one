@@ -103,21 +103,32 @@ fn run(root: &Path, settings: Settings, encoder: &dyn Encoder) -> Outcome {
 }
 
 #[test]
+fn ktx2_is_published_beside_its_model() {
+    assert_eq!(published_ktx2("m.glb", "ab"), "ab.ktx2");
+    assert_eq!(published_ktx2("models/m.glb", "ab"), "models/ab.ktx2");
+    assert_eq!(published_ktx2("a/b/m.gltf", "ab"), "a/b/ab.ktx2");
+    for model in ["m.glb", "models/m.glb", "a/b/m.gltf"] {
+        let uri = gltf::relative_uri(model, &published_ktx2(model, "ab"));
+        assert_eq!(uri, "ab.ktx2");
+    }
+}
+
+#[test]
 fn models_are_rewritten_staged_and_originals_ignored_unless_named() {
     let (_t, root, glb) = scene("textures-rewrite");
     let out = run(&root, Settings::default(), &FakeEncoder { bloat: false });
     let o = &out.overlay;
 
-    // three distinct textures, one KTX2 each, all under optimized-textures/
+    // three distinct textures, one KTX2 each, published beside the model
     assert_eq!(o.added.len(), 3);
-    assert!(o.added.iter().all(|a| a.starts_with("optimized-textures/") && a.ends_with(".ktx2")));
+    assert!(o.added.iter().all(|a| a.starts_with("models/") && a.ends_with(".ktx2")));
     let staged_model = o.source("models/a.glb").unwrap();
     assert!(staged_model.starts_with(root.join(STAGE)));
     for added in &o.added {
         let staged = o.source(added).unwrap();
         let bytes = std::fs::read(staged).unwrap();
         assert_eq!(
-            format!("optimized-textures/{}.ktx2", encode::sha256_hex(&bytes)),
+            format!("models/{}.ktx2", encode::sha256_hex(&bytes)),
             *added
         );
     }
@@ -129,7 +140,8 @@ fn models_are_rewritten_staged_and_originals_ignored_unless_named() {
     let model = gltf::Model::parse(&std::fs::read(staged_model).unwrap()).unwrap();
     for (i, image) in model.json["images"].as_array().unwrap().iter().enumerate() {
         let uri = image["uri"].as_str().unwrap();
-        assert!(uri.starts_with("../optimized-textures/"), "{uri}");
+        // beside the model: no `..` for any client to resolve
+        assert!(!uri.contains('/') && uri.ends_with(".ktx2"), "{uri}");
         assert_eq!(image["mimeType"], json!("image/ktx2"));
         assert_eq!(
             model.json["textures"][i],

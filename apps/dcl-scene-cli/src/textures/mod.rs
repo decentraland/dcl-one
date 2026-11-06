@@ -31,9 +31,17 @@ pub const MAX_TEXTURE_SIZE: u32 = 1024;
 /// The staging directory, scene-relative: inside `.dcl-one`, which is never
 /// published.
 pub const STAGE: &str = ".dcl-one/optimized-textures";
-/// Where the KTX2 files are published, scene-relative, each named by the
-/// sha256 of its bytes so models sharing a texture share one file.
-pub const PUBLISHED_DIR: &str = "optimized-textures";
+/// The scene-relative path a model's KTX2 is published at: beside the model,
+/// named by the sha256 of its bytes. The model names it with no `..`, which
+/// every client resolves the same way; models in different folders sharing a
+/// texture publish one file per folder, and content addressing uploads and
+/// stores those bytes once.
+pub fn published_ktx2(model_rel: &str, ktx2_sha: &str) -> String {
+    match model_rel.rsplit_once('/') {
+        Some((dir, _)) => format!("{dir}/{ktx2_sha}.ktx2"),
+        None => format!("{ktx2_sha}.ktx2"),
+    }
+}
 /// Files searched for an original image's name before it is left out: the
 /// bundle and its chunks, `main.crdt`, composites, `scene.json` and other
 /// JSON the scene publishes.
@@ -556,6 +564,7 @@ pub(crate) fn optimize(
     let mut replaced_files: BTreeSet<String> = BTreeSet::new();
     let mut kept_files: BTreeSet<String> = BTreeSet::new();
     let mut textures: BTreeMap<String, Value> = BTreeMap::new();
+    let mut counted_ktx2: BTreeSet<String> = BTreeSet::new();
     let mut model_entries: Vec<Value> = Vec::new();
     let mut staged_models: BTreeSet<String> = BTreeSet::new();
     for work in models {
@@ -597,7 +606,7 @@ pub(crate) fn optimize(
                         len,
                         cached,
                     } => {
-                        let ktx2_rel = format!("{PUBLISHED_DIR}/{ktx2_sha}.ktx2");
+                        let ktx2_rel = published_ktx2(&work.rel, ktx2_sha);
                         let uri = gltf::relative_uri(&work.rel, &ktx2_rel);
                         replacements.insert(image.index, uri);
                         if *mixed {
@@ -609,7 +618,9 @@ pub(crate) fn optimize(
                         overlay
                             .sources
                             .insert(ktx2_rel.clone(), ktx2_path(&stage, ktx2_sha));
-                        if overlay.added.insert(ktx2_rel.clone()) {
+                        overlay.added.insert(ktx2_rel.clone());
+                        // one upload per distinct KTX2, however many folders publish it
+                        if counted_ktx2.insert(ktx2_sha.clone()) {
                             summary.bytes_after += len;
                         }
                         let entry = textures.entry(ktx2_rel).or_insert_with(|| {

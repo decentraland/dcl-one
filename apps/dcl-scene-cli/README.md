@@ -134,7 +134,8 @@ server, parcels to the first healthy public catalyst (`--target-server` /
 normals, `-linear` otherwise), resized to at most 1024 px in whole 4x4 blocks. The encoder is the Basis
 Universal WASI build pinned in `basisu-release.lock`, run in-process with one instance per core; its
 output is byte-identical on every machine. Models are rewritten with `KHR_texture_basisu` and no
-fallback, and each texture is published once as `optimized-textures/<sha256>.ktx2`. An image stays as
+fallback, and each texture is published beside its model as `<sha256>.ktx2` (no `..` in the URI; the
+same texture in several folders is uploaded once, by content hash). An image stays as
 it was when its KTX2 is not smaller or it fails to decode. Your files are never changed: rewritten
 models and KTX2 files are staged in `.dcl-one/optimized-textures/` with a `manifest.json` and a cache
 keyed by source bytes, encoder and settings. `start` serves exactly what `deploy` uploads.

@@ -1,6 +1,6 @@
 # ADR: Opt-in UASTC KTX2 textures in scene uploads
 
-- Status: Accepted
+- Status: Proposed
 - Date: 2026-11-06
 
 ## Context
@@ -50,9 +50,11 @@ byte-for-byte what it was.
   own scratch directory, on as many threads as cores. The module is compiled once per process. NaN
   canonicalization and deterministic relaxed SIMD are enabled, so the output does not depend on
   the CPU.
-- **Models.** Each converted image becomes an external file,
-  `optimized-textures/<sha256 of the KTX2>.ktx2`, shared by every model that uses it. The model
-  names it by a relative URI with `mimeType` `image/ktx2`. Textures sampling it carry
+- **Models.** Each converted image becomes an external file beside the model,
+  `<sha256 of the KTX2>.ktx2`, which the model names with no path segment and `mimeType`
+  `image/ktx2`, so no client has to resolve `..`. Models in one folder share the file; the same
+  texture in several folders is published at several paths and, being content-addressed, uploaded
+  and stored once. Textures sampling it carry
   `KHR_texture_basisu` with no fallback `source`, and the extension is added to `extensionsUsed` and
   `extensionsRequired`. A GLB's binary chunk drops the image bytes and is repacked, with buffer-view
   references renumbered, Draco's included. If the GLB uses an extension that could address the
