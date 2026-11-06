@@ -56,6 +56,7 @@ pub fn av_sinks<T: AVPlayer>(
     let (audio, rejected_commands) = {
         let (audio_sender, audio_receiver) = tokio::sync::mpsc::channel(10);
         let (handle_sender, handle_receiver) = tokio::sync::oneshot::channel();
+        let capture = std::sync::Arc::new(media::AudioCapture::default());
         let rejected_commands = match media::resolve_source(&ipfs, &source, &hash) {
             Ok(url) => {
                 media::spawn_av(
@@ -65,6 +66,7 @@ pub fn av_sinks<T: AVPlayer>(
                     &image,
                     audio_sender,
                     handle_receiver,
+                    capture.clone(),
                 );
                 None
             }
@@ -79,7 +81,7 @@ pub fn av_sinks<T: AVPlayer>(
             }
         };
         (
-            Some(AudioSink::new(audio_receiver, handle_sender)),
+            Some(AudioSink::new(audio_receiver, handle_sender, capture)),
             rejected_commands,
         )
     };
@@ -127,7 +129,11 @@ pub fn noop_sinks<T: AVPlayer>(source: String, image: Handle<Image>) -> AVSinks<
         let (handle_sender, _handle_receiver) = tokio::sync::oneshot::channel();
         drop(command_receiver);
         drop(video_sender);
-        Some(AudioSink::new(audio_receiver, handle_sender))
+        Some(AudioSink::new(
+            audio_receiver,
+            handle_sender,
+            Default::default(),
+        ))
     };
     #[cfg(feature = "html")]
     media::spawn_av(command_receiver, video_sender, None, T::has_video(), &image);

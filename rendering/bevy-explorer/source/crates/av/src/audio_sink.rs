@@ -11,7 +11,7 @@ use kira::{
     sound::{streaming::StreamingSoundData, PlaybackState},
     tween::Tween,
 };
-use media::AudioHandle;
+use media::{AudioCapture, AudioHandle};
 use tokio::sync::mpsc::error::TryRecvError;
 
 use crate::{AVPlayer, AVPlayerSinks, AVSinks, AudioStream, VideoPlayer};
@@ -21,16 +21,20 @@ use crate::{AVPlayer, AVPlayerSinks, AVSinks, AudioStream, VideoPlayer};
 pub struct AudioSink {
     pub sound_data: tokio::sync::mpsc::Receiver<StreamingSoundData<AudioDecoderError>>,
     pub handle_sender: Option<tokio::sync::oneshot::Sender<AudioHandle>>,
+    /// The player's decoded audio, written while an `AudioAnalysis` sits on the entity.
+    pub capture: std::sync::Arc<AudioCapture>,
 }
 
 impl AudioSink {
     pub fn new(
         receiver: tokio::sync::mpsc::Receiver<StreamingSoundData<AudioDecoderError>>,
         handle_sender: tokio::sync::oneshot::Sender<AudioHandle>,
+        capture: std::sync::Arc<AudioCapture>,
     ) -> Self {
         Self {
             sound_data: receiver,
             handle_sender: Some(handle_sender),
+            capture,
         }
     }
 }

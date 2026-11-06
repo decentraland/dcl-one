@@ -7,6 +7,9 @@ pub mod audio_sink;
 #[cfg(any(feature = "uuav", feature = "html"))]
 pub mod video_stream;
 
+// audio analysis (scene-facing amplitude and bands of a clip or stream)
+pub mod audio_analysis;
+
 // audio source (non-streaming audio)
 #[cfg(feature = "html")]
 pub mod audio_host_wasm;
@@ -395,6 +398,7 @@ impl Plugin for AVPlayerPlugin {
         debug_panel::register(app);
         app.add_plugins(AudioSourcePlugin);
         app.add_plugins(AudioSourcePluginImpl);
+        app.add_plugins(audio_analysis::AudioAnalysisPlugin);
 
         app.add_crdt_lww_component::<PbAudioStream, AudioStream>(
             SceneComponentId::AUDIO_STREAM,

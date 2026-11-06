@@ -6,6 +6,8 @@ use std::{
     time::Duration,
 };
 
+use super::capture::AudioCapture;
+
 use common::structs::AudioDecoderError;
 use kira::sound::streaming::StreamingSoundData;
 
@@ -39,15 +41,18 @@ pub struct UuavKiraDecoder {
     alive: Arc<AtomicBool>,
     started: bool,
     buffer: Vec<f32>,
+    /// Every chunk decoded is also written here, for the analysis, while it is enabled.
+    capture: Arc<AudioCapture>,
 }
 
 impl UuavKiraDecoder {
-    pub fn new(id: PlayerId, alive: Arc<AtomicBool>) -> Self {
+    pub fn new(id: PlayerId, alive: Arc<AtomicBool>, capture: Arc<AudioCapture>) -> Self {
         Self {
             id,
             alive,
             started: false,
             buffer: vec![0.0; PULL_FRAMES * CHANNELS],
+            capture,
         }
     }
 }
@@ -76,12 +81,14 @@ impl kira::sound::streaming::Decoder for UuavKiraDecoder {
             };
             if copied > 0 {
                 let samples = (copied as usize).min(PULL_FRAMES) * CHANNELS;
-                return Ok(self.buffer[..samples]
+                let frames: Vec<kira::Frame> = self.buffer[..samples]
                     .as_chunks::<CHANNELS>()
                     .0
                     .iter()
                     .map(|frame| kira::Frame::new(frame[0], frame[1]))
-                    .collect());
+                    .collect();
+                self.capture.push(&frames);
+                return Ok(frames);
             }
             let wait = match super::ffi::state(self.id) {
                 uuav::UUAVState::UUAV_PLAYING => EMPTY_WAIT,

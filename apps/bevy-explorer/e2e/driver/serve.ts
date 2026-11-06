@@ -63,6 +63,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.glb': 'model/gltf-binary',
   '.gltf': 'model/gltf+json',
   '.mp4': 'video/mp4',
+  '.mp3': 'audio/mpeg',
   '.bin': 'application/octet-stream',
   '.txt': 'text/plain; charset=utf-8',
   '.wat': 'text/plain; charset=utf-8',

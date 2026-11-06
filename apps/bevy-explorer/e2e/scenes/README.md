@@ -33,5 +33,17 @@ whenever it is sampled and the audio path runs too. `specs/visual/video.test.ts`
 player's events and the frame's centre pixel instead of comparing a reference; the scene's label
 shows the last event for whoever reads the report's frame.
 
-`bin/`, `node_modules/` and the other build outputs are ignored. The `.glb`, `.png`, `.jpg` and
-`.mp4` assets are in Git LFS.
+## The audio scene
+
+`audio` analyses scene audio through the engine, after unity-explorer's AudioAnalysis playground
+(`Explorer/Assets/Plugins/NativeAudioAnalysis/Playground`), at parcel `216,0`: a looping 20 s
+tone (`assets/audio/tone_440_loop.mp3`, written by `audio/generate-fixture.sh`) as an
+`AudioSource` in log mode and again in raw mode, the same tone streamed from the scene's content
+as an `AudioStream`, and the video scene's fixture as a `VideoPlayer`, each with an `AudioAnalysis`
+driving an equaliser of eight band cubes and an amplitude cube, with the values on a label. A
+`pause / resume` box toggles the log clip and a `detach` box removes its analysis; the scene also
+pauses the log clip by itself at 12 s. `specs/visual/audio.test.ts` asserts the values through
+the engine on the standalone; the equalisers are for whoever reads the report's frame.
+
+`bin/`, `node_modules/` and the other build outputs are ignored. The `.glb`, `.png`, `.jpg`,
+`.mp4` and `.mp3` assets are in Git LFS.
