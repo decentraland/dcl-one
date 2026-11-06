@@ -140,9 +140,13 @@ impl AssetLoader for ImageLoader {
                 ImageType::Extension(ext)
             }
             ImageFormatSetting::Format(format) => ImageType::Format(format),
-            // the `image` crate doesn't know KTX2; `from_buffer_at` takes it by its magic
+            // the `image` crate doesn't know KTX2; take it by its magic, at a `.ktx2` path only.
+            // An extension-less KTX2 falls to `guess_format` and fails, as the host caches its
+            // transcode by the `.ktx2` extension and would transcode it again on every load.
             #[cfg(feature = "ktx2")]
-            ImageFormatSetting::Guess if bytes.starts_with(crate::KTX2_MAGIC) => {
+            ImageFormatSetting::Guess
+                if crate::ktx2::ktx2_magic_applies(&bytes, Some(load_context.asset_path())) =>
+            {
                 ImageType::Format(ImageFormat::Ktx2)
             }
             ImageFormatSetting::Guess => {
