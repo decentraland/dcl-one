@@ -199,12 +199,10 @@ pub fn content_functions_sql(or_replace: bool) -> String {
 /// `Ok` once `signature` (a `to_regprocedure` spelling) exists; the error
 /// names the function and how to install it, never a grant to ask for.
 pub(crate) async fn require_function(pool: &PgPool, signature: &str) -> Result<(), String> {
-    let installed: bool = sqlx::query_scalar("SELECT to_regprocedure($1) IS NOT NULL")
-        .bind(signature)
-        .fetch_one(pool)
+    let missing = crate::db::missing_functions(pool, &[signature.to_owned()])
         .await
         .map_err(|e| format!("checking {signature}: {e}"))?;
-    if installed {
+    if missing.is_empty() {
         Ok(())
     } else {
         Err(format!(

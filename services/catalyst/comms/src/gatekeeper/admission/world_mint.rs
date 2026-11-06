@@ -97,34 +97,48 @@ impl SecretThrottle<'_> {
         if invalid_secret {
             return;
         }
-        let result = async {
-            let mut tx = self.pool.begin().await?;
-            sqlx::raw_sql("SET LOCAL statement_timeout='1s'; SET LOCAL lock_timeout='500ms'").execute(&mut *tx).await?;
-            let attempts: Option<i32> = sqlx::query_scalar("SELECT attempts FROM social.world_secret_attempts WHERE world_name=$1 AND subject=$2 AND window_start=$3 FOR UPDATE")
-                .bind(self.world).bind(self.subject_key()).bind(reservation.window).fetch_optional(&mut *tx).await?;
-            if let Some(attempts) = attempts {
-                let statement = if attempts == 1 {
-                    "DELETE FROM social.world_secret_attempts WHERE world_name=$1 AND subject=$2 AND window_start=$3"
-                } else {
-                    "UPDATE social.world_secret_attempts SET attempts=attempts-1 WHERE world_name=$1 AND subject=$2 AND window_start=$3"
-                };
-                sqlx::query(statement).bind(self.world).bind(self.subject_key()).bind(reservation.window).execute(&mut *tx).await?;
-            }
-            tx.commit().await
-        }.await;
+        let result = super::functions::bounded(async {
+            let functions = super::functions::installed(self.pool).await?;
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "SELECT social.{}($1,$2,$3)",
+                functions.refund
+            )))
+            .bind(self.world)
+            .bind(self.subject_key())
+            .bind(reservation.window)
+            .execute(self.pool)
+            .await
+        })
+        .await;
         if let Err(error) = result {
             tracing::warn!(%error, world=self.world, "world secret reservation refund failed; charge expires with its window");
         }
     }
 }
 
+/// The expiry sweep deletes this many rows per statement.
+const SWEEP_BATCH: i64 = 1000;
+/// The expiry sweep stops after this time. The next run continues.
+const SWEEP_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Drops expired throttle windows (the `comms-secret-attempts-sweep` job).
+/// The sweep deletes in short batches. It continues while a batch is full,
+/// so a backlog drains in one run. It stops when a batch is short or when
+/// the time budget is used.
 pub async fn sweep_secret_attempts(pool: &PgPool, now: NaiveDateTime) -> anyhow::Result<()> {
-    sqlx::query("DELETE FROM social.world_secret_attempts WHERE (world_name,subject) IN (SELECT world_name,subject FROM social.world_secret_attempts WHERE window_start <= $1 ORDER BY window_start LIMIT 1000 FOR UPDATE SKIP LOCKED)")
-        .bind(window_start_cutoff(now))
-        .execute(pool)
-        .await?;
-    Ok(())
+    let cutoff = window_start_cutoff(now);
+    let started = std::time::Instant::now();
+    loop {
+        let removed = sqlx::query("DELETE FROM social.world_secret_attempts WHERE (world_name,subject) IN (SELECT world_name,subject FROM social.world_secret_attempts WHERE window_start <= $1 ORDER BY window_start LIMIT $2 FOR UPDATE SKIP LOCKED)")
+            .bind(cutoff)
+            .bind(SWEEP_BATCH)
+            .execute(pool)
+            .await?
+            .rows_affected();
+        if removed < SWEEP_BATCH as u64 || started.elapsed() >= SWEEP_BUDGET {
+            return Ok(());
+        }
+    }
 }
 
 fn too_many_attempts() -> ApiError {
@@ -145,19 +159,18 @@ pub(crate) async fn authorization_started(
     pool: &PgPool,
     world: &WorldName,
 ) -> Result<NaiveDateTime, sqlx::Error> {
-    let mut tx = pool.begin().await?;
-    sqlx::raw_sql("SET LOCAL statement_timeout='1s'; SET LOCAL lock_timeout='500ms'")
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("SELECT name FROM worlds.worlds WHERE name=$1 FOR SHARE")
+    super::functions::bounded(async {
+        let functions = super::functions::installed(pool).await?;
+        let started: Option<NaiveDateTime> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT social.{}($1)",
+            functions.stamp
+        )))
         .bind(world.key())
-        .fetch_one(&mut *tx)
+        .fetch_one(pool)
         .await?;
-    let started = sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())")
-        .fetch_one(&mut *tx)
-        .await?;
-    tx.commit().await?;
-    Ok(started)
+        started.ok_or(sqlx::Error::RowNotFound)
+    })
+    .await
 }
 
 pub(crate) const AUTHORIZATION_FIELD: &str = "worldAuthorization";
@@ -656,6 +669,29 @@ mod throttle_tests {
     }
 
     #[tokio::test]
+    async fn the_sweep_drains_a_backlog_larger_than_one_batch() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let world = format!("sweep-{}.dcl.eth", uuid::Uuid::new_v4());
+        let now = chrono::Utc::now().naive_utc();
+        let expired = window_start_cutoff(now) - chrono::TimeDelta::seconds(1);
+        sqlx::query("INSERT INTO social.world_secret_attempts(world_name,subject,attempts,window_start) SELECT $1,'expired-'||n,1,$2 FROM generate_series(1,$3) AS n")
+            .bind(&world).bind(expired).bind(SWEEP_BATCH * 2 + 1).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO social.world_secret_attempts(world_name,subject,attempts,window_start) VALUES($1,'live',1,$2)")
+            .bind(&world).bind(now).execute(&pool).await.unwrap();
+        sweep_secret_attempts(&pool, now).await.unwrap();
+        let left: Vec<String> = sqlx::query_scalar(
+            "SELECT subject FROM social.world_secret_attempts WHERE world_name=$1",
+        )
+        .bind(&world)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(left, vec!["live".to_string()]);
+    }
+
+    #[tokio::test]
     async fn authorization_stamp_waits_for_an_inflight_world_edit() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
@@ -769,6 +805,50 @@ mod throttle_tests {
         .await
         .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn database_wait_deadlines_refuse_stamps_and_retain_unsettled_charges() {
+        let Some(pool) = crate::db::scratch::pool(1).await else {
+            return;
+        };
+        let world =
+            WorldName::parse(&format!("deadline-{}.dcl.eth", uuid::Uuid::new_v4())).unwrap();
+        sqlx::query("INSERT INTO worlds.worlds(name) VALUES($1)")
+            .bind(world.key())
+            .execute(&pool)
+            .await
+            .unwrap();
+        let throttle = SecretThrottle {
+            pool: &pool,
+            world: world.key(),
+            subject: "caller",
+            max_attempts: 3,
+        };
+        let reservation = throttle
+            .reserve(chrono::Utc::now().naive_utc())
+            .await
+            .unwrap()
+            .unwrap();
+        crate::gatekeeper::admission::functions::installed(&pool)
+            .await
+            .unwrap();
+        let held = pool.acquire().await.unwrap();
+        let error = authorization_started(&pool, &world).await.unwrap_err();
+        assert!(
+            matches!(error, sqlx::Error::Io(ref error) if error.kind() == std::io::ErrorKind::TimedOut)
+        );
+        throttle.settle(false, reservation).await;
+        drop(held);
+        let count: i32 = sqlx::query_scalar(
+            "SELECT attempts FROM social.world_secret_attempts WHERE world_name=$1",
+        )
+        .bind(world.key())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1);
+        assert!(authorization_started(&pool, &world).await.is_ok());
     }
 
     #[tokio::test]
