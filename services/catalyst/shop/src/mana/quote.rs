@@ -48,15 +48,29 @@ pub fn static_gas(listing: &Listing) -> u64 {
     }
 }
 
-/// The Shop's MANA/USD as the rule's rate (`price::store::shop_rate`: the
-/// marketplace feed's answer where the `shop-mana-rate` job runs, else the
-/// spot) within its freshness budget, exact decimal text, never a float.
+/// The Shop's MANA/USD as the rule's rate, exact decimal text, never a
+/// float: the marketplace's feed read live where it is wired
+/// ([`super::feed_rate`]; a failed read is no rate, so every line says the
+/// price is unavailable), else the newest price snapshot within its
+/// freshness budget.
 pub async fn mana_usd_rate(pool: &sqlx::PgPool) -> Result<Option<ManaUsdRate>, sqlx::Error> {
-    let now = Utc::now();
-    let row = crate::price::store::shop_rate(pool, now).await?;
+    if let Some(feed) = super::feed_rate::read().await {
+        return Ok(match feed {
+            Ok(read) => ManaUsdRate::parse_usd_per_mana(&read.usd_per_mana),
+            Err(e) => {
+                tracing::warn!(error = %e, "the MANA/USD feed is unavailable; quoting no MANA/USD price");
+                None
+            }
+        });
+    }
+    let row: Option<(String, chrono::NaiveDateTime)> = sqlx::query_as(
+        "SELECT mana_usd::text, taken_at FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?;
     let budget = crate::price::store::SNAPSHOT_MAX_AGE.as_secs() as i64;
     Ok(row.and_then(|(rate, taken_at)| {
-        let fresh = now.timestamp() - taken_at.and_utc().timestamp() <= budget;
+        let fresh = Utc::now().timestamp() - taken_at.and_utc().timestamp() <= budget;
         fresh
             .then(|| ManaUsdRate::parse_usd_per_mana(rate.trim()))
             .flatten()
@@ -158,6 +172,15 @@ async fn mana_execution(
 ) -> ManaExecution {
     let chain: &Chain = &resolved.chain;
     let caller = wallet.unwrap_or(Address::ZERO);
+    // A USD-pegged trade settles at the feed's answer in the block that takes it,
+    // which can move after this quote: its approval carries upstream's +2%.
+    let usd_pegged = matches!(&resolved.offer, crate::types::Offer::Trade { trade, .. }
+        if trade.received.first().is_some_and(|r| r.asset_type == crate::types::TradeAssetType::UsdPeggedMana));
+    let approve = if usd_pegged {
+        super::feed_rate::usd_pegged_allowance(amount.get())
+    } else {
+        amount.get()
+    };
     let call = match &resolved.listing {
         Listing::Store { venue, price } => match (resolved.asset.token, wallet) {
             (crate::types::TokenRef::Item { item_id }, Some(buyer)) => {
@@ -167,9 +190,9 @@ async fn mana_execution(
             _ => Err("a mint names its beneficiary: sign in for the unit calldata".to_string()),
         },
         Listing::Trade { trade, venue, coupon: Some(coupon), .. } => {
-            calls::accept_with_coupon(chain, *venue, trade, coupon, caller, Some(amount.get())).map_err(|e| e.to_string())
+            calls::accept_with_coupon(chain, *venue, trade, coupon, caller, Some(approve)).map_err(|e| e.to_string())
         }
-        Listing::Trade { trade, venue, coupon: None, .. } => calls::accept(chain, *venue, trade, caller, Some(amount.get())).map_err(|e| e.to_string()),
+        Listing::Trade { trade, venue, coupon: None, .. } => calls::accept(chain, *venue, trade, caller, Some(approve)).map_err(|e| e.to_string()),
         Listing::LegacyOrder { order, .. } => match resolved.asset.token {
             crate::types::TokenRef::Token { token_id } => calls::execute_order(chain, resolved.asset.contract.address(), token_id, order.price, fingerprint).map_err(|e| e.to_string()),
             _ => Err("a legacy order sells a token".to_string()),
@@ -647,9 +670,15 @@ mod tests {
         );
         assert_eq!(call._trades[0].signer, creator);
         assert_eq!(
-            execution.allowance.map(|a| a.amount),
-            Some(discounted),
-            "the buyer approves the discounted amount"
+            execution.allowance.as_ref().map(|a| a.amount.get()),
+            Some(super::super::feed_rate::usd_pegged_allowance(
+                discounted.get()
+            )),
+            "the buyer approves the discounted amount, plus upstream's 2% for a USD-pegged trade"
+        );
+        assert_eq!(
+            execution.allowance.as_ref().map(|a| a.amount.get()),
+            Some(U256::from(1_530_000_000_000_000_000u128))
         );
         db.drop().await;
     }

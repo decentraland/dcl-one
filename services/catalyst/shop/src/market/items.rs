@@ -865,16 +865,31 @@ pub fn rate_to_numeric_string(rate: f64) -> String {
     format!("{rate:.18}")
 }
 
-/// The Shop's MANA/USD (`price::store::shop_rate`: the marketplace feed's
-/// answer where the `shop-mana-rate` job runs, else the `mana-price-poll`
-/// spot), memoized 60 s, accepted only while younger than
-/// `price::store::SNAPSHOT_MAX_AGE`; otherwise the price route's unavailable
-/// envelope. There is no fallback rate: a credit price from a constant is a
-/// wrong checkout amount (the 0.02 the slice first shipped priced 75 MANA
-/// items at 15 credits against 69 at the day's spot).
+/// The Shop's MANA/USD. Where the marketplace's feed is wired
+/// (`mana::feed_rate`), its answer read live, and the price route's
+/// unavailable envelope when that read fails. Otherwise the spot: the newest
+/// row of `economy.price_snapshots` from any source (the `mana-price-poll`
+/// job's archive: CoinGecko, or the exchange it fell back to), as the price
+/// route reads it, memoized 60 s, accepted only while younger than
+/// `price::store::SNAPSHOT_MAX_AGE`; otherwise the same envelope. There is no
+/// fallback rate: a credit price from a constant is a wrong checkout amount
+/// (the 0.02 the slice first shipped priced 75 MANA items at 15 credits
+/// against 69 at the day's spot).
 pub async fn mana_usd_rate(state: &MarketplaceState) -> Result<f64, Response> {
+    if let Some(feed) = crate::mana::feed_rate::read().await {
+        return feed
+            .ok()
+            .and_then(|read| read.usd_per_mana.parse::<f64>().ok())
+            .filter(|r| r.is_finite() && *r > 0.0)
+            .ok_or_else(|| {
+                crate::price::unavailable(
+                    "the marketplace's MANA/USD feed could not be read; credit prices need its answer",
+                )
+            });
+    }
     let v = cached(state, Ttl::S60, "economy:mana_usd".into(), || async {
-        let row = crate::price::store::shop_rate(&state.pool, Utc::now())
+        let row: Option<(String, chrono::NaiveDateTime)> = sqlx::query_as("SELECT mana_usd::text, taken_at FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1")
+            .fetch_optional(&state.pool)
             .await
             .map_err(|e| e.to_string())?;
         Ok(match row {

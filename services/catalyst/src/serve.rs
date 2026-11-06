@@ -703,9 +703,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .context("provisioning the economy relayers")?,
     );
     shop::checkout::spawn_jobs(&economy_state, &jobs);
-    shop::mana::feed_rate::spawn(
-        &jobs,
-        pool.clone(),
+    shop::mana::feed_rate::install(
         economy_state
             .settings
             .polygon_rpc_url
@@ -718,7 +716,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
                 ))
             }),
         economy_state.settings.mana_usd_aggregator,
-        economy_state.settings.data_writes_enabled,
     );
 
     let price = Arc::new(price::State::new(
