@@ -37,7 +37,7 @@ use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::ui::FocusPolicy;
-use bevy::window::{CursorGrabMode, PrimaryWindow, WindowResized};
+use bevy::window::{CursorGrabMode, PrimaryWindow};
 use cef_offscreen::prelude::{
     Browsers, CefOffscreenPlugin, CefWebviewUri, HostEmitEvent, JsEmitEventPlugin, RenderTexture,
     WebviewSize,
@@ -240,10 +240,13 @@ fn spawn_hud(
         }
     }
 
-    let (w, h) = windows
+    let size = windows
         .single()
-        .map(|w| (w.width(), w.height()))
-        .unwrap_or((1280.0, 720.0));
+        .map(WebviewSize::from)
+        .unwrap_or(WebviewSize {
+            logical: Vec2::new(1280.0, 720.0),
+            scale_factor: 1.0,
+        });
 
     // Placeholder until the first CEF paint arrives (update_hud_texture replaces it wholesale).
     let image = images.add(Image::new_fill(
@@ -259,9 +262,7 @@ fn spawn_hud(
     ));
 
     info!("[react-hud-cef] loading {url}");
-    let hud = commands
-        .spawn((CefWebviewUri::new(url), WebviewSize(Vec2::new(w, h))))
-        .id();
+    let hud = commands.spawn((CefWebviewUri::new(url), size)).id();
 
     commands.spawn((
         HudUiNode,
@@ -299,8 +300,8 @@ fn spawn_hud(
     });
 }
 
-// Copy each CEF OSR paint into the HUD image (BGRA, logical-pixel sized — the buffer is 1:1 with
-// WebviewSize). RenderAssetUsages::all() keeps the CPU copy that route_mouse alpha-tests.
+// Copy the CEF paint in device pixels. RenderAssetUsages::all() keeps the CPU copy
+// that route_mouse alpha-tests.
 fn update_hud_texture(
     mut er: EventReader<RenderTexture>,
     state: Option<Res<ReactHudCef>>,
@@ -314,9 +315,9 @@ fn update_hud_texture(
         let Some(image) = images.get_mut(&state.image) else {
             continue;
         };
-        if image.width() == 1 {
+        if image.width() != tex.width || image.height() != tex.height {
             info!(
-                "[react-hud-cef] first paint: {}x{} ({} bytes)",
+                "[react-hud-cef] paint buffer: {}x{} ({} bytes)",
                 tex.width,
                 tex.height,
                 tex.buffer.len()
@@ -336,9 +337,10 @@ fn update_hud_texture(
     }
 }
 
-// Alpha of the HUD texture at a logical-pixel position; the texture maps 1:1 onto the window.
-fn hud_alpha_at(image: &Image, pos: Vec2) -> u8 {
+// Match the fullscreen image's mapping even while CEF is repainting after a resize.
+fn hud_alpha_at(image: &Image, window_uv: Vec2) -> u8 {
     let (w, h) = (image.width() as usize, image.height() as usize);
+    let pos = window_uv * image.size().as_vec2();
     let (x, y) = (pos.x as usize, pos.y as usize);
     if x >= w || y >= h {
         return 0;
@@ -353,6 +355,32 @@ fn hud_alpha_at(image: &Image, pos: Vec2) -> u8 {
 
 // Click cadence for CEF's click_count (2 = word select, 3 = paragraph select): with no OS window
 // under the webview, multi-click detection is the host's job.
+#[cfg(test)]
+mod hit_tests {
+    use super::*;
+
+    #[test]
+    fn samples_the_painted_pixel_at_fractional_dpi() {
+        // A 2×2 logical viewport at 150% has a 3×3 paint buffer. Only its
+        // bottom-right device pixel covers the world.
+        let mut pixels = vec![0; 3 * 3 * 4];
+        pixels[35] = 255;
+        let image = Image::new(
+            Extent3d {
+                width: 3,
+                height: 3,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            pixels,
+            TextureFormat::Bgra8UnormSrgb,
+            RenderAssetUsages::all(),
+        );
+        assert_eq!(hud_alpha_at(&image, Vec2::splat(0.75)), 255);
+        assert_eq!(hud_alpha_at(&image, Vec2::splat(0.25)), 0);
+    }
+}
+
 #[derive(Default)]
 struct MultiClick {
     button: Option<MouseButton>,
@@ -391,7 +419,11 @@ fn route_mouse(
     };
 
     let over = cursor
-        .and_then(|c| images.get(&state.image).map(|img| hud_alpha_at(img, c)))
+        .and_then(|c| {
+            images
+                .get(&state.image)
+                .map(|img| hud_alpha_at(img, c / window.size()))
+        })
         .is_some_and(|alpha| alpha > 8);
 
     if over != state.over_ui {
@@ -871,25 +903,17 @@ fn player_ready(
     state.player_ready_sent = true;
 }
 
-// Track window resizes: update the webview size (bevy_cef pushes WasResized to CEF). The HUD's
-// own geometry (--ui-scale, the engine cutout rects) is NOT pushed from here — it is keyed off
-// UiCanvasInformation, which the bridge scene reports on every platform; see
-// react-web/src/lib/uiCanvasStore.ts.
+// Track both logical size and DPI. Moving between monitors can change only the latter.
 fn resize_hud(
-    mut resized: EventReader<WindowResized>,
     state: Option<Res<ReactHudCef>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut webviews: Query<&mut WebviewSize>,
 ) {
-    if resized.is_empty() {
-        return;
-    }
-    resized.clear();
     let (Some(state), Ok(window)) = (state, windows.single()) else {
         return;
     };
     if let Ok(mut ws) = webviews.get_mut(state.hud) {
-        ws.0 = Vec2::new(window.width(), window.height());
+        ws.set_if_neq(WebviewSize::from(window));
     }
 }
 

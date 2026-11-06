@@ -1,9 +1,10 @@
+use crate::components::WebviewSize;
 use async_channel::{Receiver, Sender};
 use bevy::prelude::{Entity, Event};
 use cef::rc::{Rc, RcImpl};
 use cef::{
     Browser, CefString, ImplRenderHandler, PaintElementType, Range, Rect, RenderHandler,
-    WrapRenderHandler, sys,
+    ScreenInfo, WrapRenderHandler, sys,
 };
 use cef_dll_sys::cef_paint_element_type_t;
 use std::cell::Cell;
@@ -36,7 +37,7 @@ pub enum RenderPaintElementType {
     Popup,
 }
 
-pub type SharedViewSize = std::rc::Rc<Cell<bevy::prelude::Vec2>>;
+pub type SharedViewSize = std::rc::Rc<Cell<WebviewSize>>;
 pub type SharedImeCaret = std::rc::Rc<Cell<u32>>;
 
 /// ## Reference
@@ -102,10 +103,20 @@ impl Clone for RenderHandlerBuilder {
 impl ImplRenderHandler for RenderHandlerBuilder {
     fn view_rect(&self, _browser: Option<&mut Browser>, rect: Option<&mut Rect>) {
         if let Some(rect) = rect {
-            let size = self.size.get();
+            let size = self.size.get().logical;
             rect.width = size.x as _;
             rect.height = size.y as _;
         }
+    }
+
+    fn screen_info(
+        &self,
+        _browser: Option<&mut Browser>,
+        screen_info: Option<&mut ScreenInfo>,
+    ) -> c_int {
+        let Some(info) = screen_info else { return 0 };
+        info.device_scale_factor = self.size.get().scale_factor;
+        1
     }
 
     fn on_text_selection_changed(
