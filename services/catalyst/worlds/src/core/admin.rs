@@ -8,7 +8,9 @@
 //! is at least an hour and the upload window; like every POST here it is
 //! behind `WORLDS_WRITES_ENABLED`, and it runs without the 30 s request
 //! deadline (a full store walk). One run at a time (503 + `Retry-After`
-//! otherwise); a bad or missing bearer is 401, as upstream.
+//! otherwise); a bad or missing bearer is 401, as upstream. A run that
+//! deletes also reclaims expired partial uploads and reports them under
+//! `expiredUploads`.
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -123,20 +125,25 @@ pub async fn garbage_collect(
                 options,
             )
             .await;
+            // Its deferral or failures do not undo the sweep: reported beside it, retried by its job.
+            let expired = match (&result, options.dry_run) {
+                (Ok(_), false) => Some(super::partial::delete_expired_uploads(&state).await),
+                _ => None,
+            };
             if let Err(e) = run_lock.commit().await {
                 tracing::warn!(error = %e, "releasing the gc run lock");
             }
-            result
+            result.map(|report| (report, expired))
         })
     };
     let result = run
         .await
         .map_err(|e| ApiError::internal(format!("gc task: {e}")))?;
     let elapsed = started.elapsed();
-    let report = match result {
-        Ok(report) => {
+    let (report, expired_uploads) = match result {
+        Ok((report, expired_uploads)) => {
             metrics::gc_run("success", elapsed, report.removed, report.removed_bytes);
-            report
+            (report, expired_uploads)
         }
         Err(catalyst_storage::gc::GcError::LockTimeout) => {
             metrics::gc_run("deferred", elapsed, 0, 0);
@@ -176,6 +183,7 @@ pub async fn garbage_collect(
         "scanned": report.scanned,
         "activeKeys": report.references,
         "minAgeSeconds": report.min_age_seconds,
+        "expiredUploads": expired_uploads,
     }))
     .into_response())
 }

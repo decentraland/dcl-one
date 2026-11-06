@@ -39,6 +39,7 @@ pub(crate) use dcl_http as http;
 pub mod about;
 mod available_content;
 pub mod core;
+pub mod ens;
 pub mod fed;
 pub mod index;
 pub mod mirror;
@@ -209,6 +210,8 @@ pub struct WorldsState {
     /// `READ_THROUGH_ENABLED` with the mirror on: a world held with no scene is mirrored on
     /// first read ([`WorldsState::fill_world`]).
     read_through: OnceLock<WorldReadThrough>,
+    /// The permission core `/about` resolves a world's live holder through.
+    policy: OnceLock<Arc<policy::Policy>>,
     /// The DAO name deny list `/about` applies.
     pub names: core::names::NameDenyList,
 }
@@ -241,6 +244,7 @@ impl WorldsState {
             http,
             preview_memo: preview_wearables::memo(),
             read_through: OnceLock::new(),
+            policy: OnceLock::new(),
             names: core::names::NameDenyList::default(),
         }
     }
@@ -249,6 +253,15 @@ impl WorldsState {
     /// mirror it never fills: the mirror's source and guards are the world source.
     pub fn attach_read_through(&self, read_through: WorldReadThrough) -> bool {
         self.read_through.set(read_through).is_ok()
+    }
+
+    /// Attaches the permission core once; `false` if one was attached already.
+    pub fn attach_policy(&self, policy: Arc<policy::Policy>) -> bool {
+        self.policy.set(policy).is_ok()
+    }
+
+    pub fn policy(&self) -> Option<&Arc<policy::Policy>> {
+        self.policy.get()
     }
 
     pub fn read_through(&self) -> Option<&WorldReadThrough> {

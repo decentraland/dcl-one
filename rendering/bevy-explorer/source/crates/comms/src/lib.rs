@@ -564,10 +564,10 @@ pub(crate) async fn mint_gatekeeper_adapter(
     for (k, v) in headers {
         request = request.header(k, v);
     }
-    let response = request.send().await?;
+    let response = platform::TracedJsonResponse::send(request).await?;
 
     if response.status() != StatusCode::OK {
-        return Err(anyhow::anyhow!("status: {}", response.status()));
+        return Err(anyhow::anyhow!("status: {}", response.discard()));
     }
 
     Ok(response.json::<GatekeeperResponse>().await?.adapter)

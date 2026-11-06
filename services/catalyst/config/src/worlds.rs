@@ -114,6 +114,23 @@ pub struct WorldsConfig {
     #[arg(long, env = "MAX_PARCELS", default_value_t = 4, value_parser = clap::value_parser!(u32).range(1..))]
     pub max_parcels: u32,
 
+    /// Publish and own ENS (`*.eth`) worlds, their holder read on chain over ETH_RPC_URL.
+    #[arg(long, env = "ALLOW_ENS_DOMAINS", default_value_t = false, action = clap::ArgAction::Set)]
+    pub allow_ens_domains: bool,
+
+    /// Size cap of an ENS world, MiB, unless `worlds.world_limit_overrides` says otherwise.
+    #[arg(long, env = "ENS_MAX_SIZE", default_value_t = 36, value_parser = clap::value_parser!(u32).range(1..=300))]
+    pub ens_max_size: u32,
+
+    /// Pause between passes of the job that rewrites `worlds.owner` from the name authority.
+    #[arg(
+        long,
+        env = "WORLDS_OWNER_RECONCILE_INTERVAL_SECS",
+        default_value_t = 12 * 3600,
+        value_parser = clap::value_parser!(u64).range(60..)
+    )]
+    pub worlds_owner_reconcile_interval_secs: u64,
+
     /// Entries a deployed entity's `content` may list, at most the 10,000 file parts a deploy may upload.
     #[arg(long, env = "MAX_FILE_COUNT", default_value_t = 10_000, value_parser = clap::value_parser!(u32).range(1..=10_000))]
     pub max_file_count: u32,
@@ -158,6 +175,45 @@ pub struct WorldsConfig {
         default_value_t = 300_000
     )]
     pub deployment_processing_timeout_ms: u64,
+
+    // PENDING_DEPLOYMENT_TTL, MAX_PENDING_DEPLOYMENTS_PER_DEPLOYER, MAX_PENDING_BYTES_PER_DEPLOYER,
+    // MAX_PENDING_BYTES and MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE are read from `content`.
+    /// How often expired partial uploads are cleaned up, ms.
+    #[arg(
+        long,
+        env = "PARTIAL_UPLOAD_CLEANUP_INTERVAL_MS",
+        default_value_t = 300_000
+    )]
+    pub partial_upload_cleanup_interval_ms: u64,
+
+    /// Live partial uploads per world; one deployer may hold all but one of them.
+    #[arg(long, env = "MAX_PENDING_DEPLOYMENTS_PER_WORLD", default_value_t = 4)]
+    pub max_pending_deployments_per_world: u64,
+
+    /// Staged content bytes per world, as a multiple of the world's scene size cap.
+    #[arg(long, env = "PENDING_BYTES_PER_WORLD_FACTOR", default_value_t = 2)]
+    pub pending_bytes_per_world_factor: u64,
+
+    /// Staged bytes the live uploads started from one client source may hold
+    /// (>= MAX_PENDING_BYTES_PER_DEPLOYER).
+    #[arg(
+        long,
+        env = "MAX_PENDING_BYTES_PER_SOURCE",
+        default_value_t = 4_294_967_296
+    )]
+    pub max_pending_bytes_per_source: u64,
+
+    /// How long a completed partial upload answers its retried final batch, ms.
+    #[arg(long, env = "COMPLETED_UPLOAD_TTL", default_value_t = 86_400_000)]
+    pub completed_upload_ttl: u64,
+
+    /// The Builder whose `/worlds?tab=dcl` page world notifications link to.
+    #[arg(
+        long,
+        env = "BUILDER_URL",
+        default_value = "https://decentraland.org/builder"
+    )]
+    pub builder_url: String,
 
     /// 64 hex characters (or ENCRYPTION_KEY_FILE): the AES-256-GCM key of the
     /// env values; unset, the `/env` routes answer 503 and the rest serve.
@@ -511,6 +567,34 @@ mod tests {
                 c.worlds.deployment_processing_timeout_ms
             ),
             (4_294_967_296, 40, 40_000, 300_000, 300_000)
+        );
+        let w = &c.worlds;
+        assert_eq!(
+            (
+                c.content.pending_deployment_ttl_ms,
+                w.partial_upload_cleanup_interval_ms,
+                c.content.max_pending_deployments_per_deployer,
+                w.max_pending_deployments_per_world,
+                w.pending_bytes_per_world_factor,
+                c.content.max_pending_bytes_per_deployer,
+                w.max_pending_bytes_per_source,
+                c.content.max_pending_bytes,
+                c.content.max_partial_upload_bytes_per_minute,
+                w.completed_upload_ttl
+            ),
+            (
+                3_600_000,
+                300_000,
+                10,
+                4,
+                2,
+                1_073_741_824,
+                4_294_967_296,
+                53_687_091_200,
+                536_870_912,
+                86_400_000
+            ),
+            "worlds-content-server's .env.default"
         );
         assert!(c.worlds.encryption_key.is_none());
         assert_eq!(c.worlds.authorized_addresses, "");

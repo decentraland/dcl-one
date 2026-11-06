@@ -23,6 +23,21 @@ use futures_util::{
 use serde::Serialize;
 pub use tungstenite::client::IntoClientRequest;
 use ws_stream_wasm::{WsMessage, WsMeta, WsStream};
+
+pub(crate) struct Trace;
+
+impl Trace {
+    pub(crate) fn start(_request: &reqwest::Request) -> Option<Self> {
+        None
+    }
+
+    pub(crate) fn response(&self, _response: &reqwest::Response) {}
+
+    pub(crate) fn finish(&mut self, _size: u64) {}
+
+    pub(crate) fn fail(&mut self, _reason: &str) {}
+}
+
 pub struct WebSocket {
     _meta: WsMeta,
     stream: WsStream,
@@ -381,4 +396,31 @@ pub mod deeplink {
     ) -> Result<String, anyhow::Error> {
         anyhow::bail!("deep-link sign-in is not available on web")
     }
+}
+
+mod web_client_logins {
+    use wasm_bindgen::prelude::*;
+    #[wasm_bindgen(module = "/src/web_client_logins.js")]
+    extern "C" {
+        #[wasm_bindgen(catch, js_name = clientLoginsRead)]
+        pub async fn read() -> Result<JsValue, JsValue>;
+        #[wasm_bindgen(catch, js_name = clientLoginsWrite)]
+        pub async fn write(json: &str) -> Result<JsValue, JsValue>;
+    }
+}
+
+pub async fn client_logins_read() -> Result<String, String> {
+    web_client_logins::read()
+        .await
+        .map_err(|e| js_error_message(&e))?
+        .as_string()
+        .ok_or_else(|| "invalid login queue".into())
+}
+
+pub async fn client_logins_write(json: String) -> Result<String, String> {
+    web_client_logins::write(&json)
+        .await
+        .map_err(|e| js_error_message(&e))?
+        .as_string()
+        .ok_or_else(|| "invalid login queue receipt".into())
 }

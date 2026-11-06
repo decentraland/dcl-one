@@ -23,15 +23,34 @@ use crate::shared::identity::is_valid_eth_address;
 use super::ChainIndex;
 
 pub const THE_GRAPH_PAGE_SIZE: i64 = 1000;
-/// Pages walked per owner and network before the answer is cut off: 10,000
-/// tokens, past which the explorer paginates a truncated set rather than the
-/// node walking a whale's inventory on every request.
+/// Pages walked per owner before the ownership reads (comms admission, the
+/// worlds NAME owner, profiles and outfits) and the parcel lookups are cut off.
 const MAX_PAGES: usize = 10;
+/// The owned wearables or emotes walk reads every page, as lamb2's subgraph
+/// fallback does (decentraland/lamb2:src/logic/fetch-elements/fetch-elements.ts:13-46).
+/// This is only a runaway guard: 1,000 pages is 1,000,000 tokens on one
+/// network, past which the read fails (502) rather than answer a truncated
+/// list. Each page is one subgraph request (at most 1,000 copies, a few
+/// hundred KiB), sequential per network, both networks in parallel, the
+/// result memoized [`OWNED_TTL`] per owner and category: an owner of `n`
+/// tokens on a network costs `n / 1000 + 1` requests there.
+const OWNED_MAX_PAGES: usize = 1000;
+/// Pages walked for the lambdas `/names` and `/lands` lists, which lamb2
+/// walks to the end (`fetchAllNFTs`): a guard against a subgraph that never
+/// answers a short page (1,000,000 rows), not a cut-off. Each page is one
+/// sequential GraphQL request of 1000 rows per uncached owner, so only those
+/// routes walk this far; admission, ownership checks and profiles keep
+/// [`MAX_PAGES`].
+pub(crate) const FULL_WALK_PAGES: usize = 1000;
 const BODY_CAP: usize = 8 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const RETRY_ATTEMPTS: u32 = 3;
 const RETRY_BASE_MS: u64 = 500;
 pub const OWNED_TTL: Duration = Duration::from_secs(30);
+/// How long after its fetch the lambdas `/users/{a}/names` route still
+/// answers an owner's names when the subgraph fails: lamb2's `maxAge +
+/// maxStaleAge` (`elements-fetcher.ts`, `ELEMENTS_CACHE_DEFAULTS`).
+pub const NAMES_STALE_MAX_AGE: Duration = Duration::from_secs(120);
 const OWNED_CACHE_MAX_ENTRIES: usize = 20_000;
 /// Owners folded into one aliased ownership document.
 const OWNERS_PER_QUERY: usize = 20;
@@ -124,17 +143,24 @@ pub struct OwnedLand {
     pub name: Option<String>,
     pub x: Option<i32>,
     pub y: Option<i32>,
-    /// `Some` when the LAND carries a data record (its description, possibly empty).
-    pub description: Option<String>,
+    /// `Some` when the LAND carries a data record, holding its description
+    /// (`None` for a null one, answered `null` as lamb2's `fetch-lands.ts`
+    /// passes it through); `None` without a record (no key).
+    pub description: Option<Option<String>>,
     pub price: Option<String>,
+    /// The subgraph's `nft.image` (the map service's PNG), which lamb2's
+    /// `/lands` answers as is; `None` on the index path, which synthesizes it.
+    pub image: Option<String>,
     pub transferred_at: i64,
 }
 
 pub struct Caches {
     /// `(owner, category)` -> every copy the owner holds across both networks.
     owned: TtlMap<(String, String), Arc<Vec<OwnedCopy>>>,
-    /// `owner` -> the ENS names the owner holds.
+    /// `owner` -> the ENS names the owner holds, cut off at [`MAX_PAGES`].
     pub names: TtlMap<String, Arc<Vec<OwnedName>>>,
+    /// `owner` -> every ENS name the owner holds ([`FULL_WALK_PAGES`]).
+    all_names: TtlMap<String, Arc<Vec<OwnedName>>>,
     /// The sorted coordinate list of a place -> its parcels and their owners.
     land: TtlMap<Vec<(i32, i32)>, Arc<Vec<LandParcel>>>,
     /// lowercased DCL name -> its holder.
@@ -143,11 +169,23 @@ pub struct Caches {
     lands: TtlMap<String, Arc<Vec<OwnedLand>>>,
 }
 
+impl Caches {
+    /// Ages `owner`'s names and lands entries by `by`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn backdate_owner_for_tests(&self, owner: &str, by: Duration) {
+        let owner = owner.to_lowercase();
+        self.names.backdate(&owner, by);
+        self.all_names.backdate(&owner, by);
+        self.lands.backdate(&owner, by);
+    }
+}
+
 impl Default for Caches {
     fn default() -> Self {
         Self {
             owned: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
             names: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
+            all_names: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
             land: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
             name_owner: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
             lands: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
@@ -318,33 +356,47 @@ async fn owned_on_network(
         return Ok(Vec::new());
     };
     let query = QUERY_OWNED.replace("CATEGORY", category);
-    let mut out = Vec::new();
-    let mut id_from = String::new();
-    for _ in 0..MAX_PAGES {
-        let data = graph_query(
+    let pages = walk_owned_pages(OWNED_MAX_PAGES, |id_from| {
+        graph_query(
             state,
             url,
             &query,
             json!({ "owner": owner, "idFrom": id_from, "first": THE_GRAPH_PAGE_SIZE }),
         )
-        .await?;
+    })
+    .await
+    .map_err(|e| format!("{network:?} owned {category}s of {owner}: {e}"))?;
+    Ok(pages
+        .iter()
+        .flat_map(|data| parse_owned_copies(data, category))
+        .collect())
+}
+
+/// The `id_gt` walk: every page until a short one, or an error once
+/// `max_pages` full pages leave more to read.
+async fn walk_owned_pages<F, Fut>(max_pages: usize, mut page: F) -> Result<Vec<Value>, String>
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Result<Value, String>>,
+{
+    let mut out = Vec::new();
+    let mut id_from = String::new();
+    for _ in 0..max_pages {
+        let data = page(id_from).await?;
         let n = page_len(&data);
-        out.extend(parse_owned_copies(&data, category));
+        let next = last_id(&data);
+        out.push(data);
         if (n as i64) < THE_GRAPH_PAGE_SIZE {
             return Ok(out);
         }
-        match last_id(&data) {
+        match next {
             Some(id) => id_from = id,
             None => return Ok(out),
         }
     }
-    tracing::warn!(
-        owner,
-        category,
-        ?network,
-        "owned items cut off at {MAX_PAGES} pages"
-    );
-    Ok(out)
+    Err(format!(
+        "more than {max_pages} pages of {THE_GRAPH_PAGE_SIZE}"
+    ))
 }
 
 /// Every copy of `category` (`wearable` | `emote`) the owner holds on both
@@ -387,14 +439,14 @@ fn alias(i: usize) -> String {
 }
 
 /// One aliased document per network and chunk of owners: `oN: nfts(where:
-/// {owner, urn_in}) { urn }`. Owners are validated hex addresses and the
-/// URNs are JSON-encoded, so the inlined literals cannot break the document.
+/// {owner, urn_in}) { urn tokenId }`. Owners are validated hex addresses and
+/// the URNs are JSON-encoded, so the inlined literals cannot break the document.
 fn ownership_document(chunk: &[(&str, &[String])]) -> String {
     let mut doc = String::from("query {");
     for (i, (owner, urns)) in chunk.iter().enumerate() {
         let urns = serde_json::to_string(urns).unwrap_or_else(|_| "[]".to_string());
         doc.push_str(&format!(
-            " {}: nfts(first: 1000, where: {{ owner: \"{}\", urn_in: {} }}) {{ urn }}",
+            " {}: nfts(first: 1000, where: {{ owner: \"{}\", urn_in: {} }}) {{ urn tokenId }}",
             alias(i),
             owner,
             urns
@@ -412,6 +464,19 @@ pub async fn owned_urns(
     state: &ChainIndex,
     requested: &HashSet<(String, String)>,
 ) -> Result<HashMap<String, HashSet<String>>, String> {
+    Ok(owned_tokens(state, requested)
+        .await?
+        .into_iter()
+        .map(|(owner, urns)| (owner, urns.into_keys().collect()))
+        .collect())
+}
+
+/// [`owned_urns`] with the token ids held of each URN, in subgraph order
+/// (by NFT id, as the reference lambdas' subgraph fallback lists them).
+pub async fn owned_tokens(
+    state: &ChainIndex,
+    requested: &HashSet<(String, String)>,
+) -> Result<HashMap<String, HashMap<String, Vec<String>>>, String> {
     let mut by_network: HashMap<Network, HashMap<String, Vec<String>>> = HashMap::new();
     for (owner, urn) in requested {
         if !is_valid_eth_address(owner) {
@@ -427,7 +492,7 @@ pub async fn owned_urns(
             .or_default()
             .push(normalize_urn(urn));
     }
-    let mut owned: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut owned: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
     for (network, owners) in by_network {
         let Some(url) = network.url(state) else {
             continue;
@@ -440,14 +505,21 @@ pub async fn owned_urns(
         for chunk in owners.chunks(OWNERS_PER_QUERY) {
             let data = graph_query(state, url, &ownership_document(chunk), json!({})).await?;
             for (i, (owner, _)) in chunk.iter().enumerate() {
-                let urns = data
+                let held = owned.entry((*owner).to_string()).or_default();
+                for nft in data
                     .get(alias(i))
                     .and_then(Value::as_array)
                     .into_iter()
                     .flatten()
-                    .filter_map(|n| n.get("urn").and_then(Value::as_str))
-                    .map(normalize_urn);
-                owned.entry((*owner).to_string()).or_default().extend(urns);
+                {
+                    let Some(urn) = nft.get("urn").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let tokens = held.entry(normalize_urn(urn)).or_default();
+                    if let Some(token) = nft.get("tokenId").and_then(Value::as_str) {
+                        tokens.push(token.to_string());
+                    }
+                }
             }
         }
     }
@@ -486,13 +558,29 @@ pub(crate) fn parse_names(data: &Value) -> Vec<OwnedName> {
         .collect()
 }
 
-/// The ENS names the owner holds, in subgraph id order. `Ok(empty)` when no
-/// marketplace subgraph is configured.
+/// The ENS names the owner holds, in subgraph id order, cut off at
+/// [`MAX_PAGES`]. `Ok(empty)` when no marketplace subgraph is configured.
 pub async fn owned_names(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<OwnedName>>, String> {
+    walk_names(state, &state.graph.names, owner, MAX_PAGES).await
+}
+
+/// Every ENS name the owner holds, for the lambdas `/names` list, which
+/// lamb2 walks to the end ([`FULL_WALK_PAGES`]).
+pub async fn all_owned_names(
+    state: &ChainIndex,
+    owner: &str,
+) -> Result<Arc<Vec<OwnedName>>, String> {
+    walk_names(state, &state.graph.all_names, owner, FULL_WALK_PAGES).await
+}
+
+async fn walk_names(
+    state: &ChainIndex,
+    cache: &TtlMap<String, Arc<Vec<OwnedName>>>,
+    owner: &str,
+    max_pages: usize,
+) -> Result<Arc<Vec<OwnedName>>, String> {
     let owner = owner.to_lowercase();
-    state
-        .graph
-        .names
+    cache
         .get_or_fetch(owner.clone(), || async move {
             let Some(url) = state.settings.marketplace_subgraph_url.as_deref() else {
                 return Ok(Arc::new(Vec::new()));
@@ -502,7 +590,7 @@ pub async fn owned_names(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<Owne
             }
             let mut out = Vec::new();
             let mut id_from = String::new();
-            for _ in 0..MAX_PAGES {
+            for _ in 0..max_pages {
                 let data = graph_query(
                     state,
                     url,
@@ -523,6 +611,24 @@ pub async fn owned_names(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<Owne
             Ok::<_, String>(Arc::new(out))
         })
         .await
+}
+
+/// [`all_owned_names`] for the lambdas `/users/{a}/names` list alone: when the
+/// subgraph fails, the last good list fetched within
+/// [`NAMES_STALE_MAX_AGE`], as lamb2 serves its stale entry. Never for an
+/// ownership decision (worlds' NAME owner, comms admission, profiles), which
+/// reads [`owned_names`] and fails on an outage.
+pub async fn owned_names_or_stale(
+    state: &ChainIndex,
+    owner: &str,
+) -> Result<Arc<Vec<OwnedName>>, String> {
+    all_owned_names(state, owner).await.or_else(|err| {
+        state
+            .graph
+            .all_names
+            .get_within(&owner.to_lowercase(), NAMES_STALE_MAX_AGE)
+            .ok_or(err)
+    })
 }
 
 /// The parcel NFTs standing on the requested coordinates. `searchParcelX_in`
@@ -660,6 +766,72 @@ pub async fn name_owner(state: &ChainIndex, name: &str) -> Result<Option<String>
         .map(|a| (*a).clone())
 }
 
+const QUERY_NAME_OWNERS: &str = r#"
+query nameOwners($names: [String!]!, $idFrom: ID!, $first: Int!) {
+  nfts(where: { category: ens, searchText_in: $names, id_gt: $idFrom }, orderBy: id, orderDirection: asc, first: $first) {
+    id
+    searchText
+    owner { id }
+  }
+}"#;
+
+/// DCL names asked about in one subgraph query by [`name_owners`].
+const NAMES_PER_QUERY: usize = 100;
+
+/// [`name_owner`] for many names at once, uncached (the background reconcile):
+/// each lowercased name maps to its first holder by id, `None` when nobody holds it.
+pub async fn name_owners(
+    state: &ChainIndex,
+    names: &[String],
+) -> Result<HashMap<String, Option<String>>, String> {
+    let mut names: Vec<String> = names.iter().map(|n| n.to_lowercase()).collect();
+    names.sort_unstable();
+    names.dedup();
+    let mut out: HashMap<String, Option<String>> =
+        names.iter().map(|n| (n.clone(), None)).collect();
+    let Some(url) = state.settings.marketplace_subgraph_url.as_deref() else {
+        return Ok(out);
+    };
+    for chunk in names.chunks(NAMES_PER_QUERY) {
+        let mut id_from = String::new();
+        for _ in 0..MAX_PAGES {
+            let data = graph_query(
+                state,
+                url,
+                QUERY_NAME_OWNERS,
+                json!({ "names": chunk, "idFrom": id_from, "first": THE_GRAPH_PAGE_SIZE }),
+            )
+            .await?;
+            for nft in data
+                .get("nfts")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let (Some(name), Some(owner)) = (
+                    nft.get("searchText").and_then(Value::as_str),
+                    nft.pointer("/owner/id")
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty()),
+                ) else {
+                    continue;
+                };
+                if let Some(slot @ None) = out.get_mut(&name.to_lowercase()) {
+                    *slot = Some(owner.to_lowercase());
+                }
+            }
+            if (page_len(&data) as i64) < THE_GRAPH_PAGE_SIZE {
+                break;
+            }
+            match last_id(&data) {
+                Some(id) => id_from = id,
+                None => break,
+            }
+        }
+    }
+    Ok(out)
+}
+
 const QUERY_OWNED_LANDS: &str = r#"
 query ownedLands($owner: String!, $idFrom: ID!, $first: Int!) {
   nfts(where: { owner: $owner, category_in: [parcel, estate], id_gt: $idFrom }, orderBy: id, orderDirection: asc, first: $first) {
@@ -674,6 +846,7 @@ query ownedLands($owner: String!, $idFrom: ID!, $first: Int!) {
     parcel { data { description } }
     estate { data { description } }
     activeOrder { price }
+    image
   }
 }"#;
 
@@ -691,8 +864,7 @@ pub(crate) fn parse_owned_lands(data: &Value) -> Vec<OwnedLand> {
             .map(|d| {
                 d.get("description")
                     .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string()
+                    .map(str::to_string)
             })
     };
     data.get("nfts")
@@ -713,6 +885,11 @@ pub(crate) fn parse_owned_lands(data: &Value) -> Vec<OwnedLand> {
                     .filter(|o| !o.is_null())
                     .map(|o| str_of(o, "price"))
                     .filter(|p| !p.is_empty()),
+                image: nft
+                    .get("image")
+                    .and_then(Value::as_str)
+                    .filter(|i| !i.is_empty())
+                    .map(str::to_string),
                 transferred_at: nft
                     .get("transferredAt")
                     .and_then(Value::as_str)
@@ -725,7 +902,7 @@ pub(crate) fn parse_owned_lands(data: &Value) -> Vec<OwnedLand> {
 }
 
 /// The parcels and estates `owner` holds, newest transfer first (the old
-/// `transferred_at DESC`), walked in id pages up to [`MAX_PAGES`].
+/// `transferred_at DESC`), walked in id pages to the end ([`FULL_WALK_PAGES`]).
 /// `Ok(empty)` when no marketplace subgraph is configured.
 pub async fn owned_lands(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<OwnedLand>>, String> {
     let owner = owner.to_lowercase();
@@ -741,7 +918,7 @@ pub async fn owned_lands(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<Owne
             }
             let mut out = Vec::new();
             let mut id_from = String::new();
-            for _ in 0..MAX_PAGES {
+            for _ in 0..FULL_WALK_PAGES {
                 let data = graph_query(
                     state,
                     url,
@@ -768,6 +945,23 @@ pub async fn owned_lands(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<Owne
             Ok::<_, String>(Arc::new(out))
         })
         .await
+}
+
+/// [`owned_lands`] for the lambdas `/users/{a}/lands` list: when the
+/// subgraph fails, the last good list whatever its age. lamb2's lands cache
+/// (`createLegacyElementsFetcherComponent`) stores the stale value again on
+/// a failed refresh, so it answers it for as long as the outage lasts.
+pub async fn owned_lands_or_stale(
+    state: &ChainIndex,
+    owner: &str,
+) -> Result<Arc<Vec<OwnedLand>>, String> {
+    owned_lands(state, owner).await.or_else(|err| {
+        state
+            .graph
+            .lands
+            .get_stale(&owner.to_lowercase())
+            .ok_or(err)
+    })
 }
 
 /// Whether `owner` holds any of the parcels at `coords`, directly or through
@@ -811,7 +1005,10 @@ mod tests {
             { "id": "parcel-0xF87E-5", "name": null, "contractAddress": "0xF87E", "tokenId": "5", "category": "parcel", "searchParcelX": "15", "searchParcelY": "-73",
               "transferredAt": "1693411667", "parcel": { "data": null }, "estate": null, "activeOrder": null },
             { "id": "estate-0x959e-9", "name": "Home", "contractAddress": "0x959e", "tokenId": "9", "category": "estate", "searchParcelX": null, "searchParcelY": null,
-              "transferredAt": "1700000000", "parcel": null, "estate": { "data": { "description": "" } }, "activeOrder": { "price": "1000" } }
+              "transferredAt": "1700000000", "parcel": null, "estate": { "data": { "description": "" } }, "activeOrder": { "price": "1000" },
+              "image": "https://api.decentraland.org/v1/estates/9/map.png" },
+            { "id": "parcel-0xF87E-6", "name": null, "contractAddress": "0xF87E", "tokenId": "6", "category": "parcel", "searchParcelX": "15", "searchParcelY": "-72",
+              "transferredAt": "1693411667", "parcel": { "data": { "description": null } }, "estate": null, "activeOrder": null }
         ] });
         let lands = parse_owned_lands(&data);
         assert_eq!(
@@ -825,6 +1022,7 @@ mod tests {
                 y: Some(-73),
                 description: None,
                 price: None,
+                image: None,
                 transferred_at: 1693411667
             }
         );
@@ -837,10 +1035,16 @@ mod tests {
                 name: Some("Home".into()),
                 x: None,
                 y: None,
-                description: Some(String::new()),
+                description: Some(Some(String::new())),
                 price: Some("1000".into()),
+                image: Some("https://api.decentraland.org/v1/estates/9/map.png".into()),
                 transferred_at: 1700000000
             }
+        );
+        assert_eq!(
+            lands[2].description,
+            Some(None),
+            "a null description stays null"
         );
     }
 
@@ -968,9 +1172,59 @@ mod tests {
         let a = vec!["urn:decentraland:matic:collections-v2:0xa:1".to_string()];
         let b = vec!["urn:x\"y".to_string(), "urn:z".to_string()];
         let doc = ownership_document(&[("0xaaaa", &a), ("0xbbbb", &b)]);
-        assert!(doc.starts_with("query { o0: nfts(first: 1000, where: { owner: \"0xaaaa\", urn_in: [\"urn:decentraland:matic:collections-v2:0xa:1\"] }) { urn }"), "{doc}");
-        assert!(doc.contains(" o1: nfts(first: 1000, where: { owner: \"0xbbbb\", urn_in: [\"urn:x\\\"y\",\"urn:z\"] }) { urn }"), "{doc}");
+        assert!(doc.starts_with("query { o0: nfts(first: 1000, where: { owner: \"0xaaaa\", urn_in: [\"urn:decentraland:matic:collections-v2:0xa:1\"] }) { urn tokenId }"), "{doc}");
+        assert!(doc.contains(" o1: nfts(first: 1000, where: { owner: \"0xbbbb\", urn_in: [\"urn:x\\\"y\",\"urn:z\"] }) { urn tokenId }"), "{doc}");
         assert!(doc.ends_with(" }"));
+    }
+
+    fn page_of(start: usize, n: usize) -> Value {
+        let nfts: Vec<Value> = (start..start + n)
+            .map(|i| json!({ "id": format!("0xc-{i:08}"), "urn": format!("urn:x:{i}") }))
+            .collect();
+        json!({ "nfts": nfts })
+    }
+
+    #[tokio::test]
+    async fn owned_walk_reads_every_page_and_fails_past_the_cap() {
+        let full = THE_GRAPH_PAGE_SIZE as usize;
+        let asked = std::sync::Mutex::new(Vec::new());
+        let pages = walk_owned_pages(3, |from| {
+            asked.lock().unwrap().push(from.clone());
+            let start = asked.lock().unwrap().len() - 1;
+            let n = if start == 2 { 7 } else { full };
+            async move { Ok(page_of(start * full, n)) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(pages.len(), 3, "a short third page ends the walk");
+        assert_eq!(
+            *asked.lock().unwrap(),
+            vec![
+                String::new(),
+                format!("0xc-{:08}", full - 1),
+                format!("0xc-{:08}", 2 * full - 1)
+            ],
+            "each page starts after the previous page's last id"
+        );
+
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let err = walk_owned_pages(3, |_| {
+            let i = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async move { Ok(page_of(i * full, full)) }
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert_eq!(
+            err,
+            format!("more than 3 pages of {full}"),
+            "never a truncated list"
+        );
+
+        let err = walk_owned_pages(3, |_| async { Err::<Value, _>("boom".to_string()) })
+            .await
+            .unwrap_err();
+        assert_eq!(err, "boom");
     }
 
     #[tokio::test]
@@ -983,6 +1237,24 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("not a publicly routable"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn name_owners_answers_many_names_in_one_query_without_caching() {
+        let (index, names) = test_support::index_with_names().await;
+        let holder =
+            crate::shared::identity::Address::parse("0x00000000000000000000000000000000000000aa")
+                .unwrap();
+        names.set(&holder, "Alpha");
+        let asked = ["alpha".to_string(), "BETA".to_string()];
+        let owners = name_owners(&index, &asked).await.unwrap();
+        assert_eq!(owners.len(), 2);
+        assert_eq!(owners["alpha"].as_deref(), Some(holder.as_str()));
+        assert_eq!(owners["beta"], None);
+        assert!(
+            index.graph.name_owner.is_empty(),
+            "the admission memo is untouched"
+        );
     }
 }
 
@@ -1026,7 +1298,35 @@ pub mod test_support {
         axum::Json(body): axum::Json<Value>,
     ) -> axum::response::Response {
         let query = body["query"].as_str().unwrap_or("");
-        let nfts: Vec<Value> = if query.contains("nameOwner(") {
+        let nfts: Vec<Value> = if query.contains("nameOwners(") {
+            if !body["variables"]["idFrom"]
+                .as_str()
+                .unwrap_or("")
+                .is_empty()
+            {
+                return axum::Json(json!({ "data": { "nfts": [] } })).into_response();
+            }
+            let wanted: Vec<String> = body["variables"]["names"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_lowercase)
+                .collect();
+            let registry = names.0.lock().unwrap();
+            let mut out: Vec<Value> = registry
+                .iter()
+                .flat_map(|(owner, labels)| {
+                    labels
+                        .iter()
+                        .map(|l| l.to_lowercase())
+                        .filter(|l| wanted.contains(l))
+                        .map(move |l| json!({ "id": format!("0xname-{l}-{owner}"), "searchText": l, "owner": { "id": owner } }))
+                })
+                .collect();
+            out.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+            out
+        } else if query.contains("nameOwner(") {
             let name = body["variables"]["name"]
                 .as_str()
                 .unwrap_or("")

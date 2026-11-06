@@ -291,6 +291,10 @@ pub struct DecentralandArguments {
     /// harness's spelling `-logFile` is accepted too
     #[arg(long, value_name = "path", help_heading = DEBUG)]
     pub log_file: Option<std::path::PathBuf>,
+    /// Expose observed native engine HTTP transfers to Chrome DevTools on a loopback port
+    #[cfg(not(target_arch = "wasm32"))]
+    #[arg(long, value_name = "port", help_heading = DEBUG)]
+    pub network_devtools: Option<u16>,
     // `--automation-token` and `--automation-port`: the loopback console server
     #[cfg(not(target_arch = "wasm32"))]
     #[command(flatten)]

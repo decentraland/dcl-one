@@ -14,13 +14,14 @@
 // with credits; the seller ends the discount. It mints two units each run, so it runs while supply lasts.
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { createPublicClient, erc721Abi, erc20Abi, formatEther, http, isAddress, keccak256, parseAbi, parseEther, toHex, type Hex } from "viem";
+import { createPublicClient, erc721Abi, erc20Abi, formatEther, http, isAddress, keccak256, parseAbi, parseEther, toHex, zeroAddress, type Hex } from "viem";
 import { generatePrivateKey } from "viem/accounts";
 import { polygonAmoy } from "viem/chains";
-import type { Browser, BrowserContext, Page } from "playwright-core";
+import type { Browser, BrowserContext, Page, Response } from "playwright-core";
 import { launch } from "./lib/browser.mts";
 import { journeyEnv, parseDiscount, parseItem, parseToken, parseTopup } from "./lib/env.mts";
 import { signedPost } from "./lib/signed.mts";
+import { chargedMana, collectionInRoot, couponData, couponProofs, settledCall, soldItem } from "./lib/settlement.mts";
 import { answer, DEFAULT_RPC, keyFrom, PAGE_PROVIDER, testnetWallet, type TestnetWallet } from "./lib/wallet.mts";
 
 const AMOY_MANA = "0x7ad72b9f944ea9793cf4055d88f81138cc2c63a0" as const;
@@ -356,6 +357,128 @@ async function quotedMana(page: Page): Promise<bigint | null> {
   }
 }
 
+const MANA_TRANSFER = keccak256(toHex("Transfer(address,address,uint256)"));
+// ERC-721 shares the signature; its token id is the third indexed topic.
+const ERC721_TRANSFER = MANA_TRANSFER;
+const FEED = parseAbi([
+  "function manaUsdAggregator() view returns (address)",
+  "function latestRoundData() view returns (uint80, int256, uint256, uint256, uint80)",
+  "function decimals() view returns (uint8)",
+]);
+
+/**
+ * The buyer's unit was minted by a transaction that settled through acceptWithCoupon with the seller's rate
+ * coupon for `pct`, covering the collection, applied by Amoy's coupon manager, and charging the MANA the contract
+ * charges: the coupon on each signed amount, then a USD price converted at the feed round of that block.
+ */
+const AMOY_MARKETPLACE_V3 = "0x36fd1434a6c4b8ade80c9847c1d15033ce34488c";
+const COLLECTION_V2 = parseAbi([
+  "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
+  "function decodeTokenId(uint256 id) view returns (uint256 itemId, uint256 issuedId)",
+]);
+
+/** Transaction hashes the page sent while `run` ran: the wallet's own sends and the relay's `txHash` answers. */
+async function hashesSentDuring(a: Actor, run: () => Promise<void>): Promise<Hex[]> {
+  const relayed: Hex[] = [];
+  const pending: Promise<void>[] = [];
+  const listener = (response: Response) => {
+    if (response.request().method() !== "POST") return;
+    pending.push(
+      response.json().then(
+        (body: unknown) => {
+          const hash = (body as { txHash?: unknown } | null)?.txHash;
+          if (typeof hash === "string" && /^0x[0-9a-fA-F]{64}$/.test(hash)) relayed.push(hash as Hex);
+        },
+        () => {},
+      ),
+    );
+  };
+  const before = a.wallet.sent.length;
+  a.page.on("response", listener);
+  try {
+    await run();
+  } finally {
+    a.page.off("response", listener);
+    await Promise.all(pending);
+  }
+  return [...new Set([...a.wallet.sent.slice(before), ...relayed].map((h) => h.toLowerCase() as Hex))];
+}
+
+/**
+ * The transaction that minted one unit of `item` to the buyer: among the hashes the purchase sent, the one
+ * whose receipt mints it, or, when the page sent none we could see, the single such mint since `fromBlock`.
+ * A mint is a Transfer from the zero address to the buyer of a token whose item is `item.itemId`.
+ */
+async function purchaseMint(item: { contract: string; itemId: string }, buyer: Hex, sent: Hex[], fromBlock: bigint): Promise<Hex> {
+  const ofItem = async (tokenId: bigint) => {
+    const [itemId] = await amoy.readContract({ address: item.contract as Hex, abi: COLLECTION_V2, functionName: "decodeTokenId", args: [tokenId] });
+    return itemId === BigInt(item.itemId);
+  };
+  const mints = async (logs: { address: string; topics: readonly Hex[] }[]) => {
+    const found: bigint[] = [];
+    for (const l of logs) {
+      if (l.address.toLowerCase() !== item.contract.toLowerCase() || l.topics.length !== 4 || l.topics[0] !== ERC721_TRANSFER) continue;
+      if (BigInt(l.topics[1]!) !== 0n || BigInt(l.topics[2]!) !== BigInt(buyer)) continue;
+      if (await ofItem(BigInt(l.topics[3]!))) found.push(BigInt(l.topics[3]!));
+    }
+    return found;
+  };
+  if (sent.length) {
+    const minting: Hex[] = [];
+    for (const hash of sent) {
+      const receipt = await amoy.getTransactionReceipt({ hash }).catch(() => null);
+      if (receipt && (await mints(receipt.logs)).length === 1) minting.push(hash);
+    }
+    if (minting.length === 1) return minting[0]!;
+    throw new Error(`of the ${sent.length} transaction(s) the purchase sent (${sent.join(", ")}), ${minting.length} minted item ${item.itemId} to the buyer, not one`);
+  }
+  const logs = await amoy.getLogs({ address: item.contract as Hex, event: COLLECTION_V2[0], args: { from: zeroAddress, to: buyer }, fromBlock });
+  const hashes = new Set<Hex>();
+  for (const l of logs) if (l.transactionHash && (await ofItem(l.args.tokenId!))) hashes.add(l.transactionHash);
+  if (hashes.size === 1) return [...hashes][0]!;
+  throw new Error(`the page reported no transaction hash, and ${hashes.size} transactions minted item ${item.itemId} to the buyer since the purchase started, not one`);
+}
+
+async function couponPurchase(item: { contract: string; itemId: string }, buyer: Hex, seller: Hex, pct: number, fromBlock: bigint, sent: Hex[]): Promise<string> {
+  const hash = await purchaseMint(item, buyer, sent, fromBlock);
+  const [tx, receipt] = await Promise.all([amoy.getTransaction({ hash }), amoy.getTransactionReceipt({ hash })]);
+  if (receipt.status !== "success") throw new Error(`${hash} reverted`);
+  if (tx.to?.toLowerCase() !== AMOY_MARKETPLACE_V3) throw new Error(`${hash} called ${tx.to}, not the off-chain marketplace V3 the coupon manager is paired with`);
+  const settled = settledCall(tx.input);
+  if (settled.call !== "acceptWithCoupon") throw new Error(`${hash} settled through ${settled.call}: the discount was not applied on chain`);
+  // The trade that sells this item, and the coupon and proof at its positions: coupon i applies to trade i,
+  // proof j to sent asset j.
+  const at = soldItem(settled, item.contract as Hex, BigInt(item.itemId));
+  const trade = settled.trades[at.trade]!;
+  const coupon = settled.coupons[at.trade];
+  if (!coupon) throw new Error(`${hash} carries no coupon for the trade that sells the item`);
+  if (trade.signer.toLowerCase() !== seller.toLowerCase()) throw new Error(`${hash} accepted a trade signed by ${trade.signer}, not the seller`);
+  const data = couponData(coupon.data);
+  if (data.discountType !== 1n || data.discount !== BigInt(pct) * 10_000n) throw new Error(`${hash} carried a coupon of type ${data.discountType} and ${data.discount} ppm, not the ${pct}% rate`);
+  if (!collectionInRoot(item.contract as Hex, couponProofs(coupon.callerData)[at.asset] ?? [], data.root)) throw new Error(`${hash} carried no proof that the coupon's root covers the collection`);
+  if (!receipt.logs.some((l) => l.address.toLowerCase() === AMOY_COUPON_MANAGER)) throw new Error(`${hash} has no event of Amoy's coupon manager: the coupon was not applied`);
+  let round: { answer: bigint; decimals: number } | null = null;
+  if (trade.received.some((a) => a.assetType === 2n)) {
+    // Read at the receipt's block, which is the state at the END of that block, not at the transaction's
+    // position in it. That is exact for Amoy's mock aggregator, whose answer is constant (only updatedAt
+    // follows block.timestamp); against a live feed updated in the same block it could differ.
+    const atBlock = { blockNumber: receipt.blockNumber };
+    const aggregator = await amoy.readContract({ address: tx.to!, abi: FEED, functionName: "manaUsdAggregator", ...atBlock });
+    const [[, answer], decimals] = await Promise.all([
+      amoy.readContract({ address: aggregator, abi: FEED, functionName: "latestRoundData", ...atBlock }),
+      amoy.readContract({ address: aggregator, abi: FEED, functionName: "decimals", ...atBlock }),
+    ]);
+    round = { answer, decimals };
+  }
+  const expected = chargedMana(trade.received, data.discount, round);
+  const paid = receipt.logs
+    // Transfer events only: the same MANA log stream carries the buyer's Approval, whose value is an allowance.
+    .filter((l) => l.address.toLowerCase() === AMOY_MANA && l.topics[0] === MANA_TRANSFER && l.topics[1] && BigInt(l.topics[1]) === BigInt(buyer))
+    .reduce((sum, l) => sum + BigInt(l.data), 0n);
+  if (paid !== expected) throw new Error(`${hash} took ${formatEther(paid)} MANA from the buyer; the contract charges ${formatEther(expected)} for this coupon`);
+  return `acceptWithCoupon at ${pct}% in ${hash}${sent.length ? "" : " (found by its mint)"}: ${formatEther(paid)} MANA, as the contract charges`;
+}
+
 /** The seller's live discounts on this collection in My Store: rows that still offer "End now". */
 /** "<pct>% off" at the start of a row: "5% off" must not match "15% off". */
 const offText = (pct: number) => new RegExp(`^\\s*${pct}% off`);
@@ -499,14 +622,13 @@ async function primary(seller: Actor, buyer: Actor, buyerKey: Hex, s: Funds, b: 
     });
     await step("buyer buys one with MANA at the discount", buyer, async () => {
       const units = await unitsOf(item, buyer.wallet.address);
-      const before = await manaOf(buyer.wallet.address);
-      await buyItem(buyer, item, "mana");
+      const fromBlock = await amoy.getBlockNumber();
+      const sent = await hashesSentDuring(buyer, () => buyItem(buyer, item, "mana"));
       await unitsGrow(item, buyer.wallet.address, units);
-      const paid = before - (await manaMoves(buyer.wallet.address, before));
-      if (paid <= 0n) throw new Error("the unit arrived but the buyer's MANA did not go down");
-      // The page's regular price, read before the discount: the purchase has to cost less.
-      if (price !== null && paid >= price) throw new Error(`paid ${formatEther(paid)} MANA, not less than the regular ${formatEther(price)}: the discount did not apply`);
-      return `paid ${formatEther(paid)} MANA${price !== null ? ` of a regular ${formatEther(price)}` : ""}`;
+      // Not "paid less than the page's price": the page quotes at the node's spot rate and Amoy settles at its own
+      // feed, so a lower amount proves nothing. The transaction itself must carry the coupon and charge what the
+      // contract charges for it.
+      return couponPurchase(item, buyer.wallet.address, seller.wallet.address, pct, fromBlock, sent);
     });
     await step(`buyer tops up ${topup} test credits with the mock card`, buyer, async () => {
       const out = await signedPost<{ available?: string }>(buyerKey, `${sites}/credits/topup/mock-card`, { credits: topup });
