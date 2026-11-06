@@ -6,10 +6,15 @@ use bevy_ecs::{
     hierarchy::ChildOf,
     reflect::AppTypeRegistry,
     resource::Resource,
-    world::{Mut, World},
+    world::{Mut, World, WorldId},
 };
-use bevy_platform::collections::{HashMap, HashSet};
-use bevy_reflect::Reflect;
+use bevy_platform::{
+    collections::{HashMap, HashSet},
+    time::Instant,
+};
+use bevy_reflect::{Reflect, TypeRegistry};
+#[cfg(feature = "bevy_render")]
+use bevy_render::view::visibility::Visibility;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -67,8 +72,16 @@ impl InstanceId {
 /// - [`spawn_dynamic_as_child`](Self::spawn_dynamic_as_child)
 /// - [`spawn`](Self::spawn)
 /// - [`spawn_as_child`](Self::spawn_as_child)
+/// - [`spawn_as_child_hidden`](Self::spawn_as_child_hidden)
 /// - [`despawn`](Self::despawn)
 /// - [`despawn_instance`](Self::despawn_instance)
+///
+/// With a [spawn deadline](Self::set_spawn_deadline), queued [`Scene`] instances are written an
+/// entity at a time, one instance after another in request order, and what is left when the
+/// deadline passes waits for the next run. A partial instance's top-level entities are attached to
+/// its parent from the first run and kept [`Visibility::Hidden`] until it is complete.
+///
+/// [`Visibility::Hidden`]: https://docs.rs/bevy/0.16.1/bevy/render/view/enum.Visibility.html
 #[derive(Default, Resource)]
 pub struct SceneSpawner {
     pub(crate) spawned_dynamic_scenes: HashMap<AssetId<DynamicScene>, HashSet<InstanceId>>,
@@ -82,7 +95,142 @@ pub struct SceneSpawner {
     // instances spawned as a child are forgotten when their parent is despawned
     instance_parents: HashMap<InstanceId, Entity>,
     instances_ready: Vec<(InstanceId, Option<Entity>)>,
+    spawn_deadline: Option<Instant>,
+    /// The [`Scene`] instance the last run left part-written.
+    scene_in_progress: Option<SceneInProgress>,
+    /// Part-written instances unregistered since the last run, whose entities it despawns.
+    cancelled_in_progress: Vec<SceneInProgress>,
+    /// Instances spawned with [`Self::spawn_as_child_hidden`] that are not revealed yet.
+    keep_hidden: HashSet<InstanceId>,
+    /// Spawned instances kept hidden: their top-level entities, and the visibility their scene
+    /// gives them.
+    hidden_instances: HashMap<InstanceId, Vec<(Entity, RootVisibility)>>,
 }
+
+/// A [`Scene`] instance being written into the world, an entity at a time.
+struct SceneInProgress {
+    handle: Handle<Scene>,
+    instance_id: InstanceId,
+    parent: Option<Entity>,
+    /// The scene's world when writing began: another one means the asset was replaced.
+    scene_world: WorldId,
+    entity_map: EntityHashMap<Entity>,
+    /// The scene's entities in write order, of which the first `written` are written.
+    entities: Vec<Entity>,
+    written: usize,
+    /// The scene's top-level entities, and their entities in the world.
+    roots: Vec<(Entity, Entity)>,
+    /// The roots are hidden until the instance is complete.
+    hidden: bool,
+}
+
+impl SceneInProgress {
+    /// Copies the scene's resources, allocates an entity for each of its entities and attaches
+    /// the top-level ones to the parent, so hiding them hides everything written below.
+    fn start(
+        world: &mut World,
+        scene: &Scene,
+        type_registry: &TypeRegistry,
+        (handle, instance_id, parent): (Handle<Scene>, InstanceId, Option<Entity>),
+    ) -> Result<Self, SceneSpawnError> {
+        scene.write_resources_to_world(world, type_registry)?;
+        let mut entity_map = EntityHashMap::default();
+        scene.allocate_entities(world, &mut entity_map);
+        let entities = scene.entities();
+        // in the order `set_scene_instance_parent_sync` attaches a whole instance's roots
+        let roots: Vec<_> = entity_map
+            .iter()
+            .filter(|(scene_entity, _)| !scene.world.entity(**scene_entity).contains::<ChildOf>())
+            .map(|(scene_entity, entity)| (*scene_entity, *entity))
+            .collect();
+        if let Some(mut parent) = parent.and_then(|parent| world.get_entity_mut(parent).ok()) {
+            for (_, root) in &roots {
+                parent.add_child(*root);
+            }
+        }
+        Ok(Self {
+            handle,
+            instance_id,
+            parent,
+            scene_world: scene.world.id(),
+            entity_map,
+            entities,
+            written: 0,
+            roots,
+            hidden: false,
+        })
+    }
+
+    fn is_complete(&self) -> bool {
+        self.written == self.entities.len()
+    }
+
+    fn hide(&mut self, world: &mut World) {
+        for (_, root) in &self.roots {
+            hide(world, *root);
+        }
+        self.hidden = true;
+    }
+
+    /// Despawns whatever of the instance exists. Entities not written yet are attached to
+    /// nothing, so despawning the parent misses them.
+    fn despawn(self, world: &mut World) {
+        for entity in self.entity_map.values() {
+            if let Ok(entity) = world.get_entity_mut(*entity) {
+                entity.despawn();
+            }
+        }
+    }
+
+    /// Despawns what was written and returns the request, to start over.
+    fn restart(self, world: &mut World) -> (Handle<Scene>, InstanceId, Option<Entity>) {
+        let request = (self.handle.clone(), self.instance_id, self.parent);
+        self.despawn(world);
+        request
+    }
+}
+
+/// The visibility a scene gives one of its top-level entities.
+#[cfg(feature = "bevy_render")]
+type RootVisibility = Option<Visibility>;
+#[cfg(not(feature = "bevy_render"))]
+type RootVisibility = ();
+
+#[cfg(feature = "bevy_render")]
+fn hide(world: &mut World, entity: Entity) {
+    if let Ok(mut entity) = world.get_entity_mut(entity) {
+        entity.insert(Visibility::Hidden);
+    }
+}
+
+#[cfg(not(feature = "bevy_render"))]
+fn hide(_world: &mut World, _entity: Entity) {}
+
+#[cfg(feature = "bevy_render")]
+fn scene_visibility(scene: &Scene, scene_entity: Entity) -> RootVisibility {
+    scene.world.get::<Visibility>(scene_entity).copied()
+}
+
+#[cfg(not(feature = "bevy_render"))]
+fn scene_visibility(_scene: &Scene, _scene_entity: Entity) -> RootVisibility {}
+
+#[cfg(feature = "bevy_render")]
+fn restore_visibility(world: &mut World, entity: Entity, visibility: RootVisibility) {
+    let Ok(mut entity) = world.get_entity_mut(entity) else {
+        return;
+    };
+    match visibility {
+        Some(visibility) => {
+            entity.insert(visibility);
+        }
+        None => {
+            entity.remove::<Visibility>();
+        }
+    }
+}
+
+#[cfg(not(feature = "bevy_render"))]
+fn restore_visibility(_world: &mut World, _entity: Entity, _visibility: RootVisibility) {}
 
 /// Errors that can occur when spawning a scene.
 #[derive(Error, Debug)]
@@ -193,7 +341,8 @@ impl SceneSpawner {
     }
 
     /// This will remove all records of this instance, without despawning any entities.
-    /// If the instance has not spawned yet, it will not be spawned.
+    /// If the instance has not spawned yet, it will not be spawned. An instance that is part-written
+    /// is cancelled, and the next run of the [`scene_spawner_system`] despawns what was written.
     pub fn unregister_instance(&mut self, instance_id: InstanceId) {
         self.spawned_instances.remove(&instance_id);
         self.instance_parents.remove(&instance_id);
@@ -201,6 +350,57 @@ impl SceneSpawner {
         self.scenes_to_spawn.retain(|(_, id, _)| *id != instance_id);
         self.dynamic_scenes_to_spawn
             .retain(|(_, id, _)| *id != instance_id);
+        if let Some(cancelled) = self.take_in_progress(instance_id) {
+            self.cancelled_in_progress.push(cancelled);
+        }
+        self.keep_hidden.remove(&instance_id);
+        self.hidden_instances.remove(&instance_id);
+    }
+
+    /// Bounds how long the next runs of [`Self::spawn_queued_scenes`] write queued [`Scene`]
+    /// instances: once `deadline` has passed, the rest waits for a later run, though each run
+    /// writes at least one entity. `None`, the default, spawns every queued instance whole.
+    /// Dynamic scenes always spawn whole.
+    pub fn set_spawn_deadline(&mut self, deadline: Option<Instant>) {
+        self.spawn_deadline = deadline;
+    }
+
+    /// The deadline [`Self::set_spawn_deadline`] set.
+    pub fn spawn_deadline(&self) -> Option<Instant> {
+        self.spawn_deadline
+    }
+
+    /// Like [`Self::spawn_as_child`], but the instance's top-level entities stay
+    /// [`Visibility::Hidden`] once it has spawned, until [`Self::reveal_instance_sync`].
+    ///
+    /// [`Visibility::Hidden`]: https://docs.rs/bevy/0.16.1/bevy/render/view/enum.Visibility.html
+    pub fn spawn_as_child_hidden(
+        &mut self,
+        id: impl Into<Handle<Scene>>,
+        parent: Entity,
+    ) -> InstanceId {
+        let instance_id = self.spawn_as_child(id, parent);
+        self.keep_hidden.insert(instance_id);
+        instance_id
+    }
+
+    /// Gives the top-level entities of an instance spawned with [`Self::spawn_as_child_hidden`]
+    /// the visibility its scene gives them; an instance not complete yet shows when it completes.
+    pub fn reveal_instance_sync(&mut self, world: &mut World, instance_id: InstanceId) {
+        self.keep_hidden.remove(&instance_id);
+        for (root, visibility) in self
+            .hidden_instances
+            .remove(&instance_id)
+            .into_iter()
+            .flatten()
+        {
+            restore_visibility(world, root, visibility);
+        }
+    }
+
+    fn take_in_progress(&mut self, instance_id: InstanceId) -> Option<SceneInProgress> {
+        self.scene_in_progress
+            .take_if(|progress| progress.instance_id == instance_id)
     }
 
     /// Immediately despawns all instances of a dynamic scene.
@@ -220,6 +420,11 @@ impl SceneSpawner {
     /// Immediately despawns a scene instance, removing all its entities from the world.
     pub fn despawn_instance_sync(&mut self, world: &mut World, instance_id: &InstanceId) {
         self.instance_parents.remove(instance_id);
+        self.keep_hidden.remove(instance_id);
+        self.hidden_instances.remove(instance_id);
+        if let Some(progress) = self.take_in_progress(*instance_id) {
+            progress.despawn(world);
+        }
         if let Some(instance) = self.spawned_instances.remove(instance_id) {
             for &entity in instance.entity_map.values() {
                 if let Ok(entity_mut) = world.get_entity_mut(entity) {
@@ -362,33 +567,136 @@ impl SceneSpawner {
             }
         }
 
-        let scenes_to_spawn = core::mem::take(&mut self.scenes_to_spawn);
+        self.spawn_queued_real_scenes(world)
+    }
 
-        for (scene_handle, instance_id, parent) in scenes_to_spawn {
-            let mut entity_map = EntityHashMap::default();
+    /// Writes queued [`Scene`] instances an entity at a time, in request order, until the
+    /// [spawn deadline](Self::set_spawn_deadline). Instances whose scene is not loaded wait.
+    fn spawn_queued_real_scenes(&mut self, world: &mut World) -> Result<(), SceneSpawnError> {
+        if self.scene_in_progress.is_none() && self.scenes_to_spawn.is_empty() {
+            return Ok(());
+        }
+        let type_registry = world.resource::<AppTypeRegistry>().clone();
+        let type_registry = type_registry.read();
+        let deadline = self.spawn_deadline;
+        // every run writes at least one entity
+        let has_time = |wrote_any: bool| {
+            !wrote_any || deadline.is_none_or(|deadline| Instant::now() < deadline)
+        };
 
-            match Self::spawn_sync_internal(world, scene_handle.id(), &mut entity_map) {
-                Ok(_) => {
-                    self.spawned_instances
-                        .insert(instance_id, InstanceInfo { entity_map });
-
-                    // Scenes with parents need more setup before they are ready.
-                    // See `set_scene_instance_parent_sync()`.
-                    if parent.is_none() {
-                        // We trigger `SceneInstanceReady` events after processing all scenes
-                        // SceneSpawner may not be available in the observer.
-                        self.instances_ready.push((instance_id, None));
+        world.resource_scope(|world, scenes: Mut<Assets<Scene>>| {
+            let mut wrote_any = false;
+            while has_time(wrote_any) {
+                let mut progress = match self.scene_in_progress.take() {
+                    Some(progress) => progress,
+                    None => {
+                        let Some(next) = self
+                            .scenes_to_spawn
+                            .iter()
+                            .position(|(handle, ..)| scenes.contains(handle.id()))
+                        else {
+                            break;
+                        };
+                        let request = self.scenes_to_spawn.remove(next);
+                        let scene = scenes.get(request.0.id()).expect("checked above");
+                        SceneInProgress::start(world, scene, &type_registry, request)?
                     }
+                };
+
+                // a scene removed or replaced since writing began: start over from what is there
+                let Some(scene) = scenes
+                    .get(progress.handle.id())
+                    .filter(|scene| scene.world.id() == progress.scene_world)
+                else {
+                    self.scenes_to_spawn.insert(0, progress.restart(world));
+                    continue;
+                };
+
+                while !progress.is_complete() && has_time(wrote_any) {
+                    let scene_entity = progress.entities[progress.written];
+                    if scene.world.get_entity(scene_entity).is_err() {
+                        // changed in place since writing began
+                        break;
+                    }
+                    scene.write_entity_to_world(
+                        world,
+                        scene_entity,
+                        &mut progress.entity_map,
+                        &type_registry,
+                    )?;
+                    if progress.hidden {
+                        // its own visibility was just written over the hiding
+                        if let Some((_, root)) = progress
+                            .roots
+                            .iter()
+                            .find(|(root, _)| *root == scene_entity)
+                        {
+                            hide(world, *root);
+                        }
+                    }
+                    progress.written += 1;
+                    wrote_any = true;
                 }
-                Err(SceneSpawnError::NonExistentRealScene { .. }) => {
-                    self.scenes_to_spawn
-                        .push((scene_handle, instance_id, parent));
+
+                if progress.is_complete() {
+                    self.finish(world, scene, progress);
+                } else if has_time(wrote_any) {
+                    self.scenes_to_spawn.insert(0, progress.restart(world));
+                } else {
+                    self.scene_in_progress = Some(progress);
                 }
-                Err(err) => return Err(err),
+            }
+
+            // what is left part-written stays out of view until it is complete
+            if let Some(progress) = self
+                .scene_in_progress
+                .as_mut()
+                .filter(|progress| !progress.hidden)
+            {
+                progress.hide(world);
+            }
+            Ok(())
+        })
+    }
+
+    fn finish(&mut self, world: &mut World, scene: &Scene, progress: SceneInProgress) {
+        let SceneInProgress {
+            instance_id,
+            parent,
+            entity_map,
+            roots,
+            hidden,
+            ..
+        } = progress;
+
+        let keep_hidden = self.keep_hidden.remove(&instance_id);
+        if hidden || keep_hidden {
+            let roots: Vec<_> = roots
+                .into_iter()
+                .map(|(scene_root, root)| (root, scene_visibility(scene, scene_root)))
+                .collect();
+            if keep_hidden {
+                for (root, _) in &roots {
+                    hide(world, *root);
+                }
+                self.hidden_instances.insert(instance_id, roots);
+            } else {
+                for (root, visibility) in roots {
+                    restore_visibility(world, root, visibility);
+                }
             }
         }
 
-        Ok(())
+        self.spawned_instances
+            .insert(instance_id, InstanceInfo { entity_map });
+
+        // Scenes with parents need more setup before they are ready.
+        // See `set_scene_instance_parent_sync()`.
+        if parent.is_none() {
+            // We trigger `SceneInstanceReady` events after processing all scenes
+            // SceneSpawner may not be available in the observer.
+            self.instances_ready.push((instance_id, None));
+        }
     }
 
     pub(crate) fn set_scene_instance_parent_sync(&mut self, world: &mut World) {
@@ -473,6 +781,14 @@ pub fn scene_spawner_system(world: &mut World) {
         });
         for instance in &dead_instances {
             scene_spawner.spawned_instances.remove(instance);
+            scene_spawner.keep_hidden.remove(instance);
+            scene_spawner.hidden_instances.remove(instance);
+            if let Some(progress) = scene_spawner.take_in_progress(*instance) {
+                progress.despawn(world);
+            }
+        }
+        for cancelled in core::mem::take(&mut scene_spawner.cancelled_in_progress) {
+            cancelled.despawn(world);
         }
         scene_spawner
             .scenes_with_parent
@@ -549,6 +865,9 @@ pub fn scene_spawner(
         }
     }
 }
+
+#[cfg(test)]
+mod resumable_tests;
 
 #[cfg(test)]
 mod tests {
