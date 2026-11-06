@@ -205,7 +205,7 @@ async function payGapWithMana(ctx: RailContext, target: PurchaseTarget, opts: Ga
   if (opts.credits.length === 0) throw new Error("No credits to spend: use the MANA-only rail for that");
   if (opts.manaGapWei <= 0n) throw new Error("No MANA gap to cover: use the credits-only rail for that");
   const chainId = targetChainId(target);
-  // The manager the credits were signed for is the one useCredits goes to, and so the one that pulls the gap.
+  // The book's manager, which pulls the gap: a credit signed for any other is refused before this approves.
   const spender = creditsManagerFor(chainId, opts.credits).address;
   await ensureManaAllowance(ctx, chainId, spender, opts.manaGapWei);
   const creditsValue = opts.credits.reduce((acc, c) => acc + BigInt(c.availableAmount), 0n);
