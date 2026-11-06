@@ -60,6 +60,8 @@ describe('profile passport', () => {
     const onReport = vi.fn()
     render(<ProfilePassport profile={profile} onBlock={onBlock} onReport={onReport} onClose={vi.fn()} />)
     expect(screen.queryByRole('menu')).toBeNull()
+    // A menu button, not a toggle: aria-expanded and aria-haspopup, never aria-pressed.
+    expect(screen.getByRole('button', { name: 'More options' })).not.toHaveAttribute('aria-pressed')
     await userEvent.click(screen.getByRole('button', { name: 'More options' }))
     await userEvent.click(screen.getByRole('menuitem', { name: 'Block' }))
     expect(onBlock).toHaveBeenCalledWith(profile.address)

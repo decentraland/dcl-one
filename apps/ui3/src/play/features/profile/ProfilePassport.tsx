@@ -410,7 +410,7 @@ export function ProfilePassport({
               ))}
             {options.length > 0 && (
               <div ref={menuRef} className={styles.menuWrap}>
-                <ControlButton variant="faint" aria-label="More options" aria-haspopup="menu" aria-expanded={menuOpen} active={menuOpen} onClick={() => setMenuOpen((o) => !o)}>
+                <ControlButton variant="faint" aria-label="More options" aria-haspopup="menu" aria-expanded={menuOpen} aria-pressed={undefined} active={menuOpen} onClick={() => setMenuOpen((o) => !o)}>
                   <Kebab size={18} r={2} />
                 </ControlButton>
                 {menuOpen && (

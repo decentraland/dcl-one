@@ -53,7 +53,7 @@ export function registerFriends(ctx: Ctx): void {
     run.then(
       () => {
         ctx.send({ kind: 'friendActionDone', op: msg.op, address: a })
-        if (msg.op === 'block' || msg.op === 'unblock') blockedStale = true
+        if (msg.op === 'block' || msg.op === 'unblock') blockedStale = blockedByStale = true
         acc = 1 // refresh on the next frame instead of waiting for the poll
       },
       (e: unknown) => {
@@ -84,6 +84,7 @@ export function registerFriends(ctx: Ctx): void {
   relay('friendConnectivity', async () => await social.getFriendConnectivityStream(), refresh)
   relay('blockUpdates', async () => await social.getBlockUpdateStream(), () => {
     blockedStale = true
+    blockedByStale = true
     refresh()
   })
   let busy = false
@@ -92,8 +93,9 @@ export function registerFriends(ctx: Ctx): void {
   let blocked: string[] = []
   let blockedUsers: BlockedUserData[] = []
   // Who has blocked the local user. The block update stream fires for both directions, so it's
-  // refreshed alongside the blocked list.
+  // refreshed alongside the blocked list, and retried on its own when only this call fails.
   let blockedBy: string[] = []
+  let blockedByStale = true
   ctx.push((dt) => {
     elapsed += dt
     acc += dt
@@ -113,6 +115,7 @@ export function registerFriends(ctx: Ctx): void {
         lastStatus.clear()
         availableSince = null
         blockedStale = true
+        blockedByStale = true
         const me = getPlayer()
         push(false, [], [], [], [], [], [], me != null && !me.isGuest)
         return
@@ -132,12 +135,16 @@ export function registerFriends(ctx: Ctx): void {
         } catch {
           blockedStale = true
         }
-        // Best effort: without it the passport just can't tell that this user blocked you.
+      }
+      // Best effort: without it the passport just can't tell that this user blocked you.
+      if (blockedByStale) {
+        blockedByStale = false
         try {
           const status = await social.getBlockingStatus?.()
           blockedBy = (status?.blockedByUsers ?? []).map((a) => a.toLowerCase())
         } catch (e) {
           console.error('[friends] blocking status failed', e)
+          blockedByStale = true
         }
       }
       push(true, online, received, sent, blocked, blockedUsers, blockedBy, false)

@@ -22,7 +22,7 @@ import { DEFAULT_REALM } from '../../lib/baseDomain'
 import { checkRealm, realmCheckMessage } from '../../lib/realmCheck'
 import { entryRealm } from '../../lib/entryParams'
 import { color3ToHex, hexToColor3 } from '../../lib/color'
-import { closeTopPopup, hasOpenPopup, subscribePopups } from '../../design'
+import { closeTopPopup, hasOpenPopup, subscribePopups, topPopupOrder } from '../../design'
 import { requestDebugPanel } from '../debug/useDebugPanel'
 import { emitFriendEvent } from '../friends/friendEvents'
 import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
@@ -3099,12 +3099,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     if ((window as EngineFocusWindow).__engineTextFocus) return
     if (EDITOR_BUILD && !hudActsOn(editorMode, action)) return
     // 'Cancel' is the one action handled even with a popup open: the engine resolved the
-    // cancel key or gamepad button, and this is the single layered close — topmost popup
-    // first, else the topmost registered leaf layer (lightbox, open dropdown — see
-    // cancelLayers), else any open panels. One layer per press.
+    // cancel key or gamepad button, and this is the single layered close — the most recent of
+    // the topmost popup and the topmost registered leaf layer (lightbox, open dropdown, a menu
+    // inside a popup — see cancelLayers) first, else any open panels. One layer per press.
     if (action === 'Cancel') {
+      if (dispatchCancelLayer(topPopupOrder())) return
       if (hasOpenPopup()) closeTopPopup()
-      else if (dispatchCancelLayer()) return
       // the lobby sits under the panels it opens: close those first, then the lobby
       else if (anyPanelOpenExceptLobby) panelSetters.forEach((set) => set(false))
       else setLobbyOpen(false)

@@ -76,5 +76,10 @@ describe('bridge friends: blocked-by', () => {
     await poll()
     expect(lastFriends(sent)?.blocked).toEqual(['0x1'])
     expect(lastFriends(sent)?.blockedBy).toEqual([])
+    // The next poll retries the blocking status alone; the blocked list isn't fetched again.
+    social.getBlockingStatus.mockResolvedValueOnce({ blockedUsers: [], blockedByUsers: ['0x2'] })
+    await poll()
+    expect(lastFriends(sent)?.blockedBy).toEqual(['0x2'])
+    expect(social.getBlockedUsers).toHaveBeenCalledTimes(1)
   })
 })
