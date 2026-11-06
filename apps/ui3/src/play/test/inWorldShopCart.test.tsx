@@ -165,6 +165,20 @@ describe('the in-world Shop’s cart', () => {
     expect(localStorage.getItem(`dcl-inworld-shop:cart:v2:${'0x' + '55'.repeat(20)}`)).toBeNull()
   })
 
+  it('moves the focus to the cart’s title when the focused button’s line goes', async () => {
+    serveCatalogue()
+    answerShell()
+    renderShop()
+    await addFromPanel()
+    await userEvent.click(cartButton())
+    const cart = await screen.findByRole('region', { name: 'Your cart' })
+    const trash = within(cart).getAllByRole('button', { name: 'Remove Golden Armor' })[1]
+    trash.focus()
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => expect(within(cart).getByText('Your cart is empty.')).toBeInTheDocument())
+    expect(document.activeElement).toBe(within(cart).getByRole('heading', { name: 'Your Cart (0)' }))
+  })
+
   it('closes on Escape (the HUD’s cancel, which the engine sends) and on a press anywhere else', async () => {
     serveCatalogue()
     answerShell()

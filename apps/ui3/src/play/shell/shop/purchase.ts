@@ -47,6 +47,8 @@ import {
   SHOP_PROTOCOL,
   isTerminal,
   MAX_PURCHASE_UNITS,
+  sameItem,
+  unitsOf,
   TERMINAL_STATES,
   type ShopBalance,
   type ShopBuyRequest,
@@ -301,16 +303,17 @@ interface Quote {
 type PartOutcome =
   | { kind: 'confirmed' }
   | { kind: 'pending' }
-  /** Nothing of the group was handed off, or its transaction reverted. `retry`: how it may start again. */
-  | { kind: 'failed'; message: string; retry: 'cancelled' | 'failed' | null; topUp?: number }
+  /**
+   * Nothing of the group was handed off, or its transaction reverted. `message` says it as a purchase of
+   * its own; `part`, as one transaction of a checkout. `retry`: how it may start again.
+   */
+  | { kind: 'failed'; message: string; part: string; retry: 'cancelled' | 'failed' | null; topUp?: number }
 
 const NOT_BOUGHT = "This purchase didn't go through. Nothing was bought."
 /** How a checkout says one of its transactions ended. */
 const NEVER_WENT = 'one of its transactions never went out.'
 const PART_FAILED = 'one of its transactions didn’t go through.'
 const REVERTED_PART = 'one of its transactions failed on-chain, and its Credits were returned.'
-const unitsOf = (lines: ShopLine[]): number => lines.reduce((n, l) => n + l.quantity, 0)
-const sameItem = (a: { contract: string; itemId: string }, b: { contract: string; itemId: string }): boolean => a.contract === b.contract && a.itemId === b.itemId
 
 /**
  * A confirmed purchase of several groups, as its dialog shows them together: still in progress while any
@@ -888,8 +891,18 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
    * operation of its own, held by this page before it runs. A group that fails ends the checkout: what
    * came before it stands (bought, or followed to its end), and what comes after it never starts.
    */
+  /** Operations whose BUY ITEM is being acted on: a second press, while the first awaits, does nothing. */
+  const confirming = new Set<Operation>()
   const settle = async (op: Operation, req: ShopBuyRequest, quote: Quote): Promise<void> => {
-    if (op.state !== 'reviewing' || dialog !== op || running) return
+    if (op.state !== 'reviewing' || dialog !== op || running || confirming.has(op)) return
+    confirming.add(op)
+    try {
+      await settleOnce(op, req, quote)
+    } finally {
+      confirming.delete(op)
+    }
+  }
+  const settleOnce = async (op: Operation, req: ShopBuyRequest, quote: Quote): Promise<void> => {
     op.unwatchWallet?.()
     // Every TRY AGAIN offered below follows a checkout that handed nothing off.
     const again = (): void => restart(op, req, 'cancelled')
@@ -979,7 +992,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         if (outcome.kind !== 'failed') continue
         if (i > 0) {
           // Nothing of this group went out; what came before stands, and what comes after never starts.
-          co!.failures.push(outcome.message)
+          co!.failures.push(outcome.part)
           move(run, 'failed')
           break
         }
@@ -1024,11 +1037,11 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     const chainId = group.key.chainId
     const manager = svc.manager(chainId)
     const call = group.key.call.kind
-    if (!manager || call === 'one') return { kind: 'failed', message: "Buying with Credits isn't available here right now.", retry: null }
-    const refused = (message: string, retry: 'cancelled' | 'failed' | null, topUp?: number): PartOutcome => {
+    if (!manager || call === 'one') return { kind: 'failed', message: "Buying with Credits isn't available here right now.", part: 'buying the rest with Credits isn’t available here right now.', retry: null }
+    const refused = (message: string, part: string, retry: 'cancelled' | 'failed' | null, topUp?: number): PartOutcome => {
       op.state = 'reviewing'
       publish(op)
-      return { kind: 'failed', message, retry, ...(topUp != null ? { topUp } : {}) }
+      return { kind: 'failed', message, part, retry, ...(topUp != null ? { topUp } : {}) }
     }
     const intent: PurchaseIntent = {
       buyer: quote.buyer,
@@ -1041,7 +1054,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     }
     op.chainId = chainId
     move(op, 'processing')
-    if (ledger.failed(op.id) || ledger.saved(op.buyer ?? '', op.id)?.state !== 'processing') return refused(STORAGE_REFUSED, 'cancelled')
+    if (ledger.failed(op.id) || ledger.saved(op.buyer ?? '', op.id)?.state !== 'processing') return refused(STORAGE_REFUSED, 'this browser couldn’t keep a record of the rest of it, so the rest wasn’t sent.', 'cancelled')
     show(op, { step: 'processing', balance: quote.balance, count: quote.items.length }, { onClose: () => {} })
     // The operation's own cart holds its group's lines only (a checkout's first operation read them all).
     const store = (op.store ??= ledger.storeFor(op))
@@ -1063,7 +1076,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     let result: GroupResult
     try {
       const review = reviewed ? { resolved: reviewed } : await reviewPart(part, quote)
-      if ('why' in review) return refused(review.why, review.retry)
+      if ('why' in review) return refused(review.why, review.why, review.retry)
       const { resolved } = review
       store.startCheckout([group])
       // Every step the executor writes to the checkout is copied into the operation's record.
@@ -1094,7 +1107,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         move(op, 'pending')
         return { kind: 'pending' }
       }
-      return refused("We couldn't start this purchase. Nothing was charged.", 'cancelled')
+      return refused("We couldn't start this purchase. Nothing was charged.", 'the rest of it couldn’t start.', 'cancelled')
     }
     switch (result.status) {
       case 'confirmed':
@@ -1105,11 +1118,11 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         return { kind: 'pending' }
       case 'failed':
         // The balance fell short between the quote and the authorization: Insufficient Funds after all.
-        if (result.topUp) return refused(result.failure.message, null, creditsFloor(result.topUp.balanceCents as UsdCents))
+        if (result.topUp) return refused(result.failure.message, 'your Credits balance didn’t cover the rest of it.', null, creditsFloor(result.topUp.balanceCents as UsdCents))
         // A failed group handed nothing off, or its transaction reverted: either way this attempt is over.
-        return refused(result.failure.message, result.failure.kind !== 'refused' ? 'failed' : null)
+        return refused(result.failure.message, result.failure.kind === 'reverted' ? REVERTED_PART : result.failure.message, result.failure.kind !== 'refused' ? 'failed' : null)
       case 'skipped':
-        return refused("This purchase couldn't run. Nothing was charged.", 'cancelled')
+        return refused("This purchase couldn't run. Nothing was charged.", 'the rest of it couldn’t run.', 'cancelled')
     }
   }
 

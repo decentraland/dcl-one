@@ -1354,6 +1354,19 @@ describe('a purchase of several items (the cart)', () => {
     expect(t.events.some((e) => e.state === 'processing')).toBe(false)
   })
 
+  it('acts on BUY ITEMS once, however often it is pressed while the first press runs', async () => {
+    for (const [lines, groups] of [[['7', '8'], 2], [['8'], 1]] as const) {
+      const t = setup({ items: ITEMS, offers: mixed, resolvers: trades })
+      await t.checkout(...lines)
+      const { handlers } = await t.until('confirm')
+      handlers.onConfirm?.()
+      handlers.onConfirm?.()
+      handlers.onConfirm?.()
+      await t.until('success')
+      expect(t.run).toHaveBeenCalledTimes(groups)
+    }
+  })
+
   it('names the buyer on every operation it reports', async () => {
     const t = setup({ items: ITEMS, offers: mixed, resolvers: trades })
     await t.checkout('7', '8')

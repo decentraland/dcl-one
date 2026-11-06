@@ -26,7 +26,7 @@ import { useCallback, useEffect, useSyncExternalStore } from 'react'
 import { cardPrice } from '../../../shop/discovery/cardPrice'
 import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
 import { SIGNED_OUT } from '../../../shop/model/settlement'
-import { MAX_PURCHASE_UNITS, type ShopLine } from '../../lib/shopProtocol'
+import { ADDRESS, MAX_PURCHASE_UNITS, sameItem, UINT, unitsOf, type ShopLine } from '../../lib/shopProtocol'
 
 export interface InWorldCartLine {
   /** Lowercase. */
@@ -58,19 +58,19 @@ const RECORD_VERSION = 2
 const MAX_APPLIED = 100
 const OPERATION_ID = /^[0-9a-f-]{8,64}$/
 const GUEST = 'guest'
-const ADDRESS = /^0x[0-9a-f]{40}$/
-const UINT = /^(0|[1-9][0-9]{0,77})$/
 
 const keyOf = (account: string | null): string => KEY_PREFIX + (account ?? GUEST)
-const sameItem = (a: { contract: string; itemId: string }, b: { contract: string; itemId: string }): boolean => a.contract === b.contract && a.itemId === b.itemId
-export const cartUnits = (lines: readonly { quantity: number }[]): number => lines.reduce((n, l) => n + l.quantity, 0)
+/** An address as this page keeps them: lowercase. */
+const isAddress = (s: string): boolean => ADDRESS.test(s) && s === s.toLowerCase()
+/** How many units the cart holds. */
+export const cartUnits = unitsOf
 
 function isLine(v: unknown): v is InWorldCartLine {
   if (v == null || typeof v !== 'object' || Array.isArray(v)) return false
   const l = v as Record<string, unknown>
   return (
     typeof l.contract === 'string' &&
-    ADDRESS.test(l.contract) &&
+    isAddress(l.contract) &&
     typeof l.itemId === 'string' &&
     UINT.test(l.itemId) &&
     typeof l.quantity === 'number' &&
@@ -107,12 +107,14 @@ interface CartRecord {
   applied: readonly string[]
   adopted: readonly { id: string; taken: readonly Taken[] }[]
   transfer?: { id: string; to: string }
+  /** On a signed-out cart: what an account's cap left over from taking it, already offered to that account. */
+  held?: string
 }
 const EMPTY: CartRecord = { lines: [], applied: [], adopted: [] }
 /** Transfers remembered as taken (newest kept). */
 const MAX_ADOPTED = 20
 const isTaken = (t: unknown): t is Taken =>
-  t != null && typeof t === 'object' && typeof (t as Taken).contract === 'string' && ADDRESS.test((t as Taken).contract) && typeof (t as Taken).itemId === 'string' && UINT.test((t as Taken).itemId) && Number.isSafeInteger((t as Taken).units) && (t as Taken).units > 0
+  t != null && typeof t === 'object' && typeof (t as Taken).contract === 'string' && isAddress((t as Taken).contract) && typeof (t as Taken).itemId === 'string' && UINT.test((t as Taken).itemId) && Number.isSafeInteger((t as Taken).units) && (t as Taken).units > 0
 
 /** A stored record in the shape this page writes, its lines each item once and within the cap; or null. */
 function parseRecord(raw: string): CartRecord | null {
@@ -127,8 +129,9 @@ function parseRecord(raw: string): CartRecord | null {
     .filter((a): a is { id: string; taken: Taken[] } => a != null && typeof a === 'object' && typeof a.id === 'string' && OPERATION_ID.test(a.id) && Array.isArray(a.taken) && a.taken.every(isTaken))
     .slice(-MAX_ADOPTED)
   const t = r.transfer as Record<string, unknown> | undefined
-  const transfer = t != null && typeof t === 'object' && typeof t.id === 'string' && OPERATION_ID.test(t.id) && typeof t.to === 'string' && ADDRESS.test(t.to) ? { id: t.id, to: t.to } : undefined
-  return { lines, applied, adopted, ...(transfer ? { transfer } : {}) }
+  const transfer = t != null && typeof t === 'object' && typeof t.id === 'string' && OPERATION_ID.test(t.id) && typeof t.to === 'string' && isAddress(t.to) ? { id: t.id, to: t.to } : undefined
+  const held = typeof r.held === 'string' && isAddress(r.held) ? r.held : undefined
+  return { lines, applied, adopted, ...(transfer ? { transfer } : {}), ...(held ? { held } : {}) }
 }
 
 /** The most of one line a cart may hold: what is left of it, within the purchase's cap. */
@@ -247,7 +250,7 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
         s.removeItem(key)
         stored.set(key, { raw: null, record: EMPTY })
       } else {
-        const raw = JSON.stringify({ v: RECORD_VERSION, lines: next.lines, applied: next.applied, adopted: next.adopted, ...(next.transfer ? { transfer: next.transfer } : {}) })
+        const raw = JSON.stringify({ v: RECORD_VERSION, lines: next.lines, applied: next.applied, adopted: next.adopted, ...(next.transfer ? { transfer: next.transfer } : {}), ...(next.held ? { held: next.held } : {}) })
         s.setItem(key, raw)
         stored.set(key, { raw, record: next })
       }
@@ -279,34 +282,42 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
     return true
   }
 
+  /** Accounts whose sign-in transfer a refused write cut short: tried again after this account's next write. */
+  const unfinished = new Set<string>()
+
   /**
    * The signed-out cart moved into `who`'s (call it holding the lock), as a transfer taken once and by one
    * account: the transfer (its id, and `who` as where it goes) is written on the signed-out cart first;
    * the account's cart takes its units within the cap and records the transfer, in one write; then the
-   * signed-out cart lets go of the units taken, and what didn't fit (or was added since) waits for a next
-   * transfer. A transfer under way to another account is settled against that one first: let go of if it
-   * took it, free for `who` if it never did. A step storage refuses ends it, to be tried again after a
-   * later write that lands or the next sign-in; nothing of it waits in `pending`, so it is never added
-   * twice.
+   * signed-out cart lets go of the units taken. What didn't fit stays in the signed-out cart, held as
+   * already offered to `who`, so it doesn't flow back into that cart as the buyer changes it; it is free
+   * again for another account, or once the signed-out cart is changed. A transfer under way to another
+   * account is settled against that one first: let go of if it took it, free for `who` if it never did. A
+   * step storage refuses ends it and marks it unfinished, to be tried again after this account's next
+   * write that lands (or the next sign-in); nothing of it waits in `pending`, so it is never added twice.
    */
   const adopt = (who: string): void => {
+    unfinished.delete(who)
+    const refused = (): void => void unfinished.add(who)
     /** The signed-out cart less what a transfer took, with no transfer under way; false when refused. */
-    const letGo = (guest: CartRecord, taken: readonly Taken[]): boolean => {
+    const letGo = (guest: CartRecord, taken: readonly Taken[], held?: string): boolean => {
       const lines = guest.lines.flatMap((l) => {
         const units = taken.find((t) => sameItem(t, l))?.units ?? 0
         return l.quantity > units ? [{ ...l, quantity: l.quantity - units }] : []
       })
-      return commitRecord(null, { lines, applied: guest.applied, adopted: [] })
+      return commitRecord(null, { lines, applied: guest.applied, adopted: [], ...(held && lines.length > 0 ? { held } : {}) })
     }
     // A transfer found taken is let go of first; then what is left (added since, or that didn't fit) can go.
     for (let round = 0; round < 3; round++) {
       const guest = read(null)
       if (guest.lines.length === 0) return
       let transfer = guest.transfer
+      // What is left over was already offered to this account, and didn't fit.
+      if (!transfer && guest.held === who) return
       if (transfer && transfer.to !== who) {
         const theirs = read(transfer.to).adopted.find((a) => a.id === transfer!.id)
         if (theirs) {
-          if (!letGo(guest, theirs.taken)) return
+          if (!letGo(guest, theirs.taken, transfer.to)) return refused()
           continue
         }
         // That account never took it: it is free to go to this one, as a transfer of its own.
@@ -314,12 +325,12 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
       }
       if (!transfer) {
         transfer = { id: newId(), to: who }
-        if (!commitRecord(null, { ...guest, transfer })) return
+        if (!commitRecord(null, { ...guest, transfer, held: undefined })) return refused()
       }
       const mine = read(who)
       const done = mine.adopted.find((a) => a.id === transfer!.id)
       if (done) {
-        if (!letGo(guest, done.taken)) return
+        if (!letGo(guest, done.taken, who)) return refused()
         continue
       }
       const merged = [...mine.lines]
@@ -327,17 +338,22 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
       for (const g of guest.lines) {
         const at = merged.findIndex((l) => sameItem(l, g))
         const had = at >= 0 ? merged[at].quantity : 0
-        const quantity = Math.max(had, Math.min(had + g.quantity, capFor(g, cartUnits(merged) - had)))
+        // The merged line keeps the larger stock it knows of, so its own cap never cuts what it now holds.
+        const available = at < 0 ? g.available : merged[at].available == null || g.available == null ? null : Math.max(merged[at].available!, g.available)
+        const quantity = Math.max(had, Math.min(had + g.quantity, capFor({ available }, cartUnits(merged) - had)))
         if (quantity === had) continue
         took.push({ contract: g.contract, itemId: g.itemId, units: quantity - had })
-        if (at >= 0) merged[at] = { ...merged[at], quantity }
+        if (at >= 0) merged[at] = { ...merged[at], quantity, available }
         else merged.push({ ...g, quantity })
       }
-      // Nothing fits: the signed-out cart waits as it is.
-      if (took.length === 0) return
-      if (!commitRecord(who, { ...mine, lines: merged, adopted: [...mine.adopted, { id: transfer.id, taken: took }].slice(-MAX_ADOPTED) })) return
-      // Freshly taken: let go of it; what is left didn't fit, and waits.
-      letGo(guest, took)
+      // Nothing fits: the signed-out cart waits, held as offered to this account.
+      if (took.length === 0) {
+        if (!letGo(guest, [], who)) refused()
+        return
+      }
+      if (!commitRecord(who, { ...mine, lines: merged, adopted: [...mine.adopted, { id: transfer.id, taken: took }].slice(-MAX_ADOPTED) })) return refused()
+      // Freshly taken: let go of it; what is left didn't fit, and is held.
+      if (!letGo(guest, took, who)) refused()
       return
     }
   }
@@ -358,12 +374,20 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
    */
   const mutate = (who: string | null, change: Change): Promise<boolean> =>
     lock(() => {
-      const changed = apply(who, change)
-      // A sign-in's transfer that storage refused before is tried again once this account's cart is written.
-      if (who !== null && who === account && !pending.has(keyOf(who))) adopt(who)
+      // A change to the signed-out cart is the buyer's own: what it holds is free to go again.
+      const changed = apply(who, who === null ? (r) => withoutHeld(change(r)) : change)
+      // A sign-in's transfer that storage cut short is tried again once this account's cart is written.
+      if (who !== null && who === account && unfinished.has(who) && !pending.has(keyOf(who))) adopt(who)
       if (who === account) refresh()
       return changed
     })
+
+  /** A record as changed, free of what it held for an account (or null, unchanged). */
+  const withoutHeld = (record: CartRecord | null): CartRecord | null => {
+    if (!record?.held) return record
+    const { held: _held, ...rest } = record
+    return rest
+  }
 
   /** Lines with a line's quantity set, within its cap, or null when that changes nothing. */
   const withQuantity = (record: CartRecord, item: { contract: string; itemId: string }, quantity: number): CartRecord | null => {
@@ -469,9 +493,9 @@ export function useInWorldCart(account: string | null, cart: InWorldCart = inWor
 }
 
 /** What ADD TO CART keeps of a listing: a primary sale in Credits only (anything else is bought on the web). */
-export function cartInputFor(item: CatalogItem): InWorldCartInput | null {
+export function inWorldCartInputFor(item: CatalogItem): InWorldCartInput | null {
   const price = cardPrice(item, SIGNED_OUT)
-  if (price.kind !== 'credits' || item.itemId == null || !ADDRESS.test(item.contractAddress.toLowerCase())) return null
+  if (price.kind !== 'credits' || item.itemId == null || !isAddress(item.contractAddress.toLowerCase())) return null
   return {
     contract: item.contractAddress.toLowerCase(),
     itemId: String(item.itemId),

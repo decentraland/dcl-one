@@ -40,7 +40,7 @@
   height: 30px;
   padding: 0;
   border: none;
-  border-radius: 7.5px;
+  border-radius: var(--r-shop-cart-close);
   background: none;
   cursor: pointer;
 }
@@ -90,7 +90,7 @@
 }
 .card:hover,
 .card:focus-within {
-  background: var(--white-20);
+  background: var(--shop-card-hover);
 }
 /* The dialogs' 150px tile at the card's 106px (its corner radius 10.6px, as drawn). */
 .tileSlot {
@@ -170,7 +170,7 @@
   height: 24px;
   padding: 0;
   border: none;
-  border-radius: 5.429px;
+  border-radius: var(--r-shop-cart-action);
   background: var(--black-40);
   cursor: pointer;
 }
@@ -187,7 +187,7 @@
   align-items: center;
   gap: 8px;
   padding: 6px;
-  border-radius: 50px;
+  border-radius: var(--r-pill);
   background: var(--white-10);
 }
 .step {
@@ -218,8 +218,8 @@
   align-items: center;
   gap: 3.111px;
   padding: 3.111px;
-  border-radius: 6.221px;
-  font-size: 18.664px;
+  border-radius: var(--r-shop-cart-price);
+  font-size: var(--type-shop-cart-price);
   font-weight: var(--fw-semibold);
   line-height: 1.21;
 }

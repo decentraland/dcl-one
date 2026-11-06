@@ -51,12 +51,20 @@ const THUMB = 160
 
 export function ShopCart({ lines, total, onClose, onQuantity, onRemove, onCheckout, className }: ShopCartProps): React.JSX.Element {
   const list = useRef<HTMLUListElement>(null)
+  const title = useRef<HTMLHeadingElement>(null)
   const count = lines.reduce((n, l) => n + l.quantity, 0)
+  // The button that removed a line goes with it: the focus moves to the cart's title, not to the page.
+  const remove = (key: string): void => {
+    title.current?.focus()
+    onRemove(key)
+  }
   return (
     <section className={`${styles.cart} ${className ?? ''}`.trim()} aria-label="Your cart">
       <div className={styles.top}>
         <div className={styles.head}>
-          <h2 className={styles.title}>Your Cart ({count})</h2>
+          <h2 ref={title} className={styles.title} tabIndex={-1}>
+            Your Cart ({count})
+          </h2>
           <button type="button" className={styles.close} aria-label="Close cart" onClick={onClose}>
             <img src={closeIcon} alt="" width={30} height={30} />
           </button>
@@ -83,7 +91,7 @@ export function ShopCart({ lines, total, onClose, onQuantity, onRemove, onChecko
                         <button type="button" className={styles.action} aria-label={`Add ${line.name} to favourites`} disabled title="Favourites are coming soon">
                           <img src={heartIcon} alt="" width={14.9284} height={14.9284} />
                         </button>
-                        <button type="button" className={styles.action} aria-label={`Remove ${line.name}`} onClick={() => onRemove(line.key)}>
+                        <button type="button" className={styles.action} aria-label={`Remove ${line.name}`} onClick={() => remove(line.key)}>
                           <img src={trashIcon} alt="" width={14.9284} height={14.9284} />
                         </button>
                       </div>
@@ -95,7 +103,7 @@ export function ShopCart({ lines, total, onClose, onQuantity, onRemove, onChecko
                           type="button"
                           className={styles.step}
                           aria-label={line.quantity > 1 ? `One less ${line.name}` : `Remove ${line.name}`}
-                          onClick={() => (line.quantity > 1 ? onQuantity(line.key, line.quantity - 1) : onRemove(line.key))}
+                          onClick={() => (line.quantity > 1 ? onQuantity(line.key, line.quantity - 1) : remove(line.key))}
                         >
                           <img src={minusIcon} alt="" width={16} height={16} />
                         </button>

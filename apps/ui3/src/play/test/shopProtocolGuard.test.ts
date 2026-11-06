@@ -193,6 +193,17 @@ describe('the purchase wallet', () => {
     await expect(sign(g, typed(encodeUseCredits(args)))).rejects.toMatchObject({ code: 4100 })
   })
 
+  it('has the wallet sign the typed data as checked, not the text it was read from', async () => {
+    const g = setup()
+    // The same data, with a repeated key whose first copy a different parser might keep.
+    const data = JSON.stringify(typed())
+    const repeated = data.replace('"primaryType":"MetaTransaction"', '"primaryType":"Permit","primaryType":"MetaTransaction"')
+    await expect(sign(g, repeated)).resolves.toMatch(/^0x/)
+    const forwarded = g.wallet.requests.find((r) => r.method === 'eth_signTypedData_v4')!
+    expect((forwarded.params as unknown[])[1]).toBe(JSON.stringify(JSON.parse(repeated)))
+    expect((forwarded.params as unknown[])[1]).not.toContain('Permit')
+  })
+
   it('reads the wallet’s account before signing, and refuses another one', async () => {
     const g = setup()
     g.wallet.account = OTHER

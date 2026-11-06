@@ -26,7 +26,7 @@
   --lavender: #c640cd; /* DCL/Lavender — secondary badge */
   --red: #ff0000; /* DCL/Red — blocked */
   --white-10: rgba(255, 255, 255, 0.1); /* DCL/White10% — dividers */
-  --white-20: rgba(255, 255, 255, 0.2); /* DCL/White20% — the Shop cart's hovered card */
+  --shop-card-hover: rgba(255, 255, 255, 0.2); /* DCL/White20% — the Shop cart's hovered card */
   --pale-black: #43404a; /* DCL/Pale Black — the Shop toast's rim */
   --divider-strong: rgba(255, 255, 255, 0.2); /* list section hairlines (friends) */
   --panel-translucent: rgba(0, 0, 0, 0.72); /* see-through side panel over the world */
@@ -203,6 +203,9 @@
   --loading-pill-edge: #ba67f1;
 
   --r-xs: 6px;
+  --r-shop-cart-close: 7.5px; /* the Shop cart's close button */
+  --r-shop-cart-action: 5.429px; /* the Shop cart card's favourite and remove */
+  --r-shop-cart-price: 6.221px; /* the Shop cart card's price */
   --r-sm: 8px;
   --r-button: 9.6px;
   --r-md: 12px; /* light buttons and popups */
@@ -219,6 +222,7 @@
   --type-15: 15px;
   --type-16: 16px;
   --type-18: 18px;
+  --type-shop-cart-price: 18.664px; /* the Shop cart card's price */
   --type-20: 20px;
   --type-22: 22px;
   --type-24: 24px;

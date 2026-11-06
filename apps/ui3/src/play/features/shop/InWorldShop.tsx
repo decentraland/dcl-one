@@ -26,7 +26,7 @@ import emotesIcon from '../../assets/backpack/icon-emotes.webp'
 import filterIcon from '../../assets/backpack/icon-filter.webp'
 import emptySearchArt from '../../assets/backpack/empty-search.webp'
 import cartIcon from '../../assets/shop/cart.svg'
-import { cartInputFor, cartRequestLines, cartUnits, inWorldCart, useInWorldCart } from './cartStore'
+import { cartRequestLines, cartUnits, inWorldCart, inWorldCartInputFor, useInWorldCart } from './cartStore'
 import { CATALOGUE_SORTS, categoriesFor, defaultFilters, pageCount, useShopCatalogue, type CatalogueFilters, type CatalogueKind } from './catalogueQuery'
 import { useShopFlag } from './flagsQuery'
 import { homeQueries, useNewest, useShopOutfits, useTrending, type OutfitSummary } from './homeQuery'
@@ -298,7 +298,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   }
   // The cart is bought where purchases run (the web shell); elsewhere ADD TO CART stays off.
   const addToCart = (item: CatalogItem): (() => void) | undefined => {
-    const input = purchase.available ? cartInputFor(item) : null
+    const input = purchase.available ? inWorldCartInputFor(item) : null
     if (input == null || !inWorldCart.canAdd(input)) return undefined
     return () => {
       void inWorldCart.add(input).then((added) => {

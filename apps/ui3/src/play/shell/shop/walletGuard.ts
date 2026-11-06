@@ -132,8 +132,11 @@ export function checkUseCredits(data: unknown, intent: PurchaseIntent, nowSecond
   }
 }
 
-/** The CreditsManager's meta-transaction for the buyer, exactly as the rails build it, and nothing more. */
-export function checkMetaTransaction(from: unknown, data: unknown, intent: PurchaseIntent): void {
+/**
+ * The CreditsManager's meta-transaction for the buyer, exactly as the rails build it, and nothing more.
+ * Returns the typed data as checked, for the wallet to sign that and not the text it was read from.
+ */
+export function checkMetaTransaction(from: unknown, data: unknown, intent: PurchaseIntent): unknown {
   if (lower(from) !== intent.buyer) refuse('The Shop signs only for the account you signed in with.')
   let typed: unknown
   try {
@@ -159,6 +162,7 @@ export function checkMetaTransaction(from: unknown, data: unknown, intent: Purch
     lower(message.from) === intent.buyer
   if (!ok) refuse('The Shop only signs its own purchases.')
   checkUseCredits(message.functionData, intent)
+  return typed
 }
 
 /** The same call sent from the buyer's wallet: to the manager, with no value and no unknown fields. */
@@ -213,11 +217,14 @@ export function guardedProvider(provider: Eip1193Provider, intent: PurchaseInten
           }
           return provider.request({ method, params: [AMOY_ADD_PARAMS] })
         }
-        case 'eth_signTypedData_v4':
+        case 'eth_signTypedData_v4': {
           if (args.length !== 2) refuse('The Shop only signs its own purchases.')
-          checkMetaTransaction(args[0], args[1], intent)
+          // What the wallet signs is the data as checked, serialized again: never the original text, which a
+          // wallet's own parser might read differently (a repeated key, say).
+          const checked = JSON.stringify(checkMetaTransaction(args[0], args[1], intent))
           await ready('authorized')
-          return provider.request({ method, params })
+          return provider.request({ method, params: [args[0], checked] })
+        }
         case 'eth_sendTransaction':
           if (args.length !== 1) refuse('The Shop only sends its own purchases.')
           checkTransaction(args[0], intent)

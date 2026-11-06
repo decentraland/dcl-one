@@ -425,6 +425,52 @@ describe('the in-world cart', () => {
   const GUEST_KEY = 'dcl-inworld-shop:cart:v2:guest'
   const units = (cart: { getSnapshot(): readonly { itemId: string; quantity: number }[] }) => cart.getSnapshot().map((l) => `${l.itemId}x${l.quantity}`)
 
+  it('holds what didn’t fit for the buyer to change the cart as they like, and frees it once the signed-out cart changes', async () => {
+    const s = storage()
+    const cart = createInWorldCart({ storage: () => s, watch: () => () => {} })
+    cart.scopeTo(A)
+    await cart.add(item('1', { available: 100 }))
+    await cart.setQuantity(item('1'), 25)
+    cart.scopeTo(null)
+    await cart.add(item('2', { available: 100 }))
+    await cart.setQuantity(item('2'), 10)
+    cart.scopeTo(A)
+    await vi.waitFor(() => expect(units(cart)).toEqual(['1x25', '2x5']))
+    // − sticks, a removal doesn't refill, a purchase doesn't refill: the five left over wait, held.
+    await cart.setQuantity(item('2'), 4)
+    expect(units(cart)).toEqual(['1x25', '2x4'])
+    await cart.remove(item('1'))
+    expect(units(cart)).toEqual(['2x4'])
+    await cart.applyPurchase(A, OP, bought('2', 4))
+    expect(cart.getSnapshot()).toEqual([])
+    const reloaded = createInWorldCart({ storage: () => s, watch: () => () => {} })
+    reloaded.scopeTo(A)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(reloaded.getSnapshot()).toEqual([])
+    // Signed out, the buyer changes the signed-out cart: what it holds is theirs to bring again.
+    reloaded.scopeTo(null)
+    expect(units(reloaded)).toEqual(['2x5'])
+    await reloaded.setQuantity(item('2'), 6)
+    reloaded.scopeTo(A)
+    await vi.waitFor(() => expect(units(reloaded)).toEqual(['2x6']))
+  })
+
+  it('keeps the larger stock when lines of one item join, so one − takes off one', async () => {
+    const s = storage()
+    const cart = createInWorldCart({ storage: () => s, watch: () => () => {} })
+    cart.scopeTo(A)
+    await cart.add(item('1', { available: 2 }))
+    await cart.add(item('1', { available: 2 }))
+    cart.scopeTo(null)
+    await cart.add(item('1', { available: 10 }))
+    await cart.add(item('1', { available: 10 }))
+    await cart.add(item('1', { available: 10 }))
+    cart.scopeTo(A)
+    await vi.waitFor(() => expect(units(cart)).toEqual(['1x5']))
+    await cart.setQuantity(item('1'), 4)
+    expect(units(cart)).toEqual(['1x4'])
+  })
+
   it('leaves a signed-out cart as it is until the account’s cart that took it over is written', async () => {
     const g = guarded()
     const cart = createInWorldCart({ storage: g.make, watch: () => () => {} })

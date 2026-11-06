@@ -89,9 +89,15 @@ export interface ShopOperation {
 
 export type ShopOperationEvent = ShopOperation & { type: typeof SHOP_EVENT }
 
-const ADDRESS = /^0x[0-9a-fA-F]{40}$/
+/** An EVM address, in any case. */
+export const ADDRESS = /^0x[0-9a-fA-F]{40}$/
 /** A uint256 in decimal: at most 78 digits, no leading zeros. */
-const UINT = /^(0|[1-9][0-9]{0,77})$/
+export const UINT = /^(0|[1-9][0-9]{0,77})$/
+
+/** Whether two references name the same item (contracts as given: lowercase, as parsed). */
+export const sameItem = (a: { contract: string; itemId: string }, b: { contract: string; itemId: string }): boolean => a.contract === b.contract && a.itemId === b.itemId
+/** How many units lines hold in all. */
+export const unitsOf = (lines: readonly { quantity: number }[]): number => lines.reduce((n, l) => n + l.quantity, 0)
 
 function object(value: unknown): Record<string, unknown> | null {
   return value != null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
