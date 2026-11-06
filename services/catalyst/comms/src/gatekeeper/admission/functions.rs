@@ -226,96 +226,111 @@ mod tests {
             .execute(&admin)
             .await
             .unwrap();
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(2)
-            .connect_with(options.database(&name))
-            .await
-            .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
-        let malformed = crate::db::missing_functions(&pool, &["social.invalid(".to_owned()])
-            .await
-            .unwrap_err();
-        assert!(malformed.as_database_error().is_some(), "{malformed}");
-        let signatures: Vec<String> = ALL.iter().map(|function| function.signature()).collect();
-        for signature in &signatures {
-            sqlx::query(sqlx::AssertSqlSafe(format!("DROP FUNCTION {signature}")))
-                .execute(&pool)
+        use futures::FutureExt;
+        let outcome = std::panic::AssertUnwindSafe(async {
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(2)
+                .connect_with(options.database(&name))
                 .await
                 .unwrap();
-        }
-        assert_eq!(
-            crate::db::missing_functions(&pool, &signatures)
+            crate::db::apply_schema(&pool).await.unwrap();
+            let malformed = crate::db::missing_functions(&pool, &["social.invalid(".to_owned()])
                 .await
-                .unwrap(),
-            signatures
-        );
-        let error = match Installed::load(&pool).await {
-            Err(error) => error.to_string(),
-            Ok(_) => panic!("missing production functions must refuse installation"),
-        };
-        for signature in &signatures {
-            assert!(error.contains(signature), "{error}");
-        }
-        assert!(
-            error.contains("catalyst schema migrate") && error.contains("administrative role"),
-            "{error}"
-        );
-        let world = format!("upgrade-{}.dcl.eth", uuid::Uuid::new_v4());
-        sqlx::query("INSERT INTO social.world_secret_attempts(world_name,subject,attempts,window_start) VALUES($1,'caller',2,timezone('UTC',now()))")
-            .bind(&world).execute(&pool).await.unwrap();
-        let before: Vec<(i32, chrono::NaiveDateTime)> = sqlx::query_as(
-            "SELECT attempts,window_start FROM social.world_secret_attempts WHERE world_name=$1",
-        )
-        .bind(&world)
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-        assert_eq!(before.len(), 1);
-        let done = crate::db::schema_migrate::migrate(
-            &pool,
-            crate::db::SCHEMA_SQL,
-            crate::db::MIGRATIONS_SQL,
-        )
-        .await
-        .unwrap();
-        assert_eq!(done.created.len(), 2);
-        assert!(
-            crate::db::schema_migrate::migrate(
-                &pool,
-                crate::db::SCHEMA_SQL,
-                crate::db::MIGRATIONS_SQL
+                .unwrap_err();
+            assert!(malformed.as_database_error().is_some(), "{malformed}");
+            let signatures: Vec<String> = ALL.iter().map(|function| function.signature()).collect();
+            for signature in &signatures {
+                sqlx::query(sqlx::AssertSqlSafe(format!("DROP FUNCTION {signature}")))
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+            assert_eq!(
+                crate::db::missing_functions(&pool, &signatures)
+                    .await
+                    .unwrap(),
+                signatures
+            );
+            let error = match Installed::load(&pool).await {
+                Err(error) => error.to_string(),
+                Ok(_) => panic!("missing production functions must refuse installation"),
+            };
+            for signature in &signatures {
+                assert!(error.contains(signature), "{error}");
+            }
+            assert!(
+                error.contains("catalyst schema migrate") && error.contains("administrative role"),
+                "{error}"
+            );
+            let world = format!("upgrade-{}.dcl.eth", uuid::Uuid::new_v4());
+            sqlx::query("INSERT INTO social.world_secret_attempts(world_name,subject,attempts,window_start) VALUES($1,'caller',2,timezone('UTC',now()))")
+                .bind(&world).execute(&pool).await.unwrap();
+            let before: Vec<(i32, chrono::NaiveDateTime)> = sqlx::query_as(
+                "SELECT attempts,window_start FROM social.world_secret_attempts WHERE world_name=$1",
             )
-            .await
-            .unwrap()
-            .created
-            .is_empty()
-        );
-        assert!(
-            crate::db::schema_migrate::gaps(&pool, crate::db::SCHEMA_SQL)
-                .await
-                .unwrap()
-                .fatal()
-                .is_empty()
-        );
-        let after: Vec<(i32, chrono::NaiveDateTime)> = sqlx::query_as(
-            "SELECT attempts,window_start FROM social.world_secret_attempts WHERE world_name=$1",
-        )
-        .bind(&world)
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-        assert_eq!(after, before);
-        assert!(
-            crate::db::missing_functions(&pool, &signatures)
-                .await
-                .unwrap()
-                .is_empty()
-        );
-        pool.close().await;
-        sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE \"{name}\"")))
-            .execute(&admin)
+            .bind(&world)
+            .fetch_all(&pool)
             .await
             .unwrap();
+            assert_eq!(before.len(), 1);
+            let done = crate::db::schema_migrate::migrate(
+                &pool,
+                crate::db::SCHEMA_SQL,
+                crate::db::MIGRATIONS_SQL,
+            )
+            .await
+            .unwrap();
+            assert_eq!(done.created.len(), 2);
+            assert!(
+                crate::db::schema_migrate::migrate(
+                    &pool,
+                    crate::db::SCHEMA_SQL,
+                    crate::db::MIGRATIONS_SQL
+                )
+                .await
+                .unwrap()
+                .created
+                .is_empty()
+            );
+            assert!(
+                crate::db::schema_migrate::gaps(&pool, crate::db::SCHEMA_SQL)
+                    .await
+                    .unwrap()
+                    .fatal()
+                    .is_empty()
+            );
+            let after: Vec<(i32, chrono::NaiveDateTime)> = sqlx::query_as(
+                "SELECT attempts,window_start FROM social.world_secret_attempts WHERE world_name=$1",
+            )
+            .bind(&world)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+            assert_eq!(after, before);
+            assert!(
+                crate::db::missing_functions(&pool, &signatures)
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+            pool.close().await;
+        })
+        .catch_unwind()
+        .await;
+        // Force only this private database's sessions closed, including a pool
+        // dropped during a failed connection, schema setup or assertion.
+        let cleanup = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE \"{name}\" WITH (FORCE)"
+        )))
+        .execute(&admin)
+        .await;
         admin.close().await;
+        if let Err(panic) = outcome {
+            if let Err(error) = &cleanup {
+                eprintln!("cleaning up private upgrade database {name}: {error}");
+            }
+            std::panic::resume_unwind(panic);
+        }
+        cleanup.unwrap();
     }
 }

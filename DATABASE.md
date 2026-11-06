@@ -1050,13 +1050,16 @@ constraint and the existing table layout remain unchanged.
 
 A completed world access check retains its revision and authorization cutoff, but
 sets `next_attempt_at` to PostgreSQL infinity. Completion compares both the revision
-and the exact claimed schedule. A newer edit, later claim or same-revision community
-wakeup cannot be consumed by an older pass. Community closure advances the schedule
-with `LEAST`, including completed rows. The live-world sweep still reads retained
+and the exact claimed schedule, and checks that the lease is still unexpired after
+acquiring the row lock. A newer edit, later claim or same-revision community wakeup
+cannot be consumed by an older pass. Completion-write failures are logged and leave
+retry intent intact; they do not stop the remaining batch or the live-world sweep.
+Community closure advances the schedule with `LEAST`, including completed rows. The live-world sweep still reads retained
 cutoffs. After completion, stale-token re-enforcement relies on that rotating
 sweep rather than repeated due-queue work: visiting all live worlds takes
 `ceil(live_worlds / 16)` maintenance ticks (approximately that many minutes at
 the normal 60-second cadence). Outages and slow calls can extend the wall-clock
 latency; this is not a guaranteed deadline. The application decodes only finite
-claimed schedules and never decodes infinity as a Rust timestamp. This change adds no migration column and does not
-relax the stable-ban migration's coordinated rollout requirements.
+claimed schedules and never decodes infinity as a Rust timestamp. This change adds
+no migration column and does not relax the stable-ban migration's coordinated
+rollout requirements.
