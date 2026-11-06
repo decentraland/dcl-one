@@ -588,7 +588,7 @@ no snapshot in either tree:
 | `version` | `process.env.CURRENT_VERSION ?? 'Unknown'` (`Environment.ts:270`) | `CURRENT_VERSION` when set and not blank, else this build's `CARGO_PKG_VERSION` (`content/src/lib.rs` `Settings::from_config`, read through `config/src/social.rs` `social_rpc_current_version`) (CS-15) |
 | `commitHash` | `process.env.COMMIT_HASH ?? 'Unknown'` (`Environment.ts:269`) | The configured or build-time hash, otherwise `"Unknown"` (`status.rs`) |
 | `ethNetwork` | `ETH_NETWORK` config | `config.node.eth_network` |
-| `synchronizationStatus.lastSyncWithDAO` | Time of the last successful DAO server-list refresh; 0 before the first one (`logic/peer-cluster/component.ts:43,79,123-125`) | The last sync heartbeat (this node's equivalent: it follows `SYNC_SOURCE` peers, not a DAO list); 0 before the first one (`status.rs`) |
+| `synchronizationStatus.lastSyncWithDAO` | Time of the last successful DAO server-list refresh; 0 before the first one (`logic/peer-cluster/component.ts:43,79,123-125`) | The last sync heartbeat, also with `SYNC_FROM_DAO` (which reads the DAO list, CS-25); 0 before the first one (`status.rs`) |
 | `synchronizationStatus.synchronizationState` | `"Bootstrapping"` or `"Syncing"` (`sync-orchestrator/types.ts:7-10`) | `"Bootstrapping"`, `"Syncing"` (which also covers partially synced) or **`"Failed"`** (`content/src/lib.rs:373-379`); the status stays 200 for every state |
 | extra keys | none | `syncFrontier`, `lastHeartbeat` and `up` when the sync worker reports them (`wire_types.rs:106-120`) |
 
@@ -599,7 +599,7 @@ monitor that alerted on a non-200 status loses the failed-sync signal; read `syn
 ### Data dependency
 
 - The process configuration and the sync worker state.
-- dcl-one has no DAO list refresh to time; `lastSyncWithDAO` reports the sync heartbeat instead.
+- `lastSyncWithDAO` reports the sync heartbeat, not the time of the DAO list read (CS-25).
 
 ---
 
@@ -613,7 +613,7 @@ monitor that alerted on a non-200 status loses the failed-sync signal; read `syn
 |---|---|---|
 | Value | One `uuidv4()` per process, the same on every call (`logic/peer-cluster/component.ts:51,127-129`) | One UUID v4 per process in `ContentState`; the console's `challenge/refresh` replaces it in that process only. With several `serve` replicas behind one URL, `GET /challenge` can answer a different UUID per replica, as upstream would with several processes |
 | Format | A bare UUID, e.g. `"8c9e...-..."` | the same |
-| Purpose | "a peer that fetches `/challenge` from every DAO server and finds a matching value has located its own process" (`logic/peer-cluster/types.ts:8-13`) | — |
+| Purpose | "a peer that fetches `/challenge` from every DAO server and finds a matching value has located its own process" (`logic/peer-cluster/types.ts:8-13`); the DAO list refresh does not call it, it drops `CONTENT_SERVER_ADDRESS` (`logic/peer-cluster/component.ts:19-32`) | Not called either; the DAO list drops `PUBLIC_URL` and `CONTENT_URL` (CS-25) |
 
 Each `catalyst serve` process has its own value, as each upstream process does.
 
@@ -921,8 +921,8 @@ catalyst list and its `/about` is healthy.
       `current_version_overrides_the_build_version`). The variable is the one the social RPC `/status`
       reads too.
     - Left, by design: unset, `version` is this build's version where upstream says `"Unknown"`; the
-      extra keys (dcl-one sync health, above); `lastSyncWithDAO` is the last sync heartbeat, as this
-      node has no DAO list. A client reading the upstream keys sees the same types.
+      extra keys (dcl-one sync health, above); `lastSyncWithDAO` is the last sync heartbeat, not the
+      DAO list read time (CS-25). A client reading the upstream keys sees the same types.
     - Matching: always 200 (a `Failed` sync state included), and the `commitHash` fallback `"Unknown"`
       (`services/catalyst/content/src/status.rs`).
     - Expected: `decentraland/catalyst:src/controllers/handlers/status-handler.ts:6-25`,
@@ -994,6 +994,32 @@ catalyst list and its `/about` is healthy.
       `NormalizePath`); `/content/Deployments` is routed as `/content/deployments` by
       `services/catalyst/content/src/routing.rs` `upstream_routing`, as CR-16 (test
       `content_paths_match_case_insensitively`). Only paths under `/content/` are rewritten.
+    - Severity: none (closed).
+
+25. **CS-25 · sync · peers from the DAO catalyst list.** Status: MATCH (with `SYNC_FROM_DAO`).
+    - Upstream: the peer list is the L1 `Catalyst` registry (`l1Contracts[network].catalyst` of
+      `@dcl/catalyst-contracts`, read with `getCatalystServersFromDAO`; not vendored) with `/content`
+      appended (`decentraland/catalyst:src/logic/peer-cluster/dao-source.ts:28,43-49`), unless
+      `CUSTOM_DAO` names a static list (`src/components.ts:201-205`). It drops the entry equal to its
+      lowercased `CONTENT_SERVER_ADDRESS` (`src/logic/peer-cluster/component.ts:19-32`), reads at start
+      and every `UPDATE_FROM_DAO_INTERVAL` (30 min, `src/environment.ts:528-529`;
+      `component.ts:95-111`), keeps the last list when a read fails or is empty (`component.ts:56-91`),
+      and hands each changed list to `syncWithServers` once the bootstrap finished
+      (`src/logic/sync-orchestrator/component.ts:58`).
+    - dcl-one: `SYNC_FROM_DAO` (on under `NODE_POSTURE=mirror`) reads the same registry over
+      `ETH_RPC_URL` (`catalystCount`, `catalystIds(i)`, `catalystById(id)`; mainnet
+      `0x4a2f10076101650f40342885b99b6b101d83c486`, sepolia `0x9b5091588a4bae0a5ea54a35af3c31f57a68ed37`,
+      the registry `/lambdas/contracts/servers` reads) when the sync leader starts and every 30 minutes
+      (`services/catalyst/content/src/sync/dao.rs`). An `http://` domain is dropped, a bare one gets
+      `https://`, and an entry equal to `PUBLIC_URL`, `CONTENT_URL` or the bind address (case-insensitive,
+      with or without `/content`) is this node. Until a read succeeds, or when it lists no other server,
+      the node syncs from `SYNC_SOURCE` (under mirror the three Decentraland peers); a later failure
+      keeps the current list. After the bootstrap, a changed list goes to the running orchestrator
+      (`sync/orchestrator.rs` `run_sync_job`): a new peer bootstraps from its snapshots while the node
+      stays `Syncing`, a dropped peer's stream stops, and the failed-deployments retry fetches from the
+      new list. Read-through keeps `SYNC_SOURCE`. Tests: `sync::dao::tests`.
+    - Left: without `ETH_RPC_URL`, or on a network other than mainnet and sepolia, the node syncs from
+      `SYNC_SOURCE` only; `lastSyncWithDAO` stays the sync heartbeat (CS-15).
     - Severity: none (closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not

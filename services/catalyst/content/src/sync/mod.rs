@@ -6,6 +6,7 @@
 //! the retry worker and the orchestrator that sequences them, and reports
 //! into the one [`SyncStatus`] the status routes read.
 
+pub mod dao;
 pub mod orchestrator;
 pub mod pointer_changes;
 pub mod repository;
