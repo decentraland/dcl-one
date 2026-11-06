@@ -74,3 +74,32 @@ describe('ColorPicker', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
+
+// The name colour picker: a swatch trigger, presets and the hue bar only.
+describe('ColorPicker hue-only swatch', () => {
+  const presets = ['#a140ff', '#40eaff']
+  const open = (onChange = vi.fn()) => {
+    render(<ColorPicker label="Name color" value="#40eaff" presets={presets} hueOnly swatch onChange={onChange} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Name color' }))
+    return onChange
+  }
+
+  it('is a swatch, not a COLOR button', () => {
+    render(<ColorPicker label="Name color" value="#40eaff" presets={presets} hueOnly swatch onChange={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Name color' })).not.toHaveTextContent('COLOR')
+  })
+
+  it('offers the presets and the hue bar, without saturation or brightness', () => {
+    open()
+    expect(screen.getByRole('radio', { name: '#40eaff' })).toBeChecked()
+    expect(screen.getByRole('slider', { name: 'Hue' })).toBeTruthy()
+    expect(screen.queryByRole('slider', { name: 'Saturation' })).toBeNull()
+    expect(screen.queryByRole('slider', { name: 'Brightness' })).toBeNull()
+  })
+
+  it('picks a hue at full saturation and brightness, even from a softer preset', () => {
+    const onChange = open()
+    fireEvent.change(screen.getByRole('slider', { name: 'Hue' }), { target: { value: '0' } })
+    expect(onChange).toHaveBeenLastCalledWith('#ff0000')
+  })
+})

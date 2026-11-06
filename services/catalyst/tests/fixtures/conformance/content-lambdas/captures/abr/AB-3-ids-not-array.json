@@ -1,0 +1,25 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://asset-bundle-registry.decentraland.org",
+  "request": {
+    "method": "POST",
+    "path": "/profiles/metadata",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "ids": "0x0000000000000000000000000000000000000001"
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "90"
+    },
+    "body": {
+      "error": "Bad request",
+      "message": "The ids property must be an array of non-empty strings"
+    }
+  }
+}
