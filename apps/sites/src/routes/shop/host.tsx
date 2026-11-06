@@ -22,8 +22,6 @@ import { getThirdwebSession } from "@/data/lib/auth/thirdweb/session";
 import { hasWallet } from "@/data/lib/auth/wallet";
 import { openSignIn } from "@/features/components/auth/signin-store";
 
-export { managedShopProvider, sitesWalletKind } from "@/data/lib/auth/shop-wallet";
-
 let installed = false;
 
 /** The document's Shop client signs with sites' current identity, read per request. */

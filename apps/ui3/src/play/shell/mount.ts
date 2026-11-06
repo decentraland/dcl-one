@@ -11,6 +11,7 @@ import { heldLogin, request } from './login'
 import { onInWorld } from './googleTag'
 import { PAGE_DIR } from '../lib/publicUrl'
 import { siteUrl } from '../lib/baseDomain'
+import { loadOnce } from '../lib/loadOnce'
 import type { ShellShop, ShellShopWallet } from './shop/purchase'
 
 // Runs the web shell on Sites' /play page: mounts the app document (/play/app.html) in an iframe of its
@@ -88,9 +89,8 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
 
   // The in-world Shop's purchases (shop/purchase), loaded on the app's first shop.* request: this page
   // holds the login and the wallet, shows the buyer the purchase dialog over the app and signs.
-  let shop: Promise<ShellShop> | null = null
-  function shellShop(): Promise<ShellShop> {
-    shop ??= Promise.all([import('./shop/purchase'), import('./shop/overlay')]).then(([purchase, overlay]) =>
+  const shellShop: () => Promise<ShellShop> = loadOnce(() =>
+    Promise.all([import('./shop/purchase'), import('./shop/overlay')]).then(([purchase, overlay]) =>
       purchase.createShellShop({
         login: heldLogin,
         wallet: options.shopWallet ?? null,
@@ -100,8 +100,7 @@ export function mountPlayShell(options: PlayShellOptions = {}): void {
         signIn: () => location.assign(authLoginUrl(authReturnUrl(entryUrl)))
       })
     )
-    return shop
-  }
+  )
 
   // Shown instead of the app when the app would share this page's process.
   function refuse(): void {

@@ -9,7 +9,7 @@
 // from storage. The purchase requires both before it lets anything reach the wallet or the relay.
 
 import { CART_KEY_PREFIX, CHECKOUT_KEY_PREFIX, createCartStore, type CartStorage, type CartStore } from '../../../shop/cart/store'
-import type { GroupProgress } from '../../../shop/model/purchase'
+import type { GroupProgress, GroupStatus } from '../../../shop/model/purchase'
 import type { ShopOperationState } from '../../lib/shopProtocol'
 
 /** What a purchase's dialog shows of its item. */
@@ -46,9 +46,73 @@ const PROBE = `${NS}:probe`
 /** Operations kept per buyer; the oldest settled ones go first. */
 const KEEP = 20
 
-function isRecord(v: unknown): v is OperationRecord {
-  const r = v as OperationRecord | null
-  return !!r && typeof r.id === 'string' && typeof r.state === 'string' && !!r.item && typeof r.item.contract === 'string' && typeof r.item.itemId === 'string'
+// What storage hands back is checked whole (another version of this page, or anything on the origin,
+// may have written it): a record that doesn't match is skipped, never half-trusted.
+const STATES: readonly ShopOperationState[] = ['reviewing', 'processing', 'pending', 'succeeded', 'failed', 'cancelled']
+const GROUP_STATUSES: readonly GroupStatus[] = ['idle', 'authorizing', 'submitted', 'pending', 'confirmed', 'failed', 'expired']
+const ADDRESS = /^0x[0-9a-f]{40}$/
+const HASH = /^0x[0-9a-fA-F]{64}$/
+const UINT = /^(0|[1-9][0-9]{0,77})$/
+
+const isObject = (v: unknown): v is Record<string, unknown> => v != null && typeof v === 'object' && !Array.isArray(v)
+const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === 'string')
+const isTime = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0
+const isChain = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v > 0
+const isHash = (v: unknown): boolean => v === null || (typeof v === 'string' && HASH.test(v))
+
+function isProgress(v: unknown): v is GroupProgress {
+  if (!isObject(v) || !isObject(v.key)) return false
+  const { key, failure } = v
+  return (
+    typeof v.keyId === 'string' &&
+    (key.method === 'credits' || key.method === 'mana') &&
+    isChain(key.chainId) &&
+    typeof key.contract === 'string' &&
+    isObject(key.call) &&
+    typeof key.call.kind === 'string' &&
+    isStrings(v.lineIds) &&
+    GROUP_STATUSES.includes(v.status as GroupStatus) &&
+    isStrings(v.creditIds) &&
+    isHash(v.txHash) &&
+    (failure === null || (isObject(failure) && typeof failure.kind === 'string' && typeof failure.message === 'string')) &&
+    isTime(v.updatedAt) &&
+    typeof v.attempts === 'number'
+  )
+}
+
+function isDisplay(v: unknown): boolean {
+  return (
+    isObject(v) &&
+    typeof v.name === 'string' &&
+    typeof v.creator === 'string' &&
+    typeof v.rarity === 'string' &&
+    typeof v.credits === 'number' &&
+    (v.thumbnail === undefined || typeof v.thumbnail === 'string') &&
+    (v.category === undefined || typeof v.category === 'string')
+  )
+}
+
+/** A stored operation of `buyer`'s, every field the shape this page writes. */
+function isRecord(v: unknown, buyer: string): v is OperationRecord {
+  if (!isObject(v) || !isObject(v.item)) return false
+  const { item } = v
+  return (
+    typeof v.id === 'string' &&
+    /^[0-9a-f-]{8,64}$/.test(v.id) &&
+    v.buyer === buyer &&
+    typeof item.contract === 'string' &&
+    ADDRESS.test(item.contract) &&
+    typeof item.itemId === 'string' &&
+    UINT.test(item.itemId) &&
+    STATES.includes(v.state as ShopOperationState) &&
+    (v.next === undefined || v.next === 'backpack') &&
+    (v.txHash === undefined || isHash(v.txHash)) &&
+    (v.chainId === undefined || isChain(v.chainId)) &&
+    (v.progress === undefined || isProgress(v.progress)) &&
+    (v.display === undefined || isDisplay(v.display)) &&
+    isTime(v.createdAt) &&
+    isTime(v.updatedAt)
+  )
 }
 
 export interface Ledger {
@@ -71,7 +135,7 @@ export function createLedger(storage: () => Storage | null): Ledger {
     try {
       const raw = storage()?.getItem(indexKey(buyer))
       const list = raw ? (JSON.parse(raw) as unknown) : []
-      return Array.isArray(list) ? list.filter(isRecord) : []
+      return Array.isArray(list) ? list.filter((r): r is OperationRecord => isRecord(r, buyer)) : []
     } catch {
       return []
     }

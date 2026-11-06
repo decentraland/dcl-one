@@ -13,13 +13,15 @@ import type { GroupProgress } from '../../shop/model/purchase'
 import { BOOK, ITEM, storeMint } from '../../shop/payment/fixtures'
 import type { StoredLogin } from '../features/auth/sso'
 import { SHOP_EVENT, SHOP_PROTOCOL, type ShopOperation, type ShopOperationEvent } from '../lib/shopProtocol'
-import { createShellShop, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices, type ShellShopWallet } from '../shell/shop/purchase'
+import { claimLock, createShellShop, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices, type ShellShopWallet } from '../shell/shop/purchase'
 import type { PurchaseIntent } from '../shell/shop/walletGuard'
 
 const BUYER = BOOK.buyer.toLowerCase()
 const OTHER = '0x' + '9'.repeat(40)
 const CONTRACT = BOOK.collection.toLowerCase()
 const TRUSTED = { chainId: 137, address: '0x' + 'ce'.repeat(20), name: 'Decentraland Credits', version: '1.0.0' }
+/** A transaction hash, as the chain gives one. */
+const TX = '0x' + 'ab'.repeat(32)
 
 const EXPIRES = new Date(Date.now() + 3_600_000).toISOString()
 const logins = new Map<string, StoredLogin>()
@@ -76,7 +78,7 @@ function memoryStorage(): Storage {
 }
 
 /** What the executor writes to the group's checkout before it answers `pending`: handed off, a hash. */
-function handedOff(deps: CheckoutDeps, group: CartGroup, txHash = '0xabc'): void {
+function handedOff(deps: CheckoutDeps, group: CartGroup, txHash = TX): void {
   deps.store.dispatch(group.keyId, { type: 'authorize' })
   deps.store.dispatch(group.keyId, { type: 'authorized', creditIds: ['0x' + 'a1'.repeat(32)] })
   deps.store.dispatch(group.keyId, { type: 'submit' })
@@ -103,21 +105,33 @@ function setup(
     tick?: number
     /** The chain's receipts by hash (a missing hash has none yet). */
     receipts?: Record<string, 'success' | 'reverted'>
+    /** The creator's profile name; Aurora by default. */
+    creatorName?: ShellShopServices['creatorName']
+    /** This tab's Web Locks (`locks().tab`); every lock is free by default. */
+    claim?: ShellShopServices['claim']
+    /** The server's record of the operation's credits; still open by default. */
+    creditRecord?: ShellShopServices['creditRecord']
   } = {}
 ) {
   const shown: Shown[] = []
   const events: ShopOperationEvent[] = []
   const provider: FakeWallet = createFakeWallet({ account: opts.account ?? BUYER })
   const wallet: ShellShopWallet | null = opts.wallet === undefined ? { kind: vi.fn(() => 'managed' as const), provider: vi.fn(() => provider) } : opts.wallet
-  const run = vi.fn<RunFn>(opts.run ?? (async () => ({ status: 'confirmed', txHash: '0xabc' })))
-  const watch = vi.fn<(deps: CheckoutDeps, progress: GroupProgress) => Promise<GroupResult>>(opts.watch ?? (async () => ({ status: 'pending', txHash: '0xabc' })))
+  const run = vi.fn<RunFn>(opts.run ?? (async () => ({ status: 'confirmed', txHash: TX })))
+  const watch = vi.fn<(deps: CheckoutDeps, progress: GroupProgress) => Promise<GroupResult>>(opts.watch ?? (async () => ({ status: 'pending', txHash: TX })))
   const guard = vi.fn((p: Eip1193Provider, _intent: PurchaseIntent) => p)
   const cents = (opts.balanceCents ?? 7000) as UsdCents
   const storage = opts.storage === undefined ? memoryStorage() : opts.storage
+  const creditRecord = vi.fn<ShellShopServices['creditRecord']>(opts.creditRecord ?? (async () => 'open'))
+  /** Each client's signer, in the order the shell made them (the quote's is the first after shop.buy). */
+  const signers: Array<() => unknown> = []
   let clock = 1_000_000
   let ids = 0
   const services: Partial<ShellShopServices> = {
-    client: () => ({}) as never,
+    client: (signer) => {
+      signers.push(signer)
+      return {} as never
+    },
     fetchItem: async () => (opts.listing === undefined ? LISTING : opts.listing),
     offers: () => async (queries, session) => Object.fromEntries(queries.map((q) => [q.key, storeMint(session)])),
     balance: async () => ({ balanceCents: cents, credits: Math.floor(cents / 10) }),
@@ -142,7 +156,10 @@ function setup(
     },
     now: () => clock,
     newId: () => `0f0e0d0c-0000-4000-8000-${String(++ids).padStart(12, '0')}`,
-    creditsUrl: () => 'https://decentraland.example/shop/credits'
+    creditsUrl: () => 'https://decentraland.example/shop/credits',
+    creatorName: opts.creatorName ?? (async () => 'Aurora'),
+    claim: opts.claim ?? (async () => () => {}),
+    creditRecord
   }
   const deps = {
     login: opts.login ?? (() => login()),
@@ -161,7 +178,25 @@ function setup(
   }
   const buy = (itemId = String(ITEM)) => shop.request('shop.buy', { v: SHOP_PROTOCOL, item: { contract: CONTRACT, itemId }, method: 'credits', creatorName: 'Aurora' }) as Promise<ShopOperation>
   const states = (): string[] => events.map((e) => e.state)
-  return { shop, deps, shown, events, run, watch, guard, provider, wallet, last, until, buy, states }
+  return { shop, deps, shown, events, run, watch, guard, provider, wallet, last, until, buy, states, signers, creditRecord }
+}
+
+/** Web Locks as one browser holds them across its tabs: one holder per name, until it lets go or its tab goes. */
+function locks() {
+  const held = new Map<string, string>()
+  return {
+    tab: (name: string): ShellShopServices['claim'] => async (id) => {
+      if (held.has(id)) return null
+      held.set(id, name)
+      return () => {
+        if (held.get(id) === name) held.delete(id)
+      }
+    },
+    close(name: string): void {
+      for (const [id, tab] of [...held]) if (tab === name) held.delete(id)
+    },
+    holds: (id: string): string | undefined => held.get(id)
+  }
 }
 
 describe('the shell purchase', () => {
@@ -324,9 +359,9 @@ describe('the shell purchase', () => {
     const t = setup({
       run: async (deps, group) => {
         handedOff(deps, group)
-        return { status: 'pending', txHash: '0xabc' }
+        return { status: 'pending', txHash: TX }
       },
-      watch: async () => (settled ? { status: 'confirmed', txHash: '0xabc' } : { status: 'pending', txHash: '0xabc' })
+      watch: async () => (settled ? { status: 'confirmed', txHash: TX } : { status: 'pending', txHash: TX })
     })
     await t.buy()
     ;(await t.until('confirm')).handlers.onConfirm?.()
@@ -341,7 +376,7 @@ describe('the shell purchase', () => {
     const t = setup({
       run: async (deps, group) => {
         handedOff(deps, group)
-        return { status: 'pending', txHash: '0xabc' }
+        return { status: 'pending', txHash: TX }
       }
     })
     const first = await t.buy()
@@ -374,14 +409,14 @@ describe('the shell purchase', () => {
       storage,
       run: async (deps, group) => {
         handedOff(deps, group)
-        return { status: 'pending', txHash: '0xabc' }
+        return { status: 'pending', txHash: TX }
       }
     })
     const op = await before.buy()
     ;(await before.until('confirm')).handlers.onConfirm?.()
     await before.until('pending')
     // The page reloads: a new shell over the same storage.
-    const after = setup({ storage, watch: async () => ({ status: 'confirmed', txHash: '0xabc' }) })
+    const after = setup({ storage, watch: async () => ({ status: 'confirmed', txHash: TX }) })
     expect(await after.shop.request('shop.status', { operation: op.operation })).toMatchObject({ operation: op.operation })
     await vi.waitFor(() => expect(after.events.find((e) => e.operation === op.operation && e.state === 'succeeded')).toBeTruthy())
     expect(after.watch).toHaveBeenCalled()
@@ -399,13 +434,13 @@ describe('the shell purchase', () => {
       storage,
       run: async (deps, group) => {
         handedOff(deps, group)
-        return { status: 'pending', txHash: '0xabc' }
+        return { status: 'pending', txHash: TX }
       }
     })
     const op = await before.buy()
     ;(await before.until('confirm')).handlers.onConfirm?.()
     await before.until('pending')
-    const after = setup({ storage, watch: async () => ({ status: 'confirmed', txHash: '0xabc' }) })
+    const after = setup({ storage, watch: async () => ({ status: 'confirmed', txHash: TX }) })
     await after.shop.request('shop.capabilities', undefined)
     await vi.waitFor(() => expect(after.events.find((e) => e.operation === op.operation)?.state).toBe('succeeded'))
     expect(after.events.some((e) => e.operation === op.operation && e.state === 'cancelled')).toBe(false)
@@ -424,7 +459,7 @@ describe('the shell purchase', () => {
       storage,
       run: async (deps, group) => {
         handedOff(deps, group)
-        return { status: 'pending', txHash: '0xabc' }
+        return { status: 'pending', txHash: TX }
       }
     })
     const op = await before.buy()
@@ -435,12 +470,12 @@ describe('the shell purchase', () => {
       storage,
       watch: async (_deps, progress) => {
         watched = progress
-        return { status: 'confirmed', txHash: '0xabc' }
+        return { status: 'confirmed', txHash: TX }
       }
     })
     await after.shop.request('shop.capabilities', undefined)
     await vi.waitFor(() => expect(after.events.find((e) => e.operation === op.operation)?.state).toBe('succeeded'))
-    expect(watched).toMatchObject({ status: 'pending', txHash: '0xabc' })
+    expect(watched).toMatchObject({ status: 'pending', txHash: TX })
   })
 
   /** A record as an earlier page left it, with no checkout: only its own fields. */
@@ -452,7 +487,7 @@ describe('the shell purchase', () => {
 
   it('never fails a hand-off known only by its hash: unreadable, old, it stays pending', async () => {
     const storage = memoryStorage()
-    const id = recorded(storage, { state: 'pending', txHash: '0xabc', chainId: 137 })
+    const id = recorded(storage, { state: 'pending', txHash: TX, chainId: 137 })
     // Long after it could have expired, with no receipt yet and no checkout: the page watches it until
     // its own watch ends, and it is still pending.
     const t = setup({ storage })
@@ -464,11 +499,27 @@ describe('the shell purchase', () => {
     expect((await t.buy()).operation).toBe(id)
   })
 
+  it('skips a stored record that isn’t the shape this page writes, or another buyer’s', async () => {
+    for (const record of [
+      { state: 'pending', txHash: 'not a hash', chainId: 137 },
+      { state: 'done', txHash: TX, chainId: 137 },
+      { state: 'pending', txHash: TX, chainId: 137, buyer: OTHER },
+      { state: 'pending', txHash: TX, chainId: 137, progress: { status: 'submitted' } },
+      { state: 'pending', txHash: TX, chainId: 137, createdAt: 'yesterday' }
+    ]) {
+      const storage = memoryStorage()
+      const id = recorded(storage, record)
+      const t = setup({ storage })
+      expect(await t.shop.request('shop.status', { operation: id })).toBeNull()
+      expect(t.watch).not.toHaveBeenCalled()
+    }
+  })
+
   it('settles a hand-off known only by its hash from its receipt on its chain', async () => {
     for (const [status, state] of [['success', 'succeeded'], ['reverted', 'failed']] as const) {
       const storage = memoryStorage()
-      const id = recorded(storage, { state: 'pending', txHash: '0xabc', chainId: 137 })
-      const t = setup({ storage, receipts: { '0xabc': status } })
+      const id = recorded(storage, { state: 'pending', txHash: TX, chainId: 137 })
+      const t = setup({ storage, receipts: { [TX]: status } })
       await t.shop.request('shop.capabilities', undefined)
       await vi.waitFor(() => expect(t.events.find((e) => e.operation === id)?.state).toBe(state))
     }
@@ -509,9 +560,9 @@ describe('the shell purchase', () => {
     const t = setup({
       run: async (deps, group) => {
         handedOff(deps, group)
-        return { status: 'pending', txHash: '0xabc' }
+        return { status: 'pending', txHash: TX }
       },
-      watch: async () => (settledNow ? { status: 'confirmed', txHash: '0xabc' } : { status: 'pending', txHash: '0xabc' })
+      watch: async () => (settledNow ? { status: 'confirmed', txHash: TX } : { status: 'pending', txHash: TX })
     })
     await t.buy()
     ;(await t.until('confirm')).handlers.onConfirm?.()
@@ -525,7 +576,7 @@ describe('the shell purchase', () => {
     const t = setup({
       run: async (deps, group) => {
         handedOff(deps, group)
-        return { status: 'pending', txHash: '0xabc' }
+        return { status: 'pending', txHash: TX }
       },
       watch: async () => ({ status: 'failed', failure: { kind: 'reverted', message: 'reverted' }, released: [] })
     })
@@ -542,9 +593,9 @@ describe('the shell purchase', () => {
       tick: 0,
       run: async (deps, group) => {
         handedOff(deps, group)
-        return { status: 'pending', txHash: '0xabc' }
+        return { status: 'pending', txHash: TX }
       },
-      watch: async () => (settledNow ? { status: 'confirmed', txHash: '0xabc' } : { status: 'pending', txHash: '0xabc' })
+      watch: async () => (settledNow ? { status: 'confirmed', txHash: TX } : { status: 'pending', txHash: TX })
     })
     const first = await t.buy()
     ;(await t.until('confirm')).handlers.onConfirm?.()
@@ -609,6 +660,142 @@ describe('the shell purchase', () => {
     expect(view.step === 'failed' && view.message).toMatch(/isn't on sale/)
   })
 
+  it('leaves alone a purchase another live tab holds, and its record with it', async () => {
+    const storage = memoryStorage()
+    const browser = locks()
+    let answer: (r: GroupResult) => void = () => {}
+    const first = setup({
+      storage,
+      claim: browser.tab('first'),
+      // Mid-purchase: a credit reserved, the wallet still answering.
+      run: (deps, group) => {
+        deps.store.dispatch(group.keyId, { type: 'authorize' })
+        deps.store.dispatch(group.keyId, { type: 'authorized', creditIds: ['0x' + 'a1'.repeat(32)] })
+        return new Promise((resolve) => (answer = resolve))
+      }
+    })
+    const op = await first.buy()
+    ;(await first.until('confirm')).handlers.onConfirm?.()
+    await first.until('processing')
+    expect(browser.holds(op.operation)).toBe('first')
+    // A second tab over the same storage sees it as it stands, and neither ends nor follows it.
+    const second = setup({ storage, claim: browser.tab('second') })
+    expect(await second.shop.request('shop.status', { operation: op.operation })).toMatchObject({ state: 'processing' })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(second.events.some((e) => e.operation === op.operation)).toBe(false)
+    expect(second.watch).not.toHaveBeenCalled()
+    // Buying the same item there shows the purchase under way, not a second one.
+    expect((await second.buy()).operation).toBe(op.operation)
+    expect(second.last().view.step).toBe('pending')
+    expect(second.run).not.toHaveBeenCalled()
+    // The first tab finishes its own purchase, and lets it go.
+    answer({ status: 'confirmed', txHash: TX })
+    await first.until('success')
+    expect(first.states()).toEqual(['reviewing', 'processing', 'succeeded'])
+    expect(browser.holds(op.operation)).toBeUndefined()
+    // Asked again, the second tab learns how it ended: its app hears of it, and its dialog says so.
+    await second.shop.request('shop.status', {})
+    expect(second.events.at(-1)).toMatchObject({ operation: op.operation, state: 'succeeded' })
+    expect(second.last().view.step).toBe('success')
+    expect(second.run).not.toHaveBeenCalled()
+  })
+
+  it('takes over a hand-off once the tab that held it is gone', async () => {
+    const storage = memoryStorage()
+    const browser = locks()
+    const first = setup({
+      storage,
+      claim: browser.tab('first'),
+      run: async (deps, group) => {
+        handedOff(deps, group)
+        return { status: 'pending', txHash: TX }
+      }
+    })
+    const op = await first.buy()
+    ;(await first.until('confirm')).handlers.onConfirm?.()
+    await first.until('pending')
+    const second = setup({ storage, claim: browser.tab('second'), watch: async () => ({ status: 'confirmed', txHash: TX }) })
+    await second.shop.request('shop.capabilities', undefined)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(second.watch).not.toHaveBeenCalled()
+    // The first tab closes: its locks go with it, and the second follows the purchase to its end.
+    browser.close('first')
+    await second.shop.request('shop.status', {})
+    await vi.waitFor(() => expect(second.events.find((e) => e.operation === op.operation && e.state === 'succeeded')).toBeTruthy())
+    expect(second.run).not.toHaveBeenCalled()
+    expect(browser.holds(op.operation)).toBeUndefined()
+  })
+
+  it('ends a hand-off whose hash never mined once its credit expired unused, and frees the item', async () => {
+    const t = setup({
+      run: async (deps, group) => {
+        handedOff(deps, group)
+        return { status: 'pending', txHash: TX }
+      },
+      creditRecord: async () => 'expired',
+      tick: 5 * 60_000
+    })
+    const first = await t.buy()
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    await vi.waitFor(() => expect(t.events.find((e) => e.operation === first.operation && e.state === 'failed')).toBeTruthy())
+    // Not on the first expired read: read again past the index's lag (15 minutes, here 5 a wait).
+    expect(t.creditRecord).toHaveBeenCalledTimes(4)
+    expect(t.creditRecord.mock.calls[0][1]).toEqual(['0x' + 'a1'.repeat(32)])
+    const { view, handlers } = await t.until('failed')
+    expect(view).toMatchObject({ retry: false, message: expect.stringMatching(/never went through/) })
+    handlers.onClose()
+    // The item can be bought again.
+    const again = await t.buy()
+    expect(again.operation).not.toBe(first.operation)
+    await t.until('confirm')
+  })
+
+  it('settles a hand-off whose hash has no receipt when its credit was spent', async () => {
+    const t = setup({
+      run: async (deps, group) => {
+        handedOff(deps, group)
+        return { status: 'pending', txHash: TX }
+      },
+      creditRecord: async () => 'settled'
+    })
+    const op = await t.buy()
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    await vi.waitFor(() => expect(t.events.find((e) => e.operation === op.operation && e.state === 'succeeded')).toBeTruthy())
+    expect(t.last().view.step).toBe('success')
+  })
+
+  it('names the creator from their profile, not the app, and by address without one', async () => {
+    const named = setup({ creatorName: async () => 'Marlene' })
+    await named.buy()
+    expect((await named.until('confirm')).view).toMatchObject({ item: { creator: 'Marlene' } })
+    const unnamed = setup({ creatorName: async () => null })
+    await unnamed.buy()
+    const { view } = await unnamed.until('confirm')
+    const creator = String(BOOK.creator)
+    expect(view).toMatchObject({ item: { creator: `${creator.slice(0, 6)}…${creator.slice(-4)}` } })
+  })
+
+  it('answers shop.status with the signed-in buyer’s operations only', async () => {
+    let account = BUYER
+    const t = setup({ login: () => login(account) })
+    const op = await t.buy()
+    ;(await t.until('confirm')).handlers.onClose()
+    account = OTHER
+    expect(await t.shop.request('shop.status', { operation: op.operation })).toBeNull()
+    expect(await t.shop.request('shop.status', {})).toEqual([])
+  })
+
+  it('signs the terms’ requests with the login that read them and no later one', async () => {
+    let held = login()
+    const t = setup({ login: () => held })
+    await t.buy()
+    await t.until('confirm')
+    const quote = t.signers[0]
+    expect(quote()).not.toBeNull()
+    held = { ...held, identity: { ...held.identity, expiration: new Date(Date.now() + 7_200_000).toISOString() } }
+    expect(quote()).toBeNull()
+  })
+
   it('runs one dialog at a time', async () => {
     const t = setup()
     await t.buy()
@@ -631,5 +818,37 @@ describe('the shell purchase', () => {
   it('reads the balance for the login, and none signed out', async () => {
     expect(await setup({ balanceCents: 1234 }).shop.request('shop.balance', undefined)).toEqual({ v: 1, credits: 123 })
     expect(await setup({ login: () => null }).shop.request('shop.balance', undefined)).toBeNull()
+  })
+})
+
+describe('an operation’s lock', () => {
+  /** Web Locks as the browser grants them: one holder per name, released when its callback's promise settles. */
+  function webLocks(): LockManager {
+    const held = new Set<string>()
+    const request = async (name: string, options: LockOptions, granted: LockGrantedCallback<unknown>): Promise<unknown> => {
+      if (options.ifAvailable && held.has(name)) return granted(null)
+      held.add(name)
+      try {
+        return await granted({ name, mode: 'exclusive' } as Lock)
+      } finally {
+        held.delete(name)
+      }
+    }
+    return { request, query: async () => ({ held: [], pending: [] }) } as unknown as LockManager
+  }
+
+  it('is held by one page until it lets go', async () => {
+    const locks = webLocks()
+    const release = await claimLock(locks, 'op-1')
+    expect(release).toBeTypeOf('function')
+    expect(await claimLock(locks, 'op-1')).toBeNull()
+    expect(await claimLock(locks, 'op-2')).toBeTypeOf('function')
+    release!()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(await claimLock(locks, 'op-1')).toBeTypeOf('function')
+  })
+
+  it('takes this page for the only one without Web Locks', async () => {
+    expect(await claimLock(undefined, 'op-1')).toBeTypeOf('function')
   })
 })

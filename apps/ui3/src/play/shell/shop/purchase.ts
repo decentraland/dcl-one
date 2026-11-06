@@ -12,6 +12,7 @@
 // same item again while one is unresolved shows that one instead.
 
 import type { AuthIdentity as SignerIdentity } from '../../../data/auth/identity'
+import { fetchProfile } from '../../../data/catalyst/profile'
 import type { Eip1193Provider } from '../../../data/auth/wallet'
 import { createShopClient, type ShopClient } from '../../../shop/api/shop'
 import { purchaseOfferSource } from '../../../shop/api/offers'
@@ -23,7 +24,7 @@ import { liveResolvers, reviewCart, type SettlementResolvers } from '../../../sh
 import { releaseAuthorizing, runGroup, watchGroup, type CheckoutDeps, type GroupResult } from '../../../shop/checkout/purchase/executor'
 import type { RailContext } from '../../../shop/checkout/purchase/rail'
 import { createSpendGuard } from '../../../shop/checkout/purchase/spend-guard'
-import { getUsdBalance, type UsdBalance } from '../../../shop/credits/credits'
+import { fetchUserPurchases, getUsdBalance, type UsdBalance } from '../../../shop/credits/credits'
 import type { OfferSource } from '../../../shop/detail/offers'
 import { fetchShopListingForItem } from '../../../shop/detail/api'
 import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
@@ -99,6 +100,15 @@ export interface ShellShopServices {
   primeFlags(): Promise<void>
   run(deps: CheckoutDeps, group: CartGroup, resolved: Resolved): Promise<GroupResult>
   watch(deps: CheckoutDeps, progress: GroupProgress): Promise<GroupResult>
+  /** The server's record of the operation's own credits: settled, expired unused, or still open. */
+  creditRecord(buyer: string, creditIds: string[], client: ShopClient): Promise<'settled' | 'expired' | 'open'>
+  /** The creator's display name, read here (its profile), never taken from the app. */
+  creatorName(address: string): Promise<string | null>
+  /**
+   * Takes the operation's lock for this page (Web Locks), held until the returned release or until the
+   * page goes; null when another live page holds it. A page touches only operations it holds.
+   */
+  claim(id: string): Promise<(() => void) | null>
   /** The CreditsManager this deployment trusts on a chain (./config). */
   manager(chainId: number): TrustedManager | null
   /** The wallet bound to one confirmed purchase (./walletGuard). */
@@ -131,6 +141,29 @@ const FLAGS_TIMEOUT_MS = 3000
 /** How long a page keeps watching an unsettled purchase; a later page (a reload) carries on. */
 const WATCH_FOR_MS = 30 * 60_000
 const WATCH_BACKOFF_MS = [5_000, 10_000, 20_000, 40_000, 60_000]
+
+/**
+ * The operation's Web Lock, taken only if free (`ifAvailable`) and held until the returned release, or
+ * until the page goes (the browser lets a closed or crashed page's locks go). Null when another page
+ * holds it. Without Web Locks (no current browser lacks them), this page is taken as the only one.
+ */
+export function claimLock(locks: LockManager | undefined, id: string): Promise<(() => void) | null> {
+  return new Promise((resolve) => {
+    if (!locks) return resolve(() => {})
+    locks
+      .request(`dcl-inworld-shop:operation:${id}`, { ifAvailable: true }, (lock) => {
+        if (!lock) {
+          resolve(null)
+          return undefined
+        }
+        return new Promise<void>((release) => resolve(() => release()))
+      })
+      .catch(() => resolve(null))
+  })
+}
+/** A credit the server reports expired and unused, with no receipt for the hash, is read again this much later
+ *  before the purchase is taken as never gone through: past the index's lag, an expired credit can't be spent. */
+const EXPIRY_CONFIRM_MS = 15 * 60_000
 /** How far each checkout state is along, to tell the newer of two copies when their clocks tie. */
 const RANK: Record<GroupStatus, number> = { idle: 0, authorizing: 1, submitted: 2, pending: 3, confirmed: 4, failed: 4, expired: 4 }
 
@@ -152,6 +185,18 @@ const LIVE: ShellShopServices = {
   primeFlags: async () => primeRemoteFlags(await fetchRemoteFlags(AbortSignal.timeout(FLAGS_TIMEOUT_MS))),
   run: runGroup,
   watch: watchGroup,
+  creditRecord: async (buyer, creditIds, client) => {
+    const { items } = await fetchUserPurchases(buyer, { all: true, first: 50 }, client)
+    const mine = items.filter((p) => creditIds.includes(p.id))
+    if (mine.some((p) => p.status === 'SETTLED')) return 'settled'
+    return mine.length > 0 && mine.every((p) => p.status === 'EXPIRED') ? 'expired' : 'open'
+  },
+  creatorName: async (address) => {
+    const avatar = await fetchProfile(address, { signal: AbortSignal.timeout(3000) }).catch(() => null)
+    const name = avatar?.name?.trim()
+    return name ? name.charAt(0).toUpperCase() + name.slice(1) : null
+  },
+  claim: (id) => claimLock(typeof navigator !== 'undefined' ? navigator.locks : undefined, id),
   manager: (chainId) => trustedCreditsManager(chainId),
   guard: guardedProvider,
   rail: () => ({}),
@@ -234,7 +279,18 @@ interface Quote {
 }
 
 /** An operation and, while its dialog is up, what it shows. */
-type Operation = OperationRecord & { store?: CartStore; watching?: boolean; unwatchWallet?: () => void; input?: 'pointer' | 'keyboard' }
+type Operation = OperationRecord & {
+  store?: CartStore
+  watching?: boolean
+  unwatchWallet?: () => void
+  input?: 'pointer' | 'keyboard'
+  /** This page's hold on the operation (its Web Lock), released once it settles. */
+  release?: () => void
+  /** Held by another live page: shown, never changed here. */
+  foreign?: boolean
+  /** When its credit was first read as expired and unused with no receipt for its hash. */
+  expiredSince?: number
+}
 
 export interface ShellShop {
   /** Answers a `shop.*` request from the app frame. */
@@ -247,7 +303,10 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   const operations = new Map<string, Operation>()
   /** The operation whose dialog is up. */
   let dialog: Operation | null = null
-  let restoredFor: string | null = null
+  /** A purchase is being opened (its records read, its lock taken): one at a time. */
+  let starting = false
+  /** Restores run one after another, so one page never asks twice for a lock it is taking. */
+  let restoring: Promise<void> = Promise.resolve()
 
   const snapshot = (op: Operation): ShopOperation => ({
     v: SHOP_PROTOCOL,
@@ -259,7 +318,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   })
   const keep = (op: Operation): boolean => {
     op.updatedAt = svc.now()
-    const { store: _s, watching: _w, unwatchWallet: _u, input: _i, ...record } = op
+    const { store: _s, watching: _w, unwatchWallet: _u, input: _i, release: _r, foreign: _f, expiredSince: _e, ...record } = op
     return ledger.save(record)
   }
   const publish = (op: Operation): void => {
@@ -268,9 +327,13 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   }
   /** A state the operation moves to; a settled one is final. */
   const move = (op: Operation, state: ShopOperationState, extra: Partial<Operation> = {}): void => {
-    if (TERMINAL_STATES.includes(op.state)) return
+    if (op.foreign || TERMINAL_STATES.includes(op.state)) return
     Object.assign(op, extra, { state })
     publish(op)
+    if (TERMINAL_STATES.includes(state)) {
+      op.release?.()
+      op.release = undefined
+    }
   }
   const show = (op: Operation, view: ShellPurchaseView, handlers: ShellPurchaseHandlers): void => {
     dialog = op
@@ -294,7 +357,18 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     if (!login || login.guest || loginExpired(login) || !login.identity.ephemeralIdentity.privateKey) return null
     return { login, buyer: rootAddress(login.identity).toLowerCase() }
   }
-  const client = (): ShopClient => svc.client(() => loginSigner(deps.login()))
+  /** Requests signed by the current login, while it is `buyer`'s (or any, without one): never as another account. */
+  const client = (buyer?: string | null): ShopClient =>
+    svc.client(() => {
+      const login = deps.login()
+      return login && (!buyer || rootAddress(login.identity).toLowerCase() === buyer) ? loginSigner(login) : null
+    })
+  /** Requests signed by the one login that confirmed the terms, and by no later one. */
+  const confirmedClient = (key: string): ShopClient =>
+    svc.client(() => {
+      const login = deps.login()
+      return login && loginKey(login) === key ? loginSigner(login) : null
+    })
 
   const fail = (op: Operation, message: string, retry?: () => void): void => {
     show(op, { step: 'failed', message, retry: retry != null }, { onClose: () => close(op, 'failed'), ...(retry ? { onRetry: retry } : {}) })
@@ -337,7 +411,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   // ---- Following a purchase that was handed off -------------------------------------------------
 
   const watchDeps = (op: Operation, store: CartStore): CheckoutDeps => ({
-    ctx: { buyer: op.buyer!, provider: NO_WALLET, reader: svc.reader(), client: client(), walletKind: null, ...svc.rail() },
+    ctx: { buyer: op.buyer!, provider: NO_WALLET, reader: svc.reader(), client: client(op.buyer), walletKind: null, ...svc.rail() },
     store,
     guard: createSpendGuard()
   })
@@ -419,6 +493,23 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
             settled(op, 'failed', {}, result.failure.kind === 'reverted' ? 'The transaction failed on-chain. Nothing was bought and your Credits were returned.' : result.failure.message)
             return
           }
+          // A hash with no receipt may have been dropped or replaced: the server's record of the credit
+          // itself says whether it was spent. Expired unused (read twice, past the index's lag) means it
+          // can no longer be: an expired credit reverts useCredits.
+          if (following.txHash && following.creditIds.length > 0) {
+            const record = await svc.creditRecord(op.buyer, following.creditIds, client(op.buyer)).catch(() => 'open' as const)
+            if (record === 'settled') {
+              settled(op, 'succeeded')
+              return
+            }
+            if (record === 'expired') {
+              op.expiredSince ??= svc.now()
+              if (svc.now() - op.expiredSince >= EXPIRY_CONFIRM_MS) {
+                settled(op, 'failed', {}, 'This purchase never went through, and its Credits expired unused: nothing was bought.')
+                return
+              }
+            } else op.expiredSince = undefined
+          }
         }
         if (svc.now() >= deadline) return
         await svc.sleep(WATCH_BACKOFF_MS[Math.min(attempt, WATCH_BACKOFF_MS.length - 1)])
@@ -428,24 +519,41 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     }
   }
 
-  /** This buyer's operations from storage, once per page: an open dialog didn't survive, a hand-off did. */
-  const restore = (buyer: string): void => {
-    if (restoredFor === buyer) return
-    restoredFor = buyer
+  /**
+   * This buyer's operations from storage that this page may take over: those no live page holds (their
+   * page went). An open dialog didn't survive its page; a hand-off is followed. An operation another live
+   * page holds (another tab mid-purchase) is only shown, as it stands in storage, and never changed here.
+   */
+  const restore = (buyer: string): Promise<void> => (restoring = restoring.then(() => adopt(buyer)).catch(() => {}))
+  const adopt = async (buyer: string): Promise<void> => {
     for (const record of ledger.load(buyer)) {
-      if (operations.has(record.id)) continue
-      const op: Operation = { ...record }
+      const known = operations.get(record.id)
+      if (known && !known.foreign) continue
+      const release = TERMINAL_STATES.includes(record.state) ? undefined : await svc.claim(record.id)
+      // Updated in place: a dialog this page shows for it keeps following the same operation.
+      const op: Operation = known ?? { ...record }
+      const was = known?.state
+      Object.assign(op, record, { foreign: !TERMINAL_STATES.includes(record.state) && !release, release: release ?? undefined })
       operations.set(op.id, op)
+      if (known && was !== op.state) {
+        // Another tab moved it on: this page's app hears of it, and its dialog, if up, says how it ended.
+        deps.post({ type: SHOP_EVENT, ...snapshot(op) })
+        if (op.state === 'succeeded' || op.state === 'failed' || op.state === 'cancelled') settled(op, op.state)
+      }
+      if (op.foreign || !release) continue
       if (op.state === 'reviewing') move(op, 'cancelled')
-      else if (op.state === 'processing' || op.state === 'pending') void reconcile(op)
+      else void reconcile(op)
     }
   }
 
   // ---- Reading the terms and confirming ---------------------------------------------------------
 
-  const create = (req: ShopBuyRequest, buyer: string | null): Operation => {
+  /** A new operation, held by this page before anything of it is stored. */
+  const create = async (req: ShopBuyRequest, buyer: string | null): Promise<Operation> => {
+    const id = svc.newId()
+    const release = (await svc.claim(id)) ?? undefined
     const at = svc.now()
-    const op: Operation = { id: svc.newId(), buyer, item: req.item, state: 'reviewing', createdAt: at, updatedAt: at }
+    const op: Operation = { id, buyer, item: req.item, state: 'reviewing', createdAt: at, updatedAt: at, release }
     operations.set(op.id, op)
     publish(op)
     return op
@@ -460,9 +568,16 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     op.unwatchWallet?.()
     op.unwatchWallet = undefined
     move(op, ended)
-    const fresh = create(req, signedIn()?.buyer ?? null)
-    dialog = fresh
-    void review(fresh, req)
+    starting = true
+    void create(req, signedIn()?.buyer ?? null)
+      .then((fresh) => {
+        fresh.input = op.input
+        dialog = fresh
+        void review(fresh, req)
+      })
+      .finally(() => {
+        starting = false
+      })
   }
 
   /** Reads the terms and shows them: Buy Item, or Insufficient Funds when the balance is short. */
@@ -499,11 +614,13 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   }
 
   const readQuote = async (op: Operation, login: StoredLogin, buyer: string, kind: ShopWalletKind, req: ShopBuyRequest): Promise<Quote | string> => {
-    const c = client()
+    const c = confirmedClient(loginKey(login))
     await svc.primeFlags().catch(() => {})
     const [listing, balance] = await Promise.all([svc.fetchItem(req.item.contract, req.item.itemId, c), svc.balance(buyer, c)])
     const input = listing ? cartInput(listing) : null
     if (!listing || !input) return "This item isn't on sale in the Shop right now."
+    // The creator's name, from their profile, read while the offer is: never the app's word for it.
+    const creator = listing.creator ? svc.creatorName(listing.creator).catch(() => null) : Promise.resolve(null)
     const account = parseEvmAddress(buyer)
     if (!account) return "Your sign-in can't confirm purchases here."
     // A fresh line each time the terms are read (a retry included): nothing was handed off before them.
@@ -522,7 +639,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     if (!group || group.total.method !== 'credits') return "This item can't be bought with Credits. You can still buy it on the website."
     const item: ShellPurchaseItem = {
       name: listing.name,
-      creator: req.creatorName || shortAddress(listing.creator ?? ''),
+      creator: (await creator) || shortAddress(listing.creator ?? ''),
       rarity: listing.rarity || 'base',
       thumbnail: listing.thumbnail || undefined,
       category: listing.category === 'emote' ? 'emote' : (listing.wearableCategory ?? listing.category),
@@ -716,27 +833,34 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
 
   // ---- Requests ---------------------------------------------------------------------------------
 
-  const buy = (params: unknown): ShopOperation => {
+  const buy = async (params: unknown): Promise<ShopOperation> => {
     const req = parseBuyRequest(params)
-    if (dialog && (dialog.state === 'reviewing' || dialog.state === 'processing')) throw new Error('a purchase is already open')
-    const who = signedIn()
-    if (who) {
-      restore(who.buyer)
-      // The same item while a purchase of it is unsettled: that purchase, never a second one.
-      const unsettled = [...operations.values()].find(
-        (o) => o.buyer === who.buyer && o.item.contract === req.item.contract && o.item.itemId === req.item.itemId && (o.state === 'processing' || o.state === 'pending')
-      )
-      if (unsettled) {
-        unsettled.input = req.input
-        showPending(unsettled)
-        void reconcile(unsettled)
-        return snapshot(unsettled)
+    if (starting || (dialog && (dialog.state === 'reviewing' || dialog.state === 'processing'))) throw new Error('a purchase is already open')
+    starting = true
+    try {
+      const who = signedIn()
+      if (who) {
+        await restore(who.buyer)
+        // The same item while a purchase of it is unsettled, here or in another tab: that purchase, never
+        // a second one. This page follows its own; another tab's follows itself.
+        const unsettled = [...operations.values()].find(
+          (o) => o.buyer === who.buyer && o.item.contract === req.item.contract && o.item.itemId === req.item.itemId && (o.state === 'processing' || o.state === 'pending')
+        )
+        if (unsettled) {
+          unsettled.input = req.input
+          showPending(unsettled)
+          if (!unsettled.foreign) void reconcile(unsettled)
+          return snapshot(unsettled)
+        }
       }
+      const op = await create(req, who?.buyer ?? null)
+      op.input = req.input
+      // Its first step (sign in, loading, or why it can't) shows before this returns.
+      void review(op, req)
+      return snapshot(op)
+    } finally {
+      starting = false
     }
-    const op = create(req, who?.buyer ?? null)
-    op.input = req.input
-    void review(op, req)
-    return snapshot(op)
   }
 
   const capabilities = (): ShopCapabilities => {
@@ -752,14 +876,14 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   const balance = async (): Promise<ShopBalance | null> => {
     const who = signedIn()
     if (!who) return null
-    const b = await svc.balance(who.buyer, client())
+    const b = await svc.balance(who.buyer, client(who.buyer))
     return { v: SHOP_PROTOCOL, credits: b.credits }
   }
 
   /** One operation by id; with no id, the signed-in buyer's, newest first. */
-  const status = (params: unknown): ShopOperation | ShopOperation[] | null => {
+  const status = async (params: unknown): Promise<ShopOperation | ShopOperation[] | null> => {
     const who = signedIn()
-    if (who) restore(who.buyer)
+    if (who) await restore(who.buyer)
     const empty = params == null || (typeof params === 'object' && Object.keys(params as object).length === 0)
     if (empty) {
       if (!who) return []
@@ -767,7 +891,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       return [...operations.values()].filter((o) => o.buyer === who.buyer).reverse().sort((a, b) => b.createdAt - a.createdAt).map(snapshot)
     }
     const op = operations.get(parseOperationRef(params))
-    return op ? snapshot(op) : null
+    // Only the signed-in buyer's own.
+    return op && who && op.buyer === who.buyer ? snapshot(op) : null
   }
 
   return {
@@ -775,7 +900,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       switch (method) {
         case SHOP_METHODS.capabilities: {
           const who = signedIn()
-          if (who) restore(who.buyer)
+          if (who) await restore(who.buyer)
           return capabilities()
         }
         case SHOP_METHODS.balance:

@@ -4,6 +4,8 @@
 // its own, signs and submits. Nothing that decides a payment (calldata, typed data, the buyer, a spender,
 // a relayer) crosses from the HUD: parseBuyRequest admits an item reference and a display hint only.
 
+import type { WalletKind } from '../../shop/wallet/session'
+
 export const SHOP_PROTOCOL = 1
 
 /** The methods the shell answers (`shellRequest`). */
@@ -17,7 +19,8 @@ export const SHOP_METHODS = {
 /** The message the shell posts as an operation moves on. */
 export const SHOP_EVENT = 'bevy-shell:shop'
 
-export type ShopWalletKind = 'web3' | 'managed'
+/** The web Shop's own wallet kinds: a browser wallet, or an in-app (managed) one. */
+export type ShopWalletKind = WalletKind
 
 /** What the signed-in session can pay with here. `reason` says why it can't buy, when it can't. */
 export interface ShopCapabilities {
@@ -39,7 +42,7 @@ export interface ShopBuyRequest {
   v: typeof SHOP_PROTOCOL
   item: { contract: string; itemId: string }
   method: 'credits'
-  /** The creator's display name, shown in the dialog. Cosmetic: the shell reads the item itself. */
+  /** The app's name for the creator. Not shown: the shell names the creator from their own profile. */
   creatorName?: string
   /** How BUY was pressed, so the dialog rings its first focus only for the keyboard. Cosmetic. */
   input?: 'pointer' | 'keyboard'

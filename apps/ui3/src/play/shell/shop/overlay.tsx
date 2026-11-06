@@ -31,13 +31,14 @@ function Overlay({ view, handlers, quiet }: { view: ShellPurchaseView; handlers:
   const ref = useRef<HTMLDivElement>(null)
   const busy = view.step === 'processing'
   const first = useRef(true)
-  // Focus the dialog's main action as each step shows (the last enabled button: BUY ITEM, CONTINUE…).
+  // Focus the dialog's first enabled button as each step shows: the one that spends nothing (CANCEL,
+  // CONTINUE SHOPPING, CLOSE), so an Enter pressed in passing never confirms a purchase.
   // Opened by a pointer press in the app's frame, the browser would take that first focus for the
   // keyboard's (this page saw no pointer) and ring the button: `quiet` keeps that one unrung. Opened from
   // the keyboard, and on every later step (this page now knows how it is used), focus rings as usual.
   useEffect(() => {
     const buttons = ref.current?.querySelectorAll<HTMLElement>(FOCUSABLE)
-    const target = buttons && buttons.length > 0 ? buttons[buttons.length - 1] : ref.current
+    const target = buttons && buttons.length > 0 ? buttons[0] : ref.current
     if (first.current && quiet) target?.focus({ focusVisible: false } as FocusOptions)
     else target?.focus()
     first.current = false

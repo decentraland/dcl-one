@@ -15,6 +15,11 @@ import { hasWallet, walletProvider, WalletError, type Eip1193Provider } from "./
 /**
  * How the signed identity was made: an in-app (thirdweb) session for the same account is a managed
  * wallet; otherwise the identity was signed by a browser wallet, which is web3 while one is present.
+ *
+ * With neither here, the web Shop still takes the identity for managed, as it always has: its pages
+ * browse, quote and send the buyer to sign in again when the in-app signer has no session. The /play
+ * shell (`playShopWallet`) answers none instead, because the in-world Shop offers a purchase only when
+ * something on this page can sign it, and says why not otherwise.
  */
 export function sitesWalletKind(
   identity: Pick<AuthIdentity, "signer"> | null,

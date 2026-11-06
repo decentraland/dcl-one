@@ -78,14 +78,7 @@ export function checkUseCredits(data: unknown, intent: PurchaseIntent, nowSecond
     refuse('The Shop only signs its own purchases.')
   }
   if (decoded.functionName !== 'useCredits') refuse('The Shop only signs its own purchases.')
-  const args = (decoded.args as readonly unknown[])[0] as {
-    credits: readonly { value: bigint }[]
-    creditsSignatures: readonly Hex[]
-    externalCall: { target: Hex; selector: Hex; data: Hex; expiresAt: bigint }
-    customExternalCallSignature: Hex
-    maxUncreditedValue: bigint
-    maxCreditedValue: bigint
-  }
+  const [args] = decoded.args
   if (args.credits.length !== 1 || args.creditsSignatures.length !== 1) refuse('A purchase spends one credit.')
   if (args.maxUncreditedValue !== 0n) refuse('A Credits purchase takes no MANA from your wallet.')
   if (args.maxCreditedValue > args.credits[0].value) refuse('The purchase would spend more than its credit holds.')
@@ -98,7 +91,7 @@ export function checkUseCredits(data: unknown, intent: PurchaseIntent, nowSecond
   const buyer = intent.buyer
   try {
     if (intent.sale.call === 'storeBuy') {
-      const [items] = decodeAbiParameters(STORE_BUY.inputs, call.data) as unknown as [{ collection: Hex; ids: readonly bigint[]; prices: readonly bigint[]; beneficiaries: readonly Hex[] }[]]
+      const [items] = decodeAbiParameters(STORE_BUY.inputs, call.data)
       const ok =
         items.length === 1 &&
         lower(items[0].collection) === contract &&
@@ -110,8 +103,7 @@ export function checkUseCredits(data: unknown, intent: PurchaseIntent, nowSecond
       if (!ok) refuse('The purchase is not the confirmed item.')
       return
     }
-    const inputs = intent.sale.call === 'accept' ? ACCEPT.inputs : ACCEPT_WITH_COUPON.inputs
-    const [trades] = decodeAbiParameters(inputs, call.data) as unknown as [{ sent: readonly { assetType: bigint; contractAddress: Hex; value: bigint; beneficiary: Hex }[] }[]]
+    const [trades] = intent.sale.call === 'accept' ? decodeAbiParameters(ACCEPT.inputs, call.data) : decodeAbiParameters(ACCEPT_WITH_COUPON.inputs, call.data)
     const sent = trades.length === 1 ? trades[0].sent : []
     const ok =
       sent.length === 1 &&

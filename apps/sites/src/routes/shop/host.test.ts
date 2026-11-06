@@ -5,7 +5,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ShopWalletHost } from "@ui/shop/wallet/session";
 
-import { managedShopProvider, useSitesShopHost } from "./host";
+import { managedShopProvider } from "@/data/lib/auth/shop-wallet";
+
+import { useSitesShopHost } from "./host";
 
 const ACCOUNT = "0x0000000000000000000000000000000000000B0B";
 
