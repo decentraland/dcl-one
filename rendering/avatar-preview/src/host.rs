@@ -1098,10 +1098,16 @@ fn report_emotes(
     if control.duration <= 0.0 || control.paused {
         return;
     }
-    let looped = (control.elapsed / control.duration).floor()
-        > (progress.last_elapsed / control.duration).floor();
+    // a one-shot's time runs on past its end until the end is reported: only a repeating clip loops
+    let looped = control.repeat
+        && (control.elapsed / control.duration).floor()
+            > (progress.last_elapsed / control.duration).floor();
     progress.last_elapsed = control.elapsed;
-    let time_in_clip = control.elapsed % control.duration;
+    let time_in_clip = if control.repeat {
+        control.elapsed % control.duration
+    } else {
+        control.elapsed.min(control.duration)
+    };
     if looped {
         emit(&Event::Emote {
             event: "loop",

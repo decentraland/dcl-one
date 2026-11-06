@@ -339,13 +339,15 @@ fn broadcast_emote(
 
 /// Outside control of an avatar's full-body emote, for previews that pause and scrub it: `paused`
 /// holds the clip where it is, `seek` (seconds) moves it once. The play system reports back the
-/// clip's `elapsed` time (completed loops included) and `duration`, zero while nothing plays.
+/// clip's `elapsed` time (completed loops included), `duration`, zero while nothing plays, and
+/// whether the clip `repeat`s, so a one-shot running past its end is not read as a loop.
 #[derive(Component, Default, Debug, Clone)]
 pub struct EmoteControl {
     pub paused: bool,
     pub seek: Option<f32>,
     pub elapsed: f32,
     pub duration: f32,
+    pub repeat: bool,
 }
 
 /// Where the current ActiveEmote came from. Controls override precedence and whether
@@ -1824,6 +1826,7 @@ fn play_current_emote(
             (control.elapsed, control.duration) = played
                 .as_ref()
                 .map_or((0.0, 0.0), |played| (played.elapsed, played.clip_duration));
+            control.repeat = active_emote.repeat;
         }
         let Some(played) = played else {
             continue;

@@ -75,6 +75,14 @@ await send('Runtime.enable'); await send('Page.enable'); await send('Network.ena
 await send('Network.setCacheDisabled', { cacheDisabled: true });
 { const [w, h] = (process.env.WINDOW || '512,768').split(',').map(Number); await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false }); }
 await send('Page.navigate', { url });
+// TIMELINE (comma-separated seconds after navigation) captures the page at each, as
+// `<outPrefix>-t<seconds>.png`: a host page's playback over time, whether or not it reports `load`
+for (const t of (process.env.TIMELINE || '').split(',').filter(Boolean).map(Number)) {
+  setTimeout(async () => {
+    const shot = await send('Page.captureScreenshot', { format: 'png' });
+    if (shot?.data) writeFileSync(`${out}-t${t}.png`, Buffer.from(shot.data, 'base64'));
+  }, t * 1000);
+}
 const evaluate = async (expression) => (await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })).result?.value;
 
 const deadline = Date.now() + seconds * 1000;
