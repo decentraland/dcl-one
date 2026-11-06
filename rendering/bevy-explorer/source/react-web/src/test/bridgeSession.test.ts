@@ -31,7 +31,8 @@ vi.mock('../../bridge-scene/src/bevy-api', () => ({
     })),
     loginPrevious: vi.fn(async () => ({ success: true, error: '' })),
     logout: vi.fn(),
-    getSceneLoadingUIStream: vi.fn(() => new Promise(() => {}))
+    getSceneLoadingUIStream: vi.fn(() => new Promise(() => {})),
+    social: { getCommunityConnectivityStream: vi.fn(() => new Promise(() => {})) }
   }
 }))
 
@@ -120,6 +121,26 @@ describe('bridge service URLs', () => {
     }
     expect(await catalystBase()).toBe('https://custom.example/peer')
     expect(BevyApi.getServiceUrls).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('member-of list', () => {
+  it('sends nothing for an answer without a results list, and an empty list only for an empty one', async () => {
+    const { registerCommunities } = await import('../../bridge-scene/src/domains/communities')
+    const { BevyApi } = await import('../../bridge-scene/src/bevy-api')
+    const { ctx, req, sent } = fakeCtx()
+    registerCommunities(ctx)
+    const answer = (body: string): void => {
+      vi.mocked(BevyApi.kernelFetch).mockResolvedValueOnce({ ok: true, status: 200, body } as never)
+    }
+    for (const body of ['', '{}', '{"data":{}}']) {
+      answer(body)
+      await req({ kind: 'getCommunityChannels' })
+    }
+    expect(sent.filter((m) => m.kind === 'communityChannels')).toEqual([])
+    answer('{"results":[]}')
+    await req({ kind: 'getCommunityChannels' })
+    expect(sent.filter((m) => m.kind === 'communityChannels')).toEqual([{ kind: 'communityChannels', communities: [] }])
   })
 })
 

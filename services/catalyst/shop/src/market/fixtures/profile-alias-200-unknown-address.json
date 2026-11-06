@@ -9,10 +9,15 @@
   },
   "response": {
     "status": 200,
-    "headers": {"content-type": "application/json"},
-    "body_json": {"avatars": [], "timestamp": 0}
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "avatars": [],
+      "timestamp": 0
+    }
   },
-  "captured_from": "hand-authored from handler source (lambdas.rs::profile_alias)",
+  "captured_from": "hand-authored from lamb2 02a37f5 src/controllers/handlers/profiles-handler.ts::profileAliasHandler; dcl-one shop/src/market/profiles.rs::profile_alias",
   "captured_at": "2026-05-23T20:00:00Z",
   "volatile_paths": []
 }

@@ -381,6 +381,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         ),
         events_admin_token: config.explore.catalyrst_events_admin_token.clone(),
         events_slack_webhook: config.explore.events_slack_webhook.clone(),
+        events_upcoming_summaries_enabled: config.explore.events_upcoming_summaries_enabled,
         places_upstream: source(
             config.explore.places_mirror_upstream,
             &config.explore.places_upstream_url,
@@ -932,17 +933,23 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         },
         eip1654.clone(),
     ));
-    let mana = Arc::new(shop::mana::State::new(
-        pool.clone(),
-        http_client.clone(),
-        market.clone(),
-        signatures.clone(),
-        shop::mana::Settings {
-            writes_enabled: config.writes.data_writes_enabled,
-            track_interval: Duration::from_secs(config.marketplace.marketplace_index_interval_secs),
-        },
-        eip1654.clone(),
-    ));
+    let mana = Arc::new(
+        shop::mana::State::new(
+            pool.clone(),
+            http_client.clone(),
+            market.clone(),
+            signatures.clone(),
+            shop::mana::Settings {
+                writes_enabled: config.writes.data_writes_enabled,
+                track_interval: Duration::from_secs(
+                    config.marketplace.marketplace_index_interval_secs,
+                ),
+                collections_chain_id: config.economy.collections_chain_id,
+            },
+            eip1654.clone(),
+        )
+        .context("the Shop's MANA settlement venues")?,
+    );
     shop::mana::spawn_jobs(&mana, &jobs);
     let social = social_states(
         &config,
@@ -1033,22 +1040,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     comms_stage.gatekeeper.spawn_jobs(&jobs);
     social.media.spawn_jobs(&jobs);
     social.rpc.spawn_jobs(&jobs);
-    if let Some(events) =
-        social::legacy_events::LegacyEvents::new(social::legacy_events::Settings {
-            sqs_endpoint: config.social.legacy_sqs_endpoint.clone(),
-            sqs_queue_url: config.social.legacy_sqs_queue_url.clone(),
-            sns_endpoint: config.social.legacy_sns_endpoint.clone(),
-            sns_arn: config.social.legacy_sns_arn.clone(),
-        })
-        .await?
-    {
-        social.communities.referral.set_publisher(events.clone());
-        events.spawn(
-            &jobs,
-            social.communities.clone(),
-            config.writes.social_writes_enabled,
-        );
-    }
     if config.writes.social_writes_enabled {
         let communities = social.communities.clone();
         jobs.spawn_periodic_leased(

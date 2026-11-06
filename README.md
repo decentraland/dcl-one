@@ -11,7 +11,7 @@ conformance capture corpus and internal docs stay in the private repository.
 | Path | Contents |
 | --- | --- |
 | `services/catalyst/` | Rust workspace: the `catalyst` binary (APIs, content, comms, worlds, shop, social) |
-| `apps/sites/`, `apps/ui3/` | Web sites; shared product UI |
+| `apps/sites/` | Web sites |
 | `apps/dcl-scene-cli/` | The scene SDK toolchain (`dcl-scene-cli`) |
 | `apps/creator-hub/` | Creator Hub native shell |
 | `rendering/bevy-explorer/` | Explorer source and Play pins |
