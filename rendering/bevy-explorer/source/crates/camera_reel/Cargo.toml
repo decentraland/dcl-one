@@ -33,4 +33,5 @@ mime = { workspace = true }
 multipart = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true }
+urlencoding = { workspace = true }
 web-time = { workspace = true }

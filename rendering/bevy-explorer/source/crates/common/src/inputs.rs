@@ -658,12 +658,11 @@ impl Default for InputMap {
                     Action::System(SystemAction::ChatPanel),
                     vec![InputIdentifier::Key(KeyCode::KeyT)],
                 ),
+                // no pad button: nothing is reserved outside photo mode, so a scene reading the
+                // same button (East is IaSecondary) would open it from its own action
                 (
                     Action::System(SystemAction::PhotoMode),
-                    vec![
-                        InputIdentifier::Key(KeyCode::KeyC),
-                        InputIdentifier::Gamepad(GamepadButton::East),
-                    ],
+                    vec![InputIdentifier::Key(KeyCode::KeyC)],
                 ),
                 // shares Space with IaJump: scene actions are muted while photo mode reads it
                 (
@@ -673,18 +672,19 @@ impl Default for InputMap {
                         InputIdentifier::Gamepad(GamepadButton::South),
                     ],
                 ),
+                // the bumpers zoom
                 (
                     Action::System(SystemAction::PhotoCameraUp),
                     vec![
                         InputIdentifier::Key(KeyCode::KeyR),
-                        InputIdentifier::Gamepad(GamepadButton::RightTrigger),
+                        InputIdentifier::Gamepad(GamepadButton::DPadUp),
                     ],
                 ),
                 (
                     Action::System(SystemAction::PhotoCameraDown),
                     vec![
                         InputIdentifier::Key(KeyCode::KeyF),
-                        InputIdentifier::Gamepad(GamepadButton::LeftTrigger),
+                        InputIdentifier::Gamepad(GamepadButton::DPadDown),
                     ],
                 ),
                 (

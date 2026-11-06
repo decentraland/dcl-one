@@ -240,6 +240,15 @@
   background: var(--splash);
   animation: flash var(--dur-capture) var(--ease-in-out) forwards;
 }
+@media (prefers-reduced-motion: reduce) {
+  .flash {
+    animation: none;
+    opacity: 0.3;
+  }
+  .fly {
+    transition: none;
+  }
+}
 @keyframes flash {
   from {
     opacity: 1;

@@ -1,10 +1,15 @@
 //! The console surface and debug-panel section of photo mode.
 
-use bevy::prelude::*;
+use bevy::{prelude::*, tasks::Task};
 use bevy_console::ConsoleCommand;
-use common::structs::{CursorLocks, PrimaryCamera};
+use common::{
+    structs::{CursorLocks, PrimaryCamera},
+    util::{TaskCompat, TaskExt},
+};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
+use ipfs::IpfsAssetServer;
 use serde_json::json;
+use wallet::Wallet;
 
 use crate::{
     capture::{
@@ -13,12 +18,19 @@ use crate::{
     },
     mode::PhotoModeRequest,
     photo_camera::{PhotoCamera, PhotoModeSource},
-    storage::CameraReelStorage,
+    storage::{delete_photo, CameraReelStorage},
 };
 
+/// Photo deletions asked of the console, by photo id.
+#[derive(Resource, Default)]
+struct PhotoDeletes(Vec<(String, Task<Result<(), String>>)>);
+
 pub(crate) fn register(app: &mut App) {
-    app.add_console_command::<PhotoModeCommand, _>(photo_mode_command)
+    app.init_resource::<PhotoDeletes>()
+        .add_console_command::<PhotoModeCommand, _>(photo_mode_command)
         .add_console_command::<TakePhotoCommand, _>(take_photo_command)
+        .add_console_command::<DeletePhotoCommand, _>(delete_photo_command)
+        .add_systems(Update, finish_deletes)
         .add_debug_section(DebugSection {
             title: "Photo mode",
             query: "/photo_mode",
@@ -49,17 +61,39 @@ pub(crate) fn register(app: &mut App) {
         });
 }
 
-/// Read photo mode, or open (`on`/`true`) or close (`off`/`false`) it.
+/// Read photo mode, or open (`on`/`true`) or close (`off`/`false`) it. `source` names what
+/// opened it for analytics: `button` (the HUD), `shortcut` or `console` (the default).
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/photo_mode")]
 struct PhotoModeCommand {
     state: Option<String>,
+    source: Option<String>,
 }
 
-/// Take a photo in photo mode.
+/// Take a photo in photo mode. `source` as for `/photo_mode`.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/take_photo")]
-struct TakePhotoCommand;
+struct TakePhotoCommand {
+    source: Option<String>,
+}
+
+/// Delete one of the player's photos from the camera reel; the outcome lands in `lastError`.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/delete_photo")]
+struct DeletePhotoCommand {
+    id: String,
+}
+
+fn parse_source(source: Option<&str>) -> Result<PhotoModeSource, String> {
+    match source.map(str::to_ascii_lowercase).as_deref() {
+        None | Some("console") => Ok(PhotoModeSource::Console),
+        Some("button") => Ok(PhotoModeSource::Button),
+        Some("shortcut") => Ok(PhotoModeSource::Shortcut),
+        Some(other) => Err(format!(
+            "expected button, shortcut or console as the source, got {other}"
+        )),
+    }
+}
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn take_photo_command(
@@ -78,8 +112,15 @@ fn take_photo_command(
     stats: Res<PhotoStats>,
     time: Res<Time>,
 ) {
-    let Some(Ok(_)) = cmd.take() else {
+    let Some(Ok(args)) = cmd.take() else {
         return;
+    };
+    let source = match parse_source(args.source.as_deref()) {
+        Ok(source) => source,
+        Err(message) => {
+            cmd.reply_failed(message);
+            return;
+        }
     };
     let Ok((transform, primary, photo, pending, encoding, uploading)) = camera.single() else {
         cmd.reply_failed("no primary camera");
@@ -96,9 +137,7 @@ fn take_photo_command(
         cmd.reply_failed(format!("photo not taken: {reason}"));
         return;
     }
-    requests.write(TakePhotoRequest {
-        source: PhotoModeSource::Console,
-    });
+    requests.write(TakePhotoRequest { source });
     cmd.reply_ok(
         state_json(
             transform,
@@ -133,6 +172,13 @@ fn photo_mode_command(
     let Some(Ok(args)) = cmd.take() else {
         return;
     };
+    let source = match parse_source(args.source.as_deref()) {
+        Ok(source) => source,
+        Err(message) => {
+            cmd.reply_failed(message);
+            return;
+        }
+    };
     let requested = match args
         .state
         .as_deref()
@@ -153,7 +199,7 @@ fn photo_mode_command(
     };
     if let Some(enable) = requested {
         requests.write(if enable {
-            PhotoModeRequest::Enable(PhotoModeSource::Console)
+            PhotoModeRequest::Enable(source)
         } else {
             PhotoModeRequest::Disable
         });
@@ -171,6 +217,52 @@ fn photo_mode_command(
         )
         .to_string(),
     );
+}
+
+fn delete_photo_command(
+    mut cmd: ConsoleCommand<DeletePhotoCommand>,
+    mut deletes: ResMut<PhotoDeletes>,
+    wallet: Res<Wallet>,
+    ipfs: IpfsAssetServer,
+) {
+    let Some(Ok(args)) = cmd.take() else {
+        return;
+    };
+    if wallet.address().is_none() {
+        cmd.reply_failed("not signed in");
+        return;
+    }
+    let task = bevy::tasks::IoTaskPool::get().spawn_compat(delete_photo(
+        ipfs.ipfs().client(),
+        wallet.clone(),
+        args.id.clone(),
+    ));
+    deletes.0.push((args.id.clone(), task));
+    cmd.reply_ok(json!({ "deleting": args.id }).to_string());
+}
+
+/// A finished deletion frees a storage slot; a failed one is the last error.
+fn finish_deletes(
+    mut deletes: ResMut<PhotoDeletes>,
+    mut storage: ResMut<CameraReelStorage>,
+    mut stats: ResMut<PhotoStats>,
+) {
+    deletes.0.retain_mut(|(id, task)| {
+        let Some(result) = task.complete() else {
+            return true;
+        };
+        match result {
+            Ok(()) => {
+                info!("photo deleted: {id}");
+                storage.current = storage.current.saturating_sub(1);
+            }
+            Err(message) => {
+                warn!("photo {id} not deleted: {message}");
+                stats.last_error = Some(format!("delete {id}: {message}"));
+            }
+        }
+        false
+    });
 }
 
 #[allow(clippy::too_many_arguments)]

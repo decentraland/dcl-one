@@ -80,6 +80,7 @@ pub(crate) struct EncodingPhoto {
 pub(crate) struct UploadingPhoto {
     upload: Task<Result<UploadResponse, UploadError>>,
     source: PhotoModeSource,
+    session: u32,
     people: Vec<(String, bool)>,
 }
 
@@ -88,6 +89,8 @@ struct Shot {
     metadata: ScreenshotMetadata,
     frame: Vec2,
     source: PhotoModeSource,
+    /// The photo-mode session the shutter fired in.
+    session: u32,
     place: Task<(String, String)>,
     place_found: Option<(String, String)>,
 }
@@ -213,7 +216,7 @@ fn start_capture(
             &Camera,
             &GlobalTransform,
             &Projection,
-            Has<PhotoCamera>,
+            Option<&PhotoCamera>,
             Has<PendingPhoto>,
             Has<EncodingPhoto>,
             Has<UploadingPhoto>,
@@ -225,25 +228,26 @@ fn start_capture(
         (
             &GlobalTransform,
             &UserProfile,
+            Option<&Visibility>,
             Option<(&ActiveEmote, &MaskedEmote)>,
         ),
         Or<(With<ForeignPlayer>, With<PrimaryUser>)>,
     >,
     current_profile: Res<CurrentUserProfile>,
+    wallet: Res<Wallet>,
     realm: Res<CurrentRealm>,
     ipfs: IpfsAssetServer,
 ) {
     let Some(request) = requests.read().last().copied() else {
         return;
     };
-    let Ok((camera_entity, camera, camera_transform, projection, in_photo_mode, p, e, u)) =
-        camera.single()
+    let Ok((camera_entity, camera, camera_transform, projection, photo, p, e, u)) = camera.single()
     else {
         return;
     };
     let now = time.elapsed_secs_f64();
     if let Some(reason) = capture_blocker(
-        in_photo_mode,
+        photo.is_some(),
         p || e || u,
         &storage,
         stats.effect_until,
@@ -269,9 +273,13 @@ fn start_capture(
     let frustum = photo_frustum(camera_transform, perspective.fov, perspective.near, frame);
     let clip_from_view = camera.clip_from_view();
 
+    // a player a scene hides (`Visibility::Hidden` on the player entity) is not in the photo
     let visible_people = people
         .iter()
-        .filter_map(|(transform, profile, emote)| {
+        .filter_map(|(transform, profile, visibility, emote)| {
+            if visibility == Some(&Visibility::Hidden) {
+                return None;
+            }
             let aabb = avatar_aabb(transform.translation());
             if !in_frame(&frustum, &aabb) {
                 return None;
@@ -304,13 +312,17 @@ fn start_capture(
         .scenes_urn
         .as_ref()
         .is_some_and(|urns| !urns.is_empty());
-    let (user_name, user_address) = match current_profile.profile.as_ref() {
-        Some(profile) => (
-            profile.content.name.clone(),
-            lowercase_address(&profile.content.eth_address),
-        ),
-        None => (UNKNOWN_USER.to_owned(), UNKNOWN_USER_WALLET.to_owned()),
-    };
+    let user_name = current_profile
+        .profile
+        .as_ref()
+        .map(|profile| profile.content.name.clone())
+        .unwrap_or_else(|| UNKNOWN_USER.to_owned());
+    // the service accepts a photo only from its `userAddress`, so this is the signer's, not the
+    // profile's (which may not have loaded yet)
+    let user_address = wallet
+        .address()
+        .map(|address| lowercase_address(&format!("{address:#x}")))
+        .unwrap_or_else(|| UNKNOWN_USER_WALLET.to_owned());
     let date_time = web_time::SystemTime::now()
         .duration_since(web_time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -353,6 +365,7 @@ fn start_capture(
                 metadata,
                 frame,
                 source: request.source,
+                session: photo.map(|p| p.session).unwrap_or_default(),
                 place,
                 place_found: None,
             }),
@@ -493,6 +506,7 @@ fn finish_encode(
     commands.entity(entity).insert(UploadingPhoto {
         upload,
         source: shot.source,
+        session: shot.session,
         people,
     });
 }
@@ -500,7 +514,7 @@ fn finish_encode(
 #[allow(clippy::too_many_arguments)]
 fn finish_upload(
     mut commands: Commands,
-    mut camera: Query<(Entity, &mut UploadingPhoto), With<PrimaryCamera>>,
+    mut camera: Query<(Entity, &mut UploadingPhoto, Option<&PhotoCamera>), With<PrimaryCamera>>,
     mut storage: ResMut<CameraReelStorage>,
     mut stats: ResMut<PhotoStats>,
     mut uploaded: EventWriter<PhotoUploaded>,
@@ -509,7 +523,7 @@ fn finish_upload(
     mut metrics: ResMut<SegmentMetricsEvents>,
     segment_config: Res<SegmentConfig>,
 ) {
-    let Ok((entity, mut uploading)) = camera.single_mut() else {
+    let Ok((entity, mut uploading, photo)) = camera.single_mut() else {
         return;
     };
     let Some(result) = uploading.upload.complete() else {
@@ -548,7 +562,10 @@ fn finish_upload(
             stats.failed += 1;
             stats.last_error = Some(message.clone());
             failed.write(PhotoUploadFailed { message });
-            mode_requests.write(PhotoModeRequest::Disable);
+            // a failure may land a minute later, in a session that is not the shot's
+            if photo.is_some_and(|p| p.session == uploading.session) {
+                mode_requests.write(PhotoModeRequest::Disable);
+            }
         }
     }
 }

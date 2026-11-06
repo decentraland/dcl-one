@@ -55,6 +55,8 @@ interface Props {
 export function PhotoModeOverlay({ photoMode, onOpenGallery }: Props): React.JSX.Element {
   const snap = useBindingsSnapshot()
   const state = photoMode.snapshot
+  const setPhotoMode = photoMode.set
+  const capture = photoMode.capture
   const [viewport, setViewport] = useState(() => ({ w: window.innerWidth, h: window.innerHeight, s: uiScale() }))
   useEffect(() => {
     const onResize = (): void => setViewport({ w: window.innerWidth, h: window.innerHeight, s: uiScale() })
@@ -72,7 +74,7 @@ export function PhotoModeOverlay({ photoMode, onOpenGallery }: Props): React.JSX
 
   // Escape closes photo mode engine-side; the layer keeps the HUD's own cancel dispatch from
   // closing something underneath on the same press.
-  useEffect(() => registerCancelLayer(() => photoMode.set(false)), [photoMode])
+  useEffect(() => registerCancelLayer(() => setPhotoMode(false)), [setPhotoMode])
 
   const [controlsOpen, setControlsOpen] = useState(false)
   const controlsRef = useRef<HTMLDivElement>(null)
@@ -88,13 +90,14 @@ export function PhotoModeOverlay({ photoMode, onOpenGallery }: Props): React.JSX
   const galleryIcon = useRef<HTMLSpanElement>(null)
   const [effect, setEffect] = useState<{ seq: number; preview: string } | null>(null)
   const [fly, setFly] = useState<React.CSSProperties | null>(null)
-  const seenSeq = useRef(0)
+  // a capture from before this mount is not replayed
+  const seenSeq = useRef(capture?.seq ?? 0)
   useEffect(() => {
-    if (state == null || state.event !== 'captured' || state.eventSeq === seenSeq.current) return
-    seenSeq.current = state.eventSeq
-    setEffect({ seq: state.eventSeq, preview: state.previewJpegBase64 })
+    if (capture == null || capture.seq === seenSeq.current) return
+    seenSeq.current = capture.seq
+    setEffect(capture)
     setFly(null)
-  }, [state])
+  }, [capture])
   useLayoutEffect(() => {
     if (effect == null) return
     const target = galleryIcon.current?.getBoundingClientRect()
@@ -111,8 +114,14 @@ export function PhotoModeOverlay({ photoMode, onOpenGallery }: Props): React.JSX
     }
   }, [effect])
 
-  const close = useCallback(() => photoMode.set(false), [photoMode])
+  const close = useCallback(() => setPhotoMode(false), [setPhotoMode])
+  const openGallery = useCallback(() => {
+    setPhotoMode(false)
+    onOpenGallery()
+  }, [setPhotoMode, onOpenGallery])
   const storageFull = state != null && state.storageLoaded && state.storageCurrent >= state.storageMax
+  // the engine refuses a photo while one is in flight, the effect plays or the storage is unknown
+  const canShoot = state != null && state.phase === 'idle' && state.storageLoaded && effect == null
   const hidden = state?.hudHidden ?? false
   const bottom = frameRect.top + frameRect.height
 
@@ -141,7 +150,7 @@ export function PhotoModeOverlay({ photoMode, onOpenGallery }: Props): React.JSX
           </button>
 
           <div className={styles.row} style={{ left: frameRect.left, width: frameRect.width, top: bottom }}>
-            <button type="button" className={`${styles.button} ${styles.gallery}`} aria-label="Gallery" onClick={onOpenGallery}>
+            <button type="button" className={`${styles.button} ${styles.gallery}`} aria-label="Gallery" onClick={openGallery}>
               <span ref={galleryIcon} className={styles.galleryIcon}>
                 <MaskIcon src={galleryArt} size={28 * s} />
               </span>
@@ -158,7 +167,7 @@ export function PhotoModeOverlay({ photoMode, onOpenGallery }: Props): React.JSX
                 type="button"
                 className={`${styles.button} ${styles.shoot}`}
                 aria-label="Shoot"
-                disabled={state?.phase === 'capturing'}
+                disabled={!canShoot}
                 onClick={photoMode.take}
               >
                 <MaskIcon src={shootArt} size={25 * s} />

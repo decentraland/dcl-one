@@ -23,7 +23,7 @@ pub fn smooth_damp(
     // the spring must not pass the target
     if (target - current > 0.0) == (output > target) {
         output = target;
-        *velocity = (output - target) / dt;
+        *velocity = 0.0;
     }
     output
 }
@@ -47,7 +47,7 @@ pub fn smooth_damp_vec2(
     let out_minus_orig = output - target;
     if orig_minus_current.dot(out_minus_orig) > 0.0 {
         output = target;
-        *velocity = (output - target) / dt;
+        *velocity = Vec2::ZERO;
     }
     output
 }
@@ -98,6 +98,18 @@ mod tests {
         }
         assert!((v2.x - x).abs() < 1e-4);
         assert_eq!(v2.y, 0.0);
+    }
+
+    #[test]
+    fn a_zero_length_frame_keeps_the_velocity_finite() {
+        let mut velocity = 0.0f32;
+        let out = smooth_damp(1.0, 1.0, &mut velocity, 0.1, 0.0);
+        assert_eq!(out, 1.0);
+        assert!(velocity.is_finite());
+        let mut velocity = Vec2::ZERO;
+        let out = smooth_damp_vec2(Vec2::ONE, Vec2::ONE, &mut velocity, 0.1, 0.0);
+        assert_eq!(out, Vec2::ONE);
+        assert!(velocity.is_finite());
     }
 
     #[test]

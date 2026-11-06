@@ -20,9 +20,9 @@ export function registerPhotoMode(ctx: Ctx): void {
     })
   }
   ctx.on('setPhotoMode', async (msg) => {
-    await run('photo_mode', [msg.enable ? 'on' : 'off'])
+    await run('photo_mode', [msg.enable ? 'on' : 'off', 'button'])
   })
   ctx.on('takePhoto', async () => {
-    await run('take_photo', [])
+    await run('take_photo', ['button'])
   })
 }

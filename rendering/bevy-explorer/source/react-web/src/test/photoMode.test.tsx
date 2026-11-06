@@ -43,6 +43,17 @@ describe('photo mode domain', () => {
     expect(h.session().gallery.open).toBe(false)
   })
 
+  it('a capture is kept for the overlay and dropped when photo mode closes', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'photoMode', state: snapshot({ event: 'captured', eventSeq: 1, previewJpegBase64: 'AAAA' }) })
+    expect(h.session().photoMode.capture).toEqual({ seq: 1, preview: 'AAAA' })
+    h.driver.emit({ kind: 'photoMode', state: snapshot({ event: 'none', eventSeq: 1 }) })
+    expect(h.session().photoMode.capture).toEqual({ seq: 1, preview: 'AAAA' })
+    h.driver.emit({ kind: 'photoMode', state: snapshot({ active: false, eventSeq: 1 }) })
+    expect(h.session().photoMode.capture).toBeNull()
+  })
+
   it('take sends the photo request', async () => {
     const h = renderSession()
     await enterAsGuest(h)

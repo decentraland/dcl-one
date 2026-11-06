@@ -85,6 +85,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   own Lock/Unlock cursor actions. Here right-click toggles the lock as everywhere else, left-drag
   looks while the cursor is free (Unity's drag), and Escape closes photo mode. The gallery key (G,
   Unity's K) closes photo mode and opens the gallery, where Unity's K only closes it.
+- **Photo mode has no gamepad toggle, and its pan is on the D-pad.** unity-explorer opens the
+  in-world camera with the pad's East button and pans with the bumpers (and `dpad/y`). Here East
+  is the scenes' secondary action and nothing is reserved outside photo mode, so a pad binding
+  would open the camera from inside a scene's own action; the toggle is C, the rail's Camera
+  button and `/photo_mode`, like the other HUD hotkeys. Inside photo mode the bumpers already zoom
+  (the player camera's binding), so pan is D-pad up/down.
 - **Photo mode is not feature-flagged.** unity-explorer gates the camera reel behind
   `alfa-camera-reel`; the Gallery already ships ungated here and photo mode does the same.
 - **A photo's `screenRect` is sent and dropped.** Each visible person carries the rectangle they

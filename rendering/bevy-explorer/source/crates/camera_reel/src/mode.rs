@@ -146,6 +146,8 @@ pub(crate) fn apply_photo_mode_requests(
     settings: Res<PhotoCameraSettings>,
     mut input_manager: InputManager,
     mut locks: ResMut<CursorLocks>,
+    mut nametags: ResMut<avatar::dynamic_nametag::NametagsVisible>,
+    mut sessions: Local<u32>,
 ) {
     let Some(request) = requests.read().last().copied() else {
         return;
@@ -174,9 +176,11 @@ pub(crate) fn apply_photo_mode_requests(
             Projection::Perspective(p) => p.fov,
             _ => PLAYER_CAMERA_FOV,
         };
-        commands
-            .entity(entity)
-            .insert((PhotoMode, PhotoCamera::new(start, fov.to_degrees(), source)));
+        *sessions += 1;
+        let mut photo = PhotoCamera::new(start, fov.to_degrees(), source);
+        photo.session = *sessions;
+        photo.nametags_visible_before = nametags.0;
+        commands.entity(entity).insert((PhotoMode, photo));
         if first_person {
             commands.entity(entity).insert(SystemTween {
                 target: start,
@@ -200,6 +204,12 @@ pub(crate) fn apply_photo_mode_requests(
         });
     } else {
         let source = photo.map(|p| p.source).unwrap_or(source);
+        // N flips the global setting for the photo only
+        if let Some(photo) = photo {
+            if nametags.0 != photo.nametags_visible_before {
+                nametags.0 = photo.nametags_visible_before;
+            }
+        }
         let current = *transform;
         // the player camera retargets this tween to its follow position next frame
         commands
@@ -292,10 +302,11 @@ fn move_photo_camera(
         wheel / (WHEEL_MULTIPLIER * WHEEL_PIXELS_PER_LINE)
     };
     let p = InputPriority::Ui;
+    // the arrows are a look set, so its up slot is CameraDown: flip it to read as movement
+    let arrows = input_manager.get_analog(CAMERA_SET, p) * Vec2::new(1.0, -1.0);
     let input = PhotoCameraInput {
-        translation: (input_manager.get_analog(MOVE_SET, p)
-            + input_manager.get_analog(CAMERA_SET, p))
-        .clamp(Vec2::NEG_ONE, Vec2::ONE),
+        translation: (input_manager.get_analog(MOVE_SET, p) + arrows)
+            .clamp(Vec2::NEG_ONE, Vec2::ONE),
         panning: axis(
             &input_manager,
             SystemAction::PhotoCameraUp,

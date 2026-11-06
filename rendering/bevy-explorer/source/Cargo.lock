@@ -3236,6 +3236,7 @@ dependencies = [
  "system_bridge",
  "tokio",
  "tween",
+ "urlencoding",
  "wallet",
  "web-time",
 ]
@@ -9820,6 +9821,7 @@ dependencies = [
  "async-tungstenite",
  "base64 0.22.1",
  "bevy",
+ "bytes",
  "cbc",
  "directories",
  "futures-lite",

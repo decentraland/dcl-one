@@ -303,6 +303,9 @@ export interface PhotoModeState {
   /** The engine's last report; `null` before the stream connects. */
   snapshot: PhotoModeSnapshot | null
   active: boolean
+  /** The last photo taken, for the capture effect: the snapshot's `captured` pulse lasts one
+   *  engine frame and the next report can overtake it before React renders. */
+  capture: { seq: number; preview: string } | null
   /** Open or close photo mode (`/photo_mode`); `source` is for analytics only. */
   set: (enable: boolean) => void
   toggle: () => void
@@ -1103,6 +1106,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [galleryMetas, setGalleryMetas] = useState<Record<string, GalleryPhotoMeta | null>>({})
   const [galleryOpen, setGalleryOpen] = useState(false)
   const [photoMode, setPhotoMode] = useState<PhotoModeSnapshot | null>(null)
+  const [photoCapture, setPhotoCapture] = useState<{ seq: number; preview: string } | null>(null)
   const photoModeActiveRef = useRef(false)
   const photoModeSeqRef = useRef(0)
   const [createOpen, setCreateOpen] = useState(false)
@@ -1238,6 +1242,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           if (state.event === 'uploadFailed' && state.eventSeq !== photoModeSeqRef.current) {
             showToast('There was an error uploading your screenshot.', { tone: 'error' })
           }
+          if (state.event === 'captured' && state.eventSeq !== photoModeSeqRef.current) {
+            setPhotoCapture({ seq: state.eventSeq, preview: state.previewJpegBase64 })
+          }
+          if (!state.active) setPhotoCapture(null)
           if (state.event !== 'none') photoModeSeqRef.current = state.eventSeq
           setPhotoMode(state)
           break
@@ -3690,6 +3698,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     photoMode: {
       snapshot: photoMode,
       active: photoMode?.active ?? false,
+      capture: photoCapture,
       set: setPhotoModeEnabled,
       toggle: togglePhotoMode,
       take: takePhoto

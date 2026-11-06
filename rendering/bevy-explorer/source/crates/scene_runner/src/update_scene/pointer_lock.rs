@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use bevy::{ecs::system::SystemParam, prelude::*, window::PrimaryWindow};
 use common::{
     inputs::{Action, SystemAction, POINTER_SET},
-    structs::{ActiveDialog, AppConfig, CursorLocks, PrimaryCamera},
+    structs::{ActiveDialog, AppConfig, CursorLocks, PhotoMode, PrimaryCamera},
 };
 use input_manager::{InputManager, InputPriority};
 use platform::{platform_pointer_is_locked, platform_pointer_lock_requested};
@@ -101,7 +101,7 @@ pub fn update_pointer_lock(
     )>,
     changed_pointer_locks: Query<&PointerLock, Changed<PointerLock>>,
     window: Query<&Window, With<PrimaryWindow>>,
-    camera: Query<(&Camera, &GlobalTransform), With<PrimaryCamera>>,
+    camera: Query<(&Camera, &GlobalTransform, Has<PhotoMode>), With<PrimaryCamera>>,
     mut prev_coords: Local<(Option<Vec2>, Option<Vec2>)>,
     mut locks: ResMut<CursorLocks>,
     config: Res<AppConfig>,
@@ -115,7 +115,7 @@ pub fn update_pointer_lock(
     let Ok(window) = window.single() else {
         return;
     };
-    let Ok((camera, camera_position)) = camera.single() else {
+    let Ok((camera, camera_position, photo_mode)) = camera.single() else {
         return;
     };
 
@@ -150,8 +150,9 @@ pub fn update_pointer_lock(
     *prev_coords = (constrained_coordinates, unconstrained_coordinates);
 
     // a dialog or HUD surface frees the cursor while it is up, and the toggle is kept so the lock
-    // comes back after. while it is up the toggle can be cleared but not set
-    let dialog_open = active_dialog.is_some_and(|ad| ad.in_use()) || hud_focus.0;
+    // comes back after. while it is up the toggle can be cleared but not set. photo mode holds
+    // the cursor itself and reserves input at Ui, above the reads below, so it counts as one
+    let dialog_open = active_dialog.is_some_and(|ad| ad.in_use()) || hud_focus.0 || photo_mode;
 
     // Handle mouse input
     let mut state = mb_state.update(Action::System(SystemAction::CameraLock));

@@ -269,6 +269,19 @@ export class Explorer {
     return until(() => this.photoMode(), ready, { timeoutMs, what })
   }
 
+  /** Delete one of the player's camera-reel photos (`/delete_photo`), and wait for the storage
+   *  count to drop: a failure lands in `lastError`. */
+  async deletePhoto(id: string, timeoutMs = 20_000): Promise<void> {
+    const before = await this.photoMode()
+    await this.run(`/delete_photo ${id}`)
+    await until(() => this.photoMode(), (state) => state.storage[0] < before.storage[0] || state.lastError !== before.lastError, {
+      timeoutMs,
+      what: `the photo ${id} to be deleted`
+    })
+    const after = await this.photoMode()
+    if (after.storage[0] >= before.storage[0]) throw new Error(`the photo ${id} was not deleted: ${after.lastError}`)
+  }
+
   /** Take a photo in photo mode; rejects with the engine's reason when it cannot start. */
   takePhoto(): Promise<PhotoModeState> {
     return this.json<PhotoModeState>('/take_photo')

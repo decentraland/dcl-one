@@ -149,6 +149,10 @@ pub struct PhotoCamera {
     pub following: bool,
     pub hud_hidden: bool,
     pub source: PhotoModeSource,
+    /// Counts photo-mode openings: a photo's late outcome applies only to the session it was shot in.
+    pub session: u32,
+    /// The global nametag setting photo mode opened with, restored when it closes.
+    pub nametags_visible_before: bool,
 }
 
 impl PhotoCamera {
@@ -170,6 +174,8 @@ impl PhotoCamera {
             following: false,
             hud_hidden: false,
             source,
+            session: 0,
+            nametags_visible_before: true,
         }
     }
 

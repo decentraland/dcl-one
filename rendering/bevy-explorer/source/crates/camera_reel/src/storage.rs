@@ -41,13 +41,10 @@ pub struct StorageResponse {
     pub max_images: u32,
 }
 
+/// The stored photo; only its id is read here (the HUD's gallery reads the rest).
 #[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
 pub struct UploadedImage {
     pub id: String,
-    pub url: String,
-    pub thumbnail_url: String,
-    pub is_public: bool,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -110,14 +107,44 @@ pub async fn fetch_storage(
     for (key, value) in signed_headers("GET", &url, &wallet).await? {
         request = request.header(key, value);
     }
-    let response = request.send().await.map_err(|e| e.to_string())?;
+    let response = platform::TracedJsonResponse::send(request)
+        .await
+        .map_err(|e| e.to_string())?;
     if !response.status().is_success() {
-        return Err(format!("storage status {}", response.status()));
+        return Err(format!("storage status {}", response.discard()));
     }
     response
         .json::<StorageResponse>()
         .await
         .map_err(|e| format!("storage body: {e}"))
+}
+
+/// Deletes one of the signer's photos; the service answers 403 for another owner's and 404 for
+/// an absent one.
+pub async fn delete_photo(
+    client: reqwest::Client,
+    wallet: Wallet,
+    id: String,
+) -> Result<(), String> {
+    let url = url(
+        Service::CameraReel,
+        &format!("/api/images/{}", urlencoding::encode(&id)),
+    );
+    let mut request = client
+        .delete(&url)
+        .timeout(std::time::Duration::from_secs(20));
+    for (key, value) in signed_headers("DELETE", &url, &wallet).await? {
+        request = request.header(key, value);
+    }
+    let response = platform::TracedJsonResponse::send(request)
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = response.discard();
+    if status.is_success() {
+        Ok(())
+    } else {
+        Err(format!("delete status {status}"))
+    }
 }
 
 /// The multipart body the service expects: the JPEG as `image`, the metadata JSON as `metadata`.
@@ -166,8 +193,7 @@ pub async fn upload_photo(
     {
         request = request.header(key, value);
     }
-    let response = request
-        .send()
+    let response = platform::TracedJsonResponse::send(request)
         .await
         .map_err(|e| UploadError::Other(e.to_string()))?;
     let status = response.status();
@@ -220,7 +246,7 @@ pub async fn lookup_place(
     let request = match world_name {
         Some(name) => url(
             Service::Places,
-            &format!("/api/worlds?names={}", urlencoding(&name)),
+            &format!("/api/worlds?names={}", urlencoding::encode(&name)),
         ),
         None => url(
             Service::Places,
@@ -228,12 +254,13 @@ pub async fn lookup_place(
         ),
     };
     let found = async {
-        let response = client
-            .get(&request)
-            .timeout(std::time::Duration::from_secs(20))
-            .send()
-            .await
-            .ok()?;
+        let response = platform::TracedJsonResponse::send(
+            client
+                .get(&request)
+                .timeout(std::time::Duration::from_secs(20)),
+        )
+        .await
+        .ok()?;
         let envelope = response.json::<PlacesEnvelope>().await.ok()?;
         if envelope.ok == Some(false) {
             return None;
@@ -248,19 +275,6 @@ pub async fn lookup_place(
         ),
         None => (UNKNOWN_PLACE.to_owned(), UNKNOWN_PLACE.to_owned()),
     }
-}
-
-fn urlencoding(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(byte as char)
-            }
-            _ => out.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -309,17 +323,27 @@ mod tests {
     }
 
     #[test]
-    fn world_names_are_url_encoded() {
-        assert_eq!(urlencoding("my world.dcl.eth"), "my%20world.dcl.eth");
+    fn the_upload_response_needs_only_the_photo_id() {
+        let response: UploadResponse = serde_json::from_str(
+            r#"{"currentImages":3,"maxImages":500,"image":{"id":"abc","url":"u","thumbnailUrl":"t","isPublic":false}}"#,
+        )
+        .unwrap();
+        assert_eq!(response.image.id, "abc");
+        let minimal: UploadResponse =
+            serde_json::from_str(r#"{"currentImages":3,"maxImages":500,"image":{"id":"abc"}}"#)
+                .unwrap();
+        assert_eq!((minimal.current_images, minimal.max_images), (3, 500));
     }
 }
 
 /// Fetches the storage counts for the signed-in address when it changes and whenever photo mode
-/// opens, so a photo deleted from the gallery frees its slot here too.
+/// opens, so a photo deleted from the gallery frees its slot here too. A fetch that failed is
+/// retried when a photo is asked for.
 pub(crate) fn fetch_storage_status(
     mut storage: ResMut<CameraReelStorage>,
     wallet: Res<Wallet>,
     mut opened: EventReader<crate::mode::PhotoModeChanged>,
+    mut takes: EventReader<crate::capture::TakePhotoRequest>,
     ipfs: ipfs::IpfsAssetServer,
 ) {
     use common::util::{TaskCompat, TaskExt};
@@ -334,8 +358,11 @@ pub(crate) fn fetch_storage_status(
 
     let address = wallet.address().map(|a| format!("{a:#x}"));
     let opened = opened.read().any(|change| change.active);
+    let asked = takes.read().next().is_some();
     let address_changed = address != storage.address;
     if address_changed {
+        // a fetch for the previous address would land as this one's
+        storage.fetch = None;
         storage.address = address.clone();
         storage.loaded = false;
         storage.current = 0;
@@ -344,7 +371,8 @@ pub(crate) fn fetch_storage_status(
     let Some(address) = address else {
         return;
     };
-    if (address_changed || opened) && storage.fetch.is_none() {
+    let retry = asked && !storage.loaded;
+    if (address_changed || opened || retry) && storage.fetch.is_none() {
         storage.fetch = Some(bevy::tasks::IoTaskPool::get().spawn_compat(fetch_storage(
             ipfs.ipfs().client(),
             wallet.clone(),

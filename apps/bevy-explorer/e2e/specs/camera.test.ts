@@ -31,7 +31,9 @@ scenario('the rail opens photo mode', async ({ explorer }) => {
   await explorer.waitPhotoMode(false)
 })
 
-scenario('Space in photo mode takes a photo', async ({ explorer }) => {
+// The upload goes to the shared test account's camera reel, whose storage is finite: the restore
+// deletes the photo so the scenario does not fill it over time.
+scenario('Space in photo mode takes a photo', async ({ explorer, restore }) => {
   await explorer.photoMode('on')
   const before = await explorer.waitPhotoMode(true)
   await explorer.hud.wait(SHOOT, { state: 'actionable', timeoutMs: PAGE_TIMEOUT_MS })
@@ -45,6 +47,8 @@ scenario('Space in photo mode takes a photo', async ({ explorer }) => {
   )
   assert.equal(settled.failed, before.failed, `the upload should succeed; last error: ${settled.lastError}`)
   assert.ok(settled.lastPhotoId, 'the service answers with the photo id')
+  const photoId = settled.lastPhotoId
+  restore(() => explorer.deletePhoto(photoId))
   await explorer.photoMode('off')
   await explorer.waitPhotoMode(false)
 })
