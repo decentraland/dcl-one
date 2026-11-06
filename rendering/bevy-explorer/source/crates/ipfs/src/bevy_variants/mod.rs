@@ -1,0 +1,611 @@
+//! Prototype: GPU-ready "Bevy variants" of a scene's textures and models, published by abgen.
+//!
+//! Off unless a variants base url is configured (`--bevy-variants-url`, `?bevyVariants=`, or the
+//! `bevy_variants_url` config field). For each scene entity the explorer fetches
+//! `{base}/bevy/manifest/{entityId}.json` once; it maps original content CIDs to variants, each
+//! addressed by its own raw-leaf CID. A content file read whose original CID has a variant in a
+//! format this client takes is answered with `{base}/bevy/contents/{variantCid}` instead, checked
+//! against the variant CID and cached under that CID only. Anything else, at any step, reads the
+//! original. A variant that fails to decode is marked bad for the session and its asset reloaded
+//! from the original.
+//!
+//! Preview and local scenes (preview mode, `b64-` ids, loopback or file content servers) never
+//! ask for a manifest.
+
+mod debug_panel;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests;
+
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    io::ErrorKind,
+    path::{Path, PathBuf},
+    sync::{atomic::Ordering, Arc, Mutex, OnceLock},
+};
+
+use bevy::{
+    asset::{io::AssetReaderError, AssetLoadFailedEvent},
+    image::CompressedImageFormats,
+    prelude::*,
+    render::renderer::RenderCapabilities,
+    tasks::IoTaskPool,
+};
+use common::util::{TaskCompat, UrlLoopbackExt};
+use serde::Deserialize;
+use tokio::sync::watch;
+use web_time::Duration;
+
+use crate::{
+    content_hash,
+    ipfs_path::{CacheKey, IpfsPath},
+    IpfsIo, IpfsResource, SharedBytes,
+};
+
+/// Image paths whose loader guesses the format from the bytes (or, for `.ktx2`, passes a dds
+/// through), so a dds variant decodes at the original path.
+const TEXTURE_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "ktx2"];
+const MODEL_EXTENSIONS: [&str; 2] = ["glb", "gltf"];
+const RECENT_FALLBACKS: usize = 20;
+/// Consecutive transport failures (manifest or variant) after which the service is treated as
+/// down for the rest of the session, so a dead host costs a few requests, not one per file.
+const BREAKER_FAILURES: u32 = 5;
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Variant {
+    pub cid: String,
+    pub kind: String,
+    pub format: String,
+    #[serde(default)]
+    pub width: Option<u32>,
+    #[serde(default)]
+    pub height: Option<u32>,
+    #[serde(default)]
+    pub mips: Option<u32>,
+    #[serde(default)]
+    pub size: Option<u64>,
+}
+
+#[derive(Debug)]
+pub struct Manifest {
+    pub generator: Option<String>,
+    /// Variants by original content CID, in the manifest's order of preference.
+    pub files: HashMap<String, Vec<Variant>>,
+}
+
+#[derive(Deserialize)]
+struct ManifestVersion {
+    v: u32,
+}
+
+#[derive(Deserialize)]
+struct ManifestJson {
+    entity: String,
+    #[serde(default)]
+    generator: Option<String>,
+    #[serde(default)]
+    files: HashMap<String, Vec<Variant>>,
+}
+
+/// A v1 manifest for `entity`. Variants whose cid is not a raw-leaf CIDv1 (`bafkrei…`) are
+/// dropped: the cid becomes a url path segment and a cache file name, and only that scheme is
+/// checked against the bytes.
+pub fn parse_manifest(bytes: &[u8], entity: &str) -> Result<Manifest, String> {
+    let version: ManifestVersion = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    if version.v != 1 {
+        return Err(format!("unsupported manifest version {}", version.v));
+    }
+    let json: ManifestJson = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    if json.entity != entity {
+        return Err(format!("manifest names entity `{}`", json.entity));
+    }
+    let files = json
+        .files
+        .into_iter()
+        .map(|(original, variants)| {
+            let variants: Vec<_> = variants
+                .into_iter()
+                .filter(|variant| is_raw_cid(&variant.cid))
+                .collect();
+            (original, variants)
+        })
+        .filter(|(_, variants)| !variants.is_empty())
+        .collect();
+    Ok(Manifest {
+        generator: json.generator,
+        files,
+    })
+}
+
+/// CIDv1, raw codec, sha2-256, base32: `b` + 58 base32 characters.
+fn is_raw_cid(cid: &str) -> bool {
+    cid.len() == 59
+        && cid.starts_with("bafkrei")
+        && cid
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b))
+}
+
+fn extension(file_path: &str) -> Option<String> {
+    Path::new(file_path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase)
+}
+
+/// Whether a file of this type could be replaced at all; others never wait on a manifest.
+pub fn could_have_variant(file_path: &str) -> bool {
+    extension(file_path).is_some_and(|ext| {
+        TEXTURE_EXTENSIONS.contains(&ext.as_str()) || MODEL_EXTENSIONS.contains(&ext.as_str())
+    })
+}
+
+/// Whether this client can load `variant` at `file_path`. Every variant format carries BC
+/// textures (a model variant embeds dds images), so all need the GPU's BC support.
+pub fn supports(variant: &Variant, file_path: &str, bc: bool) -> bool {
+    let Some(ext) = extension(file_path) else {
+        return false;
+    };
+    let ext = ext.as_str();
+    bc && match (variant.kind.as_str(), variant.format.as_str()) {
+        ("texture", "dds-bc7" | "dds-bc1" | "dds-bc5") => TEXTURE_EXTENSIONS.contains(&ext),
+        ("model", "glb") => MODEL_EXTENSIONS.contains(&ext),
+        _ => false,
+    }
+}
+
+/// The first variant this client supports that has not failed this session.
+pub fn select_variant<'a>(
+    variants: &'a [Variant],
+    file_path: &str,
+    bc: bool,
+    is_bad: impl Fn(&str) -> bool,
+) -> Option<&'a Variant> {
+    variants
+        .iter()
+        .find(|variant| supports(variant, file_path, bc) && !is_bad(&variant.cid))
+}
+
+/// Why a scene gets no manifest request, if it doesn't.
+pub fn scene_eligibility(
+    entity: &str,
+    contents_base_url: Option<&str>,
+    preview: bool,
+) -> Result<(), &'static str> {
+    if preview {
+        return Err("preview mode");
+    }
+    if entity.starts_with("b64-") {
+        return Err("local scene (b64- id)");
+    }
+    if entity.is_empty() || !entity.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return Err("entity id is not a content id");
+    }
+    let Some(url) = contents_base_url else {
+        return Err("no content server");
+    };
+    let Ok(url) = url::Url::parse(url) else {
+        return Err("unparseable content server url");
+    };
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("not an http content server");
+    }
+    if url.is_loopback() {
+        return Err("loopback content server");
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug)]
+pub enum ManifestState {
+    Pending,
+    Ineligible(&'static str),
+    /// 404: abgen has no manifest for the entity (yet).
+    None,
+    Loaded(Arc<Manifest>),
+    Failed(String),
+}
+
+#[derive(Clone, Debug)]
+struct ServedVariant {
+    scene: String,
+    file: String,
+    cid: String,
+    format: String,
+}
+
+#[derive(Debug)]
+struct Fallback {
+    scene: String,
+    file: String,
+    reason: String,
+}
+
+#[derive(Default)]
+struct Session {
+    disabled: Option<String>,
+    transport_failures: u32,
+    bad: HashSet<String>,
+    served: HashMap<PathBuf, ServedVariant>,
+    downloaded: u64,
+    cached: u64,
+    fallbacks: u64,
+    recent: VecDeque<Fallback>,
+}
+
+impl Session {
+    fn fallback(&mut self, scene: &str, file: &str, reason: String) {
+        debug!("bevy variant fallback for `{file}` in {scene}: {reason}");
+        self.fallbacks += 1;
+        if self.recent.len() == RECENT_FALLBACKS {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(Fallback {
+            scene: scene.to_owned(),
+            file: file.to_owned(),
+            reason,
+        });
+    }
+}
+
+#[derive(Default)]
+pub struct BevyVariants {
+    base: OnceLock<String>,
+    /// The GPU's BC support, once the renderer has reported it.
+    bc: OnceLock<bool>,
+    manifests: Mutex<HashMap<String, watch::Receiver<ManifestState>>>,
+    session: Mutex<Session>,
+}
+
+impl BevyVariants {
+    fn base(&self) -> Option<&str> {
+        self.base.get().map(String::as_str)
+    }
+
+    fn bc(&self) -> bool {
+        self.bc.get().copied().unwrap_or(false)
+    }
+
+    fn set_base(&self, url: &str) {
+        let url = url.trim().trim_end_matches('/');
+        match url::Url::parse(url) {
+            Ok(parsed) if matches!(parsed.scheme(), "http" | "https") => {
+                if self.base.set(url.to_owned()).is_ok() {
+                    info!("bevy variants: on, from `{url}`");
+                }
+            }
+            _ => warn!("bevy variants: ignoring `{url}`, not an http(s) url"),
+        }
+    }
+
+    /// A new pending manifest for `entity`, or None when one was already requested.
+    fn begin(&self, entity: &str) -> Option<watch::Sender<ManifestState>> {
+        let mut manifests = self.manifests.lock().unwrap();
+        if manifests.contains_key(entity) {
+            return None;
+        }
+        let (sender, receiver) = watch::channel(ManifestState::Pending);
+        manifests.insert(entity.to_owned(), receiver);
+        Some(sender)
+    }
+
+    fn manifest(&self, entity: &str) -> Option<watch::Receiver<ManifestState>> {
+        self.manifests.lock().unwrap().get(entity).cloned()
+    }
+
+    fn disabled(&self) -> Option<String> {
+        self.session.lock().unwrap().disabled.clone()
+    }
+
+    fn transport_ok(&self) {
+        self.session.lock().unwrap().transport_failures = 0;
+    }
+
+    fn transport_failed(&self, reason: &str) {
+        let mut session = self.session.lock().unwrap();
+        session.transport_failures += 1;
+        if session.transport_failures >= BREAKER_FAILURES && session.disabled.is_none() {
+            warn!("bevy variants: off for this session, {BREAKER_FAILURES} failed requests ({reason})");
+            session.disabled = Some(format!(
+                "{BREAKER_FAILURES} consecutive failed requests, last: {reason}"
+            ));
+        }
+    }
+
+    fn is_bad(&self, cid: &str) -> bool {
+        self.session.lock().unwrap().bad.contains(cid)
+    }
+
+    fn fail(&self, scene: &str, file: &str, cid: Option<&str>, reason: String) {
+        let mut session = self.session.lock().unwrap();
+        if let Some(cid) = cid {
+            session.bad.insert(cid.to_owned());
+        }
+        session.fallback(scene, file, reason);
+    }
+
+    fn served(&self, path: &Path, served: ServedVariant, cached: bool) {
+        let mut session = self.session.lock().unwrap();
+        if cached {
+            session.cached += 1;
+        } else {
+            session.downloaded += 1;
+        }
+        session.served.insert(path.to_owned(), served);
+    }
+
+    /// Whether the asset at `path` was last read from a variant.
+    pub fn is_served(&self, path: &Path) -> bool {
+        self.session.lock().unwrap().served.contains_key(path)
+    }
+
+    /// Marks the variant served for `path` bad, if there was one; true when the asset should be
+    /// reloaded (from its original).
+    fn decode_failed(&self, path: &Path, error: &str) -> bool {
+        let mut session = self.session.lock().unwrap();
+        let Some(served) = session.served.remove(path) else {
+            return false;
+        };
+        session.bad.insert(served.cid.clone());
+        session.fallback(
+            &served.scene,
+            &served.file,
+            format!("{} variant failed to load: {error}", served.format),
+        );
+        true
+    }
+}
+
+pub(crate) enum VariantRead {
+    Cached(Vec<u8>),
+    Downloaded(SharedBytes),
+}
+
+fn describe_fetch_error(error: &platform::FetchError<anyhow::Error>) -> String {
+    match error {
+        platform::FetchError::Headers => "timed out awaiting headers".to_owned(),
+        platform::FetchError::Stalled => "stalled".to_owned(),
+        platform::FetchError::Send(e) => format!("request failed: {e}"),
+        platform::FetchError::Status(status, _) => format!("status {status}"),
+        platform::FetchError::Body(e) => format!("body stream error: {e}"),
+    }
+}
+
+impl IpfsIo {
+    /// Turns the variants client on for the session. Startup only: a second call is ignored.
+    pub fn set_bevy_variants_base(&self, url: &str) {
+        self.bevy_variants.set_base(url);
+    }
+
+    /// Whether the asset at `path` was last read from a variant (and so must not be
+    /// reprocessed as if it were the original).
+    pub fn served_bevy_variant(&self, path: &Path) -> bool {
+        self.bevy_variants.is_served(path)
+    }
+
+    /// Asks abgen for the scene entity's manifest, once per session. A no-op when variants are
+    /// off.
+    pub fn request_bevy_variants(self: &Arc<Self>, entity: &str) {
+        let Some(base) = self.bevy_variants.base().map(str::to_owned) else {
+            return;
+        };
+        let Some(sender) = self.bevy_variants.begin(entity) else {
+            return;
+        };
+        let io = self.clone();
+        let entity = entity.to_owned();
+        IoTaskPool::get()
+            .spawn_compat(async move {
+                let state = io.fetch_bevy_variants_manifest(&base, &entity).await;
+                sender.send_replace(state);
+            })
+            .detach();
+    }
+
+    async fn fetch_bevy_variants_manifest(&self, base: &str, entity: &str) -> ManifestState {
+        let contents = self.context.read().await.contents_base_url(entity);
+        if let Err(reason) = scene_eligibility(entity, contents.as_deref(), self.is_preview) {
+            return ManifestState::Ineligible(reason);
+        }
+        if let Some(reason) = self.bevy_variants.disabled() {
+            return ManifestState::Failed(format!("variants off: {reason}"));
+        }
+        let url = format!("{base}/bevy/manifest/{entity}.json");
+        let request = match self.client.get(&url).build() {
+            Ok(request) => request,
+            Err(e) => return ManifestState::Failed(e.to_string()),
+        };
+        match self
+            .fetch_request(
+                request,
+                self.client.clone(),
+                Duration::from_secs(15),
+                Duration::from_secs(10),
+                Some(entity.to_owned()),
+            )
+            .await
+        {
+            Ok(response) => {
+                self.bevy_variants.transport_ok();
+                match parse_manifest(&response.body, entity) {
+                    Ok(manifest) => ManifestState::Loaded(Arc::new(manifest)),
+                    Err(e) => ManifestState::Failed(format!("invalid manifest: {e}")),
+                }
+            }
+            Err(platform::FetchError::Status(status, _))
+                if status == reqwest::StatusCode::NOT_FOUND =>
+            {
+                self.bevy_variants.transport_ok();
+                ManifestState::None
+            }
+            Err(e) => {
+                let reason = describe_fetch_error(&e);
+                self.bevy_variants.transport_failed(&reason);
+                ManifestState::Failed(reason)
+            }
+        }
+    }
+
+    /// The variant's bytes for a scene content file, or None to read the original.
+    pub(crate) async fn read_bevy_variant(
+        self: &Arc<Self>,
+        ipfs_path: &IpfsPath,
+        path: &Path,
+    ) -> Option<VariantRead> {
+        let variants = &self.bevy_variants;
+        let base = variants.base()?;
+        let (scene, file) = (ipfs_path.scene_hash()?, ipfs_path.content_path()?);
+        if !could_have_variant(file) {
+            return None;
+        }
+        let mut manifest = variants.manifest(scene)?;
+        let state = manifest
+            .wait_for(|state| !matches!(state, ManifestState::Pending))
+            .await
+            .ok()?
+            .clone();
+        let ManifestState::Loaded(manifest) = state else {
+            return None;
+        };
+        let original = self
+            .context
+            .read()
+            .await
+            .entities
+            .get(scene)?
+            .collection
+            .hash(file)?
+            .into_owned();
+        let options = manifest.files.get(&original)?;
+        if variants.disabled().is_some() {
+            return None;
+        }
+        let bc = variants.bc();
+        if !options.iter().any(|variant| supports(variant, file, bc)) {
+            let formats: Vec<_> = options.iter().map(|v| v.format.as_str()).collect();
+            let reason = if bc {
+                format!("no variant format this file type takes ({})", formats.join(", "))
+            } else {
+                "the GPU has no BC texture support (or has not reported it yet)".to_owned()
+            };
+            variants.fail(scene, file, None, reason);
+            return None;
+        }
+        let variant = select_variant(options, file, bc, |cid| variants.is_bad(cid))?.clone();
+
+        let url = format!("{base}/bevy/contents/{}", variant.cid);
+        let key = CacheKey::Content(variant.cid.clone());
+        let served = ServedVariant {
+            scene: scene.to_owned(),
+            file: file.to_owned(),
+            cid: variant.cid.clone(),
+            format: variant.format.clone(),
+        };
+
+        // the cache holds bytes under a content key only once they hash to it
+        #[cfg(not(target_arch = "wasm32"))]
+        let cached = self.read_disk_cache(&key).await.ok().flatten();
+        #[cfg(target_arch = "wasm32")]
+        let cached = crate::web_cache::read(&url).await;
+        if let Some(bytes) = cached {
+            variants.served(path, served, true);
+            return Some(VariantRead::Cached(bytes));
+        }
+
+        let token = self.reqno.fetch_add(1, Ordering::SeqCst);
+        let (download, task) =
+            self.share_download(key, token, path.to_owned(), url, Some(scene.to_owned()));
+        if let Some(task) = task {
+            IoTaskPool::get().spawn_compat(task).detach();
+        }
+        let mut result = download.result();
+        let fetched = result
+            .wait_for(Option::is_some)
+            .await
+            .ok()
+            .and_then(|result| result.clone());
+        match fetched {
+            Some(Ok(bytes)) if content_hash::matches_content_hash(&variant.cid, &bytes) => {
+                variants.transport_ok();
+                variants.served(path, served, false);
+                Some(VariantRead::Downloaded(bytes))
+            }
+            Some(Ok(bytes)) => {
+                variants.fail(
+                    scene,
+                    file,
+                    Some(&variant.cid),
+                    format!(
+                        "{} bytes from abgen do not hash to {}",
+                        bytes.len(),
+                        variant.cid
+                    ),
+                );
+                None
+            }
+            Some(Err(AssetReaderError::Io(e))) if e.kind() == ErrorKind::Interrupted => None,
+            Some(Err(e)) => {
+                let reason = e.to_string();
+                variants.transport_failed(&reason);
+                variants.fail(scene, file, Some(&variant.cid), format!("fetch: {reason}"));
+                None
+            }
+            None => None,
+        }
+    }
+}
+
+pub(crate) fn build(app: &mut App) {
+    app.add_systems(Update, detect_gpu_formats);
+    debug_panel::register(app);
+}
+
+/// After the asset plugins exist: an app without images or models has nothing to fall back.
+pub(crate) fn finish(app: &mut App) {
+    if app
+        .world()
+        .contains_resource::<Events<AssetLoadFailedEvent<Image>>>()
+        && app
+            .world()
+            .contains_resource::<Events<AssetLoadFailedEvent<bevy::gltf::Gltf>>>()
+    {
+        app.add_systems(Update, fall_back_from_failed_variants);
+    }
+}
+
+fn detect_gpu_formats(
+    capabilities: Option<Res<RenderCapabilities>>,
+    ipfs: Res<IpfsResource>,
+    mut done: Local<bool>,
+) {
+    if *done {
+        return;
+    }
+    let Some(capabilities) = capabilities else {
+        return;
+    };
+    *done = true;
+    let bc = CompressedImageFormats::from_features(capabilities.features())
+        .contains(CompressedImageFormats::BC);
+    let _ = ipfs.bevy_variants.bc.set(bc);
+}
+
+fn fall_back_from_failed_variants(
+    mut images: EventReader<AssetLoadFailedEvent<Image>>,
+    mut models: EventReader<AssetLoadFailedEvent<bevy::gltf::Gltf>>,
+    ipfs: Res<IpfsResource>,
+    server: Res<AssetServer>,
+) {
+    let failed = images
+        .read()
+        .map(|event| (&event.path, event.error.to_string()))
+        .chain(
+            models
+                .read()
+                .map(|event| (&event.path, event.error.to_string())),
+        );
+    for (path, error) in failed {
+        if ipfs.bevy_variants.decode_failed(path.path(), &error) {
+            server.reload(path.without_label().into_owned());
+        }
+    }
+}

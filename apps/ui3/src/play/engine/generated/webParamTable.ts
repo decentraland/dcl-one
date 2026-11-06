@@ -159,6 +159,12 @@ export const WEB_PARAMS: WebParam[] = [
     "doc": "Base url of the imposter store; absent = the default store. The realm-keyed path under it is the same as the default store's"
   },
   {
+    "name": "bevyVariants",
+    "kind": "string",
+    "delivery": "launch",
+    "doc": "Base url of an abgen Bevy variants service (prototype); absent = off. Scene textures and models it has GPU-ready variants of load as those variants, each checked against its content id; anything else, or any failure, loads the original"
+  },
+  {
     "name": "logFps",
     "kind": "bool",
     "delivery": "launch",

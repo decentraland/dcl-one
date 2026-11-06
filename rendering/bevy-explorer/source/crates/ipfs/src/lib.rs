@@ -1,4 +1,5 @@
 mod batch_sizes;
+pub mod bevy_variants;
 pub mod content_hash;
 mod debug_panel;
 mod download;
@@ -633,6 +634,7 @@ impl Plugin for IpfsIoPlugin {
 
         app.add_console_command::<ChangeRealmCommand, _>(change_realm_command);
         debug_panel::register(app, self.preview);
+        bevy_variants::build(app);
 
         app.register_diagnostic(Diagnostic::new(IPFS_IN_FLIGHT_DIAGNOSTIC_PATH));
         app.register_diagnostic(Diagnostic::new(IPFS_SUCCESS_DIAGNOSTIC_PATH));
@@ -652,6 +654,7 @@ impl Plugin for IpfsIoPlugin {
             .init_asset::<SceneJsFile>()
             .init_asset_loader::<EntityDefinitionLoader>()
             .init_asset_loader::<SceneJsLoader>();
+        bevy_variants::finish(app);
 
         if let Some(realm) = &self.starting_realm {
             let ipfs = app.world().resource::<IpfsResource>().clone();
@@ -1033,6 +1036,7 @@ pub struct IpfsIo {
     client: reqwest::Client,
     // downloads under way, by url (`share_download`)
     in_flight: InFlightDownloads,
+    pub(crate) bevy_variants: bevy_variants::BevyVariants,
     #[cfg(feature = "ipfs_debug")]
     debug_overlay_sender: tokio::sync::mpsc::UnboundedSender<IpfsDebug>,
 }
@@ -1075,6 +1079,7 @@ impl IpfsIo {
                 .build()
                 .unwrap(),
             in_flight: Default::default(),
+            bevy_variants: Default::default(),
             #[cfg(feature = "ipfs_debug")]
             debug_overlay_sender,
         }
@@ -1925,6 +1930,20 @@ impl IpfsIo {
                 ipfs_io_read_state.send_failure(file.read_to_end(&mut daft_buffer).await)?;
                 ipfs_io_read_state.send_cached(daft_buffer.len());
                 return Ok(Box::new(VecReader::new(daft_buffer)));
+            }
+
+            // a scene file abgen has a verified variant of reads as that variant
+            if let Some(variant) = self.read_bevy_variant(&ipfs_path, path).await {
+                let reader: Box<dyn Reader + 'a> = match variant {
+                    bevy_variants::VariantRead::Cached(bytes) => {
+                        ipfs_io_read_state.send_cached(bytes.len());
+                        Box::new(VecReader::new(bytes))
+                    }
+                    bevy_variants::VariantRead::Downloaded(bytes) => {
+                        Box::new(AsyncCursor::new(bytes))
+                    }
+                };
+                return Ok(reader);
             }
 
             let cache_key = ipfs_path.cache_key(&*self.context.read().await);
