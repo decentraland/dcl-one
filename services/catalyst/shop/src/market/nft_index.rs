@@ -1008,9 +1008,10 @@ impl ChainIndex for NftIndex {
                 }
                 let mut tx = pool.begin().await?;
                 insert_events(&mut tx, self.net, &rows).await?;
-                // Late rows below the producers' cursors are read again.
-                if let Some(first) = rows.iter().map(|r| r.block_number).min() {
-                    chain_walk::replay_notifications(&mut tx, INDEXER_NFT, self.net, first - 1)
+                // Late rows near the head below the producers' cursors are read again.
+                let blocks = rows.iter().map(|r| r.block_number);
+                if let (Some(first), Some(last)) = (blocks.clone().min(), blocks.max()) {
+                    super::notice_cursor::replay(&mut tx, INDEXER_NFT, self.net, first - 1, last)
                         .await?;
                 }
                 sqlx::query(

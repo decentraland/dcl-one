@@ -375,85 +375,6 @@ pub async fn rewind(
     Ok(())
 }
 
-/// How far below an index's head a rewind or a late backfill moves the
-/// notification cursors back: deeper rows are not announced again.
-pub const NOTIFICATION_REPLAY_BLOCKS: i64 = 1_000;
-
-/// The `shop.notification_cursor` producers reading `indexer` on `net`.
-pub fn notification_producers(indexer: &str, net: ChainNet) -> Vec<String> {
-    let n = net.db_name();
-    match (indexer, net) {
-        (INDEXER_NFT, ChainNet::Matic) => vec![
-            "transfer_received".into(),
-            "royalties_earned".into(),
-            format!("sales:order_successful:{n}"),
-        ],
-        (INDEXER_NFT, _) => vec![format!("sales:order_successful:{n}")],
-        (INDEXER_TRADE_EVENTS, ChainNet::Matic) => {
-            vec!["transfer_received".into(), format!("sales:traded:{n}")]
-        }
-        (INDEXER_TRADE_EVENTS, _) => vec![format!("sales:traded:{n}")],
-        (crate::rentals::index::INDEXER_RENTALS, _) => {
-            vec!["rental_started".into(), "rental_ended".into()]
-        }
-        _ => Vec::new(),
-    }
-}
-
-/// Moves the notification cursors fed by `indexer` on `net` back to just
-/// after `block` (at most [`NOTIFICATION_REPLAY_BLOCKS`] below the index's
-/// head), in the transaction that rewrites the log from there: the rows
-/// written again are read again, and their v5 ids keep the replay from
-/// notifying twice. `rental_ended` (end-time ordered) goes back to the
-/// earliest block time of the rents it may have missed. Run before the
-/// rewritten rows are deleted.
-pub async fn replay_notifications(
-    conn: &mut PgConnection,
-    indexer: &str,
-    net: ChainNet,
-    block: i64,
-) -> Result<(), sqlx::Error> {
-    let producers = notification_producers(indexer, net);
-    if producers.is_empty() {
-        return Ok(());
-    }
-    let Some(from): Option<i64> = sqlx::query_scalar(
-        "SELECT GREATEST($3, last_block - $4) FROM shop.chain_cursor WHERE indexer = $1 AND network = $2",
-    )
-    .bind(indexer)
-    .bind(net.db_name())
-    .bind(block)
-    .bind(NOTIFICATION_REPLAY_BLOCKS)
-    .fetch_optional(&mut *conn)
-    .await?
-    else {
-        return Ok(());
-    };
-    sqlx::query(
-        "UPDATE shop.notification_cursor SET block_number = $2, log_index = 2147483647, updated_at = timezone('UTC', now()) \
-         WHERE producer = ANY($1) AND end_time IS NULL AND block_number > $2",
-    )
-    .bind(&producers)
-    .bind(from)
-    .execute(&mut *conn)
-    .await?;
-    if producers.iter().any(|p| p == "rental_ended") {
-        sqlx::query(
-            "UPDATE shop.notification_cursor c SET end_time = r.since, block_number = 0, log_index = -1, \
-                 updated_at = timezone('UTC', now()) \
-             FROM (SELECT min(block_time) AS since FROM shop.rental_event \
-                   WHERE network = $1 AND kind = 'rented' AND block_number > $2) r \
-             WHERE c.producer = 'rental_ended' AND r.since IS NOT NULL \
-               AND (c.end_time, c.block_number, c.log_index) > (r.since, 0, -1)",
-        )
-        .bind(net.db_name())
-        .bind(from)
-        .execute(&mut *conn)
-        .await?;
-    }
-    Ok(())
-}
-
 /// Records the block a completed fold covered (the next fold's `since`),
 /// on the row still at that block; a publish is [`mark_folded`]'s.
 pub async fn record_fold(
@@ -833,11 +754,16 @@ pub async fn run_pass(
         if header.hash != stored {
             let to = cur.start_block - 1;
             let mut tx = pool.begin().await?;
-            replay_notifications(&mut tx, name, net, to).await?;
+            let replay =
+                super::notice_cursor::plan_replay(&mut tx, name, net, to, cur.last_block).await?;
             ix.rewind(&mut tx, to)
                 .await
                 .context("undoing the reorged range")?;
             rewind(&mut tx, name, net, to).await?;
+            // Cursor rows are locked after the deletes: producers wait only for the commit.
+            if let Some(replay) = replay {
+                replay.apply(&mut tx).await?;
+            }
             tx.commit().await?;
             tracing::warn!(indexer = name, network = net.db_name(), block = cur.last_block, stored, chain = %header.hash, rewound_to = to, "marketplace index: the cursor block's hash changed (a reorg past the confirmation depth); rewound");
             out.reorg_rewound_to = Some(to);

@@ -10,8 +10,8 @@
 //! Each (source, network) reads only up to its index's `folded_block` while
 //! `chain_walk::is_ready`; its first pass starts at that published block, so
 //! history is never replayed. Progress is `shop.notification_cursor` (`sales:{source}:{network}`), advanced
-//! with each page's notifications in one transaction; the id is a uuid v5 of
-//! the log position, so a retried page inserts nothing twice.
+//! with each page's notifications in one transaction; the id is reorg-stable
+//! (`notice_cursor`), so a retried page inserts nothing twice.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -27,6 +27,7 @@ use super::chain_walk::{self, ChainNet, INDEXER_NFT, INDEXER_TRADE_EVENTS};
 use super::listings::{
     ASSET_TYPE_COLLECTION_ITEM, ASSET_TYPE_ERC20, ASSET_TYPE_ERC721, ASSET_TYPE_USD_PEGGED_MANA,
 };
+use super::notice_cursor;
 use super::trade_events::{self, AssetMeta, StoredTrade};
 use crate::shared::identity::Address;
 use crate::social::notifications::{NewNotification, insert_notifications};
@@ -91,36 +92,49 @@ impl Source {
         }
     }
 
-    fn rows_sql(self) -> &'static str {
+    fn producer(self, net: ChainNet) -> &'static str {
+        match (self, net) {
+            (Source::Traded, ChainNet::Ethereum) => notice_cursor::SALES_TRADED_ETHEREUM,
+            (Source::Traded, ChainNet::Matic) => notice_cursor::SALES_TRADED_MATIC,
+            (Source::OrderSuccessful, _) => notice_cursor::SALES_ORDER_SUCCESSFUL_MATIC,
+        }
+    }
+
+    fn rows_sql(self) -> String {
         match self {
-            Source::Traded => {
-                "SELECT block_number, log_index, block_time, signer AS recipient, caller AS counterparty, assets, \
+            Source::Traded => format!(
+                "SELECT {key} AS id_key, e.block_number, e.log_index, e.block_time, e.signer AS recipient, e.caller AS counterparty, e.assets, \
                         NULL::text AS contract_address, NULL::text AS token_id \
-                 FROM shop.trade_event \
-                 WHERE network = $1 AND kind = 'traded' AND (block_number, log_index) > ($2, $3) AND block_number <= $4 \
-                 ORDER BY block_number, log_index LIMIT $5"
-            }
-            Source::OrderSuccessful => {
-                "SELECT block_number, log_index, block_time, from_address AS recipient, to_address AS counterparty, NULL::jsonb AS assets, \
-                        contract_address::text AS contract_address, token_id::text AS token_id \
-                 FROM shop.nft_event \
-                 WHERE network = $1 AND kind = 'order_successful' AND (block_number, log_index) > ($2, $3) AND block_number <= $4 \
-                 ORDER BY block_number, log_index LIMIT $5"
-            }
+                 FROM shop.trade_event e \
+                 WHERE e.network = $1 AND e.kind = 'traded' AND (e.block_number, e.log_index) > ($2, $3) AND e.block_number <= $4 \
+                 ORDER BY e.block_number, e.log_index LIMIT $5",
+                key = notice_cursor::tx_log_key(
+                    "trade_event",
+                    "e",
+                    "coalesce(e.hashed_signature, '')"
+                )
+            ),
+            Source::OrderSuccessful => format!(
+                "SELECT {key} AS id_key, e.block_number, e.log_index, e.block_time, e.from_address AS recipient, e.to_address AS counterparty, NULL::jsonb AS assets, \
+                        e.contract_address::text AS contract_address, e.token_id::text AS token_id \
+                 FROM shop.nft_event e \
+                 WHERE e.network = $1 AND e.kind = 'order_successful' AND (e.block_number, e.log_index) > ($2, $3) AND e.block_number <= $4 \
+                 ORDER BY e.block_number, e.log_index LIMIT $5",
+                key = notice_cursor::token_log_key("e")
+            ),
         }
     }
 }
 
-pub fn notification_id(source: &str, network: &str, block_number: i64, log_index: i32) -> Uuid {
+/// Over the log's [`notice_cursor::tx_log_key`] (Traded) or
+/// [`notice_cursor::token_log_key`] (OrderSuccessful).
+pub fn notification_id(source: &str, network: &str, key: &str) -> Uuid {
     let prefix = if source == "traded" {
         "traded"
     } else {
         "order-successful"
     };
-    Uuid::new_v5(
-        &Uuid::NAMESPACE_OID,
-        format!("{prefix}:{network}:{block_number}:{log_index}").as_bytes(),
-    )
+    notice_cursor::notification_id(prefix, network, key)
 }
 
 /// The site bases the metadata links and images point at.
@@ -132,6 +146,7 @@ pub struct Links {
 
 #[derive(sqlx::FromRow)]
 struct LogRow {
+    id_key: String,
     block_number: i64,
     log_index: i32,
     block_time: i64,
@@ -319,25 +334,13 @@ async fn drain(
     net: ChainNet,
     published: i64,
 ) -> anyhow::Result<u64> {
-    let producer = format!("sales:{}:{}", source.db_name(), net.db_name());
-    sqlx::query(
-        "INSERT INTO shop.notification_cursor (producer, block_number, log_index) \
-         VALUES ($1, $2, 2147483647) ON CONFLICT (producer) DO NOTHING",
-    )
-    .bind(&producer)
-    .bind(published)
-    .execute(pool)
-    .await?;
+    let producer = source.producer(net);
+    notice_cursor::seed(pool, producer, None, published, i32::MAX).await?;
     let mut emitted = 0;
     loop {
         let mut txn = pool.begin().await?;
-        let (since_block, since_log): (i64, i32) = sqlx::query_as(
-            "SELECT block_number, log_index FROM shop.notification_cursor WHERE producer = $1 FOR UPDATE",
-        )
-        .bind(&producer)
-        .fetch_one(&mut *txn)
-        .await?;
-        let rows: Vec<LogRow> = sqlx::query_as(source.rows_sql())
+        let (_, since_block, since_log) = notice_cursor::lock(&mut txn, producer).await?;
+        let rows: Vec<LogRow> = sqlx::query_as(sqlx::AssertSqlSafe(source.rows_sql()))
             .bind(net.db_name())
             .bind(since_block)
             .bind(since_log)
@@ -367,12 +370,7 @@ async fn drain(
                 continue;
             };
             batch.push(NewNotification {
-                id: notification_id(
-                    source.db_name(),
-                    net.db_name(),
-                    row.block_number,
-                    row.log_index,
-                ),
+                id: notification_id(source.db_name(), net.db_name(), &row.id_key),
                 address,
                 kind: kind.to_string(),
                 metadata,
@@ -382,15 +380,7 @@ async fn drain(
             });
         }
         emitted += insert_notifications(&mut *txn, &batch).await?;
-        sqlx::query(
-            "UPDATE shop.notification_cursor SET block_number = $2, log_index = $3, updated_at = timezone('UTC', now()) \
-             WHERE producer = $1",
-        )
-        .bind(&producer)
-        .bind(last_block)
-        .bind(last_log)
-        .execute(&mut *txn)
-        .await?;
+        notice_cursor::advance(&mut txn, producer, None, last_block, last_log).await?;
         txn.commit().await?;
         if rows.len() < PAGE_SIZE as usize {
             break;
@@ -477,11 +467,14 @@ mod tests {
 
     #[test]
     fn ids_are_stable_and_unique_per_log() {
-        let id = notification_id("traded", "matic", 10, 1);
-        assert_eq!(id, notification_id("traded", "matic", 10, 1));
-        assert_ne!(id, notification_id("traded", "matic", 10, 2));
-        assert_ne!(id, notification_id("traded", "ethereum", 10, 1));
-        assert_ne!(id, notification_id("order_successful", "matic", 10, 1));
+        let id = notification_id("traded", "matic", "0xa:0:0x01");
+        assert_eq!(id, notification_id("traded", "matic", "0xa:0:0x01"));
+        assert_ne!(id, notification_id("traded", "matic", "0xa:1:0x01"));
+        assert_ne!(id, notification_id("traded", "ethereum", "0xa:0:0x01"));
+        assert_ne!(
+            id,
+            notification_id("order_successful", "matic", "0xa:0:0x01")
+        );
     }
 
     fn asset(asset_type: i32, contract: &str, value: &str) -> Value {
@@ -499,7 +492,7 @@ mod tests {
     ) {
         sqlx::query(
             "INSERT INTO shop.trade_event (network, block_number, log_index, block_time, marketplace_address, kind, caller, hashed_signature, signer, assets, tx_hash) \
-             VALUES ('matic', $1, $2, 1700000000, $3, 'traded', $4, '0x01', $5, $6, '0x02')",
+             VALUES ('matic', $1, $2, 1700000000, $3, 'traded', $4, '0x01', $5, $6, $7)",
         )
         .bind(block)
         .bind(log)
@@ -507,6 +500,7 @@ mod tests {
         .bind(caller)
         .bind(signer)
         .bind(json!({ "sent": sent, "received": received, "uses": "1" }))
+        .bind(format!("0xtx{block}"))
         .execute(pool)
         .await
         .unwrap();
@@ -721,6 +715,40 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(cursor, (104, 0), "the cursor stops at the published block");
+
+        // A reorg mines transaction 101 again in block 105 and puts another
+        // trade where its first log was: only that one is new.
+        sqlx::query("UPDATE shop.trade_event SET block_number = 105, log_index = log_index + 3 WHERE block_number = 101")
+            .execute(&pool)
+            .await
+            .unwrap();
+        traded(&pool, 101, 0, CREATOR, BUYER, item(), price()).await;
+        sqlx::query("UPDATE shop.trade_event SET tx_hash = '0xother' WHERE block_number = 101")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE shop.notification_cursor SET block_number = 100, log_index = 2147483647 WHERE producer LIKE 'sales:%'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            run_once(&pool, &links, Utc::now()).await.unwrap().emitted,
+            1,
+            "the moved transaction is not announced twice"
+        );
+        let names: Vec<String> =
+            sqlx::query_scalar("SELECT producer FROM shop.notification_cursor")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(names.len(), 2);
+        assert!(
+            names
+                .iter()
+                .all(|n| notice_cursor::PRODUCERS.contains(&n.as_str()))
+        );
 
         pool.close().await;
         let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
