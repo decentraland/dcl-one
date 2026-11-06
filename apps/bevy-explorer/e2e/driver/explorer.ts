@@ -354,6 +354,12 @@ export class Explorer {
     return data
   }
 
+  /** Count a deployment of the own profile from now that no version change showed: the sign-in,
+   *  whose first login deploys a new profile before any version was read. */
+  profileDeployed(): void {
+    this.#ownVersionChangedAt = Date.now()
+  }
+
   /** Before a step that deploys the own profile (closing the Backpack on a changed look, saving
    *  the passport): wait out the catalyst's window since the profile was last seen to change, a
    *  deployment of its own. A change since the last read counts from now. */

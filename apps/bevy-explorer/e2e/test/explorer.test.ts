@@ -243,6 +243,15 @@ describe('Explorer', () => {
     assert.ok(Date.now() - started < 200, 'the window is spent once')
   })
 
+  test('profileDeployWindow counts a deployment it was told of, such as a first login', async () => {
+    const fake = new FakeConsole({ get_user_data: () => `tester (0x${'a'.repeat(40)}): v1, web3=true` })
+    const explorer = new Explorer(fake, { profileDeployWindowMs: 300 })
+    explorer.profileDeployed()
+    const started = Date.now()
+    await explorer.profileDeployWindow()
+    assert.ok(Date.now() - started >= 250, 'the window starts at the deployment it was told of')
+  })
+
   test('a long reply is cut in the record, not in the result', async () => {
     const fake = new FakeConsole({ screenshot: Buffer.alloc(9000, 1).toString('base64') })
     const explorer = new Explorer(fake)

@@ -102,6 +102,14 @@ describe('failureEvidence', () => {
     assert.equal(kept[0], 'line 5')
   })
 
+  test("scrubs the credentials in the page's console lines it keeps", async () => {
+    const console_ = Object.assign(new FakeConsole(), {
+      evidence: async () => ({ console: ['ok', 'connecting to livekit:wss://rooms.example.test/r?access_token=tok3n&x=1'], screenshot: undefined })
+    })
+    const files = await failureEvidence(console_)
+    assert.equal(files['console.txt'], 'ok\nconnecting to livekit:wss://rooms.example.test/r?access_token=REDACTED&x=1\n')
+  })
+
   test('gives up on a page that does not answer', async () => {
     const console_ = Object.assign(new FakeConsole(), { evidence: () => new Promise<never>(() => {}) })
     await assert.rejects(failureEvidence(console_, 30), TimeoutError)

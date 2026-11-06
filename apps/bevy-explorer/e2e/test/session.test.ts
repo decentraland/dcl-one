@@ -3,8 +3,27 @@ import { describe, test } from 'node:test'
 import { ConsoleError, FakeConsole } from '../driver/console.ts'
 import { Explorer, type WorldState } from '../driver/explorer.ts'
 import { type AuthIdentity, addressOf } from '../driver/identity.ts'
-import { MAX_BOOTS, arrive, closeSessions, openSession, parsePosition, sameRealm, signIn } from '../driver/session.ts'
+import { MAX_BOOTS, arrive, closeSessions, keepBootFailure, openSession, parsePosition, sameRealm, signIn } from '../driver/session.ts'
 import type { Target } from '../driver/target.ts'
+import { BootError } from '../driver/web.ts'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+
+describe('keepBootFailure', () => {
+  test("keeps the page's console with its credentials replaced", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'e2e-boot-'))
+    try {
+      const error = new BootError('the console never came', ['booting', 'connecting to livekit:wss://rooms.example.test/r?access_token=tok3n'], undefined)
+      await keepBootFailure(1, error, dir)
+      const kept = await readFile(path.join(dir, 'boot-1.console.txt'), 'utf8')
+      assert.ok(kept.includes('access_token=REDACTED'), kept)
+      assert.ok(!kept.includes('tok3n'), kept)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
 
 function world(overrides: Partial<WorldState> = {}): string {
   return JSON.stringify({

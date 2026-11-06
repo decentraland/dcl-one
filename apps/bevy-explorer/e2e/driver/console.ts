@@ -37,19 +37,18 @@ export function redactLine(line: string): string {
 export const SCRUBBED = 'REDACTED'
 /** The names whose string value is a credential, matched in any case. */
 const CREDENTIAL_FIELDS = ['access_token', 'accesstoken', 'privatekey', 'private_key', 'signature']
-/** The names that also carry their value bare in a URL's query (`access_token=<value>`). */
-const QUERY_FIELDS = ['access_token', 'accesstoken']
 /** A base64 run shorter than this cannot hold the text of an identity. */
 const MIN_BLOB = 24
 
 /** `text` (a line of the page's console) with the value of every credential the engine's strings
  *  are known to carry replaced, by the rules the engine's own benchmark log follows
- *  (`crates/perf_output/src/scrub.rs`): an `access_token` in a URL's query (a comms adapter's room
- *  credential); a string field named `access_token`, `accessToken`, `privateKey`, `private_key` or
- *  `signature`, however JSON, `Debug` or an event field quotes it; and base64 that decodes to text
- *  naming a private key (an AuthIdentity as `/login_identity` takes it). The rest of the line stays. */
+ *  (`crates/perf_output/src/scrub.rs`) and a few more, since the report is public: a field named
+ *  `access_token`, `accessToken`, `privateKey`, `private_key` or `signature`, quoted however JSON,
+ *  `Debug` (`Some("…")` too) or an event field quotes it, or bare after `=` (a URL's query: a comms
+ *  adapter's room credential); a `Bearer` token; and base64 that decodes to text naming a private
+ *  key (an AuthIdentity as `/login_identity` takes it), wherever it starts. The rest stays. */
 export function scrubCredentials(text: string): string {
-  return scrubIdentities(scrubFields(text))
+  return scrubIdentities(scrubFields(text)).replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, `$1${SCRUBBED}`)
 }
 
 const endsBareValue = (c: string): boolean => /\s/.test(c) || '&#"\'`\\<>)]},;'.includes(c)
@@ -72,7 +71,7 @@ function scrubFields(text: string): string {
     }
     if (at < 0) break
     from = at + name.length
-    const span = valueSpan(text, name, at, at + name.length)
+    const span = valueSpan(text, at, at + name.length)
     if (span === undefined || span[0] === span[1]) continue
     out += text.slice(copied, span[0]) + SCRUBBED
     copied = span[1]
@@ -83,7 +82,7 @@ function scrubFields(text: string): string {
 
 /** The range of the value after the name at `at..nameEnd`: an optional closing quote of the name,
  *  `:` or `=`, then a quoted string, or for the query names after `=` a bare value. */
-function valueSpan(text: string, name: string, at: number, nameEnd: number): [number, number] | undefined {
+function valueSpan(text: string, at: number, nameEnd: number): [number, number] | undefined {
   const quote = quoteBefore(text.slice(0, at))
   let rest = text.slice(nameEnd)
   if (quote !== '') {
@@ -94,6 +93,8 @@ function valueSpan(text: string, name: string, at: number, nameEnd: number): [nu
   const separator = rest[0]
   if (separator !== ':' && separator !== '=') return undefined
   rest = rest.slice(1).trimStart()
+  // a Rust `Option` as `Debug` prints it
+  if (rest.startsWith('Some(')) rest = rest.slice('Some('.length)
   const valueStart = text.length - rest.length
   const open = openingQuote(rest)
   if (open !== undefined) {
@@ -102,7 +103,7 @@ function valueSpan(text: string, name: string, at: number, nameEnd: number): [nu
     const close = text.indexOf(open, start)
     return [start, close < 0 ? text.length : close]
   }
-  if (separator === '=' && QUERY_FIELDS.includes(name)) {
+  if (separator === '=') {
     const end = [...rest].findIndex(endsBareValue)
     return [valueStart, end < 0 ? text.length : valueStart + end]
   }
@@ -158,12 +159,18 @@ function scrubIdentities(text: string): string {
   return copied === 0 ? text : out + text.slice(copied)
 }
 
-/** Whether `blob` is base64 of text naming a private key; only whole groups of four are decoded. */
+/** Whether `blob` is base64 of text naming a private key; only whole groups of four are decoded,
+ *  from each of the four places the base64 can start in a run glued to the text before it (a URL's
+ *  path, a word). */
 function namesPrivateKey(blob: string): boolean {
   const trimmed = blob.replace(/=+$/, '')
-  const body = trimmed.slice(0, trimmed.length - (trimmed.length % 4))
-  const decoded = Buffer.from(body, /[-_]/.test(body) ? 'base64url' : 'base64').toString('latin1').toLowerCase()
-  return decoded.includes('privatekey') || decoded.includes('private_key')
+  for (let offset = 0; offset < 4; offset++) {
+    const from = trimmed.slice(offset)
+    const body = from.slice(0, from.length - (from.length % 4))
+    const decoded = Buffer.from(body, /[-_]/.test(body) ? 'base64url' : 'base64').toString('latin1').toLowerCase()
+    if (decoded.includes('privatekey') || decoded.includes('private_key')) return true
+  }
+  return false
 }
 
 /** A command the client answered `Err`. The line and the output are kept redacted: this error

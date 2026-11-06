@@ -107,8 +107,7 @@ export async function closeSessions(): Promise<void> {
 /** A failed boot's evidence in the report: what the page said (`boot-<n>.console.txt`) and how it
  *  looked (`boot-<n>.jpg`), under `report/boot-failures/`; the console's last lines go to the log
  *  as well, where a step timeout can still cut the run off before the report is uploaded. */
-export async function keepBootFailure(boot: number, error: BootError): Promise<void> {
-  const dir = path.join(REPORT_DIR, 'boot-failures')
+export async function keepBootFailure(boot: number, error: BootError, dir = path.join(REPORT_DIR, 'boot-failures')): Promise<void> {
   await mkdir(dir, { recursive: true })
   // the report and the log are public: a line can carry a credential (a room's access token)
   const lines = error.console.map(scrubCredentials)
@@ -239,6 +238,8 @@ export async function signIn(
     if (reply.phase !== 'entering' && reply.phase !== 'world') {
       throw new Error(`the HUD did not take the destination ${destination.realm} at ${destination.position}: it answered the sign-in in phase ${reply.phase}`)
     }
+    // a first login deploys its new profile: the catalyst's window starts here
+    explorer.profileDeployed()
     return explorer.waitInWorld(WORLD_TIMEOUT_MS)
   }
   if (mode === 'account') {

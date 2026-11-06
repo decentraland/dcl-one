@@ -497,12 +497,10 @@ export async function equipFirstUnequippedHair(explorer: Explorer): Promise<{ na
 // as the card that offers UNEQUIP before anything is pressed.
 
 export interface HairPick {
-  /** The first card of `page` that offers EQUIP. */
+  /** The first card that offers EQUIP on the worn hair's page. */
   card: Card
   /** The card that offers UNEQUIP: the hair the avatar wears, when it wears one. */
   equipped: Card | undefined
-  /** The Hair page (1 first) both cards are on: the worn hair's, for the restore to find it. */
-  page: number
   start: LookStart
 }
 
@@ -550,7 +548,7 @@ export async function pickHair(explorer: Explorer): Promise<HairPick> {
     return { card, equipped }
   })
   if (!result) throw new Error(`the hair the avatar wears (${worn}) is on none of the Hair pages, so the scenario could not put it back`)
-  return { ...result.found, page: result.page, start }
+  return { ...result.found, start }
 }
 
 /** Press EQUIP on a card and wait for it to flip to UNEQUIP. The Backpack stays open: the look is
@@ -564,33 +562,40 @@ export async function equipCard(explorer: Explorer, card: Card): Promise<Control
 }
 
 /** Put the hair back as `pickHair` found it: the picked card off, the worn one on, the look
- *  committed. A look that already is the original (the equip never committed) changes nothing. */
+ *  committed. A look that already is the original (the equip never committed) changes nothing.
+ *  Each card is looked for by name over the Hair pages: the sort can differ once the Backpack
+ *  reopens. */
 export async function restoreHair(explorer: Explorer, pick: HairPick): Promise<void> {
   await closePage(explorer, 'backpack')
-  const version = await explorer.profileVersion()
   await openBackpack(explorer, 'wearables')
   let cards = await showCategory(explorer, 'Hair')
-  for (let page = 1; page < pick.page; page++) cards = await nextPage(explorer, wearableCards)
-  const byName = (name: string): Card => {
-    const found = cards.find((candidate) => normalize(candidate.name) === normalize(name))
-    if (!found) throw new Error(`Hair page ${pick.page} no longer lists "${name}", so the hair cannot be put back`)
-    return found
+  const next = async (): Promise<Card[]> => {
+    cards = (await pagerVisible(explorer)) ? await nextPage(explorer, wearableCards) : await wearableCards(explorer)
+    return cards
+  }
+  const find = async (name: string): Promise<Card> => {
+    const result = await searchPages(cards, next, async (page) => page.find((candidate) => normalize(candidate.name) === normalize(name)))
+    if (!result) throw new Error(`the Hair pages no longer list "${name}", so the hair cannot be put back`)
+    return result.found
   }
   let changed = false
-  const picked = await hoverCard(explorer, byName(pick.card.name))
+  const picked = await hoverCard(explorer, await find(pick.card.name))
   if (picked.action?.label === 'UNEQUIP') {
     await explorer.hud.click(picked.action.selector)
     await waitForAction(explorer, picked.control, 'EQUIP', EQUIP_TIMEOUT_MS)
     changed = true
   }
   if (pick.equipped) {
-    const worn = await hoverCard(explorer, byName(pick.equipped.name))
+    const worn = await hoverCard(explorer, await find(pick.equipped.name))
     if (worn.action?.label === 'EQUIP') {
       await explorer.hud.click(worn.action.selector)
       await waitForAction(explorer, worn.control, 'UNEQUIP', EQUIP_TIMEOUT_MS)
       changed = true
     }
   }
+  // read now, long after the first close's own deployment (the draft a failure left), so the
+  // version that grows below is this restore's
+  const version = await explorer.profileVersion()
   await closePage(explorer, 'backpack')
   if (changed) {
     await until(() => explorer.profileVersion(), (current) => current > version, {

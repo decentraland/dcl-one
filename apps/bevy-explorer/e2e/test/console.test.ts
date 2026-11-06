@@ -110,6 +110,16 @@ describe('scrubCredentials', () => {
     assert.equal(scrubCredentials(`> /login_identity ${identity} --guest`), '> /login_identity REDACTED --guest')
   })
 
+  test('replaces the other formats a line can take: bare after =, an Option, a Bearer token, a glued identity', () => {
+    assert.equal(scrubCredentials('key privateKey=0xabc next'), 'key privateKey=REDACTED next')
+    assert.equal(scrubCredentials('Identity { private_key: Some("0xabc") }'), 'Identity { private_key: Some("REDACTED") }')
+    assert.equal(scrubCredentials('authorization: Bearer eyJhbGciOi.payload.sig rest'), 'authorization: Bearer REDACTED rest')
+    const identity = Buffer.from(JSON.stringify({ ephemeralIdentity: { privateKey: '0x2' }, authChain: [] })).toString('base64')
+    for (const glue of ['a', 'ab', 'abc', 'ab/']) {
+      assert.equal(scrubCredentials(`GET ?id=${glue}${identity}`), 'GET ?id=REDACTED', `glued to "${glue}"`)
+    }
+  })
+
   test('leaves a line without credentials as it was', () => {
     const line = '08:09:03 iframe log: INFO crates/scene_runner found 4 entities; signature check skipped'
     assert.equal(scrubCredentials(line), line)

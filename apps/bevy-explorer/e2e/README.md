@@ -84,7 +84,8 @@ redacted) and
 page as it looked, the HUD included (on the web the engine's frame has none), and `console.txt`,
 the page's last 200 console lines. What the report keeps of the page's console, here and for a
 boot, has its credentials replaced as the engine's own benchmark log does
-(`crates/perf_output/src/scrub.rs`: an `access_token`, a named key or signature, an identity). A failed visual scenario adds `frame.png`, `reference.png` and
+(`crates/perf_output/src/scrub.rs`: an `access_token`, a named key or signature, an identity),
+and a `Bearer` token. A failed visual scenario adds `frame.png`, `reference.png` and
 `diff.png`. A client that fails to boot, at the open, at the
 console's coming or on the way into the world, leaves `boot-failures/boot-<n>.console.txt`, what
 the page said, and `boot-<n>.jpg`, how it looked; it is booted once more for the next scenario,
