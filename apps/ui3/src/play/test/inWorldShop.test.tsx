@@ -324,6 +324,56 @@ describe('in-world shop', () => {
     expect(props.preview).not.toHaveBeenCalledWith([BODY, ARMOR_URN])
   })
 
+  // An outfit of two items: the Golden Armor and a pair of boots.
+  const TWO_PIECE = { id: 'o1', name: 'Neon Night', thumbnailHash: '', items: [{ contractAddress: CONTRACT, itemId: '1' }, { contractAddress: CONTRACT, itemId: '2' }], gradientFrom: '#ff0000', gradientTo: '#0000ff' }
+  const boots = (over: Record<string, unknown> = {}): Record<string, unknown> => catalogueRow({ id: `${CONTRACT}-2`, itemId: '2', name: 'Silver Boots', priceCredits: 250, ...over })
+  const outfitTile = async (): Promise<HTMLElement> => (await screen.findByRole('button', { name: 'Try on Neon Night' }, { timeout: 5000 })).parentElement!
+
+  it('counts an outfit’s items and prices them when every one sells in credits', async () => {
+    serve({ outfits: [TWO_PIECE], byIds: [catalogueRow(), boots()] })
+    renderShop()
+    await openTab('All')
+    const tile = await outfitTile()
+    expect(within(tile).getByText('2 Items')).toBeInTheDocument()
+    expect(await within(tile).findByText('750')).toBeInTheDocument()
+  })
+
+  it('sends an outfit to the web Shop on its BUY outside the web shell, after asking', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    serve({ outfits: [TWO_PIECE], byIds: [catalogueRow(), boots()] })
+    renderShop()
+    await openTab('All')
+    await userEvent.click(within(await outfitTile()).getByRole('button', { name: 'Buy Neon Night' }))
+    const dialog = await screen.findByRole('dialog', {}, { timeout: 5000 })
+    expect(within(dialog).getByText('You will be redirected to the web Shop')).toBeInTheDocument()
+    await userEvent.click(within(dialog).getByRole('button', { name: 'CONTINUE' }))
+    expect(open).toHaveBeenCalledWith(expect.stringContaining('/shop/items/outfits/o1'), '_blank', 'noopener')
+  })
+
+  it('leaves an outfit unpriced when one of its items doesn’t sell in credits or didn’t load', async () => {
+    const f = serve({ outfits: [TWO_PIECE], byIds: [catalogueRow(), boots({ priceCredits: 0, price: null, isOnSale: false })] })
+    renderShop()
+    await openTab('All')
+    const tile = await outfitTile()
+    await waitFor(() => expect(within(tile).getByText('2 Items')).toBeInTheDocument())
+    // The outfit's items were asked for, and their answer had its turn to land.
+    await waitFor(() => expect(calls(f, '/v3/catalog/items').some((u) => u.searchParams.has('id'))).toBe(true))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(within(tile).queryByText('500')).toBeNull()
+    expect(within(tile).queryByText('750')).toBeNull()
+  })
+
+  it('leaves an outfit unpriced when one of its items is missing from the catalogue', async () => {
+    const f = serve({ outfits: [TWO_PIECE], byIds: [catalogueRow()] })
+    renderShop()
+    await openTab('All')
+    const tile = await outfitTile()
+    await waitFor(() => expect(calls(f, '/v3/catalog/items').some((u) => u.searchParams.has('id'))).toBe(true))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(within(tile).getByText('2 Items')).toBeInTheDocument()
+    expect(within(tile).queryByText('500')).toBeNull()
+  })
+
   it('takes a sort picked on the All home into the wearables catalogue', async () => {
     const f = serve({ trending: [listingRow()], listings: [[listingRow()]], catalogue: [[catalogueRow()]] })
     renderShop()

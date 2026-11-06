@@ -1,4 +1,5 @@
-// Where a catalogue item leads: the URN a try-on puts on the avatar and its page on the web Shop.
+// Where a catalogue item leads: the URN a try-on puts on the avatar and its page on the web Shop; and an
+// outfit's page there.
 
 import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
 import { itemUrn } from '../../../shop/detail/lib/urn'
@@ -16,4 +17,9 @@ export function tryOnUrn(item: CatalogItem): string | null {
 export function webShopUrl(item: CatalogItem): string | null {
   if (!item.itemId) return null
   return withUtm(siteUrl(`/shop/item/${encodeURIComponent(item.contractAddress.toLowerCase())}/${encodeURIComponent(item.itemId)}`))
+}
+
+/** An outfit's page on the web Shop, where it is bought when the Shop here can't buy it. */
+export function webOutfitUrl(outfitId: string): string {
+  return withUtm(siteUrl(`/shop/items/outfits/${encodeURIComponent(outfitId)}`))
 }

@@ -71,6 +71,8 @@ export interface ShopPurchase {
   buy(item: CatalogItem, input?: PressedWith): Promise<boolean>
   /** Opens the shell's purchase dialog for the cart's lines (CHECKOUT); false when it couldn't. */
   checkout(lines: ShopLine[], input?: PressedWith): Promise<boolean>
+  /** Opens it for several items bought together, not from the cart (an outfit's BUY); false when it couldn't. */
+  buyAll(lines: ShopLine[], input?: PressedWith): Promise<boolean>
 }
 
 /**
@@ -134,5 +136,6 @@ export function useShopPurchase(onBackpack: () => void): ShopPurchase {
     [request]
   )
   const checkout = useCallback((lines: ShopLine[], input?: PressedWith): Promise<boolean> => request(lines, true, input), [request])
-  return { available: inShell, buy, checkout }
+  const buyAll = useCallback((lines: ShopLine[], input?: PressedWith): Promise<boolean> => request(lines, false, input), [request])
+  return { available: inShell, buy, checkout, buyAll }
 }
