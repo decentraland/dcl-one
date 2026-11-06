@@ -136,6 +136,72 @@ fn state_over(
     ))
 }
 
+#[tokio::test]
+async fn estate_membership_uses_only_the_configured_fresh_publication_on_the_callers_connection() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    seed_rights(&db.pool).await;
+    let state = state_over(db.pool.clone(), Settings::for_tests(), None);
+    let mut conn = db.pool.acquire().await.unwrap();
+    assert!(state.estate_at(&mut conn, 2, 2).await.unwrap().is_none());
+    sqlx::query("INSERT INTO land_authz.index_cursor (network,land_registry,estate_registry,last_block,folded_block,folded_at,full_replay_started) VALUES ($1,$2,$3,1,1,timezone('UTC',now()),true)")
+        .bind(NETWORK_MAINNET).bind(LAND).bind(ESTATE).execute(&mut *conn).await.unwrap();
+    assert_eq!(
+        state
+            .estate_at(&mut conn, 2, 2)
+            .await
+            .unwrap()
+            .unwrap()
+            .estate_id
+            .as_deref(),
+        Some("500")
+    );
+    assert!(
+        state
+            .estate_at(&mut conn, 1, 1)
+            .await
+            .unwrap()
+            .unwrap()
+            .estate_id
+            .is_none()
+    );
+    sqlx::query("DELETE FROM land_authz.estate_land WHERE land_token_id=$1::numeric")
+        .bind(land_token(2, 2))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    assert!(
+        state
+            .estate_at(&mut conn, 2, 2)
+            .await
+            .unwrap()
+            .unwrap()
+            .estate_id
+            .is_none()
+    );
+    for assignment in [
+        "folded_at=timezone('UTC',now())-interval '31 minutes'",
+        "last_block=2",
+        "full_replay_started=false",
+        "land_registry='other'",
+    ] {
+        sqlx::query("UPDATE land_authz.index_cursor SET folded_at=timezone('UTC',now()),last_block=1,full_replay_started=true,land_registry=$1").bind(LAND).execute(&mut *conn).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE land_authz.index_cursor SET {assignment}"
+        )))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        assert!(
+            state.estate_at(&mut conn, 2, 2).await.unwrap().is_none(),
+            "{assignment}"
+        );
+    }
+    drop(conn);
+    db.drop().await;
+}
+
 async fn job_ctx() -> (Jobs, JobContext) {
     let jobs = Jobs::new();
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -249,7 +315,208 @@ async fn a_granted_then_revoked_update_operator_ends_revoked() {
     )
     .await;
     fold_all(&db.pool).await;
-    assert_eq!(token_leg(&db.pool, "1", "update_operator").await, None);
+    assert_eq!(
+        token_leg(&db.pool, "1", "update_operator").await.as_deref(),
+        Some(ZERO_ADDR),
+        "a cleared leg keeps the zero address, as the land-manager subgraph \
+         stores it (captures/lambdas-land/LL-18-*.json)"
+    );
+    db.drop().await;
+}
+
+/// The land-manager subgraph stores `null` for a leg never set and the zero
+/// address for one cleared on chain; lamb2 passes both through
+/// (`captures/lambdas-land/LL-18-*.json`). A transfer still clears to NULL.
+/// The deploy check reads a cleared leg as no leg: the zero address is
+/// never granted, and a parcel's cleared update operator falls back to its
+/// estate's, as before.
+#[tokio::test]
+async fn a_cleared_leg_answers_the_zero_address_and_never_grants() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    insert(
+        &db.pool,
+        &[
+            ev(
+                10,
+                0,
+                KIND_APPROVAL,
+                Some("6"),
+                Some(OWNER),
+                Some(BOB),
+                None,
+            ),
+            ev(
+                11,
+                0,
+                KIND_APPROVAL,
+                Some("6"),
+                Some(OWNER),
+                Some(ZERO_ADDR),
+                None,
+            ),
+            ev(
+                12,
+                0,
+                KIND_APPROVAL,
+                Some("7"),
+                Some(OWNER),
+                Some(ZERO_ADDR),
+                None,
+            ),
+            ev(
+                12,
+                1,
+                KIND_UPDATE_OPERATOR,
+                Some("7"),
+                None,
+                Some(ZERO_ADDR),
+                None,
+            ),
+            ev(13, 0, KIND_TRANSFER, Some("7"), Some(BOB), None, None),
+        ],
+    )
+    .await;
+    fold_all(&db.pool).await;
+    assert_eq!(
+        token_leg(&db.pool, "6", "operator").await.as_deref(),
+        Some(ZERO_ADDR)
+    );
+    assert_eq!(
+        token_leg(&db.pool, "6", "update_operator").await,
+        None,
+        "never set"
+    );
+    assert_eq!(
+        token_leg(&db.pool, "7", "operator").await,
+        None,
+        "transferred"
+    );
+    assert_eq!(token_leg(&db.pool, "7", "update_operator").await, None);
+
+    seed_rights(&db.pool).await;
+    sqlx::query("UPDATE land_authz.token_right SET update_operator = $2 WHERE token_address = $1 AND x = 2 AND y = 2")
+        .bind(LAND)
+        .bind(ZERO_ADDR)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let store = Store::new(db.pool.clone(), LAND, ESTATE);
+    let rights = store.rights(2, 2).await.unwrap().unwrap();
+    assert_eq!(
+        rights.subject.update_operator.as_deref(),
+        Some(ZERO_ADDR),
+        "lamb2's `parcel.updateOperator ?? estate.updateOperator` keeps the parcel's zero"
+    );
+    assert!(!rights.flags_for(CARL).update_operator);
+    assert!(
+        rights.flags_for(ZERO_ADDR).update_operator,
+        "lamb2's comparison"
+    );
+    assert_eq!(
+        rights.deploy_flags_for(CARL).granting_leg(),
+        Some(LandRightLeg::Operator),
+        "the estate's operator"
+    );
+    assert!(
+        rights.deploy_flags_for(CARL).update_operator,
+        "the estate's update operator still reaches the parcel"
+    );
+    assert!(!rights.deploy_flags_for(ZERO_ADDR).grants_deploy());
+    let updatable = store.parcels_updatable_by(CARL).await.unwrap();
+    assert_eq!(
+        updatable.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>(),
+        vec![(2, 2)]
+    );
+    db.drop().await;
+}
+
+/// `schemas/migrations/0027_land_authz_cleared_legs.sql` rewrites the legs
+/// the old fold stored as NULL for a grant to the zero address, once, and
+/// leaves a leg a later transfer cleared.
+#[tokio::test]
+async fn the_cleared_legs_step_backfills_the_zero_address() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    insert(
+        &db.pool,
+        &[
+            ev(
+                10,
+                0,
+                KIND_UPDATE_OPERATOR,
+                Some("1"),
+                None,
+                Some(ALICE),
+                None,
+            ),
+            ev(
+                11,
+                0,
+                KIND_UPDATE_OPERATOR,
+                Some("1"),
+                None,
+                Some(ZERO_ADDR),
+                None,
+            ),
+            ev(
+                11,
+                1,
+                KIND_APPROVAL,
+                Some("1"),
+                Some(OWNER),
+                Some(ZERO_ADDR),
+                None,
+            ),
+            ev(
+                12,
+                0,
+                KIND_UPDATE_OPERATOR,
+                Some("2"),
+                None,
+                Some(ZERO_ADDR),
+                None,
+            ),
+            ev(13, 0, KIND_TRANSFER, Some("2"), Some(BOB), None, None),
+            ev(
+                14,
+                0,
+                KIND_UPDATE_OPERATOR,
+                Some("3"),
+                None,
+                Some(CARL),
+                None,
+            ),
+        ],
+    )
+    .await;
+    fold_all(&db.pool).await;
+    sqlx::query("UPDATE land_authz.token_right SET operator = NULL, update_operator = NULL WHERE token_id IN (1, 2)")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let step = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/migrations/0027_land_authz_cleared_legs.sql"
+    ));
+    for _ in 0..2 {
+        sqlx::raw_sql(step).execute(&db.pool).await.unwrap();
+    }
+    assert_eq!(
+        token_leg(&db.pool, "1", "update_operator").await.as_deref(),
+        Some(ZERO_ADDR)
+    );
+    assert_eq!(
+        token_leg(&db.pool, "1", "operator").await.as_deref(),
+        Some(ZERO_ADDR)
+    );
+    assert_eq!(token_leg(&db.pool, "2", "update_operator").await, None);
+    assert_eq!(
+        token_leg(&db.pool, "3", "update_operator").await.as_deref(),
+        Some(CARL)
+    );
     db.drop().await;
 }
 
@@ -716,6 +983,67 @@ async fn seed_rights(pool: &PgPool) {
         .unwrap();
 }
 
+/// lamb2 folds the owner's authorization log into a JS `Map`
+/// (`parcel-rights-fetcher.ts`): the legs list operators by the approval
+/// that opened their current grant, a repeated approval keeps its place and
+/// a revoke then approve moves the operator to the end.
+#[tokio::test]
+async fn grant_legs_keep_lamb2s_map_order() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let grant = |block, index, kind, operator, approved| {
+        ev(
+            block,
+            index,
+            kind,
+            None,
+            Some(BOB),
+            Some(operator),
+            Some(approved),
+        )
+    };
+    insert(
+        &db.pool,
+        &[
+            ev(
+                10,
+                0,
+                KIND_TRANSFER,
+                Some(TOKEN_37_55),
+                Some(BOB),
+                None,
+                None,
+            ),
+            grant(11, 0, KIND_UPDATE_MANAGER, DANA, true),
+            grant(12, 0, KIND_UPDATE_MANAGER, CARL, true),
+            grant(13, 0, KIND_UPDATE_MANAGER, ALICE, true),
+            grant(14, 0, KIND_UPDATE_MANAGER, DANA, true),
+            grant(15, 0, KIND_UPDATE_MANAGER, CARL, false),
+            grant(16, 0, KIND_UPDATE_MANAGER, CARL, true),
+            grant(17, 0, KIND_APPROVED_FOR_ALL, CARL, true),
+            grant(17, 1, KIND_APPROVED_FOR_ALL, ALICE, true),
+            grant(18, 0, KIND_APPROVED_FOR_ALL, DANA, true),
+            grant(18, 1, KIND_APPROVED_FOR_ALL, DANA, false),
+        ],
+    )
+    .await;
+    fold_all(&db.pool).await;
+    let store = Store::new(db.pool.clone(), LAND, ESTATE);
+    let rights = store.rights(37, 55).await.unwrap().unwrap();
+    assert_eq!(rights.subject.owner, BOB);
+    assert_eq!(rights.operators.update_managers, vec![DANA, ALICE, CARL]);
+    assert_eq!(rights.operators.approved_for_all, vec![CARL, ALICE]);
+    assert_eq!(
+        store
+            .account_grants(LAND, BOB, KIND_UPDATE_MANAGER)
+            .await
+            .unwrap(),
+        vec![DANA, ALICE, CARL]
+    );
+    db.drop().await;
+}
+
 #[tokio::test]
 async fn rights_batch_matches_the_per_leg_reading() {
     let Some(db) = ScratchDb::create().await else {
@@ -775,6 +1103,22 @@ async fn rights_batch_matches_the_per_leg_reading() {
     assert_eq!(p4.subject.registry, LAND);
     assert!(store.rights_batch(&[]).await.unwrap().is_empty());
 
+    let deploy = store.deploy_rights_batch(&parcels).await.unwrap();
+    for (ordered, deploy) in batch.iter().zip(&deploy) {
+        let sorted = |r: &Option<ParcelRights>| {
+            r.clone().map(|mut r| {
+                r.operators.update_managers.sort();
+                r.operators.approved_for_all.sort();
+                r
+            })
+        };
+        assert_eq!(
+            sorted(ordered),
+            sorted(deploy),
+            "the deploy batch only drops the order"
+        );
+    }
+
     assert_eq!(p1.flags_for(BOB).granting_leg(), Some(LandRightLeg::Owner));
     assert_eq!(
         p1.flags_for(DANA).granting_leg(),
@@ -824,6 +1168,87 @@ async fn rights_batch_matches_the_per_leg_reading() {
     db.drop().await;
 }
 
+/// The land-manager subgraph's `Parcel.id` is the token id as lower-case
+/// hex without leading zeros, and lamb2 lists `lands-permissions` in its
+/// string order (`captures/lambdas-land/LL-17-*.json`): (9, 0) sorts after
+/// (22, -19).
+#[tokio::test]
+async fn update_operator_page_answers_the_subgraph_parcel_id_in_string_order() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    for (i, (x, y)) in [
+        (16, 9),
+        (16, 65),
+        (22, -19),
+        (0, 0),
+        (0, 1),
+        (-47, 111),
+        (17, 147),
+        (9, 0),
+        (0, -1),
+        (-1, -1),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        sqlx::query(
+            "INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, update_operator, updated_block, updated_log) \
+             VALUES ($1, $2::numeric, $3, $4, $5, $6, 1, $7)",
+        )
+        .bind(LAND)
+        .bind(land_token(x, y))
+        .bind(x)
+        .bind(y)
+        .bind(BOB)
+        .bind(DANA)
+        .bind(i as i32)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    }
+    let store = Store::new(db.pool.clone(), LAND, ESTATE);
+    let (page, total) = store
+        .parcels_with_update_operator_page(DANA, 100, 0)
+        .await
+        .unwrap();
+    assert_eq!(total, 10);
+    assert_eq!(
+        page.iter()
+            .map(|p| (p.id.as_str(), p.x, p.y))
+            .collect::<Vec<_>>(),
+        vec![
+            ("0x0", 0, 0),
+            ("0x1", 0, 1),
+            ("0x1000000000000000000000000000000009", 16, 9),
+            ("0x1000000000000000000000000000000041", 16, 65),
+            ("0x1100000000000000000000000000000093", 17, 147),
+            ("0x16ffffffffffffffffffffffffffffffed", 22, -19),
+            ("0x900000000000000000000000000000000", 9, 0),
+            (
+                "0xffffffffffffffffffffffffffffffd10000000000000000000000000000006f",
+                -47,
+                111
+            ),
+            ("0xffffffffffffffffffffffffffffffff", 0, -1),
+            (
+                "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                -1,
+                -1
+            ),
+        ]
+    );
+    let (page, _) = store
+        .parcels_with_update_operator_page(DANA, 2, 6)
+        .await
+        .unwrap();
+    assert_eq!(
+        page.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>(),
+        vec![(9, 0), (-47, 111)]
+    );
+    db.drop().await;
+}
+
 #[tokio::test]
 async fn update_operator_page_carries_the_total() {
     let Some(db) = ScratchDb::create().await else {
@@ -838,25 +1263,50 @@ async fn update_operator_page_carries_the_total() {
         .await
         .unwrap();
 
-    let all = store.parcels_with_update_operator(DANA).await.unwrap();
-    assert_eq!(all.len(), 3);
+    // (16, 0) and (0, 5) sort apart in numeric and in string order.
+    for (i, (x, y)) in [(16, 0), (0, 5)].into_iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, update_operator, updated_block, updated_log) \
+             VALUES ($1, $2::numeric, $3, $4, $5, $6, 2, $7)",
+        )
+        .bind(LAND)
+        .bind(land_token(x, y))
+        .bind(x)
+        .bind(y)
+        .bind(BOB)
+        .bind(DANA)
+        .bind(i as i32)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    }
+
+    let all = [(16, 0), (2, 2), (3, 3), (4, 4), (0, 5)];
+    let coords = |page: Vec<resolve::OperatedParcel>| -> Vec<(i32, i32)> {
+        page.iter().map(|p| (p.x, p.y)).collect()
+    };
     let (page, total) = store
         .parcels_with_update_operator_page(DANA, 2, 0)
         .await
         .unwrap();
-    assert_eq!((total, page), (3, all[..2].to_vec()));
+    assert_eq!((total, coords(page)), (5, all[..2].to_vec()));
     let (page, total) = store
         .parcels_with_update_operator_page(DANA, 2, 2)
         .await
         .unwrap();
-    assert_eq!((total, page), (3, all[2..].to_vec()));
+    assert_eq!((total, coords(page)), (5, all[2..4].to_vec()));
+    let (page, total) = store
+        .parcels_with_update_operator_page(DANA, 2, 4)
+        .await
+        .unwrap();
+    assert_eq!((total, coords(page)), (5, all[4..].to_vec()));
     let (page, total) = store
         .parcels_with_update_operator_page(DANA, 2, 10)
         .await
         .unwrap();
     assert_eq!(
         (page.len(), total),
-        (0, 3),
+        (0, 5),
         "past the end still reports the total"
     );
     let (page, total) = store
@@ -1507,21 +1957,35 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
     assert_eq!(body["totalAmount"], 1);
     assert_eq!(
         body["elements"][0],
-        json!({ "id": TOKEN_37_55, "x": "37", "y": "55", "owner": ALICE, "updateOperator": BOB })
+        json!({ "id": "0x2500000000000000000000000000000037", "x": "37", "y": "55", "owner": ALICE, "updateOperator": BOB }),
+        "the land-manager subgraph's Parcel.id"
     );
-    let (_, _, body) = get_json(
-        &app,
-        &format!("/lambdas/users/{BOB}/lands-permissions?pageSize=0&pageNum=-1"),
-    )
-    .await;
-    assert_eq!(
-        (
-            body["pageSize"].as_i64(),
-            body["pageNum"].as_i64(),
-            body["totalAmount"].as_i64()
-        ),
-        (Some(1), Some(1), Some(1))
-    );
+    // lamb2's `paginationObject` and `slice`: nothing is clamped, a
+    // negative bound counts from the end, `NaN` is answered `null`.
+    for (query, page_size, page_num, elements) in [
+        ("pageSize=0&pageNum=-1", json!(0), json!(-1), 0),
+        ("pageSize=1&pageNum=0", json!(1), json!(0), 0),
+        ("pageSize=-1&pageNum=0", json!(-1), json!(0), 0),
+        ("pageSize=abc", Value::Null, json!(1), 0),
+        ("pageSize=1.9&pageNum=1x", json!(1), json!(1), 1),
+    ] {
+        let (status, _, body) = get_json(
+            &app,
+            &format!("/lambdas/users/{BOB}/lands-permissions?{query}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{query}");
+        assert_eq!(
+            (
+                &body["pageSize"],
+                &body["pageNum"],
+                body["elements"].as_array().unwrap().len(),
+                body["totalAmount"].as_i64()
+            ),
+            (&page_size, &page_num, elements, Some(1)),
+            "{query}"
+        );
+    }
     let (_, _, body) = get_json(&app, &format!("/lambdas/users/{CARL}/lands-permissions")).await;
     assert_eq!(
         (
@@ -1551,6 +2015,24 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
     )
     .await;
     assert_eq!(body["owner"], true, "case-insensitive address");
+    // `EthAddress.validate` wants a lower-case `0x`.
+    let (status, _, body) = get_json(
+        &app,
+        &format!("/lambdas/users/0X{}/parcels/37/55/permissions", &ALICE[2..]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["message"], "Address must be a valid Ethereum address");
+    // `parseInt`: a fraction, a suffix and a hex prefix all read.
+    for parcel in ["37.9/55", "37abc/55", "0x25/55", "%2037/+55"] {
+        let (status, _, body) = get_json(
+            &app,
+            &format!("/lambdas/users/{BOB}/parcels/{parcel}/permissions"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{parcel}: {body}");
+        assert_eq!(body["updateOperator"], true, "{parcel}");
+    }
     let (status, _, _) = get_json(
         &app,
         &format!("/lambdas/users/{DANA}/parcels/99/99/permissions"),
@@ -1684,8 +2166,11 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
         "only the touched token was refolded"
     );
     assert_eq!(
-        token_leg(&db.pool, TOKEN_37_55, "update_operator").await,
-        None
+        token_leg(&db.pool, TOKEN_37_55, "update_operator")
+            .await
+            .as_deref(),
+        Some(ZERO_ADDR),
+        "the cleared leg"
     );
     let row = cursor(&db.pool, NETWORK_MAINNET).await.unwrap().unwrap();
     assert_eq!(
@@ -1706,7 +2191,10 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
         Utc::now()
     ));
     let (_, _, body) = get_json(&app, "/lambdas/parcels/37/55/operators").await;
-    assert_eq!(body["updateOperator"], Value::Null);
+    assert_eq!(
+        body["updateOperator"], ZERO_ADDR,
+        "lamb2 answers the cleared leg"
+    );
     assert_eq!(
         can_deploy(&s2, (37, 55), BOB).await.unwrap().verdict,
         Verdict::Denied

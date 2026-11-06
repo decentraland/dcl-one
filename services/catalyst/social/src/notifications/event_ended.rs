@@ -228,7 +228,7 @@ mod tests {
         let mut settings = catalyst_explore::Settings::for_tests();
         settings.events_admin_token = Some("metric-fixture".into());
         settings.operator_writes_enabled = true;
-        let event_id = moderation::create_as(&pool, &body, owner, owner, &settings)
+        let event_id = moderation::create_as(&pool, &body, owner, owner, &settings, None)
             .await
             .unwrap();
         moderation::moderate(
@@ -318,7 +318,7 @@ mod tests {
             let mut settings = catalyst_explore::Settings::for_tests();
             settings.events_admin_token = Some("reschedule-fixture".into());
             settings.operator_writes_enabled = true;
-            let event_id = moderation::create_as(&pool, &body, owner, owner, &settings)
+            let event_id = moderation::create_as(&pool, &body, owner, owner, &settings, None)
                 .await
                 .unwrap();
             moderation::moderate(
@@ -432,7 +432,7 @@ mod tests {
         let mut settings = catalyst_explore::Settings::for_tests();
         settings.events_admin_token = Some("metric-fixture".into());
         settings.operator_writes_enabled = true;
-        let id = moderation::create_as(pool, &body, owner, owner, &settings)
+        let id = moderation::create_as(pool, &body, owner, owner, &settings, None)
             .await
             .unwrap();
         if approve {

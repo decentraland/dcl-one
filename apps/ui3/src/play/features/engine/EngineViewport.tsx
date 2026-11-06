@@ -40,11 +40,16 @@ export function EngineViewport({
     const ro = new ResizeObserver(push)
     ro.observe(el)
     const unsubscribe = subscribeHudScale(push)
-    window.addEventListener('scroll', push, true)
+    // Only a scroll of something holding this element moves it: a list scrolling beside it does not.
+    const onScroll = (e: Event): void => {
+      if (e.target instanceof Node && !e.target.contains(el)) return
+      push()
+    }
+    window.addEventListener('scroll', onScroll, true)
     return () => {
       ro.disconnect()
       unsubscribe()
-      window.removeEventListener('scroll', push, true)
+      window.removeEventListener('scroll', onScroll, true)
       report(region, null)
     }
   }, [region, report])

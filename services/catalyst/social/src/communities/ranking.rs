@@ -1,7 +1,6 @@
 //! Ranking contracts from social-service-ea b6b2cef, logic/community/ranking.ts,
-//! communities-db.ts and its three SQS ranking handlers. Local lifecycle events
-//! use durable receipts; external delivery retains the source's at-least-once
-//! contribution semantics. Mirrored rankings are never recalculated here.
+//! communities-db.ts. Local lifecycle events use durable receipts. Mirrored
+//! rankings are never recalculated here.
 use std::{sync::Arc, time::Duration};
 
 use chrono::{NaiveDateTime, Utc};
@@ -162,72 +161,6 @@ pub(crate) async fn record_stream(
         .await?;
     }
     Ok(())
-}
-
-/// Called by the shared event ingress after it has decoded the SNS/SQS event.
-/// Source event/stream database failures are returned; photo lookup and each
-/// photo counter failure are logged and acknowledged, as the source handler does.
-/// The ingress owns acknowledgement (the pinned queue consumer deletes messages
-/// even after a handler error); a returned error does not promise queue retries.
-pub async fn apply_external_event(pool: &PgPool, event: &Value) -> sqlx::Result<bool> {
-    let metadata = &event["metadata"];
-    let (kind, subtype) = (event["type"].as_str(), event["subType"].as_str());
-    if (kind, subtype) == (Some("camera"), Some("photo-taken")) {
-        let Some(place) = metadata["placeId"].as_str().filter(|s| !s.is_empty()) else {
-            return Ok(true);
-        };
-        let communities: Vec<Uuid> = match sqlx::query_scalar(
-            "SELECT DISTINCT community_id FROM social.community_places WHERE place_id=$1",
-        )
-        .bind(place)
-        .fetch_all(pool)
-        .await
-        {
-            Ok(ids) => ids,
-            Err(error) => {
-                tracing::error!(%error, "photo ranking lookup failed");
-                return Ok(true);
-            }
-        };
-        for community in communities {
-            let result = async {
-                let mut tx = pool.begin().await?;
-                add(&mut tx, community, [0, 1, 0, 0, 0]).await?;
-                tx.commit().await
-            }
-            .await;
-            if let Err(error) = result {
-                tracing::error!(%error, %community, "photo ranking update failed");
-            }
-        }
-        return Ok(true);
-    }
-    let delta = match (kind, subtype) {
-        (Some("event"), Some("event-ended")) => [
-            1,
-            0,
-            0,
-            contribution(metadata["totalAttendees"].as_f64(), 1000),
-            0,
-        ],
-        (Some("streaming"), Some("community-streaming-ended")) => {
-            let participants = metadata["totalParticipants"].as_f64().unwrap_or(0.0);
-            if participants <= 1.0 {
-                return Ok(true);
-            }
-            [0, 0, 1, 0, contribution(Some(participants), 500)]
-        }
-        _ => return Ok(false),
-    };
-    let Some(community) = metadata["communityId"].as_str().filter(|s| !s.is_empty()) else {
-        return Ok(true);
-    };
-    let community = Uuid::parse_str(community)
-        .map_err(|_| sqlx::Error::Protocol("invalid community UUID".into()))?;
-    let mut tx = pool.begin().await?;
-    add(&mut tx, community, delta).await?;
-    tx.commit().await?;
-    Ok(true)
 }
 
 const METRICS_SQL: &str = "SELECT c.ranking_events_count::bigint AS events_count,

@@ -1,5 +1,7 @@
 //! Social-owned implementation of the gatekeeper directory.
-use crate::comms::interfaces::{ModerationNotification, SocialDirectory, StreamingNotification};
+use crate::comms::interfaces::{
+    ModerationNotification, SocialDirectory, StreamingNotification, UserNotification,
+};
 use crate::{Address, CommunityId};
 use chrono::NaiveDateTime;
 use sqlx::PgPool;
@@ -21,6 +23,24 @@ impl SocialDirectory for Directory {
         notification: &ModerationNotification,
     ) -> Result<(), sqlx::Error> {
         crate::notifications::moderation::insert(transaction, notification).await
+    }
+    async fn notify_user_notifications(
+        &self,
+        transaction: &mut sqlx::PgConnection,
+        notifications: &[UserNotification],
+    ) -> Result<(), sqlx::Error> {
+        let batch: Vec<_> = notifications
+            .iter()
+            .map(|n| crate::notifications::store::NewNotification {
+                id: n.id,
+                address: n.recipient.clone(),
+                kind: n.kind.to_string(),
+                metadata: n.metadata.clone(),
+                occurred_at: n.occurred_at,
+            })
+            .collect();
+        crate::notifications::store::insert_notifications(transaction, &batch).await?;
+        Ok(())
     }
     async fn community_members(&self, community: CommunityId) -> Result<Vec<Address>, sqlx::Error> {
         sqlx::query_scalar("SELECT member_address FROM social.community_members WHERE community_id = $1 ORDER BY member_address").bind(community).fetch_all(&self.pool).await
@@ -116,5 +136,49 @@ mod tests {
         let row: (String, serde_json::Value) = sqlx::query_as("SELECT type, metadata FROM social.notifications WHERE address = $1 AND broadcast_key = $2").bind(&address).bind(&notification.event_key).fetch_one(&pool).await.unwrap();
         assert_eq!(row.0, "streaming_place_updated");
         assert_eq!(row.1, notification.metadata);
+    }
+
+    #[tokio::test]
+    async fn user_notices_land_in_the_producers_transaction_once() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let directory = Directory::new(pool.clone());
+        let address =
+            Address::parse(&format!("0x00000000{}", uuid::Uuid::new_v4().simple())).unwrap();
+        let notice = UserNotification {
+            id: uuid::Uuid::new_v4(),
+            recipient: address.clone(),
+            kind: "worlds_permission_granted",
+            metadata: serde_json::json!({"title": "World Permission Granted"}),
+            occurred_at: chrono::Utc::now().naive_utc(),
+        };
+        let count = || async {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM social.notifications n \
+                   JOIN social.notification_deliveries d ON d.notification_id = n.id \
+                  WHERE n.address = $1 AND n.type = 'worlds_permission_granted'",
+            )
+            .bind(&address)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        let mut tx = pool.begin().await.unwrap();
+        directory
+            .notify_user_notifications(&mut tx, std::slice::from_ref(&notice))
+            .await
+            .unwrap();
+        tx.rollback().await.unwrap();
+        assert_eq!(count().await, 0, "a rolled-back change leaves no notice");
+        for _ in 0..2 {
+            let mut tx = pool.begin().await.unwrap();
+            directory
+                .notify_user_notifications(&mut tx, std::slice::from_ref(&notice))
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+        }
+        assert_eq!(count().await, 1);
     }
 }
