@@ -7,7 +7,7 @@
 // web Shop. ADD TO CART keeps such a sale in the in-world cart (cartStore), whose popover under the
 // header's cart button buys them all at once through the same dialog.
 
-import { useQueryClient } from '@tanstack/react-query'
+import { useQueries, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
 import { defaultWorn, wornUrns } from '../../../shop/discovery/lib/outfit'
@@ -33,7 +33,7 @@ import { homeQueries, useNewest, useShopOutfits, useTrending, type OutfitSummary
 import { tryOnUrn, webShopUrl } from './itemLinks'
 import { useCreditsBalance, useShopCapabilities, useShopPurchase } from './purchaseQuery'
 import { categoryGlyph, CreatorName, SelectedItemPanel, ShopCard } from './ShopItems'
-import { CreditsPill, EmoteControls, ShopCart, ShopCartBadge, ShopCartToast, ShopFilters, ShopHome, ShopItemSkeleton, type PressedWith } from './ui'
+import { CreditsPill, EmoteControls, PriceTag, ShopCart, ShopCartBadge, ShopCartToast, ShopFilters, ShopHome, ShopItemSkeleton, type PressedWith, type ShopHomeOutfitOffer } from './ui'
 import styles from './InWorldShop.module.css'
 
 type Section = 'all' | 'wearables' | 'emotes'
@@ -145,6 +145,8 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   const grid = useShopCatalogue(filters, page, { creatorSales, enabled: shop.open && flagsKnown && section !== 'all' })
   const onHome = shop.open && section === 'all'
   const outfits = useShopOutfits(onHome)
+  // Each outfit's items, for its tile's price (wearing it reads the same query).
+  const outfitReads = useQueries({ queries: (onHome ? (outfits.data ?? []) : []).map((o) => homeQueries.outfitItems(o)) })
   const trending = useTrending(creatorSales, onHome && flagsKnown)
   const newest = useNewest(creatorSales, onHome && flagsKnown)
   // Escape closes the filters first, as the HUD's other popovers (OptionMenu registers its own).
@@ -311,6 +313,27 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     void purchase.checkout(cartRequestLines(cart), input).then((opened) => {
       if (!opened) showToast("The purchase couldn't open. Try again in a moment.", { tone: 'error' })
     })
+  }
+  // An outfit's tile counts its items; it prices them and offers BUY only when it has some and every one of
+  // them sells in credits, as the web Shop's outfit card prices one. BUY buys the whole outfit in one
+  // purchase, not the cart's (what it buys stays in the cart).
+  const outfitOffer = (outfit: OutfitSummary): ShopHomeOutfitOffer => {
+    const items = outfitReads[outfits.data?.indexOf(outfit) ?? -1]?.data
+    const inputs = (items ?? []).map((item) => inWorldCartInputFor(item))
+    const lines = inputs.flatMap((i) => (i == null ? [] : [{ contract: i.contract, itemId: i.itemId, quantity: 1 }]))
+    if (items == null || items.length === 0 || items.length !== outfit.items.length || lines.length !== items.length) return { items: outfit.items.length }
+    const credits = inputs.reduce((n, i) => n + (i?.credits ?? 0), 0)
+    return {
+      items: outfit.items.length,
+      price: <PriceTag price={{ kind: 'credits', credits, compareAt: null, mana: null }} />,
+      onBuy: purchase.available
+        ? (input) => {
+            void purchase.buyAll(lines, input).then((opened) => {
+              if (!opened) showToast("The purchase couldn't open. Try again in a moment.", { tone: 'error' })
+            })
+          }
+        : undefined
+    }
   }
   const select = (item: CatalogItem): void => {
     // Whatever is picked now, an outfit still loading is no longer wanted.
@@ -487,6 +510,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                     newest={{ items: newest.data, pending: newest.data == null && (!flagsKnown || newest.fetchStatus === 'fetching'), error: newest.isError }}
                     onRetry={(row) => void (row === 'trending' ? trending : newest).refetch()}
                     onOutfit={(o) => void wearOutfit(o)}
+                    outfitOffer={outfitOffer}
                     onViewAll={viewAll}
                     renderCard={(item: CatalogItem) => (
                       <ShopCard

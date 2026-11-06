@@ -1,7 +1,7 @@
 // The in-world Shop's cart on the page, in the web shell: ADD TO CART, its toast and the header's badge,
 // the cart popover, CHECKOUT asking the shell to buy the cart (the shell, faked here, owns the dialog), and
 // what a purchase takes out of the cart.
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -51,12 +51,14 @@ const row = {
   data: { wearable: { category: 'upper_body', bodyShapes: [], isSmart: false } }
 }
 
-function serveCatalogue(): void {
+/** The catalogue (the Golden Armor), and the home's outfits when given. */
+function serveCatalogue(outfits: unknown[] = []): void {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input instanceof Request ? input.url : input), location.href)
       if (url.pathname.endsWith('/v3/catalog/items')) return Response.json({ data: [row], total: 1 })
+      if (url.pathname.endsWith('/v1/outfits')) return Response.json({ outfits })
       return new Response('', { status: 404 })
     })
   )
@@ -104,7 +106,13 @@ async function addFromPanel(times = 1): Promise<void> {
 
 const cartButton = (): HTMLElement => screen.getByRole('button', { name: /^Cart/ })
 
+// jsdom has no element scrolling, which the home's rails use.
+const scrollTo = HTMLElement.prototype.scrollTo
+beforeEach(() => {
+  HTMLElement.prototype.scrollTo = function (): void {}
+})
 afterEach(async () => {
+  HTMLElement.prototype.scrollTo = scrollTo
   resetPopups()
   primeRemoteFlags(null)
   shell.request.mockReset()
@@ -207,6 +215,33 @@ describe('the in-world Shop’s cart', () => {
     const [, params] = shell.request.mock.calls.find(([m]) => m === 'shop.buy')!
     expect(params).toEqual({ v: 1, items: [{ contract: CONTRACT, itemId: '1', quantity: 3 }], method: 'credits', cart: true, input: 'pointer' })
     expect(screen.queryByRole('region', { name: 'Your cart' })).toBeNull()
+  })
+
+  it('buys an outfit on its BUY in one purchase, not as the cart’s, and leaves the cart as it was', async () => {
+    serveCatalogue([{ id: 'o1', name: 'Neon Night', thumbnailHash: '', items: [{ contractAddress: CONTRACT, itemId: '1' }], gradientFrom: '#ff0000', gradientTo: '#0000ff' }])
+    answerShell()
+    renderShop()
+    await addFromPanel()
+    await waitFor(() => expect(cartButton()).toHaveAccessibleName('Cart, 1 item'))
+    await userEvent.click(screen.getByRole('tab', { name: 'All' }))
+    const tile = (await screen.findByRole('button', { name: 'Try on Neon Night' }, { timeout: 5000 })).parentElement!
+    await userEvent.click(await within(tile).findByRole('button', { name: 'BUY' }))
+    await waitFor(() => expect(shell.request).toHaveBeenCalledWith('shop.buy', expect.anything()))
+    const [, params] = shell.request.mock.calls.find(([m]) => m === 'shop.buy')!
+    expect(params).toEqual({ v: 1, items: [{ contract: CONTRACT, itemId: '1', quantity: 1 }], method: 'credits', input: 'pointer' })
+    expect(cartButton()).toHaveAccessibleName('Cart, 1 item')
+  })
+
+  it('offers no price or BUY on an outfit with no items', async () => {
+    serveCatalogue([{ id: 'o0', name: 'Empty Look', thumbnailHash: '', items: [], gradientFrom: '#ff0000', gradientTo: '#0000ff' }])
+    answerShell()
+    renderShop()
+    await userEvent.click(await screen.findByRole('tab', { name: 'All' }))
+    const tile = (await screen.findByRole('button', { name: 'Try on Empty Look' }, { timeout: 5000 })).parentElement!
+    await new Promise((r) => setTimeout(r, 50))
+    expect(within(tile).getByText('0 Items')).toBeInTheDocument()
+    expect(within(tile).queryByText('0', { exact: true })).toBeNull()
+    expect(within(tile).queryByRole('button', { name: 'BUY' })).toBeNull()
   })
 
   const OP = (n: number): string => `0f0e0d0c-0000-4000-8000-${String(n).padStart(12, '0')}`

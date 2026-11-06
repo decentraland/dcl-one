@@ -6,7 +6,7 @@
 export { EmoteControls } from './EmoteControls'
 export { buyableInWorld, PriceTag } from './PriceTag'
 export { ShopFilters, type ShopFilterPatch, type ShopFilterStatus, type ShopFilterValues } from './ShopFilters'
-export { ShopHome, type ShopHomeOutfit, type ShopHomeRow } from './ShopHome'
+export { ShopHome, type ShopHomeOutfit, type ShopHomeOutfitOffer, type ShopHomeRow } from './ShopHome'
 export { ShopCardActions } from './ShopCardActions'
 export { ShopItemCard, ShopItemSkeleton, type ShopItemCardProps } from './ShopItemCard'
 export { ShopItemPanel, type ShopItemHide, type ShopItemPanelProps } from './ShopItemPanel'
