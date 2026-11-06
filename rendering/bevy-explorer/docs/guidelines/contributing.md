@@ -41,8 +41,8 @@ understand the change in one sitting.
 - You should not need to add a schedule set or ordering step. If you think you do, raise it
   first; the [scheduling guide](scheduling.md) explains the current setup.
 - If something works better with a change in a dependency, change the dependency. Upstream it
-  where possible; where it is bespoke to us, we maintain our forks for exactly that. See
-  [the bevy fork](bevy-fork.md).
+  where possible; where it is bespoke to us, we maintain our forks for exactly that. Bevy itself
+  is vendored here: see [the bevy fork](bevy-fork.md).
 
 ## Tests
 
@@ -102,7 +102,8 @@ understand the change in one sitting.
 - Hoist every third-party dependency to `[workspace.dependencies]` and use
   `{ workspace = true }` at the call site, even for a crate used in one place. Convert existing
   inline uses of the same crate in the same change.
-- Changes to bevy go in [the fork](bevy-fork.md); that page covers patching it locally.
+- Changes to bevy go in the vendored tree, `rendering/bevy-explorer/bevy`: see
+  [the bevy fork](bevy-fork.md).
 - `rendering/bevy-explorer/forks.toml` and `cargo-patches.toml` are generated from the lock.
   After changing a git dependency's revision, run `python3 tooling/upstream-forks.py` from the
   dcl-one root so they match; a daily workflow otherwise opens an `upstream/forks` PR.
