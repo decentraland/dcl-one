@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use serde_json::Value;
 use sqlx::PgPool;
 
-use crate::content::queries::active_entity_docs_by_pointers;
+use crate::content::queries::{active_entity_docs_by_pointers, retain_non_denylisted};
 
 pub const BASE_AVATARS_COLLECTION_ID: &str = "urn:decentraland:off-chain:base-avatars";
 
@@ -331,10 +331,14 @@ fn english_name_from_metadata(metadata: &Value) -> Option<String> {
 }
 
 /// The base wearables in the list's order, each with its active entity; a
-/// pointer this node has not synced is left out.
-pub async fn fetch_base_wearables(pool: &PgPool) -> Result<Vec<BaseWearable>, sqlx::Error> {
+/// pointer this node has not synced, or whose entity is denylisted, is left out.
+pub async fn fetch_base_wearables(
+    pool: &PgPool,
+    denylist: &crate::content::Denylist,
+) -> Result<Vec<BaseWearable>, sqlx::Error> {
     let pointers: Vec<String> = BASE_WEARABLES.iter().map(|u| u.to_string()).collect();
-    let docs = active_entity_docs_by_pointers(pool, &pointers).await?;
+    let mut docs = active_entity_docs_by_pointers(pool, &pointers).await?;
+    retain_non_denylisted(&mut docs, denylist);
     let mut by_pointer: HashMap<String, Value> = HashMap::new();
     for entity in docs.iter().filter_map(|d| d.to_value()) {
         if let Some(ptrs) = entity.get("pointers").and_then(|p| p.as_array()) {

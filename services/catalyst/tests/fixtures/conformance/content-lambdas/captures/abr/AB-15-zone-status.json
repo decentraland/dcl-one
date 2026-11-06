@@ -1,0 +1,24 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://asset-bundle-registry.decentraland.zone",
+  "request": {
+    "method": "GET",
+    "path": "/status",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "114"
+    },
+    "body": {
+      "data": {
+        "version": "Unknown",
+        "currentTime": 1793883020465,
+        "commitHash": "d932a02eaa90345f846b068f5c8c2b9ab388deaa"
+      }
+    }
+  }
+}
