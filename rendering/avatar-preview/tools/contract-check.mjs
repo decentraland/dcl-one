@@ -84,7 +84,12 @@ const requests = [
   { id: 'r4', namespace: 'scene', method: 'getScreenshot', params: [256, 384] },
   { id: 'r5', namespace: 'emote', method: 'goTo', params: [1] },
 ];
-for (const r of requests) await evaluate(`window.postMessage({ type: 'controller_request', payload: ${JSON.stringify(r)} }, '*')`);
+// REQUESTS (json array) replaces the default requests; `{ "wait": ms }` items pause between them
+const script = process.env.REQUESTS ? JSON.parse(process.env.REQUESTS) : requests;
+for (const r of script) {
+  if (r.wait) { await sleep(r.wait); continue; }
+  await evaluate(`window.postMessage({ type: 'controller_request', payload: ${JSON.stringify(r)} }, '*')`);
+}
 await sleep(6000);
 const messages = await evaluate("JSON.stringify((window.__messages || []).map(m => m.type === 'controller_response' && m.payload.ok && typeof m.payload.result === 'string' && m.payload.result.startsWith('data:image') ? { ...m, payload: { ...m.payload, result: `data:image… (${m.payload.result.length} chars)` } } : m))");
 console.log('MESSAGES', messages);

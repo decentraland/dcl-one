@@ -102,7 +102,10 @@ const state = {
   overrides: {},
   engineReady: false,
   applying: null,
-  emote: { urn: null, playing: false },
+  emote: { urn: null, playing: false, paused: false, time: 0, length: 0, hasSound: false },
+  // emote events wait for `load`: a host expects the avatar before its animation
+  loadSent: false,
+  heldEvents: [],
   pending: new Map(), // request id -> { resolve, reject }
   camera: { alpha: 0, beta: DEFAULT_BETA, radius: DEFAULT_RADIUS, target: [0, DEFAULT_TARGET_Y, 0] },
   log: () => {},
@@ -133,18 +136,47 @@ function onEngineEvent(json) {
   switch (event.type) {
     case 'load':
       send('load', { renderer: RENDERER });
+      state.loadSent = true;
+      for (const held of state.heldEvents.splice(0)) send('emote_event', held);
       break;
     case 'error':
       send('error', { message: event.message });
       break;
     case 'emote': {
-      if (event.event === 'play') {
-        state.emote.playing = true;
-        if (event.urn) state.emote.urn = event.urn;
-        send('emote_event', { type: 'animation_play', payload: undefined });
-      } else {
-        state.emote.playing = false;
-        send('emote_event', { type: 'animation_end', payload: undefined });
+      const e = state.emote;
+      if (event.time != null) e.time = event.time;
+      if (event.length != null) e.length = event.length;
+      if (event.sound != null) e.hasSound = event.sound;
+      const emit = (type, payload) => {
+        const message = { type, payload };
+        if (state.loadSent) send('emote_event', message); else state.heldEvents.push(message);
+      };
+      switch (event.event) {
+        case 'play':
+          e.playing = true; e.paused = false; e.time = 0;
+          if (event.urn) e.urn = event.urn;
+          emit('animation_play');
+          // a pause sent with the start (a seek on a stopped emote) holds it from its first frame
+          if (e.pendingPause) { e.pendingPause = false; e.paused = true; emit('animation_pause'); }
+          break;
+        case 'resume':
+          e.playing = true; e.paused = false;
+          emit('animation_play');
+          break;
+        case 'pause':
+          if (!e.playing) { e.pendingPause = true; break; }
+          e.paused = true;
+          emit('animation_pause');
+          break;
+        case 'loop':
+          emit('animation_loop');
+          break;
+        case 'playing':
+          emit('animation_playing', { length: e.time });
+          break;
+        default: // end, interrupted
+          e.playing = false; e.paused = false; e.pendingPause = false;
+          emit('animation_end');
       }
       break;
     }
@@ -322,6 +354,8 @@ async function apply() {
   if (!state.engineReady) return;
   const o = options();
   const run = (async () => {
+    state.loadSent = false;
+    state.heldEvents = [];
     command(cameraFrom(o));
     command({ op: 'background', color: o.disableBackground ? null : (o.background ? (o.background.startsWith('#') ? o.background : '#' + o.background) : DEFAULT_BACKGROUND) });
     const { outfit, itemEmote } = await resolveOutfit(o);
@@ -349,15 +383,29 @@ const controller = {
     cleanup: async () => { command({ op: 'stopEmote' }); },
   },
   emote: {
-    getLength: () => unsupported('emote.getLength'),
-    isPlaying: async () => state.emote.playing,
-    goTo: () => unsupported('emote.goTo'),
-    play: async () => { if (!state.emote.urn) throw new Error('no emote to play'); command({ op: 'emote', urn: state.emote.urn, loop: false }); },
-    pause: () => unsupported('emote.pause'),
+    getLength: async () => state.emote.length,
+    isPlaying: async () => state.emote.playing && !state.emote.paused,
+    // like the Unity renderer: seeking a stopped emote starts it and holds it at that time
+    goTo: async (seconds) => {
+      const e = state.emote;
+      if (!e.urn) throw new Error('no emote to seek');
+      if (!e.playing) {
+        command({ op: 'emote', urn: e.urn, loop: false });
+        command({ op: 'pauseEmote' });
+      }
+      command({ op: 'seekEmote', seconds: Math.max(0, Number(seconds) || 0) });
+    },
+    play: async () => {
+      const e = state.emote;
+      if (!e.urn) throw new Error('no emote to play');
+      if (e.playing && e.paused) command({ op: 'resumeEmote' });
+      else if (!e.playing) command({ op: 'emote', urn: e.urn, loop: false });
+    },
+    pause: async () => { if (state.emote.playing) command({ op: 'pauseEmote' }); },
     stop: async () => { command({ op: 'stopEmote' }); },
-    enableSound: async () => {},
-    disableSound: async () => {},
-    hasSound: async () => false,
+    enableSound: async () => { command({ op: 'sound', enabled: true }); },
+    disableSound: async () => { command({ op: 'sound', enabled: false }); },
+    hasSound: async () => state.emote.hasSound,
     isSocialEmote: async () => false,
     getSocialEmoteAnimations: async () => null,
     getPlayingSocialEmoteAnimation: async () => null,

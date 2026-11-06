@@ -116,6 +116,19 @@ pub enum Command {
         r#loop: bool,
     },
     StopEmote,
+    /// Hold the emote where it is, or let it run on.
+    PauseEmote,
+    ResumeEmote,
+    /// Move the emote to `seconds` into its clip (it keeps its paused or running state).
+    #[serde(rename_all = "camelCase")]
+    SeekEmote {
+        seconds: f32,
+    },
+    /// Turn emote sound on or off.
+    #[serde(rename_all = "camelCase")]
+    Sound {
+        enabled: bool,
+    },
     /// An item that is not on the catalyst (an unpublished wearable or emote, or a pose the page
     /// ships): `urn` resolves to `definition` (an entity definition json, by url) whose files are
     /// fetched from `files` (name to url: http, `data:` or `blob:`). Send it before the outfit or
@@ -160,11 +173,17 @@ pub enum Event {
     Error {
         message: String,
     },
-    /// Emote playback: `play`, `end` (ran out) or `interrupted` (stopped, replaced, movement).
+    /// Emote playback: `play`, `end` (ran out) or `interrupted` (stopped, replaced, movement),
+    /// `pause`, `resume`, `loop` (a looping emote started over) and `playing` (about ten times a
+    /// second while it runs). `time` and `length` are seconds into the clip and its length, once
+    /// known; `sound` whether the emote has any.
     #[serde(rename_all = "camelCase")]
     Emote {
         event: &'static str,
         urn: Option<String>,
+        time: Option<f32>,
+        length: Option<f32>,
+        sound: Option<bool>,
     },
     #[serde(rename_all = "camelCase")]
     Screenshot {
@@ -264,6 +283,8 @@ fn apply_commands(
     mut pending: ResMut<PendingOutfit>,
     mut inline: InlineCollectibles,
     mut light: ResMut<crate::stage::StageLight>,
+    mut controls: Query<&mut avatar::animate::EmoteControl, With<PreviewAvatar>>,
+    mut sound: ResMut<crate::audio::PreviewSound>,
     mut orbit: ResMut<OrbitCamera>,
     mut cameras: Query<(Entity, &mut Camera, &mut Projection), With<PreviewCamera>>,
     windows: Query<Entity, With<PrimaryWindow>>,
@@ -363,6 +384,10 @@ fn apply_commands(
                 }
             }
             Command::Emote { urn, r#loop } => {
+                for mut control in controls.iter_mut() {
+                    control.paused = false;
+                }
+                sound.held = false;
                 for (entity, _, _) in avatars.iter() {
                     commands.entity(entity).insert(EmoteCommand {
                         urn: urn.clone(),
@@ -406,6 +431,28 @@ fn apply_commands(
                     }
                 }
             }
+            Command::PauseEmote | Command::ResumeEmote => {
+                let paused = matches!(command, Command::PauseEmote);
+                for mut control in controls.iter_mut() {
+                    if control.paused != paused {
+                        control.paused = paused;
+                        emit(&Event::Emote {
+                            event: if paused { "pause" } else { "resume" },
+                            urn: None,
+                            time: Some(control.elapsed),
+                            length: Some(control.duration),
+                            sound: None,
+                        });
+                    }
+                }
+                sound.held = paused;
+            }
+            Command::SeekEmote { seconds } => {
+                for mut control in controls.iter_mut() {
+                    control.seek = Some(seconds.max(0.0));
+                }
+            }
+            Command::Sound { enabled } => sound.enabled = enabled,
             Command::StopEmote => {
                 for (entity, _, _) in avatars.iter() {
                     commands.entity(entity).insert(EmoteCommand {
@@ -630,15 +677,88 @@ fn report_load(
     }
 }
 
-fn report_emotes(mut events: EventReader<EmoteLifecycleEvent>) {
+/// Lifecycle events from the Explorer's emote code, and the playback progress the host's emote
+/// controls follow: `playing` about ten times a second, `loop` when a looping clip starts over.
+/// Whether the emote has sound is known once its definition has loaded, which can be after it
+/// starts, so it rides on every event until then.
+#[allow(clippy::type_complexity)]
+fn report_emotes(
+    mut events: EventReader<EmoteLifecycleEvent>,
+    controls: Query<(&avatar::animate::EmoteControl, &AvatarShape), With<PreviewAvatar>>,
+    mut emotes: collectibles::CollectibleManager<Emote>,
+    time: Res<Time>,
+    mut progress: Local<EmoteProgress>,
+) {
+    let control = controls.iter().next();
+    let mut has_sound = |urn: &str| -> Option<bool> {
+        let (_, shape) = control?;
+        let body = shape.0.body_shape.clone().unwrap_or_default();
+        let urn = CollectibleUrn::<Emote>::new(urn).ok()?;
+        let emote = emotes.get_representation(&urn, &body).ok()?;
+        Some(emote.sound.iter().any(|(_, clips)| !clips.is_empty()))
+    };
     for event in events.read() {
         let (name, urn) = match &event.event {
             EmoteLifecycle::Started { urn, .. } => ("play", Some(urn.clone())),
             EmoteLifecycle::Finished => ("end", None),
             EmoteLifecycle::Interrupted => ("interrupted", None),
         };
-        emit(&Event::Emote { event: name, urn });
+        progress.sound = urn.as_deref().and_then(&mut has_sound);
+        progress.urn = urn.clone();
+        progress.last_elapsed = 0.0;
+        emit(&Event::Emote {
+            event: name,
+            urn,
+            time: None,
+            length: None,
+            sound: progress.sound,
+        });
     }
+    let Some(urn) = progress.urn.clone() else {
+        return;
+    };
+    if progress.sound.is_none() {
+        progress.sound = has_sound(&urn);
+    }
+    let Some((control, _)) = control else {
+        return;
+    };
+    if control.duration <= 0.0 || control.paused {
+        return;
+    }
+    let looped = (control.elapsed / control.duration).floor()
+        > (progress.last_elapsed / control.duration).floor();
+    progress.last_elapsed = control.elapsed;
+    let time_in_clip = control.elapsed % control.duration;
+    if looped {
+        emit(&Event::Emote {
+            event: "loop",
+            urn: None,
+            time: Some(time_in_clip),
+            length: Some(control.duration),
+            sound: progress.sound,
+        });
+    }
+    let now = time.elapsed_secs();
+    if now - progress.last_report >= 0.1 {
+        progress.last_report = now;
+        emit(&Event::Emote {
+            event: "playing",
+            urn: None,
+            time: Some(time_in_clip),
+            length: Some(control.duration),
+            sound: progress.sound,
+        });
+    }
+}
+
+/// What `report_emotes` remembers about the emote playing.
+#[derive(Default)]
+struct EmoteProgress {
+    urn: Option<String>,
+    sound: Option<bool>,
+    last_report: f32,
+    last_elapsed: f32,
 }
 
 /// The captured frame as base64 PNG, scaled and cropped to `width` x `height`.

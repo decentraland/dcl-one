@@ -18,6 +18,8 @@ for avatars, wearables and emotes, replacing the Unity renderer slot of
 - `src/lib.rs`: the module. `start(canvas, baseDomain, onEvent)` boots the shared plugins,
   points the collectible resolver at the catalyst and waits for the first `outfit` command.
 - `src/host.rs`: the host surface, below.
+- `src/audio.rs`: plays the sounds the Explorer's emote code asks for (its `AudioEmitter`s),
+  following the emote's pause and the host's sound toggle.
 - `src/stage.rs`, `src/shadow_catcher.wgsl`: the light rig and the floor that shows only the
   avatar's shadow, so a transparent canvas still grounds it on the host page.
 - `web/preview.js`: the `wearable-preview` iframe contract over the host surface.
@@ -59,13 +61,18 @@ Commands, as JSON objects with an `op`:
 | `background` | `color` (`#rrggbb` or null for transparent) | the clear colour |
 | `emote` | `urn` (a urn or a base emote name), `loop` | plays on the avatar |
 | `stopEmote` | | |
+| `pauseEmote`, `resumeEmote` | | hold the emote where it is, or let it run on |
+| `seekEmote` | `seconds` | move the emote within its clip, keeping it paused or running |
+| `sound` | `enabled` | emote sound on or off |
 | `light` | `illuminance` (lux), `ambient`, `exposure` (stops), `yaw`, `pitch` (radians, relative to the camera), `shadow` (0..1), `shadowReach` (metres) | the light rig; unset fields keep their value. The toon shading ignores ambient light: `exposure` is what brightens or darkens the avatar |
 | `collectible` | `kind` (`wearable` or `emote`), `urn`, `definition` (an entity definition json, by url), `files` (name to url) | an item not on the catalyst; send it before the outfit or emote naming the urn |
 | `screenshot` | `id`, `width`, `height` | a PNG of the frame, scaled and cropped to fit |
 | `metrics` | `id` | triangle, material, texture and mesh counts |
 
 Events reach `onEvent` as JSON strings with a `type`: `load` (the avatar is dressed and
-visible), `error {message}`, `emote {event: play|end|interrupted, urn}`, `screenshot {id,
+visible), `error {message}`, `emote {event, urn, time, length, sound}` (`event` is `play`,
+`end`, `interrupted`, `pause`, `resume`, `loop` or `playing`, the last about ten times a second;
+`sound` is whether the emote has any, once its definition has loaded), `screenshot {id,
 png}` (base64), `metrics {id, triangles, materials, textures, meshes, bodies, entities}`.
 
 ## The iframe contract (`web/preview.js`)
@@ -100,8 +107,11 @@ takes only what is brighter than white (emissive parts). Open differences from t
 renderer: its colours are deeper and more saturated, and it draws a soft light pool under the
 feet.
 
-Not supported yet, answered with an error: `emote.pause`, `emote.goTo`, `emote.getLength`,
-`physics.setSpringBonesParams`; social emotes; the Unity `mode` flows.
+The emote controller follows the Unity renderer: `goTo` on a stopped emote starts it and holds
+it at that time, `play` resumes a paused one, and emote events wait for `load`.
+
+Not supported yet, answered with an error: `physics.setSpringBonesParams`; social emotes; the
+Unity `mode` flows.
 
 ## Embedding it in the shop
 

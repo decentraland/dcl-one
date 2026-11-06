@@ -3,6 +3,7 @@
 //! over ipfs, the avatar renderer) and renders one avatar that the page drives through the host
 //! surface in `host` (commands in, events out).
 
+mod audio;
 mod host;
 mod stage;
 
@@ -125,6 +126,7 @@ pub fn run(canvas: &str, base_domain: Option<&str>, flags: &str) {
         AvatarRenderPlugin,
         HostPlugin,
         stage::StagePlugin,
+        audio::PreviewAudioPlugin,
     ));
     app.insert_resource(AppConfig::default())
         .insert_resource(PreviewMode::default())
@@ -250,6 +252,7 @@ fn spawn_avatar_on_first_outfit(
             disable_dither: true,
         },
         AvatarDynamicState::default(),
+        avatar::animate::EmoteControl::default(),
         Transform::default(),
         Visibility::default(),
         PreviewAvatar,
