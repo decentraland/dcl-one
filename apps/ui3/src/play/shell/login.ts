@@ -27,6 +27,11 @@ function currentLogin(): StoredLogin | null {
   return held
 }
 
+/** The login the shell holds now, key included: the in-world Shop's buyer (shop/purchase). */
+export function heldLogin(): StoredLogin | null {
+  return currentLogin()
+}
+
 export async function request(method: unknown, params: unknown): Promise<unknown> {
   switch (method) {
     case 'identity':

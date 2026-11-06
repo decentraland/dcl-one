@@ -33,6 +33,7 @@ export function ShopCard({
   onSelect,
   onTryOn,
   onOpenOnWeb,
+  onBuy,
   emoteTryOn = false
 }: {
   item: CatalogItem
@@ -42,10 +43,13 @@ export function ShopCard({
   onSelect: () => void
   onTryOn: () => void
   onOpenOnWeb: () => void
+  /** BUY: buys the item (the shell's purchase dialog), with the creator's name to show in it. */
+  onBuy: (creatorName: string) => void
   /** Whether an emote can be tried on (InWorldShop's emoteTryOn). */
   emoteTryOn?: boolean
 }): React.JSX.Element {
   const creator = useProfile(item.creator)
+  const creatorName = creator?.name || shortAddr(item.creator)
   // Priced signed out: credits for primary sales, MANA for resales. The HUD's identity doesn't say how the
   // buyer signed in (features/auth/sso.ts forwards it whatever the method), so a web3 buyer's extra MANA
   // price waits for the Buy flow's wallet bridge, which knows.
@@ -57,7 +61,7 @@ export function ShopCard({
       name={item.name}
       thumbnail={item.thumbnail}
       rarity={item.rarity}
-      creator={creator?.name || shortAddr(item.creator)}
+      creator={creatorName}
       creatorPicture={creator?.picture}
       price={<PriceTag price={price} size={15} />}
       discount={discount}
@@ -78,7 +82,7 @@ export function ShopCard({
                 }
           }
           buyInWorld={buyableInWorld(price)}
-          onBuy={onSelect}
+          onBuy={() => onBuy(creatorName)}
           onView={webShopUrl(item) != null ? onOpenOnWeb : undefined}
         />
       }
@@ -86,7 +90,18 @@ export function ShopCard({
   )
 }
 
-export function SelectedItemPanel({ item, onClose, onOpenOnWeb }: { item: CatalogItem; onClose: () => void; onOpenOnWeb: () => void }): React.JSX.Element {
+export function SelectedItemPanel({
+  item,
+  onClose,
+  onOpenOnWeb,
+  onBuy
+}: {
+  item: CatalogItem
+  onClose: () => void
+  onOpenOnWeb: () => void
+  /** BUY ITEM, with the creator's name to show in the purchase dialog. */
+  onBuy: (creatorName: string) => void
+}): React.JSX.Element {
   const creator = useProfile(item.creator)
   const entity = useItemEntity(tryOnUrn(item))
   const rarity = item.rarity || 'base'
@@ -105,6 +120,7 @@ export function SelectedItemPanel({ item, onClose, onOpenOnWeb }: { item: Catalo
       hides={(entity.data?.hides ?? []).map((h) => ({ key: h, label: categoryName(h), icon: <CategoryIcon category={h} size={22} /> }))}
       onClose={onClose}
       onOpenOnWeb={webShopUrl(item) != null ? onOpenOnWeb : undefined}
+      onBuy={() => onBuy(creatorName)}
     />
   )
 }

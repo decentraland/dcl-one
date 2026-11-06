@@ -12,63 +12,17 @@ import { createShopClient, identitySigner, setShopClient } from "@ui/shop/api";
 import { ShopServicesProvider, type ShopServices } from "@ui/shop/checkout/services";
 import ShopChrome from "@ui/shop/discovery/frames/ShopChrome";
 import { ShopWalletProvider } from "@ui/shop/wallet/context";
-import type { ShopWalletHost, WalletKind } from "@ui/shop/wallet/session";
+import type { ShopWalletHost } from "@ui/shop/wallet/session";
 import type { AuthIdentity } from "@ui/data/auth/identity";
 
 import { useAuth } from "@/data/lib/auth/index";
 import { getIdentity } from "@/data/lib/auth/session";
-import { getThirdwebSession, type ThirdwebSession } from "@/data/lib/auth/thirdweb/session";
-import { signTypedData } from "@/data/lib/auth/typed-data";
-import { hasWallet, walletProvider, WalletError, type Eip1193Provider } from "@/data/lib/auth/wallet";
+import { browserProvider, managedShopProvider, sitesWalletKind } from "@/data/lib/auth/shop-wallet";
+import { getThirdwebSession } from "@/data/lib/auth/thirdweb/session";
+import { hasWallet } from "@/data/lib/auth/wallet";
 import { openSignIn } from "@/features/components/auth/signin-store";
 
-/**
- * How the signed identity was made: an in-app (thirdweb) session for the same account is a managed
- * wallet; otherwise the identity was signed by a browser wallet, which is web3 while one is present.
- */
-export function sitesWalletKind(
-  identity: Pick<AuthIdentity, "signer"> | null,
-  facts: { inApp: ThirdwebSession | null; injected: boolean },
-): WalletKind | null {
-  if (!identity) return null;
-  if (facts.inApp && facts.inApp.address.toLowerCase() === identity.signer.toLowerCase()) return "managed";
-  return facts.injected ? "web3" : "managed";
-}
-
-function browserProvider(): Eip1193Provider | null {
-  try {
-    return walletProvider();
-  } catch {
-    return null;
-  }
-}
-
-type TypedData = Parameters<typeof signTypedData>[0];
-
-/**
- * The managed (in-app) wallet as the Shop's signing seam: it names its account and signs EIP-712 data
- * through the in-app signer, which is all the relayed rails (credits, approvals) ask of it. It holds
- * no gas and sends nothing itself, so every other request is refused; reads go over the Shop's RPC.
- */
-export function managedShopProvider(account: string, sign: (typedData: TypedData, from: string) => Promise<string> = signTypedData): Eip1193Provider {
-  const self = account.toLowerCase();
-  return {
-    async request({ method, params }) {
-      switch (method) {
-        case "eth_accounts":
-        case "eth_requestAccounts":
-          return [self];
-        case "eth_signTypedData_v4": {
-          const [from, data] = (params ?? []) as [string, unknown];
-          if (typeof from !== "string" || from.toLowerCase() !== self) throw new WalletError("The in-app wallet signs only for its own account.", 4100);
-          return sign((typeof data === "string" ? JSON.parse(data) : data) as TypedData, self);
-        }
-        default:
-          throw new WalletError(`The in-app wallet does not support ${method}.`, 4200);
-      }
-    },
-  };
-}
+export { managedShopProvider, sitesWalletKind } from "@/data/lib/auth/shop-wallet";
 
 let installed = false;
 
