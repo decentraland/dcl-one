@@ -174,13 +174,16 @@ impl Good {
         let elapsed = self.elapsed_s(now);
         let served_for = i64::try_from(SERVE_FOR.as_secs()).unwrap_or(i64::MAX);
         let max_age = i64::try_from(max_age_secs).unwrap_or(i64::MAX);
+        // The round's age by this node's wall clock at the read and by the chain's:
+        // the older of the two, so a wall clock set back before a second read of
+        // the same round never makes that round younger.
         let local_round_age = self
             .started_wall
             .timestamp()
             .saturating_add(elapsed)
             .saturating_sub(self.reading.updated_at_s);
-        if local_round_age > max_age
-            || (purchase && (elapsed > served_for || self.settle_left(now) < 0))
+        let round_age = local_round_age.max(self.chain_round_age(now));
+        if round_age > max_age || (purchase && (elapsed > served_for || self.settle_left(now) < 0))
         {
             return Err(Unavailable);
         }
@@ -766,6 +769,24 @@ pub(crate) mod tests {
         assert_eq!(
             slot.for_charge_at(at(T0 + 291) + Duration::from_secs(0), 300),
             Err(Unavailable)
+        );
+    }
+
+    #[test]
+    fn a_wall_clock_set_back_between_reads_does_not_reopen_a_round() {
+        let slot = RateSlot::new(3_600);
+        slot.record(Ok(read_at("0.26960836", T0, 27, T0)), at(T0), wall(T0));
+        assert_eq!(slot.for_charge_at(at(T0 + 301), 300), Err(Unavailable));
+        // The wall clock goes back 120 s; the same round is read again at T0 + 302 on chain.
+        slot.record(
+            Ok(read_at("0.26960836", T0, 27, T0 + 302)),
+            at(T0 + 302),
+            wall(T0 + 182),
+        );
+        assert_eq!(
+            slot.for_charge_at(at(T0 + 302), 300),
+            Err(Unavailable),
+            "302 s on chain, whatever the wall clock says"
         );
     }
 
