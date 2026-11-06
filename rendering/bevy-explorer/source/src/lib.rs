@@ -652,10 +652,6 @@ impl DecentralandApp {
             .add_plugins(WalletPlugin)
             .add_plugins(CommsPlugin)
             .add_plugins(SocialPlugin)
-            // Keep ImageProcessingPlugin ahead of NftShapePlugin. Bevy gives an image path
-            // without an extension to the last image loader registered, which must stay
-            // NftShapePlugin's ExtendedImageLoader (16-bit conversion, size cap); Ktx2Loader,
-            // registered before it, then only ever sees `.ktx2` paths.
             .add_plugins(ImageProcessingPlugin)
             .add_plugins(NftShapePlugin)
             .add_plugins(TweenPlugin)
@@ -899,8 +895,7 @@ fn desktop_default_plugins(decentraland_app_config: &DecentralandAppConfig) -> P
         })
         .set(
             bevy::gltf::GltfPlugin::default()
-                .with_uri_resolver(std::sync::Arc::new(ipfs::ipfs_path::resolve_content_uri))
-                .with_image_transcoder(std::sync::Arc::new(image_processing::transcode_gltf_image)),
+                .with_uri_resolver(std::sync::Arc::new(ipfs::ipfs_path::resolve_content_uri)),
         )
         .build()
         .add_before::<bevy::asset::AssetPlugin>(IpfsIoPlugin {
@@ -962,8 +957,7 @@ fn wasm_default_plugins(decentraland_app_config: &DecentralandAppConfig) -> Plug
         })
         .set(
             bevy::gltf::GltfPlugin::default()
-                .with_uri_resolver(std::sync::Arc::new(ipfs::ipfs_path::resolve_content_uri))
-                .with_image_transcoder(std::sync::Arc::new(image_processing::transcode_gltf_image)),
+                .with_uri_resolver(std::sync::Arc::new(ipfs::ipfs_path::resolve_content_uri)),
         )
         .disable::<LogPlugin>()
         // `engine_run` sets the console panic hook itself and, with a benchmark stream, chains the
