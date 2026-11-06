@@ -161,6 +161,28 @@
 .successImg .badge {
   top: 0;
 }
+/* The Error modal: its 62px mark 1px down an 80px slot, over the floor glow. */
+.errorImg {
+  height: 80px;
+}
+.errorMark {
+  position: absolute;
+  left: calc(50% - 31px);
+  top: 1px;
+  max-width: none;
+}
+/* The Error modal's text: what went wrong in bold, then what it means, at 16px. */
+.message {
+  position: relative;
+  width: 100%;
+  margin: 0;
+  font-size: var(--type-16);
+  line-height: 19px;
+  text-align: center;
+}
+.message strong {
+  font-weight: var(--fw-bold);
+}
 .badge img {
   position: absolute;
   max-width: none;
@@ -234,6 +256,27 @@
 .boughtMany > .boughtRow {
   left: 50%;
   transform: translateX(-50%);
+}
+/* Past three: the three tiles' width (482px) scrolls sideways, its scrollbar hidden for the Shop's thumb
+   10px below the tiles. */
+.boughtScrolls {
+  height: 174px;
+}
+.boughtScrolls > .boughtRow {
+  width: 482px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.boughtScrolls > .boughtRow::-webkit-scrollbar {
+  display: none;
+}
+.boughtScrolls > .boughtRow > * {
+  flex: none;
+}
+.boughtScrolls > .boughtThumb {
+  left: calc(50% - 241px);
+  right: auto;
+  width: 482px;
 }
 .boughtMany > .boughtGlow {
   left: 14.502px;

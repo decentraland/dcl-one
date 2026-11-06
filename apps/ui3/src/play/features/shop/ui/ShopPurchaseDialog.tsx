@@ -1,12 +1,13 @@
-// ShopPurchaseDialog — one step of buying with Credits, as the design's Buy Items and Cart flows draw it:
-// Buy Item or Buy N Items (the balance, the items and their prices), Insufficient Funds (what is missing,
-// BUY CREDITS), Processing and Purchase successful. Loading, a purchase still being confirmed, a failure
-// and the sign-in request aren't drawn in the design; they use the same dialog. Presentational: whoever
+// ShopPurchaseDialog — one step of buying with Credits, as the design's Buy Items and Cart flows and its
+// modals sheet draw it: Buy Item or Buy N Items (the balance, the items and their prices), Insufficient
+// Funds (what is missing, BUY CREDITS), Processing, Purchase successful, and the Error modal ("Oops!
+// Something went wrong": what happened, CANCEL and TRY AGAIN when it may be tried again, else CLOSE).
+// Loading, a purchase still being confirmed and the sign-in request aren't drawn; they use the same dialog. Presentational: whoever
 // shows it (the web Explorer's shell, which signs the purchase) decides the step and acts on the choice.
 //
 // Every unit is one row (two of an item are two rows), and the title counts them. Past two rows the list
 // scrolls, with the Shop's scroll thumb beside it, as the Cart flow draws it. Purchase successful shows
-// up to three of what was bought (the design draws three).
+// three of what was bought (the design draws three); more scroll sideways, with the same thumb below.
 
 import { useEffect, useRef, useState } from 'react'
 import { formatCredits, formatCreditsFull } from '../../../../shop/checkout/lib/currency'
@@ -22,6 +23,7 @@ import badge6 from '../../../assets/shop/modal/credits-badge-6.svg'
 import badge7 from '../../../assets/shop/modal/credits-badge-7.svg'
 import badgeC from '../../../assets/shop/modal/credits-badge-c.svg'
 import checkFill from '../../../assets/shop/modal/check-fill.svg'
+import errorBadge from '../../../assets/shop/modal/error-badge.svg'
 import checkMark from '../../../assets/shop/modal/check-mark.svg'
 import checkRing from '../../../assets/shop/modal/check-ring.svg'
 import checkRingOuter from '../../../assets/shop/modal/check-ring-outer.svg'
@@ -174,15 +176,7 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
           <SuccessBadge />
           <h2 className={styles.title}>Purchase successful!</h2>
           <ShopModalGap />
-          <span className={`${styles.bought} ${view.items.length > 1 ? styles.boughtMany : ''}`.trim()}>
-            <img className={styles.boughtGlow} src={successGlow} alt="" aria-hidden="true" />
-            <img className={styles.boughtSpark} src={successSpark} alt="" aria-hidden="true" />
-            <span className={styles.boughtRow}>
-              {view.items.slice(0, TILES_SHOWN).map((item, i) => (
-                <ShopItemTile key={i} thumbnail={item.thumbnail} rarity={item.rarity} categoryIcon={item.categoryIcon} isNew />
-              ))}
-            </span>
-          </span>
+          <BoughtTiles items={view.items} />
           <ShopModalGap />
         </ShopModal>
       )
@@ -204,11 +198,11 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
     case 'failed':
       return (
         <ShopModal
-          label="Purchase failed"
+          label="Oops! Something went wrong"
           actions={
             <>
               <Button variant="dark" size="modal" onClick={onClose}>
-                Close
+                {view.retry ? 'Cancel' : 'Close'}
               </Button>
               {view.retry && (
                 <Button size="modal" onClick={onRetry}>
@@ -218,9 +212,11 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
             </>
           }
         >
-          <h2 className={styles.title}>Purchase failed</h2>
-          <p className={styles.note} role="alert">
-            {view.message}
+          <ErrorBadge />
+          <h2 className={styles.title}>Oops! Something went wrong</h2>
+          <ShopModalGap />
+          <p className={styles.message} role="alert">
+            <strong>We couldn't complete your purchase this time.</strong> {view.message}
           </p>
           <ShopModalGap />
         </ShopModal>
@@ -246,6 +242,24 @@ function Balance({ credits }: { credits: number }): React.JSX.Element {
         {formatCredits(credits)}
       </span>
     </p>
+  )
+}
+
+/** What was bought, on the success glow: past TILES_SHOWN the row scrolls sideways, the thumb below it. */
+function BoughtTiles({ items }: { items: ShopPurchaseItem[] }): React.JSX.Element {
+  const row = useRef<HTMLSpanElement>(null)
+  const scrolls = items.length > TILES_SHOWN
+  return (
+    <span className={`${styles.bought} ${items.length > 1 ? styles.boughtMany : ''} ${scrolls ? styles.boughtScrolls : ''}`.trim()}>
+      <img className={styles.boughtGlow} src={successGlow} alt="" aria-hidden="true" />
+      <img className={styles.boughtSpark} src={successSpark} alt="" aria-hidden="true" />
+      <span ref={row} className={styles.boughtRow} role={scrolls ? 'list' : undefined} aria-label={scrolls ? `${items.length} items bought` : undefined}>
+        {items.map((item, i) => (
+          <ShopItemTile key={i} thumbnail={item.thumbnail} rarity={item.rarity} categoryIcon={item.categoryIcon} isNew />
+        ))}
+      </span>
+      {scrolls && <ScrollThumb target={row} length={LIST_THUMB} axis="x" className={styles.boughtThumb} />}
+    </span>
   )
 }
 
@@ -326,6 +340,16 @@ function CreditsBadge(): React.JSX.Element {
         <img className={styles.cb7} src={badge7} alt="" />
         <img className={styles.cbC} src={badgeC} alt="" />
       </span>
+    </span>
+  )
+}
+
+/** The Error modal's mark on its floor glow. */
+function ErrorBadge(): React.JSX.Element {
+  return (
+    <span className={`${styles.badgeImg} ${styles.errorImg}`} aria-hidden="true">
+      <img className={styles.floor} src={floor} alt="" />
+      <img className={styles.errorMark} src={errorBadge} alt="" width={62} height={62} />
     </span>
   )
 }

@@ -1,7 +1,7 @@
 // The purchase dialog's steps (features/shop/ui/ShopPurchaseDialog) and its host over the app
 // (shell/shop/overlay): what each step says and offers, and where the keyboard goes.
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { ShopPurchaseDialog, type ShopPurchaseStep } from '../features/shop/ui'
 import { ARM_MS } from '../features/shop/ui/ShopPurchaseDialog'
 import { createShopOverlay } from '../shell/shop/overlay'
@@ -57,11 +57,20 @@ describe('the purchase dialog', () => {
     expect(h.onClose).toHaveBeenCalled()
   })
 
-  it('a failure says what happened, and offers TRY AGAIN only when it may', () => {
+  it('the Error modal: what happened, then CANCEL and TRY AGAIN when it may be tried again', () => {
     const h = show({ step: 'failed', message: 'You declined the signature.', retry: true })
-    expect(screen.getByRole('alert').textContent).toBe('You declined the signature.')
+    expect(screen.getByRole('dialog', { name: 'Oops! Something went wrong' })).toBeInTheDocument()
+    expect(screen.getByRole('alert').textContent).toBe("We couldn't complete your purchase this time. You declined the signature.")
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
     expect(h.onRetry).toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(h.onClose).toHaveBeenCalled()
+  })
+
+  it('the Error modal offers only CLOSE when it can’t be tried again', () => {
+    show({ step: 'failed', message: 'The transaction failed on-chain. Nothing was bought.', retry: false })
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
   })
 
   it('Buy N Items: every unit a row, counted in the title, the list scrolling past two', () => {
@@ -90,10 +99,14 @@ describe('the purchase dialog', () => {
     expect(screen.getByRole('button', { name: 'Buy items' })).toBeDisabled()
   })
 
-  it('Purchase successful: up to three of what was bought, each tagged NEW', () => {
-    show({ step: 'success', items: [item, item, item, item] })
-    expect(screen.getByRole('dialog', { name: 'Purchase successful!' }).querySelectorAll('[data-rarity]')).toHaveLength(3)
-    expect(screen.getAllByText('New')).toHaveLength(3)
+  it('Purchase successful: three of what was bought in view, the rest a scroll away, each tagged NEW', () => {
+    show({ step: 'success', items: [item, item, item] })
+    expect(screen.queryByRole('list')).toBeNull()
+    cleanup()
+    show({ step: 'success', items: [item, item, item, item, item] })
+    const row = screen.getByRole('list', { name: '5 items bought' })
+    expect(row.querySelectorAll('[data-rarity]')).toHaveLength(5)
+    expect(screen.getAllByText('New')).toHaveLength(5)
   })
 
   it('asks a guest to sign in', () => {
