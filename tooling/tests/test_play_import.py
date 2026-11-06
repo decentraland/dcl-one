@@ -243,6 +243,36 @@ class PlayImportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'inputs differ'):
             play.install(self.build)
 
+    def test_vendored_bevy_edits_invalidate_the_artifact(self):
+        # The engine compiles rendering/bevy-explorer/bevy; this fixture has no .git, so this is
+        # the walk Nix's filtered contract takes.
+        self.write('rendering/bevy-explorer/bevy/crates/bevy_scene/src/scene_spawner.rs', 'fn changed() {}\n')
+        with self.assertRaisesRegex(ValueError, 'inputs differ'):
+            play.install(self.build)
+
+    def test_vendored_bevy_is_an_engine_input_in_git_and_in_the_nix_contract(self):
+        bevy = 'rendering/bevy-explorer/bevy/crates/bevy_scene/src/scene_spawner.rs'
+        self.write(bevy, 'fn spawn() {}\n')
+        def git(*args):
+            return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid',
+                                            *args], cwd=self.root, text=True).strip()
+        git('init', '-q')
+        git('config', 'maintenance.auto', 'false')
+        git('config', 'gc.auto', '0')
+        git('add', '.')
+        git('commit', '-qm', 'fixture')
+        self.assertIn(bevy, contract.input_files(self.root, engine_only=True))
+        key = contract.engine_inputs(self.root)
+        self.assertEqual(key, contract.engine_inputs(self.root, git('rev-parse', 'HEAD')))
+        filtered = self.root / 'nix-contract'
+        for name in git('ls-files').splitlines():
+            target = filtered / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(self.root / name, target)
+        self.assertEqual(key, contract.engine_inputs(filtered))
+        self.write(bevy, 'fn spawn_sliced() {}\n')
+        self.assertNotEqual(key, contract.engine_inputs(self.root))
+
     def test_rebuilt_hud_changes_require_reviewing_the_sites_adaptation(self):
         self.write(contract.HUD + 'new-screen.ts', 'export const screen = "new";\n')
         contract.pack(self.build, self.root)
@@ -421,6 +451,24 @@ class PlayImportTests(unittest.TestCase):
         self.assertTrue(play.engine_changed({'number': 7, 'head': SHA, 'merge': 'c' * 40}))
         with patch.object(play.subprocess, 'run', side_effect=OSError):
             self.assertTrue(play.engine_changed(pr))
+
+    def test_pr_base_is_the_main_tip_the_merge_commit_was_built_on(self):
+        tip, head, stale, merge = 'd' * 40, 'e' * 40, 'f' * 40, 'c' * 40
+        header = lambda *parents: subprocess.CompletedProcess(
+            [], 0, (''.join(f'parent {sha}\n' for sha in parents) + f'author CI\n\nparent {stale}\n').encode(), b'')
+        with tempfile.TemporaryDirectory() as temporary:
+            event = Path(temporary) / 'event.json'
+            event.write_text(json.dumps({'number': 7, 'pull_request': {'head': {'sha': head}, 'base': {'sha': stale}}}))
+            env = {'GITHUB_EVENT_NAME': 'pull_request', 'GITHUB_EVENT_PATH': str(event), 'GITHUB_SHA': merge}
+            with patch.dict(os.environ, env):
+                with patch.object(play.subprocess, 'run', return_value=header(tip, head)):
+                    self.assertEqual(play.current_pr(), {'number': 7, 'head': head, 'base': tip, 'merge': merge})
+                for result in (header(head), header(tip, stale)):
+                    with patch.object(play.subprocess, 'run', return_value=result):
+                        self.assertEqual(play.current_pr()['base'], stale)
+                for error in (subprocess.CalledProcessError(128, 'git'), OSError()):
+                    with patch.object(play.subprocess, 'run', side_effect=error):
+                        self.assertEqual(play.current_pr()['base'], stale)
 
     def test_pr_without_engine_changes_takes_the_newest_finished_main_build_without_matching(self):
         pr = {'number': 7, 'head': SHA, 'base': 'b' * 40, 'merge': 'c' * 40}

@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { journeyEnv, parseEnvFile, parseToken } from "./env.mts";
+import { journeyEnv, parseDiscount, parseEnvFile, parseItem, parseToken, parseTopup } from "./env.mts";
 
 describe("parseEnvFile", () => {
   it("reads KEY=value lines, skipping comments and export, stripping quotes", () => {
@@ -26,5 +26,31 @@ describe("parseToken", () => {
     assert.deepEqual(parseToken("0xABCDEF0123456789abcdef0123456789ABCDEF01:42"), { contract: "0xabcdef0123456789abcdef0123456789abcdef01", tokenId: "42" });
     assert.throws(() => parseToken("0x1234:42"), /E2E_TOKEN/);
     assert.throws(() => parseToken(undefined), /E2E_TOKEN/);
+  });
+});
+
+describe("parseItem", () => {
+  it("splits collection:itemId and lowercases the collection", () => {
+    assert.deepEqual(parseItem("0xABCDEF0123456789abcdef0123456789ABCDEF01:0"), { contract: "0xabcdef0123456789abcdef0123456789abcdef01", itemId: "0" });
+    assert.throws(() => parseItem("0xabcdef0123456789abcdef0123456789abcdef01"), /E2E_ITEM/);
+    assert.throws(() => parseItem(undefined), /E2E_ITEM/);
+  });
+});
+
+describe("parseDiscount", () => {
+  it("defaults to 10 and keeps to the Shop's 5..70 whole percentages", () => {
+    assert.equal(parseDiscount(undefined), 10);
+    assert.equal(parseDiscount(""), 10);
+    assert.equal(parseDiscount("70"), 70);
+    for (const bad of ["4", "71", "12.5", "ten", "0x10", "1e1"]) assert.throws(() => parseDiscount(bad), /E2E_DISCOUNT/, bad);
+  });
+});
+
+describe("parseTopup", () => {
+  it("defaults to 100 and keeps within the server's mock top-up cap", () => {
+    assert.equal(parseTopup(undefined), "100");
+    assert.equal(parseTopup(" 25.5 "), "25.5");
+    assert.equal(parseTopup("10000"), "10000");
+    for (const bad of ["0", "10001", "1.234", "-5", "1e3", "lots"]) assert.throws(() => parseTopup(bad), /E2E_TOPUP/, bad);
   });
 });

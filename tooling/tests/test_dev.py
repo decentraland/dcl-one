@@ -479,9 +479,45 @@ class DevTest(unittest.TestCase):
         self.assertTrue(env['RPC_ENDPOINT_POLYGON'].endswith('/amoy'))
         for key in ('VITE_SHOP_CHAIN_ID', 'COLLECTIONS_CHAIN_ID', 'CONTRACT_ADDRESSES_CHAIN_KEY', 'CONTRACT_ADDRESSES_URL'):
             self.assertNotIn(key, mirror, key)
+        # MANA settles on Amoy's venues, which the node accepts only with a testnet ETH_NETWORK, the Matic index on
+        # Amoy and Amoy's own endpoint; USD prices convert at the feed and tolerance of Amoy's marketplaces.
+        self.assertEqual(env['ETH_NETWORK'], 'sepolia')
+        self.assertEqual(env['POLYGON_CHAIN_ID'], env['COLLECTIONS_CHAIN_ID'])
+        self.assertNotIn('POLYGON_CHAIN_ID', mirror)
+        self.assertIn('80002=https://', env['TRADE_RPC_URLS'])
+        self.assertEqual(env['MANA_USD_AGGREGATOR_ADDRESS'], '0xdcf00f5f60b62b07e668a84c0cedaf6f453d416e')
+        self.assertEqual(env['USD_PEGGED_ORACLE_MAX_AGE_SECS'], '27')
+        for key in ('MANA_USD_AGGREGATOR_ADDRESS', 'USD_PEGGED_ORACLE_MAX_AGE_SECS'):
+            self.assertNotIn(key, mirror, key)
         # Otherwise the mirror profile's catalogue passes, against the testnet subgraphs.
         self.assertEqual(env['MARKETPLACE_MIRRORS_ENABLED'], 'true')
         self.assertIn('index', dev.project({**self.config, 'profile': 'testnet'})['processes'])
+
+    def test_the_testnet_profile_settles_credits_on_amoy(self):
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        mirror = dev.runtime_env({**self.config, 'profile': 'mirror'})
+        self.assertEqual(env['CREDITS_MANAGER_CONTRACT'], '0x8052a560e6e6ac86eeb7e711a4497f639b322fb3')
+        self.assertEqual((env['CREDITS_USAGE_INDEX_ENABLED'], env['CREDITS_MOCK_CARD']), ('true', 'true'))
+        for key in ('CREDITS_MANAGER_CONTRACT', 'CREDITS_MOCK_CARD', 'CREDITS_SIGNER_KEY_FILE'):
+            self.assertNotIn(key, mirror, key)
+        # Without a signer key in the stack's state, nothing signs credits on chain.
+        self.assertEqual(env['CREDITS_ONCHAIN_AUTHORIZE_ENABLED'], 'false')
+        self.assertNotIn('CREDITS_SIGNER_KEY_FILE', env)
+        key = self.state / 'credits-signer.key'
+        key.write_text('  \n')  # empty: the server would read no key, so authorization stays off
+        self.assertEqual(dev.runtime_env({**self.config, 'profile': 'testnet'})['CREDITS_ONCHAIN_AUTHORIZE_ENABLED'], 'false')
+        key.write_text('not a real key')
+        key.chmod(0o644)
+        warning = io.StringIO()
+        with contextlib.redirect_stderr(warning):
+            dev.runtime_env({**self.config, 'profile': 'testnet'})
+        self.assertIn('chmod 600', warning.getvalue())
+        key.chmod(0o600)
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        self.assertEqual(env['CREDITS_ONCHAIN_AUTHORIZE_ENABLED'], 'true')
+        self.assertEqual(env['CREDITS_SIGNER_KEY_FILE'], str(key))
+        # The file's path is passed, never its contents.
+        self.assertNotIn('not a real key', '\n'.join(env.values()))
 
     def test_testnet_data_never_shares_a_database_with_another_profile(self):
         (self.state / 'postgres').mkdir()

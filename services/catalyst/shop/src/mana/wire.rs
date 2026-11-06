@@ -207,8 +207,21 @@ pub struct PurchaseOffer {
     pub settlement: Vec<SettlementFor>,
     pub available: Option<i64>,
     pub quoted_at: i64,
+    /// The creator coupon the quotes are discounted by, when the sale has
+    /// one: the buyer's settlement must use this coupon, or none of it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coupon: Option<OfferCoupon>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mana: Option<ManaExecution>,
+}
+
+/// The identity and economics of the coupon an offer was priced with.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OfferCoupon {
+    pub id: String,
+    pub coupon_address: String,
+    pub discount_ppm: u32,
 }
 
 /// A line that could not be quoted at all: the rule's refusal or the
@@ -298,6 +311,12 @@ pub fn refusal_json(refusal: &Refusal) -> Value {
         Refusal::NegativeDebit { debit } => json!({ "code": "negativeDebit", "debit": debit }),
         Refusal::CreditValueTooLarge { value, cap } => {
             json!({ "code": "creditValueTooLarge", "value": value, "cap": cap })
+        }
+        Refusal::SettlementNeedAboveReference { need, reference } => {
+            json!({ "code": "settlementNeedAboveReference", "need": need, "reference": reference })
+        }
+        Refusal::UnlistedMarketplace { venue } => {
+            json!({ "code": "unlistedMarketplace", "chainId": venue.chain_id, "contract": venue.contract })
         }
     }
 }

@@ -822,9 +822,9 @@ async fn same_wallet_in_distinct_worlds_returns_retryable_503_then_single_world_
         .await
         .unwrap();
     let error: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(error["ok"], false);
+    assert_eq!(error["error"], "Service Unavailable");
     assert_eq!(
-        error["error"],
+        error["message"],
         "Connected world could not be decided; retry shortly."
     );
     assert!(Arc::ptr_eq(&state.presence.complete(), &before));

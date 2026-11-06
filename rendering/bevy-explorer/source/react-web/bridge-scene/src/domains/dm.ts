@@ -1,4 +1,6 @@
-// Direct messages: per-partner state streams and local history.
+// Direct messages: per-partner state streams and local history. The history calls take a
+// community channel (`community:<id>`) too: community chat is stored the same way, and a watch on
+// one follows community chat's state (the private chat room, the message router in it).
 //   from: BevyApi.social.getDmUserStateStream / getDmHistory / deleteDmHistory
 // DMs themselves ride the chat stream (chat.ts) with the partner wallet as the channel.
 import { BevyApi } from '../bevy-api'
@@ -12,7 +14,8 @@ const STATES = new Set<DmUserState>([
   'privateMessagesBlockedByOwnUser',
   'privateMessagesBlocked',
   'disconnected',
-  'otherClient'
+  'otherClient',
+  'noRouter'
 ])
 
 export function registerDm(ctx: Ctx): void {
