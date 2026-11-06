@@ -66,7 +66,8 @@ export interface CatalogueFilters {
   rarities: string[]
   minCredits: number | null
   maxCredits: number | null
-  status: CatalogueStatus
+  /** The status picked in the filters; null until one is, which reads as the default for the search (`statusOf`). */
+  status: CatalogueStatus | null
   /** Creator sales only: needs the creator-sales rollout. */
   deals: boolean
   smart: boolean
@@ -80,7 +81,7 @@ export const defaultFilters = (kind: CatalogueKind): CatalogueFilters => ({
   rarities: [],
   minCredits: null,
   maxCredits: null,
-  status: 'all',
+  status: null,
   deals: false,
   smart: false
 })
@@ -90,8 +91,14 @@ export function serverSort(filters: Pick<CatalogueFilters, 'search' | 'sort'>): 
   return filters.search !== '' && filters.sort === 'newest' ? 'relevance' : filters.sort
 }
 
+/** The web Shop's default status (its items grid's `defaultStatusFor`): what is on sale, or everything while searching. */
+export const defaultStatus = (search: string): CatalogueStatus => (search !== '' ? 'all' : 'on_sale')
+
+/** The status the catalogue reads: the one picked in the filters, else the default for the search. */
+export const statusOf = (filters: Pick<CatalogueFilters, 'status' | 'search'>): CatalogueStatus => filters.status ?? defaultStatus(filters.search)
+
 /** Deals are on-sale listings, so they read the listings feed whatever the status says. */
-export const readsListings = (filters: CatalogueFilters, creatorSales: boolean): boolean => filters.status === 'on_sale' || (creatorSales && filters.deals)
+export const readsListings = (filters: CatalogueFilters, creatorSales: boolean): boolean => statusOf(filters) === 'on_sale' || (creatorSales && filters.deals)
 
 export const pageCount = (total: number): number => Math.max(1, Math.ceil(total / SHOP_PAGE_SIZE))
 
@@ -99,7 +106,8 @@ export const shopQueries = {
   /** `creatorSales` is the rollout the fetchers' row mapping reads (discounted prices), so it is part of the key. */
   catalogue: (filters: CatalogueFilters, page: number, { creatorSales }: { creatorSales: boolean }) =>
     queryOptions({
-      queryKey: ['shop', 'catalogue', filters, page, { creatorSales }] as const,
+      // Keyed by the status it reads, so the default and the same status picked share their pages.
+      queryKey: ['shop', 'catalogue', { ...filters, status: statusOf(filters) }, page, { creatorSales }] as const,
       queryFn: ({ signal }) => {
         const categories = filters.category === 'all' ? undefined : SUBCAT_MAP[filters.category]
         const rarities = filters.rarities.length > 0 ? filters.rarities : undefined
@@ -125,7 +133,8 @@ export const shopQueries = {
             { signal }
           )
         // Nothing not for sale has a price, so the range applies to the other statuses only.
-        const priced = filters.status !== 'not_for_sale'
+        const status = statusOf(filters)
+        const priced = status !== 'not_for_sale'
         return fetchCatalogItems(
           {
             category: filters.kind,
@@ -134,7 +143,7 @@ export const shopQueries = {
             search,
             sortBy,
             isWearableSmart: smart,
-            isOnSale: filters.status === 'not_for_sale' ? false : undefined,
+            isOnSale: status === 'not_for_sale' ? false : undefined,
             minPriceCredits: priced ? (filters.minCredits ?? undefined) : undefined,
             maxPriceCredits: priced ? (filters.maxCredits ?? undefined) : undefined,
             ...paging

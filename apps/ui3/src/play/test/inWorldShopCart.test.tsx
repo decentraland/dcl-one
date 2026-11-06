@@ -51,6 +51,28 @@ const row = {
   data: { wearable: { category: 'upper_body', bodyShapes: [], isSmart: false } }
 }
 
+/** `row` as the listings feed lists it (what is on sale: the catalogue's default), read from `row` on every answer. */
+const listing = (): Record<string, unknown> => ({
+  tradeId: null,
+  listingType: 'primary',
+  source: 'native',
+  acquisition: 'store',
+  contractAddress: row.contractAddress,
+  itemId: row.itemId,
+  tokenId: null,
+  name: row.name,
+  thumbnail: row.thumbnail,
+  rarity: row.rarity,
+  category: row.category,
+  wearableCategory: row.data.wearable.category,
+  creator: row.creator,
+  priceCredits: row.priceCredits,
+  manaWei: null,
+  available: row.available,
+  network: row.network,
+  chainId: row.chainId
+})
+
 /** The catalogue (the Golden Armor), and the home's outfits when given. */
 function serveCatalogue(outfits: unknown[] = []): void {
   vi.stubGlobal(
@@ -58,6 +80,7 @@ function serveCatalogue(outfits: unknown[] = []): void {
     vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input instanceof Request ? input.url : input), location.href)
       if (url.pathname.endsWith('/v3/catalog/items')) return Response.json({ data: [row], total: 1 })
+      if (url.pathname.endsWith('/v3/catalog/unified')) return Response.json({ data: [listing()], total: 1 })
       if (url.pathname.endsWith('/v1/outfits')) return Response.json({ outfits })
       return new Response('', { status: 404 })
     })
