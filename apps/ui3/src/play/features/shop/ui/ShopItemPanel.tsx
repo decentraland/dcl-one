@@ -37,8 +37,7 @@ export interface ShopItemPanelProps {
   onClose: () => void
   /** Offers the item on the web Shop (resales, MANA-only, not for sale); absent when it has no page there. */
   onOpenOnWeb?: () => void
-  /** Buying in-world (the next flow); without them the buttons are shown but do nothing yet. */
-  /** BUY ITEM, with how it was pressed. */
+  /** BUY ITEM, with how it was pressed. Without it, or without ADD TO CART, that button is shown off. */
   onBuy?: (input: PressedWith) => void
   onAddToCart?: () => void
 }

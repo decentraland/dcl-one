@@ -2,7 +2,8 @@
 // (shell/shop/walletGuard).
 import { describe, expect, it } from 'vitest'
 import type { Hex } from 'viem'
-import { encodeFunctionData, parseAbi } from 'viem'
+import { decodeAbiParameters, encodeAbiParameters, encodeFunctionData, getAbiItem, parseAbi } from 'viem'
+import { COLLECTION_STORE_ABI } from '../../shop/checkout/chain/abi'
 import { metaTxTypedData } from '../../shop/checkout/chain/metatx'
 import { createFakeWallet, creatorTrade } from '../../shop/checkout/fakes'
 import { buildStoreUseCreditsArgs, buildUseCreditsArgs, encodeUseCredits, type SpendableCredit, type StoreItemToBuy, type UseCreditsArgs } from '../../shop/checkout/purchase/encoding'
@@ -17,24 +18,37 @@ const MANAGER = '0x' + 'ce'.repeat(20)
 const STORE = BOOK.store.contract.toLowerCase()
 const MARKETPLACE = BOOK.marketplace.contract.toLowerCase()
 const CHAIN = 137
+const STORE_BUY = getAbiItem({ abi: COLLECTION_STORE_ABI, name: 'buy' })
+/** A store mint's entries, as encoded. */
+const decodeStoreItems = (args: UseCreditsArgs) => [...decodeAbiParameters(STORE_BUY.inputs, args.externalCall.data as Hex)[0]]
 
 describe('the shop.buy request', () => {
-  const ok = { v: 1, item: { contract: '0x' + 'AB'.repeat(20), itemId: '7' }, method: 'credits' }
+  const line = { contract: '0x' + 'AB'.repeat(20), itemId: '7', quantity: 1 }
+  const ok = { v: 1, items: [line], method: 'credits' }
 
-  it('admits an item reference, lowercased, and a cleaned display name', () => {
-    expect(parseBuyRequest({ ...ok, creatorName: ' Aurora\u0007 ' })).toEqual({ v: 1, item: { contract: '0x' + 'ab'.repeat(20), itemId: '7' }, method: 'credits', creatorName: 'Aurora' })
-    expect(parseBuyRequest({ ...ok, creatorName: 'x'.repeat(200) }).creatorName).toHaveLength(64)
+  it('admits item references, lowercased, how many of each, and display hints', () => {
+    expect(parseBuyRequest(ok)).toEqual({ v: 1, items: [{ contract: '0x' + 'ab'.repeat(20), itemId: '7', quantity: 1 }], method: 'credits' })
     expect(parseBuyRequest({ ...ok, input: 'keyboard' }).input).toBe('keyboard')
+    expect(parseBuyRequest({ ...ok, cart: true }).cart).toBe(true)
+    const cart = parseBuyRequest({ ...ok, items: [line, { ...line, itemId: '8', quantity: 3 }, { ...line, contract: '0x' + 'cd'.repeat(20) }] })
+    expect(cart.items.map((l) => `${l.itemId}x${l.quantity}`)).toEqual(['7x1', '8x3', '7x1'])
     expect(() => parseBuyRequest({ ...ok, input: 'touch' })).toThrow()
   })
 
   it.each([
     ['another field', { ...ok, buyer: BUYER }],
-    ['a field in the item', { ...ok, item: { ...ok.item, tradeId: 'x' } }],
+    ['the app’s name for the creator', { ...ok, creatorName: 'Aurora' }],
+    ['a field in an item', { ...ok, items: [{ ...line, tradeId: 'x' }] }],
     ['another version', { ...ok, v: 2 }],
-    ['a bad contract', { ...ok, item: { contract: '0x12', itemId: '7' } }],
-    ['a bad item id', { ...ok, item: { contract: ok.item.contract, itemId: '07' } }],
-    ['an item id past uint256', { ...ok, item: { contract: ok.item.contract, itemId: '1'.repeat(79) } }],
+    ['a bad contract', { ...ok, items: [{ ...line, contract: '0x12' }] }],
+    ['a bad item id', { ...ok, items: [{ ...line, itemId: '07' }] }],
+    ['an item id past uint256', { ...ok, items: [{ ...line, itemId: '1'.repeat(79) }] }],
+    ['no items', { ...ok, items: [] }],
+    ['an item twice', { ...ok, items: [line, { ...line, contract: line.contract.toLowerCase(), quantity: 2 }] }],
+    ['none of an item', { ...ok, items: [{ ...line, quantity: 0 }] }],
+    ['part of an item', { ...ok, items: [{ ...line, quantity: 1.5 }] }],
+    ['more units than a purchase takes', { ...ok, items: [{ ...line, quantity: 20 }, { ...line, itemId: '8', quantity: 11 }] }],
+    ['a cart flag that isn’t true', { ...ok, cart: 'yes' }],
     ['MANA', { ...ok, method: 'mana' }],
     ['nothing', null]
   ])('refuses %s', (_, params) => {
@@ -42,10 +56,11 @@ describe('the shop.buy request', () => {
   })
 
   it('reads only well-formed operation events', () => {
-    const event = { type: SHOP_EVENT, v: 1, operation: 'a', state: 'succeeded', item: { contract: '0x1', itemId: '7' }, next: 'backpack', txHash: '0xabc' }
-    expect(parseOperationEvent(event)).toMatchObject({ state: 'succeeded', next: 'backpack', txHash: '0xabc' })
+    const event = { type: SHOP_EVENT, v: 1, operation: 'a', state: 'succeeded', items: [line], cart: true, next: 'backpack', txHash: '0xabc' }
+    expect(parseOperationEvent(event)).toMatchObject({ state: 'succeeded', items: [{ contract: line.contract.toLowerCase(), itemId: '7', quantity: 1 }], cart: true, next: 'backpack', txHash: '0xabc' })
     expect(parseOperationEvent({ ...event, state: 'exploded' })).toBeNull()
     expect(parseOperationEvent({ ...event, v: 2 })).toBeNull()
+    expect(parseOperationEvent({ ...event, items: [] })).toBeNull()
   })
 })
 
@@ -57,7 +72,7 @@ describe('the purchase wallet', () => {
     buyer: BUYER,
     chainId: CHAIN,
     manager: { chainId: CHAIN, address: MANAGER, name: 'Decentraland Credits', version: '1.0.0' },
-    item: { contract: BOOK.collection.toLowerCase(), itemId: String(ITEM) },
+    units: [{ contract: BOOK.collection.toLowerCase(), itemId: String(ITEM) }],
     sale: { venue: STORE, call: 'storeBuy' },
     current: () => true,
     ...over
@@ -118,6 +133,55 @@ describe('the purchase wallet', () => {
     const g = setup()
     await expect(sign(g, typed(data))).rejects.toMatchObject({ code: 4100 })
     expect(g.forwarded()).toBe(0)
+  })
+
+  describe('a cart’s group', () => {
+    const other: StoreItemToBuy = { collection: OTHER, itemId: '8', priceWei: '1000000000000000000' }
+    const units = [
+      { contract: BOOK.collection.toLowerCase(), itemId: String(ITEM) },
+      { contract: OTHER, itemId: '8' },
+      { contract: OTHER, itemId: '8' }
+    ]
+
+    it('signs one mint per confirmed unit, in any order: two of an item are two', async () => {
+      const g = setup({ units })
+      await expect(sign(g, typed(encodeUseCredits(storeArgs({}, [other, item, other]))))).resolves.toMatch(/^0x/)
+      expect(g.forwarded()).toBe(1)
+    })
+
+    it.each([
+      ['one unit short', [item, other]],
+      ['one unit more', [item, other, other, other]],
+      ['another unit in place of one', [item, other, { ...other, itemId: '9' }]],
+      ['one of an item for two of another', [item, item, other]]
+    ])('refuses %s', async (_, items) => {
+      const g = setup({ units })
+      await expect(sign(g, typed(encodeUseCredits(storeArgs({}, items))))).rejects.toMatchObject({ code: 4100 })
+      expect(g.forwarded()).toBe(0)
+    })
+
+    it('refuses a unit for someone else among the buyer’s', async () => {
+      const g = setup({ units: units.slice(0, 2) })
+      const mine = buildStoreUseCreditsArgs(STORE, [item], BUYER, [credit], credit.amount)
+      const theirs = buildStoreUseCreditsArgs(STORE, [other], OTHER, [credit], credit.amount)
+      const [a] = decodeStoreItems(mine)
+      const [b] = decodeStoreItems(theirs)
+      const mixed = { ...mine, externalCall: { ...mine.externalCall, data: encodeAbiParameters(STORE_BUY.inputs, [[a, b]]) } }
+      await expect(sign(g, typed(encodeUseCredits(mixed)))).rejects.toMatchObject({ code: 4100 })
+    })
+
+    it('signs one trade per confirmed unit through the marketplace', async () => {
+      const trade = creatorTrade()
+      const unit = { contract: BOOK.collection.toLowerCase(), itemId: String(ITEM) }
+      const g = setup({ sale: { venue: MARKETPLACE, call: 'accept' }, units: [unit, unit] })
+      await expect(sign(g, typed(encodeUseCredits(buildUseCreditsArgs(MARKETPLACE, [trade, trade], BUYER, [credit], credit.amount))))).resolves.toMatch(/^0x/)
+      await expect(sign(g, typed(encodeUseCredits(buildUseCreditsArgs(MARKETPLACE, [trade], BUYER, [credit], credit.amount))))).rejects.toMatchObject({ code: 4100 })
+    })
+
+    it('never signs for an empty confirmation', async () => {
+      const g = setup({ units: [] })
+      await expect(sign(g, typed())).rejects.toMatchObject({ code: 4100 })
+    })
   })
 
   it('refuses a listing when the confirmed sale was the store’s mint', async () => {

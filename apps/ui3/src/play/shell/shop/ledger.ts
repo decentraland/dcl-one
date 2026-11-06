@@ -14,9 +14,9 @@
 
 import { CART_KEY_PREFIX, CHECKOUT_KEY_PREFIX, createCartStore, type CartStorage, type CartStore } from '../../../shop/cart/store'
 import type { GroupProgress, GroupStatus } from '../../../shop/model/purchase'
-import { OPERATION_STATES, TERMINAL_STATES, type ShopOperationState } from '../../lib/shopProtocol'
+import { MAX_PURCHASE_UNITS, OPERATION_STATES, parseLines, TERMINAL_STATES, type ShopLine, type ShopOperationState } from '../../lib/shopProtocol'
 
-/** What a purchase's dialog shows of its item. */
+/** What a purchase's dialog shows of one item it buys (one per unit: two of an item are two). */
 export interface PurchaseDisplay {
   name: string
   creator: string
@@ -30,7 +30,10 @@ export interface OperationRecord {
   id: string
   /** Lowercase; null while signed out (never stored). */
   buyer: string | null
-  item: { contract: string; itemId: string }
+  /** What it buys: the items of one checkout group (one transaction, one credit). */
+  items: ShopLine[]
+  /** Bought from the app's cart. */
+  cart?: true
   state: ShopOperationState
   next?: 'backpack'
   txHash?: string | null
@@ -38,7 +41,8 @@ export interface OperationRecord {
   chainId?: number
   /** The checkout group's progress as the executor last wrote it, kept apart from the checkout itself. */
   progress?: GroupProgress
-  display?: PurchaseDisplay
+  /** One per unit it buys, in order. */
+  displays?: PurchaseDisplay[]
   createdAt: number
   updatedAt: number
 }
@@ -55,9 +59,8 @@ const KEEP = 20
 // What storage hands back is checked whole (another version of this page, or anything on the origin,
 // may have written it): a record that doesn't match is skipped, never half-trusted.
 const GROUP_STATUSES: readonly GroupStatus[] = ['idle', 'authorizing', 'submitted', 'pending', 'confirmed', 'failed', 'expired']
-const ADDRESS = /^0x[0-9a-f]{40}$/
 const HASH = /^0x[0-9a-fA-F]{64}$/
-const UINT = /^(0|[1-9][0-9]{0,77})$/
+const MAX_DISPLAYS = MAX_PURCHASE_UNITS
 
 const isObject = (v: unknown): v is Record<string, unknown> => v != null && typeof v === 'object' && !Array.isArray(v)
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === 'string')
@@ -99,22 +102,22 @@ function isDisplay(v: unknown): boolean {
 
 /** A stored operation of `buyer`'s, every field the shape this page writes. */
 function isRecord(v: unknown, buyer: string): v is OperationRecord {
-  if (!isObject(v) || !isObject(v.item)) return false
-  const { item } = v
+  if (!isObject(v)) return false
+  // The lines as this page writes them: lowercase contracts, as parseLines gives them back.
+  const lines = parseLines(v.items)
   return (
     typeof v.id === 'string' &&
     /^[0-9a-f-]{8,64}$/.test(v.id) &&
     v.buyer === buyer &&
-    typeof item.contract === 'string' &&
-    ADDRESS.test(item.contract) &&
-    typeof item.itemId === 'string' &&
-    UINT.test(item.itemId) &&
+    lines !== null &&
+    lines.every((l, i) => (v.items as ShopLine[])[i].contract === l.contract) &&
+    (v.cart === undefined || v.cart === true) &&
     OPERATION_STATES.includes(v.state as ShopOperationState) &&
     (v.next === undefined || v.next === 'backpack') &&
     (v.txHash === undefined || isHash(v.txHash)) &&
     (v.chainId === undefined || isChain(v.chainId)) &&
     (v.progress === undefined || isProgress(v.progress)) &&
-    (v.display === undefined || isDisplay(v.display)) &&
+    (v.displays === undefined || (Array.isArray(v.displays) && v.displays.length <= MAX_DISPLAYS && v.displays.every(isDisplay))) &&
     isTime(v.createdAt) &&
     isTime(v.updatedAt)
   )

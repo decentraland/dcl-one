@@ -35,9 +35,11 @@
   -webkit-mask-composite: xor;
 }
 
+/* Above everything on the stage (a lifted card, the item panel's buttons), so what opens from it (the
+   filters, the cart) draws over them. */
 .head {
   position: relative;
-  z-index: 2;
+  z-index: 10;
   display: flex;
   align-items: center;
   gap: 21px;
@@ -92,6 +94,33 @@
   border-radius: var(--r-md);
   background: var(--surface-light);
   color: var(--ink-on-light);
+}
+.cart:not(:disabled) {
+  cursor: pointer;
+}
+/* The cart button, its badge 32px in and 5px above it, and the cart popover 17px under it, its right edge
+   on the button's (the design's frame: the popover at 1520,142, the badge at 1890,78). */
+.cartArea {
+  position: relative;
+  display: flex;
+}
+.cartBadge {
+  position: absolute;
+  left: 32px;
+  top: -5px;
+}
+.cartPopover {
+  position: absolute;
+  top: 59px;
+  right: 0;
+  z-index: 6;
+}
+/* "1 Item Added to Cart", 7px under the header, 19px in from the right (the design's 1706,145). */
+.toast {
+  position: absolute;
+  top: 75px;
+  right: 19px;
+  z-index: 6;
 }
 
 .stage {

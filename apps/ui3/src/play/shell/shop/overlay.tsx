@@ -22,7 +22,7 @@ function withIcon(item: ShellPurchaseItem): ShopPurchaseItem {
 }
 
 function toStep(view: ShellPurchaseView): ShopPurchaseStep {
-  return 'item' in view ? ({ ...view, item: withIcon(view.item) } as ShopPurchaseStep) : view
+  return 'items' in view ? ({ ...view, items: view.items.map(withIcon) } as ShopPurchaseStep) : view
 }
 
 const FOCUSABLE = 'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'

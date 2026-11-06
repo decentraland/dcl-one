@@ -4,7 +4,8 @@
 // row by the web Shop's own card rule. Selecting an item opens its panel beside the grid. BUY and BUY ITEM
 // buy a primary sale with Credits through the web shell, which holds the wallet and shows the purchase
 // dialog (purchaseQuery); resales, anything not sold in Credits, and buying outside the shell open on the
-// web Shop.
+// web Shop. ADD TO CART keeps such a sale in the in-world cart (cartStore), whose popover under the
+// header's cart button buys them all at once through the same dialog.
 
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -12,7 +13,7 @@ import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
 import { defaultWorn, wornUrns } from '../../../shop/discovery/lib/outfit'
 import { BASE_FEMALE, BASE_MALE, type BodyShapeUrn } from '../../../shop/detail/lib/bodyShape'
 import { REMOTE_FLAG } from '../../../shop/discovery/lib/remoteFlags'
-import { Button, Chip, ChevronDown, ChevronLeft, EmptyState, MaskIcon, OptionMenu, Pager, ScrollThumb, SearchField, showConfirm, Spinner, Tabs, type TabItem } from '../../design'
+import { Button, Chip, ChevronDown, ChevronLeft, EmptyState, MaskIcon, OptionMenu, Pager, ScrollThumb, SearchField, showConfirm, showToast, Spinner, Tabs, type TabItem } from '../../design'
 import type { PreviewFocus, Wearable } from '../../engine/protocol'
 import { registerCancelLayer } from '../../lib/cancelLayers'
 import { subscribeHudScale } from '../../lib/hudScale'
@@ -25,13 +26,14 @@ import emotesIcon from '../../assets/backpack/icon-emotes.webp'
 import filterIcon from '../../assets/backpack/icon-filter.webp'
 import emptySearchArt from '../../assets/backpack/empty-search.webp'
 import cartIcon from '../../assets/shop/cart.svg'
+import { cartInputFor, cartRequestLines, cartUnits, inWorldCart, useInWorldCart } from './cartStore'
 import { CATALOGUE_SORTS, categoriesFor, defaultFilters, pageCount, useShopCatalogue, type CatalogueFilters, type CatalogueKind } from './catalogueQuery'
 import { useShopFlag } from './flagsQuery'
 import { homeQueries, useNewest, useShopOutfits, useTrending, type OutfitSummary } from './homeQuery'
 import { tryOnUrn, webShopUrl } from './itemLinks'
 import { useCreditsBalance, useShopCapabilities, useShopPurchase } from './purchaseQuery'
-import { SelectedItemPanel, ShopCard } from './ShopItems'
-import { CreditsPill, EmoteControls, ShopFilters, ShopHome, ShopItemSkeleton, type PressedWith } from './ui'
+import { categoryGlyph, CreatorName, SelectedItemPanel, ShopCard } from './ShopItems'
+import { CreditsPill, EmoteControls, ShopCart, ShopCartBadge, ShopCartToast, ShopFilters, ShopHome, ShopItemSkeleton, type PressedWith } from './ui'
 import styles from './InWorldShop.module.css'
 
 type Section = 'all' | 'wearables' | 'emotes'
@@ -46,6 +48,8 @@ const SEARCH_DEBOUNCE_MS = 350
 const THUMB_LENGTH = 203
 /** The stage image (assets/shop/stage.jpg) is the design's 1920×1080 frame, its top 70px under the top bar. */
 const STAGE = { width: 1920, height: 1080, top: 70 }
+/** How long "1 Item Added to Cart" stays up. */
+const TOAST_MS = 3000
 type Rect = { x: number; y: number; width: number; height: number }
 
 export interface InWorldShopProps {
@@ -103,6 +107,10 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   const [tryingOn, setTryingOn] = useState<string | null>(null)
   // The emote playing on the avatar (an item id), which STOP EMOTE stops.
   const [playing, setPlaying] = useState<string | null>(null)
+  const [cartOpen, setCartOpen] = useState(false)
+  // Each ADD TO CART shows the toast again (its key restarts it).
+  const [toast, setToast] = useState(0)
+  const cartArea = useRef<HTMLDivElement>(null)
   const backdrop = useRef<HTMLDivElement>(null)
   const scroller = useRef<HTMLDivElement>(null)
   const homeScroller = useRef<HTMLDivElement>(null)
@@ -145,6 +153,25 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   const capabilities = useShopCapabilities()
   const credits = useCreditsBalance(shop.open ? (capabilities?.buyer ?? null) : null)
   const purchase = useShopPurchase(() => onNavigate('backpack'))
+  const cart = useInWorldCart(capabilities?.buyer ?? null)
+  // Escape closes the cart first, and so does a press anywhere else.
+  useEffect(() => {
+    if (!cartOpen) return
+    const away = (e: PointerEvent): void => {
+      if (!cartArea.current?.contains(e.target as Node)) setCartOpen(false)
+    }
+    document.addEventListener('pointerdown', away, true)
+    const unregister = registerCancelLayer(() => setCartOpen(false))
+    return () => {
+      document.removeEventListener('pointerdown', away, true)
+      unregister()
+    }
+  }, [cartOpen])
+  useEffect(() => {
+    if (toast === 0) return
+    const t = setTimeout(() => setToast(0), TOAST_MS)
+    return () => clearTimeout(t)
+  }, [toast])
   // The panel shows the selected item as the listings now read it (its stock after a purchase), and its
   // own copy only while no listing holds it.
   const shown = selected == null ? null : ([...items, ...(trending.data ?? []), ...(newest.data ?? [])].find((i) => i.id === selected.id) ?? selected)
@@ -178,6 +205,8 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     setSelected(null)
     setTryingOn(null)
     setMenu(null)
+    setCartOpen(false)
+    setToast(0)
     restoreLook()
     stopEmote()
   }, [shop.open, focus, restoreLook, stopEmote])
@@ -255,10 +284,24 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     preview([...(body != null ? [body] : []), ...wornUrns(items, defaultWorn(items, shape), shape)])
   }
   // In the web shell the purchase dialog opens over the page; anywhere else the web Shop sells it.
-  const buy = (item: CatalogItem, creatorName: string, input: PressedWith): void => {
+  const buy = (item: CatalogItem, input: PressedWith): void => {
     // A purchase that couldn't open here (the shell refused it or didn't answer) is offered on the web.
-    if (purchase.available) void purchase.buy(item, creatorName, input).then((opened) => (opened ? undefined : openOnWeb(item)))
+    if (purchase.available) void purchase.buy(item, input).then((opened) => (opened ? undefined : openOnWeb(item)))
     else void openOnWeb(item)
+  }
+  // The cart is bought where purchases run (the web shell); elsewhere ADD TO CART stays off.
+  const addToCart = (item: CatalogItem): (() => void) | undefined => {
+    const input = purchase.available ? cartInputFor(item) : null
+    if (input == null || !inWorldCart.canAdd(input)) return undefined
+    return () => {
+      if (inWorldCart.add(input)) setToast((n) => n + 1)
+    }
+  }
+  const checkout = (input: PressedWith): void => {
+    setCartOpen(false)
+    void purchase.checkout(cartRequestLines(cart), input).then((opened) => {
+      if (!opened) showToast("The purchase couldn't open. Try again in a moment.", { tone: 'error' })
+    })
   }
   const select = (item: CatalogItem): void => {
     // Whatever is picked now, an outfit still loading is no longer wanted.
@@ -356,11 +399,58 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
               <SearchField variant="light" value={draft} onChange={setDraft} placeholder="Search" />
             </div>
             {credits != null && <CreditsPill credits={credits} />}
-            <button type="button" className={styles.cart} aria-label="Cart" disabled title="The cart is coming soon">
-              <MaskIcon src={cartIcon} size={24} />
-            </button>
+            <div ref={cartArea} className={styles.cartArea}>
+              <button
+                type="button"
+                className={styles.cart}
+                aria-label={cart.length > 0 ? `Cart, ${cartUnits(cart)} ${cartUnits(cart) === 1 ? 'item' : 'items'}` : 'Cart'}
+                aria-expanded={cartOpen}
+                disabled={!purchase.available}
+                title={purchase.available ? undefined : 'The cart is in the web Explorer'}
+                onClick={() => {
+                  // The cart says what was added: the toast goes as it opens.
+                  setToast(0)
+                  setCartOpen((o) => !o)
+                }}
+              >
+                <MaskIcon src={cartIcon} size={24} />
+              </button>
+              {cart.length > 0 && <ShopCartBadge className={styles.cartBadge} count={cartUnits(cart)} />}
+              {cartOpen && (
+                <ShopCart
+                  className={styles.cartPopover}
+                  lines={cart.map((l) => ({
+                    key: `${l.contract}:${l.itemId}`,
+                    name: l.name,
+                    creator: <CreatorName address={l.creator} />,
+                    thumbnail: l.thumbnail,
+                    rarity: l.rarity,
+                    categoryIcon: categoryGlyph(l.category, 16),
+                    quantity: l.quantity,
+                    credits: l.credits,
+                    canIncrement: inWorldCart.canAdd(l)
+                  }))}
+                  total={cart.reduce((n, l) => n + l.credits * l.quantity, 0)}
+                  onClose={() => setCartOpen(false)}
+                  onQuantity={(key, quantity) => {
+                    const [contract, itemId] = key.split(':')
+                    inWorldCart.setQuantity({ contract, itemId }, quantity)
+                  }}
+                  onRemove={(key) => {
+                    const [contract, itemId] = key.split(':')
+                    inWorldCart.remove({ contract, itemId })
+                  }}
+                  onCheckout={checkout}
+                />
+              )}
+            </div>
           </div>
         </header>
+        {toast > 0 && (
+          <ShopCartToast key={toast} className={styles.toast}>
+            1 Item Added to Cart
+          </ShopCartToast>
+        )}
 
         <div className={styles.stage}>
           {/* The engine draws the avatar preview here, seen through the backdrop's hole. */}
@@ -398,7 +488,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                         onSelect={() => select(item)}
                         onTryOn={() => toggleTryOn(item)}
                         onOpenOnWeb={() => void openOnWeb(item)}
-                        onBuy={(name, input) => buy(item, name, input)}
+                        onBuy={(input) => buy(item, input)}
                         emoteTryOn={emoteTryOn}
                       />
                     )}
@@ -406,7 +496,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                 </div>
                 <ScrollThumb target={homeScroller} length={THUMB_LENGTH} className={styles.thumb} />
                 </div>
-                {shown != null && <SelectedItemPanel key={shown.id} item={shown} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(shown)} onBuy={(name, input) => buy(shown, name, input)} />}
+                {shown != null && <SelectedItemPanel key={shown.id} item={shown} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(shown)} onBuy={(input) => buy(shown, input)} onAddToCart={addToCart(shown)} />}
               </div>
             ) : (
             <>
@@ -475,7 +565,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                           onSelect={() => select(item)}
                           onTryOn={() => toggleTryOn(item)}
                           onOpenOnWeb={() => void openOnWeb(item)}
-                          onBuy={(name, input) => buy(item, name, input)}
+                          onBuy={(input) => buy(item, input)}
                           emoteTryOn={emoteTryOn}
                         />
                       ))}
@@ -486,7 +576,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
               </div>
               <ScrollThumb target={scroller} length={THUMB_LENGTH} className={styles.thumb} />
               </div>
-              {shown != null && <SelectedItemPanel key={shown.id} item={shown} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(shown)} onBuy={(name, input) => buy(shown, name, input)} />}
+              {shown != null && <SelectedItemPanel key={shown.id} item={shown} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(shown)} onBuy={(input) => buy(shown, input)} onAddToCart={addToCart(shown)} />}
             </div>
             </>
             )}

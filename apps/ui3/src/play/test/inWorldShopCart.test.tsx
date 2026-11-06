@@ -1,0 +1,190 @@
+// The in-world Shop's cart on the page, in the web shell: ADD TO CART, its toast and the header's badge,
+// the cart popover, CHECKOUT asking the shell to buy the cart (the shell, faked here, owns the dialog), and
+// what a purchase takes out of the cart.
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+
+const shell = vi.hoisted(() => ({
+  handlers: new Map<string, (message: Record<string, unknown>) => void>(),
+  request: vi.fn()
+}))
+vi.mock('../lib/shell', () => ({
+  inShell: true,
+  postToShell: vi.fn(),
+  shellRequest: (method: string, params?: unknown) => shell.request(method, params),
+  onShellMessage: (type: string, handler: (message: Record<string, unknown>) => void) => {
+    shell.handlers.set(type, handler)
+    return () => shell.handlers.delete(type)
+  }
+}))
+
+import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop'
+import { inWorldCart } from '../features/shop/cartStore'
+import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
+import { dispatchCancelLayer } from '../lib/cancelLayers'
+import { SHOP_EVENT } from '../lib/shopProtocol'
+import type { Wearable } from '../engine/protocol'
+import { fakeProfileState } from './harness'
+import { PopupHost, resetPopups } from '../design'
+
+const CONTRACT = '0x1111111111111111111111111111111111111111'
+const CREATOR = '0x2222222222222222222222222222222222222222'
+const BUYER = '0x3333333333333333333333333333333333333333'
+
+const row = {
+  id: `${CONTRACT}-1`,
+  name: 'Golden Armor',
+  creator: CREATOR,
+  contractAddress: CONTRACT,
+  itemId: '1',
+  category: 'wearable',
+  rarity: 'epic',
+  network: 'MATIC',
+  chainId: 137,
+  thumbnail: 'https://example.com/armor.png',
+  priceCredits: 500,
+  price: '5000000000000000000',
+  available: 35,
+  isOnSale: true,
+  data: { wearable: { category: 'upper_body', bodyShapes: [], isSmart: false } }
+}
+
+function serveCatalogue(): void {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input instanceof Request ? input.url : input), location.href)
+      if (url.pathname.endsWith('/v3/catalog/items')) return Response.json({ data: [row], total: 1 })
+      return new Response('', { status: 404 })
+    })
+  )
+}
+
+function answerShell(): void {
+  shell.request.mockImplementation(async (method: string) => {
+    if (method === 'shop.capabilities') return { v: 1, buyer: BUYER, wallet: 'managed', credits: true }
+    if (method === 'shop.balance') return { v: 1, credits: 7000 }
+    if (method === 'shop.buy') return { v: 1, operation: 'op', state: 'reviewing', items: [{ contract: CONTRACT, itemId: '1', quantity: 1 }] }
+    if (method === 'shop.status') return []
+    throw new Error(`unexpected ${method}`)
+  })
+}
+
+const LOOK = [{ urn: 'urn:decentraland:off-chain:base-avatars:BaseMale', category: 'body_shape' }] as Wearable[]
+
+function renderShop(): void {
+  const props: InWorldShopProps = {
+    shop: { open: true, toggle: vi.fn() },
+    profile: fakeProfileState(),
+    onNavigate: vi.fn(),
+    setEngineViewport: vi.fn(),
+    equipped: LOOK,
+    preview: vi.fn(),
+    focus: vi.fn(),
+    stage: vi.fn(),
+    emote: vi.fn()
+  }
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <InWorldShop {...props} />
+      <PopupHost />
+    </QueryClientProvider>
+  )
+}
+
+/** Opens the item's panel and presses ADD TO CART `times` times. */
+async function addFromPanel(times = 1): Promise<void> {
+  await userEvent.click(await screen.findByRole('button', { name: 'Golden Armor' }, { timeout: 5000 }))
+  const add = await screen.findByRole('button', { name: 'Add to cart' })
+  await waitFor(() => expect(add).toBeEnabled())
+  for (let i = 0; i < times; i++) await userEvent.click(add)
+}
+
+const cartButton = (): HTMLElement => screen.getByRole('button', { name: /^Cart/ })
+
+afterEach(() => {
+  resetPopups()
+  primeRemoteFlags(null)
+  shell.request.mockReset()
+  shell.handlers.clear()
+  vi.unstubAllGlobals()
+  for (const line of [...inWorldCart.getSnapshot()]) inWorldCart.remove(line)
+  localStorage.clear()
+})
+
+describe('the in-world Shop’s cart', () => {
+  it('keeps the item on ADD TO CART, says so, and counts it on the cart button', async () => {
+    serveCatalogue()
+    answerShell()
+    renderShop()
+    await addFromPanel()
+    expect(await screen.findByText('1 Item Added to Cart')).toBeInTheDocument()
+    await waitFor(() => expect(cartButton()).toHaveAccessibleName('Cart, 1 item'))
+    await userEvent.click(screen.getByRole('button', { name: 'Add to cart' }))
+    await waitFor(() => expect(cartButton()).toHaveAccessibleName('Cart, 2 items'))
+  })
+
+  it('lists the cart: how many of each, the total, and taking one out', async () => {
+    serveCatalogue()
+    answerShell()
+    renderShop()
+    await addFromPanel(2)
+    await userEvent.click(cartButton())
+    const cart = await screen.findByRole('region', { name: 'Your cart' })
+    expect(within(cart).getByText('Your Cart (2)')).toBeInTheDocument()
+    expect(within(cart).getByLabelText('Quantity: 2')).toBeInTheDocument()
+    expect(within(cart).getByText('Total').nextElementSibling).toHaveTextContent('1K')
+    await userEvent.click(within(cart).getByRole('button', { name: 'One less Golden Armor' }))
+    expect(within(cart).getByLabelText('Quantity: 1')).toBeInTheDocument()
+    // At one, − takes it out, as the trash does.
+    expect(within(cart).queryByRole('button', { name: 'One less Golden Armor' })).toBeNull()
+    expect(within(cart).getAllByRole('button', { name: 'Remove Golden Armor' })).toHaveLength(2)
+    await userEvent.click(within(cart).getAllByRole('button', { name: 'Remove Golden Armor' })[0])
+    expect(within(cart).getByText('Your cart is empty.')).toBeInTheDocument()
+    expect(within(cart).getByRole('button', { name: 'Checkout' })).toBeDisabled()
+  })
+
+  it('closes on Escape (the HUD’s cancel, which the engine sends) and on a press anywhere else', async () => {
+    serveCatalogue()
+    answerShell()
+    renderShop()
+    await addFromPanel()
+    await userEvent.click(cartButton())
+    await screen.findByRole('region', { name: 'Your cart' })
+    act(() => void expect(dispatchCancelLayer()).toBe(true))
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Your cart' })).toBeNull())
+    await userEvent.click(cartButton())
+    await screen.findByRole('region', { name: 'Your cart' })
+    await userEvent.click(screen.getByRole('heading', { name: 'Shop' }))
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Your cart' })).toBeNull())
+  })
+
+  it('asks the shell to buy the cart’s items on CHECKOUT, marked as the cart’s, and closes', async () => {
+    serveCatalogue()
+    answerShell()
+    renderShop()
+    await addFromPanel(3)
+    await userEvent.click(cartButton())
+    await userEvent.click(within(await screen.findByRole('region', { name: 'Your cart' })).getByRole('button', { name: 'Checkout' }))
+    await waitFor(() => expect(shell.request).toHaveBeenCalledWith('shop.buy', expect.anything()))
+    const [, params] = shell.request.mock.calls.find(([m]) => m === 'shop.buy')!
+    expect(params).toEqual({ v: 1, items: [{ contract: CONTRACT, itemId: '1', quantity: 3 }], method: 'credits', cart: true, input: 'pointer' })
+    expect(screen.queryByRole('region', { name: 'Your cart' })).toBeNull()
+  })
+
+  it('lets go of what a cart purchase bought, and keeps an item bought on its own', async () => {
+    serveCatalogue()
+    answerShell()
+    renderShop()
+    await addFromPanel()
+    await waitFor(() => expect(cartButton()).toHaveAccessibleName('Cart, 1 item'))
+    const emit = (event: Record<string, unknown>): void =>
+      act(() => shell.handlers.get(SHOP_EVENT)?.({ type: SHOP_EVENT, v: 1, items: [{ contract: CONTRACT, itemId: '1', quantity: 1 }], ...event }))
+    emit({ operation: 'single', state: 'succeeded', txHash: '0xabc' })
+    expect(cartButton()).toHaveAccessibleName('Cart, 1 item')
+    emit({ operation: 'from-cart', state: 'succeeded', txHash: '0xabc', cart: true })
+    await waitFor(() => expect(cartButton()).toHaveAccessibleName('Cart'))
+  })
+})

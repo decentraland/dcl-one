@@ -17,7 +17,7 @@ function show(view: ShopPurchaseStep) {
 describe('the purchase dialog', () => {
   it('Buy Item: the balance, the item and its price, then CANCEL or BUY ITEM', () => {
     vi.useFakeTimers()
-    const h = show({ step: 'confirm', item, balance: 700 })
+    const h = show({ step: 'confirm', items: [item], balance: 700 })
     const dialog = screen.getByRole('dialog', { name: 'Buy Item' })
     expect(dialog.textContent).toContain('Your Credits Balance:700')
     expect(dialog.textContent).toContain('Golden Armor')
@@ -35,7 +35,7 @@ describe('the purchase dialog', () => {
   })
 
   it('Insufficient Funds: how many credits are missing, and BUY CREDITS', () => {
-    const h = show({ step: 'insufficient', item, balance: 200, need: 300 })
+    const h = show({ step: 'insufficient', items: [item], balance: 200, need: 300 })
     expect(screen.getByRole('dialog', { name: 'Insufficient Funds' }).textContent).toContain('You will need to buy 300 Credits to purchase this item.')
     fireEvent.click(screen.getByRole('button', { name: 'Buy credits' }))
     expect(h.onBuyCredits).toHaveBeenCalled()
@@ -49,7 +49,7 @@ describe('the purchase dialog', () => {
   })
 
   it('Purchase successful: the item tagged NEW, CONTINUE SHOPPING or GO TO BACKPACK', () => {
-    const h = show({ step: 'success', item })
+    const h = show({ step: 'success', items: [item] })
     expect(screen.getByRole('dialog', { name: 'Purchase successful!' }).textContent).toContain('New')
     fireEvent.click(screen.getByRole('button', { name: 'Go to backpack' }))
     expect(h.onBackpack).toHaveBeenCalled()
@@ -62,6 +62,38 @@ describe('the purchase dialog', () => {
     expect(screen.getByRole('alert').textContent).toBe('You declined the signature.')
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
     expect(h.onRetry).toHaveBeenCalled()
+  })
+
+  it('Buy N Items: every unit a row, counted in the title, the list scrolling past two', () => {
+    const items = [item, { ...item, name: 'Silver Boots' }, { ...item, name: 'Silver Boots' }]
+    show({ step: 'confirm', items, balance: 7000 })
+    const dialog = screen.getByRole('dialog', { name: 'Buy 3 Items' })
+    expect(screen.getByRole('list', { name: '3 items' }).children).toHaveLength(3)
+    expect(dialog.textContent).toContain('Silver Boots')
+    expect(screen.getByRole('button', { name: 'Buy items' })).toBeInTheDocument()
+  })
+
+  it('lists two items as rows, with nothing to scroll', () => {
+    show({ step: 'confirm', items: [item, item], balance: 7000 })
+    expect(screen.getByRole('dialog', { name: 'Buy 2 Items' })).toBeInTheDocument()
+    expect(screen.queryByRole('list')).toBeNull()
+  })
+
+  it('Insufficient Funds for several items: what is missing for all of them', () => {
+    show({ step: 'insufficient', items: [item, item, item], balance: 200, need: 1300 })
+    expect(screen.getByRole('dialog', { name: 'Insufficient Funds' }).textContent).toContain('You will need to buy 1,300 Credits to purchase these items.')
+  })
+
+  it('counts the units while loading and processing', () => {
+    show({ step: 'loading', count: 3 })
+    expect(screen.getByRole('dialog', { name: 'Buy 3 Items' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Buy items' })).toBeDisabled()
+  })
+
+  it('Purchase successful: up to three of what was bought, each tagged NEW', () => {
+    show({ step: 'success', items: [item, item, item, item] })
+    expect(screen.getByRole('dialog', { name: 'Purchase successful!' }).querySelectorAll('[data-rarity]')).toHaveLength(3)
+    expect(screen.getAllByText('New')).toHaveLength(3)
   })
 
   it('asks a guest to sign in', () => {
@@ -81,11 +113,11 @@ describe('the purchase dialog over the app', () => {
     const ui = createShopOverlay(restore)
     const onClose = vi.fn()
     const onConfirm = vi.fn()
-    await act(async () => ui.show({ step: 'confirm', item, balance: 700 }, { onClose, onConfirm }))
+    await act(async () => ui.show({ step: 'confirm', items: [item], balance: 700 }, { onClose, onConfirm }))
     expect(document.activeElement?.textContent).toBe('Cancel')
-    await act(async () => ui.show({ step: 'success', item }, { onClose, onBackpack: vi.fn() }))
+    await act(async () => ui.show({ step: 'success', items: [item] }, { onClose, onBackpack: vi.fn() }))
     expect(document.activeElement?.textContent).toBe('Continue shopping')
-    await act(async () => ui.show({ step: 'confirm', item, balance: 700 }, { onClose, onConfirm }))
+    await act(async () => ui.show({ step: 'confirm', items: [item], balance: 700 }, { onClose, onConfirm }))
     expect(onConfirm).not.toHaveBeenCalled()
     fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
     expect(onClose).toHaveBeenCalled()
@@ -99,13 +131,13 @@ describe('the purchase dialog over the app', () => {
     const pointer = createShopOverlay(vi.fn())
     await act(async () => pointer.show({ step: 'loading' }, { onClose: vi.fn() }, { pointer: true }))
     expect(focus).toHaveBeenLastCalledWith({ focusVisible: false })
-    await act(async () => pointer.show({ step: 'confirm', item, balance: 700 }, { onClose: vi.fn(), onConfirm: vi.fn() }, { pointer: true }))
+    await act(async () => pointer.show({ step: 'confirm', items: [item], balance: 700 }, { onClose: vi.fn(), onConfirm: vi.fn() }, { pointer: true }))
     expect(focus).toHaveBeenLastCalledWith()
     await act(async () => pointer.hide())
     document.body.innerHTML = ''
     for (const how of [{ pointer: false }, undefined]) {
       const keyboard = createShopOverlay(vi.fn())
-      await act(async () => keyboard.show({ step: 'confirm', item, balance: 700 }, { onClose: vi.fn(), onConfirm: vi.fn() }, how))
+      await act(async () => keyboard.show({ step: 'confirm', items: [item], balance: 700 }, { onClose: vi.fn(), onConfirm: vi.fn() }, how))
       expect(focus).toHaveBeenLastCalledWith()
       await act(async () => keyboard.hide())
       document.body.innerHTML = ''
@@ -126,7 +158,7 @@ describe('the purchase dialog over the app', () => {
     const app = document.createElement('div')
     document.body.appendChild(app)
     const ui = createShopOverlay(vi.fn())
-    await act(async () => ui.show({ step: 'confirm', item, balance: 700 }, { onClose: vi.fn(), onConfirm: vi.fn() }))
+    await act(async () => ui.show({ step: 'confirm', items: [item], balance: 700 }, { onClose: vi.fn(), onConfirm: vi.fn() }))
     expect(app.inert).toBe(true)
     await act(async () => ui.hide())
     expect(app.inert).toBe(false)
@@ -142,7 +174,7 @@ describe('the purchase dialog over the app', () => {
 
   it('keeps Tab within the dialog', async () => {
     const ui = createShopOverlay(vi.fn())
-    await act(async () => ui.show({ step: 'confirm', item, balance: 700 }, { onClose: vi.fn(), onConfirm: vi.fn() }))
+    await act(async () => ui.show({ step: 'confirm', items: [item], balance: 700 }, { onClose: vi.fn(), onConfirm: vi.fn() }))
     const buy = screen.getByRole('button', { name: 'Buy item' })
     const cancel = screen.getByRole('button', { name: 'Cancel' })
     expect(document.activeElement).toBe(cancel)

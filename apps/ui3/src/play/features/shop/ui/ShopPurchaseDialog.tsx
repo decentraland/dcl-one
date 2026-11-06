@@ -1,12 +1,16 @@
-// ShopPurchaseDialog — one step of buying an item with Credits, as the design's Buy Items flow draws it:
-// Buy Item (the balance, the item and its price), Insufficient Funds (what is missing, BUY CREDITS),
-// Processing and Purchase successful. Loading, a purchase still being confirmed, a failure and the
-// sign-in request aren't drawn in the design; they use the same dialog. Presentational: whoever shows it
-// (the web Explorer's shell, which signs the purchase) decides the step and acts on the choice.
+// ShopPurchaseDialog — one step of buying with Credits, as the design's Buy Items and Cart flows draw it:
+// Buy Item or Buy N Items (the balance, the items and their prices), Insufficient Funds (what is missing,
+// BUY CREDITS), Processing and Purchase successful. Loading, a purchase still being confirmed, a failure
+// and the sign-in request aren't drawn in the design; they use the same dialog. Presentational: whoever
+// shows it (the web Explorer's shell, which signs the purchase) decides the step and acts on the choice.
+//
+// Every unit is one row (two of an item are two rows), and the title counts them. Past two rows the list
+// scrolls, with the Shop's scroll thumb beside it, as the Cart flow draws it. Purchase successful shows
+// up to three of what was bought (the design draws three).
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { formatCredits, formatCreditsFull } from '../../../../shop/checkout/lib/currency'
-import { Button, Spinner } from '../../../design'
+import { Button, ScrollThumb, Spinner } from '../../../design'
 import balanceIcon from '../../../assets/shop/modal/balance-credit.svg'
 import badge0 from '../../../assets/shop/modal/credits-badge-0.svg'
 import badge1 from '../../../assets/shop/modal/credits-badge-1.svg'
@@ -41,11 +45,12 @@ export interface ShopPurchaseItem {
 }
 
 export type ShopPurchaseStep =
-  | { step: 'loading' }
-  | { step: 'confirm'; item: ShopPurchaseItem; balance: number }
-  | { step: 'insufficient'; item: ShopPurchaseItem; balance: number; /** Credits short of the price. */ need: number }
-  | { step: 'processing'; balance: number | null }
-  | { step: 'success'; item: ShopPurchaseItem }
+  /** `count`: the units being bought (one unless said). */
+  | { step: 'loading'; count?: number }
+  | { step: 'confirm'; items: ShopPurchaseItem[]; balance: number }
+  | { step: 'insufficient'; items: ShopPurchaseItem[]; balance: number; /** Credits short of the price. */ need: number }
+  | { step: 'processing'; balance: number | null; count?: number }
+  | { step: 'success'; items: ShopPurchaseItem[] }
   | { step: 'pending' }
   | { step: 'failed'; message: string; retry: boolean }
   | { step: 'signIn' }
@@ -63,6 +68,13 @@ export interface ShopPurchaseDialogProps {
 
 /** How long BUY ITEM is up before it answers. */
 export const ARM_MS = 500
+/** Rows the list shows before it scrolls, and tiles Purchase successful shows, as drawn. */
+const ROWS_SHOWN = 2
+const TILES_SHOWN = 3
+/** The design's scroll thumb beside the list: 160px. */
+const LIST_THUMB = 160
+
+const buyTitle = (count: number): string => (count === 1 ? 'Buy Item' : `Buy ${count} Items`)
 
 /**
  * BUY ITEM, answering only once it has been up a moment: it appears where the loading step's disabled
@@ -88,25 +100,29 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
     </Button>
   )
   switch (view.step) {
-    case 'loading':
+    case 'loading': {
+      const count = view.count ?? 1
       return (
-        <ShopModal label="Buy Item" busy actions={<>{cancel}<Button size="modal" disabled>Buy item</Button></>}>
-          <h2 className={styles.title}>Buy Item</h2>
+        <ShopModal label={buyTitle(count)} busy actions={<>{cancel}<Button size="modal" disabled>{count === 1 ? 'Buy item' : 'Buy items'}</Button></>}>
+          <h2 className={styles.title}>{buyTitle(count)}</h2>
           <ShopModalGap count={2} />
           <Working label="Checking the price" />
           <ShopModalGap />
         </ShopModal>
       )
-    case 'confirm':
+    }
+    case 'confirm': {
+      const count = view.items.length
       return (
-        <ShopModal label="Buy Item" actions={<>{cancel}<ArmedButton onClick={onConfirm}>Buy item</ArmedButton></>}>
-          <h2 className={styles.title}>Buy Item</h2>
+        <ShopModal label={buyTitle(count)} actions={<>{cancel}<ArmedButton onClick={onConfirm}>{count === 1 ? 'Buy item' : 'Buy items'}</ArmedButton></>}>
+          <h2 className={styles.title}>{buyTitle(count)}</h2>
           <Balance credits={view.balance} />
           <ShopModalGap count={2} />
-          <ItemRow item={view.item} />
+          <ItemList items={view.items} />
           <ShopModalGap />
         </ShopModal>
       )
+    }
     case 'insufficient':
       return (
         <ShopModal label="Insufficient Funds" actions={<>{cancel}<Button size="modal" onClick={onBuyCredits}>Buy credits</Button></>}>
@@ -115,17 +131,17 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
           <Balance credits={view.balance} />
           <ShopModalGap />
           <p className={styles.note}>
-            You will need to buy <strong>{formatCreditsFull(view.need)} Credits</strong> to purchase this item.
+            You will need to buy <strong>{formatCreditsFull(view.need)} Credits</strong> to purchase {view.items.length === 1 ? 'this item' : 'these items'}.
           </p>
           <ShopModalGap />
-          <ItemRow item={view.item} />
+          <ItemList items={view.items} />
           <ShopModalGap />
         </ShopModal>
       )
     case 'processing':
       return (
         <ShopModal
-          label="Buy Item"
+          label={buyTitle(view.count ?? 1)}
           busy
           actions={
             <Button size="modal" disabled>
@@ -133,7 +149,7 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
             </Button>
           }
         >
-          <h2 className={styles.title}>Buy Item</h2>
+          <h2 className={styles.title}>{buyTitle(view.count ?? 1)}</h2>
           {view.balance != null && <Balance credits={view.balance} />}
           <ShopModalGap count={2} />
           <Working label="Processing your purchase" />
@@ -158,10 +174,14 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
           <SuccessBadge />
           <h2 className={styles.title}>Purchase successful!</h2>
           <ShopModalGap />
-          <span className={styles.bought}>
+          <span className={`${styles.bought} ${view.items.length > 1 ? styles.boughtMany : ''}`.trim()}>
             <img className={styles.boughtGlow} src={successGlow} alt="" aria-hidden="true" />
             <img className={styles.boughtSpark} src={successSpark} alt="" aria-hidden="true" />
-            <ShopItemTile className={styles.boughtTile} thumbnail={view.item.thumbnail} rarity={view.item.rarity} categoryIcon={view.item.categoryIcon} isNew />
+            <span className={styles.boughtRow}>
+              {view.items.slice(0, TILES_SHOWN).map((item, i) => (
+                <ShopItemTile key={i} thumbnail={item.thumbnail} rarity={item.rarity} categoryIcon={item.categoryIcon} isNew />
+              ))}
+            </span>
           </span>
           <ShopModalGap />
         </ShopModal>
@@ -226,6 +246,32 @@ function Balance({ credits }: { credits: number }): React.JSX.Element {
         {formatCredits(credits)}
       </span>
     </p>
+  )
+}
+
+/** The rows, scrolling past ROWS_SHOWN with the design's thumb beside them. */
+function ItemList({ items }: { items: ShopPurchaseItem[] }): React.JSX.Element {
+  const scroller = useRef<HTMLDivElement>(null)
+  if (items.length <= ROWS_SHOWN) {
+    return (
+      <>
+        {items.map((item, i) => (
+          <ItemRow key={i} item={item} />
+        ))}
+      </>
+    )
+  }
+  return (
+    <div className={styles.listWrap}>
+      <div ref={scroller} className={styles.list} role="list" aria-label={`${items.length} items`}>
+        {items.map((item, i) => (
+          <div key={i} role="listitem">
+            <ItemRow item={item} />
+          </div>
+        ))}
+      </div>
+      <ScrollThumb target={scroller} length={LIST_THUMB} className={styles.listThumb} />
+    </div>
   )
 }
 

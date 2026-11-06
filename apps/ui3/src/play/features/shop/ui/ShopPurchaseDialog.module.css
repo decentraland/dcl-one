@@ -219,8 +219,46 @@
   height: 167.042px;
   mix-blend-mode: plus-lighter;
 }
-.bought > .boughtTile {
+.boughtRow {
   position: absolute;
   left: 27px;
   top: 0;
+  display: flex;
+  gap: 16px;
+}
+/* More than one: the column's width, the tiles centred on it (three overflow it by 43px a side, as drawn),
+   the glow and the spark where the one tile's would be. */
+.boughtMany {
+  width: 100%;
+}
+.boughtMany > .boughtRow {
+  left: 50%;
+  transform: translateX(-50%);
+}
+.boughtMany > .boughtGlow {
+  left: 14.502px;
+}
+.boughtMany > .boughtSpark {
+  left: 113.13px;
+}
+
+/* Past two rows the list scrolls in their height, its own scrollbar hidden for the design's thumb 10px
+   beyond the column's edge. */
+.listWrap {
+  position: relative;
+  width: 100%;
+}
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 316px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.list::-webkit-scrollbar {
+  display: none;
+}
+.listThumb {
+  right: -24px;
 }

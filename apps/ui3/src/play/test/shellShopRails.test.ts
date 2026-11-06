@@ -113,7 +113,7 @@ function rails(opts: { trusted: string; kind: 'managed' | 'web3'; gasless?: bool
     return shown.at(-1)!
   }
   const buy = async () => {
-    await shell.request('shop.buy', { v: SHOP_PROTOCOL, item: { contract: CONTRACT, itemId: String(ITEM) }, method: 'credits' })
+    await shell.request('shop.buy', { v: SHOP_PROTOCOL, items: [{ contract: CONTRACT, itemId: String(ITEM), quantity: 1 }], method: 'credits' })
     ;(await until('confirm')).handlers.onConfirm?.()
   }
   return { shop, chain, relay, wallet, shown, events, until, buy }

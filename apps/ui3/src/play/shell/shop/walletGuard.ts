@@ -1,6 +1,6 @@
 // The buyer's wallet as ONE confirmed in-world purchase may use it. Bound to that purchase's intent (the
-// login's account, the settlement chain, the trusted CreditsManager, the item and where its primary sale
-// settles), it forwards only what paying that item with one credit takes, and decodes it first:
+// login's account, the settlement chain, the trusted CreditsManager, the items and where their primary
+// sales settle), it forwards only what paying those items with one credit takes, and decodes it first:
 //
 //  - the account and the chain, and a switch to that chain;
 //  - the CreditsManager's meta-transaction, in its exact EIP-712 schema (domain name, version, the
@@ -8,8 +8,8 @@
 //    more, for the buyer;
 //  - or the same call sent directly from the buyer, with no value;
 //  - and in both, `useCredits` itself: one credit, no MANA from the wallet, no more spent than the credit
-//    holds, no custom call, and an external call to the sale's own venue that mints or accepts exactly the
-//    confirmed item for the buyer.
+//    holds, no custom call, and an external call to the sales' own venue that mints or accepts exactly the
+//    confirmed items for the buyer: each unit once, as many of each as confirmed, nothing else.
 //
 // Before each signature or transaction it reads the wallet's selected account and checks the login is
 // still the one confirmed. Anything else is refused before it reaches the wallet.
@@ -38,8 +38,9 @@ export interface PurchaseIntent {
   buyer: string
   chainId: number
   manager: TrustedManager
-  item: { contract: string; itemId: string }
-  /** The confirmed sale's venue and call: the CollectionStore's buy, or a marketplace's accept. */
+  /** The confirmed units, one entry per unit (two of an item are two entries), contracts lowercase. */
+  units: { contract: string; itemId: string }[]
+  /** The confirmed sales' venue and call: the CollectionStore's buy, or a marketplace's accept. */
   sale: { venue: string; call: 'storeBuy' | 'accept' | 'acceptWithCoupon' }
   /** False once the login or the wallet changed since the buyer confirmed. */
   current(): boolean
@@ -69,7 +70,21 @@ function refuse(why: string): never {
   throw new WalletRefusal(why, 4100)
 }
 
-/** `useCredits` paying exactly the confirmed item, with one credit and nothing from the wallet. */
+/** Whether `got` names exactly the units of `want`, each as often (in any order). */
+function sameUnits(got: { contract: string; itemId: bigint }[], want: PurchaseIntent['units']): boolean {
+  if (want.length === 0 || got.length !== want.length) return false
+  const count = new Map<string, number>()
+  for (const u of want) count.set(`${u.contract}:${u.itemId}`, (count.get(`${u.contract}:${u.itemId}`) ?? 0) + 1)
+  for (const g of got) {
+    const key = `${g.contract}:${g.itemId.toString()}`
+    const left = count.get(key) ?? 0
+    if (left === 0) return false
+    count.set(key, left - 1)
+  }
+  return true
+}
+
+/** `useCredits` paying exactly the confirmed units, with one credit and nothing from the wallet. */
 export function checkUseCredits(data: unknown, intent: PurchaseIntent, nowSeconds = Math.floor(Date.now() / 1000)): void {
   if (typeof data !== 'string' || !/^0x[0-9a-fA-F]*$/.test(data)) refuse('The Shop only signs its own purchases.')
   let decoded
@@ -88,30 +103,28 @@ export function checkUseCredits(data: unknown, intent: PurchaseIntent, nowSecond
   if (lower(call.target) !== intent.sale.venue) refuse('The purchase goes somewhere other than the item’s sale.')
   if (call.expiresAt > BigInt(nowSeconds + MAX_CALL_LIFETIME_S)) refuse('The purchase would stay valid too long.')
   if (lower(call.selector) !== SELECTOR[intent.sale.call]) refuse('The purchase is not the item’s sale.')
-  const { contract, itemId } = intent.item
   const buyer = intent.buyer
   try {
     if (intent.sale.call === 'storeBuy') {
+      // One entry per unit, as the rails build it: one id, one price and the buyer as its one beneficiary.
       const [items] = decodeAbiParameters(STORE_BUY.inputs, call.data)
       const ok =
-        items.length === 1 &&
-        lower(items[0].collection) === contract &&
-        items[0].ids.length === 1 &&
-        items[0].ids[0] === BigInt(itemId) &&
-        items[0].prices.length === 1 &&
-        items[0].beneficiaries.length === 1 &&
-        lower(items[0].beneficiaries[0]) === buyer
+        items.every((i) => i.ids.length === 1 && i.prices.length === 1 && i.beneficiaries.length === 1 && lower(i.beneficiaries[0]) === buyer) &&
+        sameUnits(
+          items.map((i) => ({ contract: lower(i.collection), itemId: i.ids[0] })),
+          intent.units
+        )
       if (!ok) refuse('The purchase is not the confirmed item.')
       return
     }
+    // One trade per unit, each sending the buyer one collection item.
     const [trades] = intent.sale.call === 'accept' ? decodeAbiParameters(ACCEPT.inputs, call.data) : decodeAbiParameters(ACCEPT_WITH_COUPON.inputs, call.data)
-    const sent = trades.length === 1 ? trades[0].sent : []
     const ok =
-      sent.length === 1 &&
-      sent[0].assetType === BigInt(ASSET_TYPE.COLLECTION_ITEM) &&
-      lower(sent[0].contractAddress) === contract &&
-      sent[0].value === BigInt(itemId) &&
-      lower(sent[0].beneficiary) === buyer
+      trades.every((t) => t.sent.length === 1 && t.sent[0].assetType === BigInt(ASSET_TYPE.COLLECTION_ITEM) && lower(t.sent[0].beneficiary) === buyer) &&
+      sameUnits(
+        trades.map((t) => ({ contract: lower(t.sent[0].contractAddress), itemId: t.sent[0].value })),
+        intent.units
+      )
     if (!ok) refuse('The purchase is not the confirmed item.')
   } catch (e) {
     if (e instanceof WalletRefusal) throw e

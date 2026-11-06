@@ -1,15 +1,17 @@
-// The web shell's side of the in-world Shop purchase (lib/shopProtocol). The HUD asks to buy an item; this
-// reads the item's listing, the server's offer and the buyer's Credits balance itself, shows the buyer the
-// design's dialog over the app (./overlay), and on BUY ITEM settles the purchase through the web Shop's own
-// checkout (cart partition, review, the per-group executor and its rails), with the wallet the host
-// injected, bound to the confirmed purchase (./walletGuard). The buyer is the root signer of the login
-// this shell holds; the HUD never names it.
+// The web shell's side of the in-world Shop purchase (lib/shopProtocol). The HUD asks to buy items (one,
+// or its cart's); this reads their listings, the server's offers and the buyer's Credits balance itself,
+// shows the buyer the design's dialog over the app (./overlay), and on BUY ITEM settles the purchase
+// through the web Shop's own checkout (cart partition, review, the per-group executor and its rails), with
+// the wallet the host injected, bound to the confirmed purchase (./walletGuard). The buyer is the root
+// signer of the login this shell holds; the HUD never names it.
 //
-// Every operation is kept per buyer (./ledger) with its own checkout, and its state goes to the HUD as
-// `bevy-shell:shop` events and answers shop.status. A purchase handed off to the wallet or the relay is
-// never failed or retried by a timeout: it stays pending and is watched (the executor's watchGroup: its
-// receipt, or the server's record of its credit) until it settles, across dialogs and reloads. Buying the
-// same item again while one is unresolved shows that one instead.
+// The checkout partitions the items into groups, each one transaction paid with one credit (the store's
+// mints together, a marketplace's trades together). Each group is an operation of its own, run one after
+// another under the one confirmation: kept per buyer (./ledger) with its own checkout, its state going to
+// the HUD as `bevy-shell:shop` events and answering shop.status. A purchase handed off to the wallet or the
+// relay is never failed or retried by a timeout: it stays pending and is watched (the executor's
+// watchGroup: its receipt, or the server's record of its credit) until it settles, across dialogs and
+// reloads. Buying an item again while one of it is unresolved shows that one instead.
 
 import type { AuthIdentity as SignerIdentity } from '../../../data/auth/identity'
 import { fetchProfile } from '../../../data/catalyst/profile'
@@ -44,12 +46,14 @@ import {
   SHOP_METHODS,
   SHOP_PROTOCOL,
   isTerminal,
+  MAX_PURCHASE_UNITS,
   TERMINAL_STATES,
   type ShopBalance,
   type ShopBuyRequest,
   type ShopCapabilities,
   type ShopOperation,
   type ShopOperationEvent,
+  type ShopLine,
   type ShopOperationState,
   type ShopWalletKind
 } from '../../lib/shopProtocol'
@@ -68,8 +72,8 @@ export interface ShellShopWallet {
 
 /** The dialog's item without its glyph: the overlay draws the category's. */
 export type ShellPurchaseItem = Omit<ShopPurchaseItem, 'categoryIcon'> & { category?: string }
-type WithItem<S> = S extends { item: ShopPurchaseItem } ? Omit<S, 'item'> & { item: ShellPurchaseItem } : S
-export type ShellPurchaseView = WithItem<ShopPurchaseStep>
+type WithItems<S> = S extends { items: ShopPurchaseItem[] } ? Omit<S, 'items'> & { items: ShellPurchaseItem[] } : S
+export type ShellPurchaseView = WithItems<ShopPurchaseStep>
 
 export interface ShellPurchaseHandlers {
   onClose: () => void
@@ -267,6 +271,14 @@ function shortAddress(address: string): string {
   return address.length > 10 ? `${address.slice(0, 6)}…${address.slice(-4)}` : address
 }
 
+/** One checkout group of a quote: its cart lines and offers, what it buys, and one display per unit. */
+interface QuotePart {
+  group: CartGroup
+  priced: { line: CartLine; offer: PurchaseOffer }[]
+  items: ShopLine[]
+  displays: ShellPurchaseItem[]
+}
+
 /** What the buyer is shown agreeing to: the session it was read for and the quoted terms. */
 interface Quote {
   login: string
@@ -274,14 +286,26 @@ interface Quote {
   kind: ShopWalletKind
   session: Session
   client: ShopClient
-  line: CartLine
-  offer: PurchaseOffer
-  group: CartGroup
-  item: ShellPurchaseItem
+  /** The groups, in the order they run. */
+  parts: QuotePart[]
+  /** Every unit, in the request's order. */
+  items: ShellPurchaseItem[]
+  /** Whole credits, all groups together. */
+  total: number
   balance: number
   /** Set when the wallet changed account or went away after the terms were shown. */
   stale?: string
 }
+
+/** A group's run, as the checkout around it reads it. */
+type PartOutcome =
+  | { kind: 'confirmed' }
+  | { kind: 'pending' }
+  /** Nothing of the group was handed off, or its transaction reverted. `retry`: how it may start again. */
+  | { kind: 'failed'; message: string; retry: 'cancelled' | 'failed' | null; topUp?: number }
+
+const unitsOf = (lines: ShopLine[]): number => lines.reduce((n, l) => n + l.quantity, 0)
+const sameItem = (a: { contract: string; itemId: string }, b: { contract: string; itemId: string }): boolean => a.contract === b.contract && a.itemId === b.itemId
 
 /** An operation and, while its dialog is up, what it shows. */
 type Operation = OperationRecord & {
@@ -310,6 +334,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   let dialog: Operation | null = null
   /** A purchase is being opened (its records read, its lock taken): one at a time. */
   let starting = false
+  /** A confirmed purchase is running its groups: nothing else opens meanwhile. */
+  let running = false
   /** Restores run one after another, so one page never asks twice for a lock it is taking. */
   let restoring: Promise<void> = Promise.resolve()
   /** Other tabs' operations whose lock this page is queued for. */
@@ -319,7 +345,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     v: SHOP_PROTOCOL,
     operation: op.id,
     state: op.state,
-    item: op.item,
+    items: op.items,
+    ...(op.cart ? { cart: true as const } : {}),
     ...(op.next ? { next: op.next } : {}),
     ...(op.txHash !== undefined ? { txHash: op.txHash } : {})
   })
@@ -383,12 +410,13 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     show(op, { step: 'failed', message, retry: retry != null }, { onClose: () => close(op, 'failed'), ...(retry ? { onRetry: retry } : {}) })
   }
   const showPending = (op: Operation): void => show(op, { step: 'pending' }, { onClose: () => hide(op) })
-  const showSuccess = (op: Operation): void => {
-    if (!op.display) {
+  /** Purchase successful, with what was bought (the operation's own, or a whole checkout's). */
+  const showSuccess = (op: Operation, items: ShellPurchaseItem[] | undefined = op.displays): void => {
+    if (!items || items.length === 0) {
       hide(op)
       return
     }
-    show(op, { step: 'success', item: op.display }, {
+    show(op, { step: 'success', items }, {
       onClose: () => hide(op),
       onBackpack: () => {
         hide(op)
@@ -609,12 +637,12 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
 
   // ---- Reading the terms and confirming ---------------------------------------------------------
 
-  /** A new operation, held by this page before anything of it is stored. */
-  const create = async (req: ShopBuyRequest, buyer: string | null): Promise<Operation> => {
+  /** A new operation (for `items`: the request's, or one group of it), held by this page before anything of it is stored. */
+  const create = async (req: ShopBuyRequest, buyer: string | null, items: ShopLine[] = req.items): Promise<Operation> => {
     const id = svc.newId()
     const release = (await svc.claim(id)) ?? undefined
     const at = svc.now()
-    const op: Operation = { id, buyer, item: req.item, state: 'reviewing', createdAt: at, updatedAt: at, release }
+    const op: Operation = { id, buyer, items, ...(req.cart ? { cart: true as const } : {}), state: 'reviewing', createdAt: at, updatedAt: at, release, input: req.input }
     operations.set(op.id, op)
     publish(op)
     return op
@@ -664,7 +692,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       fail(op, "Your sign-in can't confirm purchases here. Sign in again on the website to buy with Credits.")
       return
     }
-    show(op, { step: 'loading' }, { onClose: () => close(op, 'cancelled') })
+    show(op, { step: 'loading', count: unitsOf(req.items) }, { onClose: () => close(op, 'cancelled') })
     let quote: Quote | string
     try {
       quote = await readQuote(op, who.login, who.buyer, kind, req)
@@ -682,37 +710,79 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   const readQuote = async (op: Operation, login: StoredLogin, buyer: string, kind: ShopWalletKind, req: ShopBuyRequest): Promise<Quote | string> => {
     const c = confirmedClient(loginKey(login))
     await svc.primeFlags().catch(() => {})
-    const [listing, balance] = await Promise.all([svc.fetchItem(req.item.contract, req.item.itemId, c), svc.balance(buyer, c)])
-    const input = listing ? cartInput(listing) : null
-    if (!listing || !input) return "This item isn't on sale in the Shop right now."
-    // The creator's name, from their profile, read while the offer is: never the app's word for it.
-    const creator = listing.creator ? svc.creatorName(listing.creator).catch(() => null) : Promise.resolve(null)
+    const [listings, balance] = await Promise.all([Promise.all(req.items.map((l) => svc.fetchItem(l.contract, l.itemId, c))), svc.balance(buyer, c)])
+    // One item is "this item"; in a cart, each is named.
+    const single = req.items.length === 1
+    const named = (i: number): string => (single ? 'This item' : listings[i]?.name || 'One of these items')
+    const inputs = listings.map((listing) => (listing ? cartInput(listing) : null))
+    const gone = inputs.findIndex((input) => input == null)
+    if (gone >= 0) return `${named(gone)} isn't on sale in the Shop right now.`
+    for (const [i, l] of req.items.entries()) {
+      const available = listings[i]?.available
+      if (available != null && l.quantity > available) return available === 0 ? `${named(i)} is sold out.` : `Only ${available} left of ${single ? 'this item' : named(i)}.`
+    }
+    // The creators' names, from their profiles, read while the offers are: never the app's word for them.
+    const creators = new Map<string, Promise<string | null>>()
+    for (const listing of listings) {
+      const creator = listing?.creator
+      if (creator && !creators.has(creator)) creators.set(creator, svc.creatorName(creator).catch(() => null))
+    }
     const account = parseEvmAddress(buyer)
     if (!account) return "Your sign-in can't confirm purchases here."
-    // A fresh line each time the terms are read (a retry included): nothing was handed off before them.
+    // Fresh lines each time the terms are read (a retry included): nothing was handed off before them.
     const store = (op.store = ledger.storeFor(op))
     store.replaceCheckout(null)
     store.clear()
-    const added = store.add(input)
-    store.setMethod(added.id, 'credits')
-    const line = store.getSnapshot().lines.find((l) => l.id === added.id) ?? added
+    const ids = req.items.map((l, i) => {
+      const added = store.add({ ...inputs[i]!, quantity: l.quantity })
+      store.setMethod(added.id, 'credits')
+      return added.id
+    })
+    const stored = store.getSnapshot().lines
+    const lines = ids.map((id) => stored.find((l) => l.id === id))
+    const short = lines.findIndex((line, i) => line == null || line.quantity !== req.items[i].quantity)
+    if (short >= 0) return `${named(short)} can't be bought ${req.items[short].quantity} at a time.`
+    const cartLines = lines as CartLine[]
     const session: Session = kind === 'web3' ? { kind: 'web3', wallet: account } : { kind: 'web2', account }
-    const offers = await svc.offers(c)([{ key: line.id, asset: line.asset, listing: line.listing, quantity: 1 }], session, AbortSignal.timeout(15_000))
-    const offer = offers[line.id] ?? null
-    if (!offer) return "This item isn't on sale in the Shop right now."
-    const partition = partitionCart([{ line, offer }], session, { creditsBalance: balance.balanceCents })
-    const group = partition.groups.find((g) => g.key.method === 'credits')
-    if (!group || group.total.method !== 'credits') return "This item can't be bought with Credits. You can still buy it on the website."
-    const item: ShellPurchaseItem = {
-      name: listing.name,
-      creator: (await creator) || shortAddress(listing.creator ?? ''),
-      rarity: listing.rarity || 'base',
-      thumbnail: listing.thumbnail || undefined,
-      category: listing.category === 'emote' ? 'emote' : (listing.wearableCategory ?? listing.category),
-      credits: creditsCeil(group.total.charged)
+    const offers = await svc.offers(c)(
+      cartLines.map((line) => ({ key: line.id, asset: line.asset, listing: line.listing, quantity: line.quantity })),
+      session,
+      AbortSignal.timeout(15_000)
+    )
+    const noOffer = cartLines.findIndex((line) => offers[line.id] == null)
+    if (noOffer >= 0) return `${named(noOffer)} isn't on sale in the Shop right now.`
+    const priced = cartLines.map((line) => ({ line, offer: offers[line.id]! }))
+    const partition = partitionCart(priced, session, { creditsBalance: balance.balanceCents })
+    const refused = partition.refused[0]
+    if (refused?.code === 'groupTooLarge') return `That's more than ${MAX_PURCHASE_UNITS} items at once. Buy some of them first.`
+    if (refused || partition.groups.length === 0 || partition.groups.some((g) => g.key.method !== 'credits' || g.total.method !== 'credits')) {
+      return single ? "This item can't be bought with Credits. You can still buy it on the website." : `${named(refused?.index ?? 0)} can't be bought with Credits here. You can still buy it on the website.`
     }
-    op.display = item
-    return { login: loginKey(login), buyer, kind, session, client: c, line, offer, group, item, balance: balance.credits }
+    // Each line's unit price, as the partition charges it (whole credits).
+    const unitCredits = new Map<string, number>()
+    for (const g of partition.groups) g.lineIds.forEach((id, k) => unitCredits.set(id, g.quotes[k].method === 'credits' ? creditsCeil(g.quotes[k].quoted) : 0))
+    const displays = await Promise.all(
+      cartLines.map(async (line, i): Promise<ShellPurchaseItem> => {
+        const listing = listings[i]!
+        return {
+          name: listing.name,
+          creator: (listing.creator ? await creators.get(listing.creator) : null) || shortAddress(listing.creator ?? ''),
+          rarity: listing.rarity || 'base',
+          thumbnail: listing.thumbnail || undefined,
+          category: listing.category === 'emote' ? 'emote' : (listing.wearableCategory ?? listing.category),
+          credits: unitCredits.get(line.id) ?? 0
+        }
+      })
+    )
+    const unitsFor = (i: number): ShellPurchaseItem[] => Array.from({ length: cartLines[i].quantity }, () => displays[i])
+    const indexOf = new Map(cartLines.map((line, i) => [line.id, i]))
+    const parts: QuotePart[] = partition.groups.map((group) => {
+      const at = group.lineIds.map((id) => indexOf.get(id)!)
+      return { group, priced: at.map((i) => priced[i]), items: at.map((i) => req.items[i]), displays: at.flatMap(unitsFor) }
+    })
+    const items = cartLines.flatMap((_, i) => unitsFor(i))
+    op.displays = items
+    return { login: loginKey(login), buyer, kind, session, client: c, parts, items, total: creditsCeil(partition.totals.credits.charged), balance: balance.credits }
   }
 
   /** While the terms are up, a wallet that leaves the buyer's account makes them stale. */
@@ -735,9 +805,9 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   }
 
   const present = (op: Operation, req: ShopBuyRequest, quote: Quote): void => {
-    const short = quote.item.credits - quote.balance
+    const short = quote.total - quote.balance
     if (short > 0) {
-      show(op, { step: 'insufficient', item: quote.item, balance: quote.balance, need: short }, {
+      show(op, { step: 'insufficient', items: quote.items, balance: quote.balance, need: short }, {
         onClose: () => close(op, 'cancelled'),
         onBuyCredits: () => {
           deps.openExternal(svc.creditsUrl())
@@ -746,17 +816,24 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       })
       return
     }
-    show(op, { step: 'confirm', item: quote.item, balance: quote.balance }, { onClose: () => close(op, 'cancelled'), onConfirm: () => void settle(op, req, quote) })
+    show(op, { step: 'confirm', items: quote.items, balance: quote.balance }, { onClose: () => close(op, 'cancelled'), onConfirm: () => void settle(op, req, quote) })
     watchWallet(op, quote)
   }
 
   // ---- Paying -----------------------------------------------------------------------------------
 
-  /** BUY ITEM: the confirmed terms, for the same login and wallet account, through the web Shop's executor. */
+  const STORAGE_REFUSED = "This browser can't keep a record of the purchase right now (its storage is full or blocked), so nothing was bought."
+
+  /**
+   * BUY ITEM: the confirmed terms, for the same login and wallet account, through the web Shop's executor,
+   * group by group. The first group runs as the operation the dialog opened with; each next one is an
+   * operation of its own, held by this page before it runs. A group that fails ends the checkout: what
+   * came before it stands (bought, or followed to its end), and what comes after it never starts.
+   */
   const settle = async (op: Operation, req: ShopBuyRequest, quote: Quote): Promise<void> => {
-    if (op.state !== 'reviewing' || dialog !== op) return
+    if (op.state !== 'reviewing' || dialog !== op || running) return
     op.unwatchWallet?.()
-    // Every TRY AGAIN offered below follows an attempt that handed nothing off.
+    // Every TRY AGAIN offered below follows a checkout that handed nothing off.
     const again = (): void => restart(op, req, 'cancelled')
     const current = (): boolean => {
       const who = signedIn()
@@ -767,10 +844,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       fail(op, quote.stale ?? 'Your sign-in changed meanwhile. Open the item again to buy it.')
       return
     }
-    const chainId = quote.group.key.chainId
-    const manager = svc.manager(chainId)
-    const call = quote.group.key.call.kind
-    if (!manager || call === 'one') {
+    // Every group settles through a CreditsManager this deployment trusts, in a call the guard reads.
+    if (quote.parts.some((p) => !svc.manager(p.group.key.chainId) || p.group.key.call.kind === 'one')) {
       fail(op, "Buying with Credits isn't available here right now.")
       return
     }
@@ -789,28 +864,84 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     }
     // A purchase that can't be kept can't be followed after a reload: nothing is reserved without it.
     if (!ledger.writable()) {
-      fail(op, "This browser can't keep a record of the purchase right now (its storage is full or blocked), so nothing was bought.", again)
+      fail(op, STORAGE_REFUSED, again)
       return
+    }
+    running = true
+    // Followed only once the checkout's last dialog is up: a watch that settles at once then updates it.
+    const follow: Operation[] = []
+    try {
+      let last = op
+      for (const [i, part] of quote.parts.entries()) {
+        let run = op
+        if (i > 0) {
+          run = await create(req, quote.buyer, part.items)
+          dialog = run
+          if (!run.release) {
+            move(run, 'cancelled')
+            fail(run, partly("This browser couldn't keep the rest of the purchase to this tab.", req))
+            return
+          }
+        }
+        run.items = part.items
+        run.displays = part.displays
+        last = run
+        const outcome = await runPart(run, part, quote, wallet, current)
+        if (outcome.kind === 'pending') follow.push(run)
+        if (outcome.kind !== 'failed') continue
+        if (i > 0) {
+          fail(run, partly(outcome.message, req))
+          return
+        }
+        // Nothing of the checkout was handed off.
+        if (outcome.topUp != null) present(op, req, { ...quote, balance: outcome.topUp })
+        else fail(op, outcome.message, outcome.retry === 'cancelled' ? again : outcome.retry === 'failed' ? () => restart(op, req, 'failed') : undefined)
+        return
+      }
+      if (follow.length > 0) showPending(last)
+      else showSuccess(last, quote.items)
+    } finally {
+      running = false
+      for (const pending of follow) void reconcile(pending)
+    }
+  }
+
+  /** A checkout's failure after part of it went out: what went stands, the rest didn't. */
+  const partly = (why: string, req: ShopBuyRequest): string =>
+    `Part of this purchase went through, but not all of it: ${why}${req.cart ? ' What wasn’t bought is still in your cart.' : ''}`
+
+  /** One group, as its own operation, through the executor: never resubmitted, and followed if handed off. */
+  const runPart = async (op: Operation, part: QuotePart, quote: Quote, wallet: Eip1193Provider, current: () => boolean): Promise<PartOutcome> => {
+    const { group } = part
+    const chainId = group.key.chainId
+    const manager = svc.manager(chainId)
+    const call = group.key.call.kind
+    if (!manager || call === 'one') return { kind: 'failed', message: "Buying with Credits isn't available here right now.", retry: null }
+    const refused = (message: string, retry: 'cancelled' | 'failed' | null, topUp?: number): PartOutcome => {
+      op.state = 'reviewing'
+      publish(op)
+      return { kind: 'failed', message, retry, ...(topUp != null ? { topUp } : {}) }
     }
     const intent: PurchaseIntent = {
       buyer: quote.buyer,
       chainId,
       manager,
-      item: req.item,
-      sale: { venue: quote.group.key.contract.toLowerCase(), call },
+      units: part.items.flatMap((l) => Array.from({ length: l.quantity }, () => ({ contract: l.contract, itemId: l.itemId }))),
+      sale: { venue: group.key.contract.toLowerCase(), call },
       current,
       durable: (stage) => durable(op, stage)
     }
     op.chainId = chainId
     move(op, 'processing')
-    if (ledger.failed(op.id) || ledger.saved(op.buyer ?? '', op.id)?.state !== 'processing') {
-      op.state = 'reviewing'
-      publish(op)
-      fail(op, "This browser can't keep a record of the purchase right now (its storage is full or blocked), so nothing was bought.", again)
-      return
-    }
-    show(op, { step: 'processing', balance: quote.balance }, { onClose: () => {} })
+    if (ledger.failed(op.id) || ledger.saved(op.buyer ?? '', op.id)?.state !== 'processing') return refused(STORAGE_REFUSED, 'cancelled')
+    show(op, { step: 'processing', balance: quote.balance, count: quote.items.length }, { onClose: () => {} })
+    // The operation's own cart holds its group's lines only (a checkout's first operation read them all).
     const store = (op.store ??= ledger.storeFor(op))
+    const lines = part.priced.map((p) => p.line)
+    if (store.getSnapshot().lines.length !== lines.length) {
+      store.clear()
+      store.restore(lines)
+    }
     // The relay gets the signed purchase only once its hand-off is kept; refused here, it was never sent.
     const rail = svc.rail()
     const send = rail.fetchImpl ?? ((...a: Parameters<typeof fetch>) => fetch(...a))
@@ -820,24 +951,24 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       }
       return send(input, init)
     }) as typeof fetch
+    const single = quote.items.length === 1
     let unmirror = (): void => {}
     let result: GroupResult
     try {
-      const review = await reviewCart([{ line: quote.line, offer: quote.offer }], quote.session, quote.buyer, svc.resolvers(quote.client))
+      const review = await reviewCart(part.priced, quote.session, quote.buyer, svc.resolvers(quote.client))
       const resolved = new Map(review.buyable.map((r) => [r.line.id, r]))
-      if (!resolved.has(quote.line.id)) {
-        const why = review.own.length ? 'You already own this item.' : review.stale.length ? 'Its price changed. Try again to see the new one.' : "This item can't be bought right now."
-        op.state = 'reviewing'
-        publish(op)
-        fail(op, why, review.stale.length ? again : undefined)
-        return
+      const missing = lines.find((l) => !resolved.has(l.id))
+      if (missing) {
+        const name = single ? 'this item' : missing.display.name
+        const why = review.own.length ? `You already own ${name}.` : review.stale.length ? `${single ? 'Its' : `${name}’s`} price changed. Try again to see the new one.` : `${single ? 'This item' : name} can't be bought right now.`
+        return refused(why, review.stale.length ? 'cancelled' : null)
       }
-      store.startCheckout([quote.group])
+      store.startCheckout([group])
       // Every step the executor writes to the checkout is copied into the operation's record.
       const mirror = (): void => {
-        const group = store.getSnapshot().checkout?.groups[0]
-        if (!group) return
-        op.progress = { ...group }
+        const progress = store.getSnapshot().checkout?.groups[0]
+        if (!progress) return
+        op.progress = { ...progress }
         keep(op)
       }
       mirror()
@@ -848,7 +979,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           store,
           guard: createSpendGuard()
         },
-        quote.group,
+        group,
         resolved
       )
       unmirror()
@@ -859,41 +990,24 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       // got as far as a credit, it is followed like any purchase that may have gone out, never retried.
       if (op.progress && op.progress.creditIds.length > 0) {
         move(op, 'pending')
-        showPending(op)
-        void reconcile(op)
-        return
+        return { kind: 'pending' }
       }
-      op.state = 'reviewing'
-      publish(op)
-      fail(op, "We couldn't start this purchase. Nothing was charged.", again)
-      return
+      return refused("We couldn't start this purchase. Nothing was charged.", 'cancelled')
     }
     switch (result.status) {
       case 'confirmed':
         move(op, 'succeeded', { txHash: result.txHash })
-        showSuccess(op)
-        return
+        return { kind: 'confirmed' }
       case 'pending':
         move(op, 'pending', { txHash: result.txHash })
-        showPending(op)
-        void reconcile(op)
-        return
-      case 'failed': {
-        op.state = 'reviewing'
-        publish(op)
+        return { kind: 'pending' }
+      case 'failed':
         // The balance fell short between the quote and the authorization: Insufficient Funds after all.
-        if (result.topUp) {
-          present(op, req, { ...quote, balance: creditsFloor(result.topUp.balanceCents as UsdCents) })
-          return
-        }
+        if (result.topUp) return refused(result.failure.message, null, creditsFloor(result.topUp.balanceCents as UsdCents))
         // A failed group handed nothing off, or its transaction reverted: either way this attempt is over.
-        fail(op, result.failure.message, result.failure.kind !== 'refused' ? () => restart(op, req, 'failed') : undefined)
-        return
-      }
+        return refused(result.failure.message, result.failure.kind !== 'refused' ? 'failed' : null)
       case 'skipped':
-        op.state = 'reviewing'
-        publish(op)
-        fail(op, "This purchase couldn't run. Nothing was charged.", again)
+        return refused("This purchase couldn't run. Nothing was charged.", 'cancelled')
     }
   }
 
@@ -901,16 +1015,16 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
 
   const buy = async (params: unknown): Promise<ShopOperation> => {
     const req = parseBuyRequest(params)
-    if (starting || (dialog && (dialog.state === 'reviewing' || dialog.state === 'processing'))) throw new Error('a purchase is already open')
+    if (starting || running || (dialog && (dialog.state === 'reviewing' || dialog.state === 'processing'))) throw new Error('a purchase is already open')
     starting = true
     try {
       const who = signedIn()
       if (who) {
         await restore(who.buyer)
-        // The same item while a purchase of it is unsettled, here or in another tab: that purchase, never
-        // a second one. This page follows its own; another tab's follows itself.
+        // An item while a purchase of it is unsettled, here or in another tab: that purchase, never a
+        // second one. This page follows its own; another tab's follows itself.
         const unsettled = [...operations.values()].find(
-          (o) => o.buyer === who.buyer && o.item.contract === req.item.contract && o.item.itemId === req.item.itemId && (o.state === 'processing' || o.state === 'pending')
+          (o) => o.buyer === who.buyer && (o.state === 'processing' || o.state === 'pending') && o.items.some((l) => req.items.some((r) => sameItem(l, r)))
         )
         if (unsettled) {
           unsettled.input = req.input
@@ -920,7 +1034,6 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         }
       }
       const op = await create(req, who?.buyer ?? null)
-      op.input = req.input
       // Its first step (sign in, loading, or why it can't) shows before this returns.
       void review(op, req)
       return snapshot(op)
