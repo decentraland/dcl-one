@@ -739,6 +739,59 @@ pub async fn list_nfts(
         prefetched = Some(listings);
     }
     let (mut data, total) = list_page(state, f).await?;
+    // Both readers carry only the legacy order. An nft listed through the
+    // off-chain marketplace carries its open v3 listing, signed by its
+    // owner, as its order, so a client sees it on sale (and relists by
+    // cancelling that trade). A node with no source of trades has no such
+    // listing. A single token's read (the sell and relist flow) is strict,
+    // as `/v1/orders` is: unavailable until the trades mirror is ready, an
+    // error if the read fails, never the token shown as unlisted. A list
+    // page serves its legacy orders and logs when the mirror cannot answer.
+    let has_trades =
+        state.settings.trades_sync_upstream_url.is_some() || state.settings.data_writes_enabled;
+    let single_token = f.contract_addresses.len() == 1 && f.token_id.is_some();
+    let unlisted: Vec<(String, String, String, String)> = data
+        .iter()
+        .filter(|r| has_trades && r.order.is_none())
+        .map(|r| {
+            (
+                r.nft.network.db_name().to_string(),
+                r.nft.contract_address.to_ascii_lowercase(),
+                r.nft.token_id.clone(),
+                r.nft.owner.to_ascii_lowercase(),
+            )
+        })
+        .collect();
+    let mut trade_orders = if unlisted.is_empty() {
+        Default::default()
+    } else {
+        let read = async {
+            super::trades::require_ready(state).await?;
+            super::orders::open_trade_orders(state, &unlisted)
+                .await
+                .map_err(IntoResponse::into_response)
+        };
+        match read.await {
+            Ok(orders) => orders,
+            Err(response) if single_token => return Err(response),
+            Err(response) => {
+                tracing::warn!(status = %response.status(), "/v1/nfts: the open v3 listings could not be read; serving legacy orders only");
+                Default::default()
+            }
+        }
+    };
+    for r in &mut data {
+        if r.order.is_none()
+            && let Some(order) = trade_orders.remove(&(
+                r.nft.network.db_name().to_string(),
+                r.nft.contract_address.to_ascii_lowercase(),
+                r.nft.token_id.clone(),
+            ))
+        {
+            r.nft.active_order_id = Some(order.id.clone());
+            r.order = Some(order);
+        }
+    }
     let listings = match prefetched {
         Some(listings) => listings,
         None => {

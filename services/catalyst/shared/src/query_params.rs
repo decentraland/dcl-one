@@ -189,7 +189,7 @@ pub fn parse_pagination(params: &QueryParams, max_page_size: i64) -> Result<Pagi
 /// `hex_prefix` (`parseInt(s)` with no radix) a `0x`/`0X` reads hex digits.
 /// A value past `i64` saturates.
 pub fn js_parse_int(s: &str, hex_prefix: bool) -> Option<i64> {
-    let s = s.trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+    let s = s.trim_start_matches(is_js_whitespace);
     let (negative, s) = match s.as_bytes().first() {
         Some(b'-') => (true, &s[1..]),
         Some(b'+') => (false, &s[1..]),
@@ -208,6 +208,33 @@ pub fn js_parse_int(s: &str, hex_prefix: bool) -> Option<i64> {
             .saturating_add(i64::from(d))
     });
     Some(if negative { -magnitude } else { magnitude })
+}
+
+/// JavaScript `parseInt(s, 10)` ([`js_parse_int`] without the hex prefix):
+/// `"10abc"` is 10, `"1.5"` is 1, `None` is `NaN`. A value past `i64`
+/// saturates (JS keeps the float, so only an echoed value differs, never
+/// the slice).
+pub fn parse_int_js(s: &str) -> Option<i64> {
+    js_parse_int(s, false)
+}
+
+/// JavaScript's `WhiteSpace` and `LineTerminator`, which `parseInt` skips:
+/// Unicode `White_Space` without U+0085, plus U+FEFF.
+fn is_js_whitespace(c: char) -> bool {
+    c == '\u{feff}' || (c != '\u{85}' && c.is_whitespace())
+}
+
+/// The `[start, end)` of JavaScript's `elements.slice(offset, offset +
+/// limit)` over `len` elements: a negative index counts from the end.
+pub fn js_slice_range(len: usize, offset: i64, limit: i64) -> (usize, usize) {
+    let len = len as i64;
+    let js_index = |i: i64| if i < 0 { (len + i).max(0) } else { i.min(len) };
+    let (start, end) = (js_index(offset), js_index(offset.saturating_add(limit)));
+    if start < end {
+        (start as usize, end as usize)
+    } else {
+        (0, 0)
+    }
 }
 
 /// lamb2's `paginationObject` with `fetchAndPaginate`'s slicing: each of
@@ -267,6 +294,28 @@ impl JsPagination {
             Some(_) => None,
         }
     }
+
+    /// `(offset, limit)` for a JavaScript `slice`, `None` when either is `NaN`.
+    pub fn offset_limit(&self) -> Option<(i64, i64)> {
+        let (size, num) = (self.page_size?, self.page_num?);
+        Some((num.saturating_sub(1).saturating_mul(size), size))
+    }
+
+    /// The `[start, end)` of `elements.slice(offset, offset + limit)` over
+    /// `len` elements: a negative index counts from the end, a `NaN` is 0.
+    pub fn slice_range(&self, len: usize) -> (usize, usize) {
+        let r = self.range(len);
+        (r.start, r.end)
+    }
+}
+
+/// [`JsPagination::parse`], lamb2's `paginationObject`
+/// (decentraland/lamb2:src/logic/pagination.ts:4-19).
+pub fn parse_pagination_js(
+    params: &QueryParams,
+    max_page_size: i64,
+) -> Result<JsPagination, String> {
+    JsPagination::parse(params, max_page_size)
 }
 
 fn urlencoding_decode(s: &str) -> String {
@@ -552,4 +601,60 @@ mod tests {
             "entityType=scene&lastId=a%20b&to=5"
         );
     }
+    #[test]
+    fn parse_int_js_reads_the_leading_digits() {
+        assert_eq!(parse_int_js("10abc"), Some(10));
+        assert_eq!(parse_int_js("1.5"), Some(1));
+        assert_eq!(parse_int_js(" -7x"), Some(-7));
+        assert_eq!(parse_int_js("+3"), Some(3));
+        assert_eq!(parse_int_js("abc"), None);
+        assert_eq!(parse_int_js(""), None);
+        assert_eq!(parse_int_js("-"), None);
+        assert_eq!(parse_int_js("99999999999999999999"), Some(i64::MAX));
+        assert_eq!(parse_int_js("\u{feff}\u{2028}5"), Some(5), "JS whitespace");
+        assert_eq!(parse_int_js("\u{85}5"), None, "U+0085 is not JS whitespace");
+    }
+
+    #[test]
+    fn js_pagination_keeps_nan_and_slices_like_javascript() {
+        let p = |qs: &str| parse_pagination_js(&parse_query_string(qs), 1000);
+        assert_eq!(
+            p("").unwrap(),
+            JsPagination {
+                page_size: Some(100),
+                page_num: Some(1)
+            }
+        );
+        assert_eq!(
+            p("pageSize=10abc&pageNum=2.9").unwrap(),
+            JsPagination {
+                page_size: Some(10),
+                page_num: Some(2)
+            }
+        );
+        let nan = p("pageSize=abc").unwrap();
+        assert_eq!(nan.page_size, None);
+        assert_eq!(nan.slice_range(50), (0, 0), "a NaN pages nothing");
+        assert_eq!(
+            p("pageSize=").unwrap().page_size,
+            None,
+            "present but empty is NaN"
+        );
+        assert_eq!(
+            p("pageSize=1001").unwrap_err(),
+            "max allowed pageSize is 1000"
+        );
+        // pageNum=0: slice(-10, 0) is empty; pageNum=-1 with 25 elements:
+        // slice(-20, -10) is [5, 15).
+        assert_eq!(p("pageSize=10&pageNum=0").unwrap().slice_range(25), (0, 0));
+        assert_eq!(
+            p("pageSize=10&pageNum=-1").unwrap().slice_range(25),
+            (5, 15)
+        );
+        assert_eq!(
+            p("pageSize=10&pageNum=3").unwrap().slice_range(25),
+            (20, 25)
+        );
+    }
+
 }

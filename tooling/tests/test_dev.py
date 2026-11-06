@@ -479,6 +479,16 @@ class DevTest(unittest.TestCase):
         self.assertTrue(env['RPC_ENDPOINT_POLYGON'].endswith('/amoy'))
         for key in ('VITE_SHOP_CHAIN_ID', 'COLLECTIONS_CHAIN_ID', 'CONTRACT_ADDRESSES_CHAIN_KEY', 'CONTRACT_ADDRESSES_URL'):
             self.assertNotIn(key, mirror, key)
+        # MANA settles on Amoy's venues, which the node accepts only with a testnet ETH_NETWORK, the Matic index on
+        # Amoy and Amoy's own endpoint; USD prices convert at the feed and tolerance of Amoy's marketplaces.
+        self.assertEqual(env['ETH_NETWORK'], 'sepolia')
+        self.assertEqual(env['POLYGON_CHAIN_ID'], env['COLLECTIONS_CHAIN_ID'])
+        self.assertNotIn('POLYGON_CHAIN_ID', mirror)
+        self.assertIn('80002=https://', env['TRADE_RPC_URLS'])
+        self.assertEqual(env['MANA_USD_AGGREGATOR_ADDRESS'], '0xdcf00f5f60b62b07e668a84c0cedaf6f453d416e')
+        self.assertEqual(env['USD_PEGGED_ORACLE_MAX_AGE_SECS'], '27')
+        for key in ('MANA_USD_AGGREGATOR_ADDRESS', 'USD_PEGGED_ORACLE_MAX_AGE_SECS'):
+            self.assertNotIn(key, mirror, key)
         # Otherwise the mirror profile's catalogue passes, against the testnet subgraphs.
         self.assertEqual(env['MARKETPLACE_MIRRORS_ENABLED'], 'true')
         self.assertIn('index', dev.project({**self.config, 'profile': 'testnet'})['processes'])

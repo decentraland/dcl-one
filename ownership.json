@@ -235,7 +235,7 @@
       "id": "explorer-client",
       "description": "Explorer source, local app builds and component workflows",
       "owners": [
-        "@decentraland/client"
+        "@robtfm"
       ],
       "paths": [
         "/rendering/bevy-explorer/",
