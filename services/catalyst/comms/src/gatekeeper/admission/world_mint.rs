@@ -759,6 +759,47 @@ mod throttle_tests {
     }
 
     #[tokio::test]
+    async fn database_wait_deadlines_refuse_stamps_and_retain_unsettled_charges() {
+        let Some(pool) = crate::db::scratch::pool(1).await else {
+            return;
+        };
+        let world =
+            WorldName::parse(&format!("deadline-{}.dcl.eth", uuid::Uuid::new_v4())).unwrap();
+        sqlx::query("INSERT INTO worlds.worlds(name) VALUES($1)")
+            .bind(world.key())
+            .execute(&pool)
+            .await
+            .unwrap();
+        let throttle = SecretThrottle {
+            pool: &pool,
+            world: world.key(),
+            subject: "caller",
+            max_attempts: 3,
+        };
+        let reservation = throttle
+            .reserve(chrono::Utc::now().naive_utc())
+            .await
+            .unwrap()
+            .unwrap();
+        let held = pool.acquire().await.unwrap();
+        let error = authorization_started(&pool, &world).await.unwrap_err();
+        assert!(
+            matches!(error, sqlx::Error::Io(ref error) if error.kind() == std::io::ErrorKind::TimedOut)
+        );
+        throttle.settle(false, reservation).await;
+        drop(held);
+        let count: i32 = sqlx::query_scalar(
+            "SELECT attempts FROM social.world_secret_attempts WHERE world_name=$1",
+        )
+        .bind(world.key())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1);
+        assert!(authorization_started(&pool, &world).await.is_ok());
+    }
+
+    #[tokio::test]
     async fn stable_ban_upgrade_consolidates_active_retired_and_existing_keys() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;

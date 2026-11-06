@@ -135,7 +135,7 @@ mod tests {
         let statement = format!("SELECT social.{}($1)", functions.stamp);
         let mut writer = pool.begin().await.unwrap();
         // Non-key update is the lock taken by access writers before this PR.
-        sqlx::query("UPDATE worlds.worlds SET access_secret_hash='changed' WHERE name=$1")
+        sqlx::query("UPDATE worlds.worlds SET access_type='shared-secret',access_secret_hash='changed' WHERE name=$1")
             .bind(&world)
             .execute(&mut *writer)
             .await
@@ -187,7 +187,7 @@ mod tests {
             return;
         };
         let schema = format!("admission_upgrade_{}", uuid::Uuid::new_v4().simple());
-        sqlx::raw_sql(&format!("CREATE SCHEMA {schema}"))
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
             .execute(&pool)
             .await
             .unwrap();
@@ -231,7 +231,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(after, before);
-        sqlx::raw_sql(&format!("DROP SCHEMA {schema} CASCADE"))
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
             .execute(&pool)
             .await
             .unwrap();
