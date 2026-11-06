@@ -204,7 +204,13 @@ def render(table, cfg, mime):
     if cfg["storage"]:
         # A host rewrite also marks a request internal in nginx. Require an
         # upstream response header as well; client headers cannot supply it.
+        # Content blobs are public and immutable, so compressing them on the wire
+        # leaks nothing (no secret shares a body with requester input). nginx
+        # can't tell a GLB from a PNG here (no extension, one type), so every blob
+        # over 1 KiB is offered gzip at a moderate level; the API's own layer
+        # skips already-compressed formats when it streams a file itself.
         storage = (f'internal; alias {cfg["storage"]}/contents/; sendfile on; etag off;\n'
+                   'gzip on; gzip_types *; gzip_min_length 1024; gzip_comp_level 5; gzip_vary on;\n'
                    'if ($upstream_http_x_accel_redirect = "") { return 404; }\n'
                    'add_header ETag $upstream_http_etag always;\n'
                    'add_header Access-Control-Allow-Origin "*" always;\n'
