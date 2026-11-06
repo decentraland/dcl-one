@@ -70,8 +70,9 @@ export interface InWorldShopProps {
   emote: (urn: string | null) => void
   /** No engine draws the avatar (the UI-only mock): the stage shows whole, without the avatar's window. */
   noEngine?: boolean
-  /** Emotes tried on on the avatar (TRY ON, playing on select, STOP EMOTE). Off until the engine plays a
-   *  preview avatar's emote by URN: the message reaches the scene, the avatar doesn't animate yet. */
+  /** Emotes tried on on the avatar (TRY ON, playing on select, STOP EMOTE): on wherever an engine draws the
+   *  avatar. The engine plays the emote once, then the avatar idles; STOP EMOTE stays until pressed, as the
+   *  page doesn't hear when it ends. */
   emoteTryOn?: boolean
 }
 
@@ -98,7 +99,7 @@ async function openWebShop(url: string | null): Promise<void> {
   if (go) window.open(url, '_blank', 'noopener')
 }
 
-export default function InWorldShop({ shop, profile, onNavigate, setEngineViewport, equipped, preview, focus, stage, emote, noEngine = false, emoteTryOn = false }: InWorldShopProps): React.JSX.Element | null {
+export default function InWorldShop({ shop, profile, onNavigate, setEngineViewport, equipped, preview, focus, stage, emote, noEngine = false, emoteTryOn = !noEngine }: InWorldShopProps): React.JSX.Element | null {
   // The Shop opens on the wearables catalogue, as the design's every frame of this flow does.
   const [section, setSection] = useState<Section>('wearables')
   const queryClient = useQueryClient()
