@@ -411,6 +411,7 @@ impl Plugin for HostPlugin {
                 fit_item,
                 prepare_item,
                 place_camera,
+                show_subjects,
                 report_load,
                 send_load,
                 report_emotes,
@@ -1310,6 +1311,35 @@ fn prepare_item(
                     .try_insert(bevy::pbr::NotShadowCaster);
             }
         }
+    }
+}
+
+/// Shows the subject of the view and hides the other. The camera orbits its subject where the
+/// Unity renderer turns the subject in front of a fixed camera, so the other one, 5 m away, would
+/// swing into the background; the renderer never shows it. Both show during a switch's glide, and
+/// while a subject is measured (behind the loading spinner, as measuring needs it visible).
+#[allow(clippy::type_complexity)]
+fn show_subjects(
+    orbit: Res<OrbitCamera>,
+    gate: Res<LoadGate>,
+    mut avatars: Query<&mut Visibility, (With<PreviewAvatar>, Without<PreviewItem>)>,
+    mut items: Query<&mut Visibility, (With<PreviewItem>, Without<PreviewAvatar>)>,
+) {
+    let gliding = orbit.blend.is_some();
+    let measuring_avatar = gate.armed && !gate.avatar_framed;
+    let measuring_item = gate.item_wanted && !gate.item_framed;
+    let shown = |yes: bool| {
+        if yes {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        }
+    };
+    for mut visibility in avatars.iter_mut() {
+        visibility.set_if_neq(shown(!orbit.item_view || gliding || measuring_avatar));
+    }
+    for mut visibility in items.iter_mut() {
+        visibility.set_if_neq(shown(orbit.item_view || gliding || measuring_item));
     }
 }
 
