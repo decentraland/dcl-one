@@ -5,19 +5,21 @@
 // and the shell reads the terms itself (shell/shop/purchase).
 //
 // Kept per account in localStorage (a signed-out cart under its own key, taken into the account's once
-// one signs in). Storage that throws or is missing leaves the cart in memory for the page's life.
+// one signs in).
 //
 // What a purchase from the cart bought leaves the cart of the account that bought it (whichever is active
 // now): as many of each item as it bought, once per operation, however often its success is heard (an
 // event, the shell's status after a reload). The cart and the operations already taken out of it are one
 // record per account, written whole in one go: a write that sticks keeps both, one that doesn't keeps
-// neither, so a replay after a reload takes the purchase out exactly once either way. Within the page, the
-// record a write couldn't keep is the one in memory.
+// neither, so a replay after a reload takes the purchase out exactly once either way.
 //
-// Every change, in every tab, is one read-change-write of the record under one Web Lock (`mutate`), so no
-// tab's change is written over by another's; another tab's write is also shown as it lands (the `storage`
-// event). Without Web Locks a page's own changes still go one at a time. localStorage itself has no
-// transactions: the lock orders the tabs' writes, and each reads what the browser gives it then.
+// Every change, in every tab, is one read-change-write of the record under one Web Lock (`mutate`): read as
+// storage holds it then, so no tab writes over another tab's change. A change storage doesn't take (full,
+// blocked) stays this page's, replayed on whatever storage holds next and written with the next change it
+// takes; it is never written back as a stale whole. Another tab's write is shown as it lands (the
+// `storage` event). The scope: Web Locks order the writes of the origin's tabs; how localStorage itself is
+// shared between them is the browser's (the HTML standard leaves it undefined across agent clusters).
+// Without Web Locks, only this page's own changes go one at a time.
 
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
 import { cardPrice } from '../../../shop/discovery/cardPrice'
@@ -166,61 +168,83 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
   let account: string | null = null
   /** The active account's record; its lines are the snapshot. */
   let current: CartRecord = EMPTY
-  /** Every account's record this page read or wrote. */
-  const memory = new Map<string, CartRecord>()
-  /** Records whose last write didn't stick: memory, not storage, holds them now. */
-  const unsaved = new Set<string>()
-  /** What storage held for each record when this page last read or wrote it: unchanged, the same record. */
-  const seen = new Map<string, string | null>()
+  type Change = (record: CartRecord) => CartRecord | null
+  /** What storage last gave for each record (its text and the record parsed from it). */
+  const stored = new Map<string, { raw: string | null; record: CartRecord }>()
+  /** This page's changes to a record that storage didn't take yet, replayed on what storage holds. */
+  const pending = new Map<string, Change[]>()
+  /** The last view of each record (what storage holds, with this page's pending changes on it). */
+  const views = new Map<string, { base: CartRecord; changes: number; record: CartRecord }>()
 
-  /** The record as storage holds it, when storage works and holds this page's last write of it; else memory's. */
-  const read = (who: string | null): CartRecord => {
-    const key = keyOf(who)
-    if (unsaved.has(key)) return memory.get(key) ?? EMPTY
+  /** The record as storage holds it now; what it last gave when it can't be read. */
+  const fromStorage = (key: string): CartRecord => {
     let raw: string | null
     try {
       const s = storage()
-      if (!s) return memory.get(key) ?? EMPTY
+      if (!s) return stored.get(key)?.record ?? EMPTY
       raw = s.getItem(key)
     } catch {
-      // Unreadable: what this page knows of it.
-      return memory.get(key) ?? EMPTY
+      return stored.get(key)?.record ?? EMPTY
     }
-    const known = memory.get(key)
-    if (known && seen.has(key) && seen.get(key) === raw) return known
+    const last = stored.get(key)
+    if (last && last.raw === raw) return last.record
     let record = EMPTY
     try {
       record = raw == null ? EMPTY : (parseRecord(raw) ?? EMPTY)
     } catch {
       // Not this page's shape: an empty cart.
     }
-    memory.set(key, record)
-    seen.set(key, raw)
+    stored.set(key, { raw, record })
     return record
   }
-  /** The whole record, in one write. */
-  const write = (who: string | null, next: CartRecord): void => {
+  /**
+   * `who`'s record as this page sees it: what storage holds now (whichever tab wrote it), with this page's
+   * changes that storage didn't take yet replayed on it. The same object while neither changes.
+   */
+  const read = (who: string | null): CartRecord => {
     const key = keyOf(who)
-    memory.set(key, next)
+    const base = fromStorage(key)
+    const changes = pending.get(key) ?? []
+    if (changes.length === 0) return base
+    const view = views.get(key)
+    if (view && view.base === base && view.changes === changes.length) return view.record
+    const record = changes.reduce((r, change) => change(r) ?? r, base)
+    views.set(key, { base, changes: changes.length, record })
+    return record
+  }
+  /** Writes the whole record in one go; false when storage didn't take it. */
+  const persist = (key: string, next: CartRecord): boolean => {
     try {
       const s = storage()
-      if (!s) throw new Error('no storage')
+      if (!s) return false
       if (next.lines.length === 0 && next.applied.length === 0) {
         s.removeItem(key)
-        seen.set(key, null)
+        stored.set(key, { raw: null, record: EMPTY })
       } else {
         const raw = JSON.stringify({ v: RECORD_VERSION, lines: next.lines, applied: next.applied })
         s.setItem(key, raw)
-        seen.set(key, raw)
+        stored.set(key, { raw, record: next })
       }
-      unsaved.delete(key)
+      return true
     } catch {
-      // Storage refused: the record stays in memory for the page's life.
-      unsaved.add(key)
+      return false
     }
   }
+  /**
+   * One change applied to `who`'s record as it stands (call it holding the lock): written whole if storage
+   * takes it, which takes this page's pending changes with it; otherwise kept to replay on whatever
+   * storage holds next, never written over another tab's record as a stale whole.
+   */
+  const apply = (who: string | null, change: Change): boolean => {
+    const key = keyOf(who)
+    const next = change(read(who))
+    if (!next) return false
+    if (persist(key, next)) pending.delete(key)
+    else pending.set(key, [...(pending.get(key) ?? []), change])
+    return true
+  }
   const notify = (): void => listeners.forEach((l) => l())
-  /** The active account's record as storage holds it now, shown. */
+  /** The active account's record as it stands now, shown. */
   const refresh = (): void => {
     const next = read(account)
     if (next === current) return
@@ -229,25 +253,23 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
   }
 
   /**
-   * One change to `who`'s record, whole: read under the cart's lock (as every tab's last write left it),
-   * changed, and written before the lock goes, so no tab's change is written over by another's. `change`
-   * answers null to leave the record as it is.
+   * One change to `who`'s record, whole, under the cart's lock: read as every tab's last write left it
+   * (with this page's untaken changes on it), changed, and written before the lock goes, so no tab's
+   * change is written over by another's. `change` answers null to leave the record as it is.
    */
-  const mutate = (who: string | null, change: (record: CartRecord) => CartRecord | null): Promise<boolean> =>
+  const mutate = (who: string | null, change: Change): Promise<boolean> =>
     lock(() => {
-      const next = change(read(who))
-      if (next) write(who, next)
+      const changed = apply(who, change)
       if (who === account) refresh()
-      return next != null
+      return changed
     })
 
   /** Lines with a line's quantity set, within its cap, or null when that changes nothing. */
-  const withQuantity = (record: CartRecord, item: { contract: string; itemId: string }, quantity: number, available?: number | null): CartRecord | null => {
+  const withQuantity = (record: CartRecord, item: { contract: string; itemId: string }, quantity: number): CartRecord | null => {
     const at = record.lines.findIndex((l) => sameItem(l, item))
     if (at < 0) return null
     const line = record.lines[at]
-    const cap = capFor({ available: available === undefined ? line.available : available }, cartUnits(record.lines) - line.quantity)
-    const q = Math.min(Math.max(1, Math.floor(quantity)), cap)
+    const q = Math.min(Math.max(1, Math.floor(quantity)), capFor(line, cartUnits(record.lines) - line.quantity))
     if (q < 1 || q === line.quantity) return null
     const lines = [...record.lines]
     lines[at] = { ...line, quantity: q }
@@ -256,10 +278,10 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
 
   current = read(null)
 
-  // Another tab wrote: the active account's record is shown again as it stands; any other is read when next needed.
+  // Another tab wrote: the active account's record is shown again as it stands (with this page's untaken
+  // changes on it); any other is read when next needed.
   ;(opts.watch ?? windowStorageEvents)((key) => {
     if (key !== null && !key.startsWith(KEY_PREFIX)) return
-    for (const k of key === null ? [...unsaved] : [key]) unsaved.delete(k)
     if (key === null || key === keyOf(account)) refresh()
   })
 
@@ -280,18 +302,19 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
       void lock(() => {
         const guest = read(null).lines
         if (guest.length === 0) return
-        const mine = read(who)
-        const merged = [...mine.lines]
-        for (const g of guest) {
-          const at = merged.findIndex((l) => sameItem(l, g))
-          const others = cartUnits(merged) - (at >= 0 ? merged[at].quantity : 0)
-          const quantity = Math.min((at >= 0 ? merged[at].quantity : 0) + g.quantity, capFor(g, others))
-          if (quantity <= 0) continue
-          if (at >= 0) merged[at] = { ...merged[at], quantity }
-          else merged.push({ ...g, quantity })
-        }
-        write(who, { lines: merged, applied: mine.applied })
-        write(null, EMPTY)
+        apply(who, (mine) => {
+          const merged = [...mine.lines]
+          for (const g of guest) {
+            const at = merged.findIndex((l) => sameItem(l, g))
+            const others = cartUnits(merged) - (at >= 0 ? merged[at].quantity : 0)
+            const quantity = Math.min((at >= 0 ? merged[at].quantity : 0) + g.quantity, capFor(g, others))
+            if (quantity <= 0) continue
+            if (at >= 0) merged[at] = { ...merged[at], quantity }
+            else merged.push({ ...g, quantity })
+          }
+          return { lines: merged, applied: mine.applied }
+        })
+        apply(null, (g) => (g.lines.length > 0 ? { lines: [], applied: g.applied } : null))
         if (account === who) refresh()
       })
     },

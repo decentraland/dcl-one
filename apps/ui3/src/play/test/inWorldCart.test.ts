@@ -104,6 +104,67 @@ describe('the in-world cart', () => {
     expect(again.getSnapshot().map((l) => `${l.itemId}x${l.quantity}`)).toEqual(['1x2', '2x1'])
   })
 
+  it('replays a change storage didn’t take on what another tab wrote since, never writing over it', async () => {
+    const shared = storage()
+    const lock = sharedLock()
+    const refuse = { a: false }
+    // Tab A's writes fail while `refuse.a`; tab B's always land. Storage events are never delivered.
+    const storageA: CartStorage = {
+      getItem: shared.getItem,
+      setItem: (k, v) => {
+        if (refuse.a) throw new Error('full')
+        shared.setItem(k, v)
+      },
+      removeItem: shared.removeItem
+    }
+    const tabA = createInWorldCart({ storage: () => storageA, lock, watch: () => () => {} })
+    const tabB = createInWorldCart({ storage: () => shared, lock, watch: () => () => {} })
+    tabA.scopeTo(A)
+    tabB.scopeTo(A)
+    refuse.a = true
+    await tabA.add(item('1'))
+    expect(tabA.getSnapshot().map((l) => l.itemId)).toEqual(['1'])
+    refuse.a = false
+    await tabB.add(item('2'))
+    // A changes the cart again before hearing of B's write: it reads B's, its own untaken change on it.
+    await tabA.add(item('3'))
+    const reloaded = createInWorldCart({ storage: () => shared, lock, watch: () => () => {} })
+    reloaded.scopeTo(A)
+    expect(reloaded.getSnapshot().map((l) => l.itemId).sort()).toEqual(['1', '2', '3'])
+  })
+
+  it('takes a purchase out once while its write waits on storage, over another tab’s writes', async () => {
+    const shared = storage()
+    const lock = sharedLock()
+    const refuse = { a: false }
+    const storageA: CartStorage = {
+      getItem: shared.getItem,
+      setItem: (k, v) => {
+        if (refuse.a) throw new Error('full')
+        shared.setItem(k, v)
+      },
+      removeItem: shared.removeItem
+    }
+    const tabA = createInWorldCart({ storage: () => storageA, lock, watch: () => () => {} })
+    const tabB = createInWorldCart({ storage: () => shared, lock, watch: () => () => {} })
+    tabA.scopeTo(A)
+    tabB.scopeTo(A)
+    await tabA.add(item('1'))
+    await tabA.add(item('1'))
+    refuse.a = true
+    await tabA.applyPurchase(A, OP, bought('1'))
+    await tabA.applyPurchase(A, OP, bought('1'))
+    refuse.a = false
+    await tabB.add(item('2'))
+    await tabA.add(item('3'))
+    const reloaded = createInWorldCart({ storage: () => shared, lock, watch: () => () => {} })
+    reloaded.scopeTo(A)
+    expect(reloaded.getSnapshot().map((l) => `${l.itemId}x${l.quantity}`).sort()).toEqual(['1x1', '2x1', '3x1'])
+    // And kept as taken out: heard again after the reload, nothing more leaves.
+    await reloaded.applyPurchase(A, OP, bought('1'))
+    expect(reloaded.getSnapshot().find((l) => l.itemId === '1')?.quantity).toBe(1)
+  })
+
   it('takes a purchase out under the same lock as the cart’s other changes', async () => {
     const shared = storage()
     const lock = sharedLock()
