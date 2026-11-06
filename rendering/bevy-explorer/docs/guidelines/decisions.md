@@ -98,11 +98,20 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the metadata into a struct without that field, so it is not stored. Kept for parity with the
   upstream service's clients.
 - **The photo camera stops at scene geometry instead of sliding.** unity-explorer moves a capsule
-  character controller, which slides along walls; here the move is refused when the camera's sphere
-  would intersect a scene collider.
-- **The photo camera's wheel zoom is normalised to lines.** unity-explorer scales the scroll delta
-  by 50 everywhere but macOS, in its input system's units; here a wheel line counts as one unit
-  on other platforms and a pixel on macOS, with the same scale, until measured against Unity.
+  character controller, which slides along walls; here the move is swept and refused whole when
+  the camera's sphere would cross a scene collider. A collider the camera starts inside (the player
+  camera has no wall avoidance, so photo mode can open in one) does not block it, so it can leave.
+- **No camera-to-player dither in photo mode.** unity-explorer keeps fading what stands between the
+  camera and the avatar; here the fade showed in the photos, so the dither depth is zero while the
+  mode is on and the player camera's depth comes back when it closes.
+- **The photo camera looks through the player camera's input path.** unity-explorer turns it by a
+  rotation speed times the frame time, which depends on the frame rate and ignores the sensitivity
+  setting; here the pointer delta goes through the player camera's sensitivity and smoothing
+  settings, scaled by 0.17, which matches the Unity feel at 60 fps.
+- **The photo camera's wheel zoom is per line, and a held zoom button zooms per second.**
+  unity-explorer scales the scroll delta by 50 everywhere but macOS, per frame; here a wheel line
+  (16 pixels of a trackpad's scroll, on every platform including web) zooms as Unity's 60 fps frame
+  would, and a held bumper zooms at Unity's per-second rate, so neither depends on the frame rate.
 
 ## Deliberate choices that look like mistakes
 

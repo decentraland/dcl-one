@@ -1901,6 +1901,19 @@ impl CameraSmoothing {
             CameraSmoothing::Drunk => Some(5.0),
         }
     }
+
+    /// This frame's look delta: `raw` filtered against `smoothed`, the previous frame's result,
+    /// which is updated in place.
+    pub fn smooth(&self, raw: Vec2, smoothed: &mut Vec2, dt: f32) -> Vec2 {
+        match self.rate() {
+            Some(rate) => {
+                let factor = 1.0 - (-dt * rate).exp();
+                *smoothed = factor * raw + (1.0 - factor) * *smoothed;
+            }
+            None => *smoothed = raw,
+        }
+        *smoothed
+    }
 }
 
 #[derive(Event)]

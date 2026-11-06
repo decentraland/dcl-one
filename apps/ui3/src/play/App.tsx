@@ -241,8 +241,9 @@ function Hud(): React.JSX.Element {
       : null
 
   // Scene permission prompts (e.g. ChangeRealm), one at a time, opened through the popup layer. Escape
-  // / scrim-click deny once. Re-opens whenever the front of the pending queue changes.
-  const permFrontId = session.phase === 'world' ? session.permissions.pending[0]?.id : undefined
+  // / scrim-click deny once. Re-opens whenever the front of the pending queue changes. Photo mode
+  // holds them: a popup would close it, and the prompt opens when it ends.
+  const permFrontId = session.phase === 'world' && !session.photoMode.active ? session.permissions.pending[0]?.id : undefined
   useEffect(() => {
     const front = session.permissions.pending[0]
     if (permFrontId == null || !front) return

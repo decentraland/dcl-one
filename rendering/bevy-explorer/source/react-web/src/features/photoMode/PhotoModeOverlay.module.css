@@ -46,24 +46,15 @@
   height: 1px;
 }
 
+/* the design's control button at the frame's reference size */
 .close {
   position: absolute;
   top: calc(12px * var(--s));
   right: calc(12px * var(--s));
-  display: flex;
-  align-items: center;
-  justify-content: center;
   width: calc(46px * var(--s));
   height: calc(46px * var(--s));
-  border: 0;
   border-radius: var(--r-md);
-  background: var(--scrim-40);
-  color: var(--text);
-  cursor: pointer;
   pointer-events: auto;
-}
-.close:hover {
-  background: var(--scrim);
 }
 
 /* the row under the frame: Gallery left, Shoot centre, camera controls right */

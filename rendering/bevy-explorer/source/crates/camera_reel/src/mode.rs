@@ -1,15 +1,18 @@
 //! Entering and leaving photo mode, its per-frame input, cursor lock and scene UI hiding, and
-//! flying the photo camera.
+//! flying the photo camera. The HUD opens and closes the mode and declares it as focus, which
+//! reserves input above scenes; the keys read here are the mode's own.
 
-use bevy::{platform::collections::HashSet, prelude::*};
+use bevy::{platform::collections::HashSet, prelude::*, render::view::ViewUserValue};
 use common::{
     inputs::{CommonInputAction, SystemAction, CAMERA_SET, CAMERA_ZOOM, MOVE_SET, POINTER_SET},
     sets::{PostUpdateSets, SceneSets},
-    structs::{CursorLocks, OutOfWorld, PhotoMode, PrimaryCamera, PrimaryUser, PLAYER_CAMERA_FOV},
+    structs::{
+        AppConfig, CursorLocks, OutOfWorld, PhotoMode, PrimaryCamera, PrimaryUser,
+        PLAYER_CAMERA_FOV,
+    },
 };
 use dcl_component::proto_components::sdk::components::ColliderLayer;
-use input_manager::{InputManager, InputPriority, InputType};
-use rapier3d_f64::prelude::ColliderBuilder;
+use input_manager::{InputManager, InputPriority};
 use scene_runner::{
     initialize_scene::SuperUserScene,
     update_scene::pointer_lock::update_pointer_lock,
@@ -21,7 +24,9 @@ use scene_runner::{
 };
 use tween::SystemTween;
 
-use crate::photo_camera::{PhotoCamera, PhotoCameraInput, PhotoCameraSettings, PhotoModeSource};
+use crate::photo_camera::{
+    Look, PhotoCamera, PhotoCameraInput, PhotoCameraSettings, PhotoModeSource,
+};
 
 /// The `CursorLocks` entry photo mode holds while its cursor is locked.
 const PHOTO_CURSOR_LOCK: &str = "photo";
@@ -30,13 +35,12 @@ const PHOTO_CURSOR_LOCK: &str = "photo";
 const WHEEL_PIXELS_PER_LINE: f32 = 16.0;
 const WHEEL_MULTIPLIER: f32 = 10.0;
 
-/// Asks to open, close or toggle photo mode. Sent by the key, the HUD and the console; applied
-/// once per frame by `apply_photo_mode_requests`.
+/// Asks to open or close photo mode. Sent by the HUD through the console; applied once per
+/// frame by `apply_photo_mode_requests`.
 #[derive(Event, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PhotoModeRequest {
     Enable(PhotoModeSource),
     Disable,
-    Toggle(PhotoModeSource),
 }
 
 /// Photo mode just opened (`true`) or closed (`false`), for analytics and the HUD relay.
@@ -71,46 +75,25 @@ pub(crate) fn register(app: &mut App) {
         );
 }
 
-/// The keys photo mode owns: its toggle outside and inside the mode, and inside it the close,
-/// gallery, nametag and HUD keys and the cursor lock toggle.
-#[allow(clippy::too_many_arguments)]
+/// The keys read inside photo mode: the nametag and HUD keys and the cursor lock toggle. A scene
+/// taking the camera, or the player leaving the world, closes the mode.
 fn read_photo_mode_keys(
-    mut input_manager: InputManager,
-    mut camera: Query<(&PrimaryCamera, Option<&mut PhotoCamera>)>,
+    input_manager: InputManager,
+    mut camera: Query<(&PrimaryCamera, &mut PhotoCamera)>,
     player: Query<Has<OutOfWorld>, With<PrimaryUser>>,
     mut requests: EventWriter<PhotoModeRequest>,
     mut locks: ResMut<CursorLocks>,
     mut nametags: ResMut<avatar::dynamic_nametag::NametagsVisible>,
 ) {
-    let Ok((primary, photo)) = camera.single_mut() else {
+    let Ok((primary, mut photo)) = camera.single_mut() else {
         return;
     };
     let out_of_world = player.single().unwrap_or(false);
-
-    let Some(mut photo) = photo else {
-        if input_manager.just_down(SystemAction::PhotoMode, InputPriority::Ui) {
-            requests.write(PhotoModeRequest::Toggle(PhotoModeSource::Shortcut));
-        }
-        return;
-    };
-
     if primary.scene_override.is_some() || out_of_world {
         requests.write(PhotoModeRequest::Disable);
         return;
     }
 
-    // the reservation is re-asserted each frame: a HUD surface closing releases the same key
-    input_manager
-        .priorities()
-        .reserve(InputType::All, InputPriority::Ui);
-
-    if input_manager.just_down(SystemAction::PhotoMode, InputPriority::Ui)
-        || input_manager.just_down(SystemAction::Cancel, InputPriority::Ui)
-        || input_manager.just_down(SystemAction::Gallery, InputPriority::Ui)
-    {
-        requests.write(PhotoModeRequest::Disable);
-        return;
-    }
     if input_manager.just_down(SystemAction::HideUi, InputPriority::Ui) {
         photo.hud_hidden = !photo.hud_hidden;
     }
@@ -144,7 +127,6 @@ pub(crate) fn apply_photo_mode_requests(
     )>,
     player: Query<Has<OutOfWorld>, With<PrimaryUser>>,
     settings: Res<PhotoCameraSettings>,
-    mut input_manager: InputManager,
     mut locks: ResMut<CursorLocks>,
     mut nametags: ResMut<avatar::dynamic_nametag::NametagsVisible>,
     mut sessions: Local<u32>,
@@ -159,7 +141,6 @@ pub(crate) fn apply_photo_mode_requests(
     let (enable, source) = match request {
         PhotoModeRequest::Enable(source) => (true, source),
         PhotoModeRequest::Disable => (false, PhotoModeSource::Console),
-        PhotoModeRequest::Toggle(source) => (!active, source),
     };
     if enable == active {
         return;
@@ -180,7 +161,10 @@ pub(crate) fn apply_photo_mode_requests(
         let mut photo = PhotoCamera::new(start, fov.to_degrees(), source);
         photo.session = *sessions;
         photo.nametags_visible_before = nametags.0;
-        commands.entity(entity).insert((PhotoMode, photo));
+        // the camera-to-player dither would show in the photos; the player camera restores it
+        commands
+            .entity(entity)
+            .insert((PhotoMode, photo, ViewUserValue(0.0)));
         if first_person {
             commands.entity(entity).insert(SystemTween {
                 target: start,
@@ -193,9 +177,6 @@ pub(crate) fn apply_photo_mode_requests(
                 p.fov = fov;
             }
         }
-        input_manager
-            .priorities()
-            .reserve(InputType::All, InputPriority::Ui);
         locks.0.insert(PHOTO_CURSOR_LOCK);
         platform::platform_pointer_lock_requested();
         changed.write(PhotoModeChanged {
@@ -223,9 +204,6 @@ pub(crate) fn apply_photo_mode_requests(
                 time: settings.exit_secs,
                 fov: Some(PLAYER_CAMERA_FOV),
             });
-        input_manager
-            .priorities()
-            .release(InputType::All, InputPriority::Ui);
         locks.0.remove(PHOTO_CURSOR_LOCK);
         changed.write(PhotoModeChanged {
             active: false,
@@ -234,7 +212,8 @@ pub(crate) fn apply_photo_mode_requests(
     }
 }
 
-/// Scene UI is hidden for the whole of photo mode; roots that appear meanwhile are hidden too.
+/// Scene UI is hidden for the whole of photo mode; roots that appear, or are restyled for a new
+/// HUD inset, meanwhile are hidden too.
 #[allow(clippy::type_complexity)]
 fn hide_scene_ui_in_photo_mode(
     mut commands: Commands,
@@ -253,11 +232,18 @@ fn hide_scene_ui_in_photo_mode(
                 node.display = Display::None;
                 commands.entity(entity).insert(HiddenForPhotoMode(display));
             }
+            (true, Some(_)) => {
+                if node.display != Display::None {
+                    let display = node.display;
+                    node.display = Display::None;
+                    commands.entity(entity).insert(HiddenForPhotoMode(display));
+                }
+            }
             (false, Some(HiddenForPhotoMode(display))) => {
                 node.display = *display;
                 commands.entity(entity).remove::<HiddenForPhotoMode>();
             }
-            _ => {}
+            (false, None) => {}
         }
     }
 }
@@ -268,22 +254,24 @@ fn hide_scene_ui_in_photo_mode(
 fn move_photo_camera(
     time: Res<Time>,
     settings: Res<PhotoCameraSettings>,
+    config: Res<AppConfig>,
     input_manager: InputManager,
     locks: Res<CursorLocks>,
     mut camera: Query<
-        (&mut Transform, &mut Projection, &mut PhotoCamera),
         (
-            With<PrimaryCamera>,
-            Without<SystemTween>,
-            Without<PrimaryUser>,
+            &mut Transform,
+            &mut Projection,
+            &mut PhotoCamera,
+            &PrimaryCamera,
         ),
+        (Without<SystemTween>, Without<PrimaryUser>),
     >,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
     containing_scene: ContainingScene,
     mut scene_colliders: Query<&mut SceneColliderData, Without<GlobalGroundCollider>>,
     mut ground: Query<&mut SceneColliderData, With<GlobalGroundCollider>>,
 ) {
-    let Ok((mut transform, mut projection, mut photo)) = camera.single_mut() else {
+    let Ok((mut transform, mut projection, mut photo, primary)) = camera.single_mut() else {
         return;
     };
     let Ok(player_position) = player.single().map(|gt| gt.translation()) else {
@@ -295,13 +283,15 @@ fn move_photo_camera(
     let dt = time.delta_secs();
     let cursor_locked = locks.0.contains(PHOTO_CURSOR_LOCK);
 
-    let wheel = input_manager.get_analog(CAMERA_ZOOM, InputPriority::Ui).y;
-    let zoom = if cfg!(target_os = "macos") {
-        wheel / WHEEL_MULTIPLIER
-    } else {
-        wheel / (WHEEL_MULTIPLIER * WHEEL_PIXELS_PER_LINE)
-    };
     let p = InputPriority::Ui;
+    // a held zoom button and the wheel share the zoom actions: the wheel is read when none is held
+    let zoom_held = button(&input_manager, SystemAction::CameraZoomIn)
+        - button(&input_manager, SystemAction::CameraZoomOut);
+    let zoom_lines = if zoom_held == 0.0 {
+        input_manager.get_analog(CAMERA_ZOOM, p).y / (WHEEL_MULTIPLIER * WHEEL_PIXELS_PER_LINE)
+    } else {
+        0.0
+    };
     // the arrows are a look set, so its up slot is CameraDown: flip it to read as movement
     let arrows = input_manager.get_analog(CAMERA_SET, p) * Vec2::new(1.0, -1.0);
     let input = PhotoCameraInput {
@@ -321,32 +311,41 @@ fn move_photo_camera(
         walking: input_manager.is_down(CommonInputAction::IaWalk, p),
         aim: input_manager.get_analog(POINTER_SET, p),
         mouse_dragging: !cursor_locked && input_manager.is_down(CommonInputAction::IaPointer, p),
-        zoom,
+        zoom_lines,
+        zoom_held,
         cursor_locked,
+    };
+    let look = Look {
+        sensitivity: primary.sensitivity,
+        smoothing: config.camera_smoothing,
     };
 
     let movement = photo.requested_move(&input, &settings, dt, player_position);
-    let desired = photo.target.translation + movement;
-    let blocked = movement != Vec3::ZERO && {
-        let probe = ColliderBuilder::ball(settings.collider_radius as f64)
-            .translation(desired.as_dvec3().into())
-            .build();
+    let length = movement.length();
+    // a step at run speed is longer than the camera's sphere, so the whole move is swept
+    let blocked = length > 0.0 && {
+        let start = photo.target.translation;
+        let origin = start.as_dvec3();
+        let direction = (movement / length).as_dvec3();
+        let radius = settings.collider_radius as f64;
         let mask = ColliderLayer::ClPhysics as u32;
-        let scenes: HashSet<Entity> = containing_scene.get_position(desired);
-        let mut hit = false;
-        for scene in scenes.iter() {
-            if let Ok(mut colliders) = scene_colliders.get_mut(*scene) {
-                hit |= !colliders.intersect_collider(&probe, mask).is_empty();
-            }
-        }
-        hit || ground
-            .iter_mut()
-            .any(|mut colliders| !colliders.intersect_collider(&probe, mask).is_empty())
+        let hits = |colliders: &mut SceneColliderData| {
+            colliders
+                .cast_ball_nearest(origin, direction, length as f64, radius, mask)
+                .is_some()
+        };
+        let mut scenes: HashSet<Entity> = containing_scene.get_position(start);
+        scenes.extend(containing_scene.get_position(start + movement));
+        scenes.iter().any(|scene| {
+            scene_colliders
+                .get_mut(*scene)
+                .is_ok_and(|mut colliders| hits(&mut colliders))
+        }) || ground.iter_mut().any(|mut colliders| hits(&mut colliders))
     };
     if !blocked {
         photo.apply_move(movement);
     }
-    photo.steer(&input, &settings, dt);
+    photo.steer(&input, &settings, &look, dt);
 
     *transform = photo.follow(&transform, &settings, dt);
     if let Projection::Perspective(perspective) = &mut *projection {
@@ -368,4 +367,12 @@ fn axis(input_manager: &InputManager, positive: SystemAction, negative: SystemAc
     } else {
         0.0
     })
+}
+
+fn button(input_manager: &InputManager, action: SystemAction) -> f32 {
+    if input_manager.is_button_down(action, InputPriority::Ui) {
+        1.0
+    } else {
+        0.0
+    }
 }

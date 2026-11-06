@@ -30,7 +30,6 @@ describe('photo mode overlay', () => {
     active: true,
     capture: null,
     set: vi.fn(),
-    toggle: vi.fn(),
     take: vi.fn(),
     ...over
   })
@@ -49,7 +48,7 @@ describe('photo mode overlay', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Shoot' }))
     expect(mode.take).toHaveBeenCalledTimes(1)
     await userEvent.click(screen.getByRole('button', { name: 'Close camera' }))
-    expect(mode.set).toHaveBeenCalledWith(false)
+    expect(mode.set).toHaveBeenCalledWith(false, 'button')
   })
 
   it.each([

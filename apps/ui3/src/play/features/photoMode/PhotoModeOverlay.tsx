@@ -4,7 +4,7 @@
 // into the Gallery button). The engine owns the camera and the capture; this reads its stream
 // and sends it the buttons. Sizes are reference pixels (1080p canvas) scaled by --ui-scale.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Close, MaskIcon, MouseIcon, ScrollIcon } from '../../design'
+import { Close, ControlButton, MaskIcon, MouseIcon, ScrollIcon } from '../../design'
 import { keyHintFor, useBindingsSnapshot, type BindingsSnapshot } from '../../lib/bindingLabels'
 import { registerCancelLayer } from '../../lib/cancelLayers'
 import type { ActionWire } from '../../engine/protocol'
@@ -73,9 +73,8 @@ export function PhotoModeOverlay({ photoMode, onOpenGallery }: Props): React.JSX
   }
   const s = viewport.s
 
-  // Escape closes photo mode engine-side; the layer keeps the HUD's own cancel dispatch from
-  // closing something underneath on the same press.
-  useEffect(() => registerCancelLayer(() => setPhotoMode(false)), [setPhotoMode])
+  // Escape: the dispatcher peels this layer, so nothing underneath closes on the same press.
+  useEffect(() => registerCancelLayer(() => setPhotoMode(false, 'shortcut')), [setPhotoMode])
 
   const [controlsOpen, setControlsOpen] = useState(false)
   const controlsRef = useRef<HTMLDivElement>(null)
@@ -115,9 +114,9 @@ export function PhotoModeOverlay({ photoMode, onOpenGallery }: Props): React.JSX
     }
   }, [effect])
 
-  const close = useCallback(() => setPhotoMode(false), [setPhotoMode])
+  const close = useCallback(() => setPhotoMode(false, 'button'), [setPhotoMode])
   const openGallery = useCallback(() => {
-    setPhotoMode(false)
+    setPhotoMode(false, 'button')
     onOpenGallery()
   }, [setPhotoMode, onOpenGallery])
   const storageFull = state != null && state.storageLoaded && state.storageCurrent >= state.storageMax
@@ -146,9 +145,9 @@ export function PhotoModeOverlay({ photoMode, onOpenGallery }: Props): React.JSX
             <div className={styles.gridH} style={{ top: '66.667%' }} />
           </div>
 
-          <button type="button" className={styles.close} aria-label="Close camera" onClick={close}>
+          <ControlButton variant="dark" className={styles.close} aria-label="Close camera" onClick={close}>
             <Close size={12 * s} strokeWidth={2} />
-          </button>
+          </ControlButton>
 
           <div className={styles.row} style={{ left: frameRect.left, width: frameRect.width, top: bottom }}>
             <button type="button" className={`${styles.button} ${styles.gallery}`} aria-label="Gallery" onClick={openGallery}>

@@ -3,8 +3,14 @@
 //! the rendered camera lags it by `follow_damping`.
 
 use bevy::prelude::*;
+use common::structs::CameraSmoothing;
 
-use crate::smooth_damp::{follow_damp_fraction, smooth_damp, smooth_damp_vec2};
+use crate::smooth_damp::{follow_damp_fraction, smooth_damp};
+
+/// Zoom input is held for a 60 fps frame per wheel line, and per second while a zoom button is
+/// held; both at `fov_change_speed` times this.
+const ZOOM_SCALAR: f32 = 50.0;
+const WHEEL_LINE_SECS: f32 = 1.0 / 60.0;
 
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct PhotoCameraSettings {
@@ -19,11 +25,10 @@ pub struct PhotoCameraSettings {
     pub fov_damping: f32,
     pub min_fov: f32,
     pub max_fov: f32,
-    /// Degrees per second per unit of look input.
-    pub rotation_speed: f32,
+    /// The player camera's turn per pointer delta, scaled by this.
+    pub look_scale: f32,
     /// Degrees a frame may turn the camera.
     pub max_rotation_per_frame: f32,
-    pub rotation_damping: f32,
     pub min_vertical_angle: f32,
     pub max_vertical_angle: f32,
     /// Degrees per second while a tilt key is held.
@@ -53,9 +58,8 @@ impl Default for PhotoCameraSettings {
             fov_damping: 0.5,
             min_fov: 10.0,
             max_fov: 120.0,
-            rotation_speed: 3.0,
+            look_scale: 0.17,
             max_rotation_per_frame: 10.0,
-            rotation_damping: 0.1,
             min_vertical_angle: -90.0,
             max_vertical_angle: 90.0,
             tilt_speed: 30.0,
@@ -87,9 +91,19 @@ pub struct PhotoCameraInput {
     pub aim: Vec2,
     /// The pointer button is held while the cursor is free.
     pub mouse_dragging: bool,
-    /// Zoom in positive, in wheel lines (or a held zoom button per frame).
-    pub zoom: f32,
+    /// Wheel lines turned this frame, zoom in positive.
+    pub zoom_lines: f32,
+    /// A held zoom button, in -1..=1, zoom in positive.
+    pub zoom_held: f32,
     pub cursor_locked: bool,
+}
+
+/// How the player camera turns, which the photo camera follows.
+#[derive(Clone, Copy, Debug)]
+pub struct Look {
+    /// The player camera's sensitivity setting.
+    pub sensitivity: f32,
+    pub smoothing: CameraSmoothing,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -107,12 +121,6 @@ impl Damped {
             velocity: 0.0,
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct DampedVec2 {
-    pub current: Vec2,
-    pub velocity: Vec2,
 }
 
 /// How photo mode was opened, for analytics.
@@ -143,7 +151,8 @@ pub struct PhotoCamera {
     pub roll: f32,
     pub fov: Damped,
     pub tilt: Damped,
-    pub aim: DampedVec2,
+    /// The smoothed pointer delta, the player camera's filter state.
+    look_smoothed: Vec2,
     cursor_was_locked: bool,
     /// False until the opening transition lands and the follow target takes over.
     pub following: bool,
@@ -166,10 +175,7 @@ impl PhotoCamera {
             roll: roll.to_degrees(),
             fov: Damped::at(fov_degrees),
             tilt: Damped::default(),
-            aim: DampedVec2 {
-                current: Vec2::Y,
-                velocity: Vec2::Y,
-            },
+            look_smoothed: Vec2::ZERO,
             cursor_was_locked: true,
             following: false,
             hud_hidden: false,
@@ -250,15 +256,24 @@ impl PhotoCamera {
         self.target.translation += movement;
     }
 
-    /// Look, tilt and zoom for one frame; `rotate` is false while the cursor is free and the
-    /// pointer button is up.
-    pub fn steer(&mut self, input: &PhotoCameraInput, settings: &PhotoCameraSettings, dt: f32) {
-        if input.cursor_locked || input.mouse_dragging {
-            self.rotate(input.aim, settings, dt);
-        }
+    /// Look, tilt and zoom for one frame. The pointer looks while the cursor is locked or its
+    /// button is held; otherwise the smoothed look runs out.
+    pub fn steer(
+        &mut self,
+        input: &PhotoCameraInput,
+        settings: &PhotoCameraSettings,
+        look: &Look,
+        dt: f32,
+    ) {
+        let aim = if input.cursor_locked || input.mouse_dragging {
+            input.aim
+        } else {
+            Vec2::ZERO
+        };
+        self.rotate(aim, settings, look, dt);
         let reset_tilt = input.cursor_locked != self.cursor_was_locked;
         self.tilt_by(input.tilting, settings, reset_tilt, dt);
-        self.zoom(input.zoom, settings, dt);
+        self.zoom(input.zoom_lines, input.zoom_held, settings, dt);
         self.target.rotation = Quat::from_euler(
             EulerRot::YXZ,
             self.yaw.to_radians(),
@@ -267,18 +282,13 @@ impl PhotoCamera {
         );
     }
 
-    fn rotate(&mut self, aim: Vec2, settings: &PhotoCameraSettings, dt: f32) {
-        let target = aim * settings.rotation_speed;
-        self.aim.current = smooth_damp_vec2(
-            self.aim.current,
-            target,
-            &mut self.aim.velocity,
-            settings.rotation_damping,
-            dt,
-        );
+    fn rotate(&mut self, aim: Vec2, settings: &PhotoCameraSettings, look: &Look, dt: f32) {
+        let turn = look.smoothing.smooth(aim, &mut self.look_smoothed, dt) * look.sensitivity
+            / 1000.0
+            * settings.look_scale;
         let max = settings.max_rotation_per_frame;
-        let horizontal = (self.aim.current.x * dt).clamp(-max, max);
-        let vertical = (self.aim.current.y * dt).clamp(-max, max);
+        let horizontal = turn.x.to_degrees().clamp(-max, max);
+        let vertical = turn.y.to_degrees().clamp(-max, max);
         self.yaw -= horizontal;
         self.pitch =
             (self.pitch - vertical).clamp(settings.min_vertical_angle, settings.max_vertical_angle);
@@ -307,10 +317,9 @@ impl PhotoCamera {
         self.roll = (self.roll + rotation).clamp(-settings.max_tilt_angle, settings.max_tilt_angle);
     }
 
-    fn zoom(&mut self, zoom: f32, settings: &PhotoCameraSettings, dt: f32) {
-        if zoom.abs() > f32::EPSILON {
-            self.fov.target -= zoom * settings.fov_change_speed * dt * zoom_speed_scalar();
-        }
+    fn zoom(&mut self, lines: f32, held: f32, settings: &PhotoCameraSettings, dt: f32) {
+        let rate = settings.fov_change_speed * ZOOM_SCALAR;
+        self.fov.target -= lines * rate * WHEEL_LINE_SECS + held * rate * dt;
         self.fov.target = self.fov.target.clamp(settings.min_fov, settings.max_fov);
         self.fov.current = smooth_damp(
             self.fov.current,
@@ -332,20 +341,15 @@ impl PhotoCamera {
     }
 }
 
-/// Wheel lines are small on every platform but macOS, whose trackpads deliver pixel-sized deltas.
-fn zoom_speed_scalar() -> f32 {
-    if cfg!(target_os = "macos") {
-        1.0
-    } else {
-        50.0
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const DT: f32 = 1.0 / 60.0;
+    const LOOK: Look = Look {
+        sensitivity: 5.0,
+        smoothing: CameraSmoothing::Smoothed,
+    };
 
     fn camera() -> PhotoCamera {
         PhotoCamera::new(Transform::IDENTITY, 60.0, PhotoModeSource::Console)
@@ -417,14 +421,41 @@ mod tests {
             ..Default::default()
         };
         for _ in 0..30 {
-            cam.steer(&input, &settings, DT);
+            cam.steer(&input, &settings, &LOOK, DT);
         }
         assert!(cam.yaw < 0.0, "mouse right turns right: {}", cam.yaw);
         assert!(cam.pitch < 0.0, "mouse down looks down: {}", cam.pitch);
         assert!(cam.pitch >= settings.min_vertical_angle);
         let before = cam.yaw;
-        cam.steer(&input, &settings, DT);
+        cam.steer(&input, &settings, &LOOK, DT);
         assert!(before - cam.yaw <= settings.max_rotation_per_frame + 1e-4);
+    }
+
+    #[test]
+    fn a_pointer_delta_turns_as_the_player_camera_would_times_the_look_scale() {
+        let settings = PhotoCameraSettings::default();
+        let mut cam = camera();
+        let raw = Look {
+            sensitivity: 5.0,
+            smoothing: CameraSmoothing::Raw,
+        };
+        let input = PhotoCameraInput {
+            aim: Vec2::new(100.0, 0.0),
+            cursor_locked: true,
+            ..Default::default()
+        };
+        cam.steer(&input, &settings, &raw, DT);
+        // the player camera turns raw * sensitivity / 1000 radians
+        let player_turn = (100.0f32 * 5.0 / 1000.0).to_degrees();
+        assert!(
+            (-cam.yaw - player_turn * settings.look_scale).abs() < 1e-4,
+            "{}",
+            cam.yaw
+        );
+        // the same delta at half the frame rate turns the same
+        let mut slow = camera();
+        slow.steer(&input, &settings, &raw, DT * 2.0);
+        assert!((slow.yaw - cam.yaw).abs() < 1e-5);
     }
 
     #[test]
@@ -435,15 +466,15 @@ mod tests {
             aim: Vec2::new(100.0, 0.0),
             ..Default::default()
         };
-        cam.steer(&free, &settings, DT);
-        cam.steer(&free, &settings, DT);
+        cam.steer(&free, &settings, &LOOK, DT);
+        cam.steer(&free, &settings, &LOOK, DT);
         assert_eq!(cam.yaw, 0.0);
         let drag = PhotoCameraInput {
             mouse_dragging: true,
             ..free
         };
-        cam.steer(&drag, &settings, DT);
-        cam.steer(&drag, &settings, DT);
+        cam.steer(&drag, &settings, &LOOK, DT);
+        cam.steer(&drag, &settings, &LOOK, DT);
         assert!(cam.yaw < 0.0);
     }
 
@@ -457,21 +488,45 @@ mod tests {
             ..Default::default()
         };
         for _ in 0..60 {
-            cam.steer(&tilt, &settings, DT);
+            cam.steer(&tilt, &settings, &LOOK, DT);
         }
         assert!(cam.roll > 1.0, "tilt left rolls positive: {}", cam.roll);
         let release = PhotoCameraInput {
             tilting: 0.0,
             ..tilt
         };
-        cam.steer(&release, &settings, DT);
+        cam.steer(&release, &settings, &LOOK, DT);
         assert!(cam.tilt.target == 0.0);
         let unlocked = PhotoCameraInput {
             cursor_locked: false,
             ..release
         };
-        cam.steer(&unlocked, &settings, DT);
+        cam.steer(&unlocked, &settings, &LOOK, DT);
         assert_eq!(cam.roll, 0.0);
+    }
+
+    #[test]
+    fn a_wheel_line_zooms_a_fixed_angle_and_a_held_button_zooms_per_second() {
+        let settings = PhotoCameraSettings::default();
+        let mut cam = camera();
+        let line = PhotoCameraInput {
+            zoom_lines: 1.0,
+            ..Default::default()
+        };
+        cam.steer(&line, &settings, &LOOK, DT);
+        let per_line = 60.0 - cam.fov.target;
+        assert!((per_line - 5.0 / 3.0).abs() < 1e-4, "{per_line}");
+        let mut slow = camera();
+        slow.steer(&line, &settings, &LOOK, DT * 4.0);
+        assert!((slow.fov.target - cam.fov.target).abs() < 1e-5);
+
+        let mut held = camera();
+        let button = PhotoCameraInput {
+            zoom_held: -1.0,
+            ..Default::default()
+        };
+        held.steer(&button, &settings, &LOOK, 0.25);
+        assert!((held.fov.target - 85.0).abs() < 1e-4, "{}", held.fov.target);
     }
 
     #[test]
@@ -479,21 +534,21 @@ mod tests {
         let settings = PhotoCameraSettings::default();
         let mut cam = camera();
         let zoom_in = PhotoCameraInput {
-            zoom: 1.0,
+            zoom_held: 1.0,
             cursor_locked: true,
             ..Default::default()
         };
-        for _ in 0..10_000 {
-            cam.steer(&zoom_in, &settings, DT);
+        for _ in 0..600 {
+            cam.steer(&zoom_in, &settings, &LOOK, DT);
         }
         assert!((cam.fov.target - settings.min_fov).abs() < 1e-4);
         assert!(cam.fov.current >= settings.min_fov - 1e-3);
         let zoom_out = PhotoCameraInput {
-            zoom: -1.0,
+            zoom_held: -1.0,
             ..zoom_in
         };
-        for _ in 0..20_000 {
-            cam.steer(&zoom_out, &settings, DT);
+        for _ in 0..600 {
+            cam.steer(&zoom_out, &settings, &LOOK, DT);
         }
         assert!((cam.fov.target - settings.max_fov).abs() < 1e-4);
     }

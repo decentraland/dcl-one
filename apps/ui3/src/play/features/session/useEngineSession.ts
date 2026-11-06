@@ -9,9 +9,7 @@ import type { LaunchHostOptions } from '../../engine/engineRpc'
 import { recordVisit } from '../lobby/lobbyApi'
 import type { SatelliteView } from '../../engine/generated'
 import type { AvatarLook } from '../../engine/avatarEquip'
-import type { PreviewFocus,
-  PhotoModeSnapshot
-} from '../../engine/protocol'
+import type { PhotoModeSnapshot, PhotoModeSource, PreviewFocus } from '../../engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '../../lib/analytics'
 import { randomDefaultLook } from '../../lib/guestName'
 import { fetchStoredProfile, useStoredProfile, type StoredProfile } from '../login/useStoredProfile'
@@ -307,8 +305,7 @@ export interface PhotoModeState {
    *  engine frame and the next report can overtake it before React renders. */
   capture: { seq: number; preview: string } | null
   /** Open or close photo mode (`/photo_mode`); `source` is for analytics only. */
-  set: (enable: boolean) => void
-  toggle: () => void
+  set: (enable: boolean, source: PhotoModeSource) => void
   /** Take a photo (`/take_photo`). */
   take: () => void
 }
@@ -1236,7 +1233,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         }
         case 'photoMode': {
           const state = msg.state
-          // photo mode owns the screen: every page and popup closes as it opens
+          // photo mode owns the screen: every page and panel closes as it opens
           if (state.active && !photoModeActiveRef.current) panelSetters.forEach((set) => set(false))
           photoModeActiveRef.current = state.active
           if (state.event === 'uploadFailed' && state.eventSeq !== photoModeSeqRef.current) {
@@ -2310,10 +2307,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     }
   }, [skyboxOpen, skyboxProgressing, readClock])
   const toggleGallery = useCallback(() => exclusive(setGalleryOpen, () => ensure('getGallery')), [exclusive, ensure])
-  const setPhotoModeEnabled = useCallback((enable: boolean) => {
-    driverRef.current?.send({ kind: 'setPhotoMode', enable })
+  const setPhotoModeEnabled = useCallback((enable: boolean, source: PhotoModeSource) => {
+    driverRef.current?.send({ kind: 'setPhotoMode', enable, source })
   }, [])
-  const togglePhotoMode = useCallback(() => setPhotoModeEnabled(!photoModeActiveRef.current), [setPhotoModeEnabled])
   const takePhoto = useCallback(() => {
     driverRef.current?.send({ kind: 'takePhoto' })
   }, [])
@@ -3459,7 +3455,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     },
     []
   )
-  const uiFocus = anyPanelOpen || popupOpen || locked
+  // photo mode reserves all input like a page; the engine reads the camera's keys above that
+  const photoModeActive = photoMode?.active ?? false
+  const uiFocus = anyPanelOpen || popupOpen || locked || photoModeActive
+  // a popup opening on top of photo mode ends it
+  useEffect(() => {
+    if (popupOpen && photoModeActive) setPhotoModeEnabled(false, 'button')
+  }, [popupOpen, photoModeActive, setPhotoModeEnabled])
   // `covered` also spans the loading overlay: it outlives the engine's own out-of-world state
   // (player spawn, render-settle, reveal debounce), so the engine can't see that tail itself.
   const covered = menuPageOpen || phase === 'welcome' || phase === 'lobby' || phase === 'entering'
@@ -3529,8 +3531,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     // the startup lobby mounts only what it opens itself; the world's hotkeys wait for the world
     if (phase === 'lobby') return
     if (hasOpenPopup()) return
-    // in photo mode the engine owns the keys; the gallery key closes photo mode and opens the gallery
-    if (photoModeActiveRef.current && action !== 'Gallery') return
+    // in photo mode only its own key and the gallery key act, and both close it
+    if (photoModeActiveRef.current) {
+      if (action === 'PhotoMode' || action === 'Gallery') setPhotoModeEnabled(false, 'shortcut')
+      if (action === 'Gallery') toggleGallery()
+      return
+    }
     // Quick emotes: while the wheel is open, QuickEmoteN plays that slot's emote (which also
     // closes the wheel). With the wheel closed a number does nothing — this covers both
     // "hold B, tap a number" and "tap B, then a number", since either way B opened the wheel.
@@ -3547,6 +3553,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       case 'Communities': toggleCommunities(); break
       case 'Backpack': toggleBackpack(); break
       case 'Gallery': toggleGallery(); break
+      case 'PhotoMode': setPhotoModeEnabled(true, 'shortcut'); break
       case 'Settings': toggleSettings(); break
       case 'Friends': toggleFriends(); break
       case 'ChatPanel': toggleChat(); break
@@ -3700,7 +3707,6 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       active: photoMode?.active ?? false,
       capture: photoCapture,
       set: setPhotoModeEnabled,
-      toggle: togglePhotoMode,
       take: takePhoto
     },
     gallery: {

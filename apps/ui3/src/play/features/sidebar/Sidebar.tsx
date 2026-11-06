@@ -220,14 +220,7 @@ function renderItem(item: Item, i: number, session: EngineSession, snap: Binding
     )
   if (item.kind === 'camera')
     return (
-      <RailButton
-        key="camera"
-        icon={item.icon}
-        label={item.label}
-        shortcut={shortcut}
-        active={session.photoMode.active}
-        onClick={session.photoMode.toggle}
-      />
+      <RailButton key="camera" icon={item.icon} label={item.label} shortcut={shortcut} onClick={() => session.photoMode.set(true, 'button')} />
     )
   if (item.kind === 'gallery')
     return (

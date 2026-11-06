@@ -88,14 +88,9 @@ pub fn update_camera(
     if locks.0.contains("camera") {
         mouse_delta += input_manager.get_analog(POINTER_SET, InputPriority::Scroll);
     }
-    match config.camera_smoothing.rate() {
-        Some(rate) => {
-            let factor = 1.0 - (-dt * rate).exp();
-            mouse_delta = factor * mouse_delta + (1.0 - factor) * *smoothed_delta;
-            *smoothed_delta = mouse_delta;
-        }
-        None => *smoothed_delta = mouse_delta,
-    }
+    let mouse_delta = config
+        .camera_smoothing
+        .smooth(mouse_delta, &mut smoothed_delta, dt);
 
     if allow_cam_move {
         if input_manager.is_down(Action::System(SystemAction::RollLeft), InputPriority::None) {

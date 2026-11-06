@@ -1739,11 +1739,14 @@ export interface PhotoModeMessage {
   state: PhotoModeSnapshot
 }
 
-/** Open or close photo mode (the engine's `/photo_mode`). */
+/** Open or close photo mode (the engine's `/photo_mode`); `source` names what asked, for analytics. */
 export interface SetPhotoModeRequest {
   kind: 'setPhotoMode'
   enable: boolean
+  source: PhotoModeSource
 }
+
+export type PhotoModeSource = 'button' | 'shortcut'
 
 /** Take a photo in photo mode (the engine's `/take_photo`). */
 export interface TakePhotoRequest {

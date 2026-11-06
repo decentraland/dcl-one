@@ -1,5 +1,6 @@
 // explorer-automation `CameraTests` (3): photo mode (C or the sidebar's camera button) and the
-// capture. The engine owns photo mode (`/photo_mode`, `/take_photo`); the HUD shows its overlay
+// capture. The engine owns the camera and the capture (`/photo_mode`, `/take_photo`); the HUD opens
+// and closes the mode (C reaches it through the engine's action stream) and shows its overlay
 // (the frame, Shoot, Gallery, Close) while it is on.
 //
 // | Unity test                    | Here                                                    | Class   |
@@ -14,8 +15,8 @@ const scenario = spec(import.meta.url)
 const SHOOT = { name: 'Shoot', role: 'button' } as const
 const PAGE_TIMEOUT_MS = 10_000
 
-// Every scenario restores photo mode off: while it is on the engine reserves all input, which
-// would hold a following scenario that skips the opening Escape.
+// Every scenario restores photo mode off: while it is on the HUD declares focus, which reserves
+// all input and would hold a following scenario that skips the opening Escape.
 scenario('C toggles photo mode', async ({ explorer, restore }) => {
   restore(async () => {
     await explorer.photoMode('off')

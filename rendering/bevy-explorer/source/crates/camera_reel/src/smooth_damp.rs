@@ -2,8 +2,6 @@
 //! `smooth_time` seconds without overshooting, and `follow_damp` is the exponential lag a follow
 //! camera applies, closing 99% of the gap in `damp_time` seconds.
 
-use bevy::prelude::Vec2;
-
 /// Moves `current` toward `target`, updating `velocity`, over about `smooth_time` seconds.
 pub fn smooth_damp(
     current: f32,
@@ -24,30 +22,6 @@ pub fn smooth_damp(
     if (target - current > 0.0) == (output > target) {
         output = target;
         *velocity = 0.0;
-    }
-    output
-}
-
-pub fn smooth_damp_vec2(
-    current: Vec2,
-    target: Vec2,
-    velocity: &mut Vec2,
-    smooth_time: f32,
-    dt: f32,
-) -> Vec2 {
-    let smooth_time = smooth_time.max(0.0001);
-    let omega = 2.0 / smooth_time;
-    let x = omega * dt;
-    let exp = 1.0 / (1.0 + x + 0.48 * x * x + 0.235 * x * x * x);
-    let change = current - target;
-    let temp = (*velocity + omega * change) * dt;
-    *velocity = (*velocity - omega * temp) * exp;
-    let mut output = target + (change + temp) * exp;
-    let orig_minus_current = target - current;
-    let out_minus_orig = output - target;
-    if orig_minus_current.dot(out_minus_orig) > 0.0 {
-        output = target;
-        *velocity = Vec2::ZERO;
     }
     output
 }
@@ -89,26 +63,10 @@ mod tests {
     }
 
     #[test]
-    fn vec2_matches_scalar_per_axis() {
-        let (mut v2, mut vel2) = (Vec2::ZERO, Vec2::ZERO);
-        let (mut x, mut vx) = (0.0, 0.0);
-        for _ in 0..30 {
-            v2 = smooth_damp_vec2(v2, Vec2::new(3.0, 0.0), &mut vel2, 0.1, 1.0 / 60.0);
-            x = smooth_damp(x, 3.0, &mut vx, 0.1, 1.0 / 60.0);
-        }
-        assert!((v2.x - x).abs() < 1e-4);
-        assert_eq!(v2.y, 0.0);
-    }
-
-    #[test]
     fn a_zero_length_frame_keeps_the_velocity_finite() {
         let mut velocity = 0.0f32;
         let out = smooth_damp(1.0, 1.0, &mut velocity, 0.1, 0.0);
         assert_eq!(out, 1.0);
-        assert!(velocity.is_finite());
-        let mut velocity = Vec2::ZERO;
-        let out = smooth_damp_vec2(Vec2::ONE, Vec2::ONE, &mut velocity, 0.1, 0.0);
-        assert_eq!(out, Vec2::ONE);
         assert!(velocity.is_finite());
     }
 
