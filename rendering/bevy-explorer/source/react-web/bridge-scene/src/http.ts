@@ -37,6 +37,17 @@ export async function catalystBase(): Promise<string> {
 
 const META = JSON.stringify({})
 
+/** A signed request the service answered with an error status; keeps the status and body. */
+export class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly body: string,
+    statusText?: string
+  ) {
+    super(`HTTP ${status}: ${statusText ?? body}`)
+  }
+}
+
 // Catalyst/public GET. MUST go through the engine's kernelFetch, not the browser's fetch():
 // the scene runs in the engine's COEP (cross-origin-isolated) context, where a raw fetch() to
 // the catalyst is blocked (no CORP). kernelFetch performs the request natively in the engine.
@@ -65,7 +76,7 @@ export async function signed<T>(
     },
     meta: META
   })
-  if (!result.ok) throw new Error(`HTTP ${result.status}: ${result.statusText ?? result.body}`)
+  if (!result.ok) throw new HttpError(result.status, result.body, result.statusText)
   if (!result.body) return undefined
   const parsed = JSON.parse(result.body) as { data?: T } & T
   return parsed.data ?? parsed
@@ -134,7 +145,7 @@ export async function signedForm<T>(
     init: { headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` }, method, body },
     meta: META
   })
-  if (!result.ok) throw new Error(`HTTP ${result.status}: ${result.statusText ?? result.body}`)
+  if (!result.ok) throw new HttpError(result.status, result.body, result.statusText)
   if (!result.body) return undefined
   const parsed = JSON.parse(result.body) as { data?: T } & T
   return parsed.data ?? parsed

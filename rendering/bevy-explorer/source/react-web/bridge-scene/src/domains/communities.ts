@@ -8,12 +8,12 @@
 //         updates add and remove channels.
 import { getPlayer } from '@dcl/sdk/players'
 import { BevyApi } from '../bevy-api'
-import { getJson, serviceBase, signed, signedForm } from '../http'
+import { dataUrlBytes, getJson, HttpError, serviceBase, signed, signedForm } from '../http'
 import { fetchIdentities } from './profile'
 import type { ProfileIdentity } from './profile'
 import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'
-import type { Community, CommunityAction, CommunityChannel, CommunityEvent, CommunityMember, CommunityPhoto, CommunityPlace, CommunityPost } from '../../../src/engine/protocol'
+import type { Community, CommunityAction, CommunityChannel, CommunityEvent, CommunityMember, CommunityPhoto, CommunityPlace, CommunityPost, CommunitySaveResultMessage } from '../../../src/engine/protocol'
 
 // Community events live on the (public) events-api, filtered by community_id. Community photos
 // live on the camera-reel service (mirrors /api/users/{a}/images). Community thumbnails are NOT
@@ -202,6 +202,29 @@ async function detail(id: string): Promise<{ members: CommunityMember[]; posts: 
   return { members, posts, places, events, photos }
 }
 
+/** A refused create or update as the form shows it. As in unity-explorer, every HTTP 400 is the
+ *  content check's answer: its per-field issues (possibly none), or `unavailable` when the check
+ *  could not run. Anything else is a plain error. */
+function saveFailure(e: unknown): Pick<CommunitySaveResultMessage, 'moderation' | 'error'> {
+  if (e instanceof HttpError && e.status === 400) {
+    let body: { data?: { issues?: Partial<Record<'name' | 'description' | 'image', unknown>> }; communityContentValidationUnavailable?: unknown } = {}
+    try {
+      body = JSON.parse(e.body) as typeof body
+    } catch {
+      // not JSON: a refusal with no findings
+    }
+    const tags = (v: unknown): string[] => (Array.isArray(v) ? v.filter((t): t is string => typeof t === 'string') : [])
+    const issues = body.data?.issues
+    return {
+      moderation: {
+        issues: { name: tags(issues?.name), description: tags(issues?.description), image: tags(issues?.image) },
+        unavailable: body.communityContentValidationUnavailable === true
+      }
+    }
+  }
+  return { error: e instanceof Error ? e.message : String(e) }
+}
+
 export function registerCommunities(ctx: Ctx): void {
   ctx.on('getCommunities', async () => {
     const communities = await list()
@@ -274,15 +297,24 @@ export function registerCommunities(ctx: Ctx): void {
       .catch((e: unknown) => console.error('[communities] presence identity failed', e))
   })
   ctx.on('createCommunity', async (msg) => {
-    // Text-only multipart (no thumbnail — see signedForm). Matches Unity's create payload.
-    await signedForm(await base('v1'), 'POST', {
-      name: msg.name,
-      description: msg.description,
-      privacy: msg.privacy,
-      visibility: msg.discoverable ? 'all' : 'unlisted'
-    }).catch((e: unknown) => {
-      console.error('[communities] create failed', e)
-    })
+    // unity-explorer's create payload: text fields, and the picture as a `thumbnail.png` file part
+    // (always labelled image/png; the service reads the real type from the bytes).
+    const files =
+      msg.thumbnail != null
+        ? [{ name: 'thumbnail', filename: 'thumbnail.png', contentType: 'image/png', bytes: dataUrlBytes(msg.thumbnail) }]
+        : []
+    const result = await signedForm<{ id?: string }>(
+      await base('v1'),
+      'POST',
+      { name: msg.name, description: msg.description, privacy: msg.privacy, visibility: msg.discoverable ? 'all' : 'unlisted' },
+      files
+    )
+      .then((created): CommunitySaveResultMessage => ({ kind: 'communitySaveResult', mode: 'create', id: created?.id ?? '' }))
+      .catch((e: unknown): CommunitySaveResultMessage => {
+        console.error('[communities] create failed', e)
+        return { kind: 'communitySaveResult', mode: 'create', ...saveFailure(e) }
+      })
+    ctx.send(result)
     ctx.send({ kind: 'communities', communities: await list() })
     await sendChannels()
   })

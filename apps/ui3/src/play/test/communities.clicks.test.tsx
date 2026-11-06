@@ -3,11 +3,11 @@ import { render, screen, act, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { CommunitiesPage } from '../features/communities/CommunitiesPage'
 import { CommunityModal } from '../features/communities/CommunityModal'
-import { openCommunityCreateModal } from '../features/communities/CommunityCreateModal'
+import { openCommunityCreateModal, readCommunityPicture } from '../features/communities/CommunityCreateModal'
 import { SessionProvider } from '../features/session/SessionContext'
-import { PopupHost, closeTopPopup, resetPopups } from '../design'
+import { PopupHost, ToastHost, closeTopPopup, resetPopups } from '../design'
 import type { Community, CommunityDetailMessage } from '../engine/protocol'
-import type { CommunitiesState } from '../features/session/useEngineSession'
+import type { CommunitiesState, CommunitySave } from '../features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from './harness'
 
 afterEach(resetPopups) // the community modal now lives on the module-level popup stack
@@ -103,54 +103,182 @@ describe('community modal clicks', () => {
   })
 })
 
-// The create modal holds typed details with nowhere to put them yet, so it takes the same close
-// contract as the passport: the scrim refuses, the deliberate closes ask.
-describe('community create modal guards what you typed', () => {
-  const openWithAName = async (): Promise<void> => {
-    render(<PopupHost />)
+// The create form, as unity-explorer's: it holds typed details (the scrim refuses, the deliberate
+// closes ask), needs a name and a description, waits for the content check, and shows how it ended.
+describe('community create modal', () => {
+  function renderCreate(): { communities: CommunitiesState; setSave: (save: CommunitySave | null) => void; onCreated: ReturnType<typeof vi.fn> } {
+    const session = fakeSession()
+    const onCreated = vi.fn()
+    const view = (save: CommunitySave | null): React.JSX.Element => {
+      session.communities = { ...session.communities, save }
+      return (
+        <SessionProvider value={{ ...session }}>
+          <PopupHost />
+          <ToastHost />
+        </SessionProvider>
+      )
+    }
+    const { rerender } = render(view(null))
     act(() => {
-      openCommunityCreateModal(true, vi.fn())
+      openCommunityCreateModal(true, onCreated)
     })
-    await userEvent.type(screen.getByLabelText(/community name/i), 'Builders')
+    return { communities: session.communities, setSave: (save) => rerender(view(save)), onCreated }
+  }
+  const fill = async (name = 'Builders', description = 'We build things'): Promise<void> => {
+    await userEvent.type(screen.getByLabelText(/community name/i), name)
+    await userEvent.type(screen.getByLabelText(/description/i), description)
   }
 
   it('ignores a backdrop click once something has been entered', async () => {
-    await openWithAName()
+    renderCreate()
+    await fill()
     fireEvent.click(document.querySelector('[class*="backdrop"]') as HTMLElement)
     expect(screen.queryByText('Discard this community?')).toBeNull()
     expect((screen.getByLabelText(/community name/i) as HTMLInputElement).value).toBe('Builders')
   })
 
   it('asks on CANCEL, and keeps the details when the answer is no', async () => {
-    await openWithAName()
+    renderCreate()
+    await fill()
     await userEvent.click(screen.getByRole('button', { name: 'CANCEL' }))
     await userEvent.click(screen.getByRole('button', { name: 'Keep editing' }))
     expect((screen.getByLabelText(/community name/i) as HTMLInputElement).value).toBe('Builders')
   })
 
-  it('picks membership from our own listbox, with the explanation in the option', async () => {
-    render(<PopupHost />)
-    const onCreate = vi.fn()
-    act(() => {
-      openCommunityCreateModal(true, onCreate)
-    })
+  it('needs a description as well as a name, as the service does', async () => {
+    renderCreate()
     await userEvent.type(screen.getByLabelText(/community name/i), 'Builders')
+    expect(screen.getByRole('button', { name: 'CREATE' })).toBeDisabled()
+    await userEvent.type(screen.getByLabelText(/description/i), '   ')
+    expect(screen.getByRole('button', { name: 'CREATE' })).toBeDisabled()
+    await userEvent.type(screen.getByLabelText(/description/i), 'We build things')
+    expect(screen.getByRole('button', { name: 'CREATE' })).toBeEnabled()
+  })
+
+  it('sends membership and discoverability picked from our own listboxes', async () => {
+    const { communities } = renderCreate()
+    await fill()
 
     // A native <select> would open a Chromium popup, which the offscreen HUD cannot composite.
     expect(document.querySelector('select')).toBeNull()
     await userEvent.click(screen.getByRole('button', { name: 'Membership' }))
-    await userEvent.click(screen.getByRole('option', { name: /^Private: Members must be approved/ }))
+    await userEvent.click(screen.getByRole('option', { name: /^Private: Membership by request\/invite/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'Discoverability' }))
+    await userEvent.click(screen.getByRole('option', { name: /^Unlisted: Hidden from non-members/ }))
 
     await userEvent.click(screen.getByRole('button', { name: 'CREATE' }))
-    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ privacy: 'private' }))
+    expect(communities.create).toHaveBeenCalledWith({
+      name: 'Builders',
+      description: 'We build things',
+      privacy: 'private',
+      discoverable: false
+    })
+  })
+
+  it('shows the counters only while their field has focus', async () => {
+    renderCreate()
+    expect(screen.queryByText('0/30')).toBeNull()
+    await userEvent.type(screen.getByLabelText(/community name/i), 'Bui')
+    expect(screen.getByText('3/30')).toBeInTheDocument()
+    await userEvent.click(screen.getByLabelText(/description/i))
+    expect(screen.queryByText('3/30')).toBeNull()
+    expect(screen.getByText('0/500')).toBeInTheDocument()
+  })
+
+  it('waits for the content check, then opens the new community without asking', async () => {
+    const { setSave, onCreated } = renderCreate()
+    await fill()
+    await userEvent.click(screen.getByRole('button', { name: 'CREATE' }))
+    act(() => setSave({ status: 'saving' }))
+    expect(screen.getByText('Running Content Policy check. This may take a moment.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'CREATE' })).toBeDisabled()
+
+    act(() => setSave({ status: 'done', result: { kind: 'communitySaveResult', mode: 'create', id: 'c-new' } }))
+    expect(onCreated).toHaveBeenCalledWith('c-new')
+    expect(screen.queryByText('Discard this community?')).toBeNull()
+    expect(screen.queryByRole('dialog', { name: 'Create a Community' })).toBeNull()
+  })
+
+  it('keeps the form and says so when the create fails', async () => {
+    const { setSave, onCreated } = renderCreate()
+    await fill()
+    act(() => setSave({ status: 'done', result: { kind: 'communitySaveResult', mode: 'create', error: 'HTTP 500: boom' } }))
+    expect(await screen.findByText('There was an error creating community. Please try again.')).toBeInTheDocument()
+    expect(onCreated).not.toHaveBeenCalled()
+    expect((screen.getByLabelText(/community name/i) as HTMLInputElement).value).toBe('Builders')
+  })
+
+  it("shows the content check's findings, and EDIT COMMUNITY goes back to the form", async () => {
+    const { communities, setSave } = renderCreate()
+    await fill()
+    act(() =>
+      setSave({
+        status: 'done',
+        result: { kind: 'communitySaveResult', mode: 'create', moderation: { issues: { name: ['Hate speech', 'Slur'], description: [], image: ['Violence'] }, unavailable: false } }
+      })
+    )
+    expect(screen.getByRole('heading', { name: "Your Community Couldn't Be Created" })).toBeInTheDocument()
+    expect(screen.getByText('COMMUNITY NAME: [Hate speech], [Slur]')).toBeInTheDocument()
+    expect(screen.getByText('COMMUNITY IMAGE: [Violence]')).toBeInTheDocument()
+    expect(screen.queryByText(/COMMUNITY DESCRIPTION/)).toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: 'EDIT COMMUNITY' }))
+    expect(communities.clearSave).toHaveBeenCalled()
+    act(() => setSave(null))
+    expect((screen.getByLabelText(/community name/i) as HTMLInputElement).value).toBe('Builders')
+  })
+
+  it('offers RETRY when the content check could not run', async () => {
+    const { communities, setSave } = renderCreate()
+    await fill()
+    act(() =>
+      setSave({
+        status: 'done',
+        result: { kind: 'communitySaveResult', mode: 'create', moderation: { issues: { name: [], description: [], image: [] }, unavailable: true } }
+      })
+    )
+    expect(screen.getByText('Content verification is temporarily unavailable. Please try again later.')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'RETRY' }))
+    expect(communities.create).toHaveBeenCalledWith(expect.objectContaining({ name: 'Builders', description: 'We build things' }))
   })
 
   it('closes untouched, with nothing to lose', () => {
-    render(<PopupHost />)
-    act(() => {
-      openCommunityCreateModal(true, vi.fn())
-    })
+    renderCreate()
     act(() => closeTopPopup())
     expect(screen.queryByRole('button', { name: 'CANCEL' })).toBeNull()
+  })
+})
+
+// unity-explorer's checks on a picked picture, with its three messages.
+describe('community picture checks', () => {
+  const file = (bytes: number, type = 'image/png'): File => new File([new Uint8Array(bytes)], 'pic', { type })
+  const stubImage = (w: number, h: number): void => {
+    vi.stubGlobal(
+      'Image',
+      class {
+        onload: (() => void) | null = null
+        naturalWidth = w
+        naturalHeight = h
+        set src(_: string) {
+          setTimeout(() => this.onload?.())
+        }
+      }
+    )
+  }
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('takes a PNG or JPEG within 500 KB and 512×512 px', async () => {
+    stubImage(512, 512)
+    expect(await readCommunityPicture(file(512000))).toEqual({ dataUrl: expect.stringMatching(/^data:image\/png;base64,/) })
+    expect(await readCommunityPicture(file(1000, 'image/jpeg'))).toEqual({ dataUrl: expect.stringMatching(/^data:image\/jpeg;base64,/) })
+  })
+
+  it('refuses other types, and says which limit a picture breaks', async () => {
+    stubImage(600, 400)
+    expect(await readCommunityPicture(file(1000, 'image/gif'))).toEqual({ error: 'Invalid image file selected. Please check file type and size.' })
+    expect(await readCommunityPicture(file(1000))).toEqual({ error: 'Selected image exceeds 512x512 px size limit.' })
+    expect(await readCommunityPicture(file(512001))).toEqual({ error: 'Invalid image file selected. Please check file type and size.' })
+    stubImage(100, 100)
+    expect(await readCommunityPicture(file(512001))).toEqual({ error: 'Selected image exceeds 500KB size limit.' })
   })
 })

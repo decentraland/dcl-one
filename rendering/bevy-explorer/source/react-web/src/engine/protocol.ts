@@ -1127,6 +1127,29 @@ export interface CreateCommunityRequest {
   privacy: 'public' | 'private'
   /** Discoverable in the directory → visibility 'all', otherwise 'unlisted'. */
   discoverable: boolean
+  /** The picture as a data URL (PNG or JPEG, at most 500 KB and 512×512 px), sent as the form's
+   *  `thumbnail` file part. */
+  thumbnail?: string
+}
+
+/** The content check's findings per field: short tags, at most three each. */
+export interface CommunityModerationIssues {
+  name: string[]
+  description: string[]
+  image: string[]
+}
+
+/** How a community create ended (scene → page). Exactly one of `id`, `moderation`, `error`. */
+export interface CommunitySaveResultMessage {
+  kind: 'communitySaveResult'
+  mode: 'create'
+  /** The new community, on success. */
+  id?: string
+  /** The social-api refused it (HTTP 400): the content check's findings, which may be empty, or
+   *  `unavailable` when the check itself could not run. */
+  moderation?: { issues: CommunityModerationIssues; unavailable: boolean }
+  /** Any other failure. */
+  error?: string
 }
 
 export interface JoinCommunityRequest {
@@ -1769,6 +1792,7 @@ export type SceneToPage =
   | CommunityMessage
   | VoiceActivityMessage
   | CommunityActionFailedMessage
+  | CommunitySaveResultMessage
   | TravelResultMessage
   | AvatarSaveFailedMessage
   | RequestFailedMessage

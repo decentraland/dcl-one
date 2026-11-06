@@ -921,17 +921,30 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'createCommunity') {
+      // A name with "flagged" or "unavailable" in it gets the content check's two refusals, so the
+      // form's moderation views can be seen without a backend.
+      const lower = msg.name.toLowerCase()
+      if (lower.includes('flagged') || lower.includes('unavailable')) {
+        const unavailable = lower.includes('unavailable')
+        const issues = { name: unavailable ? [] : ['Offensive language'], description: [], image: [] }
+        setTimeout(() => reply({ kind: 'communitySaveResult', mode: 'create', moderation: { issues, unavailable } }), 600)
+        return
+      }
+      const id = `new-${mockCommunities.length}`
       mockCommunities.unshift({
-        id: `new-${mockCommunities.length}`,
+        id,
         name: msg.name,
         description: msg.description,
-        thumbnail: '',
+        thumbnail: msg.thumbnail ?? '',
         membersCount: 1,
         role: 'owner',
         ownerName: 'You',
         privacy: msg.privacy
       })
-      reply({ kind: 'communities', communities: mockCommunities })
+      setTimeout(() => {
+        reply({ kind: 'communitySaveResult', mode: 'create', id })
+        reply({ kind: 'communities', communities: mockCommunities })
+      }, 600)
       return
     }
     if (msg.kind === 'joinCommunity') {
