@@ -39,10 +39,14 @@ use wallet::{
     Wallet,
 };
 
+#[path = "client_login.rs"]
+mod client_login;
+
 pub struct LoginPlugin;
 
 impl Plugin for LoginPlugin {
     fn build(&self, app: &mut App) {
+        client_login::register(app);
         app.add_event::<LoginType>().add_systems(
             Update,
             (
@@ -592,6 +596,7 @@ fn process_login_bridge(
     >,
     mut wallet: ResMut<Wallet>,
     mut segment_config: ResMut<SegmentConfig>,
+    mut login_events: ResMut<client_login::ClientLoginDelivery>,
     mut current_profile: ResMut<CurrentUserProfile>,
     mut window: Query<&mut Window, With<PrimaryWindow>>,
     mut config: ResMut<AppConfig>,
@@ -826,6 +831,7 @@ fn process_login_bridge(
             }
             SystemApi::LoginGuest => {
                 *login_task = None;
+                login_events.pause();
                 wallet.finalize_as_guest();
                 segment_config.update_identity(format!("{:#x}", wallet.address().unwrap()), true);
                 current_profile.profile = Some(UserProfile {
@@ -845,6 +851,7 @@ fn process_login_bridge(
             }
             SystemApi::Logout => {
                 *login_task = None;
+                login_events.pause();
                 wallet.disconnect();
                 segment_config.reset_identity();
                 current_profile.profile = None;
@@ -888,6 +895,7 @@ fn process_login_bridge(
                         );
                     }
                 }
+                login_events.completed(&wallet);
                 segment_config
                     .update_identity(format!("{:#x}", wallet.address().unwrap()), guest_account);
                 let (profile, deployed) = match profile {
@@ -905,6 +913,7 @@ fn process_login_bridge(
             None => *login_task = Some(task),
         }
     }
+    login_events.drive(&wallet);
 }
 
 #[cfg(test)]

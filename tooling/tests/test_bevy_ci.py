@@ -254,6 +254,79 @@ class SelectionTest(unittest.TestCase):
         with patch.object(ci, 'api', side_effect=AssertionError('PR must not consult main runs')):
             self.assertFalse(ci.plan('pull_request', self.base, self.commit(), '')['test'])
 
+    def pr_merge(self, main_file, pr_file):
+        self.write(pr_file, 'pr')
+        pr = self.commit()
+        self.git('checkout', '-q', '--detach', self.base)
+        self.write(main_file, 'main moved')
+        tip = self.commit()
+        self.git('merge', '-q', '--no-ff', '-m', f'Merge {pr} into {tip}', pr)
+        return tip, pr, self.git('rev-parse', 'HEAD')
+
+    def run_main(self, command, head, base, pr_head):
+        with tempfile.TemporaryDirectory() as temporary:
+            output, event = Path(temporary) / 'output', Path(temporary) / 'event.json'
+            event.write_text(json.dumps({'pull_request': {'head': {'sha': pr_head}}}))
+            env = {'GITHUB_EVENT_NAME': 'pull_request', 'GITHUB_EVENT_PATH': str(event), 'BASE_SHA': base,
+                   'GH_REPO': '', 'GITHUB_OUTPUT': str(output), 'GITHUB_STEP_SUMMARY': ''}
+            with patch.dict(os.environ, env), patch('sys.argv', ['bevy-ci.py', command, '--head', head]), \
+                    patch.object(ci, 'api', side_effect=AssertionError('PR must not consult main runs')):
+                ci.main()
+            return dict(line.split('=', 1) for line in output.read_text().splitlines())
+
+    def test_pr_compares_with_the_main_tip_it_was_merged_onto(self):
+        tip, pr, merge = self.pr_merge('rendering/bevy-explorer/source/Cargo.toml', 'apps/sites/only-sites.ts')
+        self.assertTrue(ci.plan('pull_request', self.base, merge, '')['native-matrix'])
+        self.assertEqual(ci.tested_base(merge, pr, self.base), tip)
+        values = self.run_main('plan', merge, self.base, pr)
+        for lane in ('clippy', 'test', 'headless', 'web', 'native-matrix', 'scenes'):
+            self.assertEqual(values[lane], 'false', lane)
+
+    def test_pr_images_ignore_main_changes_since_the_payload_base(self):
+        _, pr, merge = self.pr_merge('services/catalyst/src/main.rs', 'docs/only-docs.md')
+        self.assertEqual(self.run_main('consumer-plan', merge, self.base, pr)['images'], 'false')
+
+    def test_pr_merged_onto_main_keeps_its_own_engine_change(self):
+        _, pr, merge = self.pr_merge('apps/sites/main-only.ts', 'rendering/bevy-explorer/source/src/lib.rs')
+        values = self.run_main('plan', merge, self.base, pr)
+        self.assertEqual((values['test'], values['web']), ('true', 'true'))
+
+    def test_pr_base_falls_back_unless_github_merged_the_pr_head(self):
+        self.write('rendering/bevy-explorer/source/src/lib.rs', 'changed')
+        head = self.commit()
+        self.assertEqual(ci.tested_base(head, head, self.base), self.base)
+        self.assertEqual(self.run_main('plan', head, self.base, head)['test'], 'true')
+        # A branch's own merge of main has two parents, but its second is not the PR head.
+        self.git('checkout', '-q', '--detach', self.base)
+        self.write('apps/sites/main-only.ts', 'main')
+        main_tip = self.commit()
+        self.git('checkout', '-q', '--detach', head)
+        self.git('merge', '-q', '--no-ff', '-m', 'Merge main into feature', main_tip)
+        branch_merge = self.git('rev-parse', 'HEAD')
+        self.assertEqual(ci.tested_base(branch_merge, branch_merge, self.base), self.base)
+        self.assertEqual(ci.tested_base(branch_merge, None, self.base), self.base)
+        self.git('commit', '-q', '--allow-empty', '-m', f'notes\n\nparent {head}')
+        self.assertEqual(ci.tested_base(self.git('rev-parse', 'HEAD'), head, 'fallback'), 'fallback')
+        self.assertEqual(ci.tested_base('0' * 39 + '1', head, 'fallback'), 'fallback')
+
+    def test_pr_base_is_read_from_a_shallow_checkout_of_the_merge_commit(self):
+        tip, pr, merge = self.pr_merge('rendering/bevy-explorer/source/Cargo.toml', 'apps/sites/only-sites.ts')
+        self.git('config', 'uploadpack.allowAnySHA1InWant', 'true')
+        with tempfile.TemporaryDirectory() as temporary:
+            clone = Path(temporary)
+            run = lambda *args: subprocess.check_output(['git', *args], cwd=clone, text=True).strip()
+            run('init', '-q')
+            run('config', 'maintenance.auto', 'false')
+            run('config', 'gc.auto', '0')
+            # What actions/checkout does for a pull_request: the merge commit at depth 1.
+            run('remote', 'add', 'origin', self.root.as_uri())
+            run('fetch', '-q', '--no-tags', '--depth=1', 'origin', f'+{merge}:refs/remotes/pull/1/merge')
+            run('checkout', '-q', '--detach', merge)
+            self.assertNotEqual(subprocess.run(['git', 'rev-parse', '--verify', '-q', 'HEAD^1'], cwd=clone).returncode, 0)
+            with patch.object(ci, 'ROOT', clone):
+                self.assertEqual(ci.tested_base(merge, pr, self.base), tip)
+                self.assertEqual(self.run_main('plan', merge, self.base, pr)['native-matrix'], 'false')
+
     def test_gateway_contract_inputs_select_only_the_linux_test_lane_on_prs(self):
         for name in ('infra/gateway/gateway.py', 'infra/gateway/routes.nix',
                      'apps/ui3/src/play/lib/baseDomain.ts',

@@ -15,12 +15,19 @@ function pageStride(el: HTMLDivElement, perPage: number, gap: number): number {
 export function Rail({
   perPage,
   gap,
+  variant = 'default',
+  bleed = 0,
   children,
   className
 }: {
   perPage: number
   /** Space between cards, px. */
   gap: number
+  /** `shop`: the Shop home's larger page dots, set further below the cards. */
+  variant?: 'default' | 'shop'
+  /** Room (px) inside the clip above, below and left of the cards, for a card that grows on hover; the
+   *  layout doesn't move. None to the right, where the clip is the edge the design draws. */
+  bleed?: number
   children: React.ReactNode
   className?: string
 }): React.JSX.Element {
@@ -59,8 +66,8 @@ export function Rail({
   }, [count])
 
   return (
-    <div className={`${styles.rail} ${className ?? ''}`.trim()}>
-      <div ref={viewport} className={styles.viewport}>
+    <div className={`${styles.rail} ${variant === 'shop' ? styles.shop : ''} ${className ?? ''}`.trim()}>
+      <div ref={viewport} className={styles.viewport} style={bleed > 0 ? ({ '--rail-bleed': `${bleed}px` } as React.CSSProperties) : undefined}>
         <div className={styles.track} style={{ gap }}>
           {children}
         </div>

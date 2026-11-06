@@ -16,6 +16,7 @@ import type { ContributableDomains } from "@catalyst-api/worlds/ContributableDom
 import type { ContributorDomain } from "@catalyst-api/worlds/ContributorDomain";
 import type { DeployRejection } from "@catalyst-api/worlds/DeployRejection";
 import type { DeploySuccess } from "@catalyst-api/worlds/DeploySuccess";
+import type { ExpiredUploadsCleanup } from "@catalyst-api/worlds/ExpiredUploadsCleanup";
 import type { FederationMirrorResponse } from "@catalyst-api/worlds/FederationMirrorResponse";
 import type { FederationPeerOmissionView } from "@catalyst-api/worlds/FederationPeerOmissionView";
 import type { FederationPeersResponse } from "@catalyst-api/worlds/FederationPeersResponse";
@@ -31,6 +32,7 @@ import type { LiveDataResponse } from "@catalyst-api/worlds/LiveDataResponse";
 import type { MinimapConfig } from "@catalyst-api/worlds/MinimapConfig";
 import type { MirrorFreshness } from "@catalyst-api/worlds/MirrorFreshness";
 import type { MirrorStatus } from "@catalyst-api/worlds/MirrorStatus";
+import type { PartialDeployPending } from "@catalyst-api/worlds/PartialDeployPending";
 import type { PermissionsResponse } from "@catalyst-api/worlds/PermissionsResponse";
 import type { PermissionSummaryEntry } from "@catalyst-api/worlds/PermissionSummaryEntry";
 import type { PersonalWorldsStatus } from "@catalyst-api/worlds/PersonalWorldsStatus";
@@ -160,6 +162,12 @@ export const DeploySuccessSchema = z.object({
   message: z.string(),
 });
 
+export const ExpiredUploadsCleanupSchema = z.object({
+  outcome: z.enum(["success", "deferred", "error"]),
+  removed: z.number(),
+  failed: z.number(),
+});
+
 export const FederationPeerStatusViewSchema = z.object({
   lastAttemptAt: z.string().nullable(),
   lastSuccessAt: z.string().nullable(),
@@ -287,6 +295,10 @@ export const MirrorStatusSchema = z.object({
   worlds: CatalogueCountsSchema,
 });
 
+export const PartialDeployPendingSchema = z.object({
+  missing: z.array(z.string()),
+});
+
 export const PermissionSummaryEntrySchema = z.object({
   permission: z.string(),
   world_wide: z.boolean(),
@@ -383,6 +395,7 @@ export type _AssertContributableDomains = Assert<Mutual<ContributableDomains, z.
 export type _AssertContributorDomain = Assert<Mutual<ContributorDomain, z.infer<typeof ContributorDomainSchema>>>;
 export type _AssertDeployRejection = Assert<Mutual<DeployRejection, z.infer<typeof DeployRejectionSchema>>>;
 export type _AssertDeploySuccess = Assert<Mutual<DeploySuccess, z.infer<typeof DeploySuccessSchema>>>;
+export type _AssertExpiredUploadsCleanup = Assert<Mutual<ExpiredUploadsCleanup, z.infer<typeof ExpiredUploadsCleanupSchema>>>;
 export type _AssertFederationMirrorResponse = Assert<Mutual<FederationMirrorResponse, z.infer<typeof FederationMirrorResponseSchema>>>;
 export type _AssertFederationPeerOmissionView = Assert<Mutual<FederationPeerOmissionView, z.infer<typeof FederationPeerOmissionViewSchema>>>;
 export type _AssertFederationPeersResponse = Assert<Mutual<FederationPeersResponse, z.infer<typeof FederationPeersResponseSchema>>>;
@@ -398,6 +411,7 @@ export type _AssertLiveDataResponse = Assert<Mutual<LiveDataResponse, z.infer<ty
 export type _AssertMinimapConfig = Assert<Mutual<MinimapConfig, z.infer<typeof MinimapConfigSchema>>>;
 export type _AssertMirrorFreshness = Assert<Mutual<MirrorFreshness, z.infer<typeof MirrorFreshnessSchema>>>;
 export type _AssertMirrorStatus = Assert<Mutual<MirrorStatus, z.infer<typeof MirrorStatusSchema>>>;
+export type _AssertPartialDeployPending = Assert<Mutual<PartialDeployPending, z.infer<typeof PartialDeployPendingSchema>>>;
 export type _AssertPermissionsResponse = Assert<Mutual<PermissionsResponse, z.infer<typeof PermissionsResponseSchema>>>;
 export type _AssertPermissionSummaryEntry = Assert<Mutual<PermissionSummaryEntry, z.infer<typeof PermissionSummaryEntrySchema>>>;
 export type _AssertPersonalWorldsStatus = Assert<Mutual<PersonalWorldsStatus, z.infer<typeof PersonalWorldsStatusSchema>>>;

@@ -384,6 +384,14 @@ def testnet_env():
         # would read Sepolia through ETH_RPC_URL and store its logs as mainnet rows.
         'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         'VITE_SHOP_CHAIN_ID': '80002',
+        # The catalogue's chainId for MATIC items, and the chain the Shop's coupons pair with: the pages ask the
+        # node to settle on it, and the node refuses a catalogue chain that differs from COLLECTIONS_CHAIN_ID.
+        'POLYGON_CHAIN_ID': '80002',
+        # A USD-priced trade settles at the MANA/USD feed of the marketplace it runs on. Amoy's off-chain
+        # marketplaces read this one (manaUsdAggregator()) and refuse a round older than 27 s
+        # (manaUsdAggregatorTolerance()), so the node checks the same age before it converts.
+        'MANA_USD_AGGREGATOR_ADDRESS': '0xdcf00f5f60b62b07e668a84c0cedaf6f453d416e',
+        'USD_PEGGED_ORACLE_MAX_AGE_SECS': '27',
         # Credits settle through Amoy's CreditsManager (contracts.decentraland.org, `amoy`). The usage index
         # reads its CreditUsed events over RPC_ENDPOINT_POLYGON on COLLECTIONS_CHAIN_ID; POST /credits/authorize
         # signs only while that index is ready. Mock card top-ups grant test credits with no charge.

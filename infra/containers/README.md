@@ -42,6 +42,11 @@ python3 tooling/image-smoke.py
 
 ## Build and transfer reuse
 
+- PRs build and smoke-test AMD64 only unless they change an
+  architecture-sensitive input (the `arches` job in `apis-sites-images.yml` lists
+  them); main, tag and manual runs build both architectures. Before the APIs image
+  compiles, the build checks the reviewed Sites HUD lock and builds the Sites
+  dependencies, so those failures report within minutes.
 - Image caches separate Catalyst dependencies, Sites dependencies/toolchain and
   the compiled API runtime closure, keyed by exact Nix derivation identities and
   architecture. Container revision labels are still rebuilt for each commit.

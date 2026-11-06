@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use chrono::NaiveDateTime;
 use serde_json::{Value, json};
 use sqlx::postgres::PgRow;
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, Postgres, Row};
 use uuid::Uuid;
 
 use crate::comms::world_identity::{Parcel, ParcelSet, SceneId, WorldName};
@@ -273,6 +273,8 @@ pub struct SceneDeployment<'a> {
     /// The upstream this publish is forwarded to (`WORLDS_FORWARD_UPSTREAM_URL`):
     /// its `worlds.forward_outbox` row commits with the scene.
     pub forward_to: Option<&'a str>,
+    /// The storage allowance the publish is charged to, re-checked before commit.
+    pub quota: Option<&'a super::quota::QuotaCharge>,
 }
 
 pub(crate) struct DerivedSceneSettings {
@@ -420,15 +422,27 @@ pub async fn get_world(pool: &PgPool, world: &WorldName) -> Result<Option<WorldR
     Ok(row.as_ref().map(world_from_row))
 }
 
-/// Upstream's `isWorldValid`: the world has scenes and is not disabled.
-pub async fn world_is_valid(pool: &PgPool, world: &WorldName) -> Result<bool, ApiError> {
-    let has_scenes: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM worlds.world_scenes WHERE world_name = $1)",
+/// Upstream's `isWorldValid`: the world has scenes and is neither disabled
+/// nor its owner quota-blocked past the grace.
+pub async fn world_is_valid(
+    pool: &PgPool,
+    policy: &crate::policy::Policy,
+    world: &WorldName,
+) -> Result<bool, ApiError> {
+    let row: Option<(bool, Option<NaiveDateTime>)> = sqlx::query_as(
+        "SELECT EXISTS (SELECT 1 FROM worlds.world_scenes s WHERE s.world_name = w.name), \
+                w.blocked_since \
+           FROM worlds.worlds w WHERE w.name = $1",
     )
     .bind(world.key())
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await?;
-    Ok(has_scenes && !is_world_disabled(pool, world).await?)
+    let Some((has_scenes, disabled)) = row else {
+        return Ok(false);
+    };
+    let quota = policy.quota_blocked_since(world).await?;
+    let now = chrono::Utc::now().naive_utc();
+    Ok(has_scenes && !crate::comms::access::world_blocked(disabled, quota, now))
 }
 
 pub async fn ensure_world(
@@ -540,11 +554,53 @@ async fn missing_stored_file(
         }))
 }
 
+/// The transaction advisory lock key a scene publish of `world` holds.
+pub(crate) fn publish_lock_key(world: &WorldName) -> String {
+    format!("worlds-publish:{}", world.key())
+}
+
+/// Persists one scene deploy; `Ok(Some(previous))` when it replaced the
+/// world's stored owner with a different one.
 pub async fn deploy_scene(
     pool: &PgPool,
     storage: &Storage,
     deployment: SceneDeployment<'_>,
-) -> Result<(), ApiError> {
+) -> Result<Option<Address>, ApiError> {
+    deploy_scene_with(pool, storage, deployment, None)
+        .await
+        .map(|d| d.previous_owner)
+}
+
+/// What a committed publish reports.
+#[derive(Debug)]
+pub struct Deployed {
+    /// The scene row's creation time (ms).
+    pub created_at_ms: i64,
+    /// The world's stored owner this publish replaced with a different one.
+    pub previous_owner: Option<Address>,
+}
+
+/// The partial upload a publish completes: its pending row must still be live (database clock)
+/// and its completion receipt commits with the scene.
+pub struct PartialCompletion<'a> {
+    pub ttl_ms: u64,
+    /// The world and parcels the receipt's message names, as the first answer did.
+    pub world_name: &'a str,
+    pub scene_parcels: &'a [String],
+}
+
+/// The refusal of a publish whose partial upload expired (or is gone) before it committed.
+pub const PARTIAL_UPLOAD_EXPIRED: &str =
+    "This upload expired. Create a new entity with a fresh timestamp.";
+
+/// [`deploy_scene`] that answers [`Deployed`] and, with `completion`, consumes
+/// the entity's partial upload; any other publish drops the entity's staging state.
+pub async fn deploy_scene_with(
+    pool: &PgPool,
+    storage: &Storage,
+    deployment: SceneDeployment<'_>,
+    completion: Option<&PartialCompletion<'_>>,
+) -> Result<Deployed, ApiError> {
     let SceneDeployment {
         world,
         name_owner,
@@ -556,6 +612,7 @@ pub async fn deploy_scene(
         size,
         replacement,
         forward_to,
+        quota,
     } = deployment;
     let mut s = scene_settings_from_entity(entity);
     if let Some(hash) = s.thumbnail_hash.take() {
@@ -570,6 +627,19 @@ pub async fn deploy_scene(
     if let Some(error) = missing_stored_file(storage, entity_id, entity).await? {
         return Err(error);
     }
+
+    // Serializes publishes of one world, so a first publish cannot race past the owner read.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(publish_lock_key(world))
+        .execute(&mut *tx)
+        .await?;
+    // Locks an existing row so the owner read is the one this write replaces.
+    let previous_owner: Option<String> =
+        sqlx::query_scalar("SELECT owner FROM worlds.worlds WHERE name = $1 FOR UPDATE")
+            .bind(world.key())
+            .fetch_optional(&mut *tx)
+            .await?
+            .flatten();
 
     let (is_insert, disabled): (bool, bool) = sqlx::query_as(
         r#"INSERT INTO worlds.worlds AS w (
@@ -609,23 +679,13 @@ pub async fn deploy_scene(
     // Under the world row's lock, so a concurrent publish cannot slip past.
     // A stored timestamp counts no later than the row's write (a future-dated
     // entity cannot lock the parcels); a non-numeric one never blocks.
-    let newer_deployed: bool = sqlx::query_scalar(
-        r#"WITH stored AS (
-             SELECT entity_id,
-                    CASE WHEN jsonb_typeof(entity->'timestamp') = 'number'
-                         THEN LEAST((entity->>'timestamp')::numeric,
-                                    extract(epoch FROM updated_at) * 1000)
-                    END AS ts
-             FROM worlds.world_scenes
-             WHERE world_name = $1 AND parcels && $2::text[] AND entity_id <> $3)
-           SELECT EXISTS (SELECT 1 FROM stored
-             WHERE ts > $4::bigint OR (ts = $4::bigint AND entity_id COLLATE "C" > $3))"#,
+    let newer_deployed = newer_scene_deployed(
+        &mut tx,
+        world,
+        &parcels,
+        entity_id,
+        entity_timestamp(entity)?,
     )
-    .bind(world.key())
-    .bind(&parcels)
-    .bind(entity_id)
-    .bind(entity_timestamp(entity)?)
-    .fetch_one(&mut *tx)
     .await?;
     if newer_deployed {
         return Err(ApiError::bad_request(
@@ -722,7 +782,7 @@ pub async fn deploy_scene(
 
     let auth_chain_text = serde_json::to_string(deployment_auth_chain)
         .map_err(|e| ApiError::internal(format!("auth chain: {e}")))?;
-    sqlx::query(
+    let created_ms: i64 = sqlx::query_scalar(
         r#"INSERT INTO worlds.world_scenes
              (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size, mirror_source)
            VALUES ($1, $2, $3::json, $4, $5, $6::text[], $7, NULL)
@@ -733,7 +793,8 @@ pub async fn deploy_scene(
                  parcels = EXCLUDED.parcels,
                  size = EXCLUDED.size,
                  mirror_source = NULL,
-                 updated_at = timezone('UTC', now())"#,
+                 updated_at = timezone('UTC', now())
+           RETURNING (extract(epoch FROM created_at) * 1000)::bigint"#,
     )
     .bind(world.key())
     .bind(entity_id)
@@ -742,7 +803,7 @@ pub async fn deploy_scene(
     .bind(deployer)
     .bind(&parcels)
     .bind(size)
-    .execute(&mut *tx)
+    .fetch_one(&mut *tx)
     .await?;
     // Active again: a (world, entity) is active or retired, never both.
     sqlx::query("DELETE FROM worlds.retired_world_scenes WHERE world_name = $1 AND entity_id = $2")
@@ -755,6 +816,15 @@ pub async fn deploy_scene(
         .await?;
     crate::explore::places::scene_identity::retire_orphans(&mut tx, &[world.key().to_string()])
         .await?;
+
+    if let Some(charge) = quota
+        && let Some(max) = super::quota::recheck_charge(&mut tx, charge, size).await?
+    {
+        return Err(ApiError::bad_request(format!(
+            "Deployment failed: {}",
+            super::quota::too_big(max, size)
+        )));
+    }
 
     if let Some(target) = forward_to {
         // A re-publish of the same entity replaces its record: the new id
@@ -774,8 +844,82 @@ pub async fn deploy_scene(
         .await?;
     }
 
+    // Any publish of the entity supersedes its partial upload; only the completing one keeps a receipt.
+    let pending_live: Option<bool> = sqlx::query_scalar(
+        "DELETE FROM worlds.pending_scenes WHERE entity_id = $1 \
+         RETURNING created_at > timezone('UTC', now()) - make_interval(secs => $2::float8 / 1000)",
+    )
+    .bind(entity_id)
+    .bind(completion.map_or(0.0, |c| c.ttl_ms as f64))
+    .fetch_optional(&mut *tx)
+    .await?;
+    match completion {
+        Some(completion) => {
+            if pending_live != Some(true) {
+                return Err(ApiError::bad_request(PARTIAL_UPLOAD_EXPIRED));
+            }
+            sqlx::query(
+                "INSERT INTO worlds.completed_scene_uploads \
+                   (entity_id, deployer, world_name, parcels, creation_timestamp) \
+                 VALUES ($1, $2, $3, $4::text[], $5) \
+                 ON CONFLICT (entity_id) DO UPDATE SET deployer = EXCLUDED.deployer, \
+                   world_name = EXCLUDED.world_name, parcels = EXCLUDED.parcels, \
+                   creation_timestamp = EXCLUDED.creation_timestamp, \
+                   completed_at = timezone('UTC', now())",
+            )
+            .bind(entity_id)
+            .bind(deployer)
+            .bind(completion.world_name)
+            .bind(completion.scene_parcels)
+            .bind(created_ms)
+            .execute(&mut *tx)
+            .await?;
+        }
+        None => {
+            sqlx::query("DELETE FROM worlds.completed_scene_uploads WHERE entity_id = $1")
+                .bind(entity_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+
     tx.commit().await?;
-    Ok(())
+    Ok(Deployed {
+        created_at_ms: created_ms,
+        previous_owner: previous_owner
+            .and_then(|p| Address::parse(&p).ok())
+            .filter(|p| name_owner.is_some_and(|owner| owner != p)),
+    })
+}
+
+/// Whether a scene of `world` overlapping `parcels` is newer than this entity: a stored
+/// timestamp counts no later than its row's write (a future-dated entity cannot lock the
+/// parcels), ties break by byte-wise greater entity id, a non-numeric one never blocks.
+pub async fn newer_scene_deployed(
+    conn: &mut sqlx::PgConnection,
+    world: &WorldName,
+    parcels: &[String],
+    entity_id: &str,
+    timestamp: i64,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        r#"WITH stored AS (
+             SELECT entity_id,
+                    CASE WHEN jsonb_typeof(entity->'timestamp') = 'number'
+                         THEN LEAST((entity->>'timestamp')::numeric,
+                                    extract(epoch FROM updated_at) * 1000)
+                    END AS ts
+             FROM worlds.world_scenes
+             WHERE world_name = $1 AND parcels && $2::text[] AND entity_id <> $3)
+           SELECT EXISTS (SELECT 1 FROM stored
+             WHERE ts > $4::bigint OR (ts = $4::bigint AND entity_id COLLATE "C" > $3))"#,
+    )
+    .bind(world.key())
+    .bind(parcels)
+    .bind(entity_id)
+    .bind(timestamp)
+    .fetch_one(conn)
+    .await
 }
 
 /// Refused publish to a world the operator disabled (`/admin/worlds/{w}/disable`).
@@ -796,7 +940,7 @@ pub async fn is_world_disabled(pool: &PgPool, world: &WorldName) -> Result<bool,
 }
 
 /// The entity's integer `timestamp`; the deploy route already required it.
-fn entity_timestamp(entity: &Value) -> Result<i64, ApiError> {
+pub(super) fn entity_timestamp(entity: &Value) -> Result<i64, ApiError> {
     entity
         .get("timestamp")
         .and_then(Value::as_i64)
@@ -1034,46 +1178,58 @@ pub async fn entities_for_worlds(
 
 /// `POST /permissions/{deployment|streaming}` in one statement: ensure the
 /// worlds row (signer as owner), drop the addresses no longer listed, add the
-/// new ones (existing rows keep their scoping).
-pub async fn replace_world_wide_permission(
-    pool: &PgPool,
+/// new ones (existing rows keep their scoping). Returns `(added, removed)`.
+pub async fn replace_world_wide_permission<'e, E>(
+    executor: E,
     world: &WorldName,
     owner: &Address,
     permission: Permission,
     addresses: &[Address],
-) -> Result<(), ApiError> {
-    sqlx::query(
+) -> Result<(Vec<String>, Vec<String>), ApiError>
+where
+    E: sqlx::Executor<'e, Database = Postgres>,
+{
+    let rows: Vec<(bool, String)> = sqlx::query_as(
         r#"WITH ensured AS (
              INSERT INTO worlds.worlds (name, owner) VALUES ($1, $4) ON CONFLICT (name) DO NOTHING
            ), removed AS (
              DELETE FROM worlds.world_permissions
              WHERE world_name = $1 AND permission = $2 AND NOT (address = ANY($3::text[]))
+             RETURNING address
            ), added AS (
              INSERT INTO worlds.world_permissions (world_name, permission, address)
              SELECT $1, $2, addr FROM unnest($3::text[]) AS addr
              ON CONFLICT (world_name, permission, address) DO NOTHING
+             RETURNING address
            )
-           SELECT 1"#,
+           SELECT true, address FROM added UNION ALL SELECT false, address FROM removed"#,
     )
     .bind(world.key())
     .bind(permission.as_str())
     .bind(addresses)
     .bind(owner)
-    .execute(pool)
+    .fetch_all(executor)
     .await?;
-    Ok(())
+    let (added, removed): (Vec<_>, Vec<_>) = rows.into_iter().partition(|(added, _)| *added);
+    Ok((
+        added.into_iter().map(|(_, a)| a).collect(),
+        removed.into_iter().map(|(_, a)| a).collect(),
+    ))
 }
 
 /// Grants world-wide `permission` to `addresses`: new rows are inserted and any
 /// parcel scoping the addresses had is cleared. `ensure_owner` creates the
 /// worlds row first. Returns the newly added addresses.
-pub async fn grant_addresses_world_wide_permission(
-    pool: &PgPool,
+pub async fn grant_addresses_world_wide_permission<'e, E>(
+    executor: E,
     world: &WorldName,
     permission: Permission,
     addresses: &[Address],
     ensure_owner: Option<&Address>,
-) -> Result<Vec<String>, ApiError> {
+) -> Result<Vec<String>, ApiError>
+where
+    E: sqlx::Executor<'e, Database = Postgres>,
+{
     if addresses.is_empty() {
         return Ok(Vec::new());
     }
@@ -1097,17 +1253,20 @@ pub async fn grant_addresses_world_wide_permission(
     .bind(permission.as_str())
     .bind(addresses)
     .bind(ensure_owner)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await?;
     Ok(inserted.into_iter().map(|r| r.get("address")).collect())
 }
 
-pub async fn remove_addresses_permission(
-    pool: &PgPool,
+pub async fn remove_addresses_permission<'e, E>(
+    executor: E,
     world: &WorldName,
     permission: Permission,
     addresses: &[Address],
-) -> Result<Vec<String>, ApiError> {
+) -> Result<Vec<String>, ApiError>
+where
+    E: sqlx::Executor<'e, Database = Postgres>,
+{
     if addresses.is_empty() {
         return Ok(Vec::new());
     }
@@ -1117,20 +1276,23 @@ pub async fn remove_addresses_permission(
     .bind(world.key())
     .bind(permission.as_str())
     .bind(addresses)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await?;
     Ok(rows.into_iter().map(|r| r.get("address")).collect())
 }
 
 /// Adds canonical parcels under a grant, creating it when absent; `true` when
 /// the grant was created by this call.
-pub async fn add_parcels_to_permission(
-    pool: &PgPool,
+pub async fn add_parcels_to_permission<'e, E>(
+    executor: E,
     world: &WorldName,
     permission: Permission,
     address: &Address,
     parcels: &ParcelSet,
-) -> Result<bool, ApiError> {
+) -> Result<bool, ApiError>
+where
+    E: sqlx::Executor<'e, Database = Postgres>,
+{
     let created: bool = sqlx::query_scalar(
         r#"WITH perm AS (
              INSERT INTO worlds.world_permissions (world_name, permission, address)
@@ -1148,22 +1310,26 @@ pub async fn add_parcels_to_permission(
     .bind(permission.as_str())
     .bind(address)
     .bind(parcels.canonical())
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await?;
     Ok(created)
 }
 
-/// `false` when the address holds no such permission (the caller's 400).
-/// Removing the last parcel drops the grant: zero parcels would read as
-/// world-wide (deliberate divergence from upstream, which keeps the row).
-pub async fn remove_parcels_from_permission(
-    pool: &PgPool,
+/// `None` when the address holds no such permission (the caller's 400),
+/// else whether the grant was dropped. Removing the last parcel drops the
+/// grant: zero parcels would read as world-wide (deliberate divergence from
+/// upstream, which keeps the row).
+pub async fn remove_parcels_from_permission<'c, A>(
+    conn: A,
     world: &WorldName,
     permission: Permission,
     address: &Address,
     parcels: &ParcelSet,
-) -> Result<bool, ApiError> {
-    let mut tx = pool.begin().await?;
+) -> Result<Option<bool>, ApiError>
+where
+    A: sqlx::Acquire<'c, Database = Postgres>,
+{
+    let mut tx = conn.begin().await?;
     let found = sqlx::query(
         "SELECT 1 FROM worlds.world_permissions
          WHERE world_name = $1 AND permission = $2 AND address = $3 FOR UPDATE",
@@ -1175,7 +1341,7 @@ pub async fn remove_parcels_from_permission(
     .await?
     .is_some();
     if !found {
-        return Ok(false);
+        return Ok(None);
     }
     let removed = sqlx::query(
         "DELETE FROM worlds.world_permission_parcels
@@ -1214,7 +1380,7 @@ pub async fn remove_parcels_from_permission(
         .await?;
     }
     tx.commit().await?;
-    Ok(true)
+    Ok(Some(dropped))
 }
 
 /// `None` when the address holds no such permission, otherwise the filtered
@@ -1721,6 +1887,7 @@ pub async fn list_worlds_public(
     } else {
         ""
     };
+    let blockable = super::quota::quota_blockable_world!();
     let base_from = format!(
         r#"
         FROM worlds.worlds w
@@ -1735,7 +1902,7 @@ pub async fn list_worlds_public(
             FROM worlds.world_scenes ws, unnest(ws.parcels) AS p
             GROUP BY ws.world_name
         ) ss ON ss.world_name = w.name
-        LEFT JOIN worlds.blocked_wallets b ON w.owner = b.wallet
+        LEFT JOIN worlds.quota_blocks b ON w.owner = b.wallet AND {blockable}
         WHERE ($1::text IS NULL
                 OR w.owner = $1
                 OR EXISTS (SELECT 1 FROM worlds.world_permissions wp

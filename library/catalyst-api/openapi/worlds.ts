@@ -911,6 +911,15 @@ export interface components {
             creationTimestamp: number;
             message: string;
         };
+        /** @description One expired-upload cleanup run, as `/gc` reports it under `expiredUploads`. */
+        ExpiredUploadsCleanup: {
+            /** Format: int64 */
+            failed: number;
+            /** @enum {string} */
+            outcome: "success" | "deferred" | "error";
+            /** Format: int64 */
+            removed: number;
+        };
         FederationMirrorResponse: {
             /**
              * @description Health of every admitted peer, returned **with the listing**, so a consumer
@@ -1071,6 +1080,8 @@ export interface components {
             activeKeys: number;
             candidates: number;
             dryRun: boolean;
+            /** @description The expired partial upload cleanup the run did; null for a dry run */
+            expiredUploads?: null | components["schemas"]["ExpiredUploadsCleanup"];
             failed: number;
             message: string;
             /** Format: int64 */
@@ -1126,6 +1137,11 @@ export interface components {
             summary: {
                 [key: string]: components["schemas"]["PermissionSummaryEntry"][];
             };
+        };
+        /** @description `202` of a batch that left files outstanding. */
+        PartialDeployPending: {
+            /** @description The content hashes still to send, in the manifest's order. */
+            missing: string[];
         };
         PermissionSummaryEntry: {
             /** Format: int64 */
@@ -2092,7 +2108,10 @@ export interface operations {
     };
     deploy_entity: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Declares a partial (multi-request) batch; requires the `partial=true` form field */
+                partial?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2109,6 +2128,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeploySuccess"];
+                };
+            };
+            /** @description A partial batch was stored; the listed files are still missing */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PartialDeployPending"];
                 };
             };
             400: {
@@ -2152,6 +2180,15 @@ export interface operations {
                 };
             };
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeployRejection"];
+                };
+            };
+            /** @description A partial upload staging budget is full; retry after Retry-After seconds */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
