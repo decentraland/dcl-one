@@ -260,6 +260,17 @@ describe('in-world shop', () => {
     await waitFor(() => expect(calls(f, '/v3/catalog/trending').length).toBeGreaterThan(before))
   })
 
+  it("pages the home's rows with their arrows, without dots, as the design draws them", async () => {
+    const rows = Array.from({ length: 8 }, (_, i) => listingRow({ itemId: String(i + 1), name: `Item ${i + 1}` }))
+    serve({ trending: rows, listings: [rows] })
+    renderShop()
+    await openTab('All')
+    const trending = await screen.findByRole('region', { name: 'Trending' })
+    await within(trending).findByText('Item 1', {}, { timeout: 5000 })
+    expect(within(trending).getByRole('button', { name: 'Next' })).toBeInTheDocument()
+    expect(within(trending).queryByRole('button', { name: /^Page \d/ })).not.toBeInTheDocument()
+  })
+
   it('says so when the All home has nothing to show', async () => {
     serve({ trending: [], listings: [[]], outfits: [] })
     renderShop()

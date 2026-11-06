@@ -204,20 +204,27 @@
 .stale {
   opacity: 0.5;
 }
-/* With the item panel open the grid narrows to four 203px columns (872px), the thumb 9px past them, and the
-   panel sits at the right, 8px in. */
-.withPanel .grid {
-  grid-template-columns: repeat(auto-fill, 203px);
+/* With the item panel open the grid takes as many whole 203px columns as fit beside the panel (four at the
+   design's 1920: 872px), the thumb 9px past them and the panel 23px after that, 8px in from the right. The
+   wrap is sized to those whole columns, so the panel always sits right after the grid; what is left of a
+   column goes past the panel, not between them. */
+.withPanel {
+  container-type: inline-size;
 }
 .withPanel .scrollWrap {
   flex: none;
-  width: 882px;
+  /* N columns of 203px + 20px, N the most that fit in the width less the panel (382px, 23px before it, 8px
+     after), less the last column's 20px, plus the thumb's 10px: N·223 − 10. */
+  width: max(213px, calc(round(down, 100cqw - 403px, 223px) - 10px));
+}
+.withPanel .grid {
+  grid-template-columns: repeat(auto-fill, 203px);
 }
 .withPanel .scroller {
   padding-right: 10px;
 }
 .withPanel > aside {
-  margin: 0 8px 0 auto;
+  margin: 0 8px 0 3px;
 }
 /* Over the home the panel starts lower, level with the carousel's top band. */
 .homeBody.withPanel > aside {
