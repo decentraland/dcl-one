@@ -180,6 +180,7 @@ fn world_batch(state: &CommsState, rooms: &[String]) -> Vec<WorldName> {
 #[cfg(test)]
 mod recheck_regressions {
     use super::*;
+    use crate::AuthorityNotEstablished;
     use crate::interfaces::test_support::{StubDirectory, StubPolicy, StubScenes};
     use std::sync::atomic::{AtomicBool, Ordering};
 
