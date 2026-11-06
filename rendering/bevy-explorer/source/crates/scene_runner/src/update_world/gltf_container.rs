@@ -74,7 +74,7 @@ pub struct GltfDefinitionPlugin;
 #[derive(SystemSet, Debug, PartialEq, Eq, Hash, Clone)]
 pub struct GltfLinkSet;
 
-#[derive(Component, Debug)]
+#[derive(Component, Debug, Deref)]
 pub struct GltfDefinition(PbGltfContainer);
 
 impl From<PbGltfContainer> for GltfDefinition {
@@ -217,7 +217,8 @@ pub struct GltfEntity {
 }
 
 #[derive(Component)]
-struct GltfLoaded(Option<InstanceId>);
+pub(crate) struct GltfLoaded(Option<InstanceId>);
+
 #[derive(Component, Default)]
 pub struct GltfProcessed {
     pub instance_id: Option<InstanceId>,
