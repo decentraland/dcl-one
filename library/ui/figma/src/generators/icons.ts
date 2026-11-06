@@ -112,13 +112,20 @@ function generateIcons(icons: IconSpec[], context: GeneratorContext) {
       })
       continue
     }
-    const component = uniqueName(assertIdentifier(pascalCase(name)), usedNames)
+    assertIdentifier(variants[0]!.category)
+    let identifier: string
+    try {
+      identifier = assertIdentifier(pascalCase(name))
+    } catch (error) {
+      skipped.push({ name, reason: (error as Error).message })
+      continue
+    }
+    const component = uniqueName(identifier, usedNames)
     const optimized = variants.map((icon) => ({
       icon,
       optimized: optimizeIcon(icon.svg, component, variants.length > 1 ? 3 : 2)
     }))
     const first = variants[0]!
-    assertIdentifier(first.category)
     const source = componentSource(component, optimized)
     const bucket = byCategory.get(first.category) ?? []
     bucket.push(source)

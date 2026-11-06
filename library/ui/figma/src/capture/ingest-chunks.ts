@@ -8,8 +8,9 @@ import {
   type RawComponentPage,
   type RawNode
 } from '../ir/raw-components.js'
+import { readMaterialized } from '../lfs.js'
 import { stripFileKey } from './strip-file-key.js'
-import { encodePageFileName } from './page-file-name.js'
+import { assertDistinctPageFiles, encodePageFileName } from './page-file-name.js'
 
 type PageChunk = {
   page: { id: string; name: string }
@@ -121,7 +122,12 @@ function groupByPage(chunks: CaptureChunk[]): Map<string, PageChunk[]> {
 }
 
 async function readExisting(file: string): Promise<RawComponentPage | undefined> {
-  const raw = await readFile(file, 'utf8').catch(() => undefined)
+  const raw = await readMaterialized(file)
+    .then((bytes) => bytes.toString('utf8'))
+    .catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return undefined
+      throw error
+    })
   return raw === undefined ? undefined : rawComponentPageSchema.parse(JSON.parse(raw))
 }
 
@@ -129,17 +135,28 @@ async function readExisting(file: string): Promise<RawComponentPage | undefined>
 async function findExisting(
   directory: string,
   pageId: string,
-  file: string
+  file: string,
+  legacySnapshotNames: readonly string[]
 ): Promise<{ file: string; page: RawComponentPage } | undefined> {
+  const names = (await readdir(directory)).filter((name) => name.endsWith('.json'))
   const byName = await readExisting(file)
-  if (byName) return { file, page: byName }
-  for (const name of await readdir(directory)) {
-    if (!name.endsWith('.json')) continue
+  // macOS may return a decomposed directory entry for a name originally written in NFC.
+  const sameName = byName && encodePageFileName(byName.page.name.trim()) === path.basename(file)
+  assertDistinctPageFiles(sameName ? names : [...names, path.basename(file)])
+  if (byName) {
+    if (byName.page.id !== pageId)
+      throw new Error(`Snapshot page identity changed: ${path.basename(file)}`)
+    return { file, page: byName }
+  }
+  const excluded = new Set(legacySnapshotNames.map(encodePageFileName))
+  const matches: { file: string; page: RawComponentPage }[] = []
+  for (const name of names.filter((name) => !excluded.has(name))) {
     const candidate = path.join(directory, name)
     const page = await readExisting(candidate)
-    if (page?.page.id === pageId) return { file: candidate, page }
+    if (page?.page.id === pageId) matches.push({ file: candidate, page })
   }
-  return undefined
+  if (matches.length > 1) throw new Error(`Ambiguous snapshot page ID: ${pageId}`)
+  return matches[0]
 }
 
 type VariantPart = {
@@ -196,7 +213,11 @@ function isComplete(entries: PageChunk[], capturedIds: Set<string>): boolean {
 
 // Components are upserted by id, so a page can be captured in several runs and re-captured partially. A
 // complete capture replaces the page instead, so components deleted in Figma leave the snapshot.
-async function ingestChunks(snapshotDir: string, chunks: CaptureChunk[]): Promise<IngestReport[]> {
+async function ingestChunks(
+  snapshotDir: string,
+  chunks: CaptureChunk[],
+  legacySnapshotNames: readonly string[] = []
+): Promise<IngestReport[]> {
   const reports: IngestReport[] = []
   const directory = path.join(snapshotDir, 'components')
   await mkdir(directory, { recursive: true })
@@ -204,7 +225,7 @@ async function ingestChunks(snapshotDir: string, chunks: CaptureChunk[]): Promis
     const [first] = entries
     if (!first) continue
     const file = path.join(directory, encodePageFileName(first.page.name.trim()))
-    const existing = await findExisting(directory, first.page.id, file)
+    const existing = await findExisting(directory, first.page.id, file, legacySnapshotNames)
     const previous = new Map(
       (existing?.page.components ?? []).map((component) => [component.id, component])
     )
@@ -239,13 +260,17 @@ async function ingestChunks(snapshotDir: string, chunks: CaptureChunk[]): Promis
   return reports
 }
 
-async function ingestChunkFiles(snapshotDir: string, inputs: string[]): Promise<IngestReport[]> {
+async function ingestChunkFiles(
+  snapshotDir: string,
+  inputs: string[],
+  legacySnapshotNames: readonly string[] = []
+): Promise<IngestReport[]> {
   const chunks = decodeCaptureChunks(
     await Promise.all(
       inputs.map(async (input) => JSON.parse(await readFile(input, 'utf8')) as unknown)
     )
   )
-  return ingestChunks(snapshotDir, chunks)
+  return ingestChunks(snapshotDir, chunks, legacySnapshotNames)
 }
 
 const transportSchema = z.object({

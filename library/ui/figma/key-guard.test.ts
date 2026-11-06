@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { link, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, link, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -87,6 +88,7 @@ describe('when matching Figma URLs for the url check', () => {
     ],
     ['a lowercase percent-encoded link', `${HOST}%2fproto%2fAbC123`],
     ['a JSON-escaped link', `"https:\\/\\/www.${HOST}\\/design\\/AbC123"`],
+    ['a unicode JSON separator', `${HOST}\\u002fdesign\\u002fAbC123`],
     ['a doubly escaped link', `${HOST}\\\\/board\\\\/AbC123`]
   ])('should flag %s', (_, text) => {
     expect(scanBuffer(Buffer.from(text))).toEqual(['url'])
@@ -680,6 +682,117 @@ describe('when selecting a main push range', () => {
     expect(guard({ worktree: false, range, key: FAKE_KEY }).findings).toContainEqual({
       check: 'key',
       location: `${leaked}:README.md`
+    })
+  })
+})
+
+describe('when a merge includes upstream changes', () => {
+  it('should scan a conflicting merge resolution without relisting clean upstream merges', async () => {
+    await put('conflict.txt', 'base\n')
+    commit('shared')
+    git('tag', 'shared')
+    git('checkout', '-qb', 'upstream')
+    await put('conflict.txt', 'upstream\n')
+    await put('upstream-only.txt', 'clean')
+    commit('upstream')
+    git('checkout', 'main')
+    await put('conflict.txt', 'branch\n')
+    commit('branch')
+    try {
+      git('-c', 'commit.gpgsign=false', 'merge', '--no-ff', 'upstream')
+    } catch {
+      /* Resolve below. */
+    }
+    await put('conflict.txt', FAKE_KEY)
+    commit('merge resolution')
+    const merged = git('rev-parse', '--short=12', 'HEAD')
+    expect(
+      guard({ range: 'upstream..HEAD', worktree: false, key: FAKE_KEY }).findings
+    ).toContainEqual({ check: 'key', location: `${merged}:conflict.txt` })
+    await put('conflict.txt', 'clean\n')
+    commit('clear')
+    git('checkout', 'upstream')
+    await put('only-main.txt', 'clean')
+    commit('more upstream')
+    git('checkout', 'main')
+    git(
+      '-c',
+      'user.name=Dev',
+      '-c',
+      'user.email=dev@example.com',
+      '-c',
+      'commit.gpgsign=false',
+      'merge',
+      '--no-ff',
+      'upstream',
+      '-m',
+      'clean merge'
+    )
+    expect(
+      guard({ range: 'HEAD^1..HEAD', worktree: false, key: FAKE_KEY }).lines.join('\n')
+    ).toMatch(/1 blobs/)
+  })
+})
+describe('when build output holds an LFS pointer', () => {
+  it('should fail closed without attempting any LFS materialization', async () => {
+    await put(
+      'artifact/pointer',
+      'version https://git-lfs.github.com/spec/v1\noid sha256:' + 'f'.repeat(64) + '\nsize 1\n'
+    )
+    expect(
+      guard({ range: null, worktree: false, artifacts: ['artifact'], key: FAKE_KEY }).findings
+    ).toEqual([{ check: 'lfs', location: 'pointer' }])
+  })
+})
+
+describe('when an artifact or non-UI range contains a pointer', () => {
+  it('should fail without invoking the LFS client or downloading content', async () => {
+    const actualGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim()
+    const bin = path.join(root, 'bin')
+    await mkdir(bin)
+    const marker = path.join(root, 'download-called')
+    const wrapper = path.join(bin, 'git')
+    await writeFile(
+      wrapper,
+      '#!' +
+        process.execPath +
+        '\n' +
+        `const {execFileSync}=require('node:child_process');const {writeFileSync}=require('node:fs');if(process.argv[2]==='lfs'){writeFileSync(${JSON.stringify(marker)},'called');process.exit(97)}process.stdout.write(execFileSync(${JSON.stringify(actualGit)},process.argv.slice(2)));`
+    )
+    await chmod(wrapper, 0o755)
+    await put(
+      'outside/data',
+      'version https://git-lfs.github.com/spec/v1\noid sha256:' + 'f'.repeat(64) + '\nsize 1\n'
+    )
+    commit('pointer')
+    const previous = process.env.PATH
+    process.env.PATH = bin + path.delimiter + previous
+    try {
+      expect(
+        guard({ range: 'base..HEAD', worktree: false, artifacts: ['outside'] }).findings.map(
+          (item) => item.check
+        )
+      ).toEqual(['lfs', 'lfs'])
+      expect(() => readFileSync(marker)).toThrow()
+    } finally {
+      process.env.PATH = previous
+    }
+  })
+})
+
+describe('when a historical UI pointer has been prefetched', () => {
+  it('should read its verified local content and preserve leak detection', async () => {
+    const content = Buffer.from(FAKE_KEY)
+    const oid = createHash('sha256').update(content).digest('hex')
+    await put(`.git/lfs/objects/${oid.slice(0, 2)}/${oid.slice(2, 4)}/${oid}`, FAKE_KEY)
+    await put(
+      'library/ui/input.json',
+      `version https://git-lfs.github.com/spec/v1\noid sha256:${oid}\nsize ${content.length}\n`
+    )
+    commit('prefetched pointer')
+    expect(guard({ worktree: false, key: FAKE_KEY }).findings).toContainEqual({
+      check: 'key',
+      location: `${git('rev-parse', '--short=12', 'HEAD')}:library/ui/input.json`
     })
   })
 })

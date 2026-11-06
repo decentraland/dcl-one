@@ -650,7 +650,7 @@ outer: for (let pageIndex = START_PAGE; pageIndex < jobs.length; pageIndex++) {
   }
   if (components.length > 0 || start === 0) pages.push(out)
   if (next !== null) {
-    if (!resume) resume = { page: pageIndex, component: next }
+    if (!resume) resume = { page: pageIndex, component: next, variant: 0 }
     break outer
   }
   if (VARIANT_LIMIT > 0) {
@@ -660,7 +660,7 @@ outer: for (let pageIndex = START_PAGE; pageIndex < jobs.length; pageIndex++) {
     break
   }
   if (size > BUDGET && pageIndex + 1 < jobs.length) {
-    resume = { page: pageIndex + 1, component: 0 }
+    resume = { page: pageIndex + 1, component: 0, variant: 0 }
     break outer
   }
 }

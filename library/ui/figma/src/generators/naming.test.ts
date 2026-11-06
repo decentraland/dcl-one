@@ -39,3 +39,9 @@ describe('when validating generated identifiers and import path segments', () =>
     }
   )
 })
+
+describe('when an import binding is forbidden in strict modules', () => {
+  it.each(['eval', 'arguments'])('should reject %s', (name) => {
+    expect(() => assertIdentifier(name)).toThrow('Invalid generated TypeScript identifier')
+  })
+})

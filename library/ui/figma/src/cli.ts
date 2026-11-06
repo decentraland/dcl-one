@@ -22,6 +22,7 @@ import { buildOwnership } from './guard/ownership.js'
 import { RETIREMENTS_PATH, loadRetirements, serializeRetirements } from './guard/retirements.js'
 import { createRuntime } from './runtime.js'
 import { EnvTokenProvider, FigmaClient } from './figma/client.js'
+import { configuredPages } from './page-identity.js'
 import { ingestChunkFiles } from './capture/ingest-chunks.js'
 import { mergeChunkFiles } from './capture/merge-component-chunks.js'
 import { probeAccess } from './probe.js'
@@ -175,7 +176,15 @@ async function main(argv: string[]): Promise<number> {
     const [, ...chunks] = positionals
     if (chunks.length === 0) throw new Error(USAGE)
     const app = await createApp(process.cwd(), values.config)
-    print(await ingestChunkFiles(path.resolve(app.cwd, app.config.snapshotDir), chunks))
+    print(
+      await ingestChunkFiles(
+        path.resolve(app.cwd, app.config.snapshotDir),
+        chunks,
+        configuredPages(app.config)
+          .filter((page) => page.id === null)
+          .map((page) => page.name)
+      )
+    )
     return 0
   }
 

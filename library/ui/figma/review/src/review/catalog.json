@@ -8928,9 +8928,7 @@
       "page": "Search Bar",
       "id": "3959:1973",
       "needsManual": [],
-      "notes": [
-        "negative-gap-ignored"
-      ],
+      "notes": [],
       "variants": [
         {
           "id": "15798:45751",
@@ -9701,7 +9699,6 @@
       "id": "16189:2716",
       "needsManual": [],
       "notes": [
-        "negative-gap-ignored",
         "state-reveals-layers:layout:below|product:explorer|state:default|access:noAccess|size:lg|viewport:desktop:hover: /Info/Actions, /Info/CTA",
         "state-reveals-layers:layout:below|product:explorer|state:default|access:password|size:lg|viewport:desktop:hover: /Info/Actions, /Info/CTA",
         "state-reveals-layers:layout:below|product:explorer|state:default|access:private|size:lg|viewport:desktop:hover: /Info/Actions, /Info/CTA",
@@ -14366,9 +14363,7 @@
       "page": "Tabs bar",
       "id": "15843:56922",
       "needsManual": [],
-      "notes": [
-        "negative-gap-ignored"
-      ],
+      "notes": [],
       "variants": [
         {
           "id": "15843:56923",
@@ -14514,9 +14509,7 @@
       "needsManual": [
         "slot-property: Figma slots have no generated equivalent"
       ],
-      "notes": [
-        "negative-gap-ignored"
-      ],
+      "notes": [],
       "variants": [
         {
           "id": "15843:57004",

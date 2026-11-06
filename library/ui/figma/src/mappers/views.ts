@@ -753,7 +753,7 @@ function capturedLines(node: RawNode, lineHeight: number): number | 'ambiguous' 
   if (whole) return lines
   if (node.sizing?.[1] === 'FIXED') return 'ambiguous'
   if (ratio < 1.5) return 1
-  return whole ? lines : 'ambiguous'
+  return 'ambiguous'
 }
 
 function buildNode(

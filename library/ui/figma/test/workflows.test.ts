@@ -166,29 +166,40 @@ describe('ui-library-key-scan.yml', () => {
     const [first] = allSteps
     expect(first!.run).toContain('[ "$head" = "$HEAD_SHA" ]')
     expect(first!.run).toContain('[ "$(jq \'length\' <<< "$PULL_REQUESTS")" = 1 ]')
-    expect(first!.run).toContain('artifact="ui-review-$HEAD_SHA"')
-    expect(first!.run).toContain('actions/runs/$RUN_ID/artifacts')
-    expect(first!.run).toContain('.workflow_run.id == $RUN_ID')
-    expect(first!.run).toContain('.workflow_run.head_sha == \\"$HEAD_SHA\\"')
+    const artifact = allSteps.find((step) => step.run?.includes('/artifacts'))!
+    expect(artifact.run).toContain('ui-review-$HEAD_SHA')
+    expect(artifact.run).toContain('actions/runs/$RUN_ID/artifacts')
+    expect(artifact.run).toContain('.workflow_run.id == $RUN_ID')
+    expect(artifact.run).toContain('.workflow_run.head_sha == \\"$HEAD_SHA\\"')
     const download = allSteps.find((step) => step.uses?.startsWith('actions/download-artifact@'))!
     expect(download.with).toMatchObject({
-      name: '${{ steps.trigger.outputs.artifact }}',
+      name: 'ui-review-${{ steps.trigger.outputs.head }}',
       'run-id': '${{ github.event.workflow_run.id }}',
       path: '${{ runner.temp }}/pr-artifact'
     })
   })
 
   it('should read no Git configuration but its own, and keep the checkout credential-free', () => {
-    expect(workflow.env).toMatchObject({ GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' })
+    expect(workflow.env?.GIT_CONFIG_GLOBAL).toBeUndefined()
+    for (const step of allSteps.filter(
+      (step) => step.run?.includes('git -C trusted') || step.run?.includes('node trusted/')
+    ))
+      expect(step.env).toMatchObject({ GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' })
     const checkout = allSteps.find((step) => step.uses?.startsWith('actions/checkout@'))!
-    expect(checkout.with).toMatchObject({ 'persist-credentials': false, lfs: false })
+    expect(checkout.with).toMatchObject({
+      'persist-credentials': false,
+      lfs: false,
+      'set-safe-directory': false
+    })
   })
 
   it('should fetch LFS from the fixed repository endpoint, for library/ui only, with an unpersisted token', () => {
     const lfs = allSteps.find((step) => step.run?.includes('lfs fetch'))!
     expect(lfs.run).toContain('GIT_CONFIG_KEY_1=lfs.url')
     expect(lfs.run).toContain('GIT_CONFIG_VALUE_1="https://github.com/$REPOSITORY.git/info/lfs"')
-    expect(lfs.run).toContain('lfs fetch --include "library/ui/**" origin "$HEAD_SHA"')
+    expect(lfs.run).toContain(
+      'lfs fetch --include "library/ui/**" origin "$HEAD_SHA" "${commits[@]}"'
+    )
     expect(lfs.run).toContain('::add-mask::')
     expect(lfs.run).not.toMatch(/git (config|credential)|--global|--system|\.lfsconfig/)
     expect(lfs.env).toMatchObject({ REPOSITORY: '${{ github.repository }}' })
@@ -232,5 +243,33 @@ describe('the controller-owned push boundary', () => {
     expect(query).toContain('.head_sha == "$HEAD_SHA"')
     expect(query).toContain('.conclusion == "success"')
     expect(script).not.toContain('base="$HEAD_SHA^1"')
+  })
+})
+
+describe('when key scanning covers the whole repository', () => {
+  it('should trigger without path filters and gate only the heavy library job', () => {
+    const ui = load('ui-library.yml')
+    expect(ui.on).toMatchObject({ push: { branches: ['main'] }, pull_request: null })
+    expect(JSON.stringify(ui.on)).not.toContain('paths')
+    expect(Object.keys(ui.on)).not.toContain('workflow_call')
+    const concurrency = parse(
+      readFileSync(path.join(workflows, 'ui-library.yml'), 'utf8')
+    ).concurrency
+    expect(concurrency.group).toContain(
+      "github.event_name == 'pull_request' && github.ref || github.run_id"
+    )
+    expect((ui.jobs.library as unknown as { if: string }).if).toContain('ui_changed')
+  })
+  it('should let checkout use its temporary global config while isolating the Git run steps', () => {
+    const ui = load('ui-library-key-scan.yml')
+    expect(ui.env?.GIT_CONFIG_GLOBAL).toBeUndefined()
+    const all = ui.jobs['key-scan']!.steps
+    expect(all.find((step) => step.uses?.includes('actions/checkout'))!.with).toMatchObject({
+      'set-safe-directory': false
+    })
+    for (const step of all.filter(
+      (step) => step.run?.includes('git -C trusted') || step.run?.includes('node trusted/')
+    ))
+      expect(step.env).toMatchObject({ GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' })
   })
 })

@@ -42,3 +42,18 @@ function decodePageFileName(fileName: string): string {
 }
 
 export { decodePageFileName, encodePageFileName, isWindowsSafeName }
+
+// Case-insensitive filesystems also collapse canonically equivalent Unicode names.
+function assertDistinctPageFiles(files: readonly string[]): void {
+  const seen = new Map<string, string>()
+  for (const file of files) {
+    const key = file.normalize('NFC').toLowerCase()
+    const previous = seen.get(key)
+    if (previous !== undefined && previous !== file)
+      throw new Error(
+        `Portable capture filename collision: ${JSON.stringify(previous)} and ${JSON.stringify(file)}`
+      )
+    seen.set(key, file)
+  }
+}
+export { assertDistinctPageFiles }

@@ -1,21 +1,14 @@
 name: Shared UI library
 
 on:
-  workflow_call:
-    inputs:
-      ref:
-        type: string
-        required: true
   push:
     branches: [main]
-    paths: ['library/ui/**', '.github/workflows/ui-library.yml', '.gitattributes']
   pull_request:
-    paths: ['library/ui/**', '.github/workflows/ui-library.yml', '.gitattributes']
 
 concurrency:
-  group: ui-library-${{ inputs.ref || github.ref }}
-  # A newer push to a pull request supersedes its run; a push to main never cancels another, so every
-  # pushed range is scanned.
+  group: ui-library-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  # Pull requests supersede their earlier run. Main pushes use unique groups so pending runs cannot
+  # replace each other before their history is scanned.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -30,36 +23,53 @@ jobs:
     # Pull request checks keep their stable name; job scripts and artifacts cannot supply this boundary.
     name: ${{ github.event_name == 'push' && format('UI key push boundary {0}..{1}', github.event.before, github.sha) || 'key-guard' }}
     runs-on: ubuntu-26.04
+    outputs:
+      ui_changed: ${{ steps.scope.outputs.ui_changed }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref || github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           # Only library/ui's LFS content is read; the rest of the monorepo's LFS is not fetched.
           lfs: false
-      - run: git lfs pull --include "library/ui/**"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-      - name: Scan the tree and the outgoing commits for Figma urls
+      - name: Select the range and library scope
+        id: scope
         env:
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD: ${{ github.event.pull_request.head.sha }}
-          BASE: ${{ github.event.before || 'origin/main' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BEFORE: ${{ github.event.before }}
         run: |
-          if [ "$EVENT" = pull_request ]; then
-            # The pull request's own commits, not the synthetic merge with everything main gained since its
-            # branch point. Files outside library/ui reach this scan through the range; the rest of the tree
-            # was scanned when it landed on main.
-            node library/ui/figma/key-guard.mjs --no-worktree --path library/ui --range "$PR_BASE..$PR_HEAD"
-            exit 0
+          base="$BEFORE"
+          [ "$EVENT" != pull_request ] || base="$PR_BASE"
+          range="$base..$HEAD_SHA"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            range="$HEAD_SHA"
+            changed=true
+          else
+            changed=false
+            files=$(git log --format= --name-only --diff-merges=cc "$range" -- library/ui .github/workflows/ui-library.yml .github/workflows/ui-library-key-scan.yml .gitattributes)
+            [ -z "$files" ] || changed=true
           fi
-          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then BASE=origin/main; fi
-          node library/ui/figma/key-guard.mjs --range "$BASE..HEAD"
+          echo "ui_changed=$changed" >> "$GITHUB_OUTPUT"
+          echo "range=$range" >> "$GITHUB_OUTPUT"
+          # Prefetch once with checkout's credentials. Historical UI pointers must already be local when scanned.
+          if [ "$changed" = true ]; then
+            revisions=$(git rev-list "$range")
+            mapfile -t commits <<< "$revisions"
+            git lfs fetch --include "library/ui/**" origin "$HEAD_SHA" "${commits[@]}"
+          fi
+      - name: Scan every outgoing commit for Figma urls
+        env:
+          RANGE: ${{ steps.scope.outputs.range }}
+        run: node library/ui/figma/key-guard.mjs --no-worktree --range "$RANGE"
 
   library:
     needs: key-guard
+    if: needs.key-guard.outputs.ui_changed == 'true'
     runs-on: ubuntu-26.04
     defaults:
       run:
@@ -67,7 +77,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref || github.sha }}
+          ref: ${{ github.sha }}
           # The pull request's base parent is checked out for the retirement guard below.
           fetch-depth: 2
           lfs: false

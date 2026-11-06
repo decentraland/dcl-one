@@ -1,3 +1,4 @@
+import { readMaterialized } from '../src/lfs.js'
 import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -53,25 +54,31 @@ const configuredPages = (file: string): ConfiguredPage[] =>
   Object.values(
     (JSON.parse(readFileSync(file, 'utf8')) as { pages: Record<string, ConfiguredPage> }).pages
   )
-const capturesIn = (directory: string) =>
-  readdirSync(directory)
-    .filter((file) => file.endsWith('.json'))
-    .map((file) => {
-      const { page } = JSON.parse(readFileSync(path.join(directory, file), 'utf8')) as {
-        page: { id: string; name: string }
-      }
-      return { file, id: page.id, name: page.name }
-    })
+const capturesIn = async (directory: string) =>
+  Promise.all(
+    readdirSync(directory)
+      .filter((file) => file.endsWith('.json'))
+      .map(async (file) => {
+        const { page } = JSON.parse(
+          (await readMaterialized(path.join(directory, file))).toString('utf8')
+        ) as {
+          page: { id: string; name: string }
+        }
+        return { file, id: page.id, name: page.name }
+      })
+  )
+
+const captures = [
+  ...(await capturesIn(path.join(figma, 'figma-snapshot/components'))),
+  ...(await capturesIn(path.join(figma, 'test/fixtures/figma-snapshot/components')))
+]
 
 describe('when mapping every existing Figma page name to its capture file', () => {
   const pages = [
     ...configuredPages(path.join(figma, 'figma.config.json')),
     ...configuredPages(path.join(figma, 'test/fixtures/figma.config.json'))
   ]
-  const captures = [
-    ...capturesIn(path.join(figma, 'figma-snapshot/components')),
-    ...capturesIn(path.join(figma, 'test/fixtures/figma-snapshot/components'))
-  ]
+
   const names = [...new Set([...pages, ...captures].map((page) => page.name))]
   // A capture is stored under its configured page name; the Figma page name may add a marker (for
   // example a trailing check mark). A legacy capture, configured by name with no id, keeps that name even

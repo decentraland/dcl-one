@@ -88,3 +88,25 @@ describe('parseMappingSource', () => {
     })
   })
 })
+
+describe('when a text placeholder is inside a JSX JavaScript expression', () => {
+  it('should reject the unsupported context instead of emitting entity text in JavaScript', () => {
+    const source = mappingSource({ body: "const label = instance.getString('Label')" }).replace(
+      '>Label</Button>',
+      " aria-label={'${label}'}>Label</Button>"
+    )
+    expect(
+      parseMappingSource(source, 'Button.figma.ts').issues.map((issue) => issue.code)
+    ).toContain('unsupported-construct')
+  })
+})
+
+describe('when a text placeholder follows a literal brace in a quoted JSX attribute', () => {
+  it('should retain the supported JSX string context', () => {
+    const source = mappingSource({ body: "const label = instance.getString('Label')" }).replace(
+      '>Label</Button>',
+      ' title="{${label}}">Label</Button>'
+    )
+    expect(parseMappingSource(source, 'Button.figma.ts').issues).toEqual([])
+  })
+})

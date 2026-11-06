@@ -5,6 +5,7 @@
 // trusted copy of this script can scan a pull request without checking it out or running any of its code.
 // Diagnostics name the path (or commit:path) and the check ID only, never the match or the key.
 // Dependency-free so it runs before `pnpm install` and in fork CI.
+import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
@@ -14,7 +15,7 @@ import { fileURLToPath } from 'node:url'
 // with its separators written plainly, percent-encoded (%2F, as in embed links) or JSON-escaped (\/). The
 // lookbehind keeps hosts that merely end in "figma.com" out; subdomains such as www. still match. REST API
 // paths (/v1/…) are not file links: a real key in one still fails the key check.
-const SEPARATOR = String.raw`(?:\/|%2f|\\+\/)`
+const SEPARATOR = String.raw`(?:\/|%2f|\\+\/|\\+u002f)`
 export const URL_PATTERN = new RegExp(
   String.raw`(?<![a-z0-9-])figma\.com${SEPARATOR}(?!v\d+${SEPARATOR})[a-z0-9_-]+${SEPARATOR}([a-z0-9]+)`,
   'gi'
@@ -91,16 +92,32 @@ export function loadAllowlist(root, rev) {
   return allowlist
 }
 
+const lfsStores = new Map()
 function materializeLfs(root, pointer) {
+  // Only the explicitly prefetched local store is read. Neither a historical pointer nor a missing object
+  // may initiate a network request from the scan step, where credentials are deliberately absent.
   try {
-    return git(root, ['lfs', 'smudge'], pointer)
+    const oid = /^oid sha256:([0-9a-f]{64})$/m.exec(pointer.toString('utf8'))?.[1]
+    const size = /^size ([0-9]+)$/m.exec(pointer.toString('utf8'))?.[1]
+    if (!oid || size === undefined) return null
+    if (!lfsStores.has(root)) {
+      const store = /^LocalMediaDir=(.+)$/m.exec(git(root, ['lfs', 'env']).toString('utf8'))?.[1]
+      lfsStores.set(root, store)
+    }
+    const store = lfsStores.get(root)
+    if (!store) return null
+    const file = join(store, oid.slice(0, 2), oid.slice(2, 4), oid)
+    if (statSync(file).size !== Number(size)) return null
+    const content = readFileSync(file)
+    return createHash('sha256').update(content).digest('hex') === oid ? content : null
   } catch {
     return null
   }
 }
 
-function scanContent(root, buffer, key, allowedIds) {
+function scanContent(root, buffer, key, allowedIds, materialize = false) {
   if (!isLfsPointer(buffer)) return scanBuffer(buffer, key, allowedIds)
+  if (!materialize) return ['lfs']
   const content = materializeLfs(root, buffer)
   return content && !isLfsPointer(content) ? scanBuffer(content, key, allowedIds) : ['lfs']
 }
@@ -131,7 +148,7 @@ function scanRange(root, range, key, allowed, report) {
     '--root',
     '--raw',
     '--no-abbrev',
-    '-m',
+    '--diff-merges=cc',
     '-z',
     '--no-renames',
     '--format=commit %H',
@@ -148,17 +165,28 @@ function scanRange(root, range, key, allowed, report) {
       commits.add(commit)
       continue
     }
-    // Raw entry: ":<mode> <mode> <src> <dst> <status>" followed by the path field.
-    const match = /^:\d+ \d+ [0-9a-f]+ ([0-9a-f]+) ([A-Z])/.exec(field)
+    // Combined entries have one mode and hash per parent plus the result, and a multi-letter status.
+    const match = /^(:+)(.+)$/.exec(field)
     if (!match) continue
-    const path = fields[i + 1]
-    i += 1
-    if (match[2] === 'D' || /^0+$/.test(match[1])) continue
-    blobs.push({ commit, path, sha: match[1] })
+    const parts = match[2].split(' ')
+    const parents = match[1].length
+    if (parts.length !== 2 * (parents + 1) + 1) continue
+    const sha = parts.at(-2)
+    if (!/^[0-9a-f]{40}$/.test(sha) || !/^[A-Z]+$/.test(parts.at(-1))) continue
+    const path = fields[++i]
+    if (/^0+$/.test(sha)) continue
+    blobs.push({ commit, path, sha })
   }
   for (const { commit: sha, path, sha: blob } of blobs) {
     const buffer = git(root, ['cat-file', 'blob', blob])
-    for (const check of scanContent(root, buffer, key, allowed(path))) report(check, path, sha)
+    for (const check of scanContent(
+      root,
+      buffer,
+      key,
+      allowed(path),
+      path.startsWith('library/ui/')
+    ))
+      report(check, path, sha)
   }
   return { commits: commits.size, blobs: blobs.length }
 }
@@ -178,7 +206,13 @@ function scanTree(root, rev, prefix, key, allowed, report) {
     if (!match) continue // a submodule commit: nothing to read
     scanned += 1
     const buffer = git(root, ['cat-file', 'blob', match[1]])
-    for (const check of scanContent(root, buffer, key, allowed(match[2])))
+    for (const check of scanContent(
+      root,
+      buffer,
+      key,
+      allowed(match[2]),
+      match[2].startsWith('library/ui/')
+    ))
       report(check, match[2], commit)
   }
   return { commit, scanned }
@@ -359,7 +393,7 @@ export function main(argv) {
   try {
     const options = parseArgs(argv)
     const root =
-      options.root ?? execFileSync('git', ['rev-parse', '--show-toplevel']).toString().trim()
+      options.root ?? git(process.cwd(), ['rev-parse', '--show-toplevel']).toString().trim()
     const { findings, lines } = runGuard({
       ...options,
       root,

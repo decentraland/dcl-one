@@ -2,6 +2,7 @@ import { configuredPages } from '../page-identity.js'
 import { atomicWrite, resolveContained, validateOutputPath } from '../guard/fs-safe.js'
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
+import { isWindowsSafeName } from '../capture/page-file-name.js'
 import { z } from 'zod'
 import { runDiff, runSync, type App } from '../app.js'
 import { requireFileKey } from '../config.js'
@@ -247,7 +248,7 @@ function createTools(app: App): ToolDefinition[] {
           for (const icon of icons) {
             if (
               path.basename(icon.file) !== icon.file ||
-              /[\\/:]/.test(icon.file) ||
+              !isWindowsSafeName(icon.file) ||
               !icon.file.endsWith('.svg')
             )
               throw new Error(`Invalid icon filename: ${JSON.stringify(icon.file)}`)

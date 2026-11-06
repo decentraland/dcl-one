@@ -19,7 +19,7 @@ import {
 } from '../ir/schemas.js'
 import type { FigmaSource } from './types.js'
 import { readMaterialized } from '../lfs.js'
-import { encodePageFileName } from '../capture/page-file-name.js'
+import { assertDistinctPageFiles, encodePageFileName } from '../capture/page-file-name.js'
 
 const readText = async (file: string) => (await readMaterialized(file)).toString('utf8')
 
@@ -92,6 +92,7 @@ class SnapshotSource implements FigmaSource {
         throw error
       }
     )
+    assertDistinctPageFiles(names)
     const matches: RawComponentPage[] = []
     const excluded = new Set(this.legacySnapshotNames.map(encodePageFileName))
     for (const name of names.filter((name) => name.endsWith('.json') && !excluded.has(name))) {
@@ -115,7 +116,15 @@ class SnapshotSource implements FigmaSource {
   }
 
   async getComponentPage(pageName: string): Promise<RawComponentPage | undefined> {
-    const file = path.join('components', encodePageFileName(pageName))
+    const name = encodePageFileName(pageName)
+    const names = await readdir(path.join(this.dir, 'components')).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return []
+        throw error
+      }
+    )
+    assertDistinctPageFiles(names)
+    const file = path.join('components', name)
     const raw = await readText(path.join(this.dir, file)).catch((error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') return undefined
       throw error
