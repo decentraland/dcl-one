@@ -246,7 +246,7 @@
     },
     {
       "id": "explorer-rust",
-      "description": "Explorer Rust source, its workspace manifest and build script, and the vendored Bevy",
+      "description": "Explorer Rust source, its workspace manifest, build script and Cargo configuration, the Rust harness crates, the vendored Rust crates including Bevy, and the generated fork pins",
       "owners": [
         "@robtfm"
       ],
@@ -257,7 +257,12 @@
         "/rendering/bevy-explorer/source/Cargo.lock",
         "/rendering/bevy-explorer/source/build.rs",
         "/rendering/bevy-explorer/source/.cargo/config.toml",
-        "/rendering/bevy-explorer/bevy/"
+        "/rendering/bevy-explorer/source/local-harness/benchmark/",
+        "/rendering/bevy-explorer/source/local-harness/presence/harness-util/",
+        "/rendering/bevy-explorer/source/vendor/",
+        "/rendering/bevy-explorer/bevy/",
+        "/rendering/bevy-explorer/cargo-patches.toml",
+        "/rendering/bevy-explorer/forks.toml"
       ]
     },
     {
