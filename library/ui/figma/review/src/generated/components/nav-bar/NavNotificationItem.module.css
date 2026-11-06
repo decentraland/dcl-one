@@ -1,0 +1,169 @@
+.v0nroot {
+display: flex;
+box-sizing: border-box;
+flex-direction: row;
+justify-content: flex-start;
+align-items: center;
+gap: var(--dcl-space-8);
+padding: var(--dcl-space-8) var(--dcl-space-16) var(--dcl-space-8) var(--dcl-space-16);
+width: 390px;
+height: 102px;
+border-radius: var(--dcl-radius-sm);
+opacity: 1;
+&:hover:not(:disabled):not([data-interaction-mode='controlled']), &[data-force-state='hover'] {
+  background: var(--dcl-transparencies-white-10);
+}
+&:hover:not(:disabled):not([data-interaction-mode='controlled']) [data-n='0'], &[data-force-state='hover'] [data-n='0'] {
+  background: url("../assets/3edb17a16fc416b7.svg") center / contain no-repeat;
+}
+}
+
+.v0n0 {
+box-sizing: border-box;
+width: 56px;
+flex-shrink: 0;
+height: 56px;
+background: url("../assets/9825021882bb9742.svg") center / contain no-repeat;
+}
+
+.v0n1 {
+box-sizing: border-box;
+display: flex;
+flex-direction: column;
+justify-content: flex-start;
+align-items: flex-start;
+gap: var(--dcl-space-4);
+flex: 1 1 0;
+min-width: 0;
+opacity: 1;
+}
+
+.v0n1_0 {
+composes: text626f64792f6d642d7374726f6e67 from '../../tokens/text-styles.module.css';
+display: block;
+min-height: 24px;
+width: 206px;
+color: var(--dcl-neutrals-snow);
+white-space: nowrap;
+text-transform: none;
+letter-spacing: 0px;
+text-align: left;
+line-height: 24px;
+opacity: 1;
+}
+
+.v0n1_1 {
+composes: text626f64792f7873 from '../../tokens/text-styles.module.css';
+display: block;
+min-height: 36px;
+color: var(--dcl-neutrals-pearl);
+text-transform: none;
+letter-spacing: 0px;
+text-align: left;
+line-height: 18px;
+width: 280px;
+opacity: 1;
+}
+
+.v0n1_2 {
+composes: text626f64792f7873 from '../../tokens/text-styles.module.css';
+display: block;
+min-height: 18px;
+width: 52px;
+color: var(--dcl-neutrals-silver);
+white-space: nowrap;
+text-transform: none;
+letter-spacing: 0px;
+text-align: left;
+line-height: 18px;
+opacity: 1;
+}
+
+.v0n2 {
+box-sizing: border-box;
+width: 8px;
+flex-shrink: 0;
+height: 8px;
+background: url("data:image/svg+xml,%3Csvg width='8' height='8' viewBox='0 0 8 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E %3Ccircle cx='4' cy='4' r='4' fill='%23FF2D55'/%3E %3C/svg%3E") center / contain no-repeat;
+}
+
+.v1nroot {
+display: flex;
+box-sizing: border-box;
+flex-direction: row;
+justify-content: flex-start;
+align-items: center;
+gap: var(--dcl-space-8);
+padding: var(--dcl-space-8) var(--dcl-space-16) var(--dcl-space-8) var(--dcl-space-16);
+width: 390px;
+height: 102px;
+border-radius: var(--dcl-radius-sm);
+opacity: 1;
+&:hover:not(:disabled):not([data-interaction-mode='controlled']), &[data-force-state='hover'] {
+  background: var(--dcl-transparencies-white-10);
+}
+&:hover:not(:disabled):not([data-interaction-mode='controlled']) [data-n='0'], &[data-force-state='hover'] [data-n='0'] {
+  background: url("../assets/093fdd6b2c76b00f.svg") center / contain no-repeat;
+}
+}
+
+.v1n0 {
+box-sizing: border-box;
+width: 56px;
+flex-shrink: 0;
+height: 56px;
+background: url("../assets/b735d794ebbbc3e6.svg") center / contain no-repeat;
+}
+
+.v1n1 {
+box-sizing: border-box;
+display: flex;
+flex-direction: column;
+justify-content: flex-start;
+align-items: flex-start;
+gap: var(--dcl-space-4);
+flex: 1 1 0;
+min-width: 0;
+opacity: 1;
+}
+
+.v1n1_0 {
+composes: text626f64792f6d642d7374726f6e67 from '../../tokens/text-styles.module.css';
+display: block;
+min-height: 24px;
+width: 206px;
+color: var(--dcl-neutrals-snow);
+white-space: nowrap;
+text-transform: none;
+letter-spacing: 0px;
+text-align: left;
+line-height: 24px;
+opacity: 1;
+}
+
+.v1n1_1 {
+composes: text626f64792f7873 from '../../tokens/text-styles.module.css';
+display: block;
+min-height: 36px;
+color: var(--dcl-neutrals-pearl);
+text-transform: none;
+letter-spacing: 0px;
+text-align: left;
+line-height: 18px;
+width: 280px;
+opacity: 1;
+}
+
+.v1n1_2 {
+composes: text626f64792f7873 from '../../tokens/text-styles.module.css';
+display: block;
+min-height: 18px;
+width: 52px;
+color: var(--dcl-neutrals-silver);
+white-space: nowrap;
+text-transform: none;
+letter-spacing: 0px;
+text-align: left;
+line-height: 18px;
+opacity: 1;
+}

@@ -1,0 +1,108 @@
+.v0nroot {
+display: inline-flex;
+box-sizing: border-box;
+position: relative;
+width: 140px;
+height: 58px;
+border-radius: var(--dcl-radius-md);
+opacity: 1;
+}
+
+.v0n0 {
+composes: text627574746f6e2f6d64 from '../../tokens/text-styles.module.css';
+display: block;
+min-height: 17px;
+color: var(--dcl-neutrals-cloudy-sky);
+white-space: nowrap;
+text-transform: uppercase;
+letter-spacing: 0px;
+text-align: center;
+line-height: 16.94px;
+flex: none;
+position: absolute;
+left: 23px;
+top: 36.15px;
+opacity: 1;
+}
+
+.v0n0r0 {
+composes: text627574746f6e2f6d64 from '../../tokens/text-styles.module.css';
+text-transform: uppercase;
+letter-spacing: 0px;
+line-height: 16.94px;
+color: var(--dcl-neutrals-cloudy-sky);
+}
+
+.v0n0r1 {
+composes: text627574746f6e2f6d64 from '../../tokens/text-styles.module.css';
+text-transform: uppercase;
+letter-spacing: 0px;
+line-height: 16.94px;
+color: var(--dcl-neutrals-pale-black);
+}
+
+.v0n1 {
+box-sizing: border-box;
+width: 36px;
+height: 36px;
+flex: none;
+position: absolute;
+left: 52px;
+top: 2.62px;
+background: url("../assets/4151a1a77e219230.svg") center / contain no-repeat;
+}
+
+.v1nroot {
+display: inline-flex;
+box-sizing: border-box;
+position: relative;
+width: 140px;
+height: 58px;
+border-radius: var(--dcl-radius-md);
+background: var(--dcl-transparencies-white-10);
+opacity: 1;
+}
+
+.v1n0 {
+composes: text627574746f6e2f6d64 from '../../tokens/text-styles.module.css';
+display: block;
+min-height: 17px;
+color: var(--dcl-neutrals-snow);
+white-space: nowrap;
+text-transform: uppercase;
+letter-spacing: 0px;
+text-align: center;
+line-height: 16.94px;
+flex: none;
+position: absolute;
+left: 22px;
+top: 36px;
+opacity: 1;
+}
+
+.v1n0r0 {
+composes: text627574746f6e2f6d64 from '../../tokens/text-styles.module.css';
+text-transform: uppercase;
+letter-spacing: 0px;
+line-height: 16.94px;
+color: var(--dcl-neutrals-snow);
+}
+
+.v1n0r1 {
+composes: text627574746f6e2f6d64 from '../../tokens/text-styles.module.css';
+text-transform: uppercase;
+letter-spacing: 0px;
+line-height: 16.94px;
+color: var(--dcl-neutrals-silver);
+}
+
+.v1n1 {
+box-sizing: border-box;
+width: 36px;
+height: 36px;
+flex: none;
+position: absolute;
+left: 52px;
+top: 2.62px;
+background: url("../assets/730ae433766298b6.svg") center / contain no-repeat;
+}

@@ -1,0 +1,40 @@
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--dcl-transparencies-white-20);
+  border-radius: var(--dcl-radius-md);
+}
+.controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.controls select {
+  height: 44px;
+  padding: 10px;
+  color: inherit;
+  background-color: var(--dcl-bg-hover);
+  border: 1px solid var(--dcl-transparencies-white-40);
+  border-radius: var(--dcl-radius-sm);
+}
+.controls p {
+  margin: 0;
+  min-height: 44px;
+  align-self: flex-end;
+  display: flex;
+  align-items: center;
+}
+.controls small {
+  flex-basis: 100%;
+  color: var(--dcl-text-secondary);
+  line-height: 1.5;
+}
+.diff {
+  overflow: auto;
+}
+.diff canvas {
+  display: block;
+}

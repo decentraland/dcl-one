@@ -1,0 +1,21 @@
+node_modules
+pnpm-lock.yaml
+figma/.figma-cache
+figma/figma-snapshot
+figma/test/fixtures
+figma/capture
+figma/review/review-dist
+figma/review/src/generated
+figma/review/public/dcl-ui-review
+figma/review/src/review/catalog.json
+figma/review/src/review/references.json
+figma/review/src/review/promotion.json
+
+# Written by promote-reviewed as exact copies of reviewed output; never reformatted by hand.
+components/*
+!components/Button
+!components/Modal
+foundations/*
+!foundations/index.ts
+!foundations/foundations.css
+foundations/typography/inter.css
