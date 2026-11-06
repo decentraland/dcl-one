@@ -121,3 +121,76 @@ describe('closing a passport with unsaved edits', () => {
     expect(screen.queryByText('gm from the plaza')).toBeNull()
   })
 })
+
+// The name colour: own passport, claimed name only; previewed while open, deployed as it closes
+// (unity-explorer PassportController), and dropped with the form on Discard.
+describe('the name colour picker', () => {
+  const ME: Profile = { ...RICH, address: '0xme', name: 'Me' }
+  const openOwn = (me: Profile = ME): EngineSession => {
+    receiveProfile('0xme', me)
+    const s = renderWithSession(<PopupHost />, (s) => {
+      s.profile = fakeProfileState({ data: me })
+    })
+    act(() => {
+      openPassport('0xme')
+    })
+    return s
+  }
+  const pickPreset = async (hex: string): Promise<void> => {
+    // The popup stays open after a pick, so the swatch is pressed only to open it.
+    if (screen.queryByRole('dialog', { name: 'Name color' }) == null) await userEvent.click(screen.getByRole('button', { name: 'Name color' }))
+    await userEvent.click(screen.getByRole('radio', { name: hex }))
+  }
+
+  it('is offered on your own passport with a claimed name only', () => {
+    openOwn({ ...ME, name: 'Me#abcd', hasClaimedName: false })
+    expect(screen.queryByRole('button', { name: 'Name color' })).toBeNull()
+    act(() => closeTopPopup())
+
+    receiveProfile('0xabc', RICH)
+    act(() => {
+      openPassport('0xabc')
+    })
+    expect(screen.queryByRole('button', { name: 'Name color' })).toBeNull()
+  })
+
+  it('previews the pick on the name and deploys it once, as the passport closes', async () => {
+    const s = openOwn()
+    await pickPreset('#ff4046')
+    expect(screen.getByText('Me').style.getPropertyValue('--name-color')).toBe('#ff4046')
+    await pickPreset('#40eaff')
+    expect(s.profile.saveNameColor).not.toHaveBeenCalled()
+
+    // Cancel closes the passport even with the picker open: popups are dispatched before leaf
+    // cancel layers (lib/cancelLayers). The pick is kept, not lost.
+    act(() => closeTopPopup())
+    expect(screen.queryByRole('button', { name: 'Name color' })).toBeNull()
+    expect(s.profile.saveNameColor).toHaveBeenCalledTimes(1)
+    expect(s.profile.saveNameColor).toHaveBeenCalledWith({ r: 0x40 / 255, g: 0xea / 255, b: 1 })
+  })
+
+  it('deploys nothing when the colour picked is the one already saved', async () => {
+    const s = openOwn({ ...ME, nameColor: { r: 1, g: 0x40 / 255, b: 0x46 / 255 } })
+    await pickPreset('#40eaff')
+    await pickPreset('#ff4046')
+    act(() => closeTopPopup())
+    expect(s.profile.saveNameColor).not.toHaveBeenCalled()
+  })
+
+  it('deploys nothing when no colour was picked', () => {
+    const s = openOwn()
+    act(() => closeTopPopup())
+    expect(s.profile.saveNameColor).not.toHaveBeenCalled()
+  })
+
+  it('drops the picked colour with the form edits on Discard', async () => {
+    const s = openOwn()
+    await pickPreset('#ff4046')
+    await userEvent.click(screen.getByRole('button', { name: 'Edit profile' }))
+    await userEvent.type(screen.getByLabelText('About me'), '!')
+    act(() => closeTopPopup())
+    await userEvent.click(await screen.findByRole('button', { name: 'Discard' }))
+    expect(screen.queryByLabelText('About me')).toBeNull()
+    expect(s.profile.saveNameColor).not.toHaveBeenCalled()
+  })
+})
