@@ -16,9 +16,9 @@ LANES = ('clippy', 'test', 'headless', 'web')
 NATIVE_JOBS = {'Test Suite (ubuntu-24.04)', 'Test Suite (windows-2025)', 'Test Suite (macos-15)'}
 GATEWAY_HUD_INPUTS = ('apps/ui3/src/play/lib/baseDomain.ts',
                       'apps/ui3/src/play/engine/generated/serviceTable.ts')
-INPUTS = ('rendering/bevy-explorer/source', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
+INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/bevy', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
           'infra/gateway', *GATEWAY_HUD_INPUTS,
-          'tooling/bevy-ci.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
+          'tooling/bevy-ci.py', 'tooling/bevy-mtimes.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
           'tooling/tests/test_bevy_*.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
           '.github/workflows/bevy-explorer-headless.yml',
@@ -34,6 +34,7 @@ HARNESS_WEB_READS = ('rendering/bevy-explorer/source/deploy/web/engine/perf_stre
 IMAGES_INPUTS = (
     'flake.*',
     'rendering/bevy-explorer/source/**',
+    'rendering/bevy-explorer/bevy/**',
     'rendering/bevy-explorer/upstream.lock.json',
     'apps/bevy-explorer/build-web.py',
     'apps/bevy-explorer/install-*.py',
