@@ -48,17 +48,15 @@ pub fn static_gas(listing: &Listing) -> u64 {
     }
 }
 
-/// The node's MANA/USD spot as the rule's rate: the newest price snapshot
-/// within its freshness budget, exact decimal text, never a float.
+/// The Shop's MANA/USD as the rule's rate (`price::store::shop_rate`: the
+/// marketplace feed's answer where the `shop-mana-rate` job runs, else the
+/// spot) within its freshness budget, exact decimal text, never a float.
 pub async fn mana_usd_rate(pool: &sqlx::PgPool) -> Result<Option<ManaUsdRate>, sqlx::Error> {
-    let row: Option<(String, chrono::NaiveDateTime)> = sqlx::query_as(
-        "SELECT mana_usd::text, taken_at FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await?;
+    let now = Utc::now();
+    let row = crate::price::store::shop_rate(pool, now).await?;
     let budget = crate::price::store::SNAPSHOT_MAX_AGE.as_secs() as i64;
     Ok(row.and_then(|(rate, taken_at)| {
-        let fresh = Utc::now().timestamp() - taken_at.and_utc().timestamp() <= budget;
+        let fresh = now.timestamp() - taken_at.and_utc().timestamp() <= budget;
         fresh
             .then(|| ManaUsdRate::parse_usd_per_mana(rate.trim()))
             .flatten()

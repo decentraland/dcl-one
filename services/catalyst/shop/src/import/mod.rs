@@ -434,10 +434,9 @@ pub fn decide(signer: EvmAddress, trade: SignedTrade, facts: &MirrorFacts) -> Im
     }
 }
 
-/// The newest price snapshot of any source as an exact rate: `(rate, taken_at)`.
+/// The Shop's MANA/USD (`price::store::shop_rate`) as an exact rate: `(rate, taken_at)`.
 pub async fn current_rate(pool: &PgPool) -> Result<Option<(ManaUsdRate, i64)>, ApiError> {
-    let row: Option<(String, chrono::NaiveDateTime)> =
-        sqlx::query_as("SELECT mana_usd::text, taken_at FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1").fetch_optional(pool).await?;
+    let row = crate::price::store::shop_rate(pool, chrono::Utc::now()).await?;
     Ok(row.and_then(|(text, taken_at)| {
         ManaUsdRate::parse_usd_per_mana(text.trim())
             .map(|rate| (rate, taken_at.and_utc().timestamp()))

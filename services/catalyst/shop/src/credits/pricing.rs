@@ -310,14 +310,17 @@ impl Market for LocalMarket {
     }
 
     async fn mana_usd(&self) -> Result<String, ApiError> {
-        let Some(price) = self.price.as_ref() else {
+        if self.price.is_none() {
             return Err(ApiError::service_unavailable(
                 "the MANA price is not configured on this node (PRICE_POLL_ENABLED)",
             ));
-        };
-        let snapshot = price
-            .prices
-            .latest()
+        }
+        // The Shop's rate (`price::store::shop_rate`): the marketplace feed's answer
+        // where the `shop-mana-rate` job runs, else the spot. A feed row is as old as
+        // this node's read of it (the job judges the round's own age when it reads);
+        // a spot row is as old as its source's quote, as before.
+        let now = chrono::Utc::now();
+        let row = crate::price::store::shop_rate_row(&self.pool, now)
             .await
             .map_err(|e| ApiError::Internal(format!("price snapshot read failed: {e}")))?
             .ok_or_else(|| {
@@ -325,15 +328,24 @@ impl Market for LocalMarket {
                     "no MANA price snapshot on this node yet (mana-price-poll)",
                 )
             })?;
-        let usd = snapshot
+        let usd = row
             .mana_usd
-            .filter(|v| v.is_finite() && *v > 0.0)
-            .ok_or_else(|| ApiError::Internal("price snapshot missing numeric 'usd'".into()))?;
-        let last_updated_at = snapshot
-            .source_updated_at
-            .unwrap_or(snapshot.taken_at)
-            .timestamp();
-        let now = chrono::Utc::now().timestamp();
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|v| v.is_finite() && *v > 0.0);
+        let Some(usd) = usd else {
+            return Err(ApiError::Internal(
+                "price snapshot missing numeric 'usd'".into(),
+            ));
+        };
+        let quoted_at = if row.source == crate::price::store::SOURCE_MARKETPLACE_FEED {
+            row.taken_at
+        } else {
+            row.source_updated_at.unwrap_or(row.taken_at)
+        };
+        let last_updated_at = quoted_at.and_utc().timestamp();
+        let now = now.timestamp();
         if is_stale(last_updated_at, now, self.max_staleness_secs) {
             return Err(ApiError::service_unavailable(format!(
                 "MANA/USD oracle is stale (age {}s exceeds {}s)",

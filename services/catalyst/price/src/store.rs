@@ -12,6 +12,58 @@ use sqlx::postgres::{PgPool, PgRow};
 
 pub const SOURCE_COINGECKO: &str = "coingecko";
 
+/// Rows the Shop's `shop-mana-rate` job writes: the MANA/USD answer of the
+/// feed the settlement chain's marketplace converts USD-pegged prices with,
+/// so a price the Shop shows is the one the contract charges. Only the Shop
+/// reads them ([`shop_rate`]); the economy routes keep the market spot.
+pub const SOURCE_MARKETPLACE_FEED: &str = "marketplace-feed";
+
+/// The Shop's MANA/USD rate as exact decimal text and when it was read: the
+/// newest [`SOURCE_MARKETPLACE_FEED`] row while that job has written one in
+/// the day before `now`, otherwise the newest spot (a node that does not run
+/// the job prices as before). Callers judge freshness by `taken_at` against
+/// [`SNAPSHOT_MAX_AGE`]: a stopped job makes the Shop's prices unavailable
+/// rather than quietly falling back to the spot.
+pub async fn shop_rate(
+    pool: &PgPool,
+    now: DateTime<Utc>,
+) -> Result<Option<(String, NaiveDateTime)>, sqlx::Error> {
+    Ok(shop_rate_row(pool, now)
+        .await?
+        .map(|r| (r.mana_usd, r.taken_at)))
+}
+
+/// [`shop_rate`]'s row, with its source and the source's own quote time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShopRateRow {
+    pub mana_usd: String,
+    pub taken_at: NaiveDateTime,
+    pub source: String,
+    pub source_updated_at: Option<NaiveDateTime>,
+}
+
+pub async fn shop_rate_row(
+    pool: &PgPool,
+    now: DateTime<Utc>,
+) -> Result<Option<ShopRateRow>, sqlx::Error> {
+    let row: Option<(String, NaiveDateTime, String, Option<NaiveDateTime>)> = sqlx::query_as(
+        "SELECT mana_usd::text, taken_at, source, source_updated_at FROM economy.price_snapshots \
+         WHERE taken_at > $1 - interval '1 day' \
+         ORDER BY (source = 'marketplace-feed') DESC, taken_at DESC LIMIT 1",
+    )
+    .bind(now.naive_utc())
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(
+        |(mana_usd, taken_at, source, source_updated_at)| ShopRateRow {
+            mana_usd,
+            taken_at,
+            source,
+            source_updated_at,
+        },
+    ))
+}
+
 /// How old the newest snapshot may be and still be a price: six default
 /// poll intervals (`PRICE_POLL_INTERVAL_SECS` 300). Past it the price route
 /// and the credit-priced catalog feeds answer the unavailable envelope
@@ -128,12 +180,13 @@ impl Prices {
         Ok(row)
     }
 
-    /// `price_snapshots_newest_idx`: the newest row of any source.
+    /// `price_snapshots_newest_idx`: the newest market spot, of any source but
+    /// the Shop's marketplace feed ([`SOURCE_MARKETPLACE_FEED`]).
     pub async fn latest_snapshot(&self) -> Result<Option<PriceSnapshot>, sqlx::Error> {
         let row = sqlx::query(concat!(
             "SELECT ",
             snapshot_columns!(),
-            " FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1"
+            " FROM economy.price_snapshots WHERE source <> 'marketplace-feed' ORDER BY taken_at DESC LIMIT 1"
         ))
         .fetch_optional(&self.pool)
         .await?;
