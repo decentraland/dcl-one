@@ -40,3 +40,9 @@ export const SCENES: readonly VisualScene[] = [
 
 /** The video scene (`scenes/video`): in the workspace, not in `SCENES`, so without a reference. */
 export const VIDEO_SCENE = { id: 'video', base: [204, 0] as const }
+
+/** The pointer scene (`scenes/pointer-targets`), parcels `0,20` to `9,20`: not in `SCENES`. */
+export const POINTER_SCENE = { id: 'pointer-targets', base: [0, 20] as const }
+
+/** The raycast budget scene (`scenes/raycast-storm`), parcel `0,22`: not in `SCENES`. */
+export const RAYCAST_STORM_SCENE = { id: 'raycast-storm', base: [0, 22] as const }

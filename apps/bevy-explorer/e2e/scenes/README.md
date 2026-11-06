@@ -33,5 +33,23 @@ whenever it is sampled and the audio path runs too. `specs/visual/video.test.ts`
 player's events and the frame's centre pixel instead of comparing a reference; the scene's label
 shows the last event for whoever reads the report's frame.
 
+## The pointer and raycast scenes
+
+Two more scenes outside explorer-automation, in the workspace but not in `SCENES`, so without a
+reference:
+
+- `pointer-targets`, parcels `0,20` to `9,20`, spawn at `(8, 0, 8)` facing +X: the targets of
+  `specs/visual/pointer.test.ts`, which hovers and clicks them through `/hover_entity` and
+  `/click_entity`. A near box with a Down and an Up (`Near`), a wall and the box it hides
+  (`Behind`), a box 50 m out reachable by camera distance (`Far`, `maxCameraDistance: 60`), a box
+  150 m out past the cursor ray (`Beyond`) and the avocado glTF (`Model`, its pointer events on
+  the container). It logs `pointer-targets ready` once the entities exist, then
+  `pointer down entity=<id> tick=<tick>` and `pointer up entity=<id> tick=<tick>` once per new
+  input command on a target.
+- `raycast-storm`, parcel `0,22`: 200 invisible entities in a 10 by 20 grid, each with a
+  continuous raycast down onto one floor collider, the load of `specs/visual/raycast-budget.test.ts`.
+  It logs `raycast entity=<id>` the first time an entity's raycast answers and
+  `raycast-storm complete` once all 200 have.
+
 `bin/`, `node_modules/` and the other build outputs are ignored. The `.glb`, `.png`, `.jpg` and
 `.mp4` assets are in Git LFS.

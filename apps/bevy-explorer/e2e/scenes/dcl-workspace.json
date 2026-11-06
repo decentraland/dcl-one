@@ -53,6 +53,12 @@
     },
     {
       "path": "video"
+    },
+    {
+      "path": "pointer-targets"
+    },
+    {
+      "path": "raycast-storm"
     }
   ]
 }
