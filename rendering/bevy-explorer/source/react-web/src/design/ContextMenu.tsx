@@ -11,6 +11,8 @@ export type ContextMenuItem =
   | { kind: 'caption'; label: ReactNode; avatar?: ReactNode }
   | { kind: 'header'; name: ReactNode; tag?: ReactNode; address?: string; avatar?: ReactNode }
   | { kind: 'toggle'; label: ReactNode; icon?: ReactNode; checked?: boolean; onChange?: (checked: boolean) => void }
+  /** One of a set of exclusive choices (a radio): the checked one carries the mark. */
+  | { kind: 'option'; label: ReactNode; icon?: ReactNode; checked: boolean; onClick?: () => void }
   | { kind?: 'item' | 'submenu'; label: ReactNode; icon?: ReactNode; danger?: boolean; onClick?: () => void }
 
 interface ContextMenuProps {
@@ -61,6 +63,23 @@ export function ContextMenu({ items }: ContextMenuProps): React.JSX.Element {
         }
 
         if (it.kind === 'toggle') return <ToggleItem item={it} key={i} />
+
+        if (it.kind === 'option') {
+          return (
+            <button
+              type="button"
+              className={`${styles.item} ${it.checked ? styles.itemChecked : ''}`.trim()}
+              role="menuitemradio"
+              aria-checked={it.checked}
+              key={i}
+              onClick={it.onClick}
+            >
+              {it.icon != null && <span className={styles.icon}>{it.icon}</span>}
+              <span className={styles.label}>{it.label}</span>
+              <span className={styles.check} aria-hidden="true">{it.checked ? '✓' : ''}</span>
+            </button>
+          )
+        }
 
         return (
           <button

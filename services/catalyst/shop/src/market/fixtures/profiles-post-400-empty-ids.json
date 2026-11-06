@@ -1,5 +1,5 @@
 {
-  "description": "POST /lambdas/profiles with an empty ids array must 400 (lamb2 #465 amplification-DoS fix rejects both missing and empty ids). NOTE: peer.decentraland.org's deployed runtime lags #465 and still 200s empty ids \u2014 golden follows the current SOURCE + DoS intent, which our port matches; the two converge once peer redeploys.",
+  "description": "POST /lambdas/profiles with an empty ids array answers 400 with lamb2's message, as the production peer does.",
   "request": {
     "method": "POST",
     "path": "/lambdas/profiles",
@@ -21,7 +21,7 @@
       "message": "No profile ids were specified. Expected ids:string[] in body"
     }
   },
-  "captured_from": "lamb2 SOURCE profiles-handler.ts (#465, 2026-06-10) \u2014 empty ids -> 400. Peer runtime lags (200 []); we follow source.",
-  "captured_at": "2026-05-23T20:00:00Z",
+  "captured_from": "services/catalyst/tests/fixtures/conformance/content-lambdas/captures/lambdas-profiles/LP-31-canonical-profiles-empty-ids.json (peer.decentraland.org, lamb2 02a37f5)",
+  "captured_at": "2026-11-04T00:00:00Z",
   "volatile_paths": []
 }

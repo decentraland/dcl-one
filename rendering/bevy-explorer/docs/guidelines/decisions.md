@@ -29,6 +29,24 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Scene roots and avatars register their hashes through component hooks; the publisher writes
   the values in place. See the
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
+- **Community chat (#223).** A community packet is taken only from the server's message
+  router, which checks membership and stamps the author; unity-explorer also accepts one
+  straight from a peer under the peer's own identity. Community history is stored like a DM's
+  and trimmed to 200 messages and 1000 records per community; unity-explorer keeps it in memory
+  and persists DMs only. A community tab's input is blocked while the private chat room is not
+  joined or the router is not in it, as a DM's is for an unreachable partner. Leaving a
+  community (or being removed) deletes its stored history and settings, and the communities an
+  account had chats for are remembered per account so a leave while logged out does the same.
+  The notification ping has a default in the Chat settings tab and a per-conversation override
+  with a "Default" choice; a flood of lines on one conversation is one sound (400 ms). The
+  member-of list is read up to 10 pages of 100 (unity-explorer reads one), and one pair of clips
+  serves focused and unfocused channels alike, played by the bridge scene from its own content.
+- **Blocked users in chat history (#296).** Live chat and reactions from anyone blocked in
+  either direction are dropped on every channel. Community history still stores them and
+  leaves them out of each read while the block lasts, so an unblock brings them back;
+  unity-explorer stores no community history. A new DM or DM reaction from them is not stored,
+  since a DM history is never trimmed. A DM thread stored before the block is read back whole:
+  hiding it would reveal that the other side blocked you, who is otherwise shown as offline.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.

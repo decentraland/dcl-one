@@ -34,13 +34,17 @@ pub mod deploy;
 mod deploy_form;
 mod deploy_validate;
 pub mod forwarding;
+pub mod holdings;
 pub mod http;
 pub mod limits;
 pub mod manifest;
 pub mod metrics;
 pub mod names;
+pub mod notices;
 pub mod owners;
+pub mod partial;
 pub mod permissions;
+pub mod quota;
 pub mod scenes;
 pub mod settings;
 pub mod settings_policy;
@@ -72,6 +76,7 @@ use crate::shared::identity::Address;
 use crate::shared::nul_guard;
 use catalyst_storage::Storage;
 
+pub use partial::PartialUploadLimits;
 pub use upload_limits::UploadLimits;
 
 /// Rows per multi-row access-log INSERT; the drain takes whatever is queued up to this.
@@ -103,6 +108,8 @@ pub struct Settings {
     pub public_url: String,
     /// `MAX_FILE_COUNT`: entries a deployed entity's `content` may list.
     pub max_file_count: usize,
+    /// The partial (multi-request) upload limits (`PENDING_DEPLOYMENT_TTL`, `MAX_PENDING_*`, ...).
+    pub partial_uploads: PartialUploadLimits,
     /// `WORLDS_OWNER_RECONCILE_INTERVAL_SECS`: the `worlds-owner-reconcile` pause.
     pub owner_reconcile_interval: std::time::Duration,
 }
@@ -130,8 +137,15 @@ impl Settings {
             scene_eviction_ttl: DEFAULT_SCENE_EVICTION_TTL,
             public_url: String::new(),
             max_file_count: deploy::DEFAULT_MAX_FILE_COUNT,
+            partial_uploads: PartialUploadLimits::default(),
             owner_reconcile_interval: DEFAULT_OWNER_RECONCILE_INTERVAL,
         })
+    }
+
+    /// The partial upload limits, validated against the world size cap.
+    pub fn with_partial_uploads(mut self, limits: PartialUploadLimits) -> anyhow::Result<Self> {
+        self.partial_uploads = limits.validate(crate::policy::MAX_SCENE_SIZE_BYTES)?;
+        Ok(self)
     }
 
     pub fn with_scene_eviction_ttl_ms(mut self, ms: u64) -> Self {
@@ -169,6 +183,7 @@ impl Settings {
             scene_eviction_ttl: DEFAULT_SCENE_EVICTION_TTL,
             public_url: "https://worlds.example".to_string(),
             max_file_count: deploy::DEFAULT_MAX_FILE_COUNT,
+            partial_uploads: PartialUploadLimits::default(),
             owner_reconcile_interval: DEFAULT_OWNER_RECONCILE_INTERVAL,
         }
     }
@@ -190,6 +205,9 @@ pub enum Revocation {
     /// owner's is decided again, and a shared-secret admission is void until
     /// the client presents the new secret.
     AccessSetting { world: WorldName },
+    /// Re-evaluate current policy without invalidating shared-secret admissions.
+    /// This advisory carries no persisted access-change cutoff.
+    AccessRecheck { world: WorldName },
     /// The operator blocked the wallet everywhere (`POST /admin/blocked/{w}`).
     Platform { address: Address },
 }
@@ -221,6 +239,7 @@ impl RevocationSink for CommsRoomRevocations {
                 RoomRevocation::WorldAddress { world, address }
             }
             Revocation::AccessSetting { world } => RoomRevocation::WorldAccess { world },
+            Revocation::AccessRecheck { world } => RoomRevocation::WorldAccessRecheck { world },
             Revocation::Platform { address } => RoomRevocation::Everywhere { address },
         });
     }
@@ -270,6 +289,10 @@ pub struct CoreState {
     /// `WORLDS_FORWARD_UPSTREAM_URL`: every local publish is queued for it in
     /// the publish transaction and sent by the `worlds-forward` job.
     pub forwarder: Option<Arc<crate::content::forward::Forwarder>>,
+    /// The per-wallet storage allowance (unlimited without chain reads).
+    pub allowance: Arc<dyn quota::SpaceAllowance>,
+    /// The user notices (permission grants, storage quota) and their links.
+    pub notices: Arc<notices::Notices>,
 }
 
 pub type SharedState = Arc<CoreState>;
@@ -295,7 +318,21 @@ impl CoreState {
             access_log_rx: Mutex::new(Some(access_log_rx)),
             revocation_sinks: parking_lot::RwLock::new(Vec::new()),
             forwarder: None,
+            allowance: Arc::new(quota::Unlimited),
+            notices: Arc::new(notices::Notices::default()),
         }
+    }
+
+    /// The storage allowance source ([`holdings::configured`]).
+    pub fn with_allowance(mut self, allowance: Arc<dyn quota::SpaceAllowance>) -> Self {
+        self.allowance = allowance;
+        self
+    }
+
+    /// Where user notices go (social's directory) and the Builder they link.
+    pub fn with_notices(mut self, notices: notices::Notices) -> Self {
+        self.notices = Arc::new(notices);
+        self
     }
 
     /// Turns on upstream forwarding ([`forwarding::LANE`]); `serve` spawns its job.
@@ -363,7 +400,27 @@ impl CoreState {
     /// `community` was deleted, suspended or deactivated: each allow-list
     /// world listing it re-decides every participant.
     pub async fn community_closed(&self, community: uuid::Uuid) {
-        for world in self.worlds_listing_community(community).await {
+        // Persist the entire affected set before advisory wakeups. Preserve an
+        // earlier edit's cutoff/revision so delayed closures cannot revoke fresh
+        // secret admissions or erase newer edit obligations.
+        let names: Vec<String> = match sqlx::query_scalar(
+            "INSERT INTO social.world_access_rechecks AS q(world_name) \
+             SELECT wac.world_name FROM worlds.world_access_communities wac \
+             JOIN worlds.worlds w ON w.name=wac.world_name \
+             WHERE wac.community_id=$1 AND w.access_type='allow-list' \
+             ON CONFLICT(world_name) DO UPDATE SET next_attempt_at=LEAST(q.next_attempt_at,timezone('UTC',now())) \
+             RETURNING world_name",
+        ).bind(community).fetch_all(&self.pool).await {
+            Ok(names) => names,
+            Err(error) => {
+                tracing::warn!(%error, %community, "community closure recheck could not be persisted; attempting advisory policy recheck");
+                for world in self.worlds_listing_community(community).await {
+                    self.revoked(Revocation::AccessRecheck { world }).await;
+                }
+                return;
+            }
+        };
+        for world in names.iter().filter_map(|name| WorldName::parse(name).ok()) {
             self.revoked(Revocation::AccessSetting { world }).await;
         }
     }
@@ -421,9 +478,10 @@ impl CoreState {
     }
 
     /// The `worlds-access-log` job: drains the queue into `world_access_log`
-    /// in batches until shutdown, flushing what is left on cancel; and the
+    /// in batches until shutdown, flushing what is left on cancel; the
     /// fleet-wide hourly `worlds-scene-eviction` of expired retired scenes;
-    /// and the fleet-wide `worlds-owner-reconcile` ([`owners`]).
+    /// the fleet-wide `worlds-owner-reconcile` ([`owners`]); and the
+    /// fleet-wide `worlds-partial-upload-cleanup` of expired partial uploads.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         let state = self.clone();
         jobs.spawn_periodic_leased(
@@ -443,6 +501,21 @@ impl CoreState {
         );
         let state = self.clone();
         jobs.spawn_periodic_leased(
+            "worlds-partial-upload-cleanup",
+            crate::jobs::PeriodicCfg::every(std::time::Duration::from_millis(
+                self.settings.partial_uploads.cleanup_interval_ms,
+            )),
+            move |_ctx| {
+                let state = state.clone();
+                async move {
+                    partial::delete_expired_uploads(&state).await;
+                    Ok(())
+                }
+            },
+        );
+        metrics::partial_capacity(self.settings.partial_uploads.max_pending_bytes);
+        let state = self.clone();
+        jobs.spawn_periodic_leased(
             "worlds-scene-eviction",
             crate::jobs::PeriodicCfg::every(std::time::Duration::from_secs(3600)),
             move |_ctx| {
@@ -455,6 +528,15 @@ impl CoreState {
                     tracing::info!(evicted, "retired world scenes evicted");
                     Ok(())
                 }
+            },
+        );
+        let state = self.clone();
+        jobs.spawn_periodic_leased(
+            "worlds-quota",
+            crate::jobs::PeriodicCfg::every(quota::QUOTA_PASS_INTERVAL),
+            move |_ctx| {
+                let state = state.clone();
+                async move { state.quota_pass().await }
             },
         );
         let limits = &self.settings.upload_limits;

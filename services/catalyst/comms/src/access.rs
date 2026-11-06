@@ -6,7 +6,7 @@
 //! depending on it.
 
 use crate::shared::identity::Address;
-use crate::world_identity::{ParcelSet, SceneId, WorldName};
+use crate::world_identity::{Parcel, ParcelSet, SceneId, WorldName};
 
 /// `worlds.worlds.access_type`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -38,16 +38,19 @@ impl AccessType {
     }
 }
 
-/// How long a world with `blocked_since` stays open. Zero: `blocked_since` is
-/// only an operator disable; WCS's two-day grace belongs to quota blocks.
-pub const BLOCKED_WORLD_GRACE: chrono::TimeDelta = chrono::TimeDelta::zero();
+/// How long a quota-blocked owner's worlds stay open (WCS `TWO_DAYS_IN_MS`).
+pub const QUOTA_BLOCK_GRACE: chrono::TimeDelta = chrono::TimeDelta::days(2);
 
-/// The one "blocked past grace" predicate `/about` and the comms mints share.
-pub fn blocked_past_grace(
-    blocked_since: Option<chrono::NaiveDateTime>,
+/// The one "world refused" predicate `/about` and the comms mints share: an
+/// operator disable (`worlds.blocked_since`) applies at once, the owner's
+/// quota block (`worlds.quota_blocks.created_at`) after its grace.
+pub fn world_blocked(
+    disabled_since: Option<chrono::NaiveDateTime>,
+    quota_blocked_since: Option<chrono::NaiveDateTime>,
     now: chrono::NaiveDateTime,
 ) -> bool {
-    blocked_since.is_some_and(|since| now - since >= BLOCKED_WORLD_GRACE)
+    disabled_since.is_some()
+        || quota_blocked_since.is_some_and(|since| now - since > QUOTA_BLOCK_GRACE)
 }
 
 /// Whether a world can be joined at all, before any actor is considered.
@@ -55,9 +58,29 @@ pub fn blocked_past_grace(
 pub enum WorldAdmission {
     /// No `worlds.worlds` row.
     Unknown,
-    /// Blocked for longer than [`BLOCKED_WORLD_GRACE`].
+    /// Disabled, or its owner's quota block is past [`QUOTA_BLOCK_GRACE`].
     Blocked,
     Open(AccessType),
+}
+
+/// The `social.scene_bans.place_id` a scene's bans live under: a world scene
+/// by world and base parcel, so a ban survives redeploys (the old
+/// worlds-content-server's key), a Genesis scene by its entity id.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SceneBanKey(String);
+
+impl SceneBanKey {
+    pub fn world(world: &WorldName, base: Parcel) -> Self {
+        Self(format!("{}:{base}", world.key()))
+    }
+
+    pub fn scene(scene: &SceneId) -> Self {
+        Self(scene.as_str().to_owned())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// Why a world join is refused before any access setting is consulted.
@@ -157,15 +180,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_operator_block_takes_effect_at_once() {
+    fn an_operator_disable_applies_at_once_and_a_quota_block_after_two_days() {
         let now = chrono::DateTime::from_timestamp(1_800_000_000, 0)
             .unwrap()
             .naive_utc();
-        assert!(!blocked_past_grace(None, now));
-        assert!(blocked_past_grace(Some(now), now));
-        assert!(blocked_past_grace(
-            Some(now - chrono::TimeDelta::seconds(1)),
-            now
-        ));
+        let ago = |s: i64| Some(now - chrono::TimeDelta::seconds(s));
+        assert!(!world_blocked(None, None, now));
+        assert!(world_blocked(Some(now), None, now));
+        assert!(!world_blocked(None, Some(now), now));
+        assert!(!world_blocked(None, ago(2 * 86_400), now));
+        assert!(world_blocked(None, ago(2 * 86_400 + 1), now));
     }
 }

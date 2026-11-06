@@ -13,16 +13,34 @@ difference not listed here is a gap, not a decision.
   parse the world name first and answer 400 `Invalid world name: …` for a
   name that is not a valid world key. The upstream service answers defaults
   or 404 for such names.
-- **Wallet storage allowance.** `GET /wallet/{wallet}/stats` reports
-  `maxAllowedSpace` as one world-size cap (the publish limit, smaller for a
-  personal world) per DCL world the wallet owns: the NAMEs the names
-  authority says it holds now, plus its personal world when personal worlds
-  are enabled. The upstream service derives it from an account-holdings
-  service. `dclNames` and `ensNames` list the wallet's worlds that have a
-  world row here; a DCL world counts when the names authority names the
-  wallet as its holder (the stored owner when no names reader is
-  configured). `usedSpace` sums the stored size of every scene in the
-  wallet's DCL worlds, mirrored copies included.
+- **Wallet storage allowance.** `GET /wallet/{wallet}/stats`, the publish
+  size cap and `GET /world/{name}/limits` count only scenes published here:
+  mirrored worlds and scenes are left out. Personal worlds are outside the
+  allowance and are not listed. A wallet's DCL NAME worlds are the NAMEs it
+  holds now (the stored owner only without a names reader). A DCL NAME
+  world's publish is capped at 500 MiB per scene (the upstream
+  `MAX_SCENE_SIZE` default; not configurable here) and by what the owner's
+  allowance leaves; the publish re-checks the allowance in its transaction,
+  so concurrent publishes cannot exceed it together. The allowance is
+  computed in process, as dcl-name-stats' `account-holdings` does: 100 MiB
+  per DCL NAME (registrar `balanceOf`), per LAND (`balanceOf`) and per
+  estate LAND (`getLANDsSize`), plus 100 MiB per whole 2000 MANA held
+  across Ethereum and Polygon, read with `eth_call` at `latest` over
+  `ETH_RPC_URL` (one batch) and `RPC_ENDPOINT_POLYGON` for `ETH_NETWORK`
+  (mainnet with Polygon, sepolia with Amoy). Unlike upstream, which counts a
+  failed or reverted call as zero, any failed call is an allowance outage.
+  Without either RPC URL, or on another network, the allowance is unlimited
+  (logged at startup) and `maxAllowedSpace` reports the per-scene caps of
+  the wallet's DCL NAME worlds; the stats route reports the same during an
+  outage, while the publish and `/limits` answer 503 and the quota pass
+  keeps existing blocks. An answered allowance is reused for 60 seconds and
+  a failed lookup for 15 seconds. At most 8 publish and `/limits` lookups
+  run at once, and one that waits over 5 seconds for a slot answers 503;
+  the stats route has 2 slots of its own and, when they are busy, reports
+  the per-scene caps instead of waiting. The 12-hourly quota pass evaluates
+  both the stored owner and the live holder of each DCL NAME world.
+  A publish credits back only the replaced scenes of a world charged to
+  the same owner.
 - **Legacy content keys.** The worlds `/contents/{key}` route also accepts a
   64-hex sha256 key and serves the blob whose raw-leaf CIDv1 has that
   digest, which covers files of one chunk (256 KiB) or less. An invalid key
@@ -39,9 +57,13 @@ difference not listed here is a gap, not a decision.
 
 ## Comms
 
-- **World blocks apply at once.** `blocked_since` is set by an operator
-  disable, so `/about` and the comms mints refuse the world immediately.
-  Upstream's two-day grace belongs to storage-quota blocks.
+- **Operator disables apply at once.** An operator disable
+  (`/admin/worlds/{name}/disable`) refuses the world on `/about` and the
+  comms mints immediately. A storage-quota block keeps the upstream two-day
+  grace and refuses only the owner's local DCL NAME and ENS worlds, not its
+  personal world or mirrored worlds. The block follows the NAME's live
+  holder: a sold world is judged by its new holder's block (the stored
+  owner's while the authority cannot answer).
 - **Shared-secret throttle.** Attempts are counted in Postgres per world
   and client source (`X-Real-IP`, IPv6 by /64; the wallet without one) over
   a fixed 60-second window from the first attempt
@@ -72,11 +94,11 @@ difference not listed here is a gap, not a decision.
   fault for the stored owner or a client admitted as owner, and a database
   fault reading the world, its grants or bans; a client admitted by the
   shared secret keeps that grant until the secret or access type changes.
-  `GET /world/{name}/permissions` reports the live holder (no `owner` while
-  the authority cannot answer), and the comms owner read for stream-key
-  notices is unavailable then; neither falls back to the stored owner.
-  Publishes of one world are serialized, so a publish by a new holder
-  always sees the owner it replaces.
+  `GET /world/{name}/permissions` reports the live holder and, like
+  `/limits`, answers 503 while the authority cannot answer; the comms owner
+  read for stream-key notices is unavailable then too. Neither falls back
+  to the stored owner. Publishes of one world are serialized, so a publish
+  by a new holder always sees the owner it replaces.
 - **Capacity check fails closed.** When the live occupancy of a world cannot
   be recovered, the comms mint answers 503 instead of counting zero
   participants and admitting the user.
@@ -141,16 +163,66 @@ difference not listed here is a gap, not a decision.
   `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE`, the latter defaulting to one
   maximum-size upload).
 - **Per-world limits** come from `MAX_PARCELS`, `MAX_FILE_COUNT` and the
-  `worlds.world_limit_overrides` table; there is no `WHITELIST_URL`. As
-  upstream, an ENS world's size cap is `ENS_MAX_SIZE` whatever its override
-  row says.
+  `worlds.world_limit_overrides` table; there is no `WHITELIST_URL`. Only a
+  row with a size takes the world out of its owner's storage allowance; a
+  row that sets parcels alone leaves the allowance in force. As upstream, an
+  ENS world's size cap is `ENS_MAX_SIZE` whatever its override row says.
 - **Retired scenes.** Replaced and undeployed scenes are kept for
   `SCENE_EVICTION_TTL_MS` and removed by an hourly sweep. Scenes a mirror
   pass retires are deleted at once.
-- **`/gc`** reports `removedBytes` and has no `expiredUploads`. Every
-  `/admin/*` route answers 401 for a missing or wrong token.
+- **`/gc`** reports `removedBytes`. A dry run reclaims no expired partial
+  upload and reports `expiredUploads: null`. Every `/admin/*` route answers
+  401 for a missing or wrong token.
+- **Partial uploads** follow the upstream contract and limits, with these
+  differences:
+  - Files are keyed by the hash of their bytes. A batch carrying the same
+    file twice answers 400 `Duplicate form field '<hash>'`; upstream
+    refuses a repeated form field name.
+  - A stored file is free of staging charges when any domain of the shared
+    blob store names it, not only world scenes and thumbnails.
+  - The collector keeps every file a pending upload names, expired uploads
+    included, until the cleanup removes the upload. The cleanup unlinks
+    only files the upload's own batches stored, nothing else names and are
+    older than the collector's age floor; it leaves any other file to the
+    collector.
+  - A file found stored when the upload began and gone by its completion
+    is listed in `missing` again (202) instead of failing the publish.
+  - Batches of one entity are serialized within a process by an in-memory
+    lock; across replicas each staging step is atomic in the database.
+    There is no `CONTENT_LOCK_CONNECTIONS`. `MAX_CONCURRENT_UPLOADS` is
+    lowered to three quarters of `PG_POOL_SIZE` (at least one) with a
+    startup warning when it is set higher. Single-request and partial
+    publishes share that limit, so the lowered value bounds both.
+  - A personal world accepts partial uploads only once it is published on
+    this realm; its first scene goes in a single request.
+  - `PENDING_DEPLOYMENT_TTL`, `MAX_PENDING_DEPLOYMENTS_PER_DEPLOYER`,
+    `MAX_PENDING_BYTES_PER_DEPLOYER`, `MAX_PENDING_BYTES` and
+    `MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE` are the variables the content
+    server's partial uploads read, with the same defaults. Each value
+    applies to worlds and content separately: world uploads and content
+    uploads keep their own counts, bytes and rate windows.
+  - `MAX_PENDING_BYTES_PER_SOURCE` (default 4 GiB, at least
+    `MAX_PENDING_BYTES_PER_DEPLOYER`) caps the bytes staged by the live
+    uploads one client address started (429 with `Retry-After`).
+  - The cleanup runs as a fleet-wide leased job. Its `Retry-After` estimate
+    uses the last run this process finished.
+  - Partial batches record only the `total` processing stage, labelled
+    `mode="partial"`.
 - **`GET /worlds` search** adds trigram similarity only when the `pg_trgm`
   extension is installed. `%` and `_` in the query match literally.
+
+## Notifications
+
+- **Delivery.** World notices are written to the catalyst's own inbox and
+  email outbox, in the same transaction as the grant edit or quota change,
+  instead of being published to SNS. Re-detecting the same quota block keeps
+  the first notice unchanged; a new block notifies again even on the same
+  day. Every grant or revoke is its own notice, so the latest notice matches
+  the current grant. One edit notifies at most 50 added and 50 removed
+  addresses. The notice description does not name the world (it is in the
+  `world` field).
+- **Last parcel removed.** Removing a parcel-scoped grant's last parcel
+  sends `worlds_permission_revoked`, because the grant is deleted.
 
 ## Permissions
 

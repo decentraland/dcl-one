@@ -1,0 +1,18 @@
+{
+  "description": "GET /lambdas/users/{address}/names with pageSize=99999 answers lamb2's 400: paginationObject(url, 1000) throws InvalidRequestError (decentraland/lamb2:src/logic/pagination.ts:12, names-handler.ts:11).",
+  "request": {
+    "method": "GET",
+    "path": "/lambdas/users/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef/names",
+    "query": {"pageSize": ["99999"]},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {"content-type": "application/json"},
+    "body_json": {"error": "Bad request", "message": "max allowed pageSize is 1000"}
+  },
+  "captured_from": "hand-authored from decentraland/lamb2@02a37f5 src/logic/pagination.ts and errorHandler.ts",
+  "captured_at": "2026-11-04T00:00:00Z",
+  "volatile_paths": []
+}

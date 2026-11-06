@@ -1,0 +1,114 @@
+/* The All home: the outfits carousel (four to a page), then the rows (five whole cards and the sixth's
+   edge, clipped where the design clips them). */
+.home {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+/* The outfits' renders rise above their cards; without outfits the first row starts at the top. */
+.outfits {
+  flex: none;
+  margin-top: 68px;
+}
+/* An outfit: its colours' gradient on a 295×354 card, the render rising 53px over its top edge (clipped at
+   the sides and the rounded bottom only), and the bottom 150px fading into the second colour. */
+.outfit {
+  position: relative;
+  flex: none;
+  width: 295px;
+  height: 354px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-xl);
+  background: linear-gradient(180deg, var(--from, var(--accent)) 15.833%, var(--to, var(--brand)) 115.83%);
+  cursor: pointer;
+}
+.outfitArt {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -53px;
+  bottom: 0;
+  clip-path: inset(0 round 0 0 var(--r-xl) var(--r-xl));
+  pointer-events: none;
+}
+/* The outfit's square render, framed as the design frames it: 2.53× the card's width, the figure centred
+   and cut at the knees by the card's bottom. */
+.outfitArt img {
+  position: absolute;
+  left: -80.92%;
+  top: -12.64%;
+  width: 253.16%;
+  max-width: none;
+  height: auto;
+  aspect-ratio: 1;
+}
+.outfitFade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 150px;
+  border-radius: 0 0 var(--r-xl) var(--r-xl);
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--to, var(--brand)) 80%, transparent));
+  pointer-events: none;
+}
+.outfit:hover,
+.outfit:focus-visible {
+  box-shadow: 0 0 0 2px var(--brand), 0 0 18px var(--glow-pink);
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.rowHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 38px;
+}
+.rowTitle {
+  margin: 0;
+  font-size: var(--type-24);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+.viewAll {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 4px 0 16px;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.viewAll > svg {
+  color: var(--brand);
+}
+.slot {
+  flex: none;
+  width: 203px;
+}
+.skeletons {
+  display: grid;
+  grid-template-columns: repeat(6, 203px);
+  gap: 20px;
+  overflow: hidden;
+}
+/* A row that couldn't be read: where its cards would be, a line and Retry. */
+.rowError {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 80px;
+  color: var(--text);
+  font-size: var(--type-16);
+}

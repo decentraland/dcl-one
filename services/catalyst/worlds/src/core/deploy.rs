@@ -9,9 +9,11 @@
 //! `worlds::policy::Policy::can_deploy` (the NAME/personal owner replaces
 //! every overlapping scene; a deployment grantee exactly the overlapping
 //! scenes its grant covers), the minimap, skybox and navmap files, the
-//! uploaded files (none extra, none missing) and the world size cap. The
+//! uploaded files (none extra, none missing) and the scene size cap (the
+//! owner's remaining storage allowance, `CoreState::max_scene_size`). The
 //! files go to the ONE blob store and the scene row lands in
-//! `worlds.world_scenes` in one transaction (`store::deploy_scene`).
+//! `worlds.world_scenes` in one transaction (`store::deploy_scene`). A
+//! `partial=true` batch is staged by [`super::partial`] instead.
 //!
 //! Why not the content write path's statement: `content.deployments` /
 //! `content.active_pointers` key active scenes by parcel, which is Genesis
@@ -24,7 +26,7 @@ use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::extract::{Multipart, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use serde_json::Value;
@@ -42,6 +44,7 @@ use super::deploy_validate::{
     validate_parcel_in_bounds,
 };
 use super::metrics as worlds_metrics;
+use super::partial;
 use super::store::{self, SceneDeployment};
 use super::upload_limits::DeployRejection;
 use super::upload_spool::{self, SpooledFile};
@@ -83,7 +86,7 @@ fn declared_length_exceeds_limit(declared_len: u64) -> bool {
 }
 
 /// The old service's `{error, message}` answer of a refused deploy.
-fn rejection(status: StatusCode, message: impl Into<String>) -> Response {
+pub(super) fn rejection(status: StatusCode, message: impl Into<String>) -> Response {
     let error = match status {
         StatusCode::BAD_REQUEST => "Bad request",
         other => other.canonical_reason().unwrap_or("Error"),
@@ -109,7 +112,7 @@ pub(super) fn payload_too_large(message: impl Into<String>) -> Response {
 }
 
 /// A refused publish: its status and message.
-struct Refusal(StatusCode, String);
+pub(super) struct Refusal(pub(super) StatusCode, pub(super) String);
 
 impl IntoResponse for Refusal {
     fn into_response(self) -> Response {
@@ -118,27 +121,28 @@ impl IntoResponse for Refusal {
 }
 
 /// A failed validation, worded as the old service.
-fn failed(message: impl std::fmt::Display) -> Refusal {
+pub(super) fn failed(message: impl std::fmt::Display) -> Refusal {
     Refusal(
         StatusCode::BAD_REQUEST,
         format!("Deployment failed: {message}"),
     )
 }
 
-fn forbidden(message: impl Into<String>) -> Refusal {
+pub(super) fn forbidden(message: impl Into<String>) -> Refusal {
     Refusal(StatusCode::FORBIDDEN, message.into())
 }
 
-fn internal(message: impl Into<String>) -> Refusal {
+pub(super) fn internal(message: impl Into<String>) -> Refusal {
     Refusal(StatusCode::INTERNAL_SERVER_ERROR, message.into())
 }
 
-fn unavailable(message: impl Into<String>) -> Refusal {
+pub(super) fn unavailable(message: impl Into<String>) -> Refusal {
     Refusal(StatusCode::SERVICE_UNAVAILABLE, message.into())
 }
 
 pub async fn deploy_entity(
     State(state): State<SharedState>,
+    uri: Uri,
     headers: HeaderMap,
     multipart: Multipart,
 ) -> Response {
@@ -222,11 +226,24 @@ pub async fn deploy_entity(
         }
     };
 
+    let is_partial = form.fields.get("partial").is_some_and(|v| v == "true");
+    let mode = if is_partial {
+        worlds_metrics::PARTIAL_MODE
+    } else {
+        worlds_metrics::REGULAR_MODE
+    };
+    // A batch may also be declared with `?partial=true`; it must agree with the form, as upstream.
+    if !is_partial && partial::query_declares_partial(&uri) {
+        let resp = err_one(partial::QUERY_WITHOUT_FIELD_MESSAGE);
+        worlds_metrics::deployment_processed(mode, resp.status(), Duration::ZERO);
+        return resp;
+    }
+
     let timeout_ms = limits.deployment_processing_timeout_ms;
     let processing = Instant::now();
     let resp = match tokio::time::timeout(
         Duration::from_millis(timeout_ms),
-        deploy_entity_inner(&state, &headers, form),
+        deploy_entity_inner(&state, &headers, form, is_partial),
     )
     .await
     {
@@ -241,7 +258,7 @@ pub async fn deploy_entity(
             ))
         }
     };
-    worlds_metrics::deployment_processed(resp.status(), processing.elapsed());
+    worlds_metrics::deployment_processed(mode, resp.status(), processing.elapsed());
     resp
 }
 
@@ -297,7 +314,7 @@ fn encode_uri_component(s: &str) -> String {
 }
 
 /// The old `buildSceneDeploymentMessage`: the parcels and the play link.
-fn deployment_message(base_url: &str, world_name: &str, parcels: &[String]) -> String {
+pub(super) fn deployment_message(base_url: &str, world_name: &str, parcels: &[String]) -> String {
     let world_url = format!("{base_url}/world/{world_name}");
     let position = parcels.first().map_or("0,0", String::as_str);
     format!(
@@ -308,7 +325,7 @@ fn deployment_message(base_url: &str, world_name: &str, parcels: &[String]) -> S
     )
 }
 
-fn raw_strings(value: Option<&Value>) -> Vec<String> {
+pub(super) fn raw_strings(value: Option<&Value>) -> Vec<String> {
     value
         .and_then(Value::as_array)
         .into_iter()
@@ -395,13 +412,13 @@ fn deprecated_config_error(entity: &Value) -> Option<&'static str> {
 }
 
 /// The uploaded files, each once in upload order, keyed by their CIDv1.
-struct Uploads {
-    order: Vec<String>,
-    by_hash: HashMap<String, SpooledFile>,
+pub(super) struct Uploads {
+    pub(super) order: Vec<String>,
+    pub(super) by_hash: HashMap<String, SpooledFile>,
 }
 
 impl Uploads {
-    fn new(files: &[SpooledFile]) -> Self {
+    pub(super) fn new(files: &[SpooledFile]) -> Self {
         let mut order = Vec::new();
         let mut by_hash = HashMap::new();
         for blob in files {
@@ -447,21 +464,43 @@ async fn authenticate(
 }
 
 /// What a validated publish carries to the store.
-struct Validated {
-    world: WorldName,
-    world_name: String,
-    parcels: ParcelSet,
-    replacement: Deploy,
-    size: i64,
+pub(super) struct Validated {
+    pub(super) world: WorldName,
+    pub(super) world_name: String,
+    pub(super) parcels: ParcelSet,
+    /// `None` only for a staging check that skipped the permission.
+    pub(super) replacement: Option<Deploy>,
+    /// The live NAME holder `worlds.owner` is refreshed to; `None` with `replacement`.
+    pub(super) name_owner: Option<Address>,
+    pub(super) size: i64,
+    /// This scene's size cap: the owner's remaining storage allowance, capped per world.
+    pub(super) max_size_bytes: i64,
+    /// The world's scene size cap, whatever the owner's allowance (the staging budget's unit).
+    pub(super) world_size_cap: i64,
+    /// The allowance the publish is charged to.
+    pub(super) charge: Option<super::quota::QuotaCharge>,
 }
 
-async fn validate(
+/// Which checks [`validate`] runs and where it takes the content sizes from.
+pub(super) enum Check<'a> {
+    /// A single-request publish: sizes of the uploads, else of the stored files.
+    Publish,
+    /// A partial batch: no completeness or size check; `permission` unless its own signer resumes.
+    Stage { permission: bool },
+    /// The batch completing a partial upload: the sizes its receipts recorded.
+    Complete(&'a HashMap<String, i64>),
+}
+
+/// The publish checks in the old service's order. `anchor_ms` dates the timestamp window:
+/// now, or a partial upload's first batch.
+pub(super) async fn validate(
     state: &SharedState,
     entity: &Value,
     signer: &Address,
     entity_id: &str,
     uploads: &Uploads,
-    now_ms: i64,
+    anchor_ms: i64,
+    check: Check<'_>,
 ) -> Result<Validated, Refusal> {
     if let Some(e) = entity_schema_error(entity) {
         return Err(failed(e));
@@ -480,7 +519,7 @@ async fn validate(
             content.len()
         )));
     }
-    if let Some(e) = entity_timestamp_error(entity, now_ms) {
+    if let Some(e) = entity_timestamp_error(entity, anchor_ms) {
         return Err(failed(e));
     }
 
@@ -543,25 +582,29 @@ async fn validate(
             "Deployment failed: World \"{world_name}\" can not be deployed because the name is in the name deny list managed by Decentraland DAO."
         )));
     }
-    let replacement = match state.policy.can_deploy(&world, signer, &parcels).await {
-        Ok(decision) => decision,
-        Err(AuthorityNotEstablished::RefusedLacksAuthority { detail }) => {
-            tracing::info!(world = %world, signer = %signer.as_str(), "deploy denied: {detail}");
-            // A realm-level refusal (personal worlds, no name authority) keeps its own reason.
-            return Err(if detail.starts_with("Not authorized:") {
-                failed(detail)
-            } else {
-                failed(format!(
-                    "Deployment failed: Your wallet has no permission to publish this scene because it does not have permission to deploy under \"{world_name}\". Check scene.json to select a name that either you own or you were given permission to deploy."
-                ))
-            });
-        }
-        Err(undetermined) => {
-            tracing::warn!(world = %world, signer = %signer.as_str(), error = %undetermined, "deploy denied: authority undetermined (fail-closed)");
-            return Err(forbidden(
-                "Not authorized: could not verify deployment permissions (deploy denied)",
-            ));
-        }
+    let check_permission = !matches!(check, Check::Stage { permission: false });
+    let replacement = match check_permission {
+        false => None,
+        true => match state.policy.can_deploy(&world, signer, &parcels).await {
+            Ok(decision) => Some(decision),
+            Err(AuthorityNotEstablished::RefusedLacksAuthority { detail }) => {
+                tracing::info!(world = %world, signer = %signer.as_str(), "deploy denied: {detail}");
+                // A realm-level refusal (personal worlds, no name authority) keeps its own reason.
+                return Err(if detail.starts_with("Not authorized:") {
+                    failed(detail)
+                } else {
+                    failed(format!(
+                        "Deployment failed: Your wallet has no permission to publish this scene because it does not have permission to deploy under \"{world_name}\". Check scene.json to select a name that either you own or you were given permission to deploy."
+                    ))
+                });
+            }
+            Err(undetermined) => {
+                tracing::warn!(world = %world, signer = %signer.as_str(), error = %undetermined, "deploy denied: authority undetermined (fail-closed)");
+                return Err(forbidden(
+                    "Not authorized: could not verify deployment permissions (deploy denied)",
+                ));
+            }
+        },
     };
     match store::is_world_disabled(&state.pool, &world).await {
         Ok(false) => {}
@@ -571,6 +614,29 @@ async fn validate(
             return Err(internal("Failed to persist deployment"));
         }
     }
+    // Every publish refreshes worlds.owner to the live NAME holder.
+    let name_owner = match &replacement {
+        None => None,
+        Some(Deploy::Owner) => Some(signer.clone()),
+        Some(Deploy::Scoped(_)) => match state.policy.live_name_owner(&world).await {
+            Ok(Some(owner)) => Some(owner),
+            Ok(None) => {
+                return Err(Refusal(
+                    StatusCode::BAD_REQUEST,
+                    format!(
+                        "Cannot deploy scene \"{entity_id}\" to world \"{}\": owner address could not be resolved.",
+                        world.display()
+                    ),
+                ));
+            }
+            Err(e) => {
+                tracing::warn!(world = %world, error = %e, "deploy denied: NAME owner undetermined");
+                return Err(unavailable(
+                    "Deployment failed: the world's owner could not be resolved right now",
+                ));
+            }
+        },
+    };
 
     let minimap = missing_minimap_images(entity);
     if !minimap.is_empty() {
@@ -597,7 +663,10 @@ async fn validate(
         .map(|hash| format!("Extra file detected {hash}"))
         .collect();
     let mut sizes: HashMap<&str, i64> = HashMap::new();
-    for item in content {
+    for item in content
+        .iter()
+        .filter(|_| !matches!(check, Check::Stage { .. }))
+    {
         let (file, hash) = (
             item["file"].as_str().unwrap_or_default(),
             item["hash"].as_str().unwrap_or_default(),
@@ -605,9 +674,14 @@ async fn validate(
         if sizes.contains_key(hash) {
             continue;
         }
-        let size = match uploads.by_hash.get(hash) {
-            Some(blob) => Some(blob.len() as i64),
-            None => match state.storage.file_info(hash).await {
+        let known = match &check {
+            Check::Complete(known) => Some(known.get(hash).copied()),
+            _ => None,
+        };
+        let size = match (known, uploads.by_hash.get(hash)) {
+            (Some(known), _) => known,
+            (None, Some(blob)) => Some(blob.len() as i64),
+            (None, None) => match state.storage.file_info(hash).await {
                 Ok(info) => info.map(|i| i.size as i64),
                 Err(e) => {
                     tracing::warn!(hash, error = %e, "deploy: could not stat an already-stored file");
@@ -628,11 +702,16 @@ async fn validate(
         return Err(failed(file_errors.join(", ")));
     }
     let size: i64 = sizes.values().copied().fold(0, i64::saturating_add);
-    if size > limits.max_size_bytes {
-        let max = limits.max_size_bytes;
-        return Err(failed(format!(
-            "The deployment is too big. The maximum total size allowed is {max} bytes for scenes. You can upload up to {max} bytes but you tried to upload {size}."
-        )));
+    // A staging batch that skipped the permission resolves the owner here; it is refused alike.
+    let cap = state
+        .scene_cap(&world, &limits, name_owner.as_ref(), Some(pointers.as_slice()))
+        .await
+        .map_err(|e| {
+            tracing::warn!(world = %world, error = ?e, "deploy denied: storage allowance undetermined");
+            unavailable("Deployment failed: the storage allowance could not be determined right now")
+        })?;
+    if size > cap.max {
+        return Err(failed(super::quota::too_big(cap.max, size)));
     }
 
     Ok(Validated {
@@ -640,14 +719,118 @@ async fn validate(
         world_name: world_name.to_string(),
         parcels,
         replacement,
+        name_owner,
         size,
+        max_size_bytes: cap.max,
+        world_size_cap: limits.max_size_bytes,
+        charge: cap.charge,
     })
+}
+
+/// A publish the store refused, or the scene row's creation time (ms).
+#[allow(clippy::result_large_err, clippy::too_many_arguments)] // The refusal is the answer itself.
+pub(super) async fn publish(
+    state: &SharedState,
+    headers: &HeaderMap,
+    entity_id: &str,
+    entity: &Value,
+    signer: &Address,
+    deployment_auth_chain: &Value,
+    validated: &Validated,
+    completion: Option<&store::PartialCompletion<'_>>,
+) -> Result<i64, Response> {
+    let Validated {
+        world,
+        parcels,
+        replacement,
+        name_owner,
+        size,
+        charge,
+        ..
+    } = validated;
+    let (Some(replacement), Some(name_owner)) = (replacement, name_owner) else {
+        return Err(internal("Publish without a deploy authorization").into_response());
+    };
+
+    let persisted = store::deploy_scene_with(
+        &state.pool,
+        &state.storage,
+        SceneDeployment {
+            world,
+            name_owner: Some(name_owner),
+            entity_id,
+            deployer: signer,
+            deployment_auth_chain,
+            entity,
+            parcels,
+            size: *size,
+            replacement,
+            forward_to: state.forwarder.as_deref().map(|f| f.target()),
+            quota: charge.as_ref(),
+        },
+        completion,
+    )
+    .await;
+    let deployed = match persisted {
+        Ok(deployed) => deployed,
+        Err(e) => {
+            let reason = e.public_message();
+            if e.is_conflict() {
+                tracing::info!(world = %world, entity_id = %entity_id, "deploy conflict: overlapping-scene set changed under a scoped authorization");
+                return Err(rejection(StatusCode::CONFLICT, reason));
+            }
+            if e.status() == 503 {
+                tracing::warn!(world = %world, entity_id = %entity_id, reason = %reason, "deploy deferred: stored content changed under it");
+                return Err(unavailable(reason).into_response());
+            }
+            if e.is_forbidden() || e.is_bad_request() {
+                tracing::info!(world = %world, entity_id = %entity_id, reason = %reason, "deploy refused");
+                return Err(if e.is_forbidden() {
+                    forbidden(reason).into_response()
+                } else {
+                    err_one(reason)
+                });
+            }
+            tracing::error!(error = ?e, world = %world, entity_id = %entity_id, "deploy failed: DB tx error");
+            return Err(internal("Failed to persist deployment").into_response());
+        }
+    };
+    // A new holder's publish moved worlds.owner: re-decide the previous one now.
+    if let Some(previous) = &deployed.previous_owner {
+        state.policy.note_owner(world, Some(name_owner));
+        state.revoke_unless_admitted(world, previous).await;
+    }
+
+    tracing::info!(
+        entity_id = %entity_id,
+        signer = %signer.as_str(),
+        world = %world,
+        authz = match replacement { Deploy::Owner => "name-ownership", Deploy::Scoped(_) => "acl" },
+        partial = completion.is_some(),
+        content_size = size,
+        user_agent = headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("unknown"),
+        forwarded = state.forwarder.is_some(),
+        "POST /entities - deployed (validated + authorized + persisted)"
+    );
+    worlds_metrics::world_deployed(world.key());
+    // The publish may have freed space (a smaller scene replaced a larger one).
+    let (quota_state, owner) = (state.clone(), name_owner.clone());
+    tokio::spawn(async move {
+        quota_state
+            .unblock_if_under_quota(&owner, chrono::Utc::now().naive_utc())
+            .await
+    });
+    if let Some(forwarder) = &state.forwarder {
+        forwarder.kick();
+    }
+    Ok(deployed.created_at_ms)
 }
 
 async fn deploy_entity_inner(
     state: &SharedState,
     headers: &HeaderMap,
     form: DeployForm,
+    is_partial: bool,
 ) -> Response {
     // `_spool` keeps the spooled parts on disk until this deploy has stored them.
     let DeployForm {
@@ -667,11 +850,25 @@ async fn deploy_entity_inner(
     };
 
     let now_ms = chrono::Utc::now().timestamp_millis();
-    // The signer is established before the entity is read, as the old handler did.
+    // The signer is established before the entity is read, as the old handler did; every
+    // partial batch is authenticated the same way.
     let signer = match authenticate(state, &entity_id, &auth_chain_value, now_ms).await {
         Ok(signer) => signer,
         Err(refusal) => return refusal.into_response(),
     };
+
+    if is_partial {
+        return partial::stage(
+            state,
+            headers,
+            &entity_id,
+            &auth_chain_value,
+            &signer,
+            &files,
+            now_ms,
+        )
+        .await;
+    }
 
     let uploads = Uploads::new(&files);
     let Some(entity_file) = uploads.by_hash.get(&entity_id) else {
@@ -679,52 +876,25 @@ async fn deploy_entity_inner(
             "Entity file \"{entity_id}\" is missing from the request."
         ));
     };
-    if entity_file.len() > MAX_ENTITY_FILE_SIZE_BYTES {
-        return err_one(entity_file_too_large_error());
-    }
-    let entity_bytes = match entity_file.read().await {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            tracing::error!(error = %e, "deploy failed: could not read the spooled entity file");
-            return internal("Failed to read the uploaded entity file").into_response();
-        }
-    };
-    let entity: Value = match serde_json::from_slice(&entity_bytes) {
-        Ok(v) => v,
-        Err(_) => return err_one("The entity file is not valid JSON."),
+    let entity = match read_entity_file(entity_file).await {
+        Ok(entity) => entity,
+        Err(resp) => return resp,
     };
 
-    let Validated {
-        world,
-        world_name,
-        parcels,
-        replacement,
-        size,
-    } = match validate(state, &entity, &signer, &entity_id, &uploads, now_ms).await {
+    let validated = match validate(
+        state,
+        &entity,
+        &signer,
+        &entity_id,
+        &uploads,
+        now_ms,
+        Check::Publish,
+    )
+    .await
+    {
         Ok(v) => v,
         Err(refusal) => return refusal.into_response(),
     };
-    // Every publish refreshes worlds.owner to the live NAME holder.
-    let name_owner = match &replacement {
-        Deploy::Owner => signer.clone(),
-        Deploy::Scoped(_) => match state.policy.live_name_owner(&world).await {
-            Ok(Some(owner)) => owner,
-            Ok(None) => {
-                return err_one(format!(
-                    "Cannot deploy scene \"{entity_id}\" to world \"{}\": owner address could not be resolved.",
-                    world.display()
-                ));
-            }
-            Err(e) => {
-                tracing::warn!(world = %world, error = %e, "deploy denied: NAME owner undetermined");
-                return unavailable(
-                    "Deployment failed: the world's owner could not be resolved right now",
-                )
-                .into_response();
-            }
-        },
-    };
-    let name_owner = Some(&name_owner);
 
     // Extra files are refused in validation, so every upload is referenced.
     for (hash, blob) in &uploads.by_hash {
@@ -734,65 +904,19 @@ async fn deploy_entity_inner(
         }
     }
 
-    let persisted = store::deploy_scene(
-        &state.pool,
-        &state.storage,
-        SceneDeployment {
-            world: &world,
-            name_owner,
-            entity_id: &entity_id,
-            deployer: &signer,
-            deployment_auth_chain: &auth_chain_value,
-            entity: &entity,
-            parcels: &parcels,
-            size,
-            replacement: &replacement,
-            forward_to: state.forwarder.as_deref().map(|f| f.target()),
-        },
+    if let Err(resp) = publish(
+        state,
+        headers,
+        &entity_id,
+        &entity,
+        &signer,
+        &auth_chain_value,
+        &validated,
+        None,
     )
-    .await;
-    let replaced_owner = persisted.as_ref().ok().cloned().flatten();
-    if let Err(e) = persisted {
-        let reason = e.public_message();
-        if e.is_conflict() {
-            tracing::info!(world = %world, entity_id = %entity_id, "deploy conflict: overlapping-scene set changed under a scoped authorization");
-            return rejection(StatusCode::CONFLICT, reason);
-        }
-        if e.status() == 503 {
-            tracing::warn!(world = %world, entity_id = %entity_id, reason = %reason, "deploy deferred: stored content changed under it");
-            return unavailable(reason).into_response();
-        }
-        if e.is_forbidden() || e.is_bad_request() {
-            tracing::info!(world = %world, entity_id = %entity_id, reason = %reason, "deploy refused");
-            return if e.is_forbidden() {
-                forbidden(reason).into_response()
-            } else {
-                err_one(reason)
-            };
-        }
-        tracing::error!(error = ?e, world = %world, entity_id = %entity_id, "deploy failed: DB tx error");
-        return internal("Failed to persist deployment").into_response();
-    }
-    // A new holder's publish moved worlds.owner: re-decide the previous one now.
-    if let (Some(previous), Some(owner)) = (replaced_owner, name_owner) {
-        state.policy.note_owner(&world, Some(owner));
-        state.revoke_unless_admitted(&world, &previous).await;
-    }
-
-    tracing::info!(
-        entity_id = %entity_id,
-        signer = %signer.as_str(),
-        world = %world,
-        authz = match replacement { Deploy::Owner => "name-ownership", Deploy::Scoped(_) => "acl" },
-        file_count = files.len(),
-        content_size = size,
-        user_agent = headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("unknown"),
-        forwarded = state.forwarder.is_some(),
-        "POST /entities - deployed (validated + authorized + persisted)"
-    );
-    worlds_metrics::world_deployed(world.key());
-    if let Some(forwarder) = &state.forwarder {
-        forwarder.kick();
+    .await
+    {
+        return resp;
     }
 
     let scene_parcels = raw_strings(entity.pointer("/metadata/scene/parcels"));
@@ -800,10 +924,36 @@ async fn deploy_entity_inner(
         StatusCode::OK,
         Json(DeploySuccess {
             creation_timestamp: now_ms,
-            message: deployment_message(&state.settings.public_url, &world_name, &scene_parcels),
+            message: deployment_message(
+                &state.settings.public_url,
+                &validated.world_name,
+                &scene_parcels,
+            ),
         }),
     )
         .into_response()
+}
+
+/// The entity JSON of an uploaded or stored entity file, at most [`MAX_ENTITY_FILE_SIZE_BYTES`].
+#[allow(clippy::result_large_err)] // The refusal is the answer itself.
+pub(super) async fn read_entity_file(file: &SpooledFile) -> Result<Value, Response> {
+    if file.len() > MAX_ENTITY_FILE_SIZE_BYTES {
+        return Err(err_one(entity_file_too_large_error()));
+    }
+    let bytes = file.read().await.map_err(|e| {
+        tracing::error!(error = %e, "deploy failed: could not read the spooled entity file");
+        internal("Failed to read the uploaded entity file").into_response()
+    })?;
+    parse_entity(&bytes)
+}
+
+/// The entity JSON of entity file bytes.
+#[allow(clippy::result_large_err)] // The refusal is the answer itself.
+pub(super) fn parse_entity(bytes: &[u8]) -> Result<Value, Response> {
+    if bytes.len() > MAX_ENTITY_FILE_SIZE_BYTES {
+        return Err(err_one(entity_file_too_large_error()));
+    }
+    serde_json::from_slice(bytes).map_err(|_| err_one("The entity file is not valid JSON."))
 }
 
 #[cfg(test)]

@@ -387,6 +387,11 @@ fn process_network_message(
                         NetworkMessageRecipient::AuthServer => {
                             vec![ParticipantIdentity("authoritative-server".to_string())]
                         }
+                        NetworkMessageRecipient::MessageRouter => {
+                            vec![ParticipantIdentity(
+                                crate::community_chat::message_router_identity(),
+                            )]
+                        }
                     };
 
                     let size = payload.len();

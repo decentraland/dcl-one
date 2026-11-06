@@ -135,6 +135,15 @@ pub async fn get_about(
     if about.scenes.is_empty() && state.fill_world(&world_name).await {
         about = queries::world_about(&state.pool, &world_name).await?;
     }
+    // The live NAME holder's quota block, not the stored owner's.
+    if let (Some(policy), Some(world)) = (state.policy(), about.world.as_mut())
+        && let Ok(name) = crate::comms::world_identity::WorldName::parse(&world.name)
+    {
+        world.quota_blocked_since = policy
+            .quota_blocked_since(&name)
+            .await
+            .map_err(|e| AppError::Internal(format!("quota block: {e}")))?;
+    }
     Ok(Json(build_about(&state.settings, &world_name, about)?))
 }
 
@@ -151,12 +160,19 @@ pub fn build_about(
             "World \"{world_name}\" has no scenes deployed."
         )));
     }
-    let blocked_since = world.as_ref().and_then(|w| w.blocked_since);
-    if let Some(since) = blocked_since
-        && crate::comms::access::blocked_past_grace(blocked_since, chrono::Utc::now().naive_utc())
+    let (disabled, quota) = world
+        .as_ref()
+        .map_or((None, None), |w| (w.blocked_since, w.quota_blocked_since));
+    if let Some(since) = disabled.or(quota)
+        && crate::comms::access::world_blocked(disabled, quota, chrono::Utc::now().naive_utc())
     {
+        let cause = if disabled.is_some() {
+            "by an operator"
+        } else {
+            "as it exceeded its allowed storage space"
+        };
         return Err(AppError::Unauthorized(format!(
-            "World \"{world_name}\" has been blocked since {} by an operator.",
+            "World \"{world_name}\" has been blocked since {} {cause}.",
             since
                 .and_utc()
                 .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
@@ -556,6 +572,7 @@ mod tests {
                 world: Some(WorldRecord {
                     name: "mirrored.dcl.eth".into(),
                     blocked_since: None,
+                    quota_blocked_since: None,
                     spawn_coordinates: None,
                     skybox_time: Some(43200),
                     single_player: false,
@@ -687,6 +704,7 @@ mod tests {
             Some(WorldRecord {
                 name: "mine.dcl.eth".into(),
                 blocked_since: None,
+                quota_blocked_since: None,
                 spawn_coordinates: None,
                 skybox_time: None,
                 single_player: true,
@@ -739,6 +757,7 @@ mod tests {
                         .unwrap()
                         .naive_utc(),
                 ),
+                quota_blocked_since: None,
                 spawn_coordinates: None,
                 skybox_time: None,
                 single_player: false,
@@ -746,9 +765,23 @@ mod tests {
             }),
             scenes: vec![scene(Some("https://up.example"))],
         };
-        let err = build_about(&cfg, "b.dcl.eth", blocked).unwrap_err();
+        let err = build_about(&cfg, "b.dcl.eth", blocked.clone()).unwrap_err();
         assert!(
             matches!(err, AppError::Unauthorized(m) if m.ends_with("blocked since 2023-11-14T22:13:20.000Z by an operator."))
+        );
+
+        // A quota block refuses only after its two-day grace.
+        let quota = |age: chrono::TimeDelta| {
+            let mut about = blocked.clone();
+            let world = about.world.as_mut().unwrap();
+            world.blocked_since = None;
+            world.quota_blocked_since = Some(chrono::Utc::now().naive_utc() - age);
+            about
+        };
+        assert!(build_about(&cfg, "b.dcl.eth", quota(chrono::TimeDelta::hours(47))).is_ok());
+        let err = build_about(&cfg, "b.dcl.eth", quota(chrono::TimeDelta::hours(49))).unwrap_err();
+        assert!(
+            matches!(err, AppError::Unauthorized(m) if m.contains("as it exceeded its allowed storage space"))
         );
     }
 

@@ -219,6 +219,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     .await
     .context("connecting to DATABASE_URL")?;
     db::bootstrap(&pool).await?;
+    worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
 
     let storage_root = Path::new(&config.node.storage_root_folder);
     let storage = Arc::new(
@@ -381,6 +382,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         ),
         events_admin_token: config.explore.catalyrst_events_admin_token.clone(),
         events_slack_webhook: config.explore.events_slack_webhook.clone(),
+        events_upcoming_summaries_enabled: config.explore.events_upcoming_summaries_enabled,
         places_upstream: source(
             config.explore.places_mirror_upstream,
             &config.explore.places_upstream_url,
@@ -548,7 +550,8 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             crate::index::market_settings(&config, &self_hosts)?,
         )
         .with_eip1654(eip1654.clone())
-        .with_read_through(read_through.clone()),
+        .with_read_through(read_through.clone())
+        .with_denylist(storage.denylist().clone()),
     );
     market.spawn_api_jobs(&jobs);
 
@@ -604,6 +607,24 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .await
         .context("loading content.denylist")?;
     content.spawn_jobs(&jobs);
+    // The remote moderation lists (DENYLIST_URLS; Decentraland's on a
+    // mirror), fetched once before the routes serve and every 120 s after,
+    // into the same projection; a failed fetch is logged, never fatal.
+    let denylist_urls = config.content.denylist_urls()?;
+    if !denylist_urls.is_empty() {
+        let (remote, errors) = content
+            .reload_remote_denylist(&http_client, &denylist_urls)
+            .await;
+        for error in &errors {
+            tracing::warn!(%error, "remote denylist fetch failed at boot");
+        }
+        tracing::info!(
+            urls = denylist_urls.len(),
+            remote,
+            "remote denylists loaded"
+        );
+    }
+    content.spawn_remote_denylist(&jobs, http_client.clone(), denylist_urls);
     if config.writes.content_writes_enabled {
         tracing::warn!(
             denylisted,
@@ -831,7 +852,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     let personal_worlds = worlds::policy::PersonalWorldsPolicy::new(
         config.worlds.worlds_personal_worlds_max,
         config.worlds.worlds_personal_world_max_size_bytes,
-        worlds::policy::MAX_WORLD_SIZE_BYTES,
+        worlds::policy::MAX_SCENE_SIZE_BYTES,
     )
     .context("WORLDS_PERSONAL_WORLDS_MAX / WORLDS_PERSONAL_WORLD_MAX_SIZE_BYTES")?;
     let land_operators = comms_settings
@@ -858,6 +879,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .with_max_parcels(config.worlds.max_parcels)
             .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024),
     );
+    worlds.attach_policy(policy.clone());
     // A world read-through holds each mirrored scene's signer to this policy and shares the
     // content read-through's download bound.
     if let Some(read_through) = &read_through {
@@ -931,17 +953,23 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         },
         eip1654.clone(),
     ));
-    let mana = Arc::new(shop::mana::State::new(
-        pool.clone(),
-        http_client.clone(),
-        market.clone(),
-        signatures.clone(),
-        shop::mana::Settings {
-            writes_enabled: config.writes.data_writes_enabled,
-            track_interval: Duration::from_secs(config.marketplace.marketplace_index_interval_secs),
-        },
-        eip1654.clone(),
-    ));
+    let mana = Arc::new(
+        shop::mana::State::new(
+            pool.clone(),
+            http_client.clone(),
+            market.clone(),
+            signatures.clone(),
+            shop::mana::Settings {
+                writes_enabled: config.writes.data_writes_enabled,
+                track_interval: Duration::from_secs(
+                    config.marketplace.marketplace_index_interval_secs,
+                ),
+                collections_chain_id: config.economy.collections_chain_id,
+            },
+            eip1654.clone(),
+        )
+        .context("the Shop's MANA settlement venues")?,
+    );
     shop::mana::spawn_jobs(&mana, &jobs);
     let social = social_states(
         &config,
@@ -1032,22 +1060,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     comms_stage.gatekeeper.spawn_jobs(&jobs);
     social.media.spawn_jobs(&jobs);
     social.rpc.spawn_jobs(&jobs);
-    if let Some(events) =
-        social::legacy_events::LegacyEvents::new(social::legacy_events::Settings {
-            sqs_endpoint: config.social.legacy_sqs_endpoint.clone(),
-            sqs_queue_url: config.social.legacy_sqs_queue_url.clone(),
-            sns_endpoint: config.social.legacy_sns_endpoint.clone(),
-            sns_arn: config.social.legacy_sns_arn.clone(),
-        })
-        .await?
-    {
-        social.communities.referral.set_publisher(events.clone());
-        events.spawn(
-            &jobs,
-            social.communities.clone(),
-            config.writes.social_writes_enabled,
-        );
-    }
     if config.writes.social_writes_enabled {
         let communities = social.communities.clone();
         jobs.spawn_periodic_leased(
@@ -1371,6 +1383,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         content::create_entity::MAX_DEPLOYMENT_BYTES
             .max(worlds::core::deploy::MAX_UPLOAD_WIRE_SIZE_BYTES) as u64,
     );
+    // Upstream's router under /content/: static segments matched whatever
+    // their case, and its `Allow` list on a 405. Other paths pass untouched.
+    let app = content::routing::upstream_routing(app);
     // The old executable trimmed trailing slashes outside its router
     // (`/api/events/` is what the explorer requests), so the layer wraps the
     // finished app rather than any one router.
@@ -1644,6 +1659,18 @@ async fn worlds_states(
     jobs: &Arc<jobs::Jobs>,
     presence: Arc<comms::presence::Presence>,
 ) -> anyhow::Result<worlds::Stage5> {
+    let max_concurrent_uploads = worlds::core::partial::uploads_within_pool(
+        config.worlds.max_concurrent_uploads,
+        config.node.pg_pool_size,
+    );
+    if max_concurrent_uploads < config.worlds.max_concurrent_uploads {
+        tracing::warn!(
+            configured = config.worlds.max_concurrent_uploads,
+            effective = max_concurrent_uploads,
+            pg_pool_size = config.node.pg_pool_size,
+            "MAX_CONCURRENT_UPLOADS lowered to three quarters of PG_POOL_SIZE"
+        );
+    }
     let non_empty = Config::non_empty;
 
     let core = Arc::new(
@@ -1655,21 +1682,22 @@ async fn worlds_states(
                 non_empty(&config.worlds.catalyrst_worlds_admin_token),
                 worlds::core::UploadLimits {
                     max_in_flight_upload_bytes: config.worlds.max_in_flight_upload_bytes,
-                    max_concurrent_uploads: config.worlds.max_concurrent_uploads,
+                    max_concurrent_uploads,
                     max_in_flight_upload_files: config.worlds.max_in_flight_upload_files,
                     multipart_upload_timeout_ms: config.worlds.multipart_upload_timeout_ms,
                     deployment_processing_timeout_ms: config
                         .worlds
                         .deployment_processing_timeout_ms,
-                    max_concurrent_uploads_per_source: config
-                        .worlds
-                        .max_concurrent_uploads_per_source,
+                    max_concurrent_uploads_per_source: u64::from(
+                        config.content.max_concurrent_uploads_per_source,
+                    ),
                     max_in_flight_upload_bytes_per_source: config
-                        .worlds
-                        .max_in_flight_upload_bytes_per_source,
+                        .content
+                        .max_in_flight_upload_bytes_per_source
+                        .unwrap_or(worlds::core::upload_limits::DEFAULT_MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE),
                 },
             )
-            .map(|s| {
+            .and_then(|s| {
                 s.with_global_scenes_urn(config.worlds_content.global_scenes_urn.as_deref())
                     .with_scene_eviction_ttl_ms(config.worlds.scene_eviction_ttl_ms)
                     .with_public_url(&worlds::Settings::from_config(config).public_url)
@@ -1677,6 +1705,25 @@ async fn worlds_states(
                     .with_owner_reconcile_interval_secs(
                         config.worlds.worlds_owner_reconcile_interval_secs,
                     )
+                    // The variables content's partial uploads share; each domain keeps its own budget.
+                    .with_partial_uploads(worlds::core::PartialUploadLimits {
+                        pending_deployment_ttl_ms: config.content.pending_deployment_ttl_ms,
+                        cleanup_interval_ms: config.worlds.partial_upload_cleanup_interval_ms,
+                        max_pending_per_deployer: u64::from(
+                            config.content.max_pending_deployments_per_deployer,
+                        ),
+                        max_pending_per_world: config.worlds.max_pending_deployments_per_world,
+                        pending_bytes_per_world_factor: config
+                            .worlds
+                            .pending_bytes_per_world_factor,
+                        max_pending_bytes_per_deployer: config
+                            .content
+                            .max_pending_bytes_per_deployer,
+                        max_pending_bytes_per_source: config.worlds.max_pending_bytes_per_source,
+                        max_pending_bytes: config.content.max_pending_bytes,
+                        max_bytes_per_minute: config.content.max_partial_upload_bytes_per_minute,
+                        completed_upload_ttl_ms: config.worlds.completed_upload_ttl,
+                    })
             })
             .context(
                 "MAX_IN_FLIGHT_UPLOAD_* / MAX_CONCURRENT_UPLOADS / *_TIMEOUT_MS configuration",
@@ -1684,6 +1731,19 @@ async fn worlds_states(
             eip1654.clone(),
         )
         .with_presence(presence)
+        .with_allowance(worlds::core::holdings::configured(
+            http_client.clone(),
+            config.content.eth_rpc_url()?.as_deref(),
+            non_empty(&config.economy.rpc_endpoint_polygon).as_deref(),
+            &config.node.eth_network,
+        ))
+        // World notices persist through social's directory, as comms' do.
+        .with_notices(worlds::core::notices::Notices::new(
+            Some(Arc::new(social::comms_directory::Directory::new(
+                pool.clone(),
+            ))),
+            &config.worlds.builder_url,
+        ))
         .with_forwarder(forwarder(
             "WORLDS_FORWARD_UPSTREAM_URL",
             config.worlds.worlds_forward_upstream_url.as_deref(),
@@ -1770,7 +1830,8 @@ async fn worlds_states(
                 settings,
                 eip1654.clone(),
             )
-            .context("building the scene host")?,
+            .context("building the scene host")?
+            .with_secret_max_attempts(config.worlds.shared_secret_max_attempts_per_minute),
         );
         host.spawn_jobs(jobs);
         Some(host)

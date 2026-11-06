@@ -15,12 +15,26 @@ function pageStride(el: HTMLDivElement, perPage: number, gap: number): number {
 export function Rail({
   perPage,
   gap,
+  variant = 'default',
+  bleed = 0,
+  bleedTop,
+  dots = true,
   children,
   className
 }: {
   perPage: number
   /** Space between cards, px. */
   gap: number
+  /** `shop`: the Shop home's larger page dots, set further below the cards. */
+  variant?: 'default' | 'shop'
+  /** Room (px) inside the clip above, below and left of the cards, for a card that grows on hover; the
+   *  layout doesn't move. None to the right, where the clip is the edge the design draws. */
+  bleed?: number
+  /** Room above the cards when they rise further than they spread (art drawn over their top edge);
+   *  `bleed` by default. */
+  bleedTop?: number
+  /** Page dots under the cards (the arrows stay). */
+  dots?: boolean
   children: React.ReactNode
   className?: string
 }): React.JSX.Element {
@@ -59,8 +73,12 @@ export function Rail({
   }, [count])
 
   return (
-    <div className={`${styles.rail} ${className ?? ''}`.trim()}>
-      <div ref={viewport} className={styles.viewport}>
+    <div className={`${styles.rail} ${variant === 'shop' ? styles.shop : ''} ${dots ? '' : styles.noDots} ${className ?? ''}`.replace(/\s+/g, ' ').trim()}>
+      <div
+        ref={viewport}
+        className={styles.viewport}
+        style={bleed > 0 || bleedTop != null ? ({ '--rail-bleed': `${bleed}px`, '--rail-bleed-top': `${bleedTop ?? bleed}px` } as React.CSSProperties) : undefined}
+      >
         <div className={styles.track} style={{ gap }}>
           {children}
         </div>
@@ -75,18 +93,20 @@ export function Rail({
               <MaskIcon src={arrowRight} size={15} className={styles.arrowIcon} />
             </button>
           </div>
-          <div className={styles.dots}>
-            {Array.from({ length: pages }, (_, i) => (
-              <button
-                key={i}
-                type="button"
-                aria-current={i === page ? 'true' : undefined}
-                aria-label={`Page ${i + 1}`}
-                className={`${styles.dot} ${i === page ? styles.dotActive : ''}`.trim()}
-                onClick={() => goTo(i)}
-              />
-            ))}
-          </div>
+          {dots && (
+            <div className={styles.dots}>
+              {Array.from({ length: pages }, (_, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  aria-current={i === page ? 'true' : undefined}
+                  aria-label={`Page ${i + 1}`}
+                  className={`${styles.dot} ${i === page ? styles.dotActive : ''}`.trim()}
+                  onClick={() => goTo(i)}
+                />
+              ))}
+            </div>
+          )}
         </>
       )}
     </div>
