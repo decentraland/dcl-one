@@ -55,8 +55,8 @@ export interface ShopPurchase {
   available: boolean
   /** The last operation the shell reported, until another starts. */
   operation: ShopOperation | null
-  /** Opens the shell's purchase dialog for `item`. */
-  buy(item: CatalogItem, creatorName?: string): void
+  /** Opens the shell's purchase dialog for `item`; `input` is how BUY was pressed. */
+  buy(item: CatalogItem, creatorName?: string, input?: 'pointer' | 'keyboard'): void
 }
 
 /** Buying through the shell; `onBackpack` runs when the buyer leaves the success dialog for the Backpack. */
@@ -94,13 +94,14 @@ export function useShopPurchase(onBackpack: () => void): ShopPurchase {
       if (event.next === 'backpack' && prev?.next !== 'backpack') toBackpack.current()
     })
   }, [queryClient])
-  const buy = useCallback((item: CatalogItem, creatorName?: string) => {
+  const buy = useCallback((item: CatalogItem, creatorName?: string, input?: 'pointer' | 'keyboard') => {
     if (!inShell || item.itemId == null) return
     const request: ShopBuyRequest = {
       v: SHOP_PROTOCOL,
       item: { contract: item.contractAddress, itemId: String(item.itemId) },
       method: 'credits',
-      ...(creatorName ? { creatorName } : {})
+      ...(creatorName ? { creatorName } : {}),
+      ...(input ? { input } : {})
     }
     shellRequest<ShopOperation>(SHOP_METHODS.buy, request)
       .then(setOperation)

@@ -31,7 +31,7 @@ import { homeQueries, useNewest, useShopOutfits, useTrending, type OutfitSummary
 import { tryOnUrn, webShopUrl } from './itemLinks'
 import { useCreditsBalance, useShopCapabilities, useShopPurchase } from './purchaseQuery'
 import { SelectedItemPanel, ShopCard } from './ShopItems'
-import { CreditsPill, EmoteControls, ShopFilters, ShopHome, ShopItemSkeleton } from './ui'
+import { CreditsPill, EmoteControls, ShopFilters, ShopHome, ShopItemSkeleton, type PressedWith } from './ui'
 import styles from './InWorldShop.module.css'
 
 type Section = 'all' | 'wearables' | 'emotes'
@@ -252,8 +252,8 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     preview([...(body != null ? [body] : []), ...wornUrns(items, defaultWorn(items, shape), shape)])
   }
   // In the web shell the purchase dialog opens over the page; anywhere else the web Shop sells it.
-  const buy = (item: CatalogItem, creatorName: string): void => {
-    if (purchase.available) purchase.buy(item, creatorName)
+  const buy = (item: CatalogItem, creatorName: string, input: PressedWith): void => {
+    if (purchase.available) purchase.buy(item, creatorName, input)
     else void openOnWeb(item)
   }
   const select = (item: CatalogItem): void => {
@@ -394,7 +394,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                         onSelect={() => select(item)}
                         onTryOn={() => toggleTryOn(item)}
                         onOpenOnWeb={() => void openOnWeb(item)}
-                        onBuy={(name) => buy(item, name)}
+                        onBuy={(name, input) => buy(item, name, input)}
                         emoteTryOn={emoteTryOn}
                       />
                     )}
@@ -402,7 +402,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                 </div>
                 <ScrollThumb target={homeScroller} length={THUMB_LENGTH} className={styles.thumb} />
                 </div>
-                {selected != null && <SelectedItemPanel key={selected.id} item={selected} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(selected)} onBuy={(name) => buy(selected, name)} />}
+                {selected != null && <SelectedItemPanel key={selected.id} item={selected} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(selected)} onBuy={(name, input) => buy(selected, name, input)} />}
               </div>
             ) : (
             <>
@@ -471,7 +471,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                           onSelect={() => select(item)}
                           onTryOn={() => toggleTryOn(item)}
                           onOpenOnWeb={() => void openOnWeb(item)}
-                          onBuy={(name) => buy(item, name)}
+                          onBuy={(name, input) => buy(item, name, input)}
                           emoteTryOn={emoteTryOn}
                         />
                       ))}
@@ -482,7 +482,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
               </div>
               <ScrollThumb target={scroller} length={THUMB_LENGTH} className={styles.thumb} />
               </div>
-              {selected != null && <SelectedItemPanel key={selected.id} item={selected} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(selected)} onBuy={(name) => buy(selected, name)} />}
+              {selected != null && <SelectedItemPanel key={selected.id} item={selected} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(selected)} onBuy={(name, input) => buy(selected, name, input)} />}
             </div>
             </>
             )}

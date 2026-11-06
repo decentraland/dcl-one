@@ -13,7 +13,7 @@ import { CategoryIcon } from '../backpack/categoryIcons'
 import { useProfile } from '../session/profileStore'
 import { useItemEntity } from './itemEntity'
 import { tryOnUrn, webShopUrl } from './itemLinks'
-import { buyableInWorld, PriceTag, ShopCardActions, ShopItemCard, ShopItemPanel } from './ui'
+import { buyableInWorld, PriceTag, ShopCardActions, ShopItemCard, ShopItemPanel, type PressedWith } from './ui'
 
 const CATEGORY_NAMES: Record<string, string> = { hands_wear: 'Handwear', body_shape: 'Body shape', upper_body: 'Upper body', lower_body: 'Lower body', top_head: 'Top head', facial_hair: 'Facial hair' }
 const categoryName = (c: string): string => CATEGORY_NAMES[c] ?? c.replace(/[_-]+/g, ' ')
@@ -44,7 +44,7 @@ export function ShopCard({
   onTryOn: () => void
   onOpenOnWeb: () => void
   /** BUY: buys the item (the shell's purchase dialog), with the creator's name to show in it. */
-  onBuy: (creatorName: string) => void
+  onBuy: (creatorName: string, input: PressedWith) => void
   /** Whether an emote can be tried on (InWorldShop's emoteTryOn). */
   emoteTryOn?: boolean
 }): React.JSX.Element {
@@ -82,7 +82,7 @@ export function ShopCard({
                 }
           }
           buyInWorld={buyableInWorld(price)}
-          onBuy={() => onBuy(creatorName)}
+          onBuy={(input) => onBuy(creatorName, input)}
           onView={webShopUrl(item) != null ? onOpenOnWeb : undefined}
         />
       }
@@ -100,7 +100,7 @@ export function SelectedItemPanel({
   onClose: () => void
   onOpenOnWeb: () => void
   /** BUY ITEM, with the creator's name to show in the purchase dialog. */
-  onBuy: (creatorName: string) => void
+  onBuy: (creatorName: string, input: PressedWith) => void
 }): React.JSX.Element {
   const creator = useProfile(item.creator)
   const entity = useItemEntity(tryOnUrn(item))
@@ -120,7 +120,7 @@ export function SelectedItemPanel({
       hides={(entity.data?.hides ?? []).map((h) => ({ key: h, label: categoryName(h), icon: <CategoryIcon category={h} size={22} /> }))}
       onClose={onClose}
       onOpenOnWeb={webShopUrl(item) != null ? onOpenOnWeb : undefined}
-      onBuy={() => onBuy(creatorName)}
+      onBuy={(input) => onBuy(creatorName, input)}
     />
   )
 }

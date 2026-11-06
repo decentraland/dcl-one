@@ -1,7 +1,7 @@
 // The in-world Shop page in the web shell: the Credits pill, BUY and BUY ITEM asking the shell to buy (the
 // shell, faked here, owns the dialog and the wallet), and what the page does as the purchase moves on.
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -118,7 +118,17 @@ describe('buying in the in-world Shop', () => {
     await userEvent.click(within(card).getByRole('button', { name: 'BUY' }))
     await waitFor(() => expect(shell.request).toHaveBeenCalledWith('shop.buy', expect.anything()))
     const [, params] = shell.request.mock.calls.find(([m]) => m === 'shop.buy')!
-    expect(params).toEqual({ v: 1, item: { contract: CONTRACT, itemId: '1' }, method: 'credits', creatorName: expect.any(String) })
+    expect(params).toEqual({ v: 1, item: { contract: CONTRACT, itemId: '1' }, method: 'credits', creatorName: expect.any(String), input: 'pointer' })
+  })
+
+  it('tells the shell BUY was pressed from the keyboard, so its dialog rings the focus', async () => {
+    serveCatalogue()
+    answerShell()
+    renderShop()
+    const card = (await screen.findByText('Golden Armor', {}, { timeout: 5000 })).closest('[data-rarity]') as HTMLElement
+    // Enter or Space on a focused button clicks it with no click count.
+    fireEvent.click(within(card).getByRole('button', { name: 'BUY' }), { detail: 0 })
+    await waitFor(() => expect(shell.request).toHaveBeenCalledWith('shop.buy', expect.objectContaining({ input: 'keyboard' })))
   })
 
   it('buys from the item panel’s BUY ITEM', async () => {

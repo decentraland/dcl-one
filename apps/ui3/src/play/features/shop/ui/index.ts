@@ -13,5 +13,6 @@ export { ShopItemPanel, type ShopItemHide, type ShopItemPanelProps } from './Sho
 export { CreditsPill } from './CreditsPill'
 export { ShopItemTile, type ShopItemTileProps } from './ShopItemTile'
 export { ShopModal, ShopModalGap, type ShopModalProps } from './ShopModal'
+export { pressedWith, type PressedWith } from './pressedWith'
 export { ShopPurchaseDialog, type ShopPurchaseDialogProps, type ShopPurchaseItem, type ShopPurchaseStep } from './ShopPurchaseDialog'
 export { CreditsIcon } from './CreditsIcon'

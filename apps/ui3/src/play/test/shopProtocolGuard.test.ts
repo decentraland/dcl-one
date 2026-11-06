@@ -23,6 +23,8 @@ describe('the shop.buy request', () => {
   it('admits an item reference, lowercased, and a cleaned display name', () => {
     expect(parseBuyRequest({ ...ok, creatorName: ' Aurora\u0007 ' })).toEqual({ v: 1, item: { contract: '0x' + 'ab'.repeat(20), itemId: '7' }, method: 'credits', creatorName: 'Aurora' })
     expect(parseBuyRequest({ ...ok, creatorName: 'x'.repeat(200) }).creatorName).toHaveLength(64)
+    expect(parseBuyRequest({ ...ok, input: 'keyboard' }).input).toBe('keyboard')
+    expect(() => parseBuyRequest({ ...ok, input: 'touch' })).toThrow()
   })
 
   it.each([

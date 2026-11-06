@@ -82,6 +82,25 @@ describe('the purchase dialog over the app', () => {
     expect(restore).toHaveBeenCalled()
   })
 
+  it('rings the first focus unless a pointer opened it, and leaves later steps to the browser', async () => {
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus')
+    const pointer = createShopOverlay(vi.fn())
+    await act(async () => pointer.show({ step: 'loading' }, { onClose: vi.fn() }, { pointer: true }))
+    expect(focus).toHaveBeenLastCalledWith({ focusVisible: false })
+    await act(async () => pointer.show({ step: 'confirm', item, balance: 700 }, { onClose: vi.fn(), onConfirm: vi.fn() }, { pointer: true }))
+    expect(focus).toHaveBeenLastCalledWith()
+    await act(async () => pointer.hide())
+    document.body.innerHTML = ''
+    for (const how of [{ pointer: false }, undefined]) {
+      const keyboard = createShopOverlay(vi.fn())
+      await act(async () => keyboard.show({ step: 'confirm', item, balance: 700 }, { onClose: vi.fn(), onConfirm: vi.fn() }, how))
+      expect(focus).toHaveBeenLastCalledWith()
+      await act(async () => keyboard.hide())
+      document.body.innerHTML = ''
+    }
+    focus.mockRestore()
+  })
+
   it('keeps Escape from closing a purchase that is processing', async () => {
     const ui = createShopOverlay(vi.fn())
     const onClose = vi.fn()

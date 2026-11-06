@@ -147,7 +147,7 @@ function setup(
   const deps = {
     login: opts.login ?? (() => login()),
     wallet,
-    ui: { show: vi.fn((view: ShellPurchaseView, handlers: ShellPurchaseHandlers) => void shown.push({ view, handlers })), hide: vi.fn() },
+    ui: { show: vi.fn((view: ShellPurchaseView, handlers: ShellPurchaseHandlers, _opening?: { pointer: boolean }) => void shown.push({ view, handlers })), hide: vi.fn() },
     post: vi.fn((e: ShopOperationEvent) => void events.push(e)),
     openExternal: vi.fn(),
     signIn: vi.fn(),
@@ -170,6 +170,8 @@ describe('the shell purchase', () => {
     const op = await t.buy()
     expect(op).toMatchObject({ state: 'reviewing', item: { contract: CONTRACT, itemId: '7' } })
     expect(t.shown[0].view.step).toBe('loading')
+    // No hint from the app: the dialog's first focus rings as usual.
+    expect(t.deps.ui.show.mock.calls[0][2]).toEqual({ pointer: false })
     const { view } = await t.until('confirm')
     expect(view).toMatchObject({ step: 'confirm', balance: 700, item: { name: 'Golden Armour', creator: 'Aurora', rarity: 'epic', category: 'upper_body' } })
     expect(t.run).not.toHaveBeenCalled()

@@ -80,7 +80,8 @@ export interface ShellPurchaseHandlers {
 
 /** Draws the dialog over the app, or takes it away. */
 export interface ShellShopUi {
-  show(view: ShellPurchaseView, handlers: ShellPurchaseHandlers): void
+  /** `opening.pointer`: the dialog opens from a pointer press in the app, so its first focus isn't rung. */
+  show(view: ShellPurchaseView, handlers: ShellPurchaseHandlers, opening?: { pointer: boolean }): void
   hide(): void
 }
 
@@ -233,7 +234,7 @@ interface Quote {
 }
 
 /** An operation and, while its dialog is up, what it shows. */
-type Operation = OperationRecord & { store?: CartStore; watching?: boolean; unwatchWallet?: () => void }
+type Operation = OperationRecord & { store?: CartStore; watching?: boolean; unwatchWallet?: () => void; input?: 'pointer' | 'keyboard' }
 
 export interface ShellShop {
   /** Answers a `shop.*` request from the app frame. */
@@ -258,7 +259,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   })
   const keep = (op: Operation): boolean => {
     op.updatedAt = svc.now()
-    const { store: _s, watching: _w, unwatchWallet: _u, ...record } = op
+    const { store: _s, watching: _w, unwatchWallet: _u, input: _i, ...record } = op
     return ledger.save(record)
   }
   const publish = (op: Operation): void => {
@@ -273,7 +274,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   }
   const show = (op: Operation, view: ShellPurchaseView, handlers: ShellPurchaseHandlers): void => {
     dialog = op
-    deps.ui.show(view, handlers)
+    deps.ui.show(view, handlers, { pointer: op.input === 'pointer' })
   }
   const hide = (op: Operation): void => {
     op.unwatchWallet?.()
@@ -726,12 +727,14 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         (o) => o.buyer === who.buyer && o.item.contract === req.item.contract && o.item.itemId === req.item.itemId && (o.state === 'processing' || o.state === 'pending')
       )
       if (unsettled) {
+        unsettled.input = req.input
         showPending(unsettled)
         void reconcile(unsettled)
         return snapshot(unsettled)
       }
     }
     const op = create(req, who?.buyer ?? null)
+    op.input = req.input
     void review(op, req)
     return snapshot(op)
   }

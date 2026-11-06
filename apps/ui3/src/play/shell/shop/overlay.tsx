@@ -27,17 +27,21 @@ function toStep(view: ShellPurchaseView): ShopPurchaseStep {
 
 const FOCUSABLE = 'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
 
-function Overlay({ view, handlers }: { view: ShellPurchaseView; handlers: ShellPurchaseHandlers }): React.JSX.Element {
+function Overlay({ view, handlers, quiet }: { view: ShellPurchaseView; handlers: ShellPurchaseHandlers; quiet: boolean }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const busy = view.step === 'processing'
-  // Focus the dialog's main action as each step shows (the last enabled button: BUY ITEM, CONTINUE…). The
-  // click that opened it was in the app's frame, so the browser would take this focus for the keyboard's
-  // and ring the button, which the design doesn't draw; a Tab from here rings it as usual.
+  const first = useRef(true)
+  // Focus the dialog's main action as each step shows (the last enabled button: BUY ITEM, CONTINUE…).
+  // Opened by a pointer press in the app's frame, the browser would take that first focus for the
+  // keyboard's (this page saw no pointer) and ring the button: `quiet` keeps that one unrung. Opened from
+  // the keyboard, and on every later step (this page now knows how it is used), focus rings as usual.
   useEffect(() => {
     const buttons = ref.current?.querySelectorAll<HTMLElement>(FOCUSABLE)
     const target = buttons && buttons.length > 0 ? buttons[buttons.length - 1] : ref.current
-    target?.focus({ focusVisible: false } as FocusOptions)
-  }, [view.step])
+    if (first.current && quiet) target?.focus({ focusVisible: false } as FocusOptions)
+    else target?.focus()
+    first.current = false
+  }, [view.step, quiet])
   const onKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'Escape') {
       e.preventDefault()
@@ -69,16 +73,23 @@ function Overlay({ view, handlers }: { view: ShellPurchaseView; handlers: ShellP
 export function createShopOverlay(restoreFocus: () => void): ShellShopUi {
   let host: HTMLDivElement | null = null
   let root: Root | null = null
+  // Each opening is its own dialog (a fresh first focus); its steps re-render it.
+  let opening = 0
+  let quiet = false
   return {
-    show(view, handlers) {
+    show(view, handlers, how) {
       if (!host) {
         installHudScale()
         host = document.createElement('div')
         document.body.appendChild(host)
         root = createRoot(host)
       }
+      if (host.hidden || opening === 0) {
+        opening++
+        quiet = how?.pointer === true
+      }
       host.hidden = false
-      root?.render(<Overlay view={view} handlers={handlers} />)
+      root?.render(<Overlay key={opening} view={view} handlers={handlers} quiet={quiet} />)
     },
     hide() {
       if (!host || host.hidden) return

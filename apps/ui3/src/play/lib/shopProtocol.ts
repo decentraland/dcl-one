@@ -41,6 +41,8 @@ export interface ShopBuyRequest {
   method: 'credits'
   /** The creator's display name, shown in the dialog. Cosmetic: the shell reads the item itself. */
   creatorName?: string
+  /** How BUY was pressed, so the dialog rings its first focus only for the keyboard. Cosmetic. */
+  input?: 'pointer' | 'keyboard'
 }
 
 /**
@@ -76,7 +78,7 @@ function object(value: unknown): Record<string, unknown> | null {
 export function parseBuyRequest(params: unknown): ShopBuyRequest {
   const p = object(params)
   if (!p) throw new Error('bad shop.buy request')
-  const extra = Object.keys(p).filter((k) => !['v', 'item', 'method', 'creatorName'].includes(k))
+  const extra = Object.keys(p).filter((k) => !['v', 'item', 'method', 'creatorName', 'input'].includes(k))
   if (extra.length > 0) throw new Error(`unexpected shop.buy fields: ${extra.join(', ')}`)
   if (p.v !== SHOP_PROTOCOL) throw new Error('unsupported shop protocol version')
   const item = object(p.item)
@@ -91,7 +93,9 @@ export function parseBuyRequest(params: unknown): ShopBuyRequest {
     // Display text only: no control characters, and short.
     creatorName = p.creatorName.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, NAME_MAX).trim() || undefined
   }
-  return { v: SHOP_PROTOCOL, item: { contract: contract.toLowerCase(), itemId }, method: 'credits', ...(creatorName ? { creatorName } : {}) }
+  if (p.input !== undefined && p.input !== 'pointer' && p.input !== 'keyboard') throw new Error('bad shop.buy input')
+  const input = p.input as ShopBuyRequest['input']
+  return { v: SHOP_PROTOCOL, item: { contract: contract.toLowerCase(), itemId }, method: 'credits', ...(creatorName ? { creatorName } : {}), ...(input ? { input } : {}) }
 }
 
 /** `{ operation }` for shop.status. */
