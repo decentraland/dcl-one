@@ -2,6 +2,7 @@
 //       (the version shop@94584a5c's app/package-lock.json resolves), cross-checked with docs/shop/CONTRACTS.md "Addresses"
 import { evmAddress, type EvmAddress } from "../../model/address";
 import { CHAIN, type ChainId } from "../../model/chain";
+import { configuredCreditsManager, settlementChainId } from "./config";
 
 export type MetaTxStyle = "functionData" | "functionSignature";
 
@@ -126,8 +127,16 @@ const BOOK: Record<number, ChainContracts> = {
 
 export const COLLECTION_V2_DOMAIN = { name: "Decentraland Collection", version: "2" } as const;
 
+/**
+ * A chain's contracts. On the settlement chain, the CreditsManager is the deployment's own when
+ * `VITE_SHOP_CREDITS_MANAGER` names one (same contract, so same EIP-712 domain): it is the manager the
+ * server signs credits for, so the MANA a combined purchase approves goes to the contract that pulls it.
+ */
 export function chainContracts(chainId: ChainId): ChainContracts | null {
-  return BOOK[chainId] ?? null;
+  const book = BOOK[chainId] ?? null;
+  const manager = configuredCreditsManager();
+  if (!book?.creditsManager || !manager || chainId !== settlementChainId()) return book;
+  return { ...book, creditsManager: { ...book.creditsManager, address: evmAddress(manager) } };
 }
 
 export function requireContracts(chainId: ChainId): ChainContracts {
@@ -137,7 +146,7 @@ export function requireContracts(chainId: ChainId): ChainContracts {
 }
 
 export function allContracts(): ContractInfo[] {
-  return Object.values(BOOK).flatMap((b) =>
+  return Object.values(BOOK).map((entry) => requireContracts(entry.chainId)).flatMap((b) =>
     [b.mana, b.creditsManager, b.collectionStore, b.legacyMarketplace, b.bids, b.rentals, ...b.offChainMarketplaces].filter(
       (x): x is ContractInfo => x !== null,
     ),

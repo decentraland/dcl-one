@@ -1,6 +1,6 @@
-// Grants CREDITS_SIGNER_ROLE on Amoy's CreditsManager to the testnet stack's credits signer, so the
-// credits the stack signs are accepted on chain (README, "Credits"). Amoy only: the chain, the contract
-// and the role are fixed here, and the script refuses any other chain.
+// Grants CREDITS_SIGNER_ROLE on dcl-one's CreditsManager on Amoy (./lib/contracts.mts) to the testnet
+// stack's credits signer, so the credits the stack signs are accepted on chain (README, "Credits"). Amoy
+// only: the chain, the contract and the role are fixed here, and the script refuses any other chain.
 //
 //   node grant-credits-signer.mts --check            reads only: who would be granted, and whether it already is
 //   node grant-credits-signer.mts                    sends grantRole from the contract's admin wallet
@@ -13,9 +13,9 @@ import { fileURLToPath } from "node:url";
 import { createPublicClient, createWalletClient, getAddress, http, isAddress, keccak256, parseAbi, toHex, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { polygonAmoy } from "viem/chains";
+import { AMOY_CREDITS_MANAGER as CREDITS_MANAGER } from "./lib/contracts.mts";
 import { DEFAULT_RPC } from "./lib/wallet.mts";
 
-const CREDITS_MANAGER = "0x8052a560e6e6ac86eeb7e711a4497f639b322fb3" as const;
 const ROLE = keccak256(toHex("CREDITS_SIGNER_ROLE"));
 const ABI = parseAbi([
   "function CREDITS_SIGNER_ROLE() view returns (bytes32)",

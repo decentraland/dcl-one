@@ -64,6 +64,16 @@ export function rpcUrl(chainId: ChainId): string | null {
   return named ?? DEFAULT_RPC[chainId] ?? null;
 }
 
+/**
+ * The CreditsManager this deployment settles credits through on its settlement chain, when it isn't that
+ * chain's registry one: `VITE_SHOP_CREDITS_MANAGER`, the address the Shop server's CREDITS_MANAGER_CONTRACT
+ * names. Lowercase; null when unset or not an address.
+ */
+export function configuredCreditsManager(): string | null {
+  const value = env("VITE_SHOP_CREDITS_MANAGER");
+  return value && /^0x[0-9a-fA-F]{40}$/.test(value) ? value.toLowerCase() : null;
+}
+
 export function relayerUrl(): string {
   return (overrides().relayerUrl ?? env("VITE_SHOP_RELAYER_URL") ?? `${catalystBase()}/transactions-api/v1`).replace(/\/$/, "");
 }
