@@ -247,6 +247,10 @@ pub struct OrbitCamera {
     pub zoom_min: f32,
     pub zoom_max: f32,
     pub pan: Vec3,
+    /// how much farther than `radius` the avatar's bounds need the camera, and where they move
+    /// the target: set by `fit_to_bounds`, 1 and zero for an avatar of ordinary size
+    pub fit: f32,
+    pub fit_target: Vec3,
     dragging: bool,
     velocity: f32,
     since_drag: f32,
@@ -273,6 +277,8 @@ impl Default for OrbitCamera {
             zoom_min: 1.0 / 1.5,
             zoom_max: 2.0,
             pan: Vec3::ZERO,
+            fit: 1.0,
+            fit_target: Vec3::ZERO,
             dragging: false,
             velocity: 0.0,
             since_drag: f32::MAX,
@@ -283,7 +289,7 @@ impl Default for OrbitCamera {
 impl OrbitCamera {
     /// Where the camera stands from the target, at the current zoom.
     pub fn distance(&self) -> f32 {
-        self.radius / self.zoom
+        self.radius * self.fit / self.zoom
     }
 
     /// The view as the camera command last set it, and the controls' drift dropped.
@@ -313,6 +319,7 @@ impl Plugin for HostPlugin {
             (
                 apply_commands,
                 orbit_input,
+                fit_to_bounds,
                 place_camera,
                 report_load,
                 report_emotes,
@@ -772,6 +779,116 @@ fn orbit_input(
     }
 }
 
+/// The avatar's size, as the Explorer bounds a body: every avatar mesh gets this box, so an avatar
+/// of ordinary size measures exactly this and keeps the default framing.
+const AVATAR_BOX_MIN: Vec3 = Vec3::new(-1.24, 0.0, -0.7);
+const AVATAR_BOX_MAX: Vec3 = Vec3::new(1.24, 2.42, 0.7);
+
+/// Frames what the avatar shows, emote props included, as the Unity renderer does for avatars too
+/// big for its default view: the bounds seen since the outfit or emote last changed (so an emote's
+/// whole motion counts, and a looping one does not make the camera breathe), against the
+/// ordinary avatar's box, at the panel's aspect. Skinned meshes count by their animated joints,
+/// their own bounds being the rest pose. The camera eases out to it and back.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn fit_to_bounds(
+    time: Res<Time>,
+    mut orbit: ResMut<OrbitCamera>,
+    avatars: Query<(Entity, Ref<AvatarSelection>, Option<Ref<EmoteCommand>>), With<PreviewAvatar>>,
+    meshes: Query<
+        (
+            &GlobalTransform,
+            &bevy::render::primitives::Aabb,
+            &InheritedVisibility,
+            Option<&bevy::render::mesh::skinning::SkinnedMesh>,
+        ),
+        With<Mesh3d>,
+    >,
+    joints: Query<&GlobalTransform>,
+    children: Query<&Children>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut seen: Local<Option<(Vec3, Vec3)>>,
+) {
+    let Ok((root, selection, emote)) = avatars.single() else {
+        return;
+    };
+    if selection.is_changed() || emote.as_ref().is_some_and(|e| e.is_changed()) {
+        *seen = None;
+    }
+    let mut grow = |point: Vec3| {
+        let (min, max) = seen.get_or_insert((point, point));
+        *min = min.min(point);
+        *max = max.max(point);
+    };
+    for entity in children.iter_descendants(root) {
+        let Ok((transform, aabb, visible, skin)) = meshes.get(entity) else {
+            continue;
+        };
+        if !visible.get() {
+            continue;
+        }
+        if let Some(skin) = skin {
+            // a skinned mesh's bounds are its rest pose; its skeleton is where the animation has
+            // it, and its surface lies around the joints: a margin covers it
+            const MARGIN: f32 = 0.35;
+            for joint in &skin.joints {
+                if let Ok(joint) = joints.get(*joint) {
+                    let at = joint.translation();
+                    grow(at - Vec3::splat(MARGIN));
+                    grow(at + Vec3::splat(MARGIN));
+                }
+            }
+            continue;
+        }
+        let (centre, half) = (Vec3::from(aabb.center), Vec3::from(aabb.half_extents));
+        for corner in 0..8 {
+            let sign = Vec3::new(
+                if corner & 1 == 0 { -1.0 } else { 1.0 },
+                if corner & 2 == 0 { -1.0 } else { 1.0 },
+                if corner & 4 == 0 { -1.0 } else { 1.0 },
+            );
+            // in the world, where the camera's target is
+            grow(transform.transform_point(centre + half * sign));
+        }
+    }
+    let Some((min, max)) = *seen else {
+        return;
+    };
+    let (min, max) = (min.min(AVATAR_BOX_MIN), max.max(AVATAR_BOX_MAX));
+    let aspect = windows
+        .single()
+        .map(|w| w.width() / w.height().max(1.0))
+        .unwrap_or(1.0);
+    let tan_v = (orbit.fov_degrees.to_radians() / 2.0).tan();
+    let tan_h = tan_v * aspect;
+    // the distance a box needs, height or width bound, seen from the side it turns to
+    let needs = |min: Vec3, max: Vec3| {
+        let half = (max - min) / 2.0;
+        let across = half.x.max(half.z);
+        (half.y / tan_v).max(across / tan_h) + across
+    };
+    let ordinary = {
+        let half = (AVATAR_BOX_MAX - AVATAR_BOX_MIN) / 2.0;
+        half.y / tan_v + half.x.max(half.z)
+    };
+    let fit = (needs(min, max) / ordinary).max(1.0);
+    let ordinary_centre = (AVATAR_BOX_MIN + AVATAR_BOX_MAX) / 2.0;
+    let fit_target = if fit > 1.0 {
+        (min + max) / 2.0 - ordinary_centre
+    } else {
+        Vec3::ZERO
+    };
+    // ease towards it: out quickly, back slowly
+    let rate = if fit > orbit.fit { 6.0 } else { 2.0 };
+    let t = 1.0 - (-rate * time.delta_secs()).exp();
+    let (current_fit, current_target) = (orbit.fit, orbit.fit_target);
+    let next_fit = current_fit + (fit - current_fit) * t;
+    let next_target = current_target.lerp(fit_target, t);
+    if (next_fit - current_fit).abs() > 1e-4 || (next_target - current_target).length() > 1e-4 {
+        orbit.fit = next_fit;
+        orbit.fit_target = next_target;
+    }
+}
+
 fn place_camera(
     time: Res<Time>,
     mut orbit: ResMut<OrbitCamera>,
@@ -787,7 +904,7 @@ fn place_camera(
     {
         orbit.alpha += orbit.auto_rotate_speed * dt;
     }
-    let target = orbit.target + orbit.pan;
+    let target = orbit.target + orbit.fit_target + orbit.pan;
     let rotation = Quat::from_rotation_y(orbit.alpha) * Quat::from_rotation_x(-orbit.beta);
     let position = target + rotation * Vec3::new(0.0, 0.0, orbit.distance());
     for (mut transform, mut projection) in cameras.iter_mut() {

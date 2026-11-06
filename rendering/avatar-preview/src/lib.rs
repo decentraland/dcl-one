@@ -253,7 +253,9 @@ fn spawn_avatar_on_first_outfit(
         },
         AvatarDynamicState::default(),
         avatar::animate::EmoteControl::default(),
-        Transform::default(),
+        // the Explorer builds the body facing away from its player's camera; the preview's camera
+        // stands in front
+        Transform::from_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
         Visibility::default(),
         PreviewAvatar,
     ));

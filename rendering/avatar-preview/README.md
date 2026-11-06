@@ -121,12 +121,13 @@ The target is the Unity renderer's behaviour, not only its look. In place so far
   after the last drag, in marketplace mode only and not while an emote item plays; right drag
   pans within 2 m; the wheel zooms between 1/1.5 and 2 times the framed distance; input in
   marketplace and builder modes only, four times the drag speed in builder;
-- its floor: the shadow catcher and, under it, the glow around the feet.
+- its floor: the shadow catcher and, under it, the glow around the feet;
+- its framing of avatars too big for the default view: the camera fits what the avatar shows,
+  emote props included, over the emote's whole motion, at the panel's aspect.
 
 Still to come: the item view and its view switcher, builder mode's default wearables and looping
 emote, profile, authentication and jesus modes, scene boundaries, sized screenshots rendered
-without the controls, social emotes, spring bones, refitting the framing to the panel's aspect,
-and configurator mode.
+without the controls, social emotes, spring bones, and configurator mode.
 
 The emote controller follows the Unity renderer: `goTo` on a stopped emote starts it and holds
 it at that time, `play` resumes a paused one, and emote events wait for `load`.
