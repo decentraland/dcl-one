@@ -315,13 +315,16 @@ function CartScreen() {
                   units={buyableUnits}
                   onTopUp={() => setTopUpOpen(true)}
                 />
-                <CheckoutGroups
-                  groups={co.partition?.groups ?? []}
-                  lines={co.lines}
-                  progress={co.checkout?.groups ?? []}
-                  results={co.results}
-                  walletNeededKeys={co.walletNeededKeys}
-                />
+                {/* Signed out there is nothing to confirm yet: upstream shows no group until checkout. */}
+                {signedOut ? null : (
+                  <CheckoutGroups
+                    groups={co.partition?.groups ?? []}
+                    lines={co.lines}
+                    progress={co.checkout?.groups ?? []}
+                    results={co.results}
+                    walletNeededKeys={co.walletNeededKeys}
+                  />
+                )}
                 {co.topUp && (topUpOpen || executorTopUp) ? (
                   <TopUpPanel
                     shortCents={co.topUp.shortCents}
