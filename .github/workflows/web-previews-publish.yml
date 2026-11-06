@@ -57,7 +57,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
-          PUBLICATION_RESULT: pending human approval and CDN upload
+          PUBLICATION_RESULT: waiting for human approval
         run: python3 tooling/web-preview.py report
   reviewer:
     name: 'Publish UI reviewer: PR ${{ needs.source.outputs.pr }}'
@@ -79,6 +79,8 @@ jobs:
       SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
     steps:
       # Only trusted publication code is checked out. The PR contributes static assets.
+      # Oddish uses this checkout's COMMIT for the CDN deployment. Keep the installed
+      # default-branch workflow commit: a PR merge commit cannot start its completion workflow.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.workflow_sha }}
@@ -144,7 +146,7 @@ jobs:
           BRANCH_NAME: web-preview-publication
   report:
     needs: [source, reviewer]
-    if: ${{ !cancelled() && github.event.workflow_run.event == 'pull_request' && needs.reviewer.result != 'success' }}
+    if: ${{ !cancelled() && github.event.workflow_run.event == 'pull_request' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     concurrency:
@@ -166,7 +168,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
-          PUBLICATION_RESULT: ${{ vars.WEB_PREVIEW_REVIEWER_ENABLED != 'true' && 'disabled pending CDN base verification' || needs.source.result != 'success' && 'source validation failed' || needs.source.outputs.publish != 'true' && 'not eligible for publication' || needs.reviewer.result == 'skipped' && 'not eligible for publication' || needs.reviewer.result }}
+          PUBLICATION_RESULT: ${{ vars.WEB_PREVIEW_REVIEWER_ENABLED != 'true' && 'disabled pending CDN base verification' || needs.source.result != 'success' && 'source validation failed' || needs.source.outputs.publish != 'true' && 'not eligible for publication' || needs.reviewer.result == 'skipped' && 'not eligible for publication' || needs.reviewer.result == 'success' && 'uploading' || needs.reviewer.result }}
         run: python3 tooling/web-preview.py report
   cdn:
     name: Verify uploaded reviewer and report its URL
@@ -184,7 +186,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ github.workflow_sha }}
           persist-credentials: false
           sparse-checkout: tooling/web-preview.py
           sparse-checkout-cone-mode: false

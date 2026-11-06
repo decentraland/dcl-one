@@ -103,7 +103,7 @@ def require_reviewer(repository, run_id):
     return reviewer_ready(jobs, artifacts)
 
 
-def package_reviewer(source, target, revision, run_id, attempt=1):
+def package_reviewer(source, target, revision, run_id, attempt):
     if (
         not re.fullmatch(r'[0-9a-f]{40}', revision)
         or run_id < 1
@@ -373,6 +373,33 @@ def cdn_open(url):
     return urlopen(Request(url, headers={'User-Agent': CDN_USER_AGENT}), timeout=15)
 
 
+def retry_cdn(probe, deadline):
+    while True:
+        try:
+            return probe()
+        except HTTPError as error:
+            error.close()
+        except (
+            OSError,
+            http.client.HTTPException,
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+            CdnResourceNotReady,
+        ):
+            pass
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(
+                'Reviewer is not available on the CDN; no preview link will be posted'
+            )
+        time.sleep(min(5, remaining))
+
+
+def read_cdn_source(url):
+    with cdn_open(f'{url}/preview-source.json') as response:
+        return json.load(response)
+
+
 def verify_reviewer_resources(url, entry, html):
     parser = ReviewerAssets()
     parser.feed(html)
@@ -392,37 +419,22 @@ def verify_reviewer_resources(url, entry, html):
             raise CdnResourceNotReady('CDN reviewer fidelity data is not a JSON object or array')
 
 
-def verify_cdn(version, revision, run_id, timeout=300, *, attempt=1):
+def verify_cdn(version, revision, run_id, timeout=60, *, attempt):
     url = cdn_url(version)
-    deadline = time.monotonic() + timeout
-    while True:
-        try:
-            with cdn_open(f'{url}/preview-source.json') as response:
-                identity = json.load(response)
-            if identity != {'revision': revision, 'run': run_id, 'attempt': attempt}:
-                raise ValueError('CDN preview belongs to a different source build')
-            with cdn_open(f'{url}/dcl-ui-review/index.html') as response:
-                if response.status == 200 and 'text/html' in response.headers.get(
-                    'Content-Type', ''
-                ):
-                    entry = f'{url}/dcl-ui-review/index.html'
-                    verify_reviewer_resources(url, entry, response.read().decode('utf-8'))
-                    return entry
-        except HTTPError as error:
-            error.close()
-        except (
-            OSError,
-            http.client.HTTPException,
-            json.JSONDecodeError,
-            UnicodeDecodeError,
-            CdnResourceNotReady,
-        ):
-            pass
-        if time.monotonic() >= deadline:
-            raise TimeoutError(
-                'Reviewer is not available on the CDN; no preview link will be posted'
-            )
-        time.sleep(5)
+
+    def probe():
+        if read_cdn_source(url) != {'revision': revision, 'run': run_id, 'attempt': attempt}:
+            raise ValueError('CDN preview belongs to a different source build')
+        with cdn_open(f'{url}/dcl-ui-review/index.html') as response:
+            if response.status != 200 or 'text/html' not in response.headers.get(
+                'Content-Type', ''
+            ):
+                raise CdnResourceNotReady('CDN reviewer entry is not HTML')
+            entry = f'{url}/dcl-ui-review/index.html'
+            verify_reviewer_resources(url, entry, response.read().decode('utf-8'))
+            return entry
+
+    return retry_cdn(probe, time.monotonic() + timeout)
 
 
 def complete_cdn(repository, event):
@@ -437,9 +449,9 @@ def complete_cdn(repository, event):
     ):
         print('Not a successful reviewer CDN upload')
         return
+    deadline = time.monotonic() + 60
     version = payload.get('packageVersion', '')
-    with cdn_open(f'{cdn_url(version)}/preview-source.json') as response:
-        source = json.load(response)
+    source = retry_cdn(lambda: read_cdn_source(cdn_url(version)), deadline)
     if (
         not isinstance(source, dict)
         or not isinstance(source.get('revision'), str)
@@ -458,7 +470,11 @@ def complete_cdn(repository, event):
         raise ValueError('CDN receipt does not match the source build revision')
     # Upload readiness comes from deployment_status. A retry of this job probes the same version.
     url = verify_cdn(
-        version, source['revision'], source['run'], timeout=0, attempt=source['attempt']
+        version,
+        source['revision'],
+        source['run'],
+        timeout=max(0, deadline - time.monotonic()),
+        attempt=source['attempt'],
     )
     report(repository, source['run'], url, 'success', expected_attempt=source['attempt'])
 
@@ -487,7 +503,13 @@ def report(repository, run_id, reviewer_url, publication_result, *, expected_att
             link = (
                 f'[Preview]({reviewer_url})'
                 if reviewer_url
-                else f'Publication: {publication_result}'
+                else (
+                    'Upload in progress (usually 6-10 minutes). If no preview link appears, '
+                    f'check [Web previews / Publish in Actions](https://github.com/{repository}'
+                    '/actions/workflows/web-previews-publish.yml)'
+                    if publication_result == 'uploading'
+                    else f'Publication: {publication_result}'
+                )
             )
         else:
             link = 'SSR preview pending: shared host deployment is not wired yet'
@@ -497,9 +519,11 @@ def report(repository, run_id, reviewer_url, publication_result, *, expected_att
     no_products = not rows
     if no_products:
         rows.append('| Web previews | not selected | No web products in the cumulative PR diff |')
+    verified_marker = f'<!-- verified-preview:{run_id}:{run["run_attempt"]} -->'
     body = '\n'.join(
         [
             MARKER,
+            *([verified_marker] if reviewer_url else []),
             '### Web previews',
             '',
             f'Commit `{run["head_sha"][:7]}`. [Build run]({run["html_url"]}).',
@@ -521,6 +545,9 @@ def report(repository, run_id, reviewer_url, publication_result, *, expected_att
     )
     if no_products and current is None:
         print('No selected web products to report')
+        return
+    if current and not reviewer_url and verified_marker in current['body'].splitlines():
+        print('Keep the verified preview instead of a late publication-progress update')
         return
     # Recheck after the API reads so an outdated source cannot replace the current preview.
     _, live = resolve(repository, run_id, expected_attempt=expected_attempt)
@@ -550,8 +577,6 @@ def main():
     package = sub.add_parser('package-reviewer')
     package.add_argument('source', type=Path)
     package.add_argument('target', type=Path)
-    verify = sub.add_parser('verify-cdn')
-    verify.add_argument('version')
     sub.add_parser('report')
     args = parser.parse_args()
     if args.command == 'select':
@@ -588,7 +613,7 @@ def main():
         report(
             repository,
             run_id,
-            os.environ.get('REVIEWER_URL', ''),
+            '',
             os.environ.get('PUBLICATION_RESULT', 'not published'),
             expected_attempt=expected_attempt,
         )
@@ -608,10 +633,6 @@ def main():
         return
     if args.command == 'package-reviewer':
         package_reviewer(args.source, args.target, run['head_sha'], run_id, run['run_attempt'])
-    elif args.command == 'verify-cdn':
-        print(
-            'url=' + verify_cdn(args.version, run['head_sha'], run_id, attempt=run['run_attempt'])
-        )
 
 
 if __name__ == '__main__':
