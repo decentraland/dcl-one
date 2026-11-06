@@ -11,6 +11,7 @@ pub mod pointer_lock;
 pub mod pointer_results;
 pub mod raycast_budget;
 pub mod raycast_result;
+pub mod synthetic_pointer;
 
 pub struct SceneInputPlugin;
 
