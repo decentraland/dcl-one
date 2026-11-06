@@ -235,13 +235,34 @@
       "id": "explorer-client",
       "description": "Explorer source, local app builds and component workflows",
       "owners": [
-        "@robtfm"
+        "@decentraland/client"
       ],
       "paths": [
         "/rendering/bevy-explorer/",
         "/apps/bevy-explorer/",
         "/.github/workflows/bevy-explorer-*.yml",
         "/.github/actions/bevy-explorer-*/"
+      ]
+    },
+    {
+      "id": "explorer-rust",
+      "description": "Explorer Rust source, its workspace manifest, build script and Cargo configuration, the Rust harness crates, the vendored Rust crates including Bevy, and the generated fork pins",
+      "owners": [
+        "@robtfm"
+      ],
+      "paths": [
+        "/rendering/bevy-explorer/source/crates/",
+        "/rendering/bevy-explorer/source/src/",
+        "/rendering/bevy-explorer/source/Cargo.toml",
+        "/rendering/bevy-explorer/source/Cargo.lock",
+        "/rendering/bevy-explorer/source/build.rs",
+        "/rendering/bevy-explorer/source/.cargo/config.toml",
+        "/rendering/bevy-explorer/source/local-harness/benchmark/",
+        "/rendering/bevy-explorer/source/local-harness/presence/harness-util/",
+        "/rendering/bevy-explorer/source/vendor/",
+        "/rendering/bevy-explorer/bevy/",
+        "/rendering/bevy-explorer/cargo-patches.toml",
+        "/rendering/bevy-explorer/forks.toml"
       ]
     },
     {
