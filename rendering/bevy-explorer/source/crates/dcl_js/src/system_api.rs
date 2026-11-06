@@ -20,7 +20,8 @@ use system_bridge::{
     FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo,
     PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, ProfileChangedEvent,
     ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetPermanentPermission,
-    SetSinglePermission, SystemApi, VoiceMessage, WelcomeState, WorldAccessEvent,
+    SetSinglePermission, SystemApi, TextureOptimizationStatus, VoiceMessage, WelcomeState,
+    WorldAccessEvent,
 };
 use tokio::sync::Notify;
 
@@ -1054,6 +1055,26 @@ pub async fn op_read_analytics_event_stream(
     state: Rc<RefCell<impl State>>,
     rid: u32,
 ) -> Result<Option<AnalyticsEvent>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub async fn op_get_texture_optimization_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetTextureOptimizationStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_texture_optimization_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<TextureOptimizationStatus>, anyhow::Error> {
     Ok(read_stream(state, rid).await)
 }
 

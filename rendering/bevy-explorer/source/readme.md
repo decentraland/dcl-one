@@ -175,6 +175,7 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   `/avatar_state [all|<address>]`, `/chat_history [count]`
   (Nearby only), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),
+  `/preview_textures` (the preview server's last texture optimization status, in preview mode),
   `/voice_state`, `/entity_screen_position <entity> [--bounds]`, `/photo_mode [on|off]` (the camera
   reel's in-world camera: its state, or open or close it) and `/take_photo` (a photo, captured
   and uploaded; the reply is the state, a refusal names why), plus the older `/player_position`,

@@ -76,9 +76,12 @@ export function registerWorld(ctx: Ctx): void {
     travel(msg.realm, msg.travelId, teleportTo({ realm: msg.realm }))
   })
 
-  // `/reload` — reload the scene the player is standing in, resolved by parcel from liveSceneInfo.
-  // Never the super-user bridge (isSuper filtered out) and never reload-all, so the HUD survives.
-  ctx.on('reloadScene', () => {
+  // `/reload` — reload the scene the player is standing in, resolved by parcel from liveSceneInfo;
+  // with `scene` (a preview's scene id: the texture optimization toast's Reload) that scene,
+  // wherever the player is. Either way the engine's `reload <hash>`, which drops the live scene
+  // as a preview file save does. Never the super-user bridge (isSuper filtered out) and never
+  // reload-all, so the HUD survives.
+  ctx.on('reloadScene', (msg) => {
     const op = BevyApi.consoleCommand
     if (op == null) {
       pushSystem(ctx, 'Reload is not available.')
@@ -89,9 +92,10 @@ export function registerWorld(ctx: Ctx): void {
     const py = Math.floor((pos?.z ?? 0) / 16)
     BevyApi.liveSceneInfo()
       .then(async (scenes) => {
-        const current = scenes.find((s) => !s.isSuper && !s.isPortable && (s.parcels ?? []).some((p) => p.x === px && p.y === py))
+        const here = (s: (typeof scenes)[number]): boolean => (s.parcels ?? []).some((p) => p.x === px && p.y === py)
+        const current = scenes.find((s) => !s.isSuper && !s.isPortable && (msg.scene != null ? s.hash === msg.scene : here(s)))
         if (current == null) {
-          pushSystem(ctx, 'Could not find the current scene to reload.')
+          pushSystem(ctx, msg.scene != null ? 'Could not find the scene to reload.' : 'Could not find the current scene to reload.')
           return
         }
         await op('reload', [current.hash]).then(() => { pushSystem(ctx, `Reloading ${current.title || current.hash}…`); });

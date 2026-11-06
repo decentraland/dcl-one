@@ -13,6 +13,7 @@ import { registerMinimap } from './domains/minimap'
 import { renderSceneUi } from './ui'
 import { registerSession } from './domains/session'
 import { registerAnalytics } from './domains/analytics'
+import { registerTextureOptimization } from './domains/textureOptimization'
 import { registerProfile } from './domains/profile'
 import { registerFriends } from './domains/friends'
 import { registerChat } from './domains/chat'
@@ -49,6 +50,7 @@ export function main(): void {
   startBridge((ctx) => {
     registerSession(ctx)
     registerAnalytics(ctx)
+    registerTextureOptimization(ctx)
     registerProfile(ctx)
     registerFriends(ctx)
     registerChat(ctx)

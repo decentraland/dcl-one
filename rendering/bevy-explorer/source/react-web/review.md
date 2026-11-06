@@ -327,3 +327,21 @@ owns the mode as a surface. Expectations:
   (the overlay's buttons, bindings, notice and effect); the e2e camera scenarios
   (`apps/bevy-explorer/e2e/specs/camera.test.ts`) drive the real engine.
 
+## Preview texture optimization
+
+A scene preview served by `dcl-scene-cli start` reports its background texture import on the
+preview socket; the engine relays it (`textureOptimization`, from `getTextureOptimizationStream`,
+`bridge-scene/src/domains/textureOptimization.ts`) and `features/preview/textureOptimizationToast.ts`
+shows it as one toast under one key. Expectations:
+
+- With the project's setting on: `running` updates one busy progress toast in place; `ready` shows
+  the size saved and **Reload** (accessible name "Reload scene to see optimized textures"), which
+  posts `reloadScene` with the status's scene id; `failed` says how many textures stay PNG, or that
+  the import failed, with Dismiss and no action. With it off, nothing shows.
+- A `ready` marked `replay` (the server's last status, the first per scene within two seconds of the
+  engine's socket opening, `crates/comms/src/preview.rs`) shows nothing; it only clears a progress
+  toast left from before a reconnect.
+- `?mock=1&textures=1` plays a run and the Reload offer.
+- Tests: `src/test/textureOptimization.test.tsx` (the Toast primitive's keyed, persistent and action
+  toasts; each state; the replay rule; Reload through the session),
+  `src/test/bridgeTextureOptimization.test.ts` (the relay).
