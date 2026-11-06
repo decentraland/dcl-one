@@ -16,8 +16,11 @@ the behaviour lives in npm packages missing from the pinned upstream trees, or i
 | `https://asset-bundle-registry.decentraland.org` (`abr/` only) | the asset-bundle registry | `/status`: `version` 2.5.3, `commitHash` `f9578d4ab1ab9fdff4576ba6d052b966bd0fd5e9` |
 | `https://asset-bundle-registry.decentraland.zone` (`abr/` only) | the zone asset-bundle registry | `/status`: `version` `Unknown`, `commitHash` `d932a02eaa90345f846b068f5c8c2b9ab388deaa` |
 
-Both commit hashes are the upstream revisions the backlog files pin, so these captures describe the same
-code the rows were read against.
+The content server, lamb2 and production asset-bundle registry hashes (`a416565d`, `02a37f5d`,
+`f9578d4a`) are the upstream revisions the backlog files pin, so those captures describe the same code the
+rows were read against; the zone content server runs the same `a416565d`. The zone registry's `d932a02e`
+is not pinned: `asset-bundle-registry.md` reads production's `f9578d4a`, and the zone registry captures
+only record what the zone answered (`AB-15-zone-status.json`, `AB-1-zone-one.json`).
 
 The peer sits behind a CDN and an nginx gateway. Some answers come from those layers rather than from the
 application: a capture whose response has no application trace header says so in its `note`. A
@@ -61,8 +64,11 @@ JSON bodies are re-serialized with the key order and value types of the wire byt
   from `0x0000000000000000000000000000000000000b00` upward (consistent within `abr/`, not with the other
   directories); profile names become `profile-name-N`; the entity ids of the two captured profiles become
   `<profile-entity-N>` inside `thumbnailUrl` and snapshot URLs; denylist reasons become `<reason>`. Its
-  requests are `GET`, `OPTIONS`, a refused `PUT`, and `POST` to the read routes `/profiles`,
-  `/profiles/metadata`, `/entities/active` and `/entities/versions`; no denylist, registry or cache write.
+  requests are `GET`, `OPTIONS`, a refused `PUT`, `POST` to the registry's read routes `/profiles`,
+  `/profiles/metadata`, `/entities/active` and `/entities/versions`, `POST` to the peers' read route
+  `/content/entities/active`, and `POST`s the peers refuse: `/content/entities/versions` and
+  `/lambdas/profiles/metadata` (405), `/lambdas/entities/versions` and the root paths `/profiles`,
+  `/profiles/metadata` and `/entities/versions` (404). No denylist, registry or cache write.
 - 64-hex-digit order ids (`orders.id`, `activeOrder.id`) and the Catalyst list ids in `/contracts/servers` are
   replaced by fakes from `0x…0100` upward. Parcel token ids that encode to 64 hex digits (negative x) are kept.
 - Names (`LL-7-*`) are replaced by `name-NN`, numbered by alphabetical order of the real names. Their

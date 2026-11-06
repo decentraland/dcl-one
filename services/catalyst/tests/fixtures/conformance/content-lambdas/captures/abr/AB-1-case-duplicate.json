@@ -9,7 +9,7 @@
     },
     "body": {
       "ids": [
-        "0x0000000000000000000000000000000000000b00",
+        "0x0000000000000000000000000000000000000B00",
         "0x0000000000000000000000000000000000000b00"
       ]
     }
@@ -28,5 +28,5 @@
       }
     ]
   },
-  "note": "Profile names, the profile entity ids inside thumbnailUrl and the addresses are replaced by placeholders. The first id is the second with its hex digits upper-cased: one element answered."
+  "note": "Profile names, the profile entity ids inside thumbnailUrl and the addresses are replaced by placeholders. The first id is the second with its hex digits upper-cased, and the fake keeps that case difference: one element answered, its pointer lowercased."
 }

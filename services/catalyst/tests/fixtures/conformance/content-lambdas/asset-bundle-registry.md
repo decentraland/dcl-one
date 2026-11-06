@@ -14,8 +14,7 @@
   `a416565db1e705cff9523540a2578af642598a29` (2026-10-21).
 - Upstream lambdas (production owner of `/lambdas/profiles/:id`): `decentraland/lamb2` @
   `02a37f5d88fb895339c20e84c2470be68cdf3f57` (2026-10-21).
-- dcl-one: `main` @ `20037334` (2026-11-05), workspace `services/catalyst`; open pull request
-  `decentraland/dcl-one#257` (branch `feat/catalyst-compact-profiles`) read from its diff.
+- dcl-one: `main` @ `135d3251` (2026-11-06), workspace `services/catalyst`.
 - Method: static reading, plus the captures under [`captures/abr/`](captures/abr/) taken on 2026-11-05
   from `peer.decentraland.org`, `peer.decentraland.zone`, `asset-bundle-registry.decentraland.org` and
   `asset-bundle-registry.decentraland.zone` (format and sanitization in
@@ -31,8 +30,7 @@ Files read (ABR): `src/controllers/routes.ts`, `src/controllers/handlers/{get-se
 Upstream catalyst: `src/Environment.ts`, `src/adapters/denylist/component.ts`, `src/components.ts`, `src/controllers/handlers/get-content-handler.ts`, `src/controllers/utils.ts`.
 
 Files read (dcl-one): `explore/src/api/{registry,mod,denylist}.rs`, `config/src/{posture,explore,ops}.rs`, `content/src/{denylist,queries,active_entities}.rs`,
-`shop/src/market/{mod,profiles}.rs`, `shared/src/http_util.rs`, `worlds/src/{lib,queries}.rs`, `src/serve.rs`, `../../infra/gateway/{root-aliases.nix,gateway.py}`,
-and the `decentraland/dcl-one#257` diff (`shop/src/market/{mod,profiles,tests}.rs`).
+`shop/src/market/{mod,profiles,lambdas_http}.rs`, `shared/src/http_util.rs`, `worlds/src/{lib,queries}.rs`, `src/serve.rs`, `../../infra/gateway/{root-aliases.nix,gateway.py}`.
 
 ## 1. Which production URLs reach ABR
 
@@ -44,7 +42,7 @@ the gateway in front of them, never with an ABR-shaped body:
 |---|---|---|---|
 | `POST /lambdas/profiles/metadata` | `405`, empty body, `Allow: HEAD, GET` (lamb2's `GET /profiles/:id`) | lamb2 | `AB-14-{peer,zone}-post-lambdas-profiles-metadata.json` |
 | `GET /lambdas/profiles/metadata` | `404 {"error":"Not Found","message":"Profile not found"}` (a profile id `metadata`) | lamb2 | `AB-14-{peer,zone}-get-lambdas-profiles-metadata.json` |
-| `OPTIONS /lambdas/profiles/metadata` | `204`, `access-control-allow-origin: *`, max-age 36000 (lamb2's CORS, not ABR's 86400) | lamb2 | `AB-14-{peer,zone}-preflight-lambdas-profiles-metadata.json` |
+| `OPTIONS /lambdas/profiles/metadata` | `204`, `access-control-allow-origin: *`, requested headers reflected, max-age 36000, no `allow-methods` (not ABR's 86400); no application trace header | gateway | `AB-14-{peer,zone}-preflight-lambdas-profiles-metadata.json` |
 | `POST /profiles/metadata`, `POST /profiles`, `POST /entities/versions`, `GET /entities/status/0,0`, `GET /worlds/<name>/manifest`, `GET /denylist`, `GET /queues/status`, `GET /asset-bundle-registry/status` (root paths) | `404 {"ok":false,"error":"404 path not found"}`, `application/octet-stream` | gateway | `AB-14-{peer,zone}-*-root-*.json`, `AB-14-{peer,zone}-get-abr-prefix-status.json` |
 | `POST /content/entities/versions` | `405`, `Allow: HEAD, GET` (content's `GET /entities/:type`) | content server | `AB-14-{peer,zone}-post-content-entities-versions.json` |
 | `GET /content/entities/versions` | `400 {"error":"Unrecognized type: versions"}` | content server | `AB-14-{peer,zone}-get-content-entities-versions.json` |
@@ -62,14 +60,16 @@ not listed answers `304`; the denylist check runs before the `If-None-Match` che
 (`decentraland/catalyst:src/controllers/handlers/get-content-handler.ts:22-24`,
 `decentraland/catalyst:src/controllers/utils.ts:102-104`)
 ([`AB-10-peer-denylisted-hash.json`](captures/abr/AB-10-peer-denylisted-hash.json),
-[`AB-10-peer-valid-hash.json`](captures/abr/AB-10-peer-valid-hash.json)). ABR still reports that entity
-as converted ([`AB-6-denylisted-id.json`](captures/abr/AB-6-denylisted-id.json)). The zone peer
-answered `404` to both requests, so the zone result does not show whether it applies the list
-([`AB-10-zone-*.json`](captures/abr/)).
+[`AB-10-peer-valid-hash.json`](captures/abr/AB-10-peer-valid-hash.json)), and
+`POST /content/entities/active {"ids":[<that entity id>]}` answers `200 []`
+([`AB-10-peer-active-by-denylisted-id.json`](captures/abr/AB-10-peer-active-by-denylisted-id.json)).
+ABR still reports that entity as converted ([`AB-6-denylisted-id.json`](captures/abr/AB-6-denylisted-id.json)).
+The zone peer answered `404` to both content requests, so the zone result does not show whether it
+applies the list ([`AB-10-zone-*.json`](captures/abr/)). dcl-one `main` does not read this list (AB-10).
 
 Clients call ABR at its own host (`asset-bundle-registry.<domain>`); in dcl-one that host and the
 `/asset-bundle-registry` prefix reach the read-through router (`services/catalyst/explore/src/api/mod.rs:697-741`,
-`services/catalyst/config/src/posture.rs:398-402`).
+`services/catalyst/config/src/posture.rs:427-431`).
 
 ## 2. Endpoint inventory
 
@@ -83,7 +83,7 @@ Clients call ABR at its own host (`asset-bundle-registry.<domain>`); in dcl-one 
 | GET | `/queues/status` | AB only | ABR host | none (root `/queues/` is aliased to `/asset-bundle-registry/queues/status`, which has no route: `infra/gateway/root-aliases.nix:506-513`) | MISSING (out of parity scope) |
 | GET | `/worlds/:worldName/manifest` | content | ABR host | none | MISSING |
 | POST | `/profiles` | content | ABR host | `/asset-bundle-registry/profiles` `services/catalyst/explore/src/api/registry.rs:84` (read-through) | GAP |
-| POST | `/profiles/metadata` | content | ABR host | `/asset-bundle-registry/profiles/metadata` `services/catalyst/explore/src/api/registry.rs:85` (read-through); `decentraland/dcl-one#257` adds `/lambdas/profiles/metadata` from the node's profiles | GAP |
+| POST | `/profiles/metadata` | content | ABR host | `/asset-bundle-registry/profiles/metadata` `services/catalyst/explore/src/api/registry.rs:85` (read-through); `/lambdas/profiles/metadata` serves the same projection from the node's profiles (`services/catalyst/shop/src/market/mod.rs:918-921`) | GAP |
 | GET | `/denylist` | content (moderation list) | ABR host | none (root `/denylist` is aliased to `/asset-bundle-registry/denylist`, which has no route: `infra/gateway/root-aliases.nix:497-504`) | MISSING |
 | POST | `/denylist/:entityId` (signed fetch, moderators) | ABR admin | ABR host | none; the operator console edits `content.denylist` (`services/catalyst/src/ops/admin/create.rs:546`) | MISSING (out of parity scope) |
 | DELETE | `/denylist/:entityId` (signed fetch, moderators) | ABR admin | ABR host | none; console `services/catalyst/src/ops/admin/create.rs:574` | MISSING (out of parity scope) |
@@ -119,10 +119,10 @@ Upstream routes: `decentraland/asset-bundle-registry:src/controllers/routes.ts:3
 | `Content-Type` | ignored: `text/plain` with a JSON body answers `200` ([`AB-3-text-plain.json`](captures/abr/AB-3-text-plain.json)) | axum `Json`: `415` `text/plain` | DIVERGENT |
 | unknown route | `404 Not found` `text/plain; charset=utf-8` ([`AB-12-unknown-route.json`](captures/abr/AB-12-unknown-route.json)) | falls through to the content 404 (`text/plain` `Not found`) | MATCH |
 | wrong method | `405`, empty body, `Allow: POST` ([`AB-1-get.json`](captures/abr/AB-1-get.json), [`AB-1-put.json`](captures/abr/AB-1-put.json)) | axum `405`, empty body, `Allow: POST` | MATCH |
-| trailing slash | `POST /profiles/metadata/` answers as without it ([`AB-1-trailing-slash.json`](captures/abr/AB-1-trailing-slash.json)) | trimmed for the whole app (`services/catalyst/src/serve.rs:1355`) | MATCH |
+| trailing slash | `POST /profiles/metadata/` answers as without it ([`AB-1-trailing-slash.json`](captures/abr/AB-1-trailing-slash.json)) | trimmed for the whole app (`services/catalyst/src/serve.rs:1369`) | MATCH |
 | CORS preflight | `204`, `allow-origin: *`, `allow-methods: GET,HEAD,OPTIONS,DELETE,POST,PUT`, `allow-headers` reflected, `max-age: 86400`, `vary: Access-Control-Request-Headers` ([`AB-12-preflight.json`](captures/abr/AB-12-preflight.json)) | `CorsLayer::permissive()` (`services/catalyst/explore/src/api/mod.rs:741`): any origin, any method, any header, expose any header, no max-age | DIVERGENT |
 | upstream failure | n/a | `502 {"error":"asset-bundle registry upstream: <route> failed"}` `services/catalyst/explore/src/api/registry.rs:149-155` | dcl-one only |
-| no source configured | n/a | every POST answers `200 []` `services/catalyst/explore/src/api/registry.rs:165-167`; `EXPLORER_REGISTRY_SOURCE_URL` is set only by `NODE_POSTURE=mirror` (`services/catalyst/config/src/posture.rs:398-402`) | dcl-one only |
+| no source configured | n/a | every POST answers `200 []` `services/catalyst/explore/src/api/registry.rs:165-167`; `EXPLORER_REGISTRY_SOURCE_URL` is set only by `NODE_POSTURE=mirror` (`services/catalyst/config/src/posture.rs:427-431`) | dcl-one only |
 | rate limits | none in ABR | gateway limit by IP (README "Rate limits") | as the other areas |
 
 ---
@@ -208,7 +208,7 @@ are refused (`decentraland/asset-bundle-registry:src/controllers/routes.ts:22-32
 | database failure | 500 | `{"ok":false,"message":<error message or "Failed to get world manifest">}` | `get-world-manifest.ts:48-57` | no route | MISSING |
 
 **Data dependency:** the worlds store: scenes and their parcels per world and the world's
-`spawn_coordinates` (`services/catalyst/worlds/src/queries.rs:12-30`), which dcl-one holds.
+`spawn_coordinates` (`services/catalyst/worlds/src/queries.rs:12-34`), which dcl-one holds.
 
 ## 9. POST /profiles
 
@@ -222,7 +222,7 @@ empty, no cap.
 | errors | | as section 10 | | as section 10 | DIVERGENT |
 
 **Data dependency:** the node's profiles (`/lambdas/profiles` already builds them:
-`services/catalyst/shop/src/market/profiles.rs:665-724`).
+`services/catalyst/shop/src/market/profiles.rs:713-770`).
 
 ## 10. POST /profiles/metadata
 
@@ -238,6 +238,8 @@ empty, no cap.
 (lowercased keys), then `profiles` table (`pointer = ANY(lowercased)`), then a Catalyst
 `/lambdas/profiles` fallback whose results are persisted; profiles for pointers not asked for are
 dropped. Database and Catalyst failures are logged and read as "not found": the answer stays `200`.
+Each registry holds its own profiles: the zone registry answered `[]` for the address production
+answered in `AB-1-one-known.json` ([`AB-1-zone-one.json`](captures/abr/AB-1-zone-one.json)).
 
 **Projection** (`decentraland/asset-bundle-registry:src/logic/sync/profile-sanitizer.ts:107-116`,
 type `src/types/types.ts:35-41`): from `avatars[0]`:
@@ -256,42 +258,43 @@ type `src/types/types.ts:35-41`): from `avatars[0]`:
   10 min) (`src/logic/sync/ownership-validator-job.ts:16-24`); `userId`/`ethAddress` are forced to the
   pointer (`profile-sanitizer.ts:48-65`); profiles without avatars are discarded at ingest (`:71-98`).
 
-| trigger | status | body | headers | capture / upstream | dcl-one read-through (`registry.rs:364-453`) | `/lambdas/profiles/metadata` in `decentraland/dcl-one#257` |
+| trigger | status | body | headers | capture / upstream | dcl-one read-through (`registry.rs:364-453`) | dcl-one `/lambdas/profiles/metadata` (`services/catalyst/shop/src/market/profiles.rs:831-860`) |
 |---|---|---|---|---|---|---|
-| one known id | 200 | one object, keys `pointer, hasClaimedName, name, thumbnailUrl` (`nameColor` absent when unset) | `content-type: application/json` | `AB-1-one-known.json` | ABR's bytes | own profile; keys in alphabetical order (`hasClaimedName, name, nameColor, pointer, thumbnailUrl`): `serde_json` without `preserve_order` |
+| one known id | 200 | one object, keys `pointer, hasClaimedName, name, thumbnailUrl` (`nameColor` absent when unset) | `content-type: application/json` | `AB-1-one-known.json` | ABR's bytes | own profile; keys in ABR's order (`ProfileMetadata`, `profiles.rs:779-788`) |
 | two known ids, warm cache | 200 | request order, both orders kept | | `AB-1-two-known.json`, `AB-1-two-known-reversed.json` | request order | request order |
 | order on a cold read | 200 | cache hits first in request order, then database rows in row order (no `ORDER BY`), then Catalyst fallbacks | | `profile-retriever.ts:81-121`, `db.ts:596-613` | request order | request order |
-| same address twice, different case | 200 | one element | | `AB-1-case-duplicate.json` | one element (lowercased, deduplicated) | one element |
+| same address twice, different case | 200 | one element | | `AB-1-case-duplicate.json` | one element (lowercased, deduplicated) | one element (lowercased, deduplicated: `profiles.rs:816-822`) |
 | unknown id | 200 | `[]` | | `AB-1-unknown.json` | `[]`, remembered 60 s | `[]` |
-| `ids: []` | 200 | `[]` | | `AB-3-empty-array.json` | `400 {"error":"ids must be a non-empty array"}` | `400 {"error":"Bad request","message":"No profile ids were specified. Expected ids:string[] in body"}` |
-| `{}` (no `ids`) | 400 | `{"error":"Bad request","message":"The ids property must be an array of non-empty strings"}` | `application/json` | `AB-3-missing-ids.json` | `400 {"error":"ids must be a non-empty array"}` | `400`, same envelope, message `No profile ids were specified. Expected ids:string[] in body` |
-| `ids` not an array | 400 | same as above | | `AB-3-ids-not-array.json` | axum `422` `text/plain` | `400`, message `Failed to parse the request body as JSON: invalid type: string …` |
-| non-string element | 400 | same as above | | `AB-3-non-string-element.json` | axum `422` `text/plain` | `400`, message `Failed to parse the request body as JSON: invalid type: integer …` |
-| empty-string element | 400 | same as above | | `AB-3-empty-string-element.json` | trimmed to `""`, forwarded; ABR answers 400, read as `502` | accepted; `""` finds nothing: `200 []` |
-| more than 1000 ids | 200 | (1001 unknown ids) `[]` | | `AB-3-1001-ids.json` | `400 {"error":"at most 1000 ids per request"}` | `400 … "Too many profile ids were specified. Maximum allowed is 1000"` |
-| body not JSON | 500 | `{"error":"Internal Server Error"}` | | `AB-3-not-json.json` | axum `400` `text/plain` | `400 … "Failed to parse the request body as JSON: …"` |
-| empty body | 500 | `{"error":"Internal Server Error"}` | | `AB-3-empty-body.json` | axum `400` `text/plain` | `400 … "Failed to parse …"` |
+| `ids: []` | 200 | `[]` | | `AB-3-empty-array.json` | `400 {"error":"ids must be a non-empty array"}` | `200 []`: MATCH |
+| `{}` (no `ids`) | 400 | `{"error":"Bad request","message":"The ids property must be an array of non-empty strings"}` | `application/json` | `AB-3-missing-ids.json` | `400 {"error":"ids must be a non-empty array"}` | same status, envelope and message (`profiles.rs:39`, `:838-844`): MATCH |
+| `ids` not an array | 400 | same as above | | `AB-3-ids-not-array.json` | axum `422` `text/plain` | same 400: MATCH |
+| non-string element | 400 | same as above | | `AB-3-non-string-element.json` | axum `422` `text/plain` | same 400: MATCH |
+| empty-string element | 400 | same as above | | `AB-3-empty-string-element.json` | trimmed to `""`, forwarded; ABR answers 400, read as `502` | same 400 (`profiles.rs:808-813`): MATCH |
+| more than 1000 ids | 200 | (1001 unknown ids) `[]` | | `AB-3-1001-ids.json` | `400 {"error":"at most 1000 ids per request"}` | more than 1000 distinct ids: `400 {"error":"Bad request","message":"Too many profile ids were specified. Maximum allowed is 1000"}` (`profiles.rs:845-849`) |
+| body not JSON | 500 | `{"error":"Internal Server Error"}` | | `AB-3-not-json.json` | axum `400` `text/plain` | `500 {"error":"Internal Server Error"}` (`profiles.rs:835-837`): MATCH |
+| empty body | 500 | `{"error":"Internal Server Error"}` | | `AB-3-empty-body.json` | axum `400` `text/plain` | same 500: MATCH |
 | `Content-Type: text/plain` | 200 | answered as JSON | | `AB-3-text-plain.json` | axum `415` | accepted (reads raw bytes): MATCH |
-| body over the limit | not vendored | | | | axum default 2 MiB | `413` above 256 KiB (about 5,800 addresses) |
+| body over the limit | not vendored | | | | axum default 2 MiB | `413` above 256 KiB, about 5,800 addresses (`services/catalyst/shop/src/market/mod.rs:918-921`) |
 | `GET` / `PUT` | 405 | empty, `Allow: POST` | | `AB-1-get.json`, `AB-1-put.json` | axum 405, `Allow: POST` | axum 405 `Allow: POST` (production lamb2 answers `GET` with `404 Profile not found`: `AB-14-peer-get-lambdas-profiles-metadata.json`) |
-| a lookup layer fails | 200 | what was found | | `profile-retriever.ts:50-53`, `:69-72` | `502` | `500` (database) or `503 ownership readers unavailable` (`services/catalyst/shop/src/market/profiles.rs:509-524`) |
+| a lookup layer fails | 200 | what was found | | `profile-retriever.ts:50-53`, `:69-72` | `502` | `500 {"error":"Internal Server Error"}` (database) or `503 {"error":"Service overloaded, retry shortly","message":"ownership readers unavailable"}` (`profiles.rs:534-554`) |
 
 **Data dependency:** the node's own profiles (content DB) and the name-ownership reader that sets
 `hasClaimedName`; dcl-one holds both for `/lambdas/profiles`.
 
-### `decentraland/dcl-one#257` against ABR, field by field
+### dcl-one `/lambdas/profiles/metadata` against ABR, field by field
 
-| aspect | ABR | `profile_metadata` in the diff | verdict |
+| aspect | ABR | `profile_metadata` (`services/catalyst/shop/src/market/profiles.rs:779-805`) | verdict |
 |---|---|---|---|
-| `pointer` | stored `pointers[0]` | `avatars[0].ethAddress` (else `userId`), lowercased; equal to the pointer after `apply_pointer_identity` (`services/catalyst/shop/src/market/profiles.rs:322-329`) | MATCH for address pointers |
-| `hasClaimedName` | stored value; key dropped if absent | value, default `false` | DIVERGENT only for a profile without the key |
-| `name` | stored value; key dropped if absent | value, default `""` | DIVERGENT only for a profile without the key |
-| `nameColor` | present when the key exists, `null` kept | present only when non-null | DIVERGENT for a stored `null` |
-| `thumbnailUrl` | `${PROFILE_IMAGES_URL}/entities/<id>/face.png` | the processed `avatar.snapshots.face256`: `<PROFILE_CDN_BASE_URL>/entities/<id>/face.png`, else `<profile-images>/entities/<id>/face.png`; a deployed absolute `face256` on another host is kept verbatim; an avatar without an `avatar` object gives `""` (`rewrite_snapshot_urls`, `services/catalyst/shop/src/market/profiles.rs:204-268`) | MATCH for the common case; DIVERGENT in the two edge cases |
-| key order | `pointer, hasClaimedName, name, nameColor, thumbnailUrl` | alphabetical | DIVERGENT (P2) |
+| `pointer` | stored `pointers[0]` | the requested id, lowercased, under which the profile entity was found (`profiles.rs:816-822`) | MATCH for address pointers |
+| `hasClaimedName` | stored value; key dropped if absent | the processed avatar's value; absent stays absent | MATCH |
+| `name` | stored value; key dropped if absent | the processed avatar's value; absent stays absent | MATCH |
+| `nameColor` | present when the key exists, `null` kept | present when the key exists, `null` kept | MATCH |
+| `thumbnailUrl` | `${PROFILE_IMAGES_URL}/entities/<id>/face.png` | the processed `avatar.snapshots.face256`, which `rewrite_snapshot_urls` always sets to `<PROFILE_CDN_BASE_URL>/entities/<id>/face.png` (`profiles.rs:243-280`; a mirror defaults the base to `https://profile-images.decentraland.org`, island and journey to `<PUBLIC_URL>/profile-images`: `services/catalyst/config/src/posture.rs:417-426`); an avatar without an `avatar` object gives `""` | MATCH except an avatar without `avatar` |
+| key order | `pointer, hasClaimedName, name, nameColor, thumbnailUrl` | the same (struct field order) | MATCH |
 | order | see the table above | request order | compatible |
 | dedup | case-insensitive | case-insensitive | MATCH |
-| validation and errors | see the table above | lamb2's `/profiles` rules | DIVERGENT |
+| validation and errors | see the table above | ABR's rules, envelope and message; a cap of 1000 distinct ids and a 256 KiB body limit | DIVERGENT only above 1000 ids or 256 KiB |
+| lookup failure | logged, `200` with what was found | `500` or `503` | DIVERGENT |
 | GET | 405 | 405 | MATCH (ABR) |
 | path | `asset-bundle-registry.<domain>/profiles/metadata` | `/lambdas/profiles/metadata` only; the ABR-host path stays the read-through | GAP |
 
@@ -306,7 +309,7 @@ type `src/types/types.ts:35-41`): from `avatars[0]`:
 No `Content-Type` is set by the handler; the captured answer is `application/json`.
 
 **Data dependency:** the node's `content.denylist`. Decentraland's moderation list itself is in ABR's
-database; dcl-one reads it through `DENYLIST_URLS` (AB-10).
+database; dcl-one does not read it (AB-10).
 
 ## 12. Admin and build-queue routes (outside catalyst parity)
 
@@ -329,25 +332,26 @@ In dcl-one the operator console reaches the external abgen runtime for these
 
 1. **AB-1** `POST /profiles/metadata` (ABR host and `/lambdas/profiles/metadata`). The ABR-host route
    reads only Decentraland's registry, so a profile deployed to this node is absent and an `island`
-   node answers `[]`; `decentraland/dcl-one#257` serves the node's profiles at `/lambdas/profiles/metadata`
-   only. Expected: the ABR contract (section 10, `decentraland/asset-bundle-registry:src/controllers/handlers/get-profiles-metadata.ts:11-21`,
+   node answers `[]`; `/lambdas/profiles/metadata` serves ABR's projection from the node's profiles
+   (`services/catalyst/shop/src/market/profiles.rs:824-860`), at that path only. Expected: the ABR
+   contract (section 10, `decentraland/asset-bundle-registry:src/controllers/handlers/get-profiles-metadata.ts:11-21`,
    `src/logic/sync/profile-sanitizer.ts:107-116`) from the node's own profiles at both paths; the
    read-through can stay as the source for profiles this node does not hold. Change:
    `services/catalyst/explore/src/api/registry.rs:448-453` (route to the profiles handler or merge),
-   `services/catalyst/shop/src/market/profiles.rs`. Severity: P1. Review items for
-   `decentraland/dcl-one#257`:
-   1. `ids: []` answers `400`; ABR answers `200 []` ([`AB-3-empty-array.json`](captures/abr/AB-3-empty-array.json)). The new test `profiles_metadata_rejects_missing_and_too_many_ids` pins the 400 for `{}` with lamb2's message.
-   2. More than 1000 ids answers `400`; ABR has no cap (`schemas/profiles.ts:5-7`, [`AB-3-1001-ids.json`](captures/abr/AB-3-1001-ids.json)). The 256 KiB body limit adds a `413` from about 5,800 addresses.
-   3. `{}`, `ids` not an array and a non-string element answer `400` with lamb2 or serde messages; ABR answers `400 {"error":"Bad request","message":"The ids property must be an array of non-empty strings"}` for all three (same envelope as `bad_request`, `services/catalyst/shared/src/http_util.rs:14-16`).
-   4. An empty-string element is accepted; ABR rejects it with the 400 above ([`AB-3-empty-string-element.json`](captures/abr/AB-3-empty-string-element.json)).
-   5. A body that is not JSON, or empty, answers `400`; ABR answers `500 {"error":"Internal Server Error"}` ([`AB-3-not-json.json`](captures/abr/AB-3-not-json.json), [`AB-3-empty-body.json`](captures/abr/AB-3-empty-body.json)). Matching it means answering a client error with 500; record which one dcl-one keeps.
-   6. Keys serialize alphabetically; ABR's order is `pointer, hasClaimedName, name, nameColor, thumbnailUrl`. Building the object in that order needs an ordered map (the workspace keeps `preserve_order` off, `services/catalyst/Cargo.toml:21-23`).
-   7. `thumbnailUrl` is read from the processed snapshot. ABR always builds `<PROFILE_IMAGES_URL>/entities/<entity id>/face.png` from the entity id; building it from the entity id removes the two edge cases (a foreign absolute `face256`, an avatar without `avatar`).
-   8. Missing `hasClaimedName`/`name` default to `false`/`""` where ABR drops the key; a stored `nameColor: null` is dropped where ABR sends `null`.
-   9. A database or ownership-reader failure answers `500`/`503`; ABR logs and answers `200` with what it found.
-   10. Only `/lambdas/profiles/metadata` is added; `asset-bundle-registry.<domain>/profiles/metadata` and `/asset-bundle-registry/profiles/metadata` still read Decentraland's registry, which the explorer calls on a Decentraland realm.
-   11. `GET /lambdas/profiles/metadata` becomes `405` where production lamb2 answers `404 {"error":"Not Found","message":"Profile not found"}` ([`AB-14-peer-get-lambdas-profiles-metadata.json`](captures/abr/AB-14-peer-get-lambdas-profiles-metadata.json)); `POST` is a dcl-one extension at a lamb2 path (production answers `405 Allow: HEAD, GET`). State both in the description.
-   12. CORS on `/lambdas/*` is the market router's (origin echoed with credentials); ABR answers `*` with `max-age: 86400` ([`AB-12-preflight.json`](captures/abr/AB-12-preflight.json)).
+   `services/catalyst/shop/src/market/profiles.rs`. Severity: P1. `/lambdas/profiles/metadata` against
+   ABR, item by item:
+   1. Closed: `ids: []` answers `200 []`, as ABR ([`AB-3-empty-array.json`](captures/abr/AB-3-empty-array.json)).
+   2. Open: more than 1000 distinct ids answers `400`; ABR has no cap (`schemas/profiles.ts:5-7`, [`AB-3-1001-ids.json`](captures/abr/AB-3-1001-ids.json)). The handler keeps the cap because every id costs an ownership pass (`profiles.rs:824-830`); the 256 KiB body limit adds a `413` from about 5,800 addresses.
+   3. Closed: `{}`, `ids` not an array and a non-string element answer ABR's `400 {"error":"Bad request","message":"The ids property must be an array of non-empty strings"}` (`METADATA_IDS_MSG`, `profiles.rs:39`; `bad_request`, `services/catalyst/shared/src/http_util.rs:14-16`).
+   4. Closed: an empty-string element gets the same 400 ([`AB-3-empty-string-element.json`](captures/abr/AB-3-empty-string-element.json); `profiles.rs:808-813`).
+   5. Closed: a body that is not JSON, or empty, answers `500 {"error":"Internal Server Error"}`, as ABR ([`AB-3-not-json.json`](captures/abr/AB-3-not-json.json), [`AB-3-empty-body.json`](captures/abr/AB-3-empty-body.json); `profiles.rs:835-837`).
+   6. Closed: keys serialize in ABR's order `pointer, hasClaimedName, name, nameColor, thumbnailUrl` (`ProfileMetadata`, `profiles.rs:779-788`).
+   7. Open: `thumbnailUrl` is read from the processed snapshot, always `<PROFILE_CDN_BASE_URL>/entities/<entity id>/face.png`; an avatar without an `avatar` object gives `""`, where ABR builds the URL from the entity id.
+   8. Closed: absent `hasClaimedName`/`name` stay absent and a stored `nameColor: null` is sent as `null`, as ABR.
+   9. Open: a database or ownership-reader failure answers `500`/`503`; ABR logs and answers `200` with what it found.
+   10. Open: only `/lambdas/profiles/metadata` serves the node's profiles; `asset-bundle-registry.<domain>/profiles/metadata` and `/asset-bundle-registry/profiles/metadata` still read Decentraland's registry, which the explorer calls on a Decentraland realm.
+   11. Open: `GET /lambdas/profiles/metadata` answers `405` where production lamb2 answers `404 {"error":"Not Found","message":"Profile not found"}` ([`AB-14-peer-get-lambdas-profiles-metadata.json`](captures/abr/AB-14-peer-get-lambdas-profiles-metadata.json)); `POST` is a dcl-one extension at a lamb2 path (production answers `405 Allow: HEAD, GET`).
+   12. Closed for this path: CORS under `/lambdas/` is lamb2's (`*`, requested headers reflected, `max-age: 36000`, no `allow-methods`: `services/catalyst/shop/src/market/lambdas_http.rs:21-66`), which is what production's gateway answers there ([`AB-14-peer-preflight-lambdas-profiles-metadata.json`](captures/abr/AB-14-peer-preflight-lambdas-profiles-metadata.json)). ABR's own host answers `max-age: 86400` and an `allow-methods` list ([`AB-12-preflight.json`](captures/abr/AB-12-preflight.json)); that host is AB-12.
 2. **AB-2** `POST /profiles` (ABR host). Same gap as AB-1 for the full document: expected
    `[{"timestamp":number,"avatars":[…]}]` with snapshots rewritten to
    `<PROFILE_IMAGES_URL>/entities/<id>/{face,body}.png` (`decentraland/asset-bundle-registry:src/logic/sync/profile-sanitizer.ts:118-152`)
@@ -392,17 +396,19 @@ In dcl-one the operator console reaches the external abgen runtime for these
    newest first. Change: `registry.rs:80-88` over `services/catalyst/content/src/denylist.rs`; the
    gateway's root `/denylist` alias already points at `/asset-bundle-registry/denylist`
    (`infra/gateway/root-aliases.nix:497-504`). Severity: P1.
-10. **AB-10** Status: MATCH, no work. `DENYLIST_URLS` (upstream's name) is fetched through the outbound
-    guard at boot and every 120 s (`services/catalyst/content/src/denylist.rs` `reload_remote`,
-    `services/catalyst/src/serve.rs`). `NODE_POSTURE=mirror` defaults it to
-    `https://asset-bundle-registry.decentraland.org/denylist`; island and journey leave it empty
-    (`services/catalyst/config/src/posture.rs`). The ids feed the same projection as `content.denylist`
-    (`services/catalyst/storage/src/denylist.rs`), so `/contents`, the active-entity reads, `/deployments`,
-    `/pointer-changes`, `/available-content`, erc721 and the thumbnails and images hide them; audit stays
-    unfiltered and snapshots do not filter, as upstream. A failed or garbage fetch keeps the URL's last
-    good list and never the operator's. Differences from upstream: an id removed from the remote list is
-    lifted on the next good fetch (upstream: at restart), a non-2xx answer counts as a failure, and a local
-    deploy naming a listed entity id or content hash is refused (upstream stores it hidden).
+10. **AB-10** the content server does not apply Decentraland's moderation denylist. Upstream reads
+    `https://asset-bundle-registry.decentraland.org/denylist` by default every 120 s and hides each
+    `entity_id` from `/contents`, the active-entity reads, `/deployments` and the thumbnails
+    (`decentraland/catalyst:src/Environment.ts:13`, `src/adapters/denylist/component.ts:59-86`,
+    `src/components.ts:134-137`); production applies it
+    ([`AB-10-peer-denylisted-hash.json`](captures/abr/AB-10-peer-denylisted-hash.json) against
+    [`AB-10-peer-valid-hash.json`](captures/abr/AB-10-peer-valid-hash.json),
+    [`AB-10-peer-active-by-denylisted-id.json`](captures/abr/AB-10-peer-active-by-denylisted-id.json)).
+    dcl-one's list is the operator's `content.denylist` only (`services/catalyst/content/src/denylist.rs:1-21`),
+    so a mirror serves content production hides. Expected: a configurable list of denylist URLs
+    (default Decentraland's under `NODE_POSTURE=mirror`) merged into the projection on the reload job.
+    Change: `services/catalyst/content/src/denylist.rs`, `services/catalyst/config/src/posture.rs`;
+    pending fix: `decentraland/dcl-one#275`. Severity: P0.
 11. **AB-11** `POST /entities/versions` error bodies and selector: `{"ok":false,"message":"No pointers provided"}`,
     `pointers` only, no cap (`get-entity-versions.ts:10-21`). Change: `registry.rs:303-336`. Severity: P2.
 12. **AB-12** CORS on the ABR host: expected the captured preflight (`allow-origin: *`, `allow-methods:
