@@ -57,7 +57,8 @@ the data and its operations.
    that drops, renames, retypes or deletes is refused: that change is its own
    reviewed release (record the data-safe release procedure and evidence in the task report).
    A changed body of a hash-named write function (`content.deploy_entity_<hash>`,
-   `content.unpublish_scene_<hash>`) is a new function; `migrate` creates it and
+   `content.unpublish_scene_<hash>`, `social.world_authorization_started_<hash>`,
+   `social.world_secret_refund_<hash>`) is a new function; `migrate` creates it and
    leaves the old one for binaries still calling it. `catalyst schema status`
    lists the old ones as superseded after migrate (run before `migrate`, that
    includes the one the running binary still calls); drop them by hand once no
@@ -1015,8 +1016,9 @@ The caller secret budget keeps the existing `attempts/window_start` table and
 configured limit. Mint, adapter and scene-host paths share it. Attempts charge
 before verification; cancellation keeps the charge until expiry. Non-invalid-secret
 answers refund only their exact charged window. Expiry cleanup deletes in batches
-of 1,000 rows and continues while a batch is full, for at most 10 s per scheduled
-pass. This does not add a cross-caller world ceiling.
+of 1,000 rows and continues while a batch is full. The 10-second sweep budget is
+checked between batches, so an in-flight batch can overrun it; it is not a hard
+deadline. This does not add a cross-caller world ceiling.
 
 For rollout, stop all old API and scene-host replicas before running `catalyst schema migrate` and then applying
 `schemas/releases/world-scene-ban-keys.sql` with the administrative database role, then start the updated binaries. `catalyst serve` refuses startup while active or retained
@@ -1051,6 +1053,10 @@ sets `next_attempt_at` to PostgreSQL infinity. Completion compares both the revi
 and the exact claimed schedule. A newer edit, later claim or same-revision community
 wakeup cannot be consumed by an older pass. Community closure advances the schedule
 with `LEAST`, including completed rows. The live-world sweep still reads retained
-cutoffs. The application decodes only finite claimed schedules and never decodes
-infinity as a Rust timestamp. This change adds no migration column and does not
+cutoffs. After completion, stale-token re-enforcement relies on that rotating
+sweep rather than repeated due-queue work: visiting all live worlds takes
+`ceil(live_worlds / 16)` maintenance ticks (approximately that many minutes at
+the normal 60-second cadence). Outages and slow calls can extend the wall-clock
+latency; this is not a guaranteed deadline. The application decodes only finite
+claimed schedules and never decodes infinity as a Rust timestamp. This change adds no migration column and does not
 relax the stable-ban migration's coordinated rollout requirements.

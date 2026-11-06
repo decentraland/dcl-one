@@ -3,6 +3,8 @@
 
 use sqlx::PgPool;
 
+const ADMISSION_DATABASE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(1);
+
 struct SqlFunction {
     prefix: &'static str,
     args: &'static str,
@@ -83,7 +85,7 @@ pub fn social_functions_sql(replace: bool) -> String {
 pub(crate) async fn bounded<T>(
     operation: impl std::future::Future<Output = Result<T, sqlx::Error>>,
 ) -> Result<T, sqlx::Error> {
-    tokio::time::timeout(std::time::Duration::from_secs(1), operation)
+    tokio::time::timeout(ADMISSION_DATABASE_DEADLINE, operation)
         .await
         .map_err(|_| {
             sqlx::Error::Io(std::io::Error::new(
@@ -101,15 +103,24 @@ pub(crate) struct Installed {
 static INSTALLED: tokio::sync::OnceCell<Installed> = tokio::sync::OnceCell::const_new();
 
 pub(crate) async fn installed(pool: &PgPool) -> Result<&'static Installed, sqlx::Error> {
-    INSTALLED.get_or_try_init(|| async {
+    INSTALLED.get_or_try_init(|| Installed::load(pool)).await
+}
+
+impl Installed {
+    async fn load(pool: &PgPool) -> Result<Self, sqlx::Error> {
         let signatures: Vec<String> = ALL.iter().map(|function| function.signature()).collect();
-        let present: bool = sqlx::query_scalar("SELECT bool_and(to_regprocedure(signature) IS NOT NULL) FROM unnest($1::text[]) AS signature")
-            .bind(signatures).fetch_one(pool).await?;
-        if !present {
-            return Err(sqlx::Error::Configuration("admission SQL functions missing; run catalyst schema migrate as the administrative role".into()));
+        let missing = crate::db::missing_functions(pool, &signatures).await?;
+        if !missing.is_empty() {
+            return Err(sqlx::Error::Configuration(format!(
+                "admission SQL functions missing: {}; run `catalyst schema migrate` as the administrative role",
+                missing.join(", ")
+            ).into()));
         }
-        Ok(Installed { stamp: STAMP.name(), refund: REFUND.name() })
-    }).await
+        Ok(Self {
+            stamp: STAMP.name(),
+            refund: REFUND.name(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -120,6 +131,18 @@ mod tests {
     fn the_schema_carries_the_admission_functions() {
         assert!(crate::db::SCHEMA_SQL.contains(&social_functions_sql(false)));
     }
+    #[tokio::test]
+    async fn installation_checks_preserve_query_errors() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://localhost/unused")
+            .unwrap();
+        pool.close().await;
+        assert!(matches!(
+            Installed::load(&pool).await,
+            Err(sqlx::Error::PoolClosed)
+        ));
+    }
+
     #[tokio::test]
     async fn old_non_key_writers_block_stamps_and_lock_timeout_is_restored() {
         let Some(pool) = crate::db::scratch::pool(2).await else {
@@ -183,18 +206,60 @@ mod tests {
 
     #[tokio::test]
     async fn the_schema_object_pass_installs_functions_without_changing_existing_rows() {
-        let Some(pool) = crate::db::scratch::pool(2).await else {
+        let Ok(base) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
             return;
         };
-        let schema = format!("admission_upgrade_{}", uuid::Uuid::new_v4().simple());
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
-            .execute(&pool)
+        // Only this UUID-named database loses functions. The configured database
+        // and the shared scratch database remain untouched by the upgrade fixture.
+        let options: sqlx::postgres::PgConnectOptions = base.parse().unwrap();
+        let admin = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(options.clone().database("postgres"))
             .await
             .unwrap();
-        // Isolate function names so parallel library tests retain their installed versions.
-        let objects =
-            social_functions_sql(false).replace("FUNCTION social.", &format!("FUNCTION {schema}."));
-        let layout = format!("CREATE SCHEMA {schema};\n{objects}");
+        let name = format!(
+            "catalyst_test_lib_{}_{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        );
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
+            .execute(&admin)
+            .await
+            .unwrap();
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect_with(options.database(&name))
+            .await
+            .unwrap();
+        crate::db::apply_schema(&pool).await.unwrap();
+        let malformed = crate::db::missing_functions(&pool, &["social.invalid(".to_owned()])
+            .await
+            .unwrap_err();
+        assert!(malformed.as_database_error().is_some(), "{malformed}");
+        let signatures: Vec<String> = ALL.iter().map(|function| function.signature()).collect();
+        for signature in &signatures {
+            sqlx::query(sqlx::AssertSqlSafe(format!("DROP FUNCTION {signature}")))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            crate::db::missing_functions(&pool, &signatures)
+                .await
+                .unwrap(),
+            signatures
+        );
+        let error = match Installed::load(&pool).await {
+            Err(error) => error.to_string(),
+            Ok(_) => panic!("missing production functions must refuse installation"),
+        };
+        for signature in &signatures {
+            assert!(error.contains(signature), "{error}");
+        }
+        assert!(
+            error.contains("catalyst schema migrate") && error.contains("administrative role"),
+            "{error}"
+        );
         let world = format!("upgrade-{}.dcl.eth", uuid::Uuid::new_v4());
         sqlx::query("INSERT INTO social.world_secret_attempts(world_name,subject,attempts,window_start) VALUES($1,'caller',2,timezone('UTC',now()))")
             .bind(&world).execute(&pool).await.unwrap();
@@ -205,19 +270,28 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        let done = crate::db::schema_migrate::migrate(&pool, &layout, "")
-            .await
-            .unwrap();
+        assert_eq!(before.len(), 1);
+        let done = crate::db::schema_migrate::migrate(
+            &pool,
+            crate::db::SCHEMA_SQL,
+            crate::db::MIGRATIONS_SQL,
+        )
+        .await
+        .unwrap();
         assert_eq!(done.created.len(), 2);
         assert!(
-            crate::db::schema_migrate::migrate(&pool, &layout, "")
-                .await
-                .unwrap()
-                .created
-                .is_empty()
+            crate::db::schema_migrate::migrate(
+                &pool,
+                crate::db::SCHEMA_SQL,
+                crate::db::MIGRATIONS_SQL
+            )
+            .await
+            .unwrap()
+            .created
+            .is_empty()
         );
         assert!(
-            crate::db::schema_migrate::gaps(&pool, &layout)
+            crate::db::schema_migrate::gaps(&pool, crate::db::SCHEMA_SQL)
                 .await
                 .unwrap()
                 .fatal()
@@ -231,9 +305,17 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(after, before);
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
-            .execute(&pool)
+        assert!(
+            crate::db::missing_functions(&pool, &signatures)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        pool.close().await;
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE \"{name}\"")))
+            .execute(&admin)
             .await
             .unwrap();
+        admin.close().await;
     }
 }
