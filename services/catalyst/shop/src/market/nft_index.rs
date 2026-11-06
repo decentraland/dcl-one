@@ -1008,6 +1008,11 @@ impl ChainIndex for NftIndex {
                 }
                 let mut tx = pool.begin().await?;
                 insert_events(&mut tx, self.net, &rows).await?;
+                // Late rows below the producers' cursors are read again.
+                if let Some(first) = rows.iter().map(|r| r.block_number).min() {
+                    chain_walk::replay_notifications(&mut tx, INDEXER_NFT, self.net, first - 1)
+                        .await?;
+                }
                 sqlx::query(
                     "UPDATE shop.nft_contract SET backfilled_to_block = $3, refold_owed = ($3 >= walked_from_block - 1) \
                      WHERE network = $1 AND contract_address = $2",

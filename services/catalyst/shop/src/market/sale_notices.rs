@@ -13,6 +13,7 @@
 //! with each page's notifications in one transaction; the id is a uuid v5 of
 //! the log position, so a retried page inserts nothing twice.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -179,23 +180,81 @@ fn trade_network(net: ChainNet) -> &'static str {
     }
 }
 
+/// The single good a log names: (is an nft, contract, token or item id).
+fn wanted(source: Source, row: &LogRow) -> Option<(bool, String, String)> {
+    if source == Source::OrderSuccessful {
+        return Some((true, row.contract_address.clone()?, row.token_id.clone()?));
+    }
+    let assets = row.assets.as_ref()?;
+    let goods: Vec<_> = side(assets, "sent")
+        .into_iter()
+        .chain(side(assets, "received"))
+        .filter(|a| is_good(a.0))
+        .collect();
+    let [(asset_type, contract, value)] = goods.as_slice() else {
+        return None;
+    };
+    Some((
+        *asset_type == ASSET_TYPE_ERC721,
+        contract.clone(),
+        value.clone(),
+    ))
+}
+
+/// The page's asset descriptions, fetched together.
+#[derive(Default)]
+struct Metas {
+    nfts: HashMap<(String, String), AssetMeta>,
+    items: HashMap<(String, String), AssetMeta>,
+}
+
+impl Metas {
+    async fn fetch(
+        pool: &PgPool,
+        links: &Links,
+        source: Source,
+        net: ChainNet,
+        rows: &[LogRow],
+    ) -> Result<Self, sqlx::Error> {
+        let (mut nfts, mut items) = (Vec::new(), Vec::new());
+        for (nft, contract, value) in rows.iter().filter_map(|r| wanted(source, r)) {
+            if nft {
+                nfts.push((contract, value));
+            } else {
+                items.push((contract, value));
+            }
+        }
+        let network = net.db_name();
+        let mut metas = Metas::default();
+        if !nfts.is_empty() {
+            metas.nfts = trade_events::nft_metas(pool, &links.land_images, network, &nfts).await?;
+        }
+        if !items.is_empty() {
+            metas.items = trade_events::item_metas(pool, network, &items).await?;
+        }
+        Ok(metas)
+    }
+
+    fn get(&self, nft: bool, contract: String, value: String) -> Option<AssetMeta> {
+        let map = if nft { &self.nfts } else { &self.items };
+        map.get(&(contract, value)).cloned()
+    }
+}
+
 /// The notification of one log; `None` when it names no single described asset.
-async fn notice(
-    pool: &PgPool,
+fn notice(
     links: &Links,
     source: Source,
     net: ChainNet,
     row: &LogRow,
-) -> Result<Option<(String, &'static str, Value)>, sqlx::Error> {
-    let Some(recipient) = row.recipient.as_deref().map(str::to_ascii_lowercase) else {
-        return Ok(None);
-    };
+    metas: &Metas,
+) -> Option<(String, &'static str, Value)> {
+    let recipient = row.recipient.as_deref()?.to_ascii_lowercase();
     let counterparty = row
         .counterparty
         .as_deref()
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let network = net.db_name();
     let mut trade = StoredTrade {
         id: String::new(),
         network: trade_network(net).to_string(),
@@ -205,15 +264,9 @@ async fn notice(
         sent_amount: None,
         assets: Vec::new(),
     };
+    let (nft, contract, value) = wanted(source, row)?;
+    let asset = metas.get(nft, contract, value)?;
     if source == Source::OrderSuccessful {
-        let (Some(contract), Some(token)) = (&row.contract_address, &row.token_id) else {
-            return Ok(None);
-        };
-        let Some(asset) =
-            trade_events::nft_meta(pool, &links.land_images, network, contract, token).await?
-        else {
-            return Ok(None);
-        };
         // events-notifier's sale: the log's seller and its own wording.
         let asset = AssetMeta {
             seller: recipient.clone(),
@@ -226,37 +279,14 @@ async fn notice(
             "You just sold this {}.",
             asset.name.as_deref().unwrap_or_default()
         ));
-        return Ok(Some((
-            recipient,
-            KIND_ITEM_SOLD,
-            project(&event, ITEM_SOLD_FIELDS),
-        )));
+        return Some((recipient, KIND_ITEM_SOLD, project(&event, ITEM_SOLD_FIELDS)));
     }
-    let Some(assets) = &row.assets else {
-        return Ok(None);
-    };
-    let (sent, received) = (side(assets, "sent"), side(assets, "received"));
+    let sent = side(row.assets.as_ref()?, "sent");
     let bid = !sent.iter().any(|a| is_good(a.0));
     trade.sent_amount = sent
         .iter()
         .find(|a| a.0 == ASSET_TYPE_ERC20 || a.0 == ASSET_TYPE_USD_PEGGED_MANA)
         .map(|a| a.2.clone());
-    let goods: Vec<_> = sent
-        .iter()
-        .chain(&received)
-        .filter(|a| is_good(a.0))
-        .collect();
-    let [(asset_type, contract, value)] = goods.as_slice() else {
-        return Ok(None);
-    };
-    let asset = if *asset_type == ASSET_TYPE_ERC721 {
-        trade_events::nft_meta(pool, &links.land_images, network, contract, value).await?
-    } else {
-        trade_events::item_meta(pool, network, contract, value).await?
-    };
-    let Some(asset) = asset else {
-        return Ok(None);
-    };
     // The seller is who parted with the asset: the listing's signer, the bid's acceptor.
     let asset = AssetMeta {
         seller: if bid {
@@ -266,7 +296,7 @@ async fn notice(
         },
         ..asset
     };
-    Ok(Some(if bid {
+    Some(if bid {
         let event = trade_events::bid_accepted_event(&trade, &asset, &links.marketplace);
         (
             recipient,
@@ -277,7 +307,7 @@ async fn notice(
         let event =
             trade_events::item_sold_event(&trade, &asset, &counterparty, &links.marketplace);
         (recipient, KIND_ITEM_SOLD, project(&event, ITEM_SOLD_FIELDS))
-    }))
+    })
 }
 
 /// Every published log of one (source, network) after its cursor, a page
@@ -320,10 +350,10 @@ async fn drain(
             break;
         };
         let (last_block, last_log) = (last.block_number, last.log_index);
+        let metas = Metas::fetch(pool, links, source, net, &rows).await?;
         let mut batch = Vec::with_capacity(rows.len());
         for row in &rows {
-            let Some((recipient, kind, metadata)) = notice(pool, links, source, net, row).await?
-            else {
+            let Some((recipient, kind, metadata)) = notice(links, source, net, row, &metas) else {
                 tracing::debug!(
                     source = source.db_name(),
                     network = net.db_name(),

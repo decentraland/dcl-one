@@ -52,16 +52,23 @@ pub fn ended_id(network: &str, block_number: i64, log_index: i32) -> Uuid {
     )
 }
 
-/// Every published rent with its period: `head_*` the period's first rent,
-/// `days_so_far` its days through this rent, `total_days` all of them.
-/// `$1` the published block, `$2`/`$3` the LAND and Estate registries.
-const RENTS: &str = "
+/// Every published rent of the `tokens` (a select of `(rentals_address,
+/// contract_address, token_id)` over published rents `x`) with its period:
+/// `head_*` the period's first rent, `days_so_far` its days through this
+/// rent, `total_days` all of them. `$1` the published block, `$2`/`$3` the
+/// LAND and Estate registries.
+fn rents(tokens: &str) -> String {
+    format!(
+        "
 WITH r AS (
     SELECT e.*, count(*) FILTER (WHERE NOT e.is_extension) OVER (
         PARTITION BY e.rentals_address, e.contract_address, e.token_id
         ORDER BY e.block_number, e.log_index) AS period
     FROM shop.rental_event e
     WHERE e.network = 'ethereum' AND e.kind = 'rented' AND e.block_number <= $1
+      AND (e.rentals_address, e.contract_address, e.token_id) IN (
+          SELECT x.rentals_address, x.contract_address, x.token_id FROM shop.rental_event x
+          WHERE x.network = 'ethereum' AND x.kind = 'rented' AND x.block_number <= $1 {tokens})
 ), p AS (
     SELECT r.*,
         first_value(r.block_number) OVER w AS head_block,
@@ -76,7 +83,9 @@ WITH r AS (
            whole AS (PARTITION BY r.rentals_address, r.contract_address, r.token_id, r.period
                      ORDER BY r.block_number, r.log_index
                      ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
-)";
+)"
+    )
+}
 
 /// The parcel (`x,y`) a rented token stands for and whether it is an
 /// estate of several, over the period rows `p`.
@@ -204,8 +213,10 @@ pub async fn run_started(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
     loop {
         let mut txn = pool.begin().await?;
         let (_, since_block, since_log) = lock_cursor(&mut txn, KIND_STARTED).await?;
+        // Only the tokens rented after the cursor.
+        let rents = rents("AND (x.block_number, x.log_index) > ($4, $5)");
         let rows: Vec<RentRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "{RENTS} SELECT p.block_number, p.log_index, p.block_time AS started_at, \
+            "{rents} SELECT p.block_number, p.log_index, p.block_time AS started_at, \
                     p.head_time + p.days_so_far * {DAY} AS ends_at, p.contract_address, p.token_id::text AS token_id, \
                     lower(p.signer) AS lessor, lower(p.tenant) AS tenant, lower(p.operator) AS operator, {PLACE} \
              FROM p {PLACE_JOIN} \
@@ -256,8 +267,13 @@ pub async fn run_ended(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
     loop {
         let mut txn = pool.begin().await?;
         let (since_time, since_block, since_log) = lock_cursor(&mut txn, KIND_ENDED).await?;
+        // Only the tokens with a period that may end after the cursor: none
+        // ends later than its token's last rent plus all the token's days.
+        let rents = rents(&format!(
+            "GROUP BY 1, 2, 3 HAVING max(x.block_time) + sum(x.rental_days) * {DAY} >= $4"
+        ));
         let rows: Vec<RentRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "{RENTS}, ends AS (
+            "{rents}, ends AS (
                 SELECT p.*, p.head_time + p.total_days * {DAY} AS ends_at FROM p
                 WHERE (p.block_number, p.log_index) = (p.head_block, p.head_log)
              )
@@ -464,6 +480,29 @@ mod tests {
             rows[2].3["description"],
             "The rent of your LAND at 1,2 has ended."
         );
+
+        // A rewind to block 20 moves both cursors back over the rents after
+        // it; the replay announces nothing twice.
+        let mut tx = pool.begin().await.unwrap();
+        chain_walk::replay_notifications(&mut tx, INDEXER_RENTALS, ChainNet::Ethereum, 20)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let cursors: Vec<(String, Option<i64>, i64, i32)> = sqlx::query_as(
+            "SELECT producer, end_time, block_number, log_index FROM shop.notification_cursor ORDER BY producer",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            cursors,
+            vec![
+                (KIND_ENDED.to_string(), Some(t0 + 3 * DAY), 0, -1),
+                (KIND_STARTED.to_string(), None, 20, i32::MAX),
+            ]
+        );
+        assert_eq!(run_started(&pool, base).await.unwrap(), Pass::Emitted(0));
+        assert_eq!(run_ended(&pool, base).await.unwrap(), Pass::Emitted(0));
         db.drop().await;
     }
 }
