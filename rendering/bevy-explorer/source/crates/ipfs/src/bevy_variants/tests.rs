@@ -68,9 +68,8 @@ fn parses_a_v1_manifest() {
 
 #[test]
 fn rejects_other_versions_entities_and_garbage() {
-    let manifest = |v: u32, entity: &str| {
-        format!(r#"{{"v": {v}, "entity": "{entity}", "files": {{}}}}"#)
-    };
+    let manifest =
+        |v: u32, entity: &str| format!(r#"{{"v": {v}, "entity": "{entity}", "files": {{}}}}"#);
     assert!(parse_manifest(manifest(1, SCENE).as_bytes(), SCENE).is_ok());
     assert!(parse_manifest(manifest(2, SCENE).as_bytes(), SCENE)
         .unwrap_err()
@@ -153,7 +152,10 @@ fn preview_and_local_scenes_are_not_eligible() {
         scene_eligibility(SCENE, Some("file:///scenes/x/"), false),
         Err("not an http content server")
     );
-    assert_eq!(scene_eligibility(SCENE, None, false), Err("no content server"));
+    assert_eq!(
+        scene_eligibility(SCENE, None, false),
+        Err("no content server")
+    );
     assert!(scene_eligibility("bafk/../x", remote, false).is_err());
 }
 
@@ -233,7 +235,11 @@ async fn serve(routes: Vec<(String, Vec<u8>)>) -> (String, Arc<Mutex<Vec<String>
                 let mut request = BufReader::new(socket);
                 let mut line = String::new();
                 request.read_line(&mut line).await.unwrap();
-                let path = line.split_whitespace().nth(1).unwrap_or_default().to_owned();
+                let path = line
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or_default()
+                    .to_owned();
                 loop {
                     let mut header = String::new();
                     if request.read_line(&mut header).await.unwrap() == 0 || header == "\r\n" {
@@ -351,7 +357,10 @@ async fn a_verified_variant_is_served_as_dds_and_cached_under_its_own_cid() {
     assert_eq!(requests_for(&log, &variant_route), 1);
     assert_eq!(requests_for(&log, &original_route), 0);
     let session = io.bevy_variants.session.lock().unwrap();
-    assert_eq!((session.downloaded, session.cached, session.fallbacks), (1, 2, 0));
+    assert_eq!(
+        (session.downloaded, session.cached, session.fallbacks),
+        (1, 2, 0)
+    );
     drop(session);
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -474,7 +483,12 @@ fn the_debug_snapshot_reports_state_and_fallbacks() {
     assert_eq!(snapshot_of(&variants)["state"], "off");
     variants.set_base("http://localhost:5147/");
     let _ = variants.bc.set(true);
-    variants.fail(SCENE, "tex.png", Some(VARIANT_CID), "fetch: refused".to_owned());
+    variants.fail(
+        SCENE,
+        "tex.png",
+        Some(VARIANT_CID),
+        "fetch: refused".to_owned(),
+    );
     let snapshot = snapshot_of(&variants);
     assert_eq!(snapshot["base"], "http://localhost:5147");
     assert_eq!(snapshot["state"], "on");

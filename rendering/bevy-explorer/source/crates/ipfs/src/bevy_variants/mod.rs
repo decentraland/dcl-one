@@ -483,7 +483,10 @@ impl IpfsIo {
         if !options.iter().any(|variant| supports(variant, file, bc)) {
             let formats: Vec<_> = options.iter().map(|v| v.format.as_str()).collect();
             let reason = if bc {
-                format!("no variant format this file type takes ({})", formats.join(", "))
+                format!(
+                    "no variant format this file type takes ({})",
+                    formats.join(", ")
+                )
             } else {
                 "the GPU has no BC texture support (or has not reported it yet)".to_owned()
             };
@@ -573,7 +576,12 @@ impl IpfsIo {
         let dds = match ktx2::bc_ktx2_to_dds(&ktx2, format) {
             Ok(dds) => dds,
             Err(reason) => {
-                variants.fail(scene, file, Some(&variant.cid), format!("invalid KTX2: {reason}"));
+                variants.fail(
+                    scene,
+                    file,
+                    Some(&variant.cid),
+                    format!("invalid KTX2: {reason}"),
+                );
                 return None;
             }
         };

@@ -86,7 +86,12 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
         .recent
         .iter()
         .rev()
-        .map(|fallback| format!("{} ({}): {}", fallback.file, fallback.scene, fallback.reason))
+        .map(|fallback| {
+            format!(
+                "{} ({}): {}",
+                fallback.file, fallback.scene, fallback.reason
+            )
+        })
         .collect();
     json!({
         "base": variants.base(),
