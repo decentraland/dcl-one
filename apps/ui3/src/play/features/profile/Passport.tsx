@@ -12,7 +12,7 @@ import { ProfilePassport } from './ProfilePassport'
 import type { Profile } from '../../engine/protocol'
 import { splitName, userColor } from '../../lib/identity'
 import { hexToColor3 } from '../../lib/color'
-import { confirmUnblock, confirmUnfriend } from '../friends/friendDialogs'
+import { confirmBlock, confirmUnblock, confirmUnfriend, reportUser } from '../friends/friendDialogs'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
 
 export function Passport({
@@ -94,6 +94,7 @@ export function Passport({
           : undefined
       }
       relationship={relationshipOf(session.friends, userId)}
+      blockedBy={session.friends.blockedBy.includes(a)}
       onAddFriend={() => openFriendRequest('send', friendUser)}
       onMessage={(a) => {
         onClose()
@@ -103,6 +104,8 @@ export function Passport({
       onCancelRequest={() => session.friends.act('cancel', userId)}
       onAcceptRequest={() => openFriendRequest('accept', friendUser)}
       onUnblock={() => void confirmUnblock(splitName(friendUser.name).base).then((ok) => ok && session.friends.act('unblock', userId))}
+      onBlock={() => void confirmBlock(splitName(friendUser.name).base).then((ok) => ok && session.friends.act('block', userId))}
+      onReport={() => void reportUser(session.profile.data?.address, userId)}
       onClose={onClose}
     />
   )

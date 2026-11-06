@@ -564,7 +564,9 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
             { id: 'r1', address: '0x77a0b1c2d3e4f5061728394a5b6c7d8e9f001122', name: 'SpottyGoat', message: 'Met you at the plaza!' }
           ],
           sent: [{ id: 's1', address: '0x9f8c2a1b4d6e7f0a3b5c8d9e1f2a4b6c8d0e1f23', name: 'Johnny' }],
-          blocked: []
+          blocked: [],
+          // The unnamed nearby player has blocked you: their passport offers no CHAT or friend button.
+          blockedBy: ['0xc0ffee254729296a45a3885639ac7e10f9d54979']
         }),
       1600
     )
