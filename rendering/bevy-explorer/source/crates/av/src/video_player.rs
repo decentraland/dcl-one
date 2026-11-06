@@ -19,7 +19,7 @@ use dcl_component::{
 };
 use dcl_types::interface::CrdtType;
 use ipfs::IpfsResource;
-use livestream_manager::ReceiverVolume;
+use livestream_manager::{address::LivekitAddress, PinnedTo, ReceiverVolume};
 use media::{AVCommand, VideoData, VideoInfo};
 use scene_runner::{
     automatic_testing::SnapshotInProgress,
@@ -29,9 +29,9 @@ use scene_runner::{
 };
 
 use crate::{
+    pinned_stream::PinnedStream,
     video_stream::{av_sinks, noop_sinks},
-    AVPlayer, AVPlayerConfig, AVSinks, AudioStream, ShouldBePlaying, Stream, VideoPlayer,
-    LIVEKIT_VIDEO_STREAM,
+    AVPlayer, AVPlayerConfig, AVSinks, AudioStream, SetState, ShouldBePlaying, Stream, VideoPlayer,
 };
 
 pub struct VideoPlayerPlugin;
@@ -99,7 +99,10 @@ fn new_player_source<T: AVPlayer>(
         sinks.command_sender.send(AVCommand::Dispose).report();
     }
 
-    let livestream = &**source == LIVEKIT_VIDEO_STREAM;
+    // a livekit address (the sentinel or a pinned track) is a stream; a malformed one plays
+    // nothing and says so
+    let address = LivekitAddress::parse(source).filter(|_| T::ALLOWS_LIVESTREAM);
+    let livestream = matches!(address, Some(Ok(_)));
     if T::ALLOWS_LIVESTREAM && livestream != has_stream {
         if livestream {
             debug!(
@@ -144,10 +147,39 @@ fn new_player_source<T: AVPlayer>(
         }
     };
 
-    let image = match &(**source) {
-        LIVEKIT_VIDEO_STREAM if T::ALLOWS_LIVESTREAM => return,
-        _ => create_image_handle(),
-    };
+    match address {
+        Some(Ok(LivekitAddress::CurrentStream)) => {
+            commands
+                .entity(entity)
+                .try_remove::<(PinnedStream, PinnedTo)>();
+            return;
+        }
+        Some(Ok(pinned @ LivekitAddress::User { .. })) => {
+            commands.entity(entity).try_remove::<PinnedTo>();
+            commands.entity(entity).try_insert(PinnedStream(pinned));
+            return;
+        }
+        Some(Err(e)) => {
+            warn!("livekit address `{}` is malformed: {e}", &**source);
+            commands
+                .entity(entity)
+                .try_remove::<(PinnedStream, PinnedTo)>();
+            let image = create_image_handle();
+            commands.entity(entity).try_insert((
+                VideoTextureOutput(image.clone()),
+                noop_sinks::<T>((**source).to_owned(), image),
+            ));
+            commands.trigger(SetState::<T> {
+                entity: *container_entity,
+                state: VideoState::VsError,
+                _phantom: Default::default(),
+            });
+            return;
+        }
+        None => {}
+    }
+
+    let image = create_image_handle();
     let sinks = match &(**source) {
         "" => noop_sinks::<T>((**source).to_owned(), image.clone()),
         other => av_sinks::<T>(
@@ -188,7 +220,9 @@ fn player_source_replaced<T: AVPlayer>(
         entity,
         disqualified::ShortName::of::<T::Source>(),
     );
-    commands.entity(entity).try_remove::<AVSinks<T>>();
+    commands
+        .entity(entity)
+        .try_remove::<(AVSinks<T>, PinnedStream, PinnedTo)>();
 
     if let Some(sinks) = maybe_sinks {
         sinks.command_sender.send(AVCommand::Dispose).report();

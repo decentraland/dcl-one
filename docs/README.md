@@ -19,6 +19,7 @@
 - [Referral Slack effect budget (proposed)](adr/2026-11-04-referral-slack-effect-budget.md)
 - [Social schema v3 activation (proposed)](adr/2026-11-04-social-schema-v3-activation.md)
 - [Referral reward recovery (proposed)](adr/2026-11-04-social-runtime-boundaries.md)
+- [Explorer pinned LiveKit streams](adr/2026-11-05-explorer-pinned-livekit-streams.md)
 
 Verify compatibility, readiness and performance claims against evidence at the
 target revision. Return findings and measurements in the task report; follow the

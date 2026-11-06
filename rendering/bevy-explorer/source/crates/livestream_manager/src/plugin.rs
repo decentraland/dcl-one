@@ -31,6 +31,8 @@ impl Plugin for LivestreamManagerPlugin {
         app.add_observer(transmitter_off);
         app.add_observer(receiver_on);
         app.add_observer(receiver_off);
+        app.add_observer(pinned_by_added);
+        app.add_observer(pinned_by_removed);
 
         app.add_systems(
             Update,
@@ -149,7 +151,8 @@ struct ManagingAudioStreams(Vec<Entity>);
 #[relationship(relationship_target = ManagingAudioStreams)]
 struct AudioStreamer(Entity);
 
-fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+/// An 8x8 placeholder a track's frames replace: fuchsia until the first frame.
+fn placeholder_image(images: &mut Assets<Image>) -> Handle<Image> {
     let mut image = Image::new_fill(
         Extent3d {
             width: 8,
@@ -166,10 +169,34 @@ fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     {
         image.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
     }
-    let handle = images.add(image);
+    images.add(image)
+}
 
-    commands.spawn(LivestreamManager(handle));
+fn setup_manager(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    commands.spawn(LivestreamManager(placeholder_image(&mut images)));
     debug!("LivestreamManager setup");
+}
+
+/// The first player pinned to a track gives it an image of its own.
+fn pinned_by_added(
+    trigger: Trigger<OnAdd, PinnedBy>,
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+) {
+    let entity = trigger.target();
+    debug!("Track {entity} pinned by a player");
+    commands
+        .entity(entity)
+        .try_insert(PinnedImage(placeholder_image(&mut images)));
+}
+
+/// The last pinned player left the track.
+fn pinned_by_removed(trigger: Trigger<OnRemove, PinnedBy>, mut commands: Commands) {
+    let entity = trigger.target();
+    debug!("Track {entity} no longer pinned");
+    commands
+        .entity(entity)
+        .try_remove::<(PinnedImage, VideoTrackLive)>();
 }
 
 fn transmitter_kind_on_insert(

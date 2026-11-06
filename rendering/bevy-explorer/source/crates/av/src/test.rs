@@ -22,10 +22,8 @@ use wasm_bindgen_test::*;
 
 #[cfg(any(feature = "uuav", feature = "html"))]
 use crate::AVSinks;
-use crate::{
-    AVPlayer, AVPlayerPlugin, AudioStream, InScene, ShouldBePlaying, Stream, VideoPlayer,
-    LIVEKIT_VIDEO_STREAM,
-};
+use crate::{AVPlayer, AVPlayerPlugin, AudioStream, InScene, ShouldBePlaying, Stream, VideoPlayer};
+use livestream_manager::address::CURRENT_STREAM as LIVEKIT_VIDEO_STREAM;
 
 #[cfg(target_arch = "wasm32")]
 wasm_bindgen_test_configure!(run_in_browser);
@@ -1044,4 +1042,294 @@ fn test_despawn_av_player() {
         .id();
 
     app.world_mut().entity_mut(video_player).despawn();
+}
+
+/// Pinned livekit players (`pinned_stream`): the binding, the images and the events, headless.
+/// Tracks are plain `PublishedVideoTrack` entities: the comms plugin that subscribes them is
+/// not part of this app.
+#[cfg(any(feature = "uuav", feature = "html"))]
+mod pinned {
+    use super::*;
+    use crate::{pinned_stream::PinnedStream, SetState};
+    use dcl_component::proto_components::sdk::components::VideoState;
+    use livestream_manager::{
+        PinnedBy, PinnedImage, PinnedTo, PublishedVideoTrack, VideoTrackLive,
+    };
+
+    #[derive(Resource, Default)]
+    struct States(Vec<VideoState>);
+
+    fn app_with_scene() -> (App, Entity) {
+        let mut app = min_test_app();
+        app.init_resource::<States>();
+        app.add_observer(
+            |trigger: Trigger<SetState<VideoPlayer>>, mut states: ResMut<States>| {
+                states.0.push(trigger.event().state);
+            },
+        );
+        let scene = app
+            .world_mut()
+            .spawn(RendererSceneContext::new(
+                SceneId::DUMMY,
+                "hash".to_owned(),
+                "storage_root".to_owned(),
+                false,
+                0,
+                "title".to_owned(),
+                IVec2::splat(0),
+                HashSet::from_iter([IVec2::splat(0)]),
+                vec![],
+                Default::default(),
+                vec![],
+                Entity::PLACEHOLDER,
+                0.,
+                false,
+                "sdk_version",
+                false,
+                false,
+            ))
+            .id();
+        (app, scene)
+    }
+
+    fn player(app: &mut App, scene: Entity, src: &str) -> Entity {
+        app.world_mut()
+            .spawn((
+                VideoPlayer(PbVideoPlayer {
+                    src: src.to_owned(),
+                    playing: Some(true),
+                    ..Default::default()
+                }),
+                ContainerEntity {
+                    container: scene,
+                    root: scene,
+                    container_id: SceneEntityId::new(512, 0),
+                },
+            ))
+            .id()
+    }
+
+    fn track(app: &mut App, room: &str, identity: &str, sid: &str) -> Entity {
+        app.world_mut()
+            .spawn(PublishedVideoTrack {
+                room: room.to_owned(),
+                identity: identity.to_owned(),
+                sid: sid.to_owned(),
+            })
+            .id()
+    }
+
+    fn schedule(app: &mut App, player: Entity) {
+        app.world_mut()
+            .entity_mut(player)
+            .insert((InScene, ShouldBePlaying::<VideoPlayer>::default()));
+    }
+
+    /// A frame's worth of the pinned machinery: `min_test_app` cannot run its schedules (the
+    /// scene runner's systems want resources no test creates), so the state transitions and the
+    /// two pinned systems run on their own; observers fire as their commands apply.
+    fn tick(app: &mut App) {
+        use bevy::{ecs::system::RunSystemOnce, state::state::StateTransition};
+        for _ in 0..3 {
+            app.world_mut().run_schedule(StateTransition);
+            app.world_mut()
+                .run_system_once(crate::pinned_stream::bind_pinned_streams)
+                .unwrap();
+            app.world_mut()
+                .run_system_once(crate::pinned_stream::sync_pinned_texture)
+                .unwrap();
+        }
+    }
+
+    fn states(app: &mut App) -> Vec<VideoState> {
+        std::mem::take(&mut app.world_mut().resource_mut::<States>().0)
+    }
+
+    fn texture(app: &App, player: Entity) -> Option<Handle<Image>> {
+        app.world()
+            .get::<VideoTextureOutput>(player)
+            .map(|output| output.0.clone())
+    }
+
+    fn pinned_image(app: &App, track: Entity) -> Option<Handle<Image>> {
+        app.world()
+            .get::<PinnedImage>(track)
+            .map(|image| (**image).clone())
+    }
+
+    const PINNED: &str = "livekit-video://0xabc/TR_1";
+
+    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn a_pinned_source_is_a_stream_without_sinks() {
+        let (mut app, scene) = app_with_scene();
+        let player = player(&mut app, scene, PINNED);
+        tick(&mut app);
+        assert!(app.world().get::<Stream>(player).is_some());
+        assert!(app.world().get::<PinnedStream>(player).is_some());
+        assert!(app.world().get::<AVSinks<VideoPlayer>>(player).is_none());
+        assert!(app.world().get::<PinnedTo>(player).is_none());
+    }
+
+    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn a_malformed_address_plays_nothing_and_reports_an_error() {
+        let (mut app, scene) = app_with_scene();
+        let player = player(&mut app, scene, "livekit-video://broken");
+        tick(&mut app);
+        assert!(app.world().get::<Stream>(player).is_none());
+        assert!(app.world().get::<PinnedStream>(player).is_none());
+        assert!(app.world().get::<AVSinks<VideoPlayer>>(player).is_some());
+        assert!(states(&mut app).contains(&VideoState::VsError));
+    }
+
+    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn a_scheduled_pinned_player_binds_the_track_in_its_room_and_shows_its_image() {
+        let (mut app, scene) = app_with_scene();
+        let elsewhere = track(&mut app, "other", "0xabc", "TR_1");
+        let track = track(&mut app, "hash", "0xabc", "TR_1");
+        let player = player(&mut app, scene, PINNED);
+        tick(&mut app);
+        assert!(
+            app.world().get::<PinnedTo>(player).is_none(),
+            "not scheduled yet"
+        );
+
+        schedule(&mut app, player);
+        tick(&mut app);
+        assert_eq!(
+            app.world().get::<PinnedTo>(player).map(|p| p.0),
+            Some(track)
+        );
+        assert!(app.world().get::<PinnedBy>(track).is_some());
+        assert!(app.world().get::<PinnedBy>(elsewhere).is_none());
+        let image = pinned_image(&app, track);
+        assert!(image.is_some());
+        assert_eq!(
+            texture(&app, player),
+            image,
+            "the player shows the track's image"
+        );
+        assert_eq!(states(&mut app).last(), Some(&VideoState::VsLoading));
+
+        app.world_mut().entity_mut(track).insert(VideoTrackLive);
+        tick(&mut app);
+        assert!(states(&mut app).contains(&VideoState::VsPlaying));
+        app.world_mut().entity_mut(track).remove::<VideoTrackLive>();
+        tick(&mut app);
+        assert!(states(&mut app).contains(&VideoState::VsLoading));
+    }
+
+    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn a_wrong_sid_never_binds() {
+        let (mut app, scene) = app_with_scene();
+        track(&mut app, "hash", "0xabc", "TR_2");
+        let player = player(&mut app, scene, PINNED);
+        schedule(&mut app, player);
+        tick(&mut app);
+        assert!(app.world().get::<PinnedTo>(player).is_none());
+    }
+
+    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn a_departed_track_falls_back_to_the_manager_and_is_bound_again_on_return() {
+        let (mut app, scene) = app_with_scene();
+        let track = track(&mut app, "hash", "0xabc", "TR_1");
+        let player = player(&mut app, scene, PINNED);
+        schedule(&mut app, player);
+        tick(&mut app);
+        assert!(app.world().get::<PinnedTo>(player).is_some());
+        states(&mut app);
+
+        app.world_mut().entity_mut(track).despawn();
+        tick(&mut app);
+        assert!(app.world().get::<PinnedTo>(player).is_none());
+        let manager = app
+            .world()
+            .get::<ReceiverImage>(player)
+            .map(|image| (**image).clone());
+        assert!(manager.is_some(), "the player is still a receiver");
+        assert_eq!(
+            texture(&app, player),
+            manager,
+            "back on the manager's image"
+        );
+        assert!(states(&mut app).contains(&VideoState::VsLoading));
+        assert!(
+            app.world().get::<PinnedStream>(player).is_some(),
+            "the address is kept"
+        );
+
+        let returned = self::track(&mut app, "hash", "0xabc", "TR_1");
+        tick(&mut app);
+        assert_eq!(
+            app.world().get::<PinnedTo>(player).map(|p| p.0),
+            Some(returned)
+        );
+        assert_eq!(texture(&app, player), pinned_image(&app, returned));
+    }
+
+    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn unscheduling_unbinds_and_pauses_and_despawning_releases_the_track() {
+        let (mut app, scene) = app_with_scene();
+        let track = track(&mut app, "hash", "0xabc", "TR_1");
+        let player = player(&mut app, scene, PINNED);
+        schedule(&mut app, player);
+        tick(&mut app);
+        states(&mut app);
+
+        app.world_mut()
+            .entity_mut(player)
+            .remove::<ShouldBePlaying<VideoPlayer>>();
+        tick(&mut app);
+        assert!(app.world().get::<PinnedTo>(player).is_none());
+        assert!(states(&mut app).contains(&VideoState::VsPaused));
+        assert!(app.world().get::<PinnedBy>(track).is_none());
+
+        schedule(&mut app, player);
+        tick(&mut app);
+        assert!(app.world().get::<PinnedBy>(track).is_some());
+        app.world_mut().entity_mut(player).despawn();
+        tick(&mut app);
+        assert!(app.world().get::<PinnedBy>(track).is_none());
+        assert!(app.world().get::<PinnedImage>(track).is_none());
+    }
+
+    #[test]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn a_source_change_from_pinned_to_the_sentinel_to_http_clears_the_pin() {
+        let (mut app, scene) = app_with_scene();
+        let track = track(&mut app, "hash", "0xabc", "TR_1");
+        let player = player(&mut app, scene, PINNED);
+        schedule(&mut app, player);
+        tick(&mut app);
+        assert!(app.world().get::<PinnedTo>(player).is_some());
+
+        app.world_mut()
+            .entity_mut(player)
+            .insert(VideoPlayer(PbVideoPlayer {
+                src: LIVEKIT_VIDEO_STREAM.to_owned(),
+                playing: Some(true),
+                ..Default::default()
+            }));
+        tick(&mut app);
+        assert!(app.world().get::<Stream>(player).is_some());
+        assert!(app.world().get::<PinnedStream>(player).is_none());
+        assert!(app.world().get::<PinnedTo>(player).is_none());
+        assert!(app.world().get::<PinnedBy>(track).is_none());
+
+        app.world_mut()
+            .entity_mut(player)
+            .insert(VideoPlayer(PbVideoPlayer {
+                src: EXAMPLE_VIDEO.to_owned(),
+                playing: Some(true),
+                ..Default::default()
+            }));
+        tick(&mut app);
+        assert!(app.world().get::<Stream>(player).is_none());
+        assert!(app.world().get::<AVSinks<VideoPlayer>>(player).is_some());
+    }
 }

@@ -1,6 +1,7 @@
 use super::*;
 use bevy_console::ConsoleCommand;
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
+use livestream_manager::{ActiveTransmitter, PublishedVideoTrack, VideoTrackLive};
 use scene_runner::SceneEntity;
 use serde_json::json;
 #[cfg(any(feature = "uuav", feature = "html"))]
@@ -20,6 +21,8 @@ pub(super) fn register(app: &mut App) {
                 ("Current parcel audio streams", "parcelAudio"),
                 ("Current parcel HTTP media", "parcelExternal"),
                 ("Players", "players"),
+                ("Pinned LiveKit players", "pinned"),
+                ("Pinned players in fallback", "fallback"),
             ],
             actions: &[],
             inputs: &[],
@@ -40,6 +43,14 @@ fn media_state(
         &SceneEntity,
         Has<InScene>,
         Has<ShouldBePlaying<VideoPlayer>>,
+        Option<&PinnedStream>,
+        Option<&PinnedTo>,
+    )>,
+    tracks: Query<(
+        Entity,
+        &PublishedVideoTrack,
+        Has<VideoTrackLive>,
+        Has<ActiveTransmitter>,
     )>,
     audio: Query<(
         Entity,
@@ -64,6 +75,8 @@ fn media_state(
     let mut parcel_video = 0;
     let mut parcel_audio = 0;
     let mut parcel_external = 0;
+    let mut pinned_count = 0;
+    let mut fallback_count = 0;
     let row = |kind: &str,
                entity: &SceneEntity,
                here: bool,
@@ -72,13 +85,32 @@ fn media_state(
         json!({"type":kind, "entity":entity.id.to_string(), "scene":scenes.get(entity.root).ok().map(|ctx| &ctx.title),
                "inScene":here, "requested":config.playing(), "scheduled":scheduled, "volume":config.volume(), "loop":config.r#loop(), "rate":config.playback_rate()})
     };
-    for (_ent, player, entity, here, scheduled) in &video {
+    for (_ent, player, entity, here, scheduled, pinned, pinned_to) in &video {
         if Some(entity.root) == parcel {
             parcel_video += 1;
             parcel_external += usize::from(is_external(player.url()));
         }
         let mut item = row("video", entity, here, scheduled, &player.config());
         item["source"] = json!(source_label(player.url()));
+        // a livekit player: the address it asked for and the track it shows, if pinned
+        if let Some(address) = LivekitAddress::parse(player.url()) {
+            let bound = pinned_to.and_then(|pinned_to| tracks.get(pinned_to.0).ok());
+            let mode = match (&address, pinned, bound) {
+                (Ok(LivekitAddress::CurrentStream), _, _) => "current-stream",
+                (Ok(LivekitAddress::User { .. }), _, Some(_)) => "pinned",
+                (Ok(LivekitAddress::User { .. }), Some(_), None) => "fallback",
+                _ => "invalid",
+            };
+            pinned_count += usize::from(mode == "pinned");
+            fallback_count += usize::from(mode == "fallback");
+            item["livekit"] = json!({
+                "requested": address.as_ref().map(|a| a.to_string()).ok(),
+                "mode": mode,
+                "boundTrack": bound.map(|(track, published, live, active)| json!({
+                    "identity": published.identity, "sid": published.sid, "entity": track.to_string(), "live": live,
+                    "texture": if active { "manager" } else { "track" }})),
+            });
+        }
         #[cfg(any(feature = "uuav", feature = "html"))]
         add_sink(&mut item, video_sinks.get(_ent).ok(), &images);
         rows.push(item);
@@ -101,7 +133,7 @@ fn media_state(
     } else {
         "No playback backend"
     };
-    cmd.reply_ok(json!({"backend":backend, "scene":scene, "video":video.iter().len(), "audio":audio.iter().len(), "parcelVideo":parcel_video, "parcelAudio":parcel_audio, "parcelExternal":parcel_external, "players":rows,
+    cmd.reply_ok(json!({"backend":backend, "scene":scene, "video":video.iter().len(), "audio":audio.iter().len(), "parcelVideo":parcel_video, "parcelAudio":parcel_audio, "parcelExternal":parcel_external, "pinned":pinned_count, "fallback":fallback_count, "players":rows,
         "unavailable":{"scene":"No loaded scene at the player's parcel."}}).to_string());
 }
 

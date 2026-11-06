@@ -10,7 +10,8 @@ use crate::{
     plugin::LivestreamManagerPlugin,
     states::{Receiver, TransmissionKind, Transmitter},
     ActiveAudioTransmitter, ActiveReceiver, ActiveTransmitter, ActiveVideoCast,
-    AudioTransmitterKind, ReceiverImage, TransmitterKind,
+    AudioTransmitterKind, PinnedBy, PinnedImage, PinnedTo, ReceiverImage, TransmitterKind,
+    VideoTrackLive,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -1519,4 +1520,57 @@ fn test_audios_on_transmission_kind_change() {
             .entity(*stream)
             .contains::<ActiveAudioTransmitter>());
     }
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn a_pinned_track_gets_an_image_that_outlives_all_but_its_last_player() {
+    let mut app = min_app();
+    let track = app.world_mut().spawn_empty().id();
+    let first = app.world_mut().spawn(PinnedTo(track)).id();
+    app.update();
+    assert!(app.world().get::<PinnedBy>(track).is_some());
+    let image = app.world().get::<PinnedImage>(track).map(|i| (**i).clone());
+    assert!(image.is_some(), "the first pin creates the track's image");
+
+    let second = app.world_mut().spawn(PinnedTo(track)).id();
+    app.update();
+    assert_eq!(
+        app.world().get::<PinnedImage>(track).map(|i| (**i).clone()),
+        image,
+        "a second pin shares the image"
+    );
+
+    app.world_mut().entity_mut(first).despawn();
+    app.update();
+    assert!(
+        app.world().get::<PinnedImage>(track).is_some(),
+        "one player still pins"
+    );
+    app.world_mut().entity_mut(track).insert(VideoTrackLive);
+
+    app.world_mut().entity_mut(second).despawn();
+    app.update();
+    assert!(app.world().get::<PinnedBy>(track).is_none());
+    assert!(
+        app.world().get::<PinnedImage>(track).is_none(),
+        "the last unpin drops the image"
+    );
+    assert!(app.world().get::<VideoTrackLive>(track).is_none());
+}
+
+#[test]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn a_despawned_track_releases_its_players() {
+    let mut app = min_app();
+    let track = app.world_mut().spawn_empty().id();
+    let player = app.world_mut().spawn(PinnedTo(track)).id();
+    app.update();
+    app.world_mut().entity_mut(track).despawn();
+    app.update();
+    assert!(
+        app.world().get_entity(player).is_ok(),
+        "the player outlives its track"
+    );
+    assert!(app.world().get::<PinnedTo>(player).is_none());
 }

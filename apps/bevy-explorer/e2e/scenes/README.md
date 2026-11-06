@@ -33,5 +33,16 @@ whenever it is sampled and the audio path runs too. `specs/visual/video.test.ts`
 player's events and the frame's centre pixel instead of comparing a reference; the scene's label
 shows the last event for whoever reads the report's frame.
 
+## The livekit scene
+
+`livekit` shows LiveKit video through `VideoPlayer`s, after unity-explorer's `LivekitPlayer`
+tests (`Explorer/Assets/DCL/SDKComponents/MediaStream/Tests/LivekitPlayerShould.cs`), at parcel
+`228,0`: a `current` screen on `livekit-video://current-stream`, a `pinned` screen whose source
+the scene sets to the first `pinned-*` participant `getActiveVideoStreams` lists (polled every
+2 s; an address nobody publishes while there is none), and an `invalid` screen on a malformed
+address. Each label shows the screen's last `VideoEvent`; the yellow label lists what the API
+returned. `specs/visual/livekit.test.ts` asserts the address outcomes without a room, and the
+pinned run with a local room through `scripts/livekit-room.sh`.
+
 `bin/`, `node_modules/` and the other build outputs are ignored. The `.glb`, `.png`, `.jpg` and
 `.mp4` assets are in Git LFS.

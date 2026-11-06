@@ -1,4 +1,6 @@
+pub mod address;
 mod audio_transmitter;
+mod pinned;
 pub mod plugin;
 pub mod states;
 #[cfg(test)]
@@ -8,7 +10,7 @@ mod video_transmitter;
 
 use bevy::prelude::*;
 
-pub use crate::{audio_transmitter::*, video_receiver::*, video_transmitter::*};
+pub use crate::{audio_transmitter::*, pinned::*, video_receiver::*, video_transmitter::*};
 
 #[derive(Event)]
 pub struct TransmissionUpdated;
