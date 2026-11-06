@@ -85,6 +85,7 @@ import type {
   Profile,
   ProfileEdit,
   CommunitySaveResultMessage,
+  UpdateCommunityRequest,
   SceneLoadingState,
   Setting,
   TeleportRequest,
@@ -210,7 +211,10 @@ export interface CreateCommunityInput {
   thumbnail?: string
 }
 
-/** A community create in flight (`saving`) or its outcome (`done`). */
+/** What the edit form sends: the community and only the fields that changed. */
+export type UpdateCommunityInput = Omit<UpdateCommunityRequest, 'kind'>
+
+/** A community create or update in flight (`saving`) or its outcome (`done`). */
 export type CommunitySave = { status: 'saving' } | { status: 'done'; result: CommunitySaveResultMessage }
 
 export interface CommunitiesState {
@@ -222,7 +226,9 @@ export interface CommunitiesState {
   /** Create a community (name, description, Public/Private, discoverable, picture as a data URL).
    *  Its outcome arrives in `save`. */
   create: (input: CreateCommunityInput) => void
-  /** The create in flight, or how the last one ended, for the form. */
+  /** Save an edit (only the changed fields). Its outcome arrives in `save`. */
+  update: (input: UpdateCommunityInput) => void
+  /** The create or update in flight, or how the last one ended, for the form. */
   save: CommunitySave | null
   /** Forget the last outcome (the form closed or is being edited again). */
   clearSave: () => void
@@ -2849,6 +2855,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setCommunitySave({ status: 'saving' })
     driverRef.current?.send({ kind: 'createCommunity', ...input })
   }, [])
+  const updateCommunity = useCallback((input: UpdateCommunityInput) => {
+    setCommunitySave({ status: 'saving' })
+    driverRef.current?.send({ kind: 'updateCommunity', ...input })
+  }, [])
   const clearCommunitySave = useCallback(() => setCommunitySave(null), [])
   const joinCommunity = useCallback((id: string) => {
     setCommunityError(null)
@@ -3723,7 +3733,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       saveOutfit, deleteOutfit, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
-    communities: { list: communities, mine: myCommunities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, save: communitySave, clearSave: clearCommunitySave, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
+    communities: { list: communities, mine: myCommunities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, save: communitySave, clearSave: clearCommunitySave, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
     map: mapSlice,
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces },

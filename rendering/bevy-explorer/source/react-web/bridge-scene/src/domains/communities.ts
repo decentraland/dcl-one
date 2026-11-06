@@ -29,6 +29,7 @@ type CommunityRaw = {
   role: string
   ownerAddress?: string
   privacy?: string
+  visibility?: string
   pendingActionType?: string
   pendingInviteOrRequestId?: string
   thumbnailUrl?: string
@@ -50,8 +51,13 @@ async function base(version: 'v1' | 'v2'): Promise<string> {
   return `${await serviceBase('socialApi')}/${version}/communities`
 }
 
+// A picture the user just saved, by community id. Its URL does not change on update, so the browser
+// and the CDN would keep showing the old one; as unity-explorer replaces its sprite cache, the HUD
+// shows the saved picture for the rest of the session.
+const savedThumbnails = new Map<string, string>()
+
 async function thumbnail(c: CommunityRaw): Promise<string> {
-  return c.thumbnailUrl || `${await serviceBase('assetsCdn')}/social/communities/${encodeURIComponent(c.id)}/raw-thumbnail.png`
+  return savedThumbnails.get(c.id) || c.thumbnailUrl || `${await serviceBase('assetsCdn')}/social/communities/${encodeURIComponent(c.id)}/raw-thumbnail.png`
 }
 
 async function communities(raw: CommunityRaw[]): Promise<Community[]> {
@@ -66,6 +72,7 @@ async function communities(raw: CommunityRaw[]): Promise<Community[]> {
     role: c.role,
     ownerName: identity(c.ownerAddress ?? '').name,
     privacy: c.privacy,
+    visibility: c.visibility,
     pendingRequestId: c.pendingActionType === 'request_to_join' ? c.pendingInviteOrRequestId : undefined
   }))
 }
@@ -320,6 +327,39 @@ export function registerCommunities(ctx: Ctx): void {
         return { kind: 'communitySaveResult', mode: 'create', ...saveFailure(e) }
       })
     ctx.send(result)
+    ctx.send({ kind: 'communities', communities: await list() })
+    await sendMembership()
+  })
+  ctx.on('updateCommunity', async (msg) => {
+    // unity-explorer's update: a multipart PUT with only the fields that changed, and the picture
+    // as a `thumbnail.png` file part when a new one was chosen.
+    const fields: Record<string, string> = {}
+    if (msg.name != null) fields.name = msg.name
+    if (msg.description != null) fields.description = msg.description
+    if (msg.privacy != null) fields.privacy = msg.privacy
+    if (msg.discoverable != null) fields.visibility = msg.discoverable ? 'all' : 'unlisted'
+    const files =
+      msg.thumbnail != null
+        ? [{ name: 'thumbnail', filename: 'thumbnail.png', contentType: 'image/png', bytes: dataUrlBytes(msg.thumbnail) }]
+        : []
+    const id = encodeURIComponent(msg.id)
+    const result = await signedForm(`${await base('v1')}/${id}`, 'PUT', fields, files)
+      .then((): CommunitySaveResultMessage => {
+        if (msg.thumbnail != null) savedThumbnails.set(msg.id, msg.thumbnail)
+        return { kind: 'communitySaveResult', mode: 'update', id: msg.id }
+      })
+      .catch((e: unknown): CommunitySaveResultMessage => {
+        console.error('[communities] update failed', e)
+        return { kind: 'communitySaveResult', mode: 'update', ...saveFailure(e) }
+      })
+    ctx.send(result)
+    if (result.id == null) return
+    // the card, the browse list and My Communities all show the saved values
+    const raw = await rawOne(msg.id).catch(() => undefined)
+    if (raw != null) {
+      const [community] = await communities([raw])
+      if (community != null) ctx.send({ kind: 'community', community })
+    }
     ctx.send({ kind: 'communities', communities: await list() })
     await sendMembership()
   })

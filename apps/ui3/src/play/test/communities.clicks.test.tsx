@@ -3,7 +3,7 @@ import { render, screen, act, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { CommunitiesPage } from '../features/communities/CommunitiesPage'
 import { CommunityModal } from '../features/communities/CommunityModal'
-import { openCommunityCreateModal, readCommunityPicture } from '../features/communities/CommunityCreateModal'
+import { openCommunityCreateModal, openCommunityEditModal, readCommunityPicture } from '../features/communities/CommunityCreateModal'
 import { SessionProvider } from '../features/session/SessionContext'
 import { PopupHost, ToastHost, closeTopPopup, resetPopups } from '../design'
 import type { Community, CommunityDetailMessage } from '../engine/protocol'
@@ -261,6 +261,84 @@ describe('community create modal', () => {
     renderCreate()
     act(() => closeTopPopup())
     expect(screen.queryByRole('button', { name: 'CANCEL' })).toBeNull()
+  })
+})
+
+// Edit Community, as unity-explorer's: owners and moderators open it from the card, it loads the
+// community, only the owner changes name, membership and discoverability, and only changes are sent.
+describe('community edit', () => {
+  const owned = community({ id: 'c9', name: 'Builders', description: 'We build', role: 'owner', privacy: 'private', visibility: 'unlisted', thumbnail: 'https://cdn/c9.png' })
+  function renderEdit(c: Community): { communities: CommunitiesState; setSave: (save: CommunitySave | null) => void } {
+    const session = fakeSession()
+    const view = (save: CommunitySave | null): React.JSX.Element => {
+      session.communities = { ...session.communities, save }
+      return (
+        <SessionProvider value={{ ...session }}>
+          <PopupHost />
+          <ToastHost />
+        </SessionProvider>
+      )
+    }
+    const { rerender } = render(view(null))
+    act(() => {
+      openCommunityEditModal(c)
+    })
+    return { communities: session.communities, setSave: (save) => rerender(view(save)) }
+  }
+
+  it('offers Edit Community on the card to owners and moderators only', () => {
+    const spies = { onJoin: vi.fn(), onRequestToJoin: vi.fn(), onCancelRequest: vi.fn(), onLeave: vi.fn(), onAddFriend: vi.fn(), onOpenChat: vi.fn(), onClose: vi.fn() }
+    const onEdit = vi.fn()
+    const { rerender } = render(<CommunityModal community={community({ role: 'moderator' })} detail={null} onEdit={onEdit} {...spies} />)
+    expect(screen.getByRole('button', { name: 'Edit Community' })).toBeInTheDocument()
+    rerender(<CommunityModal community={community({ role: 'member' })} detail={null} onEdit={onEdit} {...spies} />)
+    expect(screen.queryByRole('button', { name: 'Edit Community' })).toBeNull()
+  })
+
+  it('opens with the community as it is, titled Edit Community, with SAVE', () => {
+    renderEdit(owned)
+    expect(screen.getByRole('heading', { name: 'Edit Community' })).toBeInTheDocument()
+    expect((screen.getByLabelText(/community name/i) as HTMLInputElement).value).toBe('Builders')
+    expect((screen.getByLabelText(/description/i) as HTMLTextAreaElement).value).toBe('We build')
+    expect(screen.getByRole('button', { name: 'Membership' })).toHaveTextContent(/^Private/)
+    expect(screen.getByRole('button', { name: 'Discoverability' })).toHaveTextContent(/^Unlisted/)
+    expect(screen.getByRole('button', { name: 'SAVE' })).toBeEnabled()
+  })
+
+  it('lets a moderator change the description but not the name, membership or discoverability', () => {
+    renderEdit({ ...owned, role: 'moderator' })
+    expect(screen.getByLabelText(/community name/i)).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Membership' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Discoverability' })).toBeDisabled()
+    expect(screen.getByLabelText(/description/i)).toBeEnabled()
+  })
+
+  it('sends only what changed', async () => {
+    const { communities } = renderEdit(owned)
+    await userEvent.clear(screen.getByLabelText(/description/i))
+    await userEvent.type(screen.getByLabelText(/description/i), 'We build worlds')
+    await userEvent.click(screen.getByRole('button', { name: 'Discoverability' }))
+    await userEvent.click(screen.getByRole('option', { name: /^Discoverable/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'SAVE' }))
+    expect(communities.update).toHaveBeenCalledWith({ id: 'c9', description: 'We build worlds', discoverable: true })
+  })
+
+  it('closes without saving when nothing changed', async () => {
+    const { communities } = renderEdit(owned)
+    await userEvent.click(screen.getByRole('button', { name: 'SAVE' }))
+    expect(communities.update).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog', { name: 'Edit Community' })).toBeNull()
+    expect(screen.queryByText('Discard your changes?')).toBeNull()
+  })
+
+  it('closes once saved, and keeps the form with a toast when the update fails', async () => {
+    const { setSave } = renderEdit(owned)
+    await userEvent.type(screen.getByLabelText(/description/i), '!')
+    act(() => setSave({ status: 'done', result: { kind: 'communitySaveResult', mode: 'update', error: 'HTTP 500: boom' } }))
+    expect(await screen.findByText('There was an error updating community. Please try again.')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Edit Community' })).toBeInTheDocument()
+    act(() => setSave({ status: 'done', result: { kind: 'communitySaveResult', mode: 'update', id: 'c9' } }))
+    expect(screen.queryByRole('dialog', { name: 'Edit Community' })).toBeNull()
   })
 })
 

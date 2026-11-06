@@ -206,6 +206,7 @@ export type PageToScene =
   | GetCommunitiesRequest
   | GetCommunityRequest
   | CreateCommunityRequest
+  | UpdateCommunityRequest
   | JoinCommunityRequest
   | LeaveCommunityRequest
   | RequestToJoinCommunityRequest
@@ -1082,6 +1083,8 @@ export interface Community {
   ownerName: string
   /** 'public' | 'private' — gates the join flow (public = join, private = request). */
   privacy?: string
+  /** 'all' (listed in browse and search) | 'unlisted' (members and invitees only). */
+  visibility?: string
   /** Id of the local user's pending request to join (private communities). */
   pendingRequestId?: string
 }
@@ -1132,6 +1135,20 @@ export interface CreateCommunityRequest {
   thumbnail?: string
 }
 
+/** Edit a community (page → scene → signed multipart PUT to the social-api). As unity-explorer,
+ *  only what changed is sent; a field left out keeps its value. */
+export interface UpdateCommunityRequest {
+  kind: 'updateCommunity'
+  id: string
+  name?: string
+  description?: string
+  privacy?: 'public' | 'private'
+  /** Listed in browse and search → visibility 'all', otherwise 'unlisted'. */
+  discoverable?: boolean
+  /** A new picture as a data URL (same limits as on create). */
+  thumbnail?: string
+}
+
 /** The content check's findings per field: short tags, at most three each. */
 export interface CommunityModerationIssues {
   name: string[]
@@ -1139,11 +1156,11 @@ export interface CommunityModerationIssues {
   image: string[]
 }
 
-/** How a community create ended (scene → page). Exactly one of `id`, `moderation`, `error`. */
+/** How a community create or update ended (scene → page). Exactly one of `id`, `moderation`, `error`. */
 export interface CommunitySaveResultMessage {
   kind: 'communitySaveResult'
-  mode: 'create'
-  /** The new community, on success. */
+  mode: 'create' | 'update'
+  /** The community created or updated, on success. */
   id?: string
   /** The social-api refused it (HTTP 400): the content check's findings, which may be empty, or
    *  `unavailable` when the check itself could not run. */

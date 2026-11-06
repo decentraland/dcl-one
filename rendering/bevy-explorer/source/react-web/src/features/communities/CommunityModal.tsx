@@ -4,11 +4,12 @@
 // (members/posts/places/events) arrives via the bridge `communityDetail` relay.
 
 import { useEffect, useState } from 'react'
-import { Avatar, Button, Tabs, openPopup, type TabItem } from '../../design'
+import { Avatar, Button, Pencil, Tabs, openPopup, type TabItem } from '../../design'
 import { nameColor } from '../../lib/identity'
 import { knownUserColor } from '../session/profileStore'
 import { isMemberRole, roleLabel } from './roles'
 import { useSession } from '../session/SessionContext'
+import { openCommunityEditModal } from './CommunityCreateModal'
 import type {
   Community,
   CommunityDetailMessage,
@@ -188,6 +189,7 @@ export function CommunityModal({
   onLeave,
   onAddFriend,
   onOpenChat,
+  onEdit,
   onClose
 }: {
   community: Community
@@ -200,6 +202,8 @@ export function CommunityModal({
   onLeave: (id: string) => void
   onAddFriend: (address: string) => void
   onOpenChat: () => void
+  /** Open the Edit Community form (owners and moderators). */
+  onEdit?: () => void
   onClose: () => void
 }): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('announcements')
@@ -244,6 +248,9 @@ export function CommunityModal({
             {error && <p className={styles.error} role="alert">{error}</p>}
           </div>
           <div className={styles.headActions}>
+            {(community.role === 'owner' || community.role === 'moderator') && onEdit != null && (
+              <button type="button" className={styles.iconBtn} aria-label="Edit Community" onClick={onEdit}><Pencil size={16} /></button>
+            )}
             {member && (
               <button type="button" className={styles.iconBtn} aria-label="Open chat" onClick={onOpenChat}><ChatIcon /></button>
             )}
@@ -362,6 +369,7 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
       onCancelRequest={communities.cancelRequest}
       onLeave={communities.leave}
       onAddFriend={(address) => friends.act('request', address)}
+      onEdit={() => openCommunityEditModal(community)}
       onOpenChat={() => {
         onClose()
         chat.openCommunity({ id: community.id, name: community.name, thumbnail: community.thumbnail ?? '', role: community.role })

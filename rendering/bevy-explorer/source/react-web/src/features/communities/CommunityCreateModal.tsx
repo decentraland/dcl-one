@@ -1,12 +1,15 @@
-// Create-a-Community form, as unity-explorer's CommunityCreationEdition panel: a NAME gate, then
-// profile picture, name*, membership, discoverability and description*, in that order. Submits
-// through the bridge (signed multipart POST, the picture as a file part) and waits for the answer:
-// success opens the new community's card, a refusal from the content check shows its findings, and
-// any other failure is a toast with the form left as it was.
+// Create-a-Community and Edit Community form, as unity-explorer's CommunityCreationEdition panel: a
+// NAME gate (create only), then profile picture, name*, membership, discoverability and
+// description*, in that order. Submits through the bridge (signed multipart POST or PUT, the
+// picture as a file part) and waits for the answer: success opens the new community (create) or
+// closes the form (edit), a refusal from the content check shows its findings, and any other
+// failure is a toast with the form left as it was. An edit sends only what changed; only the owner
+// can change the name, membership and discoverability.
 
 import { useEffect, useRef, useState } from 'react'
 import { CharCounter, Select, Spinner, TextArea, openPopup, showConfirm, showToast } from '../../design'
-import type { CommunitySave, CreateCommunityInput } from '../session/useEngineSession'
+import type { Community } from '../../engine/protocol'
+import type { CommunitySave, CreateCommunityInput, UpdateCommunityInput } from '../session/useEngineSession'
 import { useSession } from '../session/SessionContext'
 import styles from './CommunityCreateModal.module.css'
 
@@ -32,6 +35,7 @@ const MAX_IMAGE_BYTES = 512000
 const MAX_IMAGE_PX = 512
 
 const CREATE_ERROR = 'There was an error creating community. Please try again.'
+const UPDATE_ERROR = 'There was an error updating community. Please try again.'
 const IMAGE_GENERAL_ERROR = 'Invalid image file selected. Please check file type and size.'
 const IMAGE_WEIGHT_ERROR = 'Selected image exceeds 500KB size limit.'
 const IMAGE_RESOLUTION_ERROR = 'Selected image exceeds 512x512 px size limit.'
@@ -102,36 +106,58 @@ function issueLines(issues: { name: string[]; description: string[]; image: stri
 
 export function CommunityCreateModal({
   canCreate,
+  editing,
   save,
   onCreate,
+  onUpdate,
   onClearSave,
-  onCreated,
+  onSaved,
   onClose,
   onDirtyChange
 }: {
-  /** The user has a claimed NAME (community creation is gated behind one). */
+  /** The user has a claimed NAME (community creation is gated behind one). Ignored when editing. */
   canCreate: boolean
-  /** The create in flight, or how it ended. */
+  /** The community being edited; absent to create one. */
+  editing?: Community
+  /** The create or update in flight, or how it ended. */
   save: CommunitySave | null
   onCreate: (input: CreateCommunityInput) => void
+  onUpdate: (input: UpdateCommunityInput) => void
   /** Forget the outcome: back to the form. */
   onClearSave: () => void
-  /** The community was created: close the form without asking and open the community. */
-  onCreated: (id: string) => void
+  /** Saved (or nothing to save): close the form without asking. Gets the community's id. */
+  onSaved: (id: string) => void
   onClose: () => void
   /** Announce entered details, so a stray backdrop click can't bin them. */
   onDirtyChange?: (dirty: boolean) => void
 }): React.JSX.Element {
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [privacy, setPrivacy] = useState<'public' | 'private'>('public')
-  const [visibility, setVisibility] = useState<'all' | 'unlisted'>('all')
+  // the values the form opens with: the community's when editing, unity-explorer's defaults otherwise
+  const initial = useRef({
+    name: editing?.name ?? '',
+    description: editing?.description ?? '',
+    privacy: (editing?.privacy === 'private' ? 'private' : 'public') as 'public' | 'private',
+    visibility: (editing?.visibility === 'unlisted' ? 'unlisted' : 'all') as 'all' | 'unlisted'
+  }).current
+  const [name, setName] = useState(initial.name)
+  const [description, setDescription] = useState(initial.description)
+  const [privacy, setPrivacy] = useState(initial.privacy)
+  const [visibility, setVisibility] = useState(initial.visibility)
+  // a newly chosen picture (data URL); the current one shows until then
   const [pfp, setPfp] = useState<string | null>(null)
   const [focused, setFocused] = useState<'name' | 'description' | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const isEdit = editing != null
+  // as unity-explorer: on edit only the owner may change the name, membership and discoverability
+  const ownerFields = !isEdit || editing.role === 'owner'
+  const shownPfp = pfp ?? editing?.thumbnail ?? null
   const valid = name.trim() !== '' && description.trim() !== ''
   const saving = save?.status === 'saving'
-  const dirty = name.trim() !== '' || description.trim() !== '' || pfp != null || privacy !== 'public' || visibility !== 'all'
+  const dirty =
+    name.trim() !== initial.name.trim() ||
+    description.trim() !== initial.description.trim() ||
+    pfp != null ||
+    privacy !== initial.privacy ||
+    visibility !== initial.visibility
   const dirtyCb = useRef(onDirtyChange)
   dirtyCb.current = onDirtyChange
   useEffect(() => {
@@ -139,16 +165,16 @@ export function CommunityCreateModal({
     return () => dirtyCb.current?.(false)
   }, [dirty])
 
-  // How the create ended: success opens the community; a plain failure is a toast and the form
-  // stays; a refusal from the content check stays in `save` and is shown below.
+  // How the save ended: success closes the form; a plain failure is a toast and the form stays; a
+  // refusal from the content check stays in `save` and is shown below.
   const result = save?.status === 'done' ? save.result : null
-  const created = useRef(onCreated)
-  created.current = onCreated
+  const saved = useRef(onSaved)
+  saved.current = onSaved
   useEffect(() => {
     if (result == null || result.moderation != null) return
     onClearSave()
-    if (result.error != null) showToast(CREATE_ERROR, { tone: 'error' })
-    else created.current(result.id ?? '')
+    if (result.error != null) showToast(result.mode === 'update' ? UPDATE_ERROR : CREATE_ERROR, { tone: 'error' })
+    else saved.current(result.id ?? '')
   }, [result, onClearSave])
 
   const pickPfp = (e: React.ChangeEvent<HTMLInputElement>): void => {
@@ -162,6 +188,18 @@ export function CommunityCreateModal({
   }
   const submit = (): void => {
     if (!valid || saving) return
+    if (isEdit) {
+      // only what changed, as unity-explorer; with nothing changed the form just closes
+      const changes: UpdateCommunityInput = { id: editing.id }
+      if (name.trim() !== initial.name.trim()) changes.name = name.trim()
+      if (description.trim() !== initial.description.trim()) changes.description = description.trim()
+      if (privacy !== initial.privacy) changes.privacy = privacy
+      if (visibility !== initial.visibility) changes.discoverable = visibility === 'all'
+      if (pfp != null) changes.thumbnail = pfp
+      if (Object.keys(changes).length === 1) saved.current(editing.id)
+      else onUpdate(changes)
+      return
+    }
     onCreate({
       name: name.trim(),
       description: description.trim(),
@@ -171,7 +209,7 @@ export function CommunityCreateModal({
     })
   }
 
-  if (!canCreate) {
+  if (!isEdit && !canCreate) {
     return (
       <div className={styles.gate} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Get a NAME">
         <div className={styles.gateArt}><LockArt /></div>
@@ -225,19 +263,20 @@ export function CommunityCreateModal({
     )
   }
 
+  const title = isEdit ? 'Edit Community' : 'Create a Community'
   // Just the card — the popup layer (PopupHost .dim/.pop) draws the scrim, DPI-scales it and animates
   // it in. stopPropagation keeps a click on the card from reaching the scrim.
   return (
-    <div className={styles.modal} role="dialog" aria-modal="true" aria-label="Create a Community" aria-busy={saving} onClick={(e) => e.stopPropagation()}>
-      <h2 className={styles.title}>Create a Community</h2>
+    <div className={styles.modal} role="dialog" aria-modal="true" aria-label={title} aria-busy={saving} onClick={(e) => e.stopPropagation()}>
+      <h2 className={styles.title}>{title}</h2>
 
       <div className={styles.scroll}>
         <div className={styles.group}>
           <span className={styles.label}>PROFILE PICTURE</span>
           <span className={styles.hint}>PNG or JPG | 512x512 px | 500KB max</span>
           <div className={styles.pfp}>
-            <span className={styles.pfpImg} style={pfp ? { backgroundImage: `url(${pfp})` } : undefined}>
-              {!pfp && <ImageIcon />}
+            <span className={styles.pfpImg} style={shownPfp ? { backgroundImage: `url(${shownPfp})` } : undefined}>
+              {!shownPfp && <ImageIcon />}
             </span>
             <button type="button" className={styles.pfpEdit} aria-label="Edit profile picture" disabled={saving} onClick={() => fileRef.current?.click()}>
               <PencilIcon />
@@ -257,7 +296,7 @@ export function CommunityCreateModal({
             maxLength={NAME_MAX}
             placeholder="Write here"
             value={name}
-            disabled={saving}
+            disabled={saving || !ownerFields}
             onChange={(e) => setName(e.target.value)}
             onFocus={() => setFocused('name')}
             onBlur={() => setFocused(null)}
@@ -275,7 +314,7 @@ export function CommunityCreateModal({
             aria-label="Membership"
             variant="light"
             value={privacy}
-            disabled={saving}
+            disabled={saving || !ownerFields}
             options={MEMBERSHIP.map((o) => ({ value: o.value, label: `${o.label}: ${o.note}` }))}
             onChange={(value) => setPrivacy(value as 'public' | 'private')}
           />
@@ -287,7 +326,7 @@ export function CommunityCreateModal({
             aria-label="Discoverability"
             variant="light"
             value={visibility}
-            disabled={saving}
+            disabled={saving || !ownerFields}
             options={VISIBILITY.map((o) => ({ value: o.value, label: `${o.label}: ${o.note}` }))}
             onChange={(value) => setVisibility(value as 'all' | 'unlisted')}
           />
@@ -324,7 +363,7 @@ export function CommunityCreateModal({
 
       <div className={styles.actions}>
         <button type="button" className={`${styles.ghost} ${styles.cancel}`} disabled={saving} onClick={onClose}>CANCEL</button>
-        <button type="button" className={`${styles.primary} ${styles.create}`} disabled={!valid || saving} onClick={submit}>CREATE</button>
+        <button type="button" className={`${styles.primary} ${styles.create}`} disabled={!valid || saving} onClick={submit}>{isEdit ? 'SAVE' : 'CREATE'}</button>
       </div>
 
       <p className={styles.policy}>
@@ -335,51 +374,52 @@ export function CommunityCreateModal({
   )
 }
 
-/** The form with the session's create state: the popup content re-renders as the outcome arrives. */
-function CommunityCreateContainer({
+/** The form with the session's save state: the popup content re-renders as the outcome arrives. */
+function CommunityFormContainer({
   canCreate,
-  onCreated,
+  editing,
+  onSaved,
   onClose,
   onDirtyChange
 }: {
   canCreate: boolean
-  onCreated: (id: string) => void
+  editing?: Community
+  onSaved: (id: string) => void
   onClose: () => void
   onDirtyChange: (dirty: boolean) => void
 }): React.JSX.Element {
   const { communities } = useSession()
   const { clearSave } = communities
-  // a create's outcome belongs to this form only: forget it when the form goes away
+  // a save's outcome belongs to this form only: forget it when the form goes away
   useEffect(() => clearSave, [clearSave])
   return (
     <CommunityCreateModal
       canCreate={canCreate}
+      editing={editing}
       save={communities.save}
       onCreate={communities.create}
+      onUpdate={communities.update}
       onClearSave={clearSave}
-      onCreated={onCreated}
+      onSaved={onSaved}
       onClose={onClose}
       onDirtyChange={onDirtyChange}
     />
   )
 }
 
-/** Open the create-a-community flow (NAME gate or form) as a popup; returns the close handle.
- *  `canCreate` is a snapshot taken when the button is clicked — matches the other fire-once popups
- *  (WorldVisitModal): the profile's claimed-NAME state isn't expected to change mid-flow.
- *  `onCreated` gets the new community's id (empty if the service sent none) once the form closed. */
-export function openCommunityCreateModal(canCreate: boolean, onCreated: (id: string) => void): () => void {
-  // Same contract as the passport: the scrim refuses while there is something to lose, and the
-  // deliberate closes (CANCEL, ×, the Cancel/Escape action) ask. A successful create closes through
-  // the handle, which does not ask.
+/** Open the form as a popup; returns the close handle. Same contract as the passport: the scrim
+ *  refuses while there is something to lose, and the deliberate closes (CANCEL, the Cancel/Escape
+ *  action) ask. A successful save closes through the handle, which does not ask. */
+function openCommunityForm(canCreate: boolean, editing: Community | undefined, onSaved: (id: string) => void): () => void {
   const dirty = { current: false }
   const handle = openPopup(
     (close) => (
-      <CommunityCreateContainer
+      <CommunityFormContainer
         canCreate={canCreate}
-        onCreated={(id) => {
+        editing={editing}
+        onSaved={(id) => {
           handle()
-          onCreated(id)
+          onSaved(id)
         }}
         onClose={close}
         onDirtyChange={(d) => {
@@ -392,12 +432,25 @@ export function openCommunityCreateModal(canCreate: boolean, onCreated: (id: str
       confirmClose: () =>
         !dirty.current ||
         showConfirm({
-          title: 'Discard this community?',
-          body: 'The details you have entered will be lost.',
+          title: editing != null ? 'Discard your changes?' : 'Discard this community?',
+          body: editing != null ? 'The changes you have made will be lost.' : 'The details you have entered will be lost.',
           confirmLabel: 'Discard',
           cancelLabel: 'Keep editing'
         })
     }
   )
   return handle
+}
+
+/** Open the create-a-community flow (NAME gate or form) as a popup; returns the close handle.
+ *  `canCreate` is a snapshot taken when the button is clicked — matches the other fire-once popups
+ *  (WorldVisitModal): the profile's claimed-NAME state isn't expected to change mid-flow.
+ *  `onCreated` gets the new community's id (empty if the service sent none) once the form closed. */
+export function openCommunityCreateModal(canCreate: boolean, onCreated: (id: string) => void): () => void {
+  return openCommunityForm(canCreate, undefined, onCreated)
+}
+
+/** Open the Edit Community form for a community the user owns or moderates; returns the close handle. */
+export function openCommunityEditModal(community: Community): () => void {
+  return openCommunityForm(true, community, () => undefined)
 }

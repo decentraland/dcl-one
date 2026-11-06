@@ -949,6 +949,31 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       }, 600)
       return
     }
+    if (msg.kind === 'updateCommunity') {
+      // as createCommunity: a name with "flagged" or "unavailable" gets the content check's refusals
+      const lower = (msg.name ?? '').toLowerCase()
+      if (lower.includes('flagged') || lower.includes('unavailable')) {
+        const unavailable = lower.includes('unavailable')
+        const issues = { name: unavailable ? [] : ['Offensive language'], description: [], image: [] }
+        setTimeout(() => reply({ kind: 'communitySaveResult', mode: 'update', moderation: { issues, unavailable } }), 600)
+        return
+      }
+      const c = mockCommunities.find((m) => m.id === msg.id)
+      if (c != null) {
+        if (msg.name != null) c.name = msg.name
+        if (msg.description != null) c.description = msg.description
+        if (msg.privacy != null) c.privacy = msg.privacy
+        if (msg.discoverable != null) c.visibility = msg.discoverable ? 'all' : 'unlisted'
+        if (msg.thumbnail != null) c.thumbnail = msg.thumbnail
+      }
+      setTimeout(() => {
+        reply({ kind: 'communitySaveResult', mode: 'update', id: msg.id })
+        if (c != null) reply({ kind: 'community', community: { ...c } })
+        reply({ kind: 'communities', communities: mockCommunities })
+        reply({ kind: 'myCommunities', communities: mockCommunities.filter((m) => m.role !== 'none') })
+      }, 600)
+      return
+    }
     if (msg.kind === 'joinCommunity') {
       const c = mockCommunities.find((x) => x.id === msg.id)
       if (c) {
