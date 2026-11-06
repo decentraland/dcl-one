@@ -26,6 +26,7 @@ pub async fn health(State(state): State<SharedState>) -> (StatusCode, Json<Value
         "relayer_mode": state.settings.relay_mode(),
         "data_writes_enabled": state.settings.data_writes_enabled,
         "usd_pegged_stale_refusals": crate::evm::oracle::stale_refusal_count(),
+        "shop_mana_usd_feed": crate::mana::feed_rate::health(),
     });
     (status, Json(body))
 }

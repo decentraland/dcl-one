@@ -12,6 +12,7 @@
 //! subgraphs (a reader, 10 min, at most 1,000 sales per network) and
 //! hydrates the winners through the items query.
 
+use crate::types::ManaUsdRate;
 use std::collections::HashMap;
 
 use axum::Json;
@@ -864,29 +865,37 @@ pub async fn list_items(
     Ok((rows.iter().map(row_to_item).collect(), total))
 }
 
-/// ethers-style `format!("{rate:.18}")`, `"0"` for an unusable rate.
-pub fn rate_to_numeric_string(rate: f64) -> String {
-    if !rate.is_finite() || rate <= 0.0 {
-        return "0".to_string();
-    }
-    format!("{rate:.18}")
+/// The rate as the exact decimal text a `NUMERIC` bind takes: never through
+/// a float, whose 0.1 is 0.100000000000000006 and moves a CEIL across a credit.
+pub fn rate_to_numeric_string(rate: ManaUsdRate) -> String {
+    rate.decimal_text()
 }
 
-/// The MANA/USD spot: the newest row of `economy.price_snapshots` from any
-/// source (the `mana-price-poll` job's archive: CoinGecko, or the exchange it
-/// fell back to), as the price route reads it, memoized 60 s, accepted only
-/// while younger than `price::store::SNAPSHOT_MAX_AGE`; otherwise the price
-/// route's unavailable envelope. There is no fallback rate: a credit price
-/// from a constant is a wrong checkout amount (the 0.02 the slice first
-/// shipped priced 75 MANA items at 15 credits against 69 at the day's spot).
-pub async fn mana_usd_rate(state: &MarketplaceState) -> Result<f64, Response> {
+/// The Shop's MANA/USD. Where the marketplace's feed is wired
+/// (`mana::feed_rate::current`), its last good answer, and the price route's
+/// unavailable envelope when there is none. Otherwise the spot: the newest
+/// row of `economy.price_snapshots` from any source (the `mana-price-poll`
+/// job's archive: CoinGecko, or the exchange it fell back to), as the price
+/// route reads it, memoized 60 s, accepted only while younger than
+/// `price::store::SNAPSHOT_MAX_AGE`; otherwise the same envelope. There is no
+/// fallback rate: a credit price from a constant is a wrong checkout amount
+/// (the 0.02 the slice first shipped priced 75 MANA items at 15 credits
+/// against 69 at the day's spot).
+pub async fn mana_usd_rate(state: &MarketplaceState) -> Result<ManaUsdRate, Response> {
+    if let Some(feed) = crate::mana::feed_rate::current() {
+        return feed.ok().map(|shop| shop.rate).ok_or_else(|| {
+            crate::price::unavailable(
+                "the marketplace's MANA/USD feed has no current answer; credit prices need one",
+            )
+        });
+    }
     let v = cached(state, Ttl::S60, "economy:mana_usd".into(), || async {
         let row: Option<(String, chrono::NaiveDateTime)> = sqlx::query_as("SELECT mana_usd::text, taken_at FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1")
             .fetch_optional(&state.pool)
             .await
             .map_err(|e| e.to_string())?;
         Ok(match row {
-            Some((rate, taken_at)) => json!({ "rate": rate.parse::<f64>().ok(), "taken_at": taken_at.and_utc().timestamp() }),
+            Some((rate, taken_at)) => json!({ "rate": rate.trim(), "taken_at": taken_at.and_utc().timestamp() }),
             None => json!({}),
         })
     })
@@ -897,7 +906,7 @@ pub async fn mana_usd_rate(state: &MarketplaceState) -> Result<f64, Response> {
     })?;
     let budget = crate::price::store::SNAPSHOT_MAX_AGE.as_secs() as i64;
     match (
-        v["rate"].as_f64().filter(|r| r.is_finite() && *r > 0.0),
+        v["rate"].as_str().and_then(ManaUsdRate::parse_usd_per_mana),
         v["taken_at"].as_i64(),
     ) {
         (Some(rate), Some(taken_at)) if Utc::now().timestamp() - taken_at <= budget => Ok(rate),
@@ -1485,8 +1494,10 @@ mod tests {
             parse_catalog_items_params(&pairs(&[("sortBy", "recently_listed")])).sort_by,
             None
         );
-        assert_eq!(rate_to_numeric_string(0.02), "0.020000000000000000");
-        assert_eq!(rate_to_numeric_string(f64::NAN), "0");
+        let exact = |t: &str| rate_to_numeric_string(ManaUsdRate::parse_usd_per_mana(t).unwrap());
+        assert_eq!(exact("0.02"), "0.02");
+        assert_eq!(exact("0.1"), "0.1", "never 0.100000000000000006");
+        assert_eq!(exact("0.26960836"), "0.26960836");
     }
 
     #[test]
@@ -1679,5 +1690,35 @@ mod tests {
         assert!(v["price"].is_string() && v["itemId"].is_string(), "{v}");
         assert_eq!(v["tradeId"], Value::Null);
         assert_eq!(v["category"], "wearable");
+    }
+
+    #[tokio::test]
+    async fn a_store_mint_prices_its_credits_at_the_exact_rate() {
+        // A 1 MANA store mint at $0.10 a MANA is $0.10: one credit. Bound through a
+        // float, 0.1 is 0.100000000000000006 and the CEIL makes it two.
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let credits = |rate: String| {
+            let pool = pool.clone();
+            async move {
+                let mut b = Builder::new();
+                let rate_p = b.bind_string(rate);
+                b.push(&format!(
+                    "SELECT CEIL(1000000000000000000::numeric * {rate_p}::numeric / {USD_WEI_PER_CREDIT_SQL})::text"
+                ));
+                sqlx::query_scalar_with::<_, String, _>(sqlx::AssertSqlSafe(b.sql), b.args)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap()
+            }
+        };
+        let rate = ManaUsdRate::parse_usd_per_mana("0.1").unwrap();
+        assert_eq!(credits(rate_to_numeric_string(rate)).await, "1");
+        assert_eq!(
+            credits(format!("{:.18}", 0.1_f64)).await,
+            "2",
+            "what the float bind charged"
+        );
     }
 }
