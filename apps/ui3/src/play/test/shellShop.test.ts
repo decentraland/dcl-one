@@ -1277,6 +1277,55 @@ describe('a purchase of several items (the cart)', () => {
     expect(view.step === 'failed' && view.message).toMatch(/^Part of this purchase went through.*failed on-chain.*still in your cart/)
   })
 
+  it('says nothing was bought when no group of it was', async () => {
+    const watched: Record<string, GroupResult> = {}
+    const t = setup({
+      items: ITEMS,
+      offers: mixed,
+      resolvers: trades,
+      run: async (deps, group) => {
+        if (group.key.call.kind !== 'accept') return { status: 'failed', failure: { kind: 'rejected', message: 'You declined the signature.' }, released: [] }
+        handedOff(deps, group)
+        return { status: 'pending', txHash: TX }
+      },
+      watch: async (_deps, progress) => watched[progress.key.call.kind] ?? { status: 'pending', txHash: TX }
+    })
+    await t.checkout('7', '8')
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    // The second group was declined while the first is still out: in progress until it ends.
+    await t.until('pending')
+    await vi.waitFor(() => expect(t.watch).toHaveBeenCalled())
+    watched.accept = { status: 'failed', failure: { kind: 'reverted', message: 'reverted' }, released: [] }
+    const { view } = await t.until('failed')
+    expect(view.step === 'failed' && view.message).toBe('None of its transactions went through: nothing was bought. Everything is still in your cart.')
+  })
+
+  it('stops when a later group can’t be kept to this tab', async () => {
+    let claims = 0
+    const t = setup({ items: ITEMS, offers: mixed, resolvers: trades, claim: async () => (++claims === 2 ? null : () => {}) })
+    await t.checkout('7', '8')
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    const { view } = await t.until('failed')
+    expect(view.step === 'failed' && view.message).toMatch(/^Part of this purchase went through.*couldn't keep the rest of the purchase to this tab/)
+    expect(t.run).toHaveBeenCalledTimes(1)
+    expect(t.events.filter((e) => e.state === 'cancelled').map((e) => e.items.map((i) => i.itemId))).toEqual([['8']])
+  })
+
+  it('asks for the Credits missing for the whole cart when its first group finds the balance short', async () => {
+    const t = setup({
+      items: ITEMS,
+      offers: mixed,
+      resolvers: trades,
+      run: async () => ({ status: 'failed', failure: { kind: 'refused', message: 'Your Credits balance does not cover this group.' }, released: [], topUp: { requiredCents: 900, balanceCents: 10 } })
+    })
+    await t.checkout('7', '8')
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    const { view } = await t.until('insufficient')
+    expect(view).toMatchObject({ step: 'insufficient', balance: 1 })
+    expect(view.step === 'insufficient' && view.items.map((i) => i.name)).toEqual(['Golden Armour', 'Silver Boots'])
+    expect(t.run).toHaveBeenCalledTimes(1)
+  })
+
   it('names the buyer on every operation it reports', async () => {
     const t = setup({ items: ITEMS, offers: mixed, resolvers: trades })
     await t.checkout('7', '8')

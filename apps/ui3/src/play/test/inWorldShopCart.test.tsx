@@ -2,7 +2,7 @@
 // the cart popover, CHECKOUT asking the shell to buy the cart (the shell, faked here, owns the dialog), and
 // what a purchase takes out of the cart.
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -62,9 +62,9 @@ function serveCatalogue(): void {
   )
 }
 
-function answerShell(): void {
+function answerShell(capabilities: Record<string, unknown> = { v: 1, buyer: BUYER, wallet: 'managed', credits: true }): void {
   shell.request.mockImplementation(async (method: string) => {
-    if (method === 'shop.capabilities') return { v: 1, buyer: BUYER, wallet: 'managed', credits: true }
+    if (method === 'shop.capabilities') return capabilities
     if (method === 'shop.balance') return { v: 1, credits: 7000 }
     if (method === 'shop.buy') return { v: 1, operation: 'op', state: 'reviewing', items: [{ contract: CONTRACT, itemId: '1', quantity: 1 }] }
     if (method === 'shop.status') return []
@@ -144,6 +144,23 @@ describe('the in-world Shop’s cart', () => {
     await userEvent.click(within(cart).getAllByRole('button', { name: 'Remove Golden Armor' })[0])
     expect(within(cart).getByText('Your cart is empty.')).toBeInTheDocument()
     expect(within(cart).getByRole('button', { name: 'Checkout' })).toBeDisabled()
+  })
+
+  it('keeps a guest’s cart for the account that signs in', async () => {
+    serveCatalogue()
+    // A guest login: the shell names its ephemeral account, which is no one's cart.
+    answerShell({ v: 1, buyer: '0x' + '55'.repeat(20), wallet: null, credits: false, reason: 'guest' })
+    renderShop()
+    await addFromPanel(2)
+    await waitFor(() => expect(cartButton()).toHaveAccessibleName('Cart, 2 items'))
+    cleanup()
+    // Signed in (the app loads again for the account).
+    answerShell()
+    renderShop()
+    await waitFor(() => expect(cartButton()).toHaveAccessibleName('Cart, 2 items'))
+    await waitFor(() => expect(localStorage.getItem(`dcl-inworld-shop:cart:v2:${BUYER}`) ?? '').toContain('Golden Armor'))
+    expect(localStorage.getItem('dcl-inworld-shop:cart:v2:guest')).toBeNull()
+    expect(localStorage.getItem(`dcl-inworld-shop:cart:v2:${'0x' + '55'.repeat(20)}`)).toBeNull()
   })
 
   it('closes on Escape (the HUD’s cancel, which the engine sends) and on a press anywhere else', async () => {

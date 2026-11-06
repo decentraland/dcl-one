@@ -153,7 +153,8 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   const capabilities = useShopCapabilities()
   const credits = useCreditsBalance(shop.open ? (capabilities?.buyer ?? null) : null)
   const purchase = useShopPurchase(() => onNavigate('backpack'))
-  const cart = useInWorldCart(capabilities?.buyer ?? null)
+  // A guest login's cart is the signed-out one, which the account takes over once one signs in.
+  const cart = useInWorldCart(capabilities?.reason === 'guest' ? null : (capabilities?.buyer ?? null))
   // Escape closes the cart first, and so does a press anywhere else.
   useEffect(() => {
     if (!cartOpen) return

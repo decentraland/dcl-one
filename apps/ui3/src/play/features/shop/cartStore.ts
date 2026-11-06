@@ -12,7 +12,9 @@
 // event, the shell's status after a reload). The cart and the operations already taken out of it are one
 // record per account, written whole in one go: a write that sticks keeps both, one that doesn't keeps
 // neither, so a replay after a reload takes the purchase out exactly once either way. Within the page, the
-// record a write couldn't keep is the one in memory.
+// record a write couldn't keep is the one in memory. Every change starts from the record as storage holds
+// it now, so a tab never writes over another tab's edit; another tab's write to the active account's
+// record is also read again as it lands (the `storage` event), so what is drawn follows it.
 
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
 import { cardPrice } from '../../../shop/discovery/cardPrice'
@@ -119,11 +121,21 @@ export interface InWorldCart {
    * each item as it bought. Once per operation; a repeat changes nothing.
    */
   applyPurchase(buyer: string, operation: string, items: readonly ShopLine[]): void
-  /** Whether one more unit of the item fits. */
+  /** Whether one more unit of the item fits, against `item.available` (the stock as the caller reads it now). */
   canAdd(item: Pick<InWorldCartLine, 'contract' | 'itemId' | 'available'>): boolean
 }
 
-export function createInWorldCart(opts: { storage?: () => CartStorage | null; now?: () => number } = {}): InWorldCart {
+/** Calls back with the storage key another tab wrote (null: it cleared storage); returns the unsubscribe. */
+export type StorageWatch = (onChange: (key: string | null) => void) => () => void
+
+const windowStorageEvents: StorageWatch = (onChange) => {
+  if (typeof window === 'undefined') return () => {}
+  const listener = (e: StorageEvent): void => onChange(e.key)
+  window.addEventListener('storage', listener)
+  return () => window.removeEventListener('storage', listener)
+}
+
+export function createInWorldCart(opts: { storage?: () => CartStorage | null; now?: () => number; watch?: StorageWatch } = {}): InWorldCart {
   const storage = opts.storage ?? defaultStorage
   const now = opts.now ?? Date.now
   const listeners = new Set<() => void>()
@@ -134,21 +146,33 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
   const memory = new Map<string, CartRecord>()
   /** Records whose last write didn't stick: memory, not storage, holds them now. */
   const unsaved = new Set<string>()
+  /** What storage held for each record when this page last read or wrote it: unchanged, the same record. */
+  const seen = new Map<string, string | null>()
 
+  /** The record as storage holds it, when storage works and holds this page's last write of it; else memory's. */
   const read = (who: string | null): CartRecord => {
     const key = keyOf(who)
     if (unsaved.has(key)) return memory.get(key) ?? EMPTY
+    let raw: string | null
     try {
-      const raw = storage()?.getItem(key)
-      if (raw != null) {
-        const record = parseRecord(raw) ?? EMPTY
-        memory.set(key, record)
-        return record
-      }
+      const s = storage()
+      if (!s) return memory.get(key) ?? EMPTY
+      raw = s.getItem(key)
     } catch {
       // Unreadable: what this page knows of it.
+      return memory.get(key) ?? EMPTY
     }
-    return memory.get(key) ?? EMPTY
+    const known = memory.get(key)
+    if (known && seen.has(key) && seen.get(key) === raw) return known
+    let record = EMPTY
+    try {
+      record = raw == null ? EMPTY : (parseRecord(raw) ?? EMPTY)
+    } catch {
+      // Not this page's shape: an empty cart.
+    }
+    memory.set(key, record)
+    seen.set(key, raw)
+    return record
   }
   /** The whole record, in one write. */
   const write = (who: string | null, next: CartRecord): void => {
@@ -157,14 +181,22 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
     try {
       const s = storage()
       if (!s) throw new Error('no storage')
-      if (next.lines.length === 0 && next.applied.length === 0) s.removeItem(key)
-      else s.setItem(key, JSON.stringify({ v: RECORD_VERSION, lines: next.lines, applied: next.applied }))
+      if (next.lines.length === 0 && next.applied.length === 0) {
+        s.removeItem(key)
+        seen.set(key, null)
+      } else {
+        const raw = JSON.stringify({ v: RECORD_VERSION, lines: next.lines, applied: next.applied })
+        s.setItem(key, raw)
+        seen.set(key, raw)
+      }
       unsaved.delete(key)
     } catch {
       // Storage refused: the record stays in memory for the page's life.
       unsaved.add(key)
     }
   }
+  /** The active account's record as it stands now (another tab may have written it). */
+  const fresh = (): CartRecord => (current = read(account))
   const commit = (lines: readonly InWorldCartLine[]): void => {
     current = { lines, applied: current.applied }
     write(account, current)
@@ -172,6 +204,16 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
   }
 
   current = read(null)
+
+  // Another tab wrote: the active account's record is read again; any other is read when next needed.
+  ;(opts.watch ?? windowStorageEvents)((key) => {
+    if (key !== null && !key.startsWith(KEY_PREFIX)) return
+    const mine = keyOf(account)
+    for (const k of key === null ? [...unsaved] : [key]) unsaved.delete(k)
+    if (key !== null && key !== mine) return
+    current = read(account)
+    listeners.forEach((l) => l())
+  })
 
   const cart: InWorldCart = {
     getSnapshot: () => current.lines,
@@ -206,15 +248,15 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
       listeners.forEach((l) => l())
     },
     canAdd(item) {
-      const { lines } = current
+      const { lines } = fresh()
       const line = lines.find((l) => sameItem(l, item))
       const others = cartUnits(lines) - (line?.quantity ?? 0)
-      return (line?.quantity ?? 0) + 1 <= capFor(line ?? item, others)
+      return (line?.quantity ?? 0) + 1 <= capFor(item, others)
     },
     add(input) {
       const item = { ...input, contract: input.contract.toLowerCase() }
       if (!cart.canAdd(item)) return false
-      const { lines } = current
+      const { lines } = fresh()
       const at = lines.findIndex((l) => sameItem(l, item))
       if (at >= 0) {
         const next = [...lines]
@@ -225,7 +267,7 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
       return true
     },
     setQuantity(item, quantity) {
-      const { lines } = current
+      const { lines } = fresh()
       const at = lines.findIndex((l) => sameItem(l, item))
       if (at < 0) return
       const line = lines[at]
@@ -236,12 +278,12 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
       commit(next)
     },
     remove(item) {
-      const { lines } = current
+      const { lines } = fresh()
       if (lines.some((l) => sameItem(l, item))) commit(lines.filter((l) => !sameItem(l, item)))
     },
     applyPurchase(buyer, operation, items) {
       const who = buyer.toLowerCase()
-      const mine = who === account ? current : read(who)
+      const mine = who === account ? fresh() : read(who)
       if (mine.applied.includes(operation)) return
       // What it bought and that it was taken out, together: one record, one write.
       const next: CartRecord = {

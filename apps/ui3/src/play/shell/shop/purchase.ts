@@ -320,8 +320,8 @@ interface Checkout {
   /** How many groups it has: fewer operations than that, and the rest never started. */
   parts: number
   cart: boolean
-  /** The first reason something of it wasn't bought. */
-  failure?: string
+  /** Why each part of it that wasn't bought wasn't, in the order they ended. */
+  failures: string[]
 }
 
 /** An operation and, while its dialog is up, what it shows. */
@@ -450,7 +450,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     move(op, state, extra)
     const co = op.checkout
     if (co) {
-      if (state !== 'succeeded') co.failure ??= message ?? NOT_BOUGHT
+      if (state !== 'succeeded') co.failures.push(message ?? NOT_BOUGHT)
       if (dialog?.checkout === co && !running) presentCheckout(co)
       return
     }
@@ -472,12 +472,18 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       return
     }
     const bought = co.ops.filter((o) => o.state === 'succeeded').length
-    if (co.failure == null && co.ops.length === co.parts && bought === co.ops.length) {
+    if (co.failures.length === 0 && co.ops.length === co.parts && bought === co.ops.length) {
       showSuccess(anchor, co.displays)
       return
     }
-    const why = co.failure ?? NOT_BOUGHT
-    show(anchor, { step: 'failed', message: bought > 0 ? partly(why, co.cart) : why, retry: false }, { onClose: () => hide(anchor) })
+    // One reason is said as it is; several, as what they add up to.
+    const message =
+      bought === 0
+        ? co.failures.length === 1
+          ? co.failures[0]
+          : `None of its transactions went through: nothing was bought.${co.cart ? ' Everything is still in your cart.' : ''}`
+        : partly(co.failures.length === 1 ? co.failures[0] : 'more than one of its transactions didn’t go through.', co.cart)
+    show(anchor, { step: 'failed', message, retry: false }, { onClose: () => hide(anchor) })
   }
 
   /**
@@ -915,7 +921,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     }
     running = true
     // Several groups show as one checkout; one group is its own operation's dialog, as ever.
-    const co: Checkout | undefined = quote.parts.length > 1 ? { ops: [], displays: quote.items, parts: quote.parts.length, cart: req.cart === true } : undefined
+    const co: Checkout | undefined = quote.parts.length > 1 ? { ops: [], displays: quote.items, parts: quote.parts.length, cart: req.cart === true, failures: [] } : undefined
     // Followed only once the checkout's dialog is up: a watch that settles at once then updates it.
     const follow: Operation[] = []
     try {
@@ -935,7 +941,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         last = run
         // A later group's own lock (the first one's was checked when it opened).
         if (i > 0 && !run.release) {
-          co!.failure ??= "This browser couldn't keep the rest of the purchase to this tab."
+          co!.failures.push("This browser couldn't keep the rest of the purchase to this tab.")
           move(run, 'cancelled')
           break
         }
@@ -944,7 +950,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         if (outcome.kind !== 'failed') continue
         if (i > 0) {
           // Nothing of this group went out; what came before stands, and what comes after never starts.
-          co!.failure ??= outcome.message
+          co!.failures.push(outcome.message)
           move(run, 'failed')
           break
         }

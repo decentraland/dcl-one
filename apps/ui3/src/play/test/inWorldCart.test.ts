@@ -24,7 +24,8 @@ function storage(): CartStorage & { map: Map<string, string> } {
 
 describe('the in-world cart', () => {
   it('keeps an item once, one more of it each time it is added', () => {
-    const cart = createInWorldCart({ storage: storage })
+    const s = storage()
+    const cart = createInWorldCart({ storage: () => s })
     cart.scopeTo(A)
     expect(cart.add(item('1'))).toBe(true)
     expect(cart.add(item('1'))).toBe(true)
@@ -33,7 +34,8 @@ describe('the in-world cart', () => {
   })
 
   it('takes no more of an item than is left of it, nor more units than one purchase buys', () => {
-    const cart = createInWorldCart({ storage: storage })
+    const s = storage()
+    const cart = createInWorldCart({ storage: () => s })
     cart.scopeTo(A)
     expect(cart.add(item('1', { available: 1 }))).toBe(true)
     expect(cart.add(item('1', { available: 1 }))).toBe(false)
@@ -46,8 +48,40 @@ describe('the in-world cart', () => {
     expect(cart.add(item('3'))).toBe(false)
   })
 
+  it('takes one more of an item only if what is left of it now allows', () => {
+    const s = storage()
+    const cart = createInWorldCart({ storage: () => s })
+    cart.scopeTo(A)
+    cart.add(item('1', { available: 5 }))
+    cart.add(item('1', { available: 5 }))
+    // The listing now says one is left: the cart's two are already more than that.
+    expect(cart.canAdd(item('1', { available: 1 }))).toBe(false)
+    expect(cart.add(item('1', { available: 1 }))).toBe(false)
+    expect(cart.getSnapshot()[0].quantity).toBe(2)
+  })
+
+  it('reads another tab’s write to the account’s cart as it lands, so neither tab undoes the other', () => {
+    const s = storage()
+    const listeners: Array<(key: string | null) => void> = []
+    const watch = (onChange: (key: string | null) => void) => (listeners.push(onChange), () => {})
+    const tabA = createInWorldCart({ storage: () => s, watch })
+    const tabB = createInWorldCart({ storage: () => s, watch })
+    tabA.scopeTo(A)
+    tabB.scopeTo(A)
+    tabA.add(item('1'))
+    tabB.add(item('2'))
+    // The browser tells the other tab which key changed.
+    for (const l of listeners) l(`dcl-inworld-shop:cart:v2:${A}`)
+    expect(tabA.getSnapshot().map((l) => l.itemId)).toEqual(['1', '2'])
+    tabA.setQuantity(item('1'), 2)
+    const reloaded = createInWorldCart({ storage: () => s, watch })
+    reloaded.scopeTo(A)
+    expect(reloaded.getSnapshot().map((l) => `${l.itemId}x${l.quantity}`)).toEqual(['1x2', '2x1'])
+  })
+
   it('never goes below one of an item, and removes it on its own', () => {
-    const cart = createInWorldCart({ storage: storage })
+    const s = storage()
+    const cart = createInWorldCart({ storage: () => s })
     cart.scopeTo(A)
     cart.add(item('1'))
     cart.setQuantity(item('1'), 0)
@@ -60,7 +94,8 @@ describe('the in-world cart', () => {
   const bought = (itemId: string, quantity = 1) => [{ contract: '0x' + '11'.repeat(20), itemId, quantity }]
 
   it('lets go of as many as a purchase bought, and keeps what was added since', () => {
-    const cart = createInWorldCart({ storage: storage })
+    const s = storage()
+    const cart = createInWorldCart({ storage: () => s })
     cart.scopeTo(A)
     cart.add(item('1'))
     cart.add(item('1'))
