@@ -17,7 +17,7 @@ use axum::extract::{Path, Request, State};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
-use crate::content::queries::active_entity_docs_by_pointers;
+use crate::content::queries::{active_entity_docs_by_pointers, retain_non_denylisted};
 use crate::shared::http_util::fetcher_error;
 use crate::shared::query_params::{
     JsPagination, MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy, Pagination, QueryParams,
@@ -215,9 +215,10 @@ async fn entities_by_pointer(
     if pointers.is_empty() {
         return by_pointer;
     }
-    let docs = active_entity_docs_by_pointers(&state.pool, pointers)
+    let mut docs = active_entity_docs_by_pointers(&state.pool, pointers)
         .await
         .unwrap_or_default();
+    retain_non_denylisted(&mut docs, &state.denylist);
     for ent in docs.iter().filter_map(|d| d.to_value()) {
         if let Some(ptrs) = ent.get("pointers").and_then(|p| p.as_array()) {
             for p in ptrs.iter().filter_map(Value::as_str) {

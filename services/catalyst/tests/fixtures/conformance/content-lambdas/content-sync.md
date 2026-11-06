@@ -261,7 +261,9 @@ dcl-one `wire_types.rs:20-37`, `queries.rs:571-596`):
 ### Data dependency
 
 - The `content.deployments` and `content.content_files` rows that the peer sync writes
-  (`content/src/sync/*`), plus the operator denylist.
+  (`content/src/sync/*`), plus the denylist: the operator's `content.denylist` and the remote lists of
+  `DENYLIST_URLS` (Decentraland's ABR `GET /denylist` under `NODE_POSTURE=mirror`, as upstream's default),
+  fetched at boot and every 120 s (`content/src/denylist.rs`).
 - dcl-one has all of these.
 - Row and `localTimestamp` values differ per node by design (each node stamps its own
   `local_timestamp`).
@@ -359,7 +361,8 @@ Logic: `decentraland/catalyst:src/logic/deployments/component.ts:381-420`.
 
 ### Data dependency
 
-- `content.deployments`, the denylist, and `content.local_entities` (dcl-one only).
+- `content.deployments`, the denylist (`content.denylist` and the `DENYLIST_URLS` lists, as for
+  `/deployments`), and `content.local_entities` (dcl-one only).
 - An upstream peer that syncs from dcl-one reads `entityId`, `entityType`, `pointers`,
   `entityTimestamp`, `localTimestamp` and `authChain` from each delta. dcl-one serves all of them.
 

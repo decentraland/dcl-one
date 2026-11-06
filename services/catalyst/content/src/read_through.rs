@@ -477,8 +477,9 @@ impl ReadThrough {
     }
 
     /// The active entities for `values` (ids, or pointers), as the local lookup answers them
-    /// once the misses have been filled. Denylisted ids and pointers are never asked for; the
-    /// caller still filters the answer.
+    /// once the misses have been filled, without the denylisted ones. Denylisted ids and
+    /// pointers are never asked for, and a pointer whose active entity is listed counts as
+    /// answered: hidden, not missing.
     pub async fn active_docs(
         &self,
         use_ids: bool,
@@ -497,9 +498,11 @@ impl ReadThrough {
         wait: Duration,
     ) -> Result<Vec<EntityDoc>, sqlx::Error> {
         let pool = &self.upstream.pool;
-        let docs = local_docs(pool, use_ids, values).await?;
-        let missing = missing_values(use_ids, values, &docs, self.upstream.storage.denylist());
+        let denylist = self.upstream.storage.denylist();
+        let mut docs = local_docs(pool, use_ids, values).await?;
+        let missing = missing_values(use_ids, values, &docs, denylist);
         if missing.is_empty() {
+            queries::retain_non_denylisted(&mut docs, denylist);
             return Ok(docs);
         }
         let prefix = if use_ids { ID_KEY } else { POINTER_KEY };
@@ -515,10 +518,11 @@ impl ReadThrough {
                 upstream.fill_entities(use_ids, values).await;
             })
             .await;
-        if !filled {
-            return Ok(docs);
+        if filled {
+            docs = local_docs(pool, use_ids, values).await?;
         }
-        local_docs(pool, use_ids, values).await
+        queries::retain_non_denylisted(&mut docs, denylist);
+        Ok(docs)
     }
 
     /// Fetches a content file this node does not hold; `true` when the caller should look

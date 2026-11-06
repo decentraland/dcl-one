@@ -159,9 +159,10 @@ pub fn store_from_entity(owner: &str, entity: &Value, content_public_url: &str) 
 }
 
 pub async fn read_store(state: &MarketplaceState, owner: &str) -> Result<Store, ApiError> {
-    let docs =
+    let mut docs =
         crate::content::queries::active_entity_docs_by_pointers(&state.pool, &[store_urn(owner)])
             .await?;
+    crate::content::queries::retain_non_denylisted(&mut docs, &state.denylist);
     let Some(doc) = docs.into_iter().next() else {
         return Ok(Store::empty(owner));
     };
