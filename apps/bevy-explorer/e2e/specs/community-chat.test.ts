@@ -5,15 +5,16 @@
 // from one client). The automation account must be a member of a community whose card is in the
 // browse grid (a card ending in `View`); otherwise the scenario reports that and stops.
 import assert from 'node:assert/strict'
-import { settled, spec, until, type Explorer } from '../driver/index.ts'
-import { closePage, openWithKey } from './pages.ts'
+import { spec, until, type Explorer } from '../driver/index.ts'
+import { cardSelector, closePage, openWithKey, withoutInitial } from './pages.ts'
 
 const scenario = spec(import.meta.url)
 
 const CONTROL_TIMEOUT_MS = 20_000
 const TEXT_TIMEOUT_MS = 10_000
-const SEND_ATTEMPTS = 3
-const SEND_ATTEMPT_MS = 3000
+/** The most a sent message is given to reach the engine's community counters: a ceiling, the wait
+ *  ends when it is counted. */
+const SEND_TIMEOUT_MS = 10_000
 
 const DETAIL = { name: 'Community sections', role: 'tablist' } as const
 const OPEN_CHAT = { name: 'Open chat', role: 'button' } as const
@@ -24,16 +25,17 @@ const INPUT_IDLE = { name: 'Press Enter to chat', role: 'textbox' } as const
 /** A member's card ends in View; a card the player could join ends in Join. */
 const MEMBER_CARD = /\s*Public\s*·\s*\d+\s*Members\s+View$/
 
+/** The member cards' names, without the initial a cover shows for an image that did not load. */
 async function memberCards(explorer: Explorer): Promise<string[]> {
   const buttons = await explorer.hud.list('button')
-  return buttons.map((button) => button.name).filter((name) => MEMBER_CARD.test(name))
+  return buttons.map((button) => button.name).filter((name) => MEMBER_CARD.test(name)).map(withoutInitial)
 }
 
-/** The member cards once the live list has arrived and stopped changing; none when the account
- *  is in no listed community. */
+/** The member cards once the communities list has arrived (the engine sends it whole, in one
+ *  message); none when the account is in no listed community. */
 async function waitForMemberCards(explorer: Explorer): Promise<string[]> {
   await until(() => explorer.hud.list('button'), (buttons) => buttons.some((b) => /Members\s+(?:Join|View)$/.test(b.name)), { timeoutMs: CONTROL_TIMEOUT_MS, what: 'the community cards to load' })
-  return settled(() => memberCards(explorer), { timeoutMs: TEXT_TIMEOUT_MS, intervalMs: 500, what: 'the member cards to stop changing' })
+  return memberCards(explorer)
 }
 
 scenario("a member's community card opens its chat, whose tab and title bar name the community, and a message sent there is a community message", async ({ explorer }) => {
@@ -44,7 +46,7 @@ scenario("a member's community card opens its chat, whose tab and title bar name
     assert.fail('the automation account is a member of no community in the browse grid (no card ends in View), so community chat cannot be exercised')
   }
   const card = cards[0]!
-  const target = await explorer.hud.wait({ name: card, role: 'button' }, { state: 'actionable', timeoutMs: TEXT_TIMEOUT_MS })
+  const target = await explorer.hud.wait(cardSelector(card), { state: 'actionable', timeoutMs: TEXT_TIMEOUT_MS })
   assert.ok(target.found, `"${card}" was not found`)
   await explorer.clickAt(target.x + target.width / 2, target.y + Math.min(24, target.height / 4))
   await explorer.hud.wait(DETAIL, { timeoutMs: TEXT_TIMEOUT_MS })
@@ -70,14 +72,12 @@ scenario("a member's community card opens its chat, whose tab and title bar name
   const typed = await explorer.hud.fill((await explorer.hud.isVisible(INPUT_FOCUSED)) ? INPUT_FOCUSED : INPUT_IDLE, text)
   assert.equal(typed.value, text, 'the chat input should hold the typed message')
   const before = state.sent ?? 0
-  let sent: number | undefined
-  for (let attempt = 0; attempt < SEND_ATTEMPTS && sent === undefined; attempt++) {
-    await explorer.key('Enter')
-    sent = await until(() => explorer.communityState(), (read) => (read.sent ?? 0) > before, { timeoutMs: SEND_ATTEMPT_MS, what: 'the community message to be sent' })
-      .then((read) => read.sent)
-      .catch(() => undefined)
-  }
-  assert.ok(sent !== undefined && sent > before, `the community message was not sent after ${SEND_ATTEMPTS} attempts`)
+  // the fill returned once the input had the keyboard, so the Enter is the input's: it empties as
+  // the HUD hands the message to the engine
+  await explorer.key('Enter')
+  const value = async (): Promise<string | undefined> => ((await explorer.hud.find(INPUT_FOCUSED)) ?? (await explorer.hud.find(INPUT_IDLE)))?.value
+  await until(value, (held) => held === '', { timeoutMs: TEXT_TIMEOUT_MS, what: 'the chat input to empty as it sends the community message' })
+  await until(() => explorer.communityState(), (read) => (read.sent ?? 0) > before, { timeoutMs: SEND_TIMEOUT_MS, what: 'the community message to be sent' })
   // and the engine stored it under the community's channel
   const channel = state.channels.map((id) => `community:${id}`)
   const stored = await Promise.all(channel.map((c) => explorer.dmHistory(c, 5)))

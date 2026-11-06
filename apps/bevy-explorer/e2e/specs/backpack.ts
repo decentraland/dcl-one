@@ -13,11 +13,16 @@
 //   commitAvatar, bridge-scene avatarDraft.ts), and only if the net look differs from the deployed
 //   one. So the engine's profile version and `/avatar_state` grow after the close, not after the
 //   press: `commitBackpack` closes the page and waits for the version.
-import { TimeoutError, sameBox, settled, until, type AvatarReport, type Control, type Explorer, type HudEntry, type Selector } from '../driver/index.ts'
+import { until, type AvatarReport, type Control, type Explorer, type HudEntry, type Selector } from '../driver/index.ts'
 import { closePage, openWithKey } from './pages.ts'
 
 /** One grid page: the catalogue's shared budget (the catalogue can still be arriving). */
 export const GRID_TIMEOUT_MS = 90_000
+/** The wearables grid, which says it is loading (`aria-busy`) while its newest query is in flight
+ *  or the search box waits out its debounce: its cards are the current page once it is ready. */
+export const CATALOG: Selector = { name: 'Catalog', role: 'region' }
+/** The Saved Outfits slots, loading until the saved outfits arrive: before, every slot reads empty. */
+export const SAVED_OUTFITS: Selector = { name: 'Saved outfits', role: 'region' }
 /** An equip taking effect in the HUD. */
 export const EQUIP_TIMEOUT_MS = 8_000
 /** What the engine renders after a look change (the catalogue's thumbnail budget). */
@@ -182,16 +187,17 @@ export async function selectEmoteSlot(explorer: Explorer, slot: number): Promise
   return target
 }
 
-/** Wait for the grid to show cards, then for two reads to agree: the catalogue keeps arriving and
- *  re-sorting, and a filter change leaves the old page up until the new one loads. */
+/** The grid's cards once they are the current page: the wearables grid (`CATALOG`) once it is no
+ *  longer loading; the emote list arrives whole, in one message, so its cards are final once there
+ *  are any. */
 export async function waitForCards(explorer: Explorer, find: CardFinder, timeoutMs = GRID_TIMEOUT_MS): Promise<Card[]> {
-  await until(() => find(explorer), (cards) => cards.length > 0, { timeoutMs, what: 'the Backpack grid to show items' })
-  return settled(() => find(explorer), {
-    timeoutMs: 15_000,
-    intervalMs: 500,
-    what: 'the Backpack grid to stop changing',
-    same: (a, b) => a.map((card) => card.name).join('\n') === b.map((card) => card.name).join('\n')
-  })
+  await catalogReady(explorer, timeoutMs)
+  return until(() => find(explorer), (cards) => cards.length > 0, { timeoutMs, what: 'the Backpack grid to show items' })
+}
+
+/** The wearables grid's newest page shown, when the grid is on screen (the Emotes tab has none). */
+async function catalogReady(explorer: Explorer, timeoutMs = GRID_TIMEOUT_MS): Promise<void> {
+  if (await explorer.hud.isVisible(CATALOG)) await explorer.hud.waitReady(CATALOG, timeoutMs)
 }
 
 export function sameCards(a: Card[], b: Card[]): boolean {
@@ -246,33 +252,32 @@ export async function pointAtCard(explorer: Explorer, selector: Selector): Promi
   return control
 }
 
-const sameAction = (a: CardAction | undefined, b: CardAction | undefined): boolean =>
-  a !== undefined && b !== undefined && a.label === b.label && JSON.stringify(a.selector) === JSON.stringify(b.selector) && sameBox(a.control, b.control)
+/** The button a wearable or emote card offers, as its own text says: the button is inside the
+ *  card, scaled to nothing until the pointer is on it. None for an incompatible item or an
+ *  equipped one of a required category. */
+function offered(card: Control): CardAction['label'] | undefined {
+  if (/\bUNEQUIP\b/.test(card.text)) return 'UNEQUIP'
+  if (/\bEQUIP\b/.test(card.text)) return 'EQUIP'
+  return undefined
+}
 
 /** Put the pointer on a card (a real click: it selects the card) and read the button it reveals,
- *  once it has grown in: for 100 ms (WearableCard's `--dur-tap`) the last card's button shrinks
- *  away beside it, still counted among the buttons of that name, so the index that names this one
- *  holds only once two reads agree. */
-export async function hoverCard(explorer: Explorer, card: Card, labels: readonly string[] = ['EQUIP', 'UNEQUIP']): Promise<Hovered> {
+ *  once it has grown in: the HUD counts a button as actionable only when it no longer moves, so
+ *  the previous card's, shrinking away, never answers for this one. `expected` names the button of
+ *  a card that keeps it outside itself (a saved outfit); otherwise the card's text says which. */
+export async function hoverCard(
+  explorer: Explorer,
+  card: Card,
+  labels: readonly string[] = ['EQUIP', 'UNEQUIP'],
+  expected?: CardAction['label']
+): Promise<Hovered> {
   const control = await pointAtCard(explorer, card.selector)
-  try {
-    await until(() => actionOver(explorer, control, labels), (found) => found !== undefined, {
-      timeoutMs: HOVER_TIMEOUT_MS,
-      intervalMs: 200,
-      what: `a ${labels.join(' or ')} button over "${card.name}"`
-    })
-  } catch (error) {
-    // no button: an incompatible item, or an equipped one of a required category
-    if (error instanceof TimeoutError) return { control, action: undefined }
-    throw error
-  }
-  // a button that shows but never holds still is an error, not a card without one
-  const action = await settled(() => actionOver(explorer, control, labels), {
+  const label = expected ?? offered(control)
+  if (label === undefined || !labels.includes(label)) return { control, action: undefined }
+  const action = await until(() => actionOver(explorer, control, [label]), (found) => found !== undefined, {
     timeoutMs: HOVER_TIMEOUT_MS,
-    intervalMs: 150,
-    what: `the button over "${card.name}" to hold still`,
-    same: sameAction,
-    strict: true
+    intervalMs: 100,
+    what: `the ${label} button over "${card.name}"`
   })
   return { control, action }
 }
@@ -334,11 +339,13 @@ export function renderedUrn(avatar: AvatarReport, category: string): string | un
 
 export type BackpackView = 'wearables' | 'emotes' | 'outfits'
 
-/** Make the search field empty (it persists across closes) and check the typing left it so. */
+/** Type a search (it persists across closes), check the typing left it so, and wait for the grid to
+ *  answer it: the wearables grid queries the catalyst once the box's debounce runs out, the emotes
+ *  filter at once. */
 export async function searchFor(explorer: Explorer, text: string): Promise<void> {
-  await explorer.hud.wait(SEARCH, { state: 'actionable', timeoutMs: CONTROL_TIMEOUT_MS })
   const field = await explorer.hud.fill(SEARCH, text)
   if (field.value !== text) throw new Error(`the search field holds "${field.value ?? ''}" after typing "${text}"`)
+  await catalogReady(explorer)
 }
 
 export async function pagerVisible(explorer: Explorer): Promise<boolean> {
@@ -348,6 +355,7 @@ export async function pagerVisible(explorer: Explorer): Promise<boolean> {
 /** Back to the first page when the pager is up (the page persists across closes). */
 async function firstPage(explorer: Explorer): Promise<void> {
   if (await pagerVisible(explorer)) await explorer.hud.click({ name: '1', role: 'button' })
+  await catalogReady(explorer)
 }
 
 const OUTFIT_EMPTY = /^Save outfit in slot (\d+)$/
@@ -365,10 +373,10 @@ export async function outfitSlots(explorer: Explorer): Promise<[number, boolean]
   return slots.sort(([a], [b]) => a - b)
 }
 
-/** The slots once they have loaded (they show empty until the saved outfits arrive) and stopped changing. */
+/** The slots once the saved outfits have arrived: until then every slot reads empty. */
 export async function waitForOutfitSlots(explorer: Explorer, timeoutMs = 20_000): Promise<[number, boolean][]> {
-  await until(() => outfitSlots(explorer), (slots) => slots.length >= 5, { timeoutMs, what: 'the Saved Outfits slots' })
-  return settled(() => outfitSlots(explorer), { timeoutMs: 10_000, intervalMs: 1_500, what: 'the Saved Outfits slots to stop changing' })
+  await explorer.hud.waitReady(SAVED_OUTFITS, timeoutMs)
+  return until(() => outfitSlots(explorer), (slots) => slots.length >= 5, { timeoutMs, what: 'the Saved Outfits slots' })
 }
 
 /** The Wearables categories with no category filter, no search and the first page, loaded. The
@@ -411,61 +419,28 @@ export async function openBackpack(explorer: Explorer, view: BackpackView): Prom
 export async function showCategory(explorer: Explorer, category: Category): Promise<Card[]> {
   const tile: Selector = { name: category, role: 'button', index: 0 }
   const control = await explorer.hud.get(tile)
-  if (control.checked !== true) {
-    const before = await wearableCards(explorer)
-    await explorer.hud.click(tile)
-    await until(() => wearableCards(explorer), (cards) => cards.length > 0 && !sameCards(cards, before), {
-      timeoutMs: GRID_TIMEOUT_MS,
-      what: `the grid to show ${category} items`
-    })
-  }
+  if (control.checked !== true) await explorer.hud.click(tile)
   await explorer.hud.wait({ name: `Clear ${category}`, role: 'button' }, { timeoutMs: CONTROL_TIMEOUT_MS })
   return waitForCards(explorer, wearableCards)
 }
 
 // --- paging -----------------------------------------------------------------------------------
 
-/** The name of the grid's first card once two reads a second apart agree. */
-export async function stableFirstCard(explorer: Explorer, find: CardFinder, timeoutMs = 40_000): Promise<string> {
-  let previous: string | undefined
-  const agreed = await until(
-    async () => {
-      const first = (await find(explorer))[0]?.name
-      const same = first !== undefined && first === previous ? first : undefined
-      previous = first
-      return same
-    },
-    (name) => name !== undefined,
-    { timeoutMs, intervalMs: 1_000, what: "the grid's first card to stop changing" }
-  )
-  if (agreed === undefined) throw new Error('the first card never settled')
-  return agreed
+/** The name of the grid's first card, once the grid shows its current page. */
+export async function firstCard(explorer: Explorer, find: CardFinder): Promise<string> {
+  return (await waitForCards(explorer, find))[0]!.name
 }
 
-/** The grid's next page, loaded: the pager's arrow, then the cards once they changed and settled. */
+/** The grid's next page, loaded: the pager's arrow, then the cards once the grid shows that page. */
 export async function nextPage(explorer: Explorer, find: CardFinder): Promise<Card[]> {
-  const before = await find(explorer)
   await explorer.hud.click({ name: 'Next page', role: 'button' })
-  await until(() => find(explorer), (cards) => cards.length > 0 && !sameCards(cards, before), {
-    timeoutMs: GRID_TIMEOUT_MS,
-    what: 'the next page of the grid'
-  })
   return waitForCards(explorer, find)
 }
 
-/** Press a pager arrow, give the first card up to 12 s to leave `from`, and return where it settles. */
-export async function flipPage(explorer: Explorer, arrow: 'Next page' | 'Previous page', find: CardFinder, from: string): Promise<string> {
+/** Press a pager arrow and return the first card of the page it shows once loaded. */
+export async function flipPage(explorer: Explorer, arrow: 'Next page' | 'Previous page', find: CardFinder): Promise<string> {
   await explorer.hud.click({ name: arrow, role: 'button' })
-  try {
-    await until(async () => (await find(explorer))[0]?.name, (first) => first !== undefined && first !== from, {
-      timeoutMs: 12_000,
-      intervalMs: 500,
-      what: `the first card to change from "${from}"`
-    })
-  } catch (error) {
-    if (!(error instanceof TimeoutError)) throw error
-  }
-  return stableFirstCard(explorer, find)
+  return firstCard(explorer, find)
 }
 
 // --- equipping --------------------------------------------------------------------------------

@@ -5,13 +5,16 @@ import { Explorer } from '../driver/explorer.ts'
 import { CONSOLE_TAIL_LINES, REST_ESCAPES, closeToRest, failureEvidence, specName, withinBudget } from '../driver/harness.ts'
 import { TimeoutError } from '../driver/wait.ts'
 
-const button = (name: string, actionable: boolean, checked = false) =>
-  JSON.stringify({ found: true, role: 'button', name, text: '', disabled: false, visible: true, actionable, checked, x: 0, y: 0, width: 10, height: 10 })
+const button = (name: string, actionable: boolean, checked = false, reason?: string) =>
+  JSON.stringify({ found: true, role: 'button', name, text: '', disabled: false, visible: true, actionable, checked, reason, x: 0, y: 0, width: 10, height: 10 })
 
-/** A HUD that needs `layers` Escapes before the rail takes a click; `typing` keeps the chat input
- *  focused; `panel` names a rail panel, and `popover` the rail's settings popover, open until the
- *  first Escape. */
-function hud(layers: number, options: { typing?: boolean; empty?: boolean; panel?: string; popover?: boolean } = {}): FakeConsole {
+const worldState = (keyboardClaimed: boolean | null) => JSON.stringify({ inWorld: true, arrivals: 1, keyboardClaimed })
+
+/** A HUD with `layers` modals over the rail, one closed per Escape, each listed as a dialog;
+ *  `typing` keeps the chat input focused; `panel` names a rail panel, and `popover` the rail's
+ *  settings popover, open until the first Escape; `claimed` has a field hold the keyboard until
+ *  the first Escape. */
+function hud(layers: number, options: { typing?: boolean; empty?: boolean; panel?: string; popover?: boolean; claimed?: boolean } = {}): FakeConsole {
   let escapes = 0
   return new FakeConsole({
     press_key: () => {
@@ -22,11 +25,45 @@ function hud(layers: number, options: { typing?: boolean; empty?: boolean; panel
       if (options.empty) return '{"found":false}'
       if (line.includes('Write a message')) return options.typing ? button('Write a message', true) : '{"found":false}'
       if (line.includes('"role":"dialog"')) return options.popover && escapes === 0 ? button('Sidebar settings', true).replace('"button"', '"dialog"') : '{"found":false}'
-      if (line.includes('Sidebar settings')) return button('Sidebar settings', escapes >= layers)
+      if (line.includes('Sidebar settings')) return escapes >= layers ? button('Sidebar settings', true) : button('Sidebar settings', false, false, 'covered')
       const name = /"name":"([^"]+)"/.exec(line)?.[1] ?? ''
       return button(name, true, name === options.panel && escapes === 0)
     },
-    hud_list: () => (options.empty ? '[]' : '[{"role":"button","name":"Close"}]')
+    hud_list: () => {
+      if (options.empty) return '[]'
+      const modals = Array.from({ length: Math.max(0, layers - escapes) }, (_, i) => ({ role: 'dialog', name: `Modal ${i + 1}` }))
+      return JSON.stringify([{ role: 'button', name: 'Close' }, ...modals])
+    },
+    world_state: () => worldState(options.claimed === true && escapes === 0)
+  })
+}
+
+/** A page with a dropdown open over it: the first Escape closes the dropdown, the second the
+ *  page, after which the rail slides back in, `moving` reads long. */
+function pageWithDropdown(moving: number): FakeConsole {
+  let escapes = 0
+  let railReads = 0
+  return new FakeConsole({
+    press_key: () => {
+      escapes += 1
+      return 'pressed Escape'
+    },
+    hud_read: (line) => {
+      if (line.includes('"role":"dialog"') || line.includes('Write a message')) return '{"found":false}'
+      if (line.includes('Sidebar settings')) {
+        if (escapes < 2) return '{"found":false}'
+        railReads += 1
+        return railReads <= moving ? button('Sidebar settings', false, false, 'still moving') : button('Sidebar settings', true)
+      }
+      const name = /"name":"([^"]+)"/.exec(line)?.[1] ?? ''
+      return button(name, true)
+    },
+    hud_list: () => {
+      if (escapes >= 2) return '[{"role":"button","name":"Sidebar settings"}]'
+      const page = [{ role: 'heading', name: 'Backpack' }]
+      return JSON.stringify(escapes === 0 ? [...page, { role: 'option', name: 'Newest' }] : page)
+    },
+    world_state: () => worldState(false)
   })
 }
 
@@ -52,6 +89,24 @@ describe('closeToRest', () => {
   test('presses Escape until the rail takes a click: a modal over a page needs two', async () => {
     const fake = hud(2)
     await closeToRest(new Explorer(fake), 300)
+    assert.equal(fake.sent('press_key').length, 2)
+  })
+
+  test('a field holding the keyboard is not at rest: Escape lets it go', async () => {
+    const fake = hud(0, { claimed: true })
+    await closeToRest(new Explorer(fake), 300)
+    assert.deepEqual(fake.sent('press_key'), ['/press_key Escape'])
+  })
+
+  test('follows a press as soon as the HUD shows it closed a layer, not after a window', { timeout: 10_000 }, async () => {
+    const fake = pageWithDropdown(0)
+    await closeToRest(new Explorer(fake), 600_000)
+    assert.equal(fake.sent('press_key').length, 2)
+  })
+
+  test('waits for the rail to come back in before calling the HUD at rest, without another press', { timeout: 10_000 }, async () => {
+    const fake = pageWithDropdown(4)
+    await closeToRest(new Explorer(fake), 600_000)
     assert.equal(fake.sent('press_key').length, 2)
   })
 

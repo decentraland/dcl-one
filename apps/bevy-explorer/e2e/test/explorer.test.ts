@@ -167,11 +167,10 @@ describe('Explorer', () => {
     await assert.rejects(new Explorer(synthetic).hud.click('Backpack'), /was synthetic/)
     const allowed = new Explorer(synthetic, { allowSyntheticInput: true })
     assert.equal((await allowed.hud.click('Backpack')).input, 'synthetic')
-    const trusted = new FakeConsole({ hud_wait: control(), hud_read: control(), hud_click: control({ input: 'trusted' }) })
+    const trusted = new FakeConsole({ hud_wait: control(), hud_click: control({ input: 'trusted' }) })
     assert.equal((await new Explorer(trusted).hud.click({ name: 'Backpack', role: 'button' })).input, 'trusted')
     assert.deepEqual(trusted.lines, [
       '/hud_wait {"name":"Backpack","role":"button","state":"actionable","timeout":10000}',
-      '/hud_read {"name":"Backpack","role":"button"}',
       '/hud_click {"name":"Backpack","role":"button"}'
     ])
   })
@@ -187,24 +186,64 @@ describe('Explorer', () => {
     assert.deepEqual(fake.sent('hud_click'), [])
   })
 
-  test('hud.click waits for a sliding control to hold still before it clicks', async () => {
-    let reads = 0
+  test('hud.click leaves a moving control to the HUD, which does not call it actionable until it holds still', async () => {
     const fake = new FakeConsole({
-      hud_wait: control({ y: 10 }),
-      // on its way in for two reads, then still
-      hud_read: () => control({ y: Math.min(40, 10 + 15 * ++reads) }),
-      hud_click: control({ y: 40, input: 'trusted' })
+      hud_wait: (line) => {
+        throw new ConsoleError(line, 'timed out after 10000 ms waiting for {"name":"Emotes","role":"tab"} to be actionable: the control can\'t be clicked: still moving')
+      },
+      hud_click: control({ input: 'trusted' })
     })
-    await new Explorer(fake).hud.click({ name: 'Emotes', role: 'tab' })
-    // the click comes after the third read, the first that agreed with the one before it
-    assert.deepEqual(fake.lines.map(commandOf), ['hud_wait', 'hud_read', 'hud_read', 'hud_read', 'hud_click'])
+    await assert.rejects(new Explorer(fake).hud.click({ name: 'Emotes', role: 'tab' }), /still moving/)
+    assert.deepEqual(fake.lines.map(commandOf), ['hud_wait'])
   })
 
   test('hud.fill waits for the field, sends the selector with the text and returns the field', async () => {
-    const fake = new FakeConsole({ hud_wait: control({ role: 'textbox' }), hud_read: control({ role: 'textbox' }), hud_fill: control({ role: 'textbox', value: 'Genesis', input: 'trusted' }) })
+    const fake = new FakeConsole({
+      hud_wait: control({ role: 'textbox' }),
+      hud_fill: control({ role: 'textbox', value: 'Genesis', input: 'trusted' }),
+      world_state: world({ keyboardClaimed: true })
+    })
     const result = await new Explorer(fake).hud.fill('Search', 'Genesis')
     assert.equal(result.value, 'Genesis')
-    assert.deepEqual(fake.lines, ['/hud_wait {"name":"Search","state":"actionable","timeout":10000}', '/hud_read Search', '/hud_fill {"name":"Search","text":"Genesis"}'])
+    assert.deepEqual(fake.lines, ['/hud_wait {"name":"Search","state":"actionable","timeout":10000}', '/hud_fill {"name":"Search","text":"Genesis"}', '/world_state'])
+  })
+
+  test('hud.fill returns once the engine hands the field the keyboard, so the next key is typed', async () => {
+    let reads = 0
+    const fake = new FakeConsole({
+      hud_wait: control({ role: 'textbox' }),
+      hud_fill: control({ role: 'textbox', value: 'hi', input: 'trusted' }),
+      // the HUD relays the field's focus through the bridge scene: two frames pass before it lands
+      world_state: () => world({ keyboardClaimed: ++reads > 2 })
+    })
+    await new Explorer(fake).hud.fill('Write a message', 'hi')
+    assert.equal(fake.sent('world_state').length, 3)
+  })
+
+  test('hud.fill does not wait for the keyboard after a synthetic fill, or from a client that does not say', async () => {
+    const synthetic = new FakeConsole({ hud_wait: control({ role: 'textbox' }), hud_fill: control({ role: 'textbox', value: 'hi', input: 'synthetic' }) })
+    await new Explorer(synthetic, { allowSyntheticInput: true }).hud.fill('Search', 'hi')
+    assert.deepEqual(synthetic.sent('world_state'), [])
+    const silent = new FakeConsole({ hud_wait: control({ role: 'textbox' }), hud_fill: control({ role: 'textbox', value: 'hi', input: 'trusted' }), world_state: world() })
+    await new Explorer(silent).hud.fill('Search', 'hi')
+    assert.equal(silent.sent('world_state').length, 1)
+  })
+
+  test('keyboardReleased waits for the engine to let the keyboard go', async () => {
+    let reads = 0
+    const fake = new FakeConsole({ world_state: () => world({ keyboardClaimed: ++reads < 3 }) })
+    await new Explorer(fake).keyboardReleased()
+    assert.equal(fake.sent('world_state').length, 3)
+    const silent = new FakeConsole({ world_state: world({ keyboardClaimed: null }) })
+    await new Explorer(silent).keyboardReleased()
+    assert.equal(silent.sent('world_state').length, 1)
+  })
+
+  test('hud.waitReady waits for the control out of any region still loading', async () => {
+    const fake = new FakeConsole({ hud_wait: control({ role: 'region', name: 'Catalog', busy: false }) })
+    const read = await new Explorer(fake).hud.waitReady({ name: 'Catalog', role: 'region' }, 5000)
+    assert.equal(read.busy, false)
+    assert.deepEqual(fake.lines, ['/hud_wait {"name":"Catalog","role":"region","state":"ready","timeout":5000}'])
   })
 
   test('hud.find is undefined when nothing matches and an error on ambiguity', async () => {

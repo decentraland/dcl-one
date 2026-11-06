@@ -47,9 +47,12 @@ export interface Control {
   disabled: boolean
   /** always true: a control is found only while it is visible */
   visible: boolean
-  /** a user could click it: visible, enabled, inside the viewport and not covered */
+  /** a user could click it: visible, enabled, inside the viewport, not covered and not moving */
   actionable: boolean
   reason?: string
+  /** inside a region that says it is still loading (`aria-busy="true"`): what it shows is not
+   *  final yet, such as a grid whose page has not arrived */
+  busy: boolean
   x: number
   y: number
   width: number
@@ -204,6 +207,22 @@ function isVisible(el: Element): boolean {
   return box.width > 0 && box.height > 0
 }
 
+// Moving: a finite animation or transition runs on the control or on a box around it (a page
+// sliding in, a button growing in on hover). A click is aimed at where the control is when it is
+// read and lands a few frames later, so a moving control is not one a click would land on yet.
+// Endless animations (a backdrop's drift, a loading shimmer) never end and do not count.
+function isMoving(el: Element): boolean {
+  for (let e: Element | null = el; e; e = e.parentElement) {
+    const animations = (e as Element & { getAnimations?: () => Animation[] }).getAnimations?.() ?? []
+    for (const animation of animations) {
+      if (animation.playState !== 'running') continue
+      const end = animation.effect?.getComputedTiming().endTime
+      if (typeof end === 'number' && Number.isFinite(end)) return true
+    }
+  }
+  return false
+}
+
 function isDisabled(el: Element): boolean {
   return el.matches(':disabled') || el.closest('[aria-disabled="true"]') != null
 }
@@ -237,6 +256,7 @@ function describe(el: Element): Control {
     disabled,
     visible: true,
     actionable: false,
+    busy: el.closest('[aria-busy="true"]') != null,
     x: box.left,
     y: box.top,
     width: box.width,
@@ -258,8 +278,9 @@ function describe(el: Element): Control {
   else if (cx < 0 || cy < 0 || cx >= window.innerWidth || cy >= window.innerHeight) control.reason = 'outside the viewport'
   else {
     const hit = document.elementFromPoint(cx, cy)
-    if (hit != null && (hit === el || el.contains(hit))) control.actionable = true
-    else control.reason = hit ? `covered by <${hit.tagName.toLowerCase()}>` : 'covered'
+    if (hit == null || (hit !== el && !el.contains(hit))) control.reason = hit ? `covered by <${hit.tagName.toLowerCase()}>` : 'covered'
+    else if (isMoving(el)) control.reason = 'still moving'
+    else control.actionable = true
   }
   return control
 }
@@ -299,7 +320,7 @@ export function listControls(role?: string): { role: string; name: string }[] {
 
 // --- waiting ---
 
-export const WAIT_STATES = ['visible', 'hidden', 'enabled', 'actionable'] as const
+export const WAIT_STATES = ['visible', 'hidden', 'enabled', 'actionable', 'ready'] as const
 export type WaitState = (typeof WAIT_STATES)[number]
 
 /** How long /hud_wait waits unless told otherwise. The engine's console command
@@ -309,8 +330,9 @@ const WAIT_POLL_MS = 100
 
 type WaitCheck = { done: true; description: Description } | { done: false; why: string }
 
-// Does the control meet the state now? Only a visible control is ever found, so `enabled` and
-// `actionable` include visible. `actionable` scrolls the control into view as a click would.
+// Does the control meet the state now? Only a visible control is ever found, so `enabled`,
+// `ready` and `actionable` include visible. `actionable` scrolls the control into view as a click
+// would.
 function checkWait(selector: Selector, state: WaitState): WaitCheck {
   if (state === 'hidden') {
     const matches = findControls(selector)
@@ -321,14 +343,16 @@ function checkWait(selector: Selector, state: WaitState): WaitCheck {
   if (!('el' in picked)) return { done: false, why: picked.error ?? 'no HUD control matches' }
   const { control } = picked
   if (state === 'enabled' && control.disabled) return { done: false, why: 'the control is disabled' }
+  if (state === 'ready' && control.busy) return { done: false, why: 'the control is in a region still loading' }
   if (state === 'actionable' && !control.actionable) return { done: false, why: `the control can't be clicked: ${control.reason}` }
   return { done: true, description: control }
 }
 
 /**
  * Wait until the control a selector names is in a state, polling every 100 ms: `visible` (the
- * default: found), `hidden` (no match), `enabled` (found and not disabled) or `actionable` (a
- * click would land). Resolves with the control's description (`{found: false}` for `hidden`) and
+ * default: found), `hidden` (no match), `enabled` (found and not disabled), `actionable` (a click
+ * would land: uncovered and no longer moving) or `ready` (found and not inside a region still
+ * loading). Resolves with the control's description (`{found: false}` for `hidden`) and
  * rejects when `timeout` ms (default 10 s) pass first, saying what it last saw. Several matches
  * without an `index` count as not yet found, since a list may still be filling.
  */
@@ -843,17 +867,17 @@ export const PAGE_COMMANDS: Record<string, PageCommand> = {
   },
   '/hud_read': {
     args: [SELECTOR_ARG],
-    help: 'Describe the HUD control a selector names, as JSON ({"found": false} when none does). The selector is the control\'s accessible name, or JSON {"name", "role", "index", "exact"}',
+    help: 'Describe the HUD control a selector names, as JSON ({"found": false} when none does): "actionable" once a click would land on it (visible, enabled, uncovered and no longer moving, else "reason" says why), "busy" inside a region still loading (aria-busy). The selector is the control\'s accessible name, or JSON {"name", "role", "index", "exact"}',
     run: (rest) => JSON.stringify(describeControl(parseSelector(rest)))
   },
   '/hud_wait': {
     args: [{ name: 'json', kind: 'json', optional: false, help: 'the accessible name, or a JSON selector with "state" and "timeout"' }],
-    help: 'Wait until the HUD control a selector names is in a state, then describe it as JSON ({"found": false} for hidden). The selector is as /hud_read takes it, plus "state" (visible, hidden, enabled or actionable; default visible) and "timeout" in ms (default 10000); fails if the timeout passes first',
+    help: 'Wait until the HUD control a selector names is in a state, then describe it as JSON ({"found": false} for hidden). The selector is as /hud_read takes it, plus "state" (visible, hidden, enabled, actionable, or ready: out of any region still loading; default visible) and "timeout" in ms (default 10000); fails if the timeout passes first',
     run: async (rest) => JSON.stringify(await waitForControl(parseSelector(rest)))
   },
   '/hud_click': {
     args: [SELECTOR_ARG],
-    help: 'Click the HUD control a selector names, at its centre, if it is visible, enabled and not covered. The selector is as /hud_read takes it. The reply\'s "input" is "trusted" for a real click, delivered by the test runner driving the browser, and "synthetic" for DOM events',
+    help: 'Click the HUD control a selector names, at its centre, if it is actionable: visible, enabled, not covered and no longer moving. The selector is as /hud_read takes it. The reply\'s "input" is "trusted" for a real click, delivered by the test runner driving the browser, and "synthetic" for DOM events',
     run: async (rest) => JSON.stringify(await clickControl(parseSelector(rest)))
   },
   '/hud_fill': {

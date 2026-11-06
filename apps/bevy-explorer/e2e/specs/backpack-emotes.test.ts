@@ -38,6 +38,7 @@ import {
   emoteCards,
   emoteSlot,
   equipEmoteIntoSlot,
+  firstCard,
   flipPage,
   hoverCard,
   normalize,
@@ -48,7 +49,6 @@ import {
   sameCards,
   searchFor,
   selectEmoteSlot,
-  stableFirstCard,
   unequipAllEmotes,
   unequipEmoteSlot,
   waitForAction,
@@ -176,10 +176,10 @@ scenario(
       t.skip(`the account has one page of emotes (${cards.length}), so there is no pager to exercise`)
       return
     }
-    const first = await stableFirstCard(explorer, emoteCards)
-    const second = await flipPage(explorer, 'Next page', emoteCards, first)
+    const first = await firstCard(explorer, emoteCards)
+    const second = await flipPage(explorer, 'Next page', emoteCards)
     assert.notEqual(second, first, 'First emote on page 2 should differ from first emote on page 1')
-    const back = await flipPage(explorer, 'Previous page', emoteCards, second)
+    const back = await flipPage(explorer, 'Previous page', emoteCards)
     assert.equal(back, first, "Navigating back should show page 1's first emote again")
     await closePage(explorer, 'backpack')
   },

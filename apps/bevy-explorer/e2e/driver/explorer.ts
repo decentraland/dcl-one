@@ -17,6 +17,9 @@ export interface WorldState {
   worldHeld: boolean
   outOfWorld: boolean | null
   position: [number, number, number] | null
+  /** A text field (the HUD's or the engine's) holds the keyboard: keys are typed and resolve no
+   *  action. Null where the client takes no input; absent from builds before it was reported. */
+  keyboardClaimed?: boolean | null
 }
 
 export interface Control {
@@ -30,6 +33,8 @@ export interface Control {
   visible: boolean
   actionable: boolean
   reason?: string
+  /** Inside a region that says it is still loading (`aria-busy`): what it shows is not final. */
+  busy?: boolean
   x: number
   y: number
   width: number
@@ -54,7 +59,7 @@ export interface HudEntry {
   name: string
 }
 
-export type HudState = 'visible' | 'hidden' | 'enabled' | 'actionable'
+export type HudState = 'visible' | 'hidden' | 'enabled' | 'actionable' | 'ready'
 
 export interface UserData {
   name: string
@@ -174,27 +179,19 @@ export interface ExplorerOptions {
  *  after the engine reports the new version. */
 export const PROFILE_DEPLOY_WINDOW_MS = 4_000
 
-/** How long the engine keeps the keyboard after a HUD text field lets it go: the HUD relays its
- *  focus through the bridge scene, a few frames, and no console command reports the engine's
- *  side, so this is a settle, not a wait. A key sent sooner is typed into nothing (measured on
- *  the web: lost at once, delivered 50 ms later at 60 fps; the runner's frames are slower). */
-export const KEYBOARD_RELEASE_MS = 500
+/** How long the engine may take to hand the keyboard to a HUD text field, or to take it back once
+ *  the field lets it go: the HUD relays its focus through the bridge scene, which takes a few
+ *  frames. A ceiling: the wait ends as soon as `/world_state` reports the change. */
+export const KEYBOARD_TIMEOUT_MS = 10_000
 
 export type MouseButton = 'left' | 'right' | 'middle'
 
 const DEFAULT_HUD_TIMEOUT_MS = 10_000
-/** How long a click, a fill or a hover waits for its control to take a click: a page slides and
- *  fades in for a third of a second, and a control on its way in reads as covered. */
+/** How long a click, a fill or a hover waits for its control to take a click: uncovered and no
+ *  longer moving (a page slides and fades in, a button grows in on hover). */
 const ACTIONABLE_TIMEOUT_MS = 10_000
-/** How far apart two reads of a control's box must agree for it to count as still: a click is
- *  aimed where the control is when it is read, and lands up to a few frames later. */
-const STILL_MS = 60
 
 const DEFAULT_ARRIVAL_TIMEOUT_MS = 180_000
-
-/** Two reads of a control's box agree, to half a pixel. */
-export const sameBox = (a: Control, b: Control): boolean =>
-  Math.abs(a.x - b.x) <= 0.5 && Math.abs(a.y - b.y) <= 0.5 && Math.abs(a.width - b.width) <= 0.5 && Math.abs(a.height - b.height) <= 0.5
 
 /** The error as it may be rethrown: a transport's own error (a timeout, a closed driver) can
  *  quote the line, and the test runner prints the message and the stack. */
@@ -476,10 +473,26 @@ export class Explorer {
     return this.key('Escape')
   }
 
-  /** After a HUD text field lost the focus (an Escape out of it, a click that closed it): give the
-   *  engine the keyboard back before the next key (`KEYBOARD_RELEASE_MS`). */
-  async keyboardReleased(): Promise<void> {
-    await sleep(KEYBOARD_RELEASE_MS)
+  /** After a HUD text field took the focus (a fill): wait for the engine to hand it the keyboard, as
+   *  `/world_state` reports it; until then a key is still the engine's (Enter opens the chat,
+   *  Escape closes the page) and not typed. A client that does not report it is not waited on. */
+  async keyboardTaken(timeoutMs = KEYBOARD_TIMEOUT_MS): Promise<void> {
+    await until(() => this.worldState(), (state) => state.keyboardClaimed !== false, {
+      timeoutMs,
+      intervalMs: 50,
+      what: 'the engine to hand the keyboard to the HUD field'
+    })
+  }
+
+  /** After a HUD text field lost the focus (an Escape out of it, a click that closed it): wait for
+   *  the engine to let the keyboard go, as `/world_state` reports it; a key sent sooner is typed
+   *  into nothing. A client that does not report it (an older build) is not waited on. */
+  async keyboardReleased(timeoutMs = KEYBOARD_TIMEOUT_MS): Promise<void> {
+    await until(() => this.worldState(), (state) => state.keyboardClaimed !== true, {
+      timeoutMs,
+      intervalMs: 50,
+      what: 'the engine to let the keyboard go (a HUD field had it)'
+    })
   }
 
   /** A click at window pixels (as `/entity_screen_position` and `/hud_read` report them). */
@@ -569,11 +582,13 @@ export class Hud {
   }
 
   /** Replace a field's text, once a click would land on it; the reply holds the field as the
-   *  typing left it. */
+   *  typing left it. A real fill leaves the field focused: it returns once the engine has handed
+   *  the field the keyboard, so the next key is the field's. */
   async fill(selector: Selector, text: string): Promise<HudInput> {
     await this.waitActionable(selector)
     const result = await this.#explorer.json<HudInput>(`/hud_fill ${JSON.stringify({ ...toSelectorObject(selector), text })}`)
     this.#checkInput(result, `fill of ${describeSelector(selector)}`)
+    if (result.input === 'trusted') await this.#explorer.keyboardTaken()
     return result
   }
 
@@ -588,24 +603,20 @@ export class Hud {
   }
 
   /** The control once a click would land on it: visible, enabled, in the viewport, uncovered and
-   *  still (a control that slides in can read uncovered on its way, and a click aimed at it there
-   *  lands where it no longer is). */
+   *  no longer moving (the HUD reports a control on its way in, or growing in, as still moving: a
+   *  click aimed at it there lands where it no longer is). */
   async waitActionable(selector: Selector, timeoutMs = ACTIONABLE_TIMEOUT_MS): Promise<Control> {
-    const deadline = Date.now() + timeoutMs
-    const actionable = async (left: number): Promise<Control> => {
-      const read = await this.wait(selector, { state: 'actionable', timeoutMs: Math.max(0, left) })
-      if (!read.found) throw new Error(`no visible HUD control matches ${describeSelector(selector)}`)
-      return read
-    }
-    let seen = await actionable(timeoutMs)
-    for (;;) {
-      await sleep(STILL_MS)
-      const now = await this.read(selector)
-      if (now.found && now.actionable && sameBox(now, seen)) return now
-      const left = deadline - Date.now()
-      if (left <= 0) throw new Error(`${describeSelector(selector)} did not hold still for ${timeoutMs} ms`)
-      seen = now.found && now.actionable ? now : await actionable(left)
-    }
+    const read = await this.wait(selector, { state: 'actionable', timeoutMs })
+    if (!read.found) throw new Error(`no visible HUD control matches ${describeSelector(selector)}`)
+    return read
+  }
+
+  /** The control once nothing around it is still loading (`ready`: no `aria-busy` region holds
+   *  it), such as a grid whose newest page has arrived. */
+  async waitReady(selector: Selector, timeoutMs = DEFAULT_HUD_TIMEOUT_MS): Promise<Control> {
+    const read = await this.wait(selector, { state: 'ready', timeoutMs })
+    if (!read.found) throw new Error(`no visible HUD control matches ${describeSelector(selector)}`)
+    return read
   }
 
   /** Put the pointer on a control, for the controls that appear on hover: a real click at its

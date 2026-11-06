@@ -23,6 +23,7 @@ import {
   EQUIP_TIMEOUT_MS,
   commitBackpack,
   equipCard,
+  firstCard,
   flipPage,
   gained,
   openBackpack,
@@ -32,7 +33,6 @@ import {
   restoreHair,
   sameCards,
   searchFor,
-  stableFirstCard,
   waitForCards,
   waitForPlayer,
   wearableCards
@@ -95,11 +95,11 @@ scenario(
       t.skip(`the account has one page of wearables (${cards.length} items), so there is no pager to exercise`)
       return
     }
-    const first = await stableFirstCard(explorer, wearableCards)
-    const second = await flipPage(explorer, 'Next page', wearableCards, first)
+    const first = await firstCard(explorer, wearableCards)
+    const second = await flipPage(explorer, 'Next page', wearableCards)
     assert.notEqual(second, first, 'First item on page 2 should differ from first item on page 1')
     // Not compared with page 1: the sort can vary between loads.
-    const back = await flipPage(explorer, 'Previous page', wearableCards, second)
+    const back = await flipPage(explorer, 'Previous page', wearableCards)
     assert.notEqual(back, second, "Navigating back should leave page 2 (first item should differ from page 2's)")
     await closePage(explorer, 'backpack')
   },

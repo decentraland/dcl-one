@@ -75,43 +75,78 @@ const NO_HUD = /Command not recognized|there is no HUD page|the HUD page has not
 /** Escape closes one layer a press (a dropdown, a modal, the page under it, the chat input's
  *  focus), and a failed scenario can leave several. */
 export const REST_ESCAPES = 4
-/** How long a press is given to take effect: a page or a modal closes in a third of a second. */
-export const REST_SETTLE_MS = 1_500
+/** The most one press is given to close a layer the HUD shows. A press that closes one is followed
+ *  as soon as the HUD shows it (the next press waits on that, not on this); this only bounds a
+ *  press that closes nothing the HUD reports, which is then followed by the next press anyway. */
+export const REST_PRESS_TIMEOUT_MS = 10_000
+/** The roles of the layers inside a page that Escape closes: a modal, a dropdown's options. */
+const LAYER_ROLES = new Set(['dialog', 'alertdialog', 'option', 'menu', 'listbox'])
 
 /** The HUD as a scenario's start finds it: at `rest`, with something `open` that Escape closes,
  *  or with `no-hud` to read (the standalone built without its bundle). Any other error is the
  *  scenario's: it fails at its start saying so. */
 type Rest = 'rest' | 'open' | 'no-hud'
 
-async function hudRest(explorer: Explorer): Promise<Rest> {
+/** The HUD's state as Escape changes it. */
+interface Layers {
+  rest: Rest
+  /** What is open, layer by layer: a press that closed one changes it. */
+  open: string
+  /** The rail is on its way back in: what the last press closed is still going away. */
+  moving: boolean
+}
+
+const NO_LAYERS: Layers = { rest: 'no-hud', open: '', moving: false }
+
+/** The rail, the panels beside it, the chat input, the layers inside a page, and the engine's
+ *  word on whether a field holds the keyboard. At rest the rail takes a click, no panel beside it
+ *  is open and no field holds the keys (the chat comes up with its input focused). */
+async function hudLayers(explorer: Explorer): Promise<Layers> {
   let rail: HudRead
   try {
     rail = await explorer.hud.read(WORLD_HUD)
   } catch (error) {
-    if (error instanceof ConsoleError && NO_HUD.test(error.output)) return 'no-hud'
+    if (error instanceof ConsoleError && NO_HUD.test(error.output)) return NO_LAYERS
     throw error
   }
-  if (!rail.found) return (await explorer.hud.list()).length === 0 ? 'no-hud' : 'open'
-  if (!rail.actionable || (await explorer.hud.isVisible(CHAT_TYPING)) || (await explorer.hud.isVisible(RAIL_SETTINGS))) return 'open'
-  for (const name of RAIL_PANELS) {
-    if ((await explorer.hud.find({ name, role: 'button' }))?.checked) return 'open'
+  const shown = await explorer.hud.list()
+  if (!rail.found && shown.length === 0) return NO_LAYERS
+  const pressed: string[] = []
+  if (rail.found) {
+    for (const name of RAIL_PANELS) {
+      if ((await explorer.hud.find({ name, role: 'button' }))?.checked) pressed.push(name)
+    }
   }
-  return 'rest'
+  const typing = await explorer.hud.isVisible(CHAT_TYPING)
+  const settings = await explorer.hud.isVisible(RAIL_SETTINGS)
+  const { keyboardClaimed } = await explorer.worldState()
+  const railState = rail.found ? (rail.actionable ? 'rail' : `rail ${rail.reason ?? 'not actionable'}`) : 'no rail'
+  const layers = shown.filter((entry) => LAYER_ROLES.has(entry.role)).map((entry) => `${entry.role} ${entry.name}`)
+  const atRest = rail.found && rail.actionable && !typing && !settings && pressed.length === 0 && keyboardClaimed !== true
+  return {
+    rest: atRest ? 'rest' : 'open',
+    open: JSON.stringify({ railState, pressed, typing, settings, layers, keyboardClaimed }),
+    moving: rail.found && rail.reason === 'still moving'
+  }
 }
 
-/** Close what an earlier scenario left open, a layer per Escape, until the HUD is at rest: the
- *  rail takes a click, no panel beside it is open and no field holds the keys (the chat comes up
- *  with its input focused). A HUD at rest gets no Escape, which would have nothing to close. After
- *  a press the engine gets the keyboard back before the scenario's first key: the press may have
- *  left a field. A HUD that never gets to rest is left to the scenario, whose first step then
- *  fails saying what it found. */
-export async function closeToRest(explorer: Explorer, settleMs = REST_SETTLE_MS): Promise<void> {
-  if ((await hudRest(explorer)) !== 'open') return
-  for (let press = 0; press < REST_ESCAPES; press++) {
+/** Close what an earlier scenario left open, a layer per Escape, until the HUD is at rest. Each
+ *  press waits for the HUD to show it took effect (a layer gone, the rail done moving back in)
+ *  before the next, so no press lands in the middle of the last one's change. A HUD at rest gets
+ *  no Escape, which would have nothing to close. A HUD that never gets to rest is left to the
+ *  scenario, whose first step then fails saying what it found. */
+export async function closeToRest(explorer: Explorer, pressTimeoutMs = REST_PRESS_TIMEOUT_MS): Promise<void> {
+  let layers = await hudLayers(explorer)
+  if (layers.rest !== 'open') return
+  for (let press = 0; press < REST_ESCAPES && layers.rest === 'open'; press++) {
+    const before = layers.open
     await explorer.escape()
     try {
-      await until(() => hudRest(explorer), (rest) => rest !== 'open', { timeoutMs: settleMs, intervalMs: 100, what: 'the HUD to be at rest' })
-      break
+      layers = await until(() => hudLayers(explorer), (now) => now.rest !== 'open' || (now.open !== before && !now.moving), {
+        timeoutMs: pressTimeoutMs,
+        intervalMs: 100,
+        what: 'the Escape to close a layer of the HUD'
+      })
     } catch (error) {
       if (!(error instanceof TimeoutError)) throw error
     }

@@ -105,27 +105,40 @@ with their replies parsed. It asserts through the engine where it can (`/world_s
 `/avatar_state`, `/get_user_data`'s profile version after an equip, `/chat_history`) and through
 `/hud_read` for what only the HUD shows. HUD controls are named by role and accessible name
 (`specs/pages.ts` holds the pages); a control that appears on hover is reached with `hud.hover`
-first. Every wait is bounded and says what it waits for; nothing asserts zone's live listings as
-literals. A scenario that changes account state restores it.
+first. Every wait is for a state the client reports, bounded by a ceiling and saying what it
+waits for; none waits for time to pass, save the catalyst's deployment window below. Nothing
+asserts zone's live listings as literals. A scenario that changes account state restores it.
 
 What the driver does for every scenario, so a spec need not:
 
 - **A rested HUD to start from.** Each scenario starts with Escape, a layer per press, until the
   rail's top button takes a click (a page hides the rail, a popup covers it), no panel beside the
-  rail reads pressed, the rail's settings popover is closed and the chat input does not hold the
-  keys. A HUD already at rest gets no Escape; a client with no HUD (the standalone built without
-  it) gets none, and any other error fails the scenario at its start. The web boot waits for the HUD's own world (the rail), which comes after the engine's.
-- **Clicks that land.** `hud.click`, `hud.fill` and `hud.hover` wait for the control to be
-  actionable and to hold still (two reads 60 ms apart): pages slide and fade in for a third of a
-  second, and a click aimed at a control on its way lands where it no longer is.
-- **The keyboard back.** The engine keeps the keyboard a few frames after a HUD text field lets it
-  go, and no command reports when: after an Escape out of a field, or a click that closed one, a
-  scenario calls `keyboardReleased()` (500 ms) before its next key.
+  rail reads pressed, the rail's settings popover is closed and no field holds the keys
+  (`/world_state`'s `keyboardClaimed`). Each press waits for the HUD to show it took effect (a
+  layer gone, the rail done sliding back in) before the next. A HUD already at rest gets no
+  Escape; a client with no HUD (the standalone built without it) gets none, and any other error
+  fails the scenario at its start. The web boot waits for the HUD's own world (the rail), which
+  comes after the engine's.
+- **Clicks that land.** `hud.click`, `hud.fill` and `hud.hover` wait for the HUD to call the
+  control actionable: visible, enabled, uncovered and no longer moving. The HUD reports a control
+  inside a running CSS animation or transition as `still moving` (pages slide and fade in, a
+  card's button grows in), since a click aimed at it there lands where it no longer is.
+- **The keyboard where the scenario expects it.** The HUD relays a text field's focus to the
+  engine through the bridge scene, a few frames late, and `/world_state` says which side has the
+  keys (`keyboardClaimed`). A real `hud.fill` returns once the field has them, so the next key is
+  typed (Enter sends, Escape leaves the field); after an Escape out of a field, or a click that
+  closed one, `keyboardReleased()` waits for the engine to have them back. `closePage` presses
+  Escape twice only when a field holds the keys.
+- **Lists that say when they are loaded.** The Backpack's `Catalog` grid and `Saved outfits`
+  slots, and the Places page's `Places results`, are regions marked `aria-busy` from the moment
+  their query changes (a filter, a page, the search box's debounce) until its answer shows; the
+  specs wait for `ready` (`hud.waitReady`) and read the cards once. Lists the engine sends whole
+  (the emotes, the communities) are read once they show.
 - **Profile deployments apart.** The catalyst takes one deployment of a profile per address every
-  3 s (`Entity rate limited`); closing the Backpack on a changed look and saving the passport are
-  deployments, so they first wait out that window since the profile was last seen to change
-  (`profileDeployWindow()`). A change and its restore would otherwise fail silently and leave the
-  shared account changed.
+  3 s (`Entity rate limited`), a rule of the server's clock that the client cannot observe;
+  closing the Backpack on a changed look and saving the passport are deployments, so they first
+  wait out that window since the profile was last seen to change (`profileDeployWindow()`). A
+  change and its restore would otherwise fail silently and leave the shared account changed.
 
 The in-world scenario in `specs/debug-panel.test.ts` uses the lower-right bug button in development builds and Sidebar settings → Debug panel in release builds. It reads the current realm, observes a live FPS-target change and verifies an avatar action against the engine. The same spec reads `/client_login_state` for unsigned guest sessions and checks that authenticated
 login delivery is inactive. The **Client login events** section is included in the registered-reading
@@ -270,6 +283,8 @@ change on the left updates what is on the right in the same change, then runs th
 | Changed | Update | Check |
 | --- | --- | --- |
 | A HUD control's role, accessible name, placeholder, `aria-*` state or visibility; a page's heading or tablist (`react-web/src`) | The selector in the spec (`specs/*.test.ts`, `specs/pages.ts`, `specs/backpack.ts`); the spec header's row and the scenario map above when a test's class changed; the HUD copy in `apps/ui3/src/play` and `hud_source_sha256` in `rendering/bevy-explorer/upstream.lock.json` (`python3 tooling/play-artifact.py hud-inputs --root .`) | `npm run typecheck`; the scenarios in CI |
+| A list region's `aria-busy` or what sets it (the Backpack's `Catalog` and `Saved outfits`, `Places results`), or a HUD control animated other than by CSS (which `hudAutomation.ts` cannot see moving) | `CATALOG` and `SAVED_OUTFITS` in `specs/backpack.ts`, `RESULTS` in `specs/places.test.ts`; the HUD tests that pin the state (`backpackStates`, `placesBrowser`, `hudAutomation`) | the HUD's tests; the scenarios in CI |
+| What `/world_state`'s `keyboardClaimed` reads (`InputPriorities`), or how the HUD relays a field's focus (`uiFocus`) | `keyboardTaken` and `keyboardReleased` in `driver/explorer.ts`, `closePage` in `specs/pages.ts`, `closeToRest` in `driver/harness.ts` and their tests | `cargo test world_state`; `npm test` |
 | A key binding | The keys in `specs/pages.ts`; the shortcuts spec's header | the same |
 | A console command's name, arguments or reply, in the engine or in `hudAutomation.ts`; what `/hud_login` does with the session (`useEngineSession.ts`: the stored sign-in, the welcome page, the lobby's pick) | `driver/explorer.ts`, `driver/session.ts` and their tests; the Explorer readme's "Agents and tests" and `docs/guidelines/running.md` "Test commands" | `npm test`; the HUD's tests (`react-web`: `npm test`) |
 | `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `npm test`; the web driver's tests |

@@ -21,9 +21,9 @@ const scenario = spec(import.meta.url)
 
 const CONTROL_TIMEOUT_MS = 20_000
 const TEXT_TIMEOUT_MS = 10_000
-/** The send is retried with another Enter, as explorer-automation does. */
-const SEND_ATTEMPTS = 3
-const SEND_ATTEMPT_MS = 3000
+/** The most a sent message is given to reach the engine's chat history: a ceiling, the wait ends
+ *  when it is there. */
+const SEND_TIMEOUT_MS = 10_000
 
 const RAIL_CHAT = { name: 'Chat', role: 'button' } as const
 const CLOSE_CHAT = { name: 'Close chat', role: 'button' } as const
@@ -75,7 +75,9 @@ async function resetChat(explorer: Explorer): Promise<void> {
   await explorer.keyboardReleased()
 }
 
-/** Type `text` in the chat input and send it with Enter; the message as /chat_history records it. */
+/** Type `text` in the chat input and send it with Enter; the message as /chat_history records it.
+ *  The fill returns once the input has the keyboard, so the Enter is the input's: the HUD empties
+ *  the input as it hands the message to the engine. */
 async function sendMessage(explorer: Explorer, text: string): Promise<ChatMessage> {
   const own = await ownAddress(explorer)
   const before = (await explorer.chatHistory(1)).total
@@ -84,14 +86,16 @@ async function sendMessage(explorer: Explorer, text: string): Promise<ChatMessag
 
   const typed = await explorer.hud.fill((await explorer.hud.isVisible(INPUT_FOCUSED)) ? INPUT_FOCUSED : INPUT_IDLE, text)
   assert.equal(typed.value, text, 'the chat input should hold the typed message')
-  let history: ChatHistory | undefined
-  for (let attempt = 0; attempt < SEND_ATTEMPTS && !history; attempt++) {
-    await explorer.key('Enter')
-    history = await until(() => explorer.chatHistory(), (read) => recorded(read) !== undefined, { timeoutMs: SEND_ATTEMPT_MS, what: `'${text}' in the chat history` }).catch(() => undefined)
-  }
-  const message = history && recorded(history)
-  assert.ok(message, `Chat message '${text}' did not appear in the history after ${SEND_ATTEMPTS} send attempts`)
-  return message
+  await explorer.key('Enter')
+  await waitInputEmptied(explorer, `the chat input to empty as it sends '${text}'`)
+  const history = await until(() => explorer.chatHistory(), (read) => recorded(read) !== undefined, { timeoutMs: SEND_TIMEOUT_MS, what: `'${text}' in the chat history` })
+  return recorded(history)!
+}
+
+/** Wait for the chat input, focused or not, to be empty. */
+function waitInputEmptied(explorer: Explorer, what: string): Promise<string | undefined> {
+  const value = async (): Promise<string | undefined> => ((await explorer.hud.find(INPUT_FOCUSED)) ?? (await explorer.hud.find(INPUT_IDLE)))?.value
+  return until(value, (held) => held === '', { timeoutMs: TEXT_TIMEOUT_MS, what })
 }
 
 /** The newest message's row has no control, so put the pointer on it with a click just above the
