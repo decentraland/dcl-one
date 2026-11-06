@@ -11,12 +11,13 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 7] = [
+const PREPARED_PENDING_STEPS: [&str; 8] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
     "0024_social_referral_reward_receipt",
     "0025_social_referral_login_received_at",
+    "0026_content_snapshots_outdated",
     "0027_land_authz_cleared_legs",
     "0028_shop_items_search_text",
 ];
