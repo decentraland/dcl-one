@@ -53,11 +53,13 @@ pub trait ExternalCalls: Send + Sync {
     ) -> Result<(), AuthError>;
 }
 
+/// The cause is logged, never answered: it names this node's paths and errors.
 fn content_store_unavailable(cause: &str) -> ValidationResponse {
-    ValidationResponse::unavailable(format!(
+    tracing::error!(cause, "content store unreadable during deploy validation");
+    ValidationResponse::unavailable(
         "This node could not read its own content store, so the deployment could not be \
-         validated. Please retry. Cause: {cause}"
-    ))
+         validated. Please retry.",
+    )
 }
 
 pub struct ContentValidator<'a, E: ExternalCalls, B: BlockchainChecker> {
