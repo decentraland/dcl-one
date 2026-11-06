@@ -56,8 +56,11 @@ describe('the shop.buy request', () => {
   })
 
   it('reads only well-formed operation events', () => {
-    const event = { type: SHOP_EVENT, v: 1, operation: 'a', state: 'succeeded', items: [line], cart: true, next: 'backpack', txHash: '0xabc' }
-    expect(parseOperationEvent(event)).toMatchObject({ state: 'succeeded', items: [{ contract: line.contract.toLowerCase(), itemId: '7', quantity: 1 }], cart: true, next: 'backpack', txHash: '0xabc' })
+    const event = { type: SHOP_EVENT, v: 1, operation: 'a', buyer: BUYER.toUpperCase().replace('0X', '0x'), state: 'succeeded', items: [line], cart: true, next: 'backpack', txHash: '0xabc' }
+    expect(parseOperationEvent(event)).toMatchObject({ buyer: BUYER, state: 'succeeded', items: [{ contract: line.contract.toLowerCase(), itemId: '7', quantity: 1 }], cart: true, next: 'backpack', txHash: '0xabc' })
+    expect(parseOperationEvent({ ...event, buyer: null })).toMatchObject({ buyer: null })
+    expect(parseOperationEvent({ ...event, buyer: undefined })).toBeNull()
+    expect(parseOperationEvent({ ...event, buyer: '0x12' })).toBeNull()
     expect(parseOperationEvent({ ...event, state: 'exploded' })).toBeNull()
     expect(parseOperationEvent({ ...event, v: 2 })).toBeNull()
     expect(parseOperationEvent({ ...event, items: [] })).toBeNull()

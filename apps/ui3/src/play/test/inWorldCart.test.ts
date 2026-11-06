@@ -56,13 +56,47 @@ describe('the in-world cart', () => {
     expect(cart.getSnapshot()).toEqual([])
   })
 
-  it('lets go of what a purchase bought, and only that', () => {
+  const OP = '0f0e0d0c-0000-4000-8000-000000000001'
+  const bought = (itemId: string, quantity = 1) => [{ contract: '0x' + '11'.repeat(20), itemId, quantity }]
+
+  it('lets go of as many as a purchase bought, and keeps what was added since', () => {
     const cart = createInWorldCart({ storage: storage })
     cart.scopeTo(A)
     cart.add(item('1'))
+    cart.add(item('1'))
     cart.add(item('2'))
-    cart.removeBought([{ contract: '0x' + '11'.repeat(20), itemId: '1' }])
-    expect(cart.getSnapshot().map((l) => l.itemId)).toEqual(['2'])
+    cart.applyPurchase(A, OP, bought('1'))
+    expect(cart.getSnapshot().map((l) => `${l.itemId}x${l.quantity}`)).toEqual(['1x1', '2x1'])
+    cart.applyPurchase(A, '0f0e0d0c-0000-4000-8000-000000000002', [...bought('1'), ...bought('2', 3)])
+    expect(cart.getSnapshot()).toEqual([])
+  })
+
+  it('takes a purchase out once, however often it is heard, across pages', () => {
+    const s = storage()
+    const cart = createInWorldCart({ storage: () => s })
+    cart.scopeTo(A)
+    cart.add(item('1'))
+    cart.applyPurchase(A, OP, bought('1'))
+    cart.add(item('1'))
+    cart.applyPurchase(A, OP, bought('1'))
+    expect(cart.getSnapshot().map((l) => `${l.itemId}x${l.quantity}`)).toEqual(['1x1'])
+    const reloaded = createInWorldCart({ storage: () => s })
+    reloaded.scopeTo(A)
+    reloaded.applyPurchase(A, OP, bought('1'))
+    expect(reloaded.getSnapshot().map((l) => `${l.itemId}x${l.quantity}`)).toEqual(['1x1'])
+  })
+
+  it('takes a purchase out of its buyer’s cart, whichever account is active', () => {
+    const s = storage()
+    const cart = createInWorldCart({ storage: () => s })
+    cart.scopeTo(A)
+    cart.add(item('1'))
+    cart.scopeTo(B)
+    cart.add(item('1'))
+    cart.applyPurchase(A, OP, bought('1'))
+    expect(cart.getSnapshot().map((l) => l.itemId)).toEqual(['1'])
+    cart.scopeTo(A)
+    expect(cart.getSnapshot()).toEqual([])
   })
 
   it('keeps each account’s cart apart, across pages', () => {

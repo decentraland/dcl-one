@@ -1231,23 +1231,58 @@ describe('a purchase of several items (the cart)', () => {
     expect(done.view.step === 'success' && done.view.items).toHaveLength(2)
   })
 
-  it('follows a group still confirming and goes on with the next, then says the purchase is in progress', async () => {
-    const t = setup({
+  /** Groups whose run hands off and answers pending; each one's watch answers what `watched` says for its call. */
+  function confirming(pendingCalls: string[], watched: Record<string, GroupResult>) {
+    return setup({
       items: ITEMS,
       offers: mixed,
       resolvers: trades,
       run: async (deps, group) => {
-        if (group.key.call.kind !== 'accept') return { status: 'confirmed', txHash: TX }
+        if (!pendingCalls.includes(group.key.call.kind)) return { status: 'confirmed', txHash: TX }
         handedOff(deps, group)
         return { status: 'pending', txHash: TX }
-      }
+      },
+      watch: async (_deps, progress) => watched[progress.key.call.kind] ?? { status: 'pending', txHash: TX }
     })
+  }
+
+  it('says the purchase is in progress while a group confirms, and successful with everything once it does', async () => {
+    const watched: Record<string, GroupResult> = {}
+    const t = confirming(['accept'], watched)
     await t.checkout('7', '8')
     ;(await t.until('confirm')).handlers.onConfirm?.()
     await t.until('pending')
     expect(t.run).toHaveBeenCalledTimes(2)
     await vi.waitFor(() => expect(t.watch).toHaveBeenCalled())
     expect(t.events.filter((e) => e.state === 'succeeded').map((e) => e.items.map((i) => i.itemId))).toEqual([['8']])
+    // The first group confirms after the last one did: the checkout is done, with everything it bought.
+    watched.accept = { status: 'confirmed', txHash: TX }
+    const done = await t.until('success')
+    expect(done.view.step === 'success' && done.view.items.map((i) => i.name)).toEqual(['Golden Armour', 'Silver Boots'])
+  })
+
+  it('stays in progress while any group is, and says what went and what didn’t once they all end', async () => {
+    const watched: Record<string, GroupResult> = {}
+    const t = confirming(['accept', 'storeBuy'], watched)
+    await t.checkout('7', '8')
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    await t.until('pending')
+    await vi.waitFor(() => expect(t.watch.mock.calls.length).toBeGreaterThanOrEqual(2))
+    // The last group confirms first: never "successful" while the other is still out.
+    watched.storeBuy = { status: 'confirmed', txHash: TX }
+    await vi.waitFor(() => expect(t.events.some((e) => e.state === 'succeeded')).toBe(true))
+    expect(t.last().view.step).toBe('pending')
+    watched.accept = { status: 'failed', failure: { kind: 'reverted', message: 'reverted' }, released: [] }
+    const { view } = await t.until('failed')
+    expect(view.step === 'failed' && view.message).toMatch(/^Part of this purchase went through.*failed on-chain.*still in your cart/)
+  })
+
+  it('names the buyer on every operation it reports', async () => {
+    const t = setup({ items: ITEMS, offers: mixed, resolvers: trades })
+    await t.checkout('7', '8')
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    await t.until('success')
+    expect(new Set(t.events.map((e) => e.buyer))).toEqual(new Set([BUYER]))
   })
 
   it('names the item that can’t be bought, and buys none of them', async () => {
@@ -1276,4 +1311,3 @@ describe('a purchase of several items (the cart)', () => {
     expect(t.last().view.step).toBe('pending')
   })
 })
-

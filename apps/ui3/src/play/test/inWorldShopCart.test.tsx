@@ -174,17 +174,47 @@ describe('the in-world Shop’s cart', () => {
     expect(screen.queryByRole('region', { name: 'Your cart' })).toBeNull()
   })
 
-  it('lets go of what a cart purchase bought, and keeps an item bought on its own', async () => {
+  const OP = (n: number): string => `0f0e0d0c-0000-4000-8000-${String(n).padStart(12, '0')}`
+  const emit = (event: Record<string, unknown>): void =>
+    act(() => shell.handlers.get(SHOP_EVENT)?.({ type: SHOP_EVENT, v: 1, buyer: BUYER, items: [{ contract: CONTRACT, itemId: '1', quantity: 1 }], ...event }))
+
+  it('lets go of what a cart purchase bought, once, and keeps an item bought on its own', async () => {
+    serveCatalogue()
+    answerShell()
+    renderShop()
+    await addFromPanel(3)
+    await waitFor(() => expect(cartButton()).toHaveAccessibleName('Cart, 3 items'))
+    emit({ operation: OP(1), state: 'succeeded', txHash: '0xabc' })
+    expect(cartButton()).toHaveAccessibleName('Cart, 3 items')
+    emit({ operation: OP(2), state: 'succeeded', txHash: '0xabc', cart: true })
+    await waitFor(() => expect(cartButton()).toHaveAccessibleName('Cart, 2 items'))
+    // Heard again (GO TO BACKPACK publishes it again): nothing more leaves.
+    emit({ operation: OP(2), state: 'succeeded', txHash: '0xabc', cart: true, next: 'backpack' })
+    expect(cartButton()).toHaveAccessibleName('Cart, 2 items')
+  })
+
+  it('leaves another account’s purchase to that account’s cart', async () => {
     serveCatalogue()
     answerShell()
     renderShop()
     await addFromPanel()
     await waitFor(() => expect(cartButton()).toHaveAccessibleName('Cart, 1 item'))
-    const emit = (event: Record<string, unknown>): void =>
-      act(() => shell.handlers.get(SHOP_EVENT)?.({ type: SHOP_EVENT, v: 1, items: [{ contract: CONTRACT, itemId: '1', quantity: 1 }], ...event }))
-    emit({ operation: 'single', state: 'succeeded', txHash: '0xabc' })
+    emit({ operation: OP(3), buyer: '0x' + '44'.repeat(20), state: 'succeeded', txHash: '0xabc', cart: true })
     expect(cartButton()).toHaveAccessibleName('Cart, 1 item')
-    emit({ operation: 'from-cart', state: 'succeeded', txHash: '0xabc', cart: true })
-    await waitFor(() => expect(cartButton()).toHaveAccessibleName('Cart'))
+  })
+
+  it('takes out what the cart bought while the app wasn’t listening, from the shell’s status', async () => {
+    localStorage.setItem(
+      `dcl-inworld-shop:cart:v1:${BUYER}`,
+      JSON.stringify([{ contract: CONTRACT, itemId: '1', quantity: 2, name: 'Golden Armor', rarity: 'epic', category: 'upper_body', creator: CREATOR, credits: 500, available: 35, addedAt: 1 }])
+    )
+    serveCatalogue()
+    answerShell()
+    const usual = shell.request.getMockImplementation()!
+    shell.request.mockImplementation(async (method: string, params?: unknown) =>
+      method === 'shop.status' ? [{ v: 1, operation: OP(4), buyer: BUYER, state: 'succeeded', items: [{ contract: CONTRACT, itemId: '1', quantity: 1 }], cart: true }] : usual(method, params)
+    )
+    renderShop()
+    await waitFor(() => expect(cartButton()).toHaveAccessibleName('Cart, 1 item'))
   })
 })

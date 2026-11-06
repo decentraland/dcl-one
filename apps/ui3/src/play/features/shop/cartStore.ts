@@ -6,6 +6,10 @@
 //
 // Kept per account in localStorage (a signed-out cart under its own key, taken into the account's once
 // one signs in). Storage that throws or is missing leaves the cart in memory for the page's life.
+//
+// What a purchase from the cart bought leaves the cart of the account that bought it (whichever is active
+// now): as many of each item as it bought, once per operation, however often its success is heard (an
+// event, the shell's status after a reload). The operations already taken out are kept beside the cart.
 
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
 import { cardPrice } from '../../../shop/discovery/cardPrice'
@@ -38,6 +42,10 @@ export type InWorldCartInput = Omit<InWorldCartLine, 'quantity' | 'addedAt'>
 export type CartStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 
 const KEY_PREFIX = 'dcl-inworld-shop:cart:v1:'
+/** The operations whose purchase already left the account's cart. */
+const APPLIED_PREFIX = 'dcl-inworld-shop:cart-applied:v1:'
+const MAX_APPLIED = 100
+const OPERATION_ID = /^[0-9a-f-]{8,64}$/
 const GUEST = 'guest'
 const ADDRESS = /^0x[0-9a-f]{40}$/
 const UINT = /^(0|[1-9][0-9]{0,77})$/
@@ -84,8 +92,11 @@ export interface InWorldCart {
   add(input: InWorldCartInput): boolean
   setQuantity(item: { contract: string; itemId: string }, quantity: number): void
   remove(item: { contract: string; itemId: string }): void
-  /** What a purchase bought: its lines go. */
-  removeBought(items: readonly { contract: string; itemId: string }[]): void
+  /**
+   * What `operation`, a purchase from the cart by `buyer`, bought leaves that account's cart: as many of
+   * each item as it bought. Once per operation; a repeat changes nothing.
+   */
+  applyPurchase(buyer: string, operation: string, items: readonly ShopLine[]): void
   /** Whether one more unit of the item fits. */
   canAdd(item: Pick<InWorldCartLine, 'contract' | 'itemId' | 'available'>): boolean
 }
@@ -98,6 +109,30 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
   let lines: readonly InWorldCartLine[] = []
   /** Every account's cart this page read or wrote, kept in memory when storage fails. */
   const memory = new Map<string, readonly InWorldCartLine[]>()
+  const appliedMemory = new Map<string, readonly string[]>()
+
+  const readApplied = (who: string): readonly string[] => {
+    try {
+      const raw = storage()?.getItem(APPLIED_PREFIX + who)
+      if (raw != null) {
+        const parsed = JSON.parse(raw) as unknown
+        const ids = Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string' && OPERATION_ID.test(id)) : []
+        appliedMemory.set(who, ids)
+        return ids
+      }
+    } catch {
+      // Unreadable: what this page knows of it.
+    }
+    return appliedMemory.get(who) ?? []
+  }
+  const writeApplied = (who: string, ids: readonly string[]): void => {
+    appliedMemory.set(who, ids)
+    try {
+      storage()?.setItem(APPLIED_PREFIX + who, JSON.stringify(ids))
+    } catch {
+      // Storage refused: remembered for the page's life.
+    }
+  }
 
   const read = (who: string | null): readonly InWorldCartLine[] => {
     const key = keyOf(who)
@@ -198,8 +233,20 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
     remove(item) {
       if (lines.some((l) => sameItem(l, item))) commit(lines.filter((l) => !sameItem(l, item)))
     },
-    removeBought(items) {
-      if (lines.some((l) => items.some((i) => sameItem(l, i)))) commit(lines.filter((l) => !items.some((i) => sameItem(l, i))))
+    applyPurchase(buyer, operation, items) {
+      const who = buyer.toLowerCase()
+      const done = readApplied(who)
+      if (done.includes(operation)) return
+      writeApplied(who, [...done, operation].slice(-MAX_APPLIED))
+      const mine = who === account ? lines : read(who)
+      const next = mine.flatMap((l) => {
+        const bought = items.reduce((n, i) => (sameItem(l, i) ? n + i.quantity : n), 0)
+        if (bought === 0) return [l]
+        return l.quantity > bought ? [{ ...l, quantity: l.quantity - bought }] : []
+      })
+      if (next.length === mine.length && next.every((l, i) => l === mine[i])) return
+      if (who === account) commit(next)
+      else write(who, next)
     }
   }
   return cart

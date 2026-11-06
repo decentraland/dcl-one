@@ -304,8 +304,25 @@ type PartOutcome =
   /** Nothing of the group was handed off, or its transaction reverted. `retry`: how it may start again. */
   | { kind: 'failed'; message: string; retry: 'cancelled' | 'failed' | null; topUp?: number }
 
+const NOT_BOUGHT = "This purchase didn't go through. Nothing was bought."
 const unitsOf = (lines: ShopLine[]): number => lines.reduce((n, l) => n + l.quantity, 0)
 const sameItem = (a: { contract: string; itemId: string }, b: { contract: string; itemId: string }): boolean => a.contract === b.contract && a.itemId === b.itemId
+
+/**
+ * A confirmed purchase of several groups, as its dialog shows them together: still in progress while any
+ * of its operations is, successful once every group was bought, and partly bought if any wasn't. Each
+ * operation keeps its own record, lock and watch; this is only what the dialog makes of them.
+ */
+interface Checkout {
+  ops: Operation[]
+  /** Every unit, in the request's order. */
+  displays: ShellPurchaseItem[]
+  /** How many groups it has: fewer operations than that, and the rest never started. */
+  parts: number
+  cart: boolean
+  /** The first reason something of it wasn't bought. */
+  failure?: string
+}
 
 /** An operation and, while its dialog is up, what it shows. */
 type Operation = OperationRecord & {
@@ -319,6 +336,8 @@ type Operation = OperationRecord & {
   foreign?: boolean
   /** When its credit was first read as expired and unused with no receipt for its hash. */
   expiredSince?: number
+  /** The checkout of several groups it is one of. */
+  checkout?: Checkout
 }
 
 export interface ShellShop {
@@ -344,6 +363,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   const snapshot = (op: Operation): ShopOperation => ({
     v: SHOP_PROTOCOL,
     operation: op.id,
+    buyer: op.buyer,
     state: op.state,
     items: op.items,
     ...(op.cart ? { cart: true as const } : {}),
@@ -354,7 +374,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     // Only the page holding an operation writes it while it is unsettled (its end is anyone's to keep).
     if (!op.release && !TERMINAL_STATES.includes(op.state)) return false
     op.updatedAt = svc.now()
-    const { store: _s, watching: _w, unwatchWallet: _u, input: _i, release: _r, foreign: _f, expiredSince: _e, ...record } = op
+    const { store: _s, watching: _w, unwatchWallet: _u, input: _i, release: _r, foreign: _f, expiredSince: _e, checkout: _c, ...record } = op
     return ledger.save(record)
   }
   const publish = (op: Operation): void => {
@@ -425,13 +445,39 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       }
     })
   }
-  /** A watched purchase reached its end: its dialog, if it is the one up, says so. */
+  /** A watched purchase reached its end: its dialog (or its checkout's), if it is the one up, says so. */
   const settled = (op: Operation, state: 'succeeded' | 'failed' | 'cancelled', extra: Partial<Operation> = {}, message?: string): void => {
     move(op, state, extra)
+    const co = op.checkout
+    if (co) {
+      if (state !== 'succeeded') co.failure ??= message ?? NOT_BOUGHT
+      if (dialog?.checkout === co && !running) presentCheckout(co)
+      return
+    }
     if (dialog !== op) return
     if (state === 'succeeded') showSuccess(op)
-    else if (state === 'failed') show(op, { step: 'failed', message: message ?? "This purchase didn't go through. Nothing was bought.", retry: false }, { onClose: () => hide(op) })
+    else if (state === 'failed') show(op, { step: 'failed', message: message ?? NOT_BOUGHT, retry: false }, { onClose: () => hide(op) })
     else hide(op)
+  }
+
+  /**
+   * A checkout of several groups, as its dialog shows it: in progress while any group is, Purchase
+   * successful with everything once every group was bought, and otherwise what went and what didn't.
+   */
+  const presentCheckout = (co: Checkout): void => {
+    const anchor = co.ops[co.ops.length - 1]
+    if (!anchor) return
+    if (co.ops.some((o) => o.state === 'processing' || o.state === 'pending')) {
+      showPending(anchor)
+      return
+    }
+    const bought = co.ops.filter((o) => o.state === 'succeeded').length
+    if (co.failure == null && co.ops.length === co.parts && bought === co.ops.length) {
+      showSuccess(anchor, co.displays)
+      return
+    }
+    const why = co.failure ?? NOT_BOUGHT
+    show(anchor, { step: 'failed', message: bought > 0 ? partly(why, co.cart) : why, retry: false }, { onClose: () => hide(anchor) })
   }
 
   /**
@@ -868,7 +914,9 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       return
     }
     running = true
-    // Followed only once the checkout's last dialog is up: a watch that settles at once then updates it.
+    // Several groups show as one checkout; one group is its own operation's dialog, as ever.
+    const co: Checkout | undefined = quote.parts.length > 1 ? { ops: [], displays: quote.items, parts: quote.parts.length, cart: req.cart === true } : undefined
+    // Followed only once the checkout's dialog is up: a watch that settles at once then updates it.
     const follow: Operation[] = []
     try {
       let last = op
@@ -877,28 +925,36 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         if (i > 0) {
           run = await create(req, quote.buyer, part.items)
           dialog = run
-          if (!run.release) {
-            move(run, 'cancelled')
-            fail(run, partly("This browser couldn't keep the rest of the purchase to this tab.", req))
-            return
-          }
         }
         run.items = part.items
         run.displays = part.displays
+        if (co) {
+          run.checkout = co
+          co.ops.push(run)
+        }
         last = run
+        // A later group's own lock (the first one's was checked when it opened).
+        if (i > 0 && !run.release) {
+          co!.failure ??= "This browser couldn't keep the rest of the purchase to this tab."
+          move(run, 'cancelled')
+          break
+        }
         const outcome = await runPart(run, part, quote, wallet, current)
         if (outcome.kind === 'pending') follow.push(run)
         if (outcome.kind !== 'failed') continue
         if (i > 0) {
-          fail(run, partly(outcome.message, req))
-          return
+          // Nothing of this group went out; what came before stands, and what comes after never starts.
+          co!.failure ??= outcome.message
+          move(run, 'failed')
+          break
         }
         // Nothing of the checkout was handed off.
         if (outcome.topUp != null) present(op, req, { ...quote, balance: outcome.topUp })
         else fail(op, outcome.message, outcome.retry === 'cancelled' ? again : outcome.retry === 'failed' ? () => restart(op, req, 'failed') : undefined)
         return
       }
-      if (follow.length > 0) showPending(last)
+      if (co) presentCheckout(co)
+      else if (follow.length > 0) showPending(last)
       else showSuccess(last, quote.items)
     } finally {
       running = false
@@ -907,8 +963,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   }
 
   /** A checkout's failure after part of it went out: what went stands, the rest didn't. */
-  const partly = (why: string, req: ShopBuyRequest): string =>
-    `Part of this purchase went through, but not all of it: ${why}${req.cart ? ' What wasn’t bought is still in your cart.' : ''}`
+  const partly = (why: string, cart: boolean): string => `Part of this purchase went through, but not all of it: ${why}${cart ? ' What wasn’t bought is still in your cart.' : ''}`
 
   /** One group, as its own operation, through the executor: never resubmitted, and followed if handed off. */
   const runPart = async (op: Operation, part: QuotePart, quote: Quote, wallet: Eip1193Provider, current: () => boolean): Promise<PartOutcome> => {

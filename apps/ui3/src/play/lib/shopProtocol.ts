@@ -75,6 +75,8 @@ export const isTerminal = (state: ShopOperationState): state is ShopTerminalStat
 export interface ShopOperation {
   v: typeof SHOP_PROTOCOL
   operation: string
+  /** Whose purchase it is (lowercase), as the shell holds it; null before anyone signed in. */
+  buyer: string | null
   state: ShopOperationState
   /** What it buys. A request's items that settle in separate transactions are separate operations. */
   items: ShopLine[]
@@ -144,13 +146,15 @@ export function parseOperationRef(params: unknown): string {
 /** A shell event the HUD can trust the shape of (the source and origin are checked by onShellMessage). */
 export function parseOperationEvent(message: Record<string, unknown>): ShopOperation | null {
   if (message.type !== SHOP_EVENT || message.v !== SHOP_PROTOCOL) return null
-  const { operation, state, items, cart, next, txHash } = message
+  const { operation, buyer, state, items, cart, next, txHash } = message
   if (typeof operation !== 'string' || typeof state !== 'string' || !(OPERATION_STATES as readonly string[]).includes(state)) return null
+  if (buyer !== null && (typeof buyer !== 'string' || !ADDRESS.test(buyer))) return null
   const lines = parseLines(items)
   if (!lines) return null
   return {
     v: SHOP_PROTOCOL,
     operation,
+    buyer: buyer === null ? null : buyer.toLowerCase(),
     state: state as ShopOperationState,
     items: lines,
     ...(cart === true ? { cart } : {}),

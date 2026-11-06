@@ -94,7 +94,7 @@ function renderShop(): InWorldShopProps {
 }
 
 const emit = (event: Record<string, unknown>): void =>
-  act(() => shell.handlers.get(SHOP_EVENT)?.({ type: SHOP_EVENT, v: 1, operation: 'op', items: [{ contract: CONTRACT, itemId: '1', quantity: 1 }], ...event }))
+  act(() => shell.handlers.get(SHOP_EVENT)?.({ type: SHOP_EVENT, v: 1, operation: 'op', buyer: BUYER, items: [{ contract: CONTRACT, itemId: '1', quantity: 1 }], ...event }))
 
 afterEach(() => {
   resetPopups()

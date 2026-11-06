@@ -73,6 +73,14 @@ export interface ShopPurchase {
   checkout(lines: ShopLine[], input?: PressedWith): Promise<boolean>
 }
 
+/**
+ * What a purchase from the cart bought leaves its buyer's cart (each operation is the part of the cart one
+ * transaction bought), once per operation however often it is heard.
+ */
+function leaveCart(op: ShopOperation): void {
+  if (op.state === 'succeeded' && op.cart && op.buyer) inWorldCart.applyPurchase(op.buyer, op.operation, op.items)
+}
+
 /** Buying through the shell; `onBackpack` runs when the buyer leaves the success dialog for the Backpack. */
 export function useShopPurchase(onBackpack: () => void): ShopPurchase {
   const queryClient = useQueryClient()
@@ -82,11 +90,16 @@ export function useShopPurchase(onBackpack: () => void): ShopPurchase {
   useEffect(() => {
     if (!inShell) return
     // A reloaded app picks up where the shell is: its newest operation (a purchase still settling
-    // reports to it as it ends).
+    // reports to it as it ends), and what its cart's purchases bought while the app wasn't listening.
     shellRequest<ShopOperation[]>(SHOP_METHODS.status, {})
       .then((list) => {
-        const newest = Array.isArray(list) ? list[0] : undefined
-        if (newest?.v === SHOP_PROTOCOL && last.current == null) last.current = newest
+        if (!Array.isArray(list)) return
+        const known = list.filter((op) => op?.v === SHOP_PROTOCOL)
+        if (known[0] && last.current == null) last.current = known[0]
+        for (const op of known) {
+          const parsed = parseOperationEvent({ ...op, type: SHOP_EVENT })
+          if (parsed) leaveCart(parsed)
+        }
       })
       .catch(() => {})
     return onShellMessage(SHOP_EVENT, (message) => {
@@ -100,8 +113,7 @@ export function useShopPurchase(onBackpack: () => void): ShopPurchase {
         void queryClient.invalidateQueries({ queryKey: ['shop', 'catalogue'] })
         void queryClient.invalidateQueries({ queryKey: ['shop', 'home'] })
       }
-      // What the cart bought leaves it (each operation is the part of the cart one transaction bought).
-      if (event.state === 'succeeded' && event.cart) inWorldCart.removeBought(event.items)
+      leaveCart(event)
       if (event.next === 'backpack' && prev?.next !== 'backpack') toBackpack.current()
     })
   }, [queryClient])
