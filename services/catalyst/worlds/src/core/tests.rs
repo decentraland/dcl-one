@@ -78,6 +78,15 @@ async fn fixture_full(
     ens: Option<(Arc<crate::ens::EnsResolver>, i64)>,
 ) -> Option<Fixture> {
     let pool = crate::db::scratch::pool(8).await?;
+    Some(fixture_on_pool(pool, personal, forward_to, ens).await)
+}
+
+async fn fixture_on_pool(
+    pool: PgPool,
+    personal: PersonalWorldsPolicy,
+    forward_to: Option<&str>,
+    ens: Option<(Arc<crate::ens::EnsResolver>, i64)>,
+) -> Fixture {
     let (market, names) = index_with_names().await;
     let dir = std::env::temp_dir().join(format!(
         "catalyst-worlds-core-{}-{}",
@@ -116,7 +125,7 @@ async fn fixture_full(
         )),
     );
     let app = router(state.clone());
-    Some(Fixture {
+    Fixture {
         pool,
         storage,
         state,
@@ -125,7 +134,7 @@ async fn fixture_full(
         market,
         allowance,
         social,
-    })
+    }
 }
 
 async fn fixture() -> Option<Fixture> {
@@ -3189,8 +3198,51 @@ async fn a_community_exit_evicts_from_the_livekit_rooms() {
 
 #[tokio::test]
 async fn a_community_closure_rechecks_livekit_when_its_queue_insert_fails() {
+    use futures::FutureExt;
+    use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+
+    let Ok(url) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
+        return;
+    };
+    let opts: PgConnectOptions = url.parse().unwrap();
+    let admin = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(opts.clone().database("postgres"))
+        .await
+        .unwrap();
+    let name = format!("world_closure_{}", Uuid::new_v4().simple());
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
+        .execute(&admin)
+        .await
+        .unwrap();
+    // Fault-injection DDL must never lock or alter the shared scratch database.
+    // Clean up the private database even if setup or an assertion panics.
+    let outcome = std::panic::AssertUnwindSafe(async {
+        let pool = PgPoolOptions::new()
+            .max_connections(8)
+            .connect_with(opts.database(&name))
+            .await
+            .unwrap();
+        crate::db::apply_schema(&pool).await.unwrap();
+        let f = fixture_on_pool(pool, PersonalWorldsPolicy::disabled(), None, None).await;
+        community_closure_with_failed_queue_insert(f).await;
+    })
+    .catch_unwind()
+    .await;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE \"{name}\" WITH (FORCE)"
+    )))
+    .execute(&admin)
+    .await
+    .unwrap();
+    admin.close().await;
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+async fn community_closure_with_failed_queue_insert(f: Fixture) {
     use crate::comms::gatekeeper::{CommsState, Settings as CommsSettings};
-    let Some(f) = fixture().await else { return };
     let world = world_name();
     let room = format!("world-{}", world.key());
     let owner = Wallet::random();

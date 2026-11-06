@@ -572,6 +572,39 @@ async fn a_stored_owner_can_join_with_a_valid_secret_during_an_authority_outage(
             .await
             .is_none()
     );
+    // Authority errors may refund a reservation. Fill the caller's budget
+    // explicitly, then prove this fallback cannot bypass it with a valid secret.
+    let throttle = crate::comms::gatekeeper::admission::world_mint::SecretThrottle {
+        pool: &h.state.pool,
+        max_attempts: h.state.secret_max_attempts,
+        world: world.key(),
+        subject: previous.as_str(),
+    };
+    let now = chrono::Utc::now().naive_utc();
+    for _ in 0..h.state.secret_max_attempts {
+        let _ = throttle.reserve(now).await.unwrap();
+    }
+    assert!(throttle.reserve(now).await.unwrap().is_none());
+    assert!(
+        join(addr, &world, &visitor_key, r#"{"secret":"open sesame"}"#)
+            .await
+            .is_none(),
+        "a valid secret cannot bypass the exhausted caller budget during an authority outage"
+    );
+    assert!(
+        h.state
+            .scenes
+            .get(world.key())
+            .unwrap()
+            .clients()
+            .is_empty()
+    );
+    sqlx::query("UPDATE social.world_secret_attempts SET window_start=timezone('UTC',now())-interval '61 seconds' WHERE world_name=$1 AND subject=$2")
+        .bind(world.key())
+        .bind(previous.as_str())
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
     let (_visitor_ws, _) = join(addr, &world, &visitor_key, r#"{"secret":"open sesame"}"#)
         .await
         .expect("the secret admits without asking the authority");
