@@ -671,12 +671,15 @@ async fn the_usage_index_resumes_after_a_kill_folds_each_credit_once_and_gates_t
             .unwrap()
             .unwrap()
     };
-    sqlx::query("UPDATE credits.usage_index_cursor SET contract = $2, last_block = 2000 WHERE chain_id = $1")
-        .bind(chain_id)
-        .bind(&contract)
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE credits.usage_index_cursor SET contract = $2, last_block = 2000, \
+         folded_block = NULL, folded_block_time = NULL, folded_at = NULL WHERE chain_id = $1",
+    )
+    .bind(chain_id)
+    .bind(&contract)
+    .execute(&pool)
+    .await
+    .unwrap();
     assert!(
         super::usage::begin_replay(&pool, &at(5_000, new_manager), new_manager, 5_000)
             .await
