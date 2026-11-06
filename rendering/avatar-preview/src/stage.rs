@@ -56,6 +56,9 @@ pub struct ShadowCatcherMaterial {
     /// x: the darkest the shadow gets (0..1), y: metres from the centre where the floor fades out
     #[uniform(0)]
     pub params: Vec4,
+    /// xy: the world xz the shadow and glow centre on
+    #[uniform(1)]
+    pub centre: Vec4,
 }
 
 impl Material for ShadowCatcherMaterial {
@@ -77,7 +80,7 @@ impl Plugin for StagePlugin {
             .init_resource::<StageLight>()
             .insert_resource(bevy::pbr::DirectionalLightShadowMap { size: 2048 })
             .add_systems(Startup, spawn_stage)
-            .add_systems(Update, apply_light);
+            .add_systems(Update, (apply_light, place_floors));
     }
 }
 
@@ -109,15 +112,32 @@ fn spawn_stage(
         Mesh3d(meshes.add(Plane3d::default().mesh().size(12.0, 12.0))),
         MeshMaterial3d(catchers.add(ShadowCatcherMaterial {
             params: Vec4::new(light.shadow, light.shadow_reach, light.glow, 2.5),
+            centre: Vec4::ZERO,
         })),
         Transform::from_xyz(0.0, 0.002, 0.0),
         NotShadowCaster,
-        ShadowCatcher,
+        ShadowCatcher { item: false },
+    ));
+    // the item view's floor: its glow alone (nothing casts onto it), under the item
+    commands.spawn((
+        Mesh3d(meshes.add(Plane3d::default().mesh().size(6.0, 6.0))),
+        MeshMaterial3d(catchers.add(ShadowCatcherMaterial {
+            params: Vec4::new(0.0, light.shadow_reach, light.glow, 2.5),
+            centre: Vec4::ZERO,
+        })),
+        Transform::from_xyz(0.0, 0.002, 0.0),
+        Visibility::Hidden,
+        NotShadowCaster,
+        ShadowCatcher { item: true },
     ));
 }
 
+/// A floor: the avatar's (its shadow and the glow around its feet), or the item view's (a glow
+/// under the item). Each shows in its own view, as the Unity renderer swaps them.
 #[derive(Component)]
-pub struct ShadowCatcher;
+pub struct ShadowCatcher {
+    item: bool,
+}
 
 /// The key light keeps its place relative to the camera as it orbits, so the avatar stays lit
 /// from the front whichever side the camera is on.
@@ -127,7 +147,7 @@ fn apply_light(
     mut keys: Query<(&mut DirectionalLight, &mut Transform), With<KeyLight>>,
     mut cameras: Query<&mut bevy::render::camera::Exposure, With<crate::host::PreviewCamera>>,
     mut ambient: ResMut<AmbientLight>,
-    catchers: Query<&MeshMaterial3d<ShadowCatcherMaterial>, With<ShadowCatcher>>,
+    catchers: Query<(&MeshMaterial3d<ShadowCatcherMaterial>, &ShadowCatcher)>,
     mut materials: ResMut<Assets<ShadowCatcherMaterial>>,
 ) {
     for (mut directional, mut transform) in keys.iter_mut() {
@@ -141,11 +161,48 @@ fn apply_light(
         for mut exposure in cameras.iter_mut() {
             exposure.ev100 = bevy::render::camera::Exposure::EV100_BLENDER - light.exposure;
         }
-        for handle in catchers.iter() {
+        for (handle, catcher) in catchers.iter() {
             if let Some(material) = materials.get_mut(&handle.0) {
-                material.params.x = light.shadow;
+                material.params.x = if catcher.item { 0.0 } else { light.shadow };
                 material.params.y = light.shadow_reach.max(0.1);
                 material.params.z = light.glow.max(0.0);
+            }
+        }
+    }
+}
+
+/// Shows the floor of the view on screen, the item's under the item, as the Unity renderer swaps
+/// its avatar and item floors with the view.
+fn place_floors(
+    orbit: Res<OrbitCamera>,
+    mut catchers: Query<(
+        &ShadowCatcher,
+        &MeshMaterial3d<ShadowCatcherMaterial>,
+        &mut Transform,
+        &mut Visibility,
+    )>,
+    mut materials: ResMut<Assets<ShadowCatcherMaterial>>,
+) {
+    if !orbit.is_changed() {
+        return;
+    }
+    for (catcher, handle, mut transform, mut visibility) in catchers.iter_mut() {
+        visibility.set_if_neq(if catcher.item == orbit.item_view {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
+        if catcher.item {
+            let at = Vec3::new(
+                orbit.item_target.x,
+                orbit.item_floor + 0.002,
+                orbit.item_target.z,
+            );
+            if transform.translation != at {
+                transform.translation = at;
+                if let Some(material) = materials.get_mut(&handle.0) {
+                    material.centre = Vec4::new(at.x, at.z, 0.0, 0.0);
+                }
             }
         }
     }

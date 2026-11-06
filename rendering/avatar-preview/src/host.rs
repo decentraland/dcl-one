@@ -277,9 +277,14 @@ pub struct OrbitCamera {
     pub item_view: bool,
     pub item_target: Vec3,
     pub item_distance: f32,
+    /// where the item's glow lies: the bottom of the item
+    pub item_floor: f32,
     pub lock_beta: bool,
     tilt: f32,
     tilt_velocity: f32,
+    /// a view switch glides from where the camera was: its pivot, distance and pitch then, and
+    /// how far through the glide it is (0..1)
+    blend: Option<(Vec3, f32, f32, f32)>,
     dragging: bool,
     velocity: f32,
     since_drag: f32,
@@ -311,9 +316,11 @@ impl Default for OrbitCamera {
             item_view: false,
             item_target: Vec3::new(0.0, 0.95, 0.0),
             item_distance: 4.6,
+            item_floor: 0.0,
             lock_beta: false,
             tilt: 0.0,
             tilt_velocity: 0.0,
+            blend: None,
             dragging: false,
             velocity: 0.0,
             since_drag: f32::MAX,
@@ -328,6 +335,15 @@ impl OrbitCamera {
             self.item_distance / self.zoom
         } else {
             self.radius * self.fit / self.zoom
+        }
+    }
+
+    /// The pitch the camera looks down at: the item view adds its tilt.
+    pub fn pitch(&self) -> f32 {
+        if self.item_view {
+            self.beta + self.tilt
+        } else {
+            self.beta
         }
     }
 
@@ -353,6 +369,9 @@ impl OrbitCamera {
 /// The preview's camera.
 #[derive(Component)]
 pub struct PreviewCamera;
+
+/// Where the item view's subject stands, from the avatar: the Unity renderer's wearable offset.
+const ITEM_OFFSET: Vec3 = Vec3::new(-5.0, 0.0, 0.0);
 
 /// The item view's subject: a second avatar wearing only the previewed wearable, its body hidden
 /// (but the head when `keep_head`), casting no shadow, held in its first pose.
@@ -391,7 +410,6 @@ impl Plugin for HostPlugin {
                 fit_to_bounds,
                 fit_item,
                 prepare_item,
-                show_view,
                 place_camera,
                 report_load,
                 send_load,
@@ -516,22 +534,24 @@ fn apply_commands(
                             seek: Some(0.0),
                             ..default()
                         },
-                        Transform::from_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
-                        if orbit.item_view {
-                            Visibility::Inherited
-                        } else {
-                            Visibility::Hidden
-                        },
+                        // beside the avatar, where the Unity renderer floats it; the camera
+                        // glides between the two
+                        Transform::from_translation(ITEM_OFFSET)
+                            .with_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
+                        Visibility::default(),
                         PreviewItem { keep_head },
                     ));
                 }
             }
             Command::View { item } => {
                 if orbit.item_view != item {
-                    // a switch starts the view over, as the Unity renderer resets its rotator
+                    // the camera glides from one subject to the other, as the Unity renderer
+                    // blends its cameras, and the view starts over, as it resets its rotator
+                    let from = (orbit.pivot(), orbit.distance(), orbit.pitch(), 0.0);
                     orbit.item_view = item;
                     orbit.reset_view();
                     orbit.alpha = 0.0;
+                    orbit.blend = Some(from);
                 }
             }
             Command::Camera {
@@ -1253,6 +1273,7 @@ fn fit_item(
     let size = max - min;
     let radius = 0.5 * size.xz().length();
     orbit.item_target = (min + max) / 2.0;
+    orbit.item_floor = min.y;
     orbit.item_distance = ((size.y / 2.0) / tan_v).max(radius / tan_h).max(0.1) * MARGIN;
 }
 
@@ -1289,25 +1310,6 @@ fn prepare_item(
                     .try_insert(bevy::pbr::NotShadowCaster);
             }
         }
-    }
-}
-
-/// Shows the subject the view asks for: the avatar, or the item on its own.
-fn show_view(
-    orbit: Res<OrbitCamera>,
-    mut avatars: Query<&mut Visibility, (With<PreviewAvatar>, Without<PreviewItem>)>,
-    mut items: Query<&mut Visibility, (With<PreviewItem>, Without<PreviewAvatar>)>,
-) {
-    let (avatar, item) = if orbit.item_view {
-        (Visibility::Hidden, Visibility::Inherited)
-    } else {
-        (Visibility::Inherited, Visibility::Hidden)
-    };
-    for mut visibility in avatars.iter_mut() {
-        visibility.set_if_neq(avatar);
-    }
-    for mut visibility in items.iter_mut() {
-        visibility.set_if_neq(item);
     }
 }
 
@@ -1390,16 +1392,19 @@ fn place_camera(
     }
     // the view orbits the avatar's own axis (or the item's centre); the pan slides the camera
     // across the screen
-    let pivot = orbit.pivot();
-    let pitch = if orbit.item_view {
-        orbit.beta + orbit.tilt
-    } else {
-        orbit.beta
-    };
+    let (mut pivot, mut distance, mut pitch) = (orbit.pivot(), orbit.distance(), orbit.pitch());
+    // a view switch eases from the old view to the new in 0.3 s, the Unity renderer's blend
+    if let Some((from_pivot, from_distance, from_pitch, t)) = orbit.blend {
+        let t = (t + dt / 0.3).min(1.0);
+        let s = t * t * (3.0 - 2.0 * t);
+        pivot = from_pivot.lerp(pivot, s);
+        distance = from_distance + (distance - from_distance) * s;
+        pitch = from_pitch + (pitch - from_pitch) * s;
+        orbit.blend = (t < 1.0).then_some((from_pivot, from_distance, from_pitch, t));
+    }
     let rotation = Quat::from_rotation_y(orbit.alpha) * Quat::from_rotation_x(-pitch);
-    let orbited =
-        Transform::from_translation(pivot + rotation * Vec3::new(0.0, 0.0, orbit.distance()))
-            .looking_at(pivot, Vec3::Y);
+    let orbited = Transform::from_translation(pivot + rotation * Vec3::new(0.0, 0.0, distance))
+        .looking_at(pivot, Vec3::Y);
     let slide = orbited.rotation * orbit.pan.extend(0.0);
     for (mut transform, mut projection) in cameras.iter_mut() {
         *transform = orbited.with_translation(orbited.translation + slide);

@@ -70,7 +70,7 @@ Commands, as JSON objects with an `op`:
 | --- | --- | --- |
 | `outfit` | `bodyShape`, `wearables[]`, `skin`, `hair`, `eyes` (`#rrggbb`), `forceRender[]` (categories no other wearable hides) | the avatar; the first one spawns it |
 | `item` | `urn` (or null), `bodyShape`, `skin`, `hair`, `eyes`, `keepHead` | the wearable shown on its own: a second avatar wearing only it, its body hidden (but the head, for a facial feature), framed once before `load` |
-| `view` | `item` | the item on its own, or the avatar wearing it; a switch starts the view over |
+| `view` | `item` | the item on its own, or the avatar wearing it; a switch glides the camera across and starts the view over |
 | `camera` | `alpha`, `beta` (radians), `radius` (m), `fov` (degrees), `orthographic`, `target[3]`, `autoRotate`, `autoRotateSpeed`, `interactive`, `lockAlpha`, `lockBeta` (the item view's vertical drag), `lockRadius` | the orbit camera; unset fields keep their value |
 | `background` | `color` (`#rrggbb` or null for transparent) | the clear colour |
 | `emote` | `urn` (a urn or a base emote name), `loop` | plays on the avatar |
@@ -140,13 +140,15 @@ The target is the Unity renderer's behaviour, not only its look. In place so far
   and the emote, steps the paused emote through its clip, measures the skinned surface at each pose
   and sets the camera; `load` follows and the camera then moves only for the user. The fit raises or
   lowers the view but the avatar always turns about its own vertical axis.
-- its item view: one wearable on its own (not an emote, nor several items), shown alone with its
-  body hidden and no shadow, centred and fitted to its height and its widest turn with a 5% margin,
-  turning on both axes (the tilt eases back upright); the view switcher (`disableSwitcher` hides it)
-  and the view it opens on: `type`, else the one last picked (kept in the page's storage, as the
-  renderer keeps it), else the item. An item with no representation for the avatar's body shape
-  locks the view to it, shown in the body shape it was made for, with the renderer's tooltip. The
-  previewed items' categories are force-rendered on the avatar.
+- its item view: one wearable on its own (not an emote, nor several items), standing 5 m to the
+  avatar's left as in the renderer, its body hidden and casting no shadow, with its own glow under
+  it (each view shows its own floor); centred and fitted to its height and its widest turn with a 5%
+  margin, and turning on both axes (the tilt eases back upright). A switch glides the camera from
+  one subject to the other in 0.3 s, eased, as the renderer blends its cameras. The view switcher
+  (`disableSwitcher` hides it) and the view it opens on: `type`, else the one last picked (kept in
+  the page's storage, as the renderer keeps it), else the item. An item with no representation for
+  the avatar's body shape locks the view to it, shown in the body shape it was made for, with the
+  renderer's tooltip. The previewed items' categories are force-rendered on the avatar.
 
 A named default emote plays once in the marketplace, then the avatar idles; it loops in the
 builder.

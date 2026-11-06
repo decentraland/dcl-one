@@ -11,6 +11,8 @@
 // x: the darkest the shadow gets (0..1), y: metres where the shadow has faded out,
 // z: the glow's strength (1 is the Unity renderer's), w: the glow's radius in metres
 @group(2) @binding(0) var<uniform> catcher: vec4<f32>;
+// xy: the world xz the shadow and glow centre on (the avatar's feet, or the item's)
+@group(2) @binding(1) var<uniform> centre: vec4<f32>;
 
 const GLOW_COLOR: vec3<f32> = vec3<f32>(0.9255, 0.9725, 0.9765);
 const GLOW_CENTRE: f32 = 0.03;
@@ -27,7 +29,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if lights.n_directional_lights > 0u {
         lit = fetch_directional_shadow(0u, in.world_position, normalize(in.world_normal), view_z);
     }
-    let distance = length(in.world_position.xz);
+    let distance = length(in.world_position.xz - centre.xy);
     let shadow_fade = 1.0 - smoothstep(0.6, 1.0, distance / catcher.y);
     let shadow = (1.0 - lit) * catcher.x * shadow_fade;
 
