@@ -239,6 +239,15 @@ describe('hudLogin', () => {
     assert.equal(records[0]!.line, '/hud_login <redacted> --name tester --look 3 --guest --realm https://realm.example --position 10,-20')
   })
 
+  test("the credentials of the lines run are replaced in text that quotes them, for the page's console", async () => {
+    const fake = new FakeConsole({ hud_login: '{"address":"0xabc","guest":false,"phase":"lobby"}', login_identity: 'logged in with identity' })
+    const explorer = new Explorer(fake)
+    assert.equal(explorer.redactSecrets('nothing yet eyJhIjoxfQ=='), 'nothing yet eyJhIjoxfQ==')
+    await explorer.hudLogin('eyJhIjoxfQ==')
+    await explorer.loginIdentity('eyJiIjoyfQ==')
+    assert.equal(explorer.redactSecrets('[login] failed: eyJhIjoxfQ== and eyJiIjoyfQ== again eyJhIjoxfQ=='), '[login] failed: <redacted> and <redacted> again <redacted>')
+  })
+
   test('a flag value with whitespace is refused before the line is sent', async () => {
     const fake = new FakeConsole({ hud_login: '{}' })
     await assert.rejects(new Explorer(fake).hudLogin('eyJhIjoxfQ==', { name: 'two words', look: 1 }), /a \/hud_login --name takes no whitespace: "two words"/)

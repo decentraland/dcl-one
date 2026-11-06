@@ -904,6 +904,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // for a /hud_login, which may come between a render and the effect that hands it over
   const submittedRef = useRef(false)
   submittedRef.current = submitted
+  const fatalErrorRef = useRef<FatalError | null>(null)
+  fatalErrorRef.current = fatalError
   // The post-jump-in Places picker: stay in 'picking' until the user chooses a destination (or skips).
   const [destinationPicked, setDestinationPicked] = useState(false)
   // Signed in and shown the lobby, with the engine launched holding the world back (web) or already
@@ -3103,7 +3105,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     (request: HudLoginRequest): Promise<HudLoginReply> =>
       new Promise((resolve, reject) => {
         // the refs, as the command may come between a render and the effect that hands it over
-        if (submittedRef.current || busyRef.current) return reject(new Error('already signed in: /logout first'))
+        if (fatalErrorRef.current != null) return reject(new Error(fatalErrorRef.current.message))
+        if (submittedRef.current) return reject(new Error('already signed in: /logout first'))
+        // a sign-out under a sign-in the engine has not answered yet: busy until it does
+        if (busyRef.current) return reject(new Error('a sign-in is still finishing'))
         if (!engineReady) return reject(new Error('the engine is not ready to take a sign-in yet'))
         if (hudLoginPending.current != null) return reject(new Error('a /hud_login is already under way'))
         const { identity, guest, defaultOnError, pick, destination } = request
@@ -3132,10 +3137,14 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       }),
     [engineReady, submitLogin, settleHudLogin]
   )
+  // handed over once, through a ref to the latest callback (and so the latest `submitLogin`): a
+  // command between a render and an effect that would hand a new one over sees the current state
+  const hudLoginRef = useRef(hudLogin)
+  hudLoginRef.current = hudLogin
   useEffect(() => {
-    provideHudLogin(hudLogin)
+    provideHudLogin((request) => hudLoginRef.current(request))
     return () => provideHudLogin(null)
-  }, [hudLogin])
+  }, [])
   // a sign-in the HUD went away under is answered with that, not left to the runner's timeout
   useEffect(() => () => settleHudLogin(new Error('the HUD unmounted')), [settleHudLogin])
 

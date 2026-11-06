@@ -157,10 +157,11 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
     // the HUD's travel lands there; a realm that ignores the parcel (a world) is corrected by console
     if (target.transport === 'web') await arrive(explorer, realm, position)
   } catch (error) {
-    // a page that opened but never arrived: what it said and how it looks, with the error
+    // a page that opened but never arrived: what it said and how it looks, with the error; the
+    // console with the credentials the sign-in sent replaced, should the page have quoted one
     const evidence = console_ instanceof WebConsole ? await console_.evidence().catch(() => undefined) : undefined
     await explorer.close()
-    if (evidence) throw new BootError(message(error), evidence.console, evidence.screenshot)
+    if (evidence) throw new BootError(message(error), evidence.console.map((line) => explorer.redactSecrets(line)), evidence.screenshot)
     throw error
   }
   return {

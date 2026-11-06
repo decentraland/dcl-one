@@ -1,7 +1,7 @@
 // The typed API specs use. Every method is one console command (or a command and the wait that
 // makes its effect observable), with the reply parsed as rendering/bevy-explorer/docs/guidelines/
 // running.md ("Test commands") describes it. Specs never see which transport carries the line.
-import { type Console, ConsoleError, redact, redactLine } from './console.ts'
+import { type Console, ConsoleError, redact, redactLine, secretOf } from './console.ts'
 import { type AuthIdentity, encodeIdentity } from './identity.ts'
 import { type Selector, describeSelector, selectorArg, toSelectorObject } from './selectors.ts'
 import { until } from './wait.ts'
@@ -185,6 +185,8 @@ export class Explorer {
   readonly hud: Hud
   readonly #listeners = new Set<CommandListener>()
   readonly #allowSynthetic: boolean
+  /** The credentials the lines run so far carried (`secretOf`), for text that may quote them. */
+  readonly #secrets = new Set<string>()
 
   constructor(console: Console, options: ExplorerOptions = {}) {
     this.console = console
@@ -202,6 +204,8 @@ export class Explorer {
   async run(line: string): Promise<string> {
     const startedAt = Date.now()
     const record: CommandRecord = { line: redactLine(line.trim()), startedAt, ms: 0 }
+    const secret = secretOf(line)
+    if (secret !== undefined) this.#secrets.add(secret)
     try {
       const reply = await this.console.run(line)
       record.ms = Date.now() - startedAt
@@ -217,6 +221,14 @@ export class Explorer {
     } finally {
       for (const listener of this.#listeners) listener(record)
     }
+  }
+
+  /** `text` with every credential a line of this client carried replaced: the page's console,
+   *  which the HUD may have written an error into. */
+  redactSecrets(text: string): string {
+    let out = text
+    for (const secret of this.#secrets) out = out.split(secret).join('<redacted>')
+    return out
   }
 
   /** Run a line whose reply is JSON. A reply that does not parse is an error naming the command,

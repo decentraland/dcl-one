@@ -259,7 +259,7 @@ describe('/hud_login through the session', () => {
     await expect(first).resolves.toMatchObject({ phase: 'lobby' })
   })
 
-  it('answers a pending sign-in that a sign-out ended', async () => {
+  it('answers a pending sign-in that a sign-out ended, and says so until the engine has answered it', async () => {
     const driver = new IdentityDriver()
     driver.hold = true
     const h = await ready(driver)
@@ -268,7 +268,12 @@ describe('/hud_login through the session', () => {
     act(() => h.session().logout())
     await expect(first).rejects.toThrow('signed out')
     expect(h.session().login.account).toBeNull()
+    // the engine still holds the first sign-in: a new one waits for it, and is told so
+    await expect(login(ENCODED)).rejects.toThrow('a sign-in is still finishing')
+    driver.hold = false
     driver.release()
+    await waitFor(() => expect(h.session().login.busy).toBe(false))
+    await expect(login(ENCODED)).resolves.toMatchObject({ phase: 'lobby' })
   })
 
   it('answers a pending sign-in the HUD went away under', async () => {
@@ -348,13 +353,39 @@ describe('/hud_login through the session', () => {
     driver.release()
   })
 
-  it('is answered when the engine fails to launch, the stored sign-in put back', async () => {
+  it('is refused with the crash once the engine has failed', async () => {
+    const driver = new IdentityDriver()
+    const h = await ready(driver)
+    act(() => {
+      ;(window as Window & { __onEngineCrash?: (message: string, source: string) => void }).__onEngineCrash?.('engine stalled', 'watchdog')
+    })
+    await waitFor(() => expect(h.session().fatalError).not.toBeNull())
+    await expect(login(ENCODED)).rejects.toThrow('engine stalled')
+    expect(driver.identityLogins).toEqual([])
+  })
+
+  it('is answered when the engine fails to launch for it, the stored sign-in put back', async () => {
+    // a link's page: no launch before the sign-in, so the launch that fails is the sign-in's own
+    const leave = onPage('/?position=1,2')
+    try {
+      const driver = new LaunchFailingDriver()
+      const h = await ready(driver)
+      expect(h.session().fatalError).toBeNull()
+      await expect(login(ENCODED)).rejects.toThrow('the engine failed to launch')
+      expect(driver.identityLogins).toEqual([])
+      await waitFor(() => expect(h.session().fatalError).not.toBeNull())
+      await waitFor(() => expect(h.session().login.account).toBeNull())
+    } finally {
+      leave()
+    }
+  })
+
+  it('is refused with the failure once the engine failed to launch for the start page', async () => {
     const driver = new LaunchFailingDriver()
     const h = await ready(driver)
-    await expect(login(ENCODED)).rejects.toThrow('the engine failed to launch')
+    await waitFor(() => expect(h.session().fatalError).toMatchObject({ source: 'launch' }))
+    await expect(login(ENCODED)).rejects.toThrow('unreachable')
     expect(driver.identityLogins).toEqual([])
-    expect(h.session().fatalError).not.toBeNull()
-    await waitFor(() => expect(h.session().login.account).toBeNull())
   })
 
   it('is refused before the engine can take a sign-in', async () => {
