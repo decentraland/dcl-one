@@ -123,6 +123,18 @@ across workers:
 - `children!` accepts more than twelve children (upstream #18865, #21099).
 - `SceneSpawner` forgets child instances when their parent is gone, and `unregister_instance`
   cancels a spawn that hasn't happened yet.
+- `SceneSpawner::set_spawn_deadline`: queued `Scene` instances are written an entity at a time,
+  one instance after another in request order, until the deadline. The rest waits for the next
+  run, and each run writes at least one entity. `None`, the default, spawns them whole as stock
+  bevy does; dynamic scenes and `spawn_sync` always do.
+  - A part-written instance's top-level entities are attached to the parent from the first run
+    and kept `Visibility::Hidden` until it is complete. Their own visibility is restored then.
+  - Its parent despawned, `despawn_instance` or `unregister_instance` despawn what was written.
+  - A scene replaced or removed mid-spawn starts the instance over.
+  - `spawn_as_child_hidden` keeps an instance hidden after it has spawned, until
+    `reveal_instance_sync`.
+  - The explorer sets the deadline each frame (`scene_runner::scene_spawn_slice`) and spawns glTF
+    containers hidden until `update_ready_gltfs` has processed them.
 - `mark_dirty_trees` keys its early-out on this run's tick, so transform propagation can run
   twice per frame (the explorer's early pass plus bevy's own).
 - `GlobalTransform::from(Transform)` and `mul_transform` sanitise the affine: a zero scale

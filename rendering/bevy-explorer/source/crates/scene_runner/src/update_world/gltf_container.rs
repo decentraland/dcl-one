@@ -465,7 +465,10 @@ fn update_gltf(
 
         match gltf_scene_handle {
             Some(gltf_scene_handle) => {
-                let instance_id = scene_spawner.spawn_as_child(gltf_scene_handle.clone_weak(), ent);
+                // hidden until update_ready_gltfs has processed it: before that it shows bevy's
+                // materials and its collider meshes
+                let instance_id =
+                    scene_spawner.spawn_as_child_hidden(gltf_scene_handle.clone_weak(), ent);
                 commands
                     .entity(ent)
                     .try_insert(GltfLoaded(Some(instance_id)));
@@ -621,6 +624,7 @@ fn update_ready_gltfs(
                     .try_insert(GltfProcessed::default())
                     .try_remove::<GltfReady>();
                 error!("gltf was unloaded mysteriously. this shouldn't happen and things will be broken as a result.");
+                reveal(&mut commands, *instance);
                 continue;
             };
 
@@ -1161,6 +1165,7 @@ fn update_ready_gltfs(
                 },
                 GltfReady(*instance),
             ));
+            reveal(&mut commands, *instance);
             if has_animations && !gltf.animations.is_empty() {
                 let mut graph = AnimationGraph::new();
                 let animation_clips = Clips {
@@ -1211,6 +1216,15 @@ fn update_ready_gltfs(
             gltf.source = None;
         }
     }
+}
+
+/// Shows an instance `update_gltf` spawned hidden, with the commands queued before it applied.
+fn reveal(commands: &mut Commands, instance: InstanceId) {
+    commands.queue(move |world: &mut World| {
+        world.resource_scope(|world, mut spawner: Mut<SceneSpawner>| {
+            spawner.reveal_instance_sync(world, instance);
+        });
+    });
 }
 
 pub const GLTF_LOADING: &str = "gltfs loading";
@@ -2293,6 +2307,9 @@ fn update_gltf_linked_visibility(
         }
     }
 }
+
+#[cfg(test)]
+mod reveal_tests;
 
 #[cfg(test)]
 mod tests {

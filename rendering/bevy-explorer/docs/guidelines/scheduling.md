@@ -118,6 +118,11 @@ well, or its writes land a frame late. `crates/avatar/src/point_at_marker.rs` is
 - **`First`**: pumps for the comms and social tokio runtimes, sysinfo counters.
 - **`PreUpdate`**: `UiActionSet` (system-UI actions; interact sounds before it, text links
   after), the web livekit page-event dispatch, media source serving, the headless supervisor.
+- **`SpawnScene`** (bevy's, between `Update` and `PostUpdate`), in order:
+  - `slice_scene_spawning` gives bevy's `scene_spawner_system` its deadline: 4 ms; none behind
+    the loading backdrop or on headless;
+  - the spawner writes scene instances up to that deadline;
+  - `update_ready_gltfs` processes the glTF instances that are complete and reveals them.
 - **`Last`**: CEF command drain, livekit room close on app exit, the web engine heartbeat.
 - **`OnEnter`/`OnExit`**: a few states (transmitter, receiver, microphone, parcel grass).
 
