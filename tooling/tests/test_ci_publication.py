@@ -1,4 +1,4 @@
-"""A delayed build cannot move mutable publication tags behind a newer push."""
+"""A delayed build cannot move mutable publication tags behind a newer successful run."""
 import importlib.util
 import os
 from pathlib import Path
@@ -23,16 +23,36 @@ class PublicationTests(unittest.TestCase):
         with patch.object(publication, 'api', side_effect=[self.run, {'workflow_runs': [self.run]}]):
             self.assertTrue(publication.current())
 
-    def test_newer_failed_or_incomplete_run_still_supersedes_an_old_run(self):
-        for conclusion in ('success', 'failure', None):
-            newer = {**self.run, 'run_number': 11, 'conclusion': conclusion}
-            with self.subTest(conclusion=conclusion), patch.object(publication, 'api',
-                    side_effect=[self.run, {'workflow_runs': [self.run, newer]}]):
-                self.assertFalse(publication.current())
+    NEWER = (  # status, conclusion, attempt, supersedes
+        ('completed', 'success', 1, True), ('completed', 'failure', 1, False),
+        ('completed', 'cancelled', 1, False), ('in_progress', None, 1, False), ('pending', None, 1, False),
+        # A re-run may hide an earlier attempt that published.
+        ('in_progress', None, 2, True), ('completed', 'failure', 2, True))
+
+    def test_only_a_newer_successful_or_rerun_run_supersedes_an_old_run(self):
+        for status, conclusion, attempt, supersedes in self.NEWER:
+            newer = {**self.run, 'run_number': 11, 'status': status, 'conclusion': conclusion, 'run_attempt': attempt}
+            with self.subTest(status=status, conclusion=conclusion, attempt=attempt), patch.object(
+                    publication, 'api', side_effect=[self.run, {'workflow_runs': [self.run, newer]}]):
+                self.assertEqual(publication.current(), not supersedes)
+
+    def test_callback_is_superseded_only_by_a_newer_published_or_rerun_run_of_its_consumer(self):
+        run = {**self.run, 'status': 'completed', 'conclusion': 'success', 'run_attempt': 1,
+               'path': '.github/workflows/bevy-explorer-ci.yml', 'head_repository': {'full_name': 'example/repo'}}
+        env = {'GITHUB_EVENT_NAME': 'workflow_run', 'GITHUB_REPOSITORY': 'example/repo', 'SOURCE_RUN': '42',
+               'SOURCE_SHA': 'a' * 40, 'SOURCE_ATTEMPT': '1', 'SOURCE_CONSUMER': 'headless'}
+        with patch.dict(os.environ, env):
+            for status, conclusion, attempt, supersedes in self.NEWER:
+                newer = {**run, 'run_number': 11, 'head_sha': 'c' * 40, 'status': status,
+                         'conclusion': conclusion, 'run_attempt': attempt}
+                with self.subTest(status=status, conclusion=conclusion, attempt=attempt), \
+                        patch.object(publication, 'api', side_effect=[run, {'workflow_runs': [run, newer]}]), \
+                        patch.object(publication, 'consumer_changed', return_value=True):
+                    self.assertEqual(publication.current(), not supersedes)
 
     def test_rerunning_old_run_does_not_make_it_current(self):
         with patch.object(publication, 'api', side_effect=[{**self.run, 'run_attempt': 3},
-                {'workflow_runs': [{**self.run, 'run_number': 11}]}]):
+                {'workflow_runs': [{**self.run, 'run_number': 11, 'status': 'completed', 'conclusion': 'success'}]}]):
             self.assertFalse(publication.current())
 
     def test_manual_and_tag_releases_are_explicit(self):

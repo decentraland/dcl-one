@@ -38,6 +38,7 @@ docker run --rm --network dcl-one --read-only --cap-drop ALL --security-opt no-n
 | `GATEWAY_ADMIN_CIDRS` | empty | Operator networks; empty denies all |
 | `GATEWAY_TRUSTED_PROXY_CIDRS` | empty | Proxies trusted for client IP and scheme |
 | `GATEWAY_TRUSTED_SYNC_PEER_IPS` | empty | Sync peers exempt from the `read` and `content` request limits; list the API's `TRUSTED_SYNC_PEER_IPS` |
+| `GATEWAY_STORAGE_TRUSTED_CIDRS` | empty | Client networks (such as scene-host egress) with a higher, bounded storage budget |
 | `GATEWAY_RESOLVERS` | resolv.conf | DNS servers |
 | `GATEWAY_STORAGE_ROOT` | empty | Content mount; API sets `STORAGE_X_ACCEL_BASE=/__protected_storage` |
 
@@ -47,6 +48,7 @@ docker run --rm --network dcl-one --read-only --cap-drop ALL --security-opt no-n
 - The gateway overwrites client IP, forwarding, `X-Catalyst-Admin-Gate` and `x-original-path` headers and removes `True-Client-IP`.
 - `/internal/pulse` and `/metrics` are not public; internal callers use the APIs' private address.
 - Limits: bodies 1 MiB (deployments 200, builder 21, reports 11); 30 r/s per client (content 100, deployments 2); `%3F` in paths returns 400.
+- `/world-storage` (after host rewriting): reads 100 r/s per client (burst 400), writes also 30 r/s (burst 60). Each client address in `GATEWAY_STORAGE_TRUSTED_CIDRS` gets a separate 1000 r/s budget (burst 1000); the allowance is per address, not per CIDR, and never disables limiting. Startup rejects overlaps with `GATEWAY_TRUSTED_PROXY_CIDRS`.
 
 A service subdomain `<sub>.<domain>` reaches the APIs under `/<sub>`, except
 upstream host names served under another prefix: `abcdn` and `abgen-cdn` →

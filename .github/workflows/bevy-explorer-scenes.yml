@@ -11,6 +11,7 @@ on:
       - library/vendor/rusty_enet/**
       - tooling/dev-regressions*
       - tooling/bevy-ci.py
+      - tooling/bevy-mtimes.py
       - tooling/tests/test_bevy_*.py
       - .github/workflows/bevy-explorer-scenes.yml
   workflow_dispatch:
@@ -87,6 +88,8 @@ jobs:
           cache-on-failure: true
           workspaces: rendering/bevy-explorer/source -> target
           key: bevy-explorer-native
+      - name: Restore the vendored Bevy's cached file times
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install protoc
         run: python ../../../apps/bevy-explorer/install-protoc.py
       - name: Install Linux build dependencies
@@ -113,6 +116,8 @@ jobs:
         # Cargo unifies the engine and sidecar features here, including dcl_deno/inspect.
         # Desktop and Headless packaging build their sidecars in separate invocations.
         run: cargo build --release --locked --timings -p decentra-bevy -p dcl_deno_ipc --bin decentra-bevy --bin dcl_deno_ipc
+      - name: Record the vendored Bevy's file times for the cache
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Configure virtual audio for graphical tests
         run: |
           pulseaudio --start --exit-idle-time=-1
