@@ -28,6 +28,12 @@ pub fn matches_content_hash(hash: &str, bytes: &[u8]) -> bool {
     }
 }
 
+/// The raw-leaf CIDv1 (`bafkrei…`) of `bytes`, for fixtures that need a matching hash.
+#[cfg(test)]
+pub(crate) fn raw_cid(bytes: &[u8]) -> String {
+    format!("b{}", base32(&cid(RAW, bytes)))
+}
+
 fn sha256(bytes: &[u8]) -> [u8; 32] {
     Code::Sha2_256
         .digest(bytes)

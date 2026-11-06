@@ -14,6 +14,7 @@ pub(super) fn register(app: &mut App) {
             fields: &[
                 ("Variants base url", "base"),
                 ("State", "state"),
+                ("Formats taken", "formats"),
                 (
                     "Scene manifests (loaded / none / failed / not eligible / pending)",
                     "manifestCounts",
@@ -90,6 +91,7 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
     json!({
         "base": variants.base(),
         "state": state,
+        "formats": super::TAKEN_FORMATS,
         "manifestCounts": counts,
         "manifests": (!manifests.is_empty()).then(|| manifests.join("\n")),
         "served": [session.downloaded, session.cached],

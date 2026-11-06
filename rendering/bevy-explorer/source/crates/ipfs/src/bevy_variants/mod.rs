@@ -1,18 +1,23 @@
-//! Prototype: GPU-ready "Bevy variants" of a scene's textures and models, published by abgen.
+//! Prototype: GPU-ready "Bevy variants" of a scene's textures, published by abgen.
 //!
 //! Off unless a variants base url is configured (`--bevy-variants-url`, `?bevyVariants=`, or the
 //! `bevy_variants_url` config field). For each scene entity the explorer fetches
 //! `{base}/bevy/manifest/{entityId}.json` once; it maps original content CIDs to variants, each
 //! addressed by its own raw-leaf CID. A content file read whose original CID has a variant in a
 //! format this client takes is answered with `{base}/bevy/contents/{variantCid}` instead, checked
-//! against the variant CID and cached under that CID only. Anything else, at any step, reads the
-//! original. A variant that fails to decode is marked bad for the session and its asset reloaded
-//! from the original.
+//! against the variant CID and cached under that CID only. A texture variant is a BC KTX2, handed
+//! to the loaders as the DDS it unwraps to (`ktx2`); that DDS is cached too, under a name derived
+//! from the variant CID. Anything else, at any step, reads the original. A variant that fails to
+//! decode is marked bad for the session and its asset reloaded from the original.
+//!
+//! Model (`glb`) variants are not taken: they embed their textures as KTX2 under
+//! `KHR_texture_basisu`, which the glTF loader rejects when a file requires it.
 //!
 //! Preview and local scenes (preview mode, `b64-` ids, loopback or file content servers) never
 //! ask for a manifest.
 
 mod debug_panel;
+pub mod ktx2;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 
@@ -42,9 +47,11 @@ use crate::{
 };
 
 /// Image paths whose loader guesses the format from the bytes (or, for `.ktx2`, passes a dds
-/// through), so a dds variant decodes at the original path.
+/// through), so a dds decodes at the original path. A path without an extension goes to the
+/// last image loader, which guesses too.
 const TEXTURE_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "ktx2"];
-const MODEL_EXTENSIONS: [&str; 2] = ["glb", "gltf"];
+/// The manifest formats this client takes, in the debug panel's words.
+pub const TAKEN_FORMATS: &str = "ktx2-bc7, ktx2-bc1, ktx2-bc5 (loaded as DDS); not glb";
 const RECENT_FALLBACKS: usize = 20;
 /// Consecutive transport failures (manifest or variant) after which the service is treated as
 /// down for the rest of the session, so a dead host costs a few requests, not one per file.
@@ -134,23 +141,15 @@ fn extension(file_path: &str) -> Option<String> {
 
 /// Whether a file of this type could be replaced at all; others never wait on a manifest.
 pub fn could_have_variant(file_path: &str) -> bool {
-    extension(file_path).is_some_and(|ext| {
-        TEXTURE_EXTENSIONS.contains(&ext.as_str()) || MODEL_EXTENSIONS.contains(&ext.as_str())
-    })
+    extension(file_path).is_none_or(|ext| TEXTURE_EXTENSIONS.contains(&ext.as_str()))
 }
 
-/// Whether this client can load `variant` at `file_path`. Every variant format carries BC
-/// textures (a model variant embeds dds images), so all need the GPU's BC support.
+/// Whether this client can load `variant` at `file_path`: a BC texture, on a GPU with BC
+/// support, at an image path.
 pub fn supports(variant: &Variant, file_path: &str, bc: bool) -> bool {
-    let Some(ext) = extension(file_path) else {
-        return false;
-    };
-    let ext = ext.as_str();
-    bc && match (variant.kind.as_str(), variant.format.as_str()) {
-        ("texture", "dds-bc7" | "dds-bc1" | "dds-bc5") => TEXTURE_EXTENSIONS.contains(&ext),
-        ("model", "glb") => MODEL_EXTENSIONS.contains(&ext),
-        _ => false,
-    }
+    bc && variant.kind == "texture"
+        && ktx2::BcFormat::from_variant_format(&variant.format).is_some()
+        && could_have_variant(file_path)
 }
 
 /// The first variant this client supports that has not failed this session.
@@ -355,9 +354,10 @@ impl BevyVariants {
     }
 }
 
-pub(crate) enum VariantRead {
-    Cached(Vec<u8>),
-    Downloaded(SharedBytes),
+/// The DDS a variant unwraps to, and whether it came from the cache.
+pub(crate) struct VariantRead {
+    pub(crate) dds: Vec<u8>,
+    pub(crate) cached: bool,
 }
 
 fn describe_fetch_error(error: &platform::FetchError<anyhow::Error>) -> String {
@@ -492,8 +492,15 @@ impl IpfsIo {
         }
         let variant = select_variant(options, file, bc, |cid| variants.is_bad(cid))?.clone();
 
+        let format = ktx2::BcFormat::from_variant_format(&variant.format)?;
+
         let url = format!("{base}/bevy/contents/{}", variant.cid);
         let key = CacheKey::Content(variant.cid.clone());
+        // the unwrapped DDS, under a name no content hash can take
+        #[cfg(not(target_arch = "wasm32"))]
+        let dds_key = format!("{}.dds", variant.cid);
+        #[cfg(target_arch = "wasm32")]
+        let dds_url = format!("{url}.dds");
         let served = ServedVariant {
             scene: scene.to_owned(),
             file: file.to_owned(),
@@ -501,56 +508,88 @@ impl IpfsIo {
             format: variant.format.clone(),
         };
 
+        // a warm visit skips the download and the zstd decode
+        #[cfg(not(target_arch = "wasm32"))]
+        let dds = self
+            .read_disk_cache(&CacheKey::Url(dds_key.clone()))
+            .await
+            .ok()
+            .flatten();
+        #[cfg(target_arch = "wasm32")]
+        let dds = crate::web_cache::read(&dds_url).await;
+        if let Some(dds) = dds.filter(|dds| dds.starts_with(b"DDS ")) {
+            variants.served(path, served, true);
+            return Some(VariantRead { dds, cached: true });
+        }
+
         // the cache holds bytes under a content key only once they hash to it
         #[cfg(not(target_arch = "wasm32"))]
         let cached = self.read_disk_cache(&key).await.ok().flatten();
         #[cfg(target_arch = "wasm32")]
         let cached = crate::web_cache::read(&url).await;
-        if let Some(bytes) = cached {
-            variants.served(path, served, true);
-            return Some(VariantRead::Cached(bytes));
-        }
+        let (ktx2, from_cache) = match cached {
+            Some(bytes) => (SharedBytes(Arc::new(bytes)), true),
+            None => {
+                let token = self.reqno.fetch_add(1, Ordering::SeqCst);
+                let (download, task) =
+                    self.share_download(key, token, path.to_owned(), url, Some(scene.to_owned()));
+                if let Some(task) = task {
+                    IoTaskPool::get().spawn_compat(task).detach();
+                }
+                let mut result = download.result();
+                let fetched = result
+                    .wait_for(Option::is_some)
+                    .await
+                    .ok()
+                    .and_then(|result| result.clone());
+                match fetched {
+                    Some(Ok(bytes)) if content_hash::matches_content_hash(&variant.cid, &bytes) => {
+                        variants.transport_ok();
+                        (bytes, false)
+                    }
+                    Some(Ok(bytes)) => {
+                        let reason = format!(
+                            "{} bytes from abgen do not hash to {}",
+                            bytes.len(),
+                            variant.cid
+                        );
+                        variants.fail(scene, file, Some(&variant.cid), reason);
+                        return None;
+                    }
+                    Some(Err(AssetReaderError::Io(e))) if e.kind() == ErrorKind::Interrupted => {
+                        return None
+                    }
+                    Some(Err(e)) => {
+                        let reason = e.to_string();
+                        variants.transport_failed(&reason);
+                        variants.fail(scene, file, Some(&variant.cid), format!("fetch: {reason}"));
+                        return None;
+                    }
+                    None => return None,
+                }
+            }
+        };
 
-        let token = self.reqno.fetch_add(1, Ordering::SeqCst);
-        let (download, task) =
-            self.share_download(key, token, path.to_owned(), url, Some(scene.to_owned()));
-        if let Some(task) = task {
-            IoTaskPool::get().spawn_compat(task).detach();
+        let dds = match ktx2::bc_ktx2_to_dds(&ktx2, format) {
+            Ok(dds) => dds,
+            Err(reason) => {
+                variants.fail(scene, file, Some(&variant.cid), format!("invalid KTX2: {reason}"));
+                return None;
+            }
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Err(error) = self.cache_bytes(&dds_key, &dds).await {
+            warn!("failed to cache the DDS of `{}`: {error}", variant.cid);
         }
-        let mut result = download.result();
-        let fetched = result
-            .wait_for(Option::is_some)
-            .await
-            .ok()
-            .and_then(|result| result.clone());
-        match fetched {
-            Some(Ok(bytes)) if content_hash::matches_content_hash(&variant.cid, &bytes) => {
-                variants.transport_ok();
-                variants.served(path, served, false);
-                Some(VariantRead::Downloaded(bytes))
-            }
-            Some(Ok(bytes)) => {
-                variants.fail(
-                    scene,
-                    file,
-                    Some(&variant.cid),
-                    format!(
-                        "{} bytes from abgen do not hash to {}",
-                        bytes.len(),
-                        variant.cid
-                    ),
-                );
-                None
-            }
-            Some(Err(AssetReaderError::Io(e))) if e.kind() == ErrorKind::Interrupted => None,
-            Some(Err(e)) => {
-                let reason = e.to_string();
-                variants.transport_failed(&reason);
-                variants.fail(scene, file, Some(&variant.cid), format!("fetch: {reason}"));
-                None
-            }
-            None => None,
+        #[cfg(target_arch = "wasm32")]
+        if let Err(error) = crate::web_cache::keep(&dds_url, &dds).await {
+            warn!("failed to cache the DDS of `{}`: {error:?}", variant.cid);
         }
+        variants.served(path, served, from_cache);
+        Some(VariantRead {
+            dds,
+            cached: from_cache,
+        })
     }
 }
 

@@ -194,6 +194,8 @@ rusty_enet = { path = "../../../library/vendor/rusty_enet", version = "0.4.0" }
 # share it. Vendored with local patches that bound sizes read from untrusted files; provenance
 # and the patches live beside it.
 basisu = { path = "vendor/basisu", version = "=0.1.0" }
+# Zstandard decoding of KTX2 levels; the same version and features the vendored basisu uses.
+ruzstd = { version = "0.9.1", default-features = false }
 # enables naga_oil function overrides on non-`virtual` bevy_pbr functions (e.g.
 # our shadow-darkness override in bound_material.wgsl). feature-unifies into the
 # naga_oil that bevy builds its shader composer with. version must match bevy's.
