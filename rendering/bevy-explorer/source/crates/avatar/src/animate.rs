@@ -337,6 +337,17 @@ fn broadcast_emote(
     *last = current;
 }
 
+/// Outside control of an avatar's full-body emote, for previews that pause and scrub it: `paused`
+/// holds the clip where it is, `seek` (seconds) moves it once. The play system reports back the
+/// clip's `elapsed` time (completed loops included) and `duration`, zero while nothing plays.
+#[derive(Component, Default, Debug, Clone)]
+pub struct EmoteControl {
+    pub paused: bool,
+    pub seek: Option<f32>,
+    pub elapsed: f32,
+    pub duration: f32,
+}
+
 /// Where the current ActiveEmote came from. Controls override precedence and whether
 /// the `SceneDrivenAnimationFeedback` resource is updated from this emote's playback.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -1697,6 +1708,7 @@ fn play_current_emote(
         &AvatarAnimPlayer,
         &Children,
         Option<&PrimaryUser>,
+        Option<&mut EmoteControl>,
     )>,
     definitions: Query<&AvatarDefinition>,
     mut emote_loader: CollectibleManager<Emote>,
@@ -1719,7 +1731,9 @@ fn play_current_emote(
 ) {
     let mut prev_spawned_extras = std::mem::take(&mut *spawned_extras);
 
-    for (entity, mut active_emote, target_entity, children, maybe_primary) in q.iter_mut() {
+    for (entity, mut active_emote, target_entity, children, maybe_primary, mut control) in
+        q.iter_mut()
+    {
         debug!("emote {}", active_emote.urn);
         let Some(definition) = children.iter().flat_map(|c| definitions.get(c).ok()).next() else {
             warn!("no definition");
@@ -1757,6 +1771,14 @@ fn play_current_emote(
         let ent = target_entity.0;
         let bodyshape = &definition.render.body_shape;
         let active_emote = &mut *active_emote;
+        if let Some(seek) = control.as_mut().and_then(|control| control.seek.take()) {
+            active_emote.pending_seek = Some(seek);
+        }
+        let speed = if control.as_ref().is_some_and(|control| control.paused) {
+            0.0
+        } else {
+            active_emote.speed
+        };
 
         // Play. On permanent failure, if a fallback is present (populated by `animate` for
         // scene-driven anims with the velocity-based choice), swap to it and retry. The swap
@@ -1777,7 +1799,7 @@ fn play_current_emote(
                 Slot::FullBody {
                     transition_seconds: active_emote.transition_seconds,
                 },
-                active_emote.speed,
+                speed,
                 &mut active_emote.pending_seek,
                 active_emote.initial_audio_mark,
             ) {
@@ -1798,6 +1820,11 @@ fn play_current_emote(
                 Ok(played) => break Some(played),
             }
         };
+        if let Some(control) = control.as_mut() {
+            (control.elapsed, control.duration) = played
+                .as_ref()
+                .map_or((0.0, 0.0), |played| (played.elapsed, played.clip_duration));
+        }
         let Some(played) = played else {
             continue;
         };
