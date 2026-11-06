@@ -60,7 +60,17 @@ jobs:
             [[ "$base" =~ ^[0-9a-f]{40}$ ]] || skip "unexpected pull request base"
             [ "$head" = "$HEAD_SHA" ] || skip "the pull request head is not the run's head"
           elif [ "$EVENT" = push ] && [ "$HEAD_BRANCH" = "$DEFAULT_BRANCH" ]; then
-            base="$HEAD_SHA^1"
+            # workflow_run omits push.before. Read it from the controller-generated job name, not from
+            # artifact contents, step output or a commit message that pull request code can influence.
+            boundary=$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID/jobs" --paginate \
+              --jq ".jobs[] | select(.run_id == $RUN_ID and .head_sha == \"$HEAD_SHA\" and .conclusion == \"success\" and (.name | startswith(\"UI key push boundary \"))) | .name")
+            pattern='^UI key push boundary ([0-9a-f]{40})\.\.([0-9a-f]{40})$'
+            if [[ ! "$boundary" =~ $pattern ]]; then
+              echo "Missing or ambiguous trusted push boundary" >&2
+              exit 1
+            fi
+            base="${BASH_REMATCH[1]}"
+            [ "${BASH_REMATCH[2]}" = "$HEAD_SHA" ] || { echo "Push boundary head mismatch" >&2; exit 1; }
           else
             skip "event $EVENT on $HEAD_BRANCH"
           fi
@@ -92,6 +102,7 @@ jobs:
         if: steps.trigger.outputs.scan == 'true'
         env:
           HEAD_SHA: ${{ steps.trigger.outputs.head }}
+          BASE: ${{ steps.trigger.outputs.base }}
           REPOSITORY: ${{ github.repository }}
           READ_TOKEN: ${{ github.token }}
         run: |
@@ -103,6 +114,9 @@ jobs:
           export GIT_CONFIG_KEY_1=lfs.url
           export GIT_CONFIG_VALUE_1="https://github.com/$REPOSITORY.git/info/lfs"
           git -C trusted fetch --no-tags --no-recurse-submodules origin "+$HEAD_SHA:refs/key-scan/head"
+          if [ "$BASE" != "0000000000000000000000000000000000000000" ]; then
+            git -C trusted fetch --no-tags --no-recurse-submodules origin "+$BASE:refs/key-scan/base"
+          fi
           git -C trusted lfs fetch --include "library/ui/**" origin "$HEAD_SHA"
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -129,8 +143,10 @@ jobs:
           BASE: ${{ steps.trigger.outputs.base }}
         run: |
           set -o pipefail
+          range="$BASE..$HEAD_SHA"
+          if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then range="$HEAD_SHA"; fi
           node trusted/library/ui/figma/key-guard.mjs --root trusted --no-worktree \
-            --range "$BASE..$HEAD_SHA" --tree "$HEAD_SHA:library/ui" --allowlist-from "$HEAD_SHA" \
+            --range "$range" --tree "$HEAD_SHA:library/ui" --allowlist-from "$HEAD_SHA" \
             --artifact "$RUNNER_TEMP/pr-artifact" | tee "$RUNNER_TEMP/key-scan.txt"
           grep -qx 'check key: ran' "$RUNNER_TEMP/key-scan.txt"
 

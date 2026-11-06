@@ -70,7 +70,7 @@ type Workflow = {
   on: Record<string, unknown> | string | string[]
   permissions?: Record<string, string>
   env?: Record<string, unknown>
-  jobs: Record<string, { env?: Record<string, unknown>; steps: WorkflowStep[] }>
+  jobs: Record<string, { name?: string; env?: Record<string, unknown>; steps: WorkflowStep[] }>
 }
 const workflowFiles = readdirSync(workflows).filter((file) => /\.ya?ml$/.test(file))
 const load = (file: string) => parse(readFileSync(path.join(workflows, file), 'utf8')) as Workflow
@@ -209,5 +209,28 @@ describe('ui-library-key-scan.yml', () => {
     const scan = allSteps.find((step) => JSON.stringify(step).includes(SECRET))!
     expect(scan.run).toContain('--artifact "$RUNNER_TEMP/pr-artifact"')
     expect(scan.run).not.toContain('--path')
+  })
+})
+
+describe('the controller-owned push boundary', () => {
+  it('should bind the metadata job name to the push event and keep PR check names stable', () => {
+    const name = load('ui-library.yml').jobs['key-guard']!.name!
+
+    expect(name).toContain("github.event_name == 'push'")
+    expect(name).toContain(
+      "format('UI key push boundary {0}..{1}', github.event.before, github.sha)"
+    )
+    expect(name).toContain("|| 'key-guard'")
+  })
+
+  it('should accept metadata only from a successful job of the triggering run and head', () => {
+    const script = load('ui-library-key-scan.yml').jobs['key-scan']!.steps[0]!.run!
+
+    expect(script).toContain('actions/runs/$RUN_ID/jobs')
+    expect(script).toContain('.run_id == $RUN_ID')
+    const query = script.split(String.fromCharCode(92)).join('')
+    expect(query).toContain('.head_sha == "$HEAD_SHA"')
+    expect(query).toContain('.conclusion == "success"')
+    expect(script).not.toContain('base="$HEAD_SHA^1"')
   })
 })

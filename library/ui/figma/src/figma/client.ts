@@ -90,21 +90,27 @@ function codesOf(error: unknown): string {
 
 class DownloadLimitError extends Error {}
 
-async function readBytes(response: Response, limit?: number) {
+async function readBytes(response: Response, limit?: number, truncate = false) {
   if (!response.body) throw new Error('response has no body')
   const chunks: Uint8Array[] = []
   let size = 0
   for await (const chunk of response.body) {
+    if (limit !== undefined && chunk.length > limit - size) {
+      if (!truncate) throw new RangeError(`exceeds ${limit} bytes`)
+      chunks.push(Buffer.from(chunk.subarray(0, limit - size)))
+      break
+    }
     size += chunk.length
-    if (limit !== undefined && size > limit) throw new RangeError(`exceeds ${limit} bytes`)
     chunks.push(chunk)
+    if (truncate && size === limit) break
   }
   return Buffer.concat(chunks)
 }
 
 async function bodyExcerpt(response: Response): Promise<string> {
   try {
-    return (await response.text()).slice(0, 200)
+    // Breaking the stream at the byte budget cancels the unread error body, including retry responses.
+    return (await readBytes(response, 1024, true)).toString('utf8').slice(0, 200)
   } catch {
     return ''
   }

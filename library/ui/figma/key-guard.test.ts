@@ -1,8 +1,10 @@
 import { execFileSync, spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { link, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { parse } from 'yaml'
 import { enumerateArtifact, main, redact, runGuard, scanBuffer } from './key-guard.mjs'
 
 const FAKE_KEY = 'FAKEKEY000example000000'
@@ -501,6 +503,14 @@ describe('when an untrusted path carries the private key', () => {
     expectNoKey(result)
   })
 
+  it('should capture child-process stderr when an allowlist revision contains the key', () => {
+    const result = scanner('--no-worktree', '--no-range', '--allowlist-from', FAKE_KEY)
+
+    expect(result.status).toBe(0)
+    expectNoKey(result)
+    expect(result.stderr).not.toContain('fatal:')
+  })
+
   it('should redact an argument it rejects', () => {
     const result = scanner(`--${FAKE_KEY}`)
 
@@ -533,5 +543,143 @@ describe('when an untrusted path carries the private key', () => {
 
     expect(source).toContain('// output:begin')
     expect(outside).not.toMatch(/console\.|process\.(stdout|stderr)\.write|\.write\(/)
+  })
+})
+
+// Exercise the actual trusted workflow scripts with GitHub controller metadata supplied as data.
+describe('when selecting a main push range', () => {
+  const workflow = () =>
+    parse(
+      readFileSync(
+        path.resolve(import.meta.dirname, '../../../.github/workflows/ui-library-key-scan.yml'),
+        'utf8'
+      )
+    ) as { jobs: Record<string, { steps: { run?: string; id?: string }[] }> }
+
+  async function boundary(head: string, name: string) {
+    const output = path.join(root, 'workflow-output')
+    await writeFile(output, '')
+    const mock = `gh() {
+      case "$*" in
+        *actions/workflows/ui-library.yml*) echo 42 ;;
+        */jobs*) printf '%s\\n' "$BOUNDARY_NAME" ;;
+        */artifacts*) echo 1 ;;
+        *) return 1 ;;
+      esac
+    }\n`
+    const result = spawnSync(
+      'bash',
+      ['-e', '-c', mock + workflow().jobs['key-scan']!.steps[0]!.run!],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          WORKFLOW_PATH: '.github/workflows/ui-library.yml',
+          WORKFLOW_ID: '42',
+          REPOSITORY: 'example/repository',
+          HEAD_REPO: 'example/repository',
+          RUN_ID: '123',
+          EVENT: 'push',
+          CONCLUSION: 'success',
+          HEAD_SHA: head,
+          HEAD_BRANCH: 'main',
+          DEFAULT_BRANCH: 'main',
+          BOUNDARY_NAME: name,
+          GITHUB_OUTPUT: output
+        }
+      }
+    )
+    const text = readFileSync(output, 'utf8')
+    return { ...result, output: text, base: /^base=(.*)$/m.exec(text)?.[1] }
+  }
+
+  it('should cover an add-then-delete two-commit push from its actual boundary', async () => {
+    const before = git('rev-parse', 'HEAD')
+    await put('library/ui/temporary.txt', FAKE_KEY)
+    commit('introduce synthetic key')
+    const leaked = git('rev-parse', '--short=12', 'HEAD')
+    await rm(path.join(root, 'library/ui/temporary.txt'))
+    await put('library/ui/clean.txt', 'clean tip\n')
+    commit('remove synthetic key')
+    const head = git('rev-parse', 'HEAD')
+    const result = await boundary(head, `UI key push boundary ${before}..${head}`)
+
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.base).toBe(before)
+    const { findings } = guard({ worktree: false, range: `${result.base}..${head}`, key: FAKE_KEY })
+    expect(findings).toContainEqual({
+      check: 'key',
+      location: `${leaked}:library/ui/temporary.txt`
+    })
+  })
+
+  it.each(['missing', 'malformed', 'wrong head', 'duplicate'])(
+    'should fail closed for %s push metadata',
+    async (kind) => {
+      const head = git('rev-parse', 'HEAD')
+      const valid = `UI key push boundary ${head}..${head}`
+      const name =
+        kind === 'missing'
+          ? ''
+          : kind === 'malformed'
+            ? `UI key push boundary invalid..${head}`
+            : kind === 'wrong head'
+              ? `UI key push boundary ${head}..${'f'.repeat(40)}`
+              : `${valid}\n${valid}`
+      const result = await boundary(head, name)
+
+      expect(result.status).not.toBe(0)
+      expect(result.output).not.toContain('scan=true')
+    }
+  )
+
+  it('should include the root commit when the first push has no previous head', async () => {
+    await put('README.md', FAKE_KEY)
+    git('add', '-A')
+    git(
+      '-c',
+      'user.email=dev@example.com',
+      '-c',
+      'user.name=Dev',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '--amend',
+      '-qm',
+      'synthetic key in root'
+    )
+    const leaked = git('rev-parse', '--short=12', 'HEAD')
+    await put('README.md', 'clean\n')
+    commit('remove key from tip')
+    const head = git('rev-parse', 'HEAD')
+    const result = await boundary(head, `UI key push boundary ${'0'.repeat(40)}..${head}`)
+    expect(result.status, result.stderr).toBe(0)
+    const scan = workflow().jobs['key-scan']!.steps.find((step) => step.id === 'scan')!.run!
+    const args = path.join(root, 'scanner-args')
+    const selected = spawnSync(
+      'bash',
+      ['-e', '-c', `node() { printf '%s\\n' "$@" > "$ARGS"; echo 'check key: ran'; }\n` + scan],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          BASE: result.base!,
+          HEAD_SHA: head,
+          RUNNER_TEMP: root,
+          ARGS: args,
+          FIGMA_FILE_KEY: FAKE_KEY
+        }
+      }
+    )
+    expect(selected.status, selected.stderr).toBe(0)
+    const argv = readFileSync(args, 'utf8').trim().split('\n')
+    const range = argv[argv.indexOf('--range') + 1]!
+    expect(range).toBe(head)
+    expect(guard({ worktree: false, range, key: FAKE_KEY }).findings).toContainEqual({
+      check: 'key',
+      location: `${leaked}:README.md`
+    })
   })
 })

@@ -26,6 +26,9 @@ jobs:
   # url check only. The Figma file key check runs in ui-library-key-scan.yml, from the default branch, over this
   # run's commits and Review build as data.
   key-guard:
+    # Controller-generated job metadata carries the push boundary to the privileged workflow_run scan.
+    # Pull request checks keep their stable name; job scripts and artifacts cannot supply this boundary.
+    name: ${{ github.event_name == 'push' && format('UI key push boundary {0}..{1}', github.event.before, github.sha) || 'key-guard' }}
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

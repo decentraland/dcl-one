@@ -465,3 +465,74 @@ describe('when an attempt fails', () => {
     expect(events).toEqual(['fetch', 'log 503', 'sleep', 'fetch', 'log 200'])
   })
 })
+
+function oversizedError(status: number, chunkBytes = 64 * 1024) {
+  let bytes = 0
+  let canceled = false
+  const response = new Response(
+    new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (bytes >= 20 * 1024 * 1024) return controller.close()
+        const chunk = new Uint8Array(chunkBytes).fill('x'.charCodeAt(0))
+        bytes += chunk.length
+        controller.enqueue(chunk)
+      },
+      cancel() {
+        canceled = true
+      }
+    }),
+    { status, headers: { 'retry-after': '0' } }
+  )
+  return { response, readBytes: () => bytes, canceled: () => canceled }
+}
+
+describe.each([404, 429, 503])('when an oversized HTTP %i error body streams', (status) => {
+  it('should bound and cancel the API error body while preserving status and retries', async () => {
+    const body = oversizedError(status)
+    const { client, calls, delays } = harness([body.response, ok()])
+
+    if (status === 404) {
+      await expect(client.get('/v1/x')).rejects.toMatchObject({
+        status,
+        message: `Figma API 404 on /v1/x: ${'x'.repeat(200)}`
+      })
+    } else await expect(client.get('/v1/x')).resolves.toEqual({ ok: true })
+
+    expect(body.canceled()).toBe(true)
+    expect(body.readBytes()).toBeLessThan(20 * 1024 * 1024)
+    expect(body.response.body?.locked).toBe(false)
+    expect(calls).toHaveLength(status === 404 ? 1 : 2)
+    expect(delays).toEqual(status === 404 ? [] : [status === 429 ? 0 : 2000])
+  })
+
+  it('should bound and cancel export error bodies while preserving status and retries', async () => {
+    const body = oversizedError(status)
+    const { client, calls, delays } = harness([body.response, new Response('<svg/>')])
+    const downloaded = client.download(
+      new URL('https://images.figma.com/export'),
+      'icon',
+      16 * 1024 * 1024
+    )
+
+    if (status === 404)
+      await expect(downloaded).rejects.toThrow('Export download failed for icon: 404')
+    else await expect(downloaded).resolves.toEqual(Buffer.from('<svg/>'))
+
+    expect(body.canceled()).toBe(true)
+    expect(body.readBytes()).toBeLessThan(20 * 1024 * 1024)
+    expect(body.response.body?.locked).toBe(false)
+    expect(calls).toHaveLength(status === 404 ? 1 : 2)
+    expect(delays).toEqual(status === 404 ? [] : [status === 429 ? 0 : 2000])
+  })
+})
+
+describe('when an error stream reaches the excerpt budget exactly', () => {
+  it('should stop reading at the budget instead of waiting for the next chunk', async () => {
+    const body = oversizedError(404, 1024)
+    const { client } = harness([body.response])
+
+    await expect(client.get('/v1/x')).rejects.toMatchObject({ status: 404 })
+    expect(body.canceled()).toBe(true)
+    expect(body.readBytes()).toBeLessThanOrEqual(2048)
+  })
+})

@@ -45,7 +45,7 @@ function output(stream, text, key) {
 const ALLOWLIST_PATH = 'library/ui/figma/key-guard-allow.json'
 
 function git(root, args, input) {
-  return execFileSync('git', args, { cwd: root, input, maxBuffer: 1 << 30 })
+  return execFileSync('git', args, { cwd: root, input, stdio: 'pipe', maxBuffer: 1 << 30 })
 }
 
 export function isLfsPointer(buffer) {
@@ -128,6 +128,7 @@ function scanWorktree(root, key, allowed, report) {
 function scanRange(root, range, key, allowed, report) {
   const log = git(root, [
     'log',
+    '--root',
     '--raw',
     '--no-abbrev',
     '-m',
