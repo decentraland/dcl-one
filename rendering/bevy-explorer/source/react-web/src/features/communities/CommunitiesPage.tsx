@@ -87,7 +87,7 @@ export function CommunitiesPage({
   }, [wantOpen])
 
   const matchesQuery = (c: Community): boolean => !query || c.name.toLowerCase().includes(query.toLowerCase())
-  const mine = useMemo(() => communities.list.filter((c) => isMember(c.role)), [communities.list])
+  const mine = communities.mine
   const browse = useMemo(() => communities.list.filter(matchesQuery), [communities.list, query])
   const mineFiltered = useMemo(() => mine.filter(matchesQuery), [mine, query])
   const showingMine = tab === 'mine'
@@ -121,7 +121,7 @@ export function CommunitiesPage({
           <button
             type="button"
             className={styles.createBtn}
-            onClick={() => openCommunityCreateModal(!!p && p.hasClaimedName && !p.isGuest, communities.create)}
+            onClick={() => openCommunityCreateModal(!!p && p.hasClaimedName && !p.isGuest, (id) => id !== '' && setOpenId(id))}
           >
             + CREATE A COMMUNITY
           </button>

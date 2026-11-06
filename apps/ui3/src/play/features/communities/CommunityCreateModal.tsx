@@ -1,26 +1,47 @@
-// Create-a-Community form — faithfully ports dcl-react-ui's CommunityCreate: a NAME gate, then
-// a profile picture, name*, a Public/Private membership dropdown, and a gradient discoverability
-// bar. Submits via the bridge (signed multipart POST). Thumbnail upload is deferred — kernelFetch
-// bodies are strings, so the chosen picture previews locally but isn't sent yet.
+// Create-a-Community and Edit Community form, as unity-explorer's CommunityCreationEdition panel: a
+// NAME gate (create only), then profile picture, name*, membership, discoverability and
+// description*, in that order. Submits through the bridge (signed multipart POST or PUT, the
+// picture as a file part) and waits for the answer: success opens the new community (create) or
+// closes the form (edit), a refusal from the content check shows its findings, and any other
+// failure is a toast with the form left as it was. An edit sends only what changed; only the owner
+// can change the name, membership and discoverability.
 
 import { useEffect, useRef, useState } from 'react'
-import { Select, openPopup, showConfirm } from '../../design'
-import styles from './CommunityCreateModal.module.css'
+import { CharCounter, Select, Spinner, TextArea, openPopup, showConfirm, showToast } from '../../design'
+import type { Community } from '../../engine/protocol'
+import type { CommunitySave, CreateCommunityInput, UpdateCommunityInput } from '../session/useEngineSession'
+import { useSession } from '../session/SessionContext'
 import { siteUrl } from '../../lib/baseDomain'
+import styles from './CommunityCreateModal.module.css'
 
 const MEMBERSHIP = [
   { value: 'public', label: 'Public', note: 'Anyone can become a member, view Community details, and join your Voice Streams' },
-  { value: 'private', label: 'Private', note: 'Members must be approved by an owner or moderator before they can join' }
+  { value: 'private', label: 'Private', note: 'Membership by request/invite; only Community description visible to non-members' }
+] as const
+
+const VISIBILITY = [
+  { value: 'all', label: 'Discoverable', note: "Listed in 'Browse Communities' section and search results" },
+  { value: 'unlisted', label: 'Unlisted', note: 'Hidden from non-members, invite-only' }
 ] as const
 
 const NAMES_URL = siteUrl('/marketplace/names/claim')
+const CONTENT_POLICY_URL = siteUrl('/content')
+const CODE_OF_ETHICS_URL = siteUrl('/ethics')
 
-export interface CreateCommunityInput {
-  name: string
-  description: string
-  privacy: 'public' | 'private'
-  discoverable: boolean
-}
+// unity-explorer's limits (CreateOrEditCommunityPanel.prefab, CommunityCreationEditionController.cs),
+// which are also the social service's.
+const NAME_MAX = 30
+const DESCRIPTION_MAX = 500
+const MAX_IMAGE_BYTES = 512000
+const MAX_IMAGE_PX = 512
+
+const CREATE_ERROR = 'There was an error creating community. Please try again.'
+const UPDATE_ERROR = 'There was an error updating community. Please try again.'
+const IMAGE_GENERAL_ERROR = 'Invalid image file selected. Please check file type and size.'
+const IMAGE_WEIGHT_ERROR = 'Selected image exceeds 500KB size limit.'
+const IMAGE_RESOLUTION_ERROR = 'Selected image exceeds 512x512 px size limit.'
+
+export type { CreateCommunityInput }
 
 function LockArt(): React.JSX.Element {
   return (
@@ -46,25 +67,98 @@ function PencilIcon(): React.JSX.Element {
   )
 }
 
+const openLink = (url: string): void => {
+  window.open(url, '_blank', 'noopener')
+}
+
+/** unity-explorer's checks on a chosen picture: PNG or JPEG, at most 500 KB and 512×512 px. Resolves
+ *  to the picture as a data URL, or to the message to show. */
+export async function readCommunityPicture(file: File): Promise<{ dataUrl: string } | { error: string }> {
+  if (file.type !== 'image/png' && file.type !== 'image/jpeg') return { error: IMAGE_GENERAL_ERROR }
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  }).catch(() => null)
+  if (dataUrl == null) return { error: IMAGE_GENERAL_ERROR }
+  const size = await new Promise<{ w: number; h: number } | null>((resolve) => {
+    const img = new Image()
+    img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight })
+    img.onerror = () => resolve(null)
+    img.src = dataUrl
+  })
+  if (size == null) return { error: IMAGE_GENERAL_ERROR }
+  const tooHeavy = file.size > MAX_IMAGE_BYTES
+  const tooBig = size.w > MAX_IMAGE_PX || size.h > MAX_IMAGE_PX
+  if (tooHeavy && tooBig) return { error: IMAGE_GENERAL_ERROR }
+  if (tooHeavy) return { error: IMAGE_WEIGHT_ERROR }
+  if (tooBig) return { error: IMAGE_RESOLUTION_ERROR }
+  return { dataUrl }
+}
+
+/** unity-explorer's text for the content check's findings: one line per field that has any. */
+function issueLines(issues: { name: string[]; description: string[]; image: string[] }): string[] {
+  const line = (label: string, tags: string[]): string | null => (tags.length > 0 ? `${label}: ${tags.map((t) => `[${t}]`).join(', ')}` : null)
+  return [line('COMMUNITY NAME', issues.name), line('COMMUNITY IMAGE', issues.image), line('COMMUNITY DESCRIPTION', issues.description)].filter(
+    (l): l is string => l != null
+  )
+}
+
 export function CommunityCreateModal({
   canCreate,
+  editing,
+  save,
   onCreate,
+  onUpdate,
+  onClearSave,
+  onSaved,
   onClose,
   onDirtyChange
 }: {
-  /** The user has a claimed NAME (community creation is gated behind one). */
+  /** The user has a claimed NAME (community creation is gated behind one). Ignored when editing. */
   canCreate: boolean
+  /** The community being edited; absent to create one. */
+  editing?: Community
+  /** The create or update in flight, or how it ended. */
+  save: CommunitySave | null
   onCreate: (input: CreateCommunityInput) => void
+  onUpdate: (input: UpdateCommunityInput) => void
+  /** Forget the outcome: back to the form. */
+  onClearSave: () => void
+  /** Saved (or nothing to save): close the form without asking. Gets the community's id. */
+  onSaved: (id: string) => void
   onClose: () => void
   /** Announce entered details, so a stray backdrop click can't bin them. */
   onDirtyChange?: (dirty: boolean) => void
 }): React.JSX.Element {
-  const [name, setName] = useState('')
-  const [privacy, setPrivacy] = useState<'public' | 'private'>('public')
+  // the values the form opens with: the community's when editing, unity-explorer's defaults otherwise
+  const initial = useRef({
+    name: editing?.name ?? '',
+    description: editing?.description ?? '',
+    privacy: (editing?.privacy === 'private' ? 'private' : 'public') as 'public' | 'private',
+    visibility: (editing?.visibility === 'unlisted' ? 'unlisted' : 'all') as 'all' | 'unlisted'
+  }).current
+  const [name, setName] = useState(initial.name)
+  const [description, setDescription] = useState(initial.description)
+  const [privacy, setPrivacy] = useState(initial.privacy)
+  const [visibility, setVisibility] = useState(initial.visibility)
+  // a newly chosen picture (data URL); the current one shows until then
   const [pfp, setPfp] = useState<string | null>(null)
+  const [focused, setFocused] = useState<'name' | 'description' | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
-  const valid = name.trim().length > 0
-  const dirty = name.trim() !== '' || pfp != null || privacy !== 'public'
+  const isEdit = editing != null
+  // as unity-explorer: on edit only the owner may change the name, membership and discoverability
+  const ownerFields = !isEdit || editing.role === 'owner'
+  const shownPfp = pfp ?? editing?.thumbnail ?? null
+  const valid = name.trim() !== '' && description.trim() !== ''
+  const saving = save?.status === 'saving'
+  const dirty =
+    name.trim() !== initial.name.trim() ||
+    description.trim() !== initial.description.trim() ||
+    pfp != null ||
+    privacy !== initial.privacy ||
+    visibility !== initial.visibility
   const dirtyCb = useRef(onDirtyChange)
   dirtyCb.current = onDirtyChange
   useEffect(() => {
@@ -72,48 +166,120 @@ export function CommunityCreateModal({
     return () => dirtyCb.current?.(false)
   }, [dirty])
 
-  // Local-only preview; the picture isn't uploaded yet (see file header).
+  // How the save ended: success closes the form; a plain failure is a toast and the form stays; a
+  // refusal from the content check stays in `save` and is shown below.
+  const result = save?.status === 'done' ? save.result : null
+  const saved = useRef(onSaved)
+  saved.current = onSaved
+  useEffect(() => {
+    if (result == null || result.moderation != null) return
+    onClearSave()
+    if (result.error != null) showToast(result.mode === 'update' ? UPDATE_ERROR : CREATE_ERROR, { tone: 'error' })
+    else saved.current(result.id ?? '')
+  }, [result, onClearSave])
+
   const pickPfp = (e: React.ChangeEvent<HTMLInputElement>): void => {
     const file = e.target.files?.[0]
+    e.target.value = ''
     if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => setPfp(typeof reader.result === 'string' ? reader.result : null)
-    reader.readAsDataURL(file)
+    void readCommunityPicture(file).then((picked) => {
+      if ('error' in picked) showToast(picked.error, { tone: 'error' })
+      else setPfp(picked.dataUrl)
+    })
   }
   const submit = (): void => {
-    if (!valid) return
-    // The reference form has no discoverability control → default to listed (visibility 'all').
-    onCreate({ name: name.trim(), description: '', privacy, discoverable: true })
-    onClose()
+    if (!valid || saving) return
+    if (isEdit) {
+      // only what changed, as unity-explorer; with nothing changed the form just closes
+      const changes: UpdateCommunityInput = { id: editing.id }
+      if (name.trim() !== initial.name.trim()) changes.name = name.trim()
+      if (description.trim() !== initial.description.trim()) changes.description = description.trim()
+      if (privacy !== initial.privacy) changes.privacy = privacy
+      if (visibility !== initial.visibility) changes.discoverable = visibility === 'all'
+      if (pfp != null) changes.thumbnail = pfp
+      if (Object.keys(changes).length === 1) saved.current(editing.id)
+      else onUpdate(changes)
+      return
+    }
+    onCreate({
+      name: name.trim(),
+      description: description.trim(),
+      privacy,
+      discoverable: visibility === 'all',
+      ...(pfp != null ? { thumbnail: pfp } : {})
+    })
   }
 
-  // Just the card (gate or form) — the popup layer (PopupHost .dim/.pop) draws the scrim, DPI-scales
-  // it and animates it in. stopPropagation keeps a click on the card from reaching the scrim.
-  return !canCreate ? (
-    <div className={styles.gate} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Get a NAME">
-      <div className={styles.gateArt}><LockArt /></div>
-      <h2 className={styles.gateTitle}>Get a NAME to Unlock Community Creation</h2>
-      <p className={styles.gateBody}>
-        NAMEs are unique Decentraland usernames that come with a World, and unlock community creation.
-      </p>
-      <div className={styles.gateBtns}>
-        <button type="button" className={styles.primary} onClick={() => window.open(NAMES_URL, '_blank', 'noopener')}>Get a NAME</button>
-        <button type="button" className={styles.ghost} onClick={onClose}>Maybe later</button>
+  if (!isEdit && !canCreate) {
+    return (
+      <div className={styles.gate} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Get a NAME">
+        <div className={styles.gateArt}><LockArt /></div>
+        <h2 className={styles.gateTitle}>Get a NAME to Unlock Community Creation</h2>
+        <p className={styles.gateBody}>
+          NAMEs are unique Decentraland usernames that come with a World, and unlock community creation.
+        </p>
+        <div className={styles.gateBtns}>
+          <button type="button" className={styles.primary} onClick={() => openLink(NAMES_URL)}>Get a NAME</button>
+          <button type="button" className={styles.ghost} onClick={onClose}>Maybe later</button>
+        </div>
       </div>
-    </div>
-  ) : (
-    <div className={styles.modal} role="dialog" aria-modal="true" aria-label="Create a Community" onClick={(e) => e.stopPropagation()}>
-      <h2 className={styles.title}>Create a Community</h2>
+    )
+  }
+
+  const moderation = result?.moderation
+  if (moderation != null) {
+    return (
+      <div className={styles.modal} role="dialog" aria-modal="true" aria-label="Your Community Couldn't Be Created" onClick={(e) => e.stopPropagation()}>
+        <h2 className={styles.title}>Your Community Couldn&apos;t Be Created</h2>
+        {moderation.unavailable ? (
+          <p className={styles.notice}>Content verification is temporarily unavailable. Please try again later.</p>
+        ) : (
+          <>
+            <p className={styles.notice}>
+              The following content has been flagged as violating{' '}
+              <button type="button" className={styles.link} onClick={() => openLink(CODE_OF_ETHICS_URL)}>Decentraland&apos;s Guidelines</button>:
+            </p>
+            <ul className={styles.issues}>
+              {issueLines(moderation.issues).map((l) => (
+                <li key={l}>{l}</li>
+              ))}
+            </ul>
+            <p className={styles.notice}>Please remove any rule-breaking content to continue. If you believe this was a mistake, please reach out to Support.</p>
+          </>
+        )}
+        <div className={styles.actions}>
+          {moderation.unavailable ? (
+            <>
+              <button type="button" className={`${styles.ghost} ${styles.cancel}`} onClick={onClearSave}>CANCEL</button>
+              <button type="button" className={`${styles.primary} ${styles.create}`} onClick={submit}>RETRY</button>
+            </>
+          ) : (
+            <>
+              <button type="button" className={`${styles.ghost} ${styles.cancel}`} onClick={onClose}>CANCEL</button>
+              <button type="button" className={`${styles.primary} ${styles.create}`} onClick={onClearSave}>EDIT COMMUNITY</button>
+            </>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  const title = isEdit ? 'Edit Community' : 'Create a Community'
+  // Just the card — the popup layer (PopupHost .dim/.pop) draws the scrim, DPI-scales it and animates
+  // it in. stopPropagation keeps a click on the card from reaching the scrim.
+  return (
+    <div className={styles.modal} role="dialog" aria-modal="true" aria-label={title} aria-busy={saving} onClick={(e) => e.stopPropagation()}>
+      <h2 className={styles.title}>{title}</h2>
 
       <div className={styles.scroll}>
         <div className={styles.group}>
           <span className={styles.label}>PROFILE PICTURE</span>
           <span className={styles.hint}>PNG or JPG | 512x512 px | 500KB max</span>
           <div className={styles.pfp}>
-            <span className={styles.pfpImg} style={pfp ? { backgroundImage: `url(${pfp})` } : undefined}>
-              {!pfp && <ImageIcon />}
+            <span className={styles.pfpImg} style={shownPfp ? { backgroundImage: `url(${shownPfp})` } : undefined}>
+              {!shownPfp && <ImageIcon />}
             </span>
-            <button type="button" className={styles.pfpEdit} aria-label="Edit profile picture" onClick={() => fileRef.current?.click()}>
+            <button type="button" className={styles.pfpEdit} aria-label="Edit profile picture" disabled={saving} onClick={() => fileRef.current?.click()}>
               <PencilIcon />
             </button>
             <input ref={fileRef} type="file" accept="image/png,image/jpeg" hidden onChange={pickPfp} />
@@ -121,14 +287,20 @@ export function CommunityCreateModal({
         </div>
 
         <div className={styles.group}>
-          <label className={styles.label} htmlFor="cc-name">COMMUNITY NAME <span className={styles.req}>*</span></label>
+          <div className={styles.labelRow}>
+            <label className={styles.label} htmlFor="cc-name">COMMUNITY NAME <span className={styles.req}>*</span></label>
+            {focused === 'name' && <CharCounter current={name.length} max={NAME_MAX} />}
+          </div>
           <input
             id="cc-name"
             className={styles.input}
-            maxLength={30}
+            maxLength={NAME_MAX}
             placeholder="Write here"
             value={name}
+            disabled={saving || !ownerFields}
             onChange={(e) => setName(e.target.value)}
+            onFocus={() => setFocused('name')}
+            onBlur={() => setFocused(null)}
             // eslint-disable-next-line jsx-a11y/no-autofocus
             autoFocus
           />
@@ -143,34 +315,113 @@ export function CommunityCreateModal({
             aria-label="Membership"
             variant="light"
             value={privacy}
+            disabled={saving || !ownerFields}
             options={MEMBERSHIP.map((o) => ({ value: o.value, label: `${o.label}: ${o.note}` }))}
             onChange={(value) => setPrivacy(value as 'public' | 'private')}
           />
         </div>
+
+        <div className={styles.group}>
+          <span className={styles.label}>DISCOVERABILITY</span>
+          <Select
+            aria-label="Discoverability"
+            variant="light"
+            value={visibility}
+            disabled={saving || !ownerFields}
+            options={VISIBILITY.map((o) => ({ value: o.value, label: `${o.label}: ${o.note}` }))}
+            onChange={(value) => setVisibility(value as 'all' | 'unlisted')}
+          />
+        </div>
+
+        <div className={styles.group}>
+          <div className={styles.labelRow}>
+            <label className={styles.label} htmlFor="cc-description">DESCRIPTION <span className={styles.req}>*</span></label>
+            {focused === 'description' && <CharCounter current={description.length} max={DESCRIPTION_MAX} />}
+          </div>
+          <span className={styles.hint}>
+            Tell everyone what your Community is about! The first 80 characters of your description will be visible when browsing Communities.
+          </span>
+          <TextArea
+            id="cc-description"
+            variant="light"
+            maxLength={DESCRIPTION_MAX}
+            placeholder="Write here"
+            value={description}
+            disabled={saving}
+            onChange={setDescription}
+            onFocus={() => setFocused('description')}
+            onBlur={() => setFocused(null)}
+          />
+        </div>
       </div>
+
+      {saving && (
+        <div className={styles.checking} role="status">
+          <Spinner size={20} />
+          <span>Running Content Policy check. This may take a moment.</span>
+        </div>
+      )}
 
       <div className={styles.actions}>
-        <button type="button" className={`${styles.ghost} ${styles.cancel}`} onClick={onClose}>CANCEL</button>
-        <button type="button" className={`${styles.primary} ${styles.create}`} disabled={!valid} onClick={submit}>CREATE</button>
+        <button type="button" className={`${styles.ghost} ${styles.cancel}`} disabled={saving} onClick={onClose}>CANCEL</button>
+        <button type="button" className={`${styles.primary} ${styles.create}`} disabled={!valid || saving} onClick={submit}>{isEdit ? 'SAVE' : 'CREATE'}</button>
       </div>
 
-      <p className={styles.policy}>Please ensure Community content follows Decentraland's Content Policy.</p>
+      <p className={styles.policy}>
+        Please ensure Community content follows Decentraland&apos;s{' '}
+        <button type="button" className={styles.link} onClick={() => openLink(CONTENT_POLICY_URL)}>Content Policy.</button>
+      </p>
     </div>
   )
 }
 
-/** Open the create-a-community flow (NAME gate or form) as a popup; returns the close handle.
- *  `canCreate` is a snapshot taken when the button is clicked — matches the other fire-once popups
- *  (WorldVisitModal): the profile's claimed-NAME state isn't expected to change mid-flow. */
-export function openCommunityCreateModal(canCreate: boolean, onCreate: (input: CreateCommunityInput) => void): () => void {
-  // Same contract as the passport: the scrim refuses while there is something to lose, and the
-  // deliberate closes (CANCEL, ×, the Cancel/Escape action) ask.
+/** The form with the session's save state: the popup content re-renders as the outcome arrives. */
+function CommunityFormContainer({
+  canCreate,
+  editing,
+  onSaved,
+  onClose,
+  onDirtyChange
+}: {
+  canCreate: boolean
+  editing?: Community
+  onSaved: (id: string) => void
+  onClose: () => void
+  onDirtyChange: (dirty: boolean) => void
+}): React.JSX.Element {
+  const { communities } = useSession()
+  const { clearSave } = communities
+  // a save's outcome belongs to this form only: forget it when the form goes away
+  useEffect(() => clearSave, [clearSave])
+  return (
+    <CommunityCreateModal
+      canCreate={canCreate}
+      editing={editing}
+      save={communities.save}
+      onCreate={communities.create}
+      onUpdate={communities.update}
+      onClearSave={clearSave}
+      onSaved={onSaved}
+      onClose={onClose}
+      onDirtyChange={onDirtyChange}
+    />
+  )
+}
+
+/** Open the form as a popup; returns the close handle. Same contract as the passport: the scrim
+ *  refuses while there is something to lose, and the deliberate closes (CANCEL, the Cancel/Escape
+ *  action) ask. A successful save closes through the handle, which does not ask. */
+function openCommunityForm(canCreate: boolean, editing: Community | undefined, onSaved: (id: string) => void): () => void {
   const dirty = { current: false }
-  return openPopup(
+  const handle = openPopup(
     (close) => (
-      <CommunityCreateModal
+      <CommunityFormContainer
         canCreate={canCreate}
-        onCreate={onCreate}
+        editing={editing}
+        onSaved={(id) => {
+          handle()
+          onSaved(id)
+        }}
         onClose={close}
         onDirtyChange={(d) => {
           dirty.current = d
@@ -182,11 +433,25 @@ export function openCommunityCreateModal(canCreate: boolean, onCreate: (input: C
       confirmClose: () =>
         !dirty.current ||
         showConfirm({
-          title: 'Discard this community?',
-          body: 'The details you have entered will be lost.',
+          title: editing != null ? 'Discard your changes?' : 'Discard this community?',
+          body: editing != null ? 'The changes you have made will be lost.' : 'The details you have entered will be lost.',
           confirmLabel: 'Discard',
           cancelLabel: 'Keep editing'
         })
     }
   )
+  return handle
+}
+
+/** Open the create-a-community flow (NAME gate or form) as a popup; returns the close handle.
+ *  `canCreate` is a snapshot taken when the button is clicked — matches the other fire-once popups
+ *  (WorldVisitModal): the profile's claimed-NAME state isn't expected to change mid-flow.
+ *  `onCreated` gets the new community's id (empty if the service sent none) once the form closed. */
+export function openCommunityCreateModal(canCreate: boolean, onCreated: (id: string) => void): () => void {
+  return openCommunityForm(canCreate, undefined, onCreated)
+}
+
+/** Open the Edit Community form for a community the user owns or moderates; returns the close handle. */
+export function openCommunityEditModal(community: Community): () => void {
+  return openCommunityForm(true, community, () => undefined)
 }

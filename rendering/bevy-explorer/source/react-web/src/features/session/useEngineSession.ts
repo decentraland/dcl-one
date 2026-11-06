@@ -87,6 +87,8 @@ import type {
   ProximityTip,
   Profile,
   ProfileEdit,
+  CommunitySaveResultMessage,
+  UpdateCommunityRequest,
   SceneLoadingState,
   Setting,
   TeleportRequest,
@@ -104,6 +106,7 @@ const COMMUNITY_ERROR: Record<CommunityAction, string> = {
   requestToJoin: 'There was an error requesting to join community. Please try again.',
   cancelJoinRequest: 'There was an error cancelling join request. Please try again.',
   leave: 'There was an error leaving the community. Please try again.',
+  delete: 'There was an error deleting the community. Please try again.',
   fetch: 'There was an error loading the community. Please try again.'
 }
 
@@ -197,12 +200,41 @@ export interface OutfitHistory {
 
 const NO_OUTFIT_HISTORY: OutfitHistory = { canUndo: false, canRedo: false, rolling: false }
 
+/** What the create form sends. */
+export interface CreateCommunityInput {
+  name: string
+  description: string
+  privacy: 'public' | 'private'
+  discoverable: boolean
+  /** The picture as a data URL, when one was chosen. */
+  thumbnail?: string
+}
+
+/** What the edit form sends: the community and only the fields that changed. */
+export type UpdateCommunityInput = Omit<UpdateCommunityRequest, 'kind'>
+
+/** A community create or update in flight (`saving`) or its outcome (`done`). */
+export type CommunitySave = { status: 'saving' } | { status: 'done'; result: CommunitySaveResultMessage }
+
 export interface CommunitiesState {
   list: Community[]
+  /** Every community the user is a member of, unlisted ones included (My Communities). */
+  mine: Community[]
   open: boolean
   toggle: () => void
-  /** Create a community (name + description + Public/Private + discoverable). */
-  create: (input: { name: string; description: string; privacy: 'public' | 'private'; discoverable: boolean }) => void
+  /** Create a community (name, description, Public/Private, discoverable, picture as a data URL).
+   *  Its outcome arrives in `save`. */
+  create: (input: CreateCommunityInput) => void
+  /** Delete a community the user owns. On success its id arrives in `deleted`. */
+  remove: (id: string) => void
+  /** The last community deleted, so its card closes. */
+  deleted: string | null
+  /** Save an edit (only the changed fields). Its outcome arrives in `save`. */
+  update: (input: UpdateCommunityInput) => void
+  /** The create or update in flight, or how the last one ended, for the form. */
+  save: CommunitySave | null
+  /** Forget the last outcome (the form closed or is being edited again). */
+  clearSave: () => void
   join: (id: string) => void
   /** Ask to join a private community. */
   requestToJoin: (id: string) => void
@@ -1089,6 +1121,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [communitiesOpen, setCommunitiesOpen] = useState(false)
   const [communityDetail, setCommunityDetail] = useState<CommunityDetailMessage | null>(null)
   const [communityError, setCommunityError] = useState<{ id: string; message: string } | null>(null)
+  const [communitySave, setCommunitySave] = useState<CommunitySave | null>(null)
+  const [myCommunities, setMyCommunities] = useState<Community[]>([])
+  const [deletedCommunity, setDeletedCommunity] = useState<string | null>(null)
   const [mapParcel, setMapParcel] = useState({ x: 0, y: 0 })
   const [mapOpen, setMapOpen] = useState(false)
   // Minimap pose: a ref, not state — see MinimapState.pose for why.
@@ -1583,6 +1618,19 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'communityActionFailed':
           setCommunityError({ id: msg.id, message: COMMUNITY_ERROR[msg.action] })
+          break
+        case 'communitySaveResult':
+          setCommunitySave({ status: 'done', result: msg })
+          break
+        case 'myCommunities':
+          setMyCommunities(msg.communities)
+          break
+        case 'communityDeleted':
+          setDeletedCommunity(msg.id)
+          setCommunityCards((prev) => {
+            const { [msg.id]: _gone, ...rest } = prev
+            return rest
+          })
           break
         case 'communityDetail':
           setCommunityDetail(msg)
@@ -2848,12 +2896,19 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const redoOutfit = useCallback(() => {
     driverRef.current?.send({ kind: 'redoOutfit' })
   }, [])
-  const createCommunity = useCallback(
-    (input: { name: string; description: string; privacy: 'public' | 'private'; discoverable: boolean }) => {
-      driverRef.current?.send({ kind: 'createCommunity', ...input })
-    },
-    []
-  )
+  const createCommunity = useCallback((input: CreateCommunityInput) => {
+    setCommunitySave({ status: 'saving' })
+    driverRef.current?.send({ kind: 'createCommunity', ...input })
+  }, [])
+  const updateCommunity = useCallback((input: UpdateCommunityInput) => {
+    setCommunitySave({ status: 'saving' })
+    driverRef.current?.send({ kind: 'updateCommunity', ...input })
+  }, [])
+  const clearCommunitySave = useCallback(() => setCommunitySave(null), [])
+  const deleteCommunity = useCallback((id: string) => {
+    setCommunityError(null)
+    driverRef.current?.send({ kind: 'deleteCommunity', id })
+  }, [])
   const joinCommunity = useCallback((id: string) => {
     setCommunityError(null)
     driverRef.current?.send({ kind: 'joinCommunity', id })
@@ -3736,7 +3791,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       saveOutfit, deleteOutfit, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
-    communities: { list: communities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
+    communities: { list: communities, mine: myCommunities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
     map: mapSlice,
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces },
