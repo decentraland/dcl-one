@@ -119,54 +119,45 @@ impl EntityField {
     }
 }
 
-pub fn mask_entity(
-    entity: &serde_json::Value,
-    fields: Option<&[EntityField]>,
-) -> serde_json::Value {
-    let Some(obj) = entity.as_object() else {
-        return entity.clone();
+/// An entity as `GET /entities/{type}` answers it: upstream's `maskEntity`
+/// builds `{ version, id, type, timestamp, pointers, content, metadata }`, and
+/// a struct serializes its fields in that order where a `Map` would sort them.
+#[derive(Debug, serde::Serialize)]
+pub struct MaskedEntity {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<serde_json::Value>,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub entity_type: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<serde_json::Value>,
+    pub pointers: serde_json::Value,
+    pub content: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+pub fn mask_entity(entity: &serde_json::Value, fields: Option<&[EntityField]>) -> MaskedEntity {
+    let field = |key: &str| entity.get(key).cloned();
+    let include = |f: EntityField| fields.is_none_or(|fields| fields.contains(&f));
+    let array_or_empty = |f: EntityField, key: &str| {
+        include(f)
+            .then(|| field(key))
+            .flatten()
+            .unwrap_or(serde_json::Value::Array(vec![]))
     };
-
-    let mut result = serde_json::Map::new();
-
-    for key in &["version", "id", "type", "timestamp"] {
-        if let Some(v) = obj.get(*key) {
-            result.insert(key.to_string(), v.clone());
-        }
+    MaskedEntity {
+        version: field("version"),
+        id: field("id"),
+        entity_type: field("type"),
+        timestamp: field("timestamp"),
+        pointers: array_or_empty(EntityField::Pointers, "pointers"),
+        content: array_or_empty(EntityField::Content, "content"),
+        metadata: include(EntityField::Metadata)
+            .then(|| field("metadata"))
+            .flatten(),
     }
-
-    let include_all = fields.is_none();
-    let fields = fields.unwrap_or(&[]);
-
-    if include_all || fields.contains(&EntityField::Pointers) {
-        result.insert(
-            "pointers".to_string(),
-            obj.get("pointers")
-                .cloned()
-                .unwrap_or(serde_json::Value::Array(vec![])),
-        );
-    } else {
-        result.insert("pointers".to_string(), serde_json::Value::Array(vec![]));
-    }
-
-    if include_all || fields.contains(&EntityField::Content) {
-        result.insert(
-            "content".to_string(),
-            obj.get("content")
-                .cloned()
-                .unwrap_or(serde_json::Value::Array(vec![])),
-        );
-    } else {
-        result.insert("content".to_string(), serde_json::Value::Array(vec![]));
-    }
-
-    if (include_all || fields.contains(&EntityField::Metadata))
-        && let Some(m) = obj.get("metadata")
-    {
-        result.insert("metadata".to_string(), m.clone());
-    }
-
-    serde_json::Value::Object(result)
 }
 
 #[cfg(test)]
@@ -234,10 +225,29 @@ mod tests {
             "version": "v3", "id": "bafy", "type": "scene", "timestamp": 1,
             "pointers": ["0,0"], "content": [{"file": "a", "hash": "b"}], "metadata": {"k": 1}
         });
-        let masked = mask_entity(&entity, Some(&[EntityField::Metadata]));
+        let masked =
+            serde_json::to_value(mask_entity(&entity, Some(&[EntityField::Metadata]))).unwrap();
         assert_eq!(masked["pointers"], serde_json::json!([]));
         assert_eq!(masked["content"], serde_json::json!([]));
         assert_eq!(masked["metadata"], serde_json::json!({"k": 1}));
-        assert_eq!(mask_entity(&entity, None), entity);
+        assert_eq!(
+            serde_json::to_value(mask_entity(&entity, None)).unwrap(),
+            entity
+        );
+    }
+
+    #[test]
+    fn masked_keys_follow_upstream_mask_entity_order() {
+        // decentraland/catalyst:src/controllers/handlers/get-entities-handler.ts:94; captured
+        // in conformance/content-lambdas/captures/content-reads/CR-16-trailing-slash-entities.json.
+        let entity = serde_json::json!({
+            "content": [], "id": "bafy", "metadata": {"k": 1}, "pointers": ["0,0"],
+            "timestamp": 1, "type": "scene", "version": "v3"
+        });
+        let bytes = serde_json::to_string(&mask_entity(&entity, None)).unwrap();
+        assert_eq!(
+            bytes,
+            r#"{"version":"v3","id":"bafy","type":"scene","timestamp":1,"pointers":["0,0"],"content":[],"metadata":{"k":1}}"#
+        );
     }
 }

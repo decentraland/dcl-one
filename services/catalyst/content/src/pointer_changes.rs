@@ -4,18 +4,14 @@ use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 
 use super::SharedState;
-use super::deployments::normalize_query_string;
+use super::deployments::{normalize_query_string, parse_sort};
 use super::errors::{AppError, AppResult};
 use super::queries::{self, PointerChangesQueryOptions};
 use super::query_params::{
-    camel_to_snake, parse_entity_type, parse_query_string, qs_get_array, qs_get_bool,
-    qs_get_number, qs_get_string,
+    parse_entity_type, parse_query_string, qs_get_filter_array, qs_get_js_bool, qs_get_js_number,
+    qs_get_js_timestamp, qs_get_string, to_ordered_query_string,
 };
 use super::wire_types::{HistoryPagination, PointerChangeDelta, PointerChangesResponse};
-
-const VALID_SORTING_FIELDS: &[&str] = &["local_timestamp", "entity_timestamp"];
-
-const VALID_SORTING_ORDERS: &[&str] = &["ASC", "DESC"];
 
 /// Peers poll this continuously with identical queries; the 5 s deployments
 /// memo (cleared on every commit) serves them one keyset scan per window
@@ -44,45 +40,26 @@ fn parse_pointer_changes_options(query_string: &str) -> AppResult<PointerChanges
     let params = parse_query_string(query_string);
 
     let mut entity_types: Vec<String> = Vec::new();
-    for raw in qs_get_array(&params, "entityType") {
+    for raw in qs_get_filter_array(&params, "entityType") {
         match parse_entity_type(&raw) {
             Some(canonical) => entity_types.push(canonical.to_string()),
             None => return Err(AppError::invalid("Found an unrecognized entity type")),
         }
     }
-    let from = qs_get_number(&params, "from");
-    let to = qs_get_number(&params, "to");
-    let offset = qs_get_number(&params, "offset");
-    let limit = qs_get_number(&params, "limit");
+    let from = qs_get_js_timestamp(&params, "from");
+    let to = qs_get_js_timestamp(&params, "to");
+    let offset = qs_get_js_number(&params, "offset");
+    let limit = qs_get_js_number(&params, "limit");
     let last_id = qs_get_string(&params, "lastId").map(|s| s.to_lowercase());
-    let include_auth_chain = qs_get_bool(&params, "includeAuthChain").unwrap_or(false);
+    let include_auth_chain = qs_get_js_bool(&params, "includeAuthChain").unwrap_or(false);
 
-    let sorting_field = match qs_get_string(&params, "sortingField") {
-        Some(sf) => {
-            let snake = camel_to_snake(&sf);
-            if !VALID_SORTING_FIELDS.contains(&snake.as_str()) {
-                return Err(AppError::invalid("Found an unrecognized sort field param"));
-            }
-            Some(snake)
-        }
-        None => None,
-    };
-
-    let sorting_order = match qs_get_string(&params, "sortingOrder") {
-        Some(so) => {
-            if !VALID_SORTING_ORDERS.contains(&so.as_str()) {
-                return Err(AppError::invalid("Found an unrecognized sort order param"));
-            }
-            Some(so)
-        }
-        None => None,
-    };
-
+    // Upstream's order: entity types, `offset`, then the sort values.
     if offset.is_some_and(|off| off > 5000) {
         return Err(AppError::invalid(
             "Offset can't be higher than 5000. Please use the 'next' property for pagination.",
         ));
     }
+    let (sorting_field, sorting_order) = parse_sort(&params)?;
 
     Ok(PointerChangesQueryOptions {
         entity_types,
@@ -95,6 +72,34 @@ fn parse_pointer_changes_options(query_string: &str) -> AppResult<PointerChanges
         limit,
         last_id,
     })
+}
+
+/// Upstream's `calculateNextRelativePathForPointer`: `toQueryParams` over
+/// `{entityTypes, from, to, includeAuthChain, limit, lastId}` in that order,
+/// dropping falsy values (`from=0`, `includeAuthChain=false`).
+fn next_relative_path(
+    options: &PointerChangesQueryOptions,
+    last: &PointerChangeDelta,
+    limit: i64,
+) -> String {
+    let mut pairs: Vec<(&str, Vec<String>)> = Vec::new();
+    if !options.entity_types.is_empty() {
+        pairs.push(("entityType", options.entity_types.clone()));
+    }
+    if let Some(from) = options.from.filter(|from| *from != 0) {
+        pairs.push(("from", vec![from.to_string()]));
+    }
+    if last.local_timestamp != 0 {
+        pairs.push(("to", vec![last.local_timestamp.to_string()]));
+    }
+    if options.include_auth_chain {
+        pairs.push(("includeAuthChain", vec!["true".to_string()]));
+    }
+    if limit != 0 {
+        pairs.push(("limit", vec![limit.to_string()]));
+    }
+    pairs.push(("lastId", vec![last.entity_id.clone()]));
+    format!("?{}", to_ordered_query_string(&pairs))
 }
 
 async fn fetch_pointer_changes(state: &SharedState, query_string: &str) -> AppResult<Bytes> {
@@ -111,17 +116,7 @@ async fn fetch_pointer_changes(state: &SharedState, query_string: &str) -> AppRe
     if result.pagination.more_data
         && let Some(last) = deltas.last()
     {
-        let mut qs: Vec<String> = Vec::new();
-        for et in &options.entity_types {
-            qs.push(format!("entityType={et}"));
-        }
-        if let Some(from) = options.from {
-            qs.push(format!("from={from}"));
-        }
-        qs.push(format!("to={}", last.local_timestamp));
-        qs.push(format!("limit={}", result.pagination.limit));
-        qs.push(format!("lastId={}", last.entity_id));
-        next = Some(format!("?{}", qs.join("&")));
+        next = Some(next_relative_path(&options, last, result.pagination.limit));
     }
 
     let pagination = HistoryPagination {
@@ -171,6 +166,50 @@ mod tests {
         );
         assert!(options.include_auth_chain);
         assert_eq!(options.last_id.as_deref(), Some("bafyx"));
+    }
+
+    /// CS-06, CS-08 and CS-21: empty sort values are absent, numbers and
+    /// booleans read as `qsGetNumber`/`qsGetBoolean`, and `offset` is checked
+    /// before the sort values.
+    #[test]
+    fn values_and_checks_follow_upstream() {
+        let options = parse_pointer_changes_options(
+            "sortingField=&sortingOrder=&limit=10abc&from=&includeAuthChain=",
+        )
+        .unwrap();
+        assert_eq!((options.sorting_field, options.sorting_order), (None, None));
+        assert_eq!((options.limit, options.from), (Some(10), None));
+        assert!(!options.include_auth_chain);
+        assert_eq!(
+            parse_pointer_changes_options("offset=5001&sortingField=bogus")
+                .unwrap_err()
+                .to_string(),
+            "Offset can't be higher than 5000. Please use the 'next' property for pagination."
+        );
+    }
+
+    /// CS-09: `next` carries `includeAuthChain=true` after `to`.
+    #[test]
+    fn next_carries_include_auth_chain() {
+        let last = PointerChangeDelta {
+            deployment_id: 1,
+            entity_type: "scene".into(),
+            entity_id: "bafylast".into(),
+            pointers: vec![],
+            entity_timestamp: 5,
+            deployer_address: "0x0".into(),
+            version: "v3".into(),
+            auth_chain: serde_json::Value::Null,
+            local_timestamp: 7,
+        };
+        let next = |query: &str| {
+            next_relative_path(&parse_pointer_changes_options(query).unwrap(), &last, 2)
+        };
+        assert_eq!(
+            next("entityType=scene&entityType=profile&from=3&includeAuthChain=true"),
+            "?entityType=scene&entityType=profile&from=3&to=7&includeAuthChain=true&limit=2&lastId=bafylast"
+        );
+        assert_eq!(next("from=0"), "?to=7&limit=2&lastId=bafylast");
     }
 
     async fn seed(pool: &sqlx::PgPool, entity_id: &str, local_ms: i64) {
