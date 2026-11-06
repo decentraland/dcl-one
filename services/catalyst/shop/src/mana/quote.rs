@@ -536,9 +536,12 @@ mod tests {
     #[tokio::test]
     async fn a_primary_listing_with_a_live_coupon_settles_through_accept_with_coupon() {
         use alloy_sol_types::{SolCall, SolValue};
-        let Some(pool) = crate::db::scratch::pool(2).await else {
+        // Its own database: other tests delete and reset the mirrors'
+        // completeness rows on the shared one while this runs.
+        let Some(db) = crate::test_db::OwnDatabase::create("coupon_quote").await else {
             return;
         };
+        let pool = db.pool.clone();
         let fresh = || -> Address {
             format!(
                 "0x{}{}",
@@ -650,25 +653,6 @@ mod tests {
             Some(discounted),
             "the buyer approves the discounted amount"
         );
-
-        sqlx::query("DELETE FROM shop.coupons WHERE id = $1::uuid")
-            .bind(&coupon_id)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM shop.trades WHERE id = $1::uuid")
-            .bind(&trade_id)
-            .execute(&pool)
-            .await
-            .unwrap();
-        for table in ["shop.items", "shop.collections"] {
-            sqlx::query(sqlx::AssertSqlSafe(format!(
-                "DELETE FROM {table} WHERE network = 'matic' AND contract_address = $1"
-            )))
-            .bind(format!("{collection:#x}"))
-            .execute(&pool)
-            .await
-            .unwrap();
-        }
+        db.drop().await;
     }
 }
