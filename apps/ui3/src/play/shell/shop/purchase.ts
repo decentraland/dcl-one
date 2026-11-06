@@ -23,7 +23,7 @@ import { liveResolvers, reviewCart, type SettlementResolvers } from '../../../sh
 import { releaseAuthorizing, runGroup, watchGroup, type CheckoutDeps, type GroupResult } from '../../../shop/checkout/purchase/executor'
 import type { RailContext } from '../../../shop/checkout/purchase/rail'
 import { createSpendGuard } from '../../../shop/checkout/purchase/spend-guard'
-import { fetchUserPurchases, getUsdBalance, type UsdBalance } from '../../../shop/credits/credits'
+import { getUsdBalance, type UsdBalance } from '../../../shop/credits/credits'
 import type { OfferSource } from '../../../shop/detail/offers'
 import { fetchShopListingForItem } from '../../../shop/detail/api'
 import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
@@ -98,8 +98,6 @@ export interface ShellShopServices {
   primeFlags(): Promise<void>
   run(deps: CheckoutDeps, group: CartGroup, resolved: Resolved): Promise<GroupResult>
   watch(deps: CheckoutDeps, progress: GroupProgress): Promise<GroupResult>
-  /** The server's record of the buyer's purchases: whether this item was bought (settled) since `since`. */
-  bought(buyer: string, item: { contract: string; itemId: string }, since: number, client: ShopClient): Promise<boolean>
   /** The CreditsManager this deployment trusts on a chain (./config). */
   manager(chainId: number): TrustedManager | null
   /** The wallet bound to one confirmed purchase (./walletGuard). */
@@ -132,8 +130,6 @@ const FLAGS_TIMEOUT_MS = 3000
 /** How long a page keeps watching an unsettled purchase; a later page (a reload) carries on. */
 const WATCH_FOR_MS = 30 * 60_000
 const WATCH_BACKOFF_MS = [5_000, 10_000, 20_000, 40_000, 60_000]
-/** A purchase nothing records past this can no longer settle: its credit and its external call expire within a day. */
-const DEAD_AFTER_MS = 26 * 60 * 60_000
 /** How far each checkout state is along, to tell the newer of two copies when their clocks tie. */
 const RANK: Record<GroupStatus, number> = { idle: 0, authorizing: 1, submitted: 2, pending: 3, confirmed: 4, failed: 4, expired: 4 }
 
@@ -155,11 +151,6 @@ const LIVE: ShellShopServices = {
   primeFlags: async () => primeRemoteFlags(await fetchRemoteFlags(AbortSignal.timeout(FLAGS_TIMEOUT_MS))),
   run: runGroup,
   watch: watchGroup,
-  bought: async (buyer, item, since, client) => {
-    const { items } = await fetchUserPurchases(buyer, { all: true, first: 50 }, client)
-    const ms = (t: number): number => (t < 1e12 ? t * 1000 : t)
-    return items.some((p) => p.status === 'SETTLED' && p.contractAddress?.toLowerCase() === item.contract && p.itemId === item.itemId && ms(p.createdAt) >= since - 5 * 60_000)
-  },
   manager: (chainId) => trustedCreditsManager(chainId),
   guard: guardedProvider,
   rail: () => ({}),
@@ -358,11 +349,17 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   }
 
   /**
-   * Takes an unsettled operation to its end and never resubmits it. A hand-off (a hash, a pending state,
-   * a submitted checkpoint) is only ever watched. A credit reserved with nothing handed off is given back:
-   * the purchase can't hand off without its checkpoint kept first (`durable`). With no checkpoint at all,
-   * nothing is inferred: the server's record of the buyer's purchases decides, or the day the purchase
-   * would have expired.
+   * Takes an unsettled operation to its end and never resubmits it. It settles only on authoritative
+   * evidence: the checkout's own confirmed or failed state, the executor's watcher (the receipt of the
+   * hash, or the server's record of the operation's own credit), or a known hash's receipt on its chain.
+   * Anything unknown (an unreadable answer, no receipt yet) stays unsettled and is read again; no timer
+   * ends it.
+   *
+   * Nothing is ever signed or sent before the operation's record holds its checkpoint (`durable`, read
+   * back from storage): signing needs the credit kept, the hand-off needs `submitted` kept. So a record
+   * with no checkpoint, or one at its reservation, with no sign of a hand-off, provably let nothing leave
+   * this browser: its reserved credit is given back and it ends cancelled. Any sign of a hand-off (a
+   * pending state, a hash, a submitted checkpoint) is only watched.
    */
   const reconcile = async (op: Operation): Promise<void> => {
     if (op.watching || !op.buyer) return
@@ -382,14 +379,24 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           return
         }
         if (!progress) {
-          const bought = await svc.bought(op.buyer, op.item, op.createdAt, client()).catch(() => false)
-          if (bought) {
-            settled(op, 'succeeded')
+          if (!handedOff) {
+            settled(op, 'cancelled')
             return
           }
-          if (svc.now() - op.createdAt > DEAD_AFTER_MS) {
-            settled(op, 'failed', {}, "This purchase couldn't be confirmed, and it can no longer go through.")
-            return
+          // A hand-off known only by its hash (the checkpoint is gone): its receipt on its chain decides.
+          if (op.txHash && op.chainId) {
+            const receipt = await svc
+              .reader()
+              .receipt(op.chainId as Parameters<ChainReader['receipt']>[0], op.txHash)
+              .catch(() => null)
+            if (receipt?.status === 'success') {
+              settled(op, 'succeeded', { txHash: op.txHash })
+              return
+            }
+            if (receipt?.status === 'reverted') {
+              settled(op, 'failed', {}, 'The transaction failed on-chain. Nothing was bought.')
+              return
+            }
           }
         } else if (!handedOff) {
           // Reserved, or not even that, and provably not handed off: give the credit back.
@@ -435,6 +442,28 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
 
   // ---- Reading the terms and confirming ---------------------------------------------------------
 
+  const create = (req: ShopBuyRequest, buyer: string | null): Operation => {
+    const at = svc.now()
+    const op: Operation = { id: svc.newId(), buyer, item: req.item, state: 'reviewing', createdAt: at, updatedAt: at }
+    operations.set(op.id, op)
+    publish(op)
+    return op
+  }
+
+  /**
+   * TRY AGAIN, after an attempt that provably handed nothing off: that attempt ends, and a fresh
+   * operation (its own record, checkout and durability) reads the terms anew, so a storage that failed
+   * once and works again doesn't keep refusing.
+   */
+  const restart = (op: Operation, req: ShopBuyRequest, ended: 'cancelled' | 'failed'): void => {
+    op.unwatchWallet?.()
+    op.unwatchWallet = undefined
+    move(op, ended)
+    const fresh = create(req, signedIn()?.buyer ?? null)
+    dialog = fresh
+    void review(fresh, req)
+  }
+
   /** Reads the terms and shows them: Buy Item, or Insufficient Funds when the balance is short. */
   const review = async (op: Operation, req: ShopBuyRequest): Promise<void> => {
     const who = signedIn()
@@ -459,7 +488,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       quote = await readQuote(op, who.login, who.buyer, kind, req)
     } catch (e) {
       console.warn('[shell/shop] could not read the purchase terms', e)
-      if (op.state === 'reviewing' && dialog === op) fail(op, "We couldn't check this item's price. Try again in a moment.", () => void review(op, req))
+      if (op.state === 'reviewing' && dialog === op) fail(op, "We couldn't check this item's price. Try again in a moment.", () => restart(op, req, 'cancelled'))
       return
     }
     // Cancelled while it loaded.
@@ -543,7 +572,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   const settle = async (op: Operation, req: ShopBuyRequest, quote: Quote): Promise<void> => {
     if (op.state !== 'reviewing' || dialog !== op) return
     op.unwatchWallet?.()
-    const again = (): void => void review(op, req)
+    // Every TRY AGAIN offered below follows an attempt that handed nothing off.
+    const again = (): void => restart(op, req, 'cancelled')
     const current = (): boolean => {
       const who = signedIn()
       return !!who && who.buyer === quote.buyer && loginKey(who.login) === quote.login && deps.wallet?.kind(quote.buyer) === quote.kind && !quote.stale
@@ -587,6 +617,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       current,
       durable: (stage) => durable(op, stage)
     }
+    op.chainId = chainId
     move(op, 'processing')
     if (ledger.failed(op.id) || ledger.saved(op.buyer ?? '', op.id)?.state !== 'processing') {
       op.state = 'reviewing'
@@ -639,8 +670,15 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       unmirror()
     } catch (e) {
       unmirror()
-      // The executor answers every hand-off itself; a throw here came before any.
-      console.warn('[shell/shop] the purchase could not start', e)
+      console.warn('[shell/shop] the purchase stopped unexpectedly', e)
+      // The executor answers every hand-off itself, so a throw should come before any; if the checkout
+      // got as far as a credit, it is followed like any purchase that may have gone out, never retried.
+      if (op.progress && op.progress.creditIds.length > 0) {
+        move(op, 'pending')
+        showPending(op)
+        void reconcile(op)
+        return
+      }
       op.state = 'reviewing'
       publish(op)
       fail(op, "We couldn't start this purchase. Nothing was charged.", again)
@@ -664,7 +702,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           present(op, req, { ...quote, balance: creditsFloor(result.topUp.balanceCents as UsdCents) })
           return
         }
-        fail(op, result.failure.message, result.failure.kind !== 'refused' ? again : undefined)
+        // A failed group handed nothing off, or its transaction reverted: either way this attempt is over.
+        fail(op, result.failure.message, result.failure.kind !== 'refused' ? () => restart(op, req, 'failed') : undefined)
         return
       }
       case 'skipped':
@@ -692,10 +731,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         return snapshot(unsettled)
       }
     }
-    const at = svc.now()
-    const op: Operation = { id: svc.newId(), buyer: who?.buyer ?? null, item: req.item, state: 'reviewing', createdAt: at, updatedAt: at }
-    operations.set(op.id, op)
-    publish(op)
+    const op = create(req, who?.buyer ?? null)
     void review(op, req)
     return snapshot(op)
   }

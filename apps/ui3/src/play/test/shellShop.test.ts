@@ -101,6 +101,8 @@ function setup(
     manager?: typeof TRUSTED | null
     /** How far the clock moves per watcher wait (the wait itself, by default). */
     tick?: number
+    /** The chain's receipts by hash (a missing hash has none yet). */
+    receipts?: Record<string, 'success' | 'reverted'>
   } = {}
 ) {
   const shown: Shown[] = []
@@ -120,7 +122,13 @@ function setup(
     offers: () => async (queries, session) => Object.fromEntries(queries.map((q) => [q.key, storeMint(session)])),
     balance: async () => ({ balanceCents: cents, credits: Math.floor(cents / 10) }),
     resolvers: () => ({ trade: async () => null, store: async () => ({ priceWei: '2300000000000000000', available: 10 }) }),
-    reader: () => ({}) as never,
+    reader: () =>
+      ({
+        receipt: vi.fn(async (_chain: number, hash: string) => {
+          const status = opts.receipts?.[hash]
+          return status ? { transactionHash: hash, status, blockNumber: 1n } : null
+        })
+      }) as never,
     primeFlags: async () => {},
     run: run as unknown as ShellShopServices['run'],
     watch,
@@ -431,6 +439,67 @@ describe('the shell purchase', () => {
     await after.shop.request('shop.capabilities', undefined)
     await vi.waitFor(() => expect(after.events.find((e) => e.operation === op.operation)?.state).toBe('succeeded'))
     expect(watched).toMatchObject({ status: 'pending', txHash: '0xabc' })
+  })
+
+  /** A record as an earlier page left it, with no checkout: only its own fields. */
+  function recorded(storage: Storage, record: Record<string, unknown>): string {
+    const id = '0f0e0d0c-0000-4000-8000-00000000abcd'
+    storage.setItem(`dcl-inworld-shop:operations:v1:${BUYER}`, JSON.stringify([{ id, buyer: BUYER, item: { contract: CONTRACT, itemId: '7' }, createdAt: 1, updatedAt: 1, ...record }]))
+    return id
+  }
+
+  it('never fails a hand-off known only by its hash: unreadable, old, it stays pending', async () => {
+    const storage = memoryStorage()
+    const id = recorded(storage, { state: 'pending', txHash: '0xabc', chainId: 137 })
+    // Long after it could have expired, with no receipt yet and no checkout: the page watches it until
+    // its own watch ends, and it is still pending.
+    const t = setup({ storage })
+    await t.shop.request('shop.capabilities', undefined)
+    await new Promise((r) => setTimeout(r, 300))
+    expect(await t.shop.request('shop.status', { operation: id })).toMatchObject({ state: 'pending' })
+    expect(t.events.some((e) => e.operation === id && (e.state === 'failed' || e.state === 'cancelled'))).toBe(false)
+    // And the same item stays protected from a second purchase.
+    expect((await t.buy()).operation).toBe(id)
+  })
+
+  it('settles a hand-off known only by its hash from its receipt on its chain', async () => {
+    for (const [status, state] of [['success', 'succeeded'], ['reverted', 'failed']] as const) {
+      const storage = memoryStorage()
+      const id = recorded(storage, { state: 'pending', txHash: '0xabc', chainId: 137 })
+      const t = setup({ storage, receipts: { '0xabc': status } })
+      await t.shop.request('shop.capabilities', undefined)
+      await vi.waitFor(() => expect(t.events.find((e) => e.operation === id)?.state).toBe(state))
+    }
+  })
+
+  it('ends a restored attempt with no checkpoint and no hand-off: nothing could have left the browser', async () => {
+    const storage = memoryStorage()
+    const id = recorded(storage, { state: 'processing', chainId: 137 })
+    const t = setup({ storage })
+    await t.shop.request('shop.capabilities', undefined)
+    await vi.waitFor(() => expect(t.events.find((e) => e.operation === id)?.state).toBe('cancelled'))
+  })
+
+  it('tries again as a fresh purchase once the storage works again', async () => {
+    const storage = memoryStorage()
+    const write = storage.setItem.bind(storage)
+    let refuse = true
+    storage.setItem = (key, value) => {
+      if (refuse && key.includes(':operations:') && value.includes('"processing"')) throw new DOMException('full', 'QuotaExceededError')
+      write(key, value)
+    }
+    const t = setup({ storage })
+    const first = await t.buy()
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    const failed = await t.until('failed')
+    expect(t.run).not.toHaveBeenCalled()
+    refuse = false
+    failed.handlers.onRetry?.()
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    await t.until('success')
+    expect(t.run).toHaveBeenCalledTimes(1)
+    expect(t.events.find((e) => e.operation === first.operation && e.state === 'cancelled')).toBeTruthy()
+    expect(t.events.at(-1)?.operation).not.toBe(first.operation)
   })
 
   it('shows the result in the pending dialog when it is still up: a late success', async () => {

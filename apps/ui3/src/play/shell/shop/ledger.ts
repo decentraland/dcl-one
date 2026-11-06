@@ -30,6 +30,8 @@ export interface OperationRecord {
   state: ShopOperationState
   next?: 'backpack'
   txHash?: string | null
+  /** The chain it settles on, kept before anything is reserved: a known hash is read there. */
+  chainId?: number
   /** The checkout group's progress as the executor last wrote it, kept apart from the checkout itself. */
   progress?: GroupProgress
   display?: PurchaseDisplay
