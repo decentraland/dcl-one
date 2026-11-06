@@ -35,6 +35,7 @@ it("reads and marks the inbox on the node's /notifications mount", async () => {
   const list = fetchLiveNotifications();
   const read = lastSignedFetch(bridge);
   expect(new URL(read.url).pathname).toBe("/notifications/notifications");
+  expect(new URL(read.url).searchParams.get("limit")).toBe("50");
   expect(read.method).toBe("GET");
   bridge.push({ kind: "signedFetchResult", id: read.id, status: 200, body: JSON.stringify({ notifications: [] }) });
   await expect(list).resolves.toEqual([]);
