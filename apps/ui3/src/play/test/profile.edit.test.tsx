@@ -19,7 +19,7 @@ const profile: Profile = {
 }
 
 function editing(over: Partial<PassportEditing> = {}): PassportEditing {
-  return { saving: false, error: null, save: vi.fn(), dismissError: vi.fn(), editName: vi.fn(), ...over }
+  return { saving: false, error: null, save: vi.fn(), dismissError: vi.fn(), editName: vi.fn(), pickNameColor: vi.fn(), ...over }
 }
 
 const renderPassport = (edit: PassportEditing, self = true, p: Profile = profile): void => {
