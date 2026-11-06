@@ -7,7 +7,7 @@
 
 use crate::shared::now_utc;
 use std::sync::{Arc, LazyLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde_json::Value as Json;
@@ -38,7 +38,8 @@ pub fn naive_to_ms(t: NaiveDateTime) -> i64 {
 /// poll through the plan cache"). With the flags in the text, the generic
 /// plan keeps `occurred_at >= $2` in the index condition and the unread poll
 /// matches the partial `notifications_unread_idx`. Binds: `$1` address,
-/// then `from` when present, then the limit, then the touch time when
+/// then `from` when present, then the limit, then the broadcast horizon
+/// (oldest listed broadcast `occurred_at`), then the touch time when
 /// `touch` (the reader_seen upsert rides along as a data-modifying CTE;
 /// GREATEST keeps concurrent replicas from moving the mark backwards).
 fn list_sql(with_from: bool, only_unread: bool, touch: bool) -> String {
@@ -61,6 +62,7 @@ fn list_sql(with_from: bool, only_unread: bool, touch: bool) -> String {
         ""
     };
     let limit = bind();
+    let horizon = bind();
     let touch_cte = if touch {
         format!(
             "WITH seen AS (
@@ -95,7 +97,7 @@ fn list_sql(with_from: bool, only_unread: bool, touch: bool) -> String {
                       r.read_at, b.created_at, b.metadata
                FROM social.broadcast_notifications b
                LEFT JOIN social.broadcast_reads r ON r.broadcast_id = b.id AND r.address = $1
-               WHERE TRUE{bc_from}{bc_unread}
+               WHERE b.occurred_at >= {horizon}{bc_from}{bc_unread}
                ORDER BY b.occurred_at DESC, b.id DESC
                LIMIT {limit})
             ) n
@@ -286,14 +288,55 @@ pub enum SetEmailOutcome {
 pub struct NotificationsStore {
     pool: PgPool,
     seen: Arc<SeenDebounce>,
+    broadcast_horizon: Duration,
 }
+
+/// Broadcasts older than this are neither listed nor kept (upstream kept them forever).
+pub const DEFAULT_BROADCAST_HORIZON: Duration = Duration::from_secs(90 * 24 * 3600);
 
 impl NotificationsStore {
     pub fn new(pool: PgPool) -> Self {
         Self {
             pool,
             seen: Arc::new(SeenDebounce::default()),
+            broadcast_horizon: DEFAULT_BROADCAST_HORIZON,
         }
+    }
+
+    pub fn with_broadcast_horizon(mut self, horizon: Duration) -> Self {
+        self.broadcast_horizon = horizon;
+        self
+    }
+
+    fn broadcast_cutoff(&self, now: NaiveDateTime) -> NaiveDateTime {
+        chrono::Duration::from_std(self.broadcast_horizon)
+            .ok()
+            .and_then(|h| now.checked_sub_signed(h))
+            .unwrap_or(NaiveDateTime::MIN)
+    }
+
+    /// Deletes up to `limit` broadcasts past the horizon (their reads cascade).
+    pub async fn prune_broadcasts(
+        &self,
+        now: NaiveDateTime,
+        limit: i64,
+    ) -> Result<u64, sqlx::Error> {
+        let res = sqlx::query(
+            r#"
+            DELETE FROM social.broadcast_notifications
+            WHERE id IN (
+                SELECT id FROM social.broadcast_notifications
+                WHERE occurred_at < $1
+                ORDER BY occurred_at
+                LIMIT $2
+            )
+            "#,
+        )
+        .bind(self.broadcast_cutoff(now))
+        .bind(limit)
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected())
     }
 
     pub fn pool(&self) -> &PgPool {
@@ -352,7 +395,7 @@ impl NotificationsStore {
         if let Some(from) = from {
             query = query.bind(from);
         }
-        query = query.bind(limit);
+        query = query.bind(limit).bind(self.broadcast_cutoff(now_utc()));
         if let Some(at) = touch_at {
             query = query.bind(at);
         }
@@ -759,7 +802,11 @@ mod sql_shape_tests {
         );
         let both = list_sql(true, true, true);
         assert!(both.starts_with("WITH seen AS"), "{both}");
-        assert!(both.contains("VALUES ($1, $4::timestamp)"), "{both}");
+        assert!(both.contains("VALUES ($1, $5::timestamp)"), "{both}");
+        assert!(
+            both.contains("WHERE b.occurred_at >= $4 AND b.occurred_at >= $2"),
+            "{both}"
+        );
         assert!(
             both.contains("WHERE address = $1 AND occurred_at >= $2 AND NOT read")
                 && both.contains("LIMIT $3"),

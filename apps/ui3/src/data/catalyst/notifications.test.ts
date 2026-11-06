@@ -4,6 +4,7 @@ import { afterEach, expect, it } from "vitest";
 import { FakeBridge } from "../../test/fakeBridge";
 import { fetchLiveNotifications, markNotificationsRead } from "./notifications";
 import {
+  actorAddress,
   categoryForType,
   notificationBody,
   notificationImage,
@@ -68,6 +69,16 @@ it("keeps a broadcast row, whose address is null", async () => {
   bridge.push({ kind: "signedFetchResult", id: lastSignedFetch(bridge).id, status: 200, body: JSON.stringify({ notifications: [broadcast] }) });
   const rows = await list;
   expect(rows.map((n) => [n.id, n.address, n.timestamp])).toEqual([["b1", "", 1700000000000]]);
+});
+
+it("names no actor for a broadcast, even when its metadata holds an address", () => {
+  const other = "0x00000000000000000000000000000000000000aa";
+  const row = (address: string): Notification => ({
+    id: "b1", type: "governance_announcement", address, timestamp: 1, read: false, created_at: "", updated_at: "",
+    metadata: { title: "t", link: `https://example.org/${other}`, author: other },
+  });
+  expect(actorAddress(row(""))).toBeNull();
+  expect(actorAddress(row("0x0000000000000000000000000000000000000001"))).toBe(other);
 });
 
 it("shows a favorite on sale as a marketplace notice with its server copy, image and shop link", () => {

@@ -80,6 +80,8 @@ pub struct Settings {
     pub first_wear: FirstWearSettings,
     /// `NOTIFICATION_DELIVERY_INTERVAL_SECS` (default 15; floored to 1).
     pub delivery_interval: Duration,
+    /// `NOTIFICATIONS_BROADCAST_HORIZON_DAYS` (default 90): broadcasts older are hidden and pruned.
+    pub broadcast_horizon: Duration,
     /// Deployment origin used by event notice links (`/whats-on/{id}`).
     pub events_base_url: String,
     /// Backend event asset origin and mount, distinct from notice links.
@@ -107,6 +109,7 @@ impl Default for Settings {
             first_wear_enabled: false,
             first_wear: FirstWearSettings::default(),
             delivery_interval: Duration::from_secs(15),
+            broadcast_horizon: store::DEFAULT_BROADCAST_HORIZON,
             events_base_url: "https://decentraland.org".into(),
             events_asset_base_url: "http://localhost/events".into(),
             current_version: None,
@@ -142,7 +145,7 @@ impl State {
         market: Option<Arc<ChainIndex>>,
     ) -> Self {
         Self {
-            store: NotificationsStore::new(pool),
+            store: NotificationsStore::new(pool).with_broadcast_horizon(settings.broadcast_horizon),
             email: email::EmailSender::new(settings.email.clone(), http.clone())
                 .with_unsubscribe(settings.signing_key.as_deref(), &settings.service_base_url),
             settings,
@@ -167,7 +170,7 @@ impl State {
         }
     }
 
-    /// The outbox worker always; the first-wear producer when enabled.
+    /// The outbox worker and broadcast retention always; the first-wear producer when enabled.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         let state = self.clone();
         let configured = self.email.notifications_configured();
@@ -193,6 +196,23 @@ impl State {
                     let pruned = delivery::prune(pool, crate::shared::now_utc()).await?;
                     if pruned > 0 {
                         tracing::info!(pruned, "notification deliveries pruned");
+                    }
+                    Ok(())
+                }
+            },
+        );
+        let store = self.store.clone();
+        jobs.spawn_periodic_leased(
+            "notification-broadcast-retention",
+            PeriodicCfg::every(Duration::from_secs(3600)).with_jitter(Duration::from_secs(60)),
+            move |_ctx| {
+                let store = store.clone();
+                async move {
+                    let pruned = store
+                        .prune_broadcasts(crate::shared::now_utc(), 100)
+                        .await?;
+                    if pruned > 0 {
+                        tracing::info!(pruned, "expired broadcasts pruned");
                     }
                     Ok(())
                 }

@@ -615,6 +615,14 @@ pub struct SocialConfig {
     )]
     pub notification_delivery_interval_secs: u64,
 
+    /// Days a producer broadcast stays in every inbox before it is hidden and pruned.
+    #[arg(
+        long,
+        env = "NOTIFICATIONS_BROADCAST_HORIZON_DAYS",
+        default_value_t = 90
+    )]
+    pub notifications_broadcast_horizon_days: u64,
+
     // social/badges: the old catalyrst-badges settings (the art is embedded).
     /// Bearer of the badge grant/revoke routes; unset refuses them.
     #[arg(long, env = "CATALYRST_BADGES_ADMIN_TOKEN", hide_env_values = true)]

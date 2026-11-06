@@ -673,8 +673,10 @@ CREATE UNIQUE INDEX notifications_broadcast_uidx
     ON social.notifications (address, broadcast_key) WHERE broadcast_key IS NOT NULL;
 
 -- A producer's address-less notification, stored once and listed in every
--- wallet's inbox (no subscription needed). id = v5 over (type, eventKey); a
--- repeat updates metadata/occurred_at. Few rows (announcements), read on each poll.
+-- wallet's inbox (no subscription needed). id = v5 (namespace
+-- 3f8a52d4-9c1e-4b07-a62d-71e05c9318bb) over the JSON `["<type>",null,"<eventKey>"]`;
+-- a repeat updates metadata/occurred_at. Few rows (announcements), read on each
+-- poll; listed and kept only within NOTIFICATIONS_BROADCAST_HORIZON_DAYS.
 CREATE TABLE social.broadcast_notifications (
     id uuid NOT NULL,
     type text NOT NULL,

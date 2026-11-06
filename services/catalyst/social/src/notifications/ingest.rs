@@ -6,6 +6,8 @@
 //! keeps the read state and, as upstream, emails only on first insert. An
 //! entry without `address` is a broadcast: one `broadcast_notifications` row
 //! every wallet's inbox lists, with per-wallet `broadcast_reads`, never emailed.
+//! Unlike upstream, only [`BROADCAST_TYPES`] may be address-less, timestamps
+//! may not run ahead of the clock, and items and metadata are capped.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,7 +15,7 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::{HeaderMap, StatusCode};
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, Utc};
 use serde_json::{Map, Value as Json};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -38,6 +40,18 @@ const MIN_TIMESTAMP_MS: i64 = 1_672_531_200_000;
 const MAX_SAFE_INTEGER: i64 = (1 << 53) - 1;
 const ADDRESS_PATTERN: &str = "/^0x[a-fA-F0-9]{40}$/";
 const SCOPE_COMMUNITY: &str = "community";
+
+/// The only address-less type a producer sends: governance's announcement
+/// (`src/routes/notification.ts`, `address: undefined`); rewards sends none.
+pub const BROADCAST_TYPES: [&str; 1] = ["governance_announcement"];
+/// How far a timestamp may run ahead of the server clock.
+pub const MAX_CLOCK_SKEW_MS: i64 = 5 * 60 * 1000;
+/// Serialized `metadata` per item.
+pub const MAX_METADATA_BYTES: usize = 16 * 1024;
+/// Items per body; governance posts one item per voter of a proposal.
+pub const MAX_ITEMS: usize = 10_000;
+/// Rows per INSERT statement inside the batch's transaction.
+const WRITE_CHUNK: usize = 1_000;
 
 /// A producer and the type prefix its token may publish.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,11 +159,18 @@ fn parse_opt_out(value: &Json, at: &str) -> Result<(String, String), String> {
     Ok((scope, scope_id.to_string()))
 }
 
-/// The upstream Joi schema, first error only (`abortEarly`), in its words.
-pub fn validate(body: &Json, producer: Producer) -> Result<Vec<Ingested>, String> {
+/// The upstream Joi schema plus this node's limits, first error only
+/// (`abortEarly`), in Joi's words; `now_ms` bounds the timestamp.
+pub fn validate(body: &Json, producer: Producer, now_ms: i64) -> Result<Vec<Ingested>, String> {
     let Json::Array(items) = body else {
         return Err("\"value\" must be an array".into());
     };
+    if items.len() > MAX_ITEMS {
+        return Err(format!(
+            "\"value\" must contain less than or equal to {MAX_ITEMS} items"
+        ));
+    }
+    let max_ts = now_ms.saturating_add(MAX_CLOCK_SKEW_MS);
     let mut out = Vec::with_capacity(items.len());
     for (i, item) in items.iter().enumerate() {
         let at = format!("[{i}]");
@@ -176,6 +197,9 @@ pub fn validate(body: &Json, producer: Producer) -> Result<Vec<Ingested>, String
             }
             Some(_) => return Err(format!("\"{at}.address\" must be a string")),
         };
+        if address.is_none() && !BROADCAST_TYPES.contains(&kind.as_str()) {
+            return Err(format!("\"{at}.address\" is required"));
+        }
         let event_key = string_field(obj, &at, "eventKey")?
             .ok_or_else(|| format!("\"{at}.eventKey\" is required"))?
             .to_string();
@@ -184,6 +208,11 @@ pub fn validate(body: &Json, producer: Producer) -> Result<Vec<Ingested>, String
             Some(m @ Json::Object(_)) => m.clone(),
             Some(_) => return Err(format!("\"{at}.metadata\" must be of type object")),
         };
+        if serde_json::to_vec(&metadata).map_or(0, |v| v.len()) > MAX_METADATA_BYTES {
+            return Err(format!(
+                "\"{at}.metadata\" must be less than or equal to {MAX_METADATA_BYTES} bytes"
+            ));
+        }
         let timestamp = match obj.get("timestamp") {
             None => return Err(format!("\"{at}.timestamp\" is required")),
             Some(Json::Number(n)) => match n.as_i64() {
@@ -195,6 +224,11 @@ pub fn validate(body: &Json, producer: Producer) -> Result<Vec<Ingested>, String
                         "\"{at}.timestamp\" must be greater than {MIN_TIMESTAMP_MS}"
                     ));
                 }
+                Some(ms) if ms > max_ts => {
+                    return Err(format!(
+                        "\"{at}.timestamp\" must be less than or equal to {max_ts}"
+                    ));
+                }
                 Some(ms) => ms,
                 None => return Err(format!("\"{at}.timestamp\" must be an integer")),
             },
@@ -202,6 +236,10 @@ pub fn validate(body: &Json, producer: Producer) -> Result<Vec<Ingested>, String
         };
         let occurred_at = ms_to_naive(timestamp)
             .ok_or_else(|| format!("\"{at}.timestamp\" must be a safe number"))?;
+        // A broadcast has no recipient whose opt-outs could apply.
+        if address.is_none() && obj.contains_key("optOutScope") {
+            return Err(format!("\"{at}.optOutScope\" is not allowed"));
+        }
         let opt_out = obj
             .get("optOutScope")
             .map(|v| parse_opt_out(v, &at))
@@ -229,8 +267,9 @@ pub fn validate(body: &Json, producer: Producer) -> Result<Vec<Ingested>, String
     Ok(out)
 }
 
-/// One entry per key, the last occurrence winning as upstream's sequential upserts did.
-fn dedup(batch: Vec<Ingested>) -> Vec<Ingested> {
+/// One entry per key, the last occurrence winning as upstream's sequential
+/// upserts did, in id order so overlapping batches lock rows alike.
+pub(crate) fn dedup(batch: Vec<Ingested>) -> Vec<Ingested> {
     let mut at: HashMap<Uuid, usize> = HashMap::new();
     let mut out: Vec<Ingested> = Vec::with_capacity(batch.len());
     for n in batch {
@@ -242,6 +281,7 @@ fn dedup(batch: Vec<Ingested>) -> Vec<Ingested> {
             }
         }
     }
+    out.sort_by_cached_key(Ingested::id);
     out
 }
 
@@ -253,88 +293,102 @@ pub async fn upsert(pool: &PgPool, batch: Vec<Ingested>) -> Result<u64, sqlx::Er
         batch.into_iter().partition(|n| n.address.is_some());
     let mut tx = pool.begin().await?;
     let mut inserted = 0;
-    if !addressed.is_empty() {
-        let sql = format!(
-            r#"
-            WITH src AS (
-                SELECT n.* FROM UNNEST($1::uuid[], $2::text[], $3::text[], $4::jsonb[],
-                                       $5::timestamp[], $6::text[], $7::text[])
-                    AS n(id, address, type, metadata, occurred_at, scope, scope_id)
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM social.subscription_opt_outs o
-                    WHERE o.address = n.address AND o.scope = n.scope AND o.scope_id = n.scope_id
-                )
-            ),
-            ups AS (
-                INSERT INTO social.notifications AS t (id, address, type, metadata, occurred_at)
-                SELECT id, address, type, metadata, occurred_at FROM src
-                ON CONFLICT (id) DO UPDATE
-                    SET metadata = EXCLUDED.metadata, occurred_at = EXCLUDED.occurred_at
-                    WHERE t.address = EXCLUDED.address AND t.type = EXCLUDED.type
-                RETURNING id, address, type, (xmax = 0) AS inserted
-            ),
-            ins AS (SELECT id, address, type FROM ups WHERE inserted)
-            {delivery}
-            "#,
-            delivery = *DELIVERY_ROWS_SQL
-        );
-        let ids: Vec<Uuid> = addressed.iter().map(Ingested::id).collect();
-        let addresses: Vec<&str> = addressed
-            .iter()
-            .filter_map(|n| n.address.as_ref().map(Address::as_str))
-            .collect();
-        let kinds: Vec<&str> = addressed.iter().map(|n| n.kind.as_str()).collect();
-        let metadata: Vec<&Json> = addressed.iter().map(|n| &n.metadata).collect();
-        let occurred: Vec<NaiveDateTime> = addressed.iter().map(|n| n.occurred_at).collect();
-        let scopes: Vec<Option<&str>> = addressed
-            .iter()
-            .map(|n| n.opt_out.as_ref().map(|(s, _)| s.as_str()))
-            .collect();
-        let scope_ids: Vec<Option<&str>> = addressed
-            .iter()
-            .map(|n| n.opt_out.as_ref().map(|(_, id)| id.as_str()))
-            .collect();
-        inserted += sqlx::query(sqlx::AssertSqlSafe(sql))
-            .bind(&ids)
-            .bind(&addresses)
-            .bind(&kinds)
-            .bind(&metadata)
-            .bind(&occurred)
-            .bind(&scopes)
-            .bind(&scope_ids)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
+    for chunk in addressed.chunks(WRITE_CHUNK) {
+        inserted += upsert_addressed(&mut tx, chunk).await?;
     }
-    if !broadcast.is_empty() {
-        // Stored once, listed in every inbox; never emailed (upstream sent none).
-        let ids: Vec<Uuid> = broadcast.iter().map(Ingested::id).collect();
-        let kinds: Vec<&str> = broadcast.iter().map(|n| n.kind.as_str()).collect();
-        let metadata: Vec<&Json> = broadcast.iter().map(|n| &n.metadata).collect();
-        let occurred: Vec<NaiveDateTime> = broadcast.iter().map(|n| n.occurred_at).collect();
-        let fresh: i64 = sqlx::query_scalar(
-            r#"
-            WITH ups AS (
-                INSERT INTO social.broadcast_notifications AS t (id, type, metadata, occurred_at)
-                SELECT * FROM UNNEST($1::uuid[], $2::text[], $3::jsonb[], $4::timestamp[])
-                ON CONFLICT (id) DO UPDATE
-                    SET metadata = EXCLUDED.metadata, occurred_at = EXCLUDED.occurred_at
-                    WHERE t.type = EXCLUDED.type
-                RETURNING (xmax = 0) AS inserted
-            )
-            SELECT count(*) FILTER (WHERE inserted) FROM ups
-            "#,
-        )
-        .bind(&ids)
-        .bind(&kinds)
-        .bind(&metadata)
-        .bind(&occurred)
-        .fetch_one(&mut *tx)
-        .await?;
-        inserted += fresh as u64;
+    for chunk in broadcast.chunks(WRITE_CHUNK) {
+        inserted += upsert_broadcasts(&mut tx, chunk).await?;
     }
     tx.commit().await?;
     Ok(inserted)
+}
+
+async fn upsert_addressed(
+    tx: &mut sqlx::PgConnection,
+    addressed: &[Ingested],
+) -> Result<u64, sqlx::Error> {
+    let sql = format!(
+        r#"
+        WITH src AS (
+            SELECT n.* FROM UNNEST($1::uuid[], $2::text[], $3::text[], $4::jsonb[],
+                                   $5::timestamp[], $6::text[], $7::text[])
+                AS n(id, address, type, metadata, occurred_at, scope, scope_id)
+            WHERE NOT EXISTS (
+                SELECT 1 FROM social.subscription_opt_outs o
+                WHERE o.address = n.address AND o.scope = n.scope AND o.scope_id = n.scope_id
+            )
+        ),
+        ups AS (
+            INSERT INTO social.notifications AS t (id, address, type, metadata, occurred_at)
+            SELECT id, address, type, metadata, occurred_at FROM src
+            ON CONFLICT (id) DO UPDATE
+                SET metadata = EXCLUDED.metadata, occurred_at = EXCLUDED.occurred_at
+                WHERE t.address = EXCLUDED.address AND t.type = EXCLUDED.type
+            RETURNING id, address, type, (xmax = 0) AS inserted
+        ),
+        ins AS (SELECT id, address, type FROM ups WHERE inserted)
+        {delivery}
+        "#,
+        delivery = *DELIVERY_ROWS_SQL
+    );
+    let ids: Vec<Uuid> = addressed.iter().map(Ingested::id).collect();
+    let addresses: Vec<&str> = addressed
+        .iter()
+        .filter_map(|n| n.address.as_ref().map(Address::as_str))
+        .collect();
+    let kinds: Vec<&str> = addressed.iter().map(|n| n.kind.as_str()).collect();
+    let metadata: Vec<&Json> = addressed.iter().map(|n| &n.metadata).collect();
+    let occurred: Vec<NaiveDateTime> = addressed.iter().map(|n| n.occurred_at).collect();
+    let scopes: Vec<Option<&str>> = addressed
+        .iter()
+        .map(|n| n.opt_out.as_ref().map(|(s, _)| s.as_str()))
+        .collect();
+    let scope_ids: Vec<Option<&str>> = addressed
+        .iter()
+        .map(|n| n.opt_out.as_ref().map(|(_, id)| id.as_str()))
+        .collect();
+    Ok(sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(&ids)
+        .bind(&addresses)
+        .bind(&kinds)
+        .bind(&metadata)
+        .bind(&occurred)
+        .bind(&scopes)
+        .bind(&scope_ids)
+        .execute(tx)
+        .await?
+        .rows_affected())
+}
+
+async fn upsert_broadcasts(
+    tx: &mut sqlx::PgConnection,
+    broadcast: &[Ingested],
+) -> Result<u64, sqlx::Error> {
+    // Stored once, listed in every inbox; never emailed (upstream sent none).
+    let ids: Vec<Uuid> = broadcast.iter().map(Ingested::id).collect();
+    let kinds: Vec<&str> = broadcast.iter().map(|n| n.kind.as_str()).collect();
+    let metadata: Vec<&Json> = broadcast.iter().map(|n| &n.metadata).collect();
+    let occurred: Vec<NaiveDateTime> = broadcast.iter().map(|n| n.occurred_at).collect();
+    let fresh: i64 = sqlx::query_scalar(
+        r#"
+        WITH ups AS (
+            INSERT INTO social.broadcast_notifications AS t (id, type, metadata, occurred_at)
+            SELECT * FROM UNNEST($1::uuid[], $2::text[], $3::jsonb[], $4::timestamp[])
+            ON CONFLICT (id) DO UPDATE
+                SET metadata = EXCLUDED.metadata, occurred_at = EXCLUDED.occurred_at
+                WHERE t.type = EXCLUDED.type
+            RETURNING (xmax = 0) AS inserted
+        )
+        SELECT count(*) FILTER (WHERE inserted) FROM ups
+        "#,
+    )
+    .bind(&ids)
+    .bind(&kinds)
+    .bind(&metadata)
+    .bind(&occurred)
+    .fetch_one(tx)
+    .await?;
+    Ok(fresh as u64)
 }
 
 pub async fn post_notifications(
@@ -352,7 +406,7 @@ pub async fn post_notifications(
         .await
         .map_err(|_| ApiError::http(413, "Payload Too Large"))?;
     let body = parse_json(&bytes)?;
-    let batch = validate(&body, producer).map_err(|message| {
+    let batch = validate(&body, producer, Utc::now().timestamp_millis()).map_err(|message| {
         tracing::warn!(?producer, %message, "invalid notification batch");
         ApiError::bad_request(message)
     })?;

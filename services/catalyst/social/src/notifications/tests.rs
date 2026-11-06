@@ -1545,10 +1545,18 @@ async fn only_mark_read_accepts_the_pre_6_signed_payload() {
 
 mod ingest {
     use super::*;
-    use crate::notifications::ingest::{MAX_BODY_BYTES, Producer, validate};
+    use crate::notifications::ingest::{
+        MAX_BODY_BYTES, MAX_ITEMS, MAX_METADATA_BYTES, Producer, dedup, validate,
+    };
     use crate::notifications::store::test_support::delivery_state;
 
     const PATH: &str = "/notifications/notifications";
+    /// The clock `validate` is given in unit tests.
+    const NOW: i64 = 1_750_000_000_000;
+
+    fn now_ms() -> i64 {
+        chrono::Utc::now().timestamp_millis()
+    }
 
     async fn producers() -> Option<SharedState> {
         state(Settings {
@@ -1566,8 +1574,8 @@ mod ingest {
 
     fn id_of(kind: &str, address: &Address, key: &str) -> Uuid {
         let body = json!([entry(kind, address, key, 1_700_000_000_000)]);
-        validate(&body, Producer::Governance)
-            .or_else(|_| validate(&body, Producer::Rewards))
+        validate(&body, Producer::Governance, NOW)
+            .or_else(|_| validate(&body, Producer::Rewards, NOW))
             .unwrap()[0]
             .id()
     }
@@ -1694,9 +1702,21 @@ mod ingest {
                 "Invalid notification scope: world",
             ),
             (with("extra", json!(1)), "\"[0].extra\" is not allowed"),
+            (
+                with("timestamp", json!(NOW + 5 * 60 * 1000 + 1)),
+                "\"[0].timestamp\" must be less than or equal to 1750000300000",
+            ),
+            (
+                with("metadata", json!({ "pad": "x".repeat(MAX_METADATA_BYTES) })),
+                "\"[0].metadata\" must be less than or equal to 16384 bytes",
+            ),
+            (
+                json!(vec![ok.clone(); MAX_ITEMS + 1]),
+                "\"value\" must contain less than or equal to 10000 items",
+            ),
         ] {
             assert_eq!(
-                validate(&body, Producer::Governance).unwrap_err(),
+                validate(&body, Producer::Governance, NOW).unwrap_err(),
                 message,
                 "{body}"
             );
@@ -1704,14 +1724,120 @@ mod ingest {
         let parsed = validate(
             &with("address", json!(a.to_uppercase().replace("0X", "0x"))),
             Producer::Governance,
+            NOW,
         )
         .unwrap();
         assert_eq!(parsed[0].address.as_ref().unwrap().as_str(), a);
         assert!(
-            validate(&without("address"), Producer::Governance).unwrap()[0]
+            validate(&without("address"), Producer::Governance, NOW).unwrap()[0]
                 .address
                 .is_none()
         );
+        let at_skew = with("timestamp", json!(NOW + 5 * 60 * 1000));
+        assert!(validate(&at_skew, Producer::Governance, NOW).is_ok());
+        let mut big = ok.clone();
+        big["metadata"] = json!({ "pad": "x".repeat(MAX_METADATA_BYTES - 10) });
+        assert!(validate(&json!(vec![big; MAX_ITEMS]), Producer::Governance, NOW).is_ok());
+    }
+
+    #[test]
+    fn only_announcements_may_omit_the_address_and_never_with_an_opt_out_scope() {
+        let bare =
+            |kind: &str| json!({ "type": kind, "eventKey": "k", "metadata": {}, "timestamp": NOW });
+        let mut scoped = bare("governance_announcement");
+        scoped["optOutScope"] = json!({ "scope": "community", "scopeId": "c1" });
+        for (producer, body, message) in [
+            (
+                Producer::Governance,
+                bare("governance_proposal_enacted"),
+                "\"[0].address\" is required",
+            ),
+            (
+                Producer::Rewards,
+                bare("reward_assignment"),
+                "\"[0].address\" is required",
+            ),
+            (
+                Producer::Governance,
+                scoped,
+                "\"[0].optOutScope\" is not allowed",
+            ),
+        ] {
+            assert_eq!(
+                validate(&json!([body]), producer, NOW).unwrap_err(),
+                message
+            );
+        }
+        let ok = validate(
+            &json!([bare("governance_announcement")]),
+            Producer::Governance,
+            NOW,
+        )
+        .unwrap();
+        assert!(ok[0].address.is_none());
+    }
+
+    #[test]
+    fn ids_are_the_documented_v5_and_a_batch_is_written_in_id_order() {
+        let ns: Uuid = "3f8a52d4-9c1e-4b07-a62d-71e05c9318bb".parse().unwrap();
+        let a = "0x00000000000000000000000000000000000000aa";
+        let body = json!([
+            { "type": "governance_announcement", "eventKey": "k", "metadata": {}, "timestamp": NOW },
+            { "type": "governance_announcement", "address": a.to_uppercase().replace("0X", "0x"),
+              "eventKey": "k", "metadata": {}, "timestamp": NOW },
+        ]);
+        let parsed = validate(&body, Producer::Governance, NOW).unwrap();
+        assert_eq!(
+            parsed[0].id(),
+            Uuid::new_v5(&ns, br#"["governance_announcement",null,"k"]"#)
+        );
+        assert_eq!(
+            parsed[1].id(),
+            Uuid::new_v5(
+                &ns,
+                format!(r#"["governance_announcement","{a}","k"]"#).as_bytes()
+            )
+        );
+
+        let to = fresh_address();
+        let batch: Vec<Value> = (0..50)
+            .map(|i| entry("governance_whale_vote", &to, &format!("k{i}"), NOW))
+            .chain([entry("governance_whale_vote", &to, "k3", NOW + 1)])
+            .collect();
+        let written = dedup(validate(&json!(batch), Producer::Governance, NOW).unwrap());
+        let ids: Vec<Uuid> = written.iter().map(|n| n.id()).collect();
+        let mut sorted = ids.clone();
+        sorted.sort();
+        assert_eq!((ids.len(), ids), (50, sorted));
+        let k3 = written.iter().find(|n| n.event_key == "k3").unwrap();
+        assert_eq!(
+            chrono_ms(k3.occurred_at),
+            NOW + 1,
+            "the last duplicate wins"
+        );
+    }
+
+    fn chrono_ms(t: chrono::NaiveDateTime) -> i64 {
+        t.and_utc().timestamp_millis()
+    }
+
+    #[tokio::test]
+    async fn a_future_timestamp_is_refused_over_http() {
+        let Some(state) = producers().await else {
+            return;
+        };
+        let to = fresh_address();
+        let kind = "governance_proposal_enacted";
+        let (status, body) = send(
+            app(state.clone()),
+            "POST",
+            PATH,
+            bearer("gov"),
+            Some(json!([entry(kind, &to, "f", now_ms() + 3_600_000)])),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(row(&state, id_of(kind, &to, "f")).await.is_none());
     }
 
     #[tokio::test]
@@ -1860,12 +1986,9 @@ mod ingest {
         .execute(&pool)
         .await
         .unwrap();
+        let t0 = now_ms() - 3_600_000;
         for _ in 0..2 {
-            post(
-                &state,
-                json!([announcement("ann-1", 1_700_000_000_000, "t")]),
-            )
-            .await;
+            post(&state, json!([announcement("ann-1", t0, "t")])).await;
         }
         let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM social.broadcast_notifications")
             .fetch_one(&pool)
@@ -1905,7 +2028,7 @@ mod ingest {
                 &json!("governance_announcement"),
                 &Value::Null,
                 &json!(false),
-                &json!("1700000000000")
+                &json!(t0.to_string())
             )
         );
         let id: Uuid = item["id"].as_str().unwrap().parse().unwrap();
@@ -1920,11 +2043,7 @@ mod ingest {
         assert!(!read(subscriber.clone()).await, "reads are per wallet");
 
         // A repeat updates the broadcast and keeps the reads.
-        post(
-            &state,
-            json!([announcement("ann-1", 1_700_000_500_000, "new")]),
-        )
-        .await;
+        post(&state, json!([announcement("ann-1", t0 + 500_000, "new")])).await;
         let listed = state.store.list(&stranger, 10, None, false).await.unwrap();
         assert_eq!(
             (
@@ -1933,7 +2052,7 @@ mod ingest {
                 listed[0].read,
                 listed[0].timestamp
             ),
-            (1, id, true, 1_700_000_500_000)
+            (1, id, true, t0 + 500_000)
         );
         assert_eq!(listed[0].metadata, json!({ "title": "new" }));
         assert!(
@@ -1952,7 +2071,7 @@ mod ingest {
             return;
         };
         let me = fresh_address();
-        let t = 1_700_000_000_000i64;
+        let t = now_ms() - 3_600_000;
         let kind = "governance_proposal_enacted";
         post(
             &state,
@@ -1991,6 +2110,65 @@ mod ingest {
         assert_eq!(
             stamps(store.list(&fresh_address(), 10, None, true).await.unwrap()),
             vec![4, 2]
+        );
+    }
+
+    #[tokio::test]
+    async fn broadcasts_past_the_horizon_are_hidden_then_pruned_with_their_reads() {
+        let Some(state) = private_state("ingest_horizon").await else {
+            return;
+        };
+        let pool = state.store.pool().clone();
+        let me = fresh_address();
+        let day = 86_400_000i64;
+        let now = now_ms();
+        post(
+            &state,
+            json!([
+                announcement("old", now - 91 * day, "old"),
+                announcement("new", now - 89 * day, "new"),
+            ]),
+        )
+        .await;
+        let titles = |items: Vec<super::super::types::NotificationItem>| {
+            items
+                .iter()
+                .map(|i| i.metadata["title"].clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            titles(state.store.list(&me, 10, None, false).await.unwrap()),
+            vec![json!("new")]
+        );
+        let ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM social.broadcast_notifications")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        state.store.mark_read(&me, &ids).await.unwrap();
+
+        let pruned = state
+            .store
+            .prune_broadcasts(crate::shared::now_utc(), 100)
+            .await
+            .unwrap();
+        let left: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM social.broadcast_notifications), (SELECT count(*) FROM social.broadcast_reads)",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((pruned, left), (1, (1, 1)));
+
+        // A shorter horizon hides and prunes the rest.
+        let short = crate::notifications::store::NotificationsStore::new(pool.clone())
+            .with_broadcast_horizon(std::time::Duration::from_secs(30 * 86_400));
+        assert!(short.list(&me, 10, None, false).await.unwrap().is_empty());
+        assert_eq!(
+            short
+                .prune_broadcasts(crate::shared::now_utc(), 100)
+                .await
+                .unwrap(),
+            1
         );
     }
 
@@ -2050,6 +2228,13 @@ mod ingest {
         )
         .await;
         assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+        let written: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM social.notifications WHERE address = $1")
+                .bind(&to)
+                .fetch_one(state.store.pool())
+                .await
+                .unwrap();
+        assert_eq!(written, 2_000, "every chunk of the batch is written");
         let req = Request::builder()
             .method("POST")
             .uri(PATH)
