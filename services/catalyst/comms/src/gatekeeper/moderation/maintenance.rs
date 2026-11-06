@@ -379,9 +379,51 @@ async fn room_metadata_fields(
     ))
 }
 
+// Retired world rooms have no current role authority. Only reconcile their
+// ban projection, using the resolver's exact-world retained mapping. Re-read
+// durable bans each pass: an earlier unban must not erase a later reban.
+async fn retired_room_ban_fields(
+    state: &CommsState,
+    room: &str,
+) -> Result<Option<serde_json::Map<String, Value>>, ApiError> {
+    let Some((world, scene)) = crate::rooms::decode_world_scene_room(room) else {
+        return Ok(None);
+    };
+    let Some(replaced) = state
+        .scenes
+        .replaced_world_scene(&world, &scene)
+        .await
+        .map_err(|_| ApiError::http(503, "Retired room identity is temporarily unavailable"))?
+    else {
+        return Ok(None);
+    };
+    let mut keys: Vec<String> = replaced
+        .ban_keys(&world)
+        .iter()
+        .map(|key| key.as_str().to_owned())
+        .collect();
+    keys.push(scene.as_str().to_owned());
+    let bans: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT banned_address FROM social.scene_bans WHERE place_id = ANY($1::text[]) ORDER BY banned_address",
+    )
+    .bind(&keys)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Some(
+        json!({"bannedAddresses": bans})
+            .as_object()
+            .unwrap()
+            .clone(),
+    ))
+}
+
 async fn refresh_room(state: &CommsState, room: &str) -> Result<(), ApiError> {
-    let Some(fields) = room_metadata_fields(state, room).await? else {
-        return Ok(());
+    let fields = match room_metadata_fields(state, room).await? {
+        Some(fields) => fields,
+        None => match retired_room_ban_fields(state, room).await? {
+            Some(fields) => fields,
+            None => return Ok(()),
+        },
     };
     state
         .room_service()
@@ -447,6 +489,8 @@ pub async fn run_once(state: &CommsState) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod current_scene_tests;
+#[cfg(test)]
+mod retired_scene_tests;
 
 #[cfg(test)]
 mod tests {
