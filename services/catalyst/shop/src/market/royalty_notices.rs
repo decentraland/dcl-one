@@ -12,6 +12,8 @@
 //! page's notifications in one transaction; the id is a v5 uuid of the log
 //! position, so a retried page inserts nothing twice.
 
+// TODO: on-chain ERC721Bid `BidAccepted` sales are not indexed, so they pay royalties without a `royalties_earned`.
+
 use std::time::Duration;
 
 use serde_json::{Value, json};

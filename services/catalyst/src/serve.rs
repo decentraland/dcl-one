@@ -2354,6 +2354,8 @@ fn social_states(
                 environment: non_empty(&config.social.social_environment).unwrap_or_default(),
             },
             notification_service_token: non_empty(&config.social.notification_service_token),
+            governance_token: non_empty(&config.social.notifications_governance_token),
+            rewards_token: non_empty(&config.social.notifications_rewards_token),
             first_wear_enabled: config.social.first_wear_enabled,
             first_wear: notifications::FirstWearSettings {
                 shop_item_base_url: config.social.shop_item_base_url.clone(),

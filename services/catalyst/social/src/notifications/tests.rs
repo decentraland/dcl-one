@@ -1542,3 +1542,522 @@ async fn only_mark_read_accepts_the_pre_6_signed_payload() {
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}: {body}");
     }
 }
+
+mod ingest {
+    use super::*;
+    use crate::notifications::ingest::{MAX_BODY_BYTES, Producer, validate};
+    use crate::notifications::store::test_support::delivery_state;
+
+    const PATH: &str = "/notifications/notifications";
+
+    async fn producers() -> Option<SharedState> {
+        state(Settings {
+            governance_token: Some("gov".into()),
+            rewards_token: Some("rew".into()),
+            ..Settings::default()
+        })
+        .await
+    }
+
+    fn entry(kind: &str, address: &Address, key: &str, ts: i64) -> Value {
+        json!({ "type": kind, "address": address.as_str(), "eventKey": key,
+                "metadata": { "title": "t", "link": "https://example.org" }, "timestamp": ts })
+    }
+
+    fn id_of(kind: &str, address: &Address, key: &str) -> Uuid {
+        let body = json!([entry(kind, address, key, 1_700_000_000_000)]);
+        validate(&body, Producer::Governance)
+            .or_else(|_| validate(&body, Producer::Rewards))
+            .unwrap()[0]
+            .id()
+    }
+
+    async fn row(state: &SharedState, id: Uuid) -> Option<(Value, i64, bool)> {
+        sqlx::query_as(
+            "SELECT metadata, (extract(epoch FROM occurred_at) * 1000)::bigint, read FROM social.notifications WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(state.store.pool())
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn each_token_publishes_only_its_own_prefix() {
+        let Some(state) = producers().await else {
+            return;
+        };
+        let to = fresh_address();
+        for (token, kind, ok) in [
+            ("gov", "governance_proposal_enacted", true),
+            ("gov", "reward_assignment", false),
+            ("rew", "reward_assignment", true),
+            ("rew", "governance_proposal_enacted", false),
+            ("gov", "governance_not_a_type", false),
+            ("rew", "bid_received", false),
+        ] {
+            let (status, body) = send(
+                app(state.clone()),
+                "POST",
+                PATH,
+                bearer(token),
+                Some(json!([entry(kind, &to, "k", 1_700_000_000_000)])),
+            )
+            .await;
+            if ok {
+                assert_eq!(status, StatusCode::NO_CONTENT, "{token} {kind}: {body}");
+                assert!(row(&state, id_of(kind, &to, "k")).await.is_some());
+            } else {
+                assert_eq!(
+                    (status, body),
+                    (
+                        StatusCode::BAD_REQUEST,
+                        json!({ "error": "Bad request", "message": format!("Invalid notification type: {kind}") })
+                    ),
+                    "{token} {kind}"
+                );
+            }
+        }
+        for (headers, message) in [
+            (HeaderMap::new(), "Authorization header is missing"),
+            (bearer("nope"), "Invalid authorization header"),
+            (bearer(""), "Invalid authorization header"),
+        ] {
+            let (status, body) =
+                send(app(state.clone()), "POST", PATH, headers, Some(json!([]))).await;
+            assert_eq!(
+                (status, body),
+                (
+                    StatusCode::UNAUTHORIZED,
+                    json!({ "error": "Not Authorized", "message": message })
+                )
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unset_token_disables_its_producer() {
+        let Some(state) = state(Settings {
+            governance_token: Some("gov".into()),
+            ..Settings::default()
+        })
+        .await
+        else {
+            return;
+        };
+        let (status, _) = send(app(state), "POST", PATH, bearer(""), Some(json!([]))).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn validation_answers_in_the_joi_words() {
+        let a = "0x00000000000000000000000000000000000000aa";
+        let ok = json!({ "type": "governance_announcement", "address": a, "eventKey": "k", "metadata": {}, "timestamp": 1_700_000_000_000i64 });
+        let with = |key: &str, value: Value| {
+            let mut v = ok.clone();
+            v[key] = value;
+            json!([v])
+        };
+        let without = |key: &str| {
+            let mut v = ok.clone();
+            v.as_object_mut().unwrap().remove(key);
+            json!([v])
+        };
+        for (body, message) in [
+            (json!({}), "\"value\" must be an array"),
+            (json!([1]), "\"[0]\" must be of type object"),
+            (without("type"), "\"[0].type\" is required"),
+            (
+                with("address", json!("0xZZ")),
+                "\"[0].address\" with value \"0xZZ\" fails to match the required pattern: /^0x[a-fA-F0-9]{40}$/",
+            ),
+            (without("eventKey"), "\"[0].eventKey\" is required"),
+            (
+                with("eventKey", json!("")),
+                "\"[0].eventKey\" is not allowed to be empty",
+            ),
+            (
+                with("metadata", json!([])),
+                "\"[0].metadata\" must be of type object",
+            ),
+            (without("timestamp"), "\"[0].timestamp\" is required"),
+            (
+                with("timestamp", json!(1_672_531_200_000i64)),
+                "\"[0].timestamp\" must be greater than 1672531200000",
+            ),
+            (
+                with("timestamp", json!(1.5e12)),
+                "\"[0].timestamp\" must be an integer",
+            ),
+            (
+                with("optOutScope", json!({ "scope": "world", "scopeId": "x" })),
+                "Invalid notification scope: world",
+            ),
+            (with("extra", json!(1)), "\"[0].extra\" is not allowed"),
+        ] {
+            assert_eq!(
+                validate(&body, Producer::Governance).unwrap_err(),
+                message,
+                "{body}"
+            );
+        }
+        let parsed = validate(
+            &with("address", json!(a.to_uppercase().replace("0X", "0x"))),
+            Producer::Governance,
+        )
+        .unwrap();
+        assert_eq!(parsed[0].address.as_ref().unwrap().as_str(), a);
+        assert!(
+            validate(&without("address"), Producer::Governance).unwrap()[0]
+                .address
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_repeated_key_updates_the_row_keeps_read_state_and_never_emails_again() {
+        let Some(state) = producers().await else {
+            return;
+        };
+        let to = fresh_address();
+        sqlx::query(
+            "INSERT INTO social.subscriptions (address, email) VALUES ($1, 'r@example.org')",
+        )
+        .bind(&to)
+        .execute(state.store.pool())
+        .await
+        .unwrap();
+        let kind = "governance_proposal_enacted";
+        let id = id_of(kind, &to, "p1");
+        let first = json!([entry(kind, &to, "p1", 1_700_000_000_000)]);
+        for _ in 0..2 {
+            let (status, _) = send(
+                app(state.clone()),
+                "POST",
+                PATH,
+                bearer("gov"),
+                Some(first.clone()),
+            )
+            .await;
+            assert_eq!(status, StatusCode::NO_CONTENT);
+        }
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM social.notifications WHERE address = $1")
+                .bind(&to)
+                .fetch_one(state.store.pool())
+                .await
+                .unwrap();
+        assert_eq!(count, 1, "an idempotent replay");
+        assert_eq!(
+            delivery_state(state.store.pool(), id).await.unwrap().0,
+            "pending"
+        );
+
+        state.store.mark_read(&to, &[id]).await.unwrap();
+        // The outbox prunes terminal rows; a later update must not re-queue an email.
+        sqlx::query("DELETE FROM social.notification_deliveries WHERE notification_id = $1")
+            .bind(id)
+            .execute(state.store.pool())
+            .await
+            .unwrap();
+        let mut updated = entry(kind, &to, "p1", 1_700_000_500_000);
+        updated["metadata"] = json!({ "title": "new" });
+        let (status, _) = send(
+            app(state.clone()),
+            "POST",
+            PATH,
+            bearer("gov"),
+            Some(json!([updated])),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(
+            row(&state, id).await,
+            Some((json!({ "title": "new" }), 1_700_000_500_000, true))
+        );
+        assert_eq!(delivery_state(state.store.pool(), id).await, None);
+    }
+
+    #[tokio::test]
+    async fn duplicates_in_one_batch_keep_the_last_and_opt_outs_drop_the_row() {
+        let Some(state) = producers().await else {
+            return;
+        };
+        let to = fresh_address();
+        let kind = "reward_assignment";
+        let mut last = entry(kind, &to, "r1", 1_700_000_100_000);
+        last["metadata"] = json!({ "n": 2 });
+        let (status, _) = send(
+            app(state.clone()),
+            "POST",
+            PATH,
+            bearer("rew"),
+            Some(json!([entry(kind, &to, "r1", 1_700_000_000_000), last])),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(
+            row(&state, id_of(kind, &to, "r1")).await.unwrap().0,
+            json!({ "n": 2 })
+        );
+
+        state
+            .store
+            .create_opt_out(&to, "community", "c1")
+            .await
+            .unwrap();
+        let mut scoped = entry(kind, &to, "r2", 1_700_000_000_000);
+        scoped["optOutScope"] = json!({ "scope": "community", "scopeId": "c1" });
+        let (status, _) = send(
+            app(state.clone()),
+            "POST",
+            PATH,
+            bearer("rew"),
+            Some(json!([scoped])),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert!(row(&state, id_of(kind, &to, "r2")).await.is_none());
+    }
+
+    /// Broadcasts show in every inbox, so these tests use a private database.
+    async fn private_state(tag: &str) -> Option<SharedState> {
+        let pool = crate::notifications::store::test_support::private_pool(tag).await?;
+        Some(Arc::new(State::new(
+            pool,
+            Settings {
+                governance_token: Some("gov".into()),
+                ..Settings::default()
+            },
+            crate::http::Outbound::for_tests(),
+            None,
+            None,
+        )))
+    }
+
+    fn announcement(key: &str, ts: i64, title: &str) -> Value {
+        json!({ "type": "governance_announcement", "eventKey": key,
+                "metadata": { "title": title }, "timestamp": ts })
+    }
+
+    async fn post(state: &SharedState, body: Value) {
+        let (status, resp) =
+            send(app(state.clone()), "POST", PATH, bearer("gov"), Some(body)).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{resp}");
+    }
+
+    #[tokio::test]
+    async fn a_broadcast_reaches_every_wallet_with_its_own_read_state_and_no_email() {
+        let Some(state) = private_state("ingest_bc").await else {
+            return;
+        };
+        let pool = state.store.pool().clone();
+        let (stranger, subscriber) = (fresh_address(), fresh_address());
+        sqlx::query(
+            "INSERT INTO social.subscriptions (address, email) VALUES ($1, 's@example.org')",
+        )
+        .bind(&subscriber)
+        .execute(&pool)
+        .await
+        .unwrap();
+        for _ in 0..2 {
+            post(
+                &state,
+                json!([announcement("ann-1", 1_700_000_000_000, "t")]),
+            )
+            .await;
+        }
+        let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM social.broadcast_notifications")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let fanned: i64 = sqlx::query_scalar(
+            "SELECT (SELECT count(*) FROM social.notifications) + (SELECT count(*) FROM social.notification_deliveries)",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            (rows, fanned),
+            (1, 0),
+            "stored once, no per-wallet rows, no email"
+        );
+
+        // A wallet with no subscription row sees it, on the old wire (`address: null`).
+        let (status, body) = send(
+            app(state.clone()),
+            "GET",
+            "/notifications/notifications",
+            signed("get", "/notifications/notifications").await,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let item = &body["notifications"][0];
+        assert_eq!(
+            (
+                &item["type"],
+                &item["address"],
+                &item["read"],
+                &item["timestamp"]
+            ),
+            (
+                &json!("governance_announcement"),
+                &Value::Null,
+                &json!(false),
+                &json!("1700000000000")
+            )
+        );
+        let id: Uuid = item["id"].as_str().unwrap().parse().unwrap();
+
+        assert_eq!(state.store.mark_read(&stranger, &[id]).await.unwrap(), 1);
+        assert_eq!(state.store.mark_read(&stranger, &[id]).await.unwrap(), 0);
+        let read = |who: Address| {
+            let store = state.store.clone();
+            async move { store.list(&who, 10, None, false).await.unwrap()[0].read }
+        };
+        assert!(read(stranger.clone()).await);
+        assert!(!read(subscriber.clone()).await, "reads are per wallet");
+
+        // A repeat updates the broadcast and keeps the reads.
+        post(
+            &state,
+            json!([announcement("ann-1", 1_700_000_500_000, "new")]),
+        )
+        .await;
+        let listed = state.store.list(&stranger, 10, None, false).await.unwrap();
+        assert_eq!(
+            (
+                listed.len(),
+                listed[0].id,
+                listed[0].read,
+                listed[0].timestamp
+            ),
+            (1, id, true, 1_700_000_500_000)
+        );
+        assert_eq!(listed[0].metadata, json!({ "title": "new" }));
+        assert!(
+            state
+                .store
+                .list(&stranger, 10, None, true)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn the_inbox_merges_addressed_rows_and_broadcasts_by_time() {
+        let Some(state) = private_state("ingest_mix").await else {
+            return;
+        };
+        let me = fresh_address();
+        let t = 1_700_000_000_000i64;
+        let kind = "governance_proposal_enacted";
+        post(
+            &state,
+            json!([
+                entry(kind, &me, "a1", t + 1),
+                announcement("b2", t + 2, "b2"),
+                entry(kind, &me, "a3", t + 3),
+                announcement("b4", t + 4, "b4"),
+            ]),
+        )
+        .await;
+        let stamps = |items: Vec<super::super::types::NotificationItem>| {
+            items.iter().map(|i| i.timestamp - t).collect::<Vec<_>>()
+        };
+        let store = &state.store;
+        assert_eq!(
+            stamps(store.list(&me, 3, None, false).await.unwrap()),
+            vec![4, 3, 2]
+        );
+        assert_eq!(
+            stamps(store.list(&me, 10, Some(t + 2), false).await.unwrap()),
+            vec![4, 3, 2]
+        );
+        let newest = store.list(&me, 1, None, false).await.unwrap()[0].id;
+        let own = store.list(&me, 2, None, false).await.unwrap()[1].id;
+        assert_eq!(store.mark_read(&me, &[newest, own]).await.unwrap(), 2);
+        assert_eq!(
+            stamps(store.list(&me, 10, None, true).await.unwrap()),
+            vec![2, 1]
+        );
+        assert_eq!(
+            stamps(store.list(&me, 1, Some(t + 2), true).await.unwrap()),
+            vec![2]
+        );
+        // Another wallet sees only the broadcasts, both unread.
+        assert_eq!(
+            stamps(store.list(&fresh_address(), 10, None, true).await.unwrap()),
+            vec![4, 2]
+        );
+    }
+
+    #[tokio::test]
+    async fn writes_off_answers_503_and_writes_nothing() {
+        let Some(state) = producers().await else {
+            return;
+        };
+        let to = fresh_address();
+        let gated = crate::writes::guard(app(state.clone()), false);
+        let (status, _) = send(
+            gated,
+            "POST",
+            PATH,
+            bearer("gov"),
+            Some(json!([entry(
+                "governance_announcement",
+                &to,
+                "w",
+                1_700_000_000_000
+            )])),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            row(&state, id_of("governance_announcement", &to, "w"))
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn the_body_limit_admits_large_batches_and_refuses_beyond_it() {
+        let Some(state) = producers().await else {
+            return;
+        };
+        let to = fresh_address();
+        // ~1 MiB: four times the router's default limit.
+        let batch: Vec<Value> = (0..2_000)
+            .map(|i| {
+                let mut e = entry(
+                    "governance_voting_ended_voter",
+                    &to,
+                    &format!("v{i}"),
+                    1_700_000_000_000,
+                );
+                e["metadata"]["pad"] = json!("x".repeat(400));
+                e
+            })
+            .collect();
+        let (status, body) = send(
+            app(state.clone()),
+            "POST",
+            PATH,
+            bearer("gov"),
+            Some(json!(batch)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+        let req = Request::builder()
+            .method("POST")
+            .uri(PATH)
+            .header(header::AUTHORIZATION, "Bearer gov")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(vec![b' '; MAX_BODY_BYTES + 1]))
+            .unwrap();
+        let resp = app(state).oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+}

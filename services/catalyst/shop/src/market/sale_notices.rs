@@ -13,6 +13,9 @@
 //! with each page's notifications in one transaction; the id is a uuid v5 of
 //! the log position, so a retried page inserts nothing twice.
 
+// TODO: primary sales (CollectionStore `Bought`) are not indexed, so mints never notify `item_sold`.
+// TODO: on-chain ERC721Bid `BidAccepted` is not indexed (needs `nft_event_kind_known` widened), so bid sales give no `bid_accepted` or `item_sold`.
+
 use std::sync::Arc;
 use std::time::Duration;
 

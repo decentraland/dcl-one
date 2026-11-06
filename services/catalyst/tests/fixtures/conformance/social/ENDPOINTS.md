@@ -275,8 +275,8 @@ the moderator role.
 | --- | --- | --- | --- | --- |
 | GET | `/status` | | yes | `status` |
 | GET | `/notifications` | `from` (ms), `limit` 1-50 (default 20), `onlyUnread` (presence); signed | yes (signed) | `notifications-unauth` (400, the body `auth-error-production.json` pins), `-signed`, `-signed-filters`, `-expired-timestamp` (401), `-bad-signature` (401) |
-| POST | `/notifications` | API key | no: write | |
-| PUT | `/notifications/read` | signed | no: write | |
+| POST | `/notifications` | bearer `NOTIFICATIONS_GOVERNANCE_TOKEN` (`governance_*` types) or `NOTIFICATIONS_REWARDS_TOKEN` (`reward_*` types), unset = producer disabled; `[{type, address?, eventKey, metadata, timestamp, optOutScope?}]` -> 204, body up to 16 MiB; 400 in the upstream Joi words (another prefix's or an unknown type: `Invalid notification type: <type>`), 401 `Authorization header is missing` / `Invalid authorization header`, 413, 503 while social writes are off. Id = v5 over `(type, address, eventKey)`: a repeat updates `metadata` and `timestamp`, keeps the read state and emails only on first insert; no `address` is a broadcast stored once (`social.broadcast_notifications`, id v5 over `(type, eventKey)`), listed by `GET /notifications` for every wallet with `address: null` and per-wallet read state, never emailed | no: write | |
+| PUT | `/notifications/read` | signed; a broadcast id records this wallet's read (`social.broadcast_reads`), counted in `updated` | no: write | |
 | POST | `/notifications/email` | bearer `NOTIFICATION_SERVICE_TOKEN`; `{email, subject, content, title?, titleHighlight?}` -> 204 | no: write | |
 | GET | `/subscription` | signed | yes (signed) | `subscription-unauth`, `-signed` (the default document; `address` volatile) |
 | PUT | `/subscription`, `/set-email`, `/confirm-email` | | no: write | |

@@ -61,6 +61,15 @@ it("keeps every row of a real node inbox, with its string timestamp as epoch ms"
   expect(parseNotificationsLoose(JSON.parse(nodeResponse)).map((n) => n.timestamp)).toEqual([1699999999999]);
 });
 
+it("keeps a broadcast row, whose address is null", async () => {
+  const bridge = installBridge();
+  const list = fetchLiveNotifications();
+  const broadcast = { id: "b1", type: "governance_announcement", address: null, timestamp: "1700000000000", read: false, created_at: "", updated_at: "", metadata: { title: "t" } };
+  bridge.push({ kind: "signedFetchResult", id: lastSignedFetch(bridge).id, status: 200, body: JSON.stringify({ notifications: [broadcast] }) });
+  const rows = await list;
+  expect(rows.map((n) => [n.id, n.address, n.timestamp])).toEqual([["b1", "", 1700000000000]]);
+});
+
 it("shows a favorite on sale as a marketplace notice with its server copy, image and shop link", () => {
   const base: Notification = {
     id: "d1", type: "item_discounted", address: "0x0000000000000000000000000000000000000001", timestamp: 1,

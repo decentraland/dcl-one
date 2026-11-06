@@ -1,14 +1,14 @@
 //! Notifications: the signed-fetch reader/marker surface of
 //! notifications.decentraland.org (`GET /notifications`, `PUT
 //! /notifications/read`, the subscription, email confirmation and opt-out
-//! routes), the bearer-gated broadcast, the `email` outbox worker
+//! routes), the bearer-gated broadcast, the producers' ingest (`ingest`), the `email` outbox worker
 //! (`delivery`), the `friend_first_wear` producer (`first_wear`), the
 //! `land_transfer_received` producer over the land_authz index
 //! (`land_transfers`) and the community events' rows (`community`), all
 //! over the ONE pool and the ONE outbound client.
 //! Tables: `social.notifications`, `notification_deliveries`,
 //! `subscriptions`, `unconfirmed_emails`, `subscription_opt_outs`,
-//! `notification_reader_seen`, `worn_history`, `first_wear_baseline`,
+//! `notification_reader_seen`, `broadcast_notifications`, `broadcast_reads`, `worn_history`, `first_wear_baseline`,
 //! `first_wear_cursor`, `land_transfer_cursor`.
 //!
 //! Mounted by `serve` as `.nest("/notifications", router(state))` (the old
@@ -26,6 +26,7 @@ mod event_ended;
 pub mod events;
 pub mod first_wear;
 pub mod handlers;
+pub mod ingest;
 pub mod land_transfers;
 pub(crate) mod moderation;
 pub mod seen;
@@ -68,6 +69,10 @@ pub struct Settings {
     pub service_base_url: String,
     /// `NOTIFICATION_SERVICE_TOKEN`: bearer of `POST /notifications/email`; unset refuses it.
     pub notification_service_token: Option<String>,
+    /// `NOTIFICATIONS_GOVERNANCE_TOKEN`: bearer of `POST /notifications/notifications` for `governance_*` types; unset disables it.
+    pub governance_token: Option<String>,
+    /// `NOTIFICATIONS_REWARDS_TOKEN`: the same for `reward_*` types.
+    pub rewards_token: Option<String>,
     /// `FIRST_WEAR_ENABLED`: run the friend_first_wear producer (the old
     /// binary ran it when its three extra database DSNs were set).
     pub first_wear_enabled: bool,
@@ -97,6 +102,8 @@ impl Default for Settings {
             signing_key: None,
             service_base_url: "https://notifications.decentraland.org".into(),
             notification_service_token: None,
+            governance_token: None,
+            rewards_token: None,
             first_wear_enabled: false,
             first_wear: FirstWearSettings::default(),
             delivery_interval: Duration::from_secs(15),
@@ -224,12 +231,16 @@ impl admin::AdminSecretSource for SharedState {
 }
 
 /// The routes, unprefixed: nest under `/notifications`. Bodies are capped
-/// at 256 KiB as before; CORS is permissive as the old bundle's was; bodies
+/// at 256 KiB as before (the producer ingest reads up to
+/// [`ingest::MAX_BODY_BYTES`] itself, after its bearer); CORS is permissive as the old bundle's was; bodies
 /// and refusals keep upstream's JSON wire ([`errors::json_wire`]).
 pub fn router(state: SharedState) -> Router {
     Router::new()
         .route("/status", get(handlers::get_status))
-        .route("/notifications", get(handlers::get_notifications))
+        .route(
+            "/notifications",
+            get(handlers::get_notifications).post(ingest::post_notifications),
+        )
         .route("/notifications/read", put(handlers::put_read))
         .route(
             "/subscription",

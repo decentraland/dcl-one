@@ -307,6 +307,7 @@ const ROWS: &[Row] = &[
     ),
     mirrored("indexes", "LAND_AUTHZ_INDEX_ENABLED"),
     mirrored("indexes", "CREDITS_USAGE_INDEX_ENABLED"),
+    mirrored("indexes", "SHOP_RENTALS_INDEX_ENABLED"),
     row(
         "indexes",
         "CREDITS_MANAGER_CONTRACT",
