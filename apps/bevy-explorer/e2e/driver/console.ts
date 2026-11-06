@@ -7,6 +7,8 @@ export interface Console {
   /** Run one console line and resolve with its `Ok` text; reject with a `ConsoleError` on `Err`. */
   run(line: string): Promise<string>
   close(): Promise<void>
+  /** What the page said and how it looks now, the HUD included, where the transport can tell. */
+  evidence?(): Promise<{ console: string[]; screenshot: Buffer | undefined }>
 }
 
 /** The credential a line carries: the payload of `/login_identity` or `/hud_login`, an

@@ -413,6 +413,17 @@ export async function stableFirstCard(explorer: Explorer, find: CardFinder, time
   return agreed
 }
 
+/** The grid's next page, loaded: the pager's arrow, then the cards once they changed and settled. */
+export async function nextPage(explorer: Explorer, find: CardFinder): Promise<Card[]> {
+  const before = await find(explorer)
+  await explorer.hud.click({ name: 'Next page', role: 'button' })
+  await until(() => find(explorer), (cards) => cards.length > 0 && !sameCards(cards, before), {
+    timeoutMs: GRID_TIMEOUT_MS,
+    what: 'the next page of the grid'
+  })
+  return waitForCards(explorer, find)
+}
+
 /** Press a pager arrow, give the first card up to 12 s to leave `from`, and return where it settles. */
 export async function flipPage(explorer: Explorer, arrow: 'Next page' | 'Previous page', find: CardFinder, from: string): Promise<string> {
   await explorer.hud.click({ name: arrow, role: 'button' })
@@ -457,32 +468,41 @@ export async function equipFirstUnequippedHair(explorer: Explorer): Promise<{ na
 // as the card that offers UNEQUIP before anything is pressed.
 
 export interface HairPick {
-  /** The first card of the Hair page that offers EQUIP. */
+  /** The first card of `page` that offers EQUIP. */
   card: Card
   /** The card that offers UNEQUIP: the hair the avatar wears, when it wears one. */
   equipped: Card | undefined
+  /** The Hair page (1 first) both cards are on: the worn hair's, for the restore to find it. */
+  page: number
   start: LookStart
 }
 
-/** Filter to Hair and pick, among the first page, the first card to equip and the one the avatar
- *  wears. Nothing is pressed. A worn hair that is not on the first page is an error here, before
- *  any change: the scenario could not put it back. */
+/** Filter to Hair and find the page with the hair the avatar wears (a card that offers UNEQUIP),
+ *  and on it the first card to equip; nothing is pressed. The catalogue sorts the hairs, so the
+ *  worn one can be on any page. One the grid does not list is an error here, before any change:
+ *  the scenario could not put it back. */
 export async function pickHair(explorer: Explorer): Promise<HairPick> {
-  const cards = await showCategory(explorer, 'Hair')
+  let cards = await showCategory(explorer, 'Hair')
   const start = await startLook(explorer)
-  let card: Card | undefined
-  let equipped: Card | undefined
-  for (const candidate of cards.slice(0, PAGE_SIZE)) {
-    if (card && equipped) break
-    const { action } = await hoverCard(explorer, candidate)
-    if (action?.label === 'EQUIP' && !card) card = candidate
-    if (action?.label === 'UNEQUIP' && !equipped) equipped = candidate
+  const worn = renderedUrn(start.before, 'hair')
+  for (let page = 1; ; page++) {
+    let card: Card | undefined
+    let equipped: Card | undefined
+    for (const candidate of cards.slice(0, PAGE_SIZE)) {
+      if (card && (equipped || worn === undefined)) break
+      const { action } = await hoverCard(explorer, candidate)
+      if (action?.label === 'EQUIP' && !card) card = candidate
+      if (action?.label === 'UNEQUIP' && !equipped) equipped = candidate
+    }
+    if (equipped || worn === undefined) {
+      if (!card) throw new Error(`Every card of Hair page ${page} is equipped or cannot be equipped: ${cards.map((c) => c.name).join(', ')}`)
+      return { card, equipped, page, start }
+    }
+    if (!(await pagerVisible(explorer)) || !(await explorer.hud.find({ name: 'Next page', role: 'button' }))?.actionable) {
+      throw new Error(`the hair the avatar wears (${worn}) is on none of the ${page} Hair pages, so the scenario could not put it back`)
+    }
+    cards = await nextPage(explorer, wearableCards)
   }
-  if (!card) throw new Error(`Every loaded card is equipped or cannot be equipped: ${cards.map((c) => c.name).join(', ')}`)
-  if (!equipped && renderedUrn(start.before, 'hair') !== undefined) {
-    throw new Error(`the hair the avatar wears (${renderedUrn(start.before, 'hair')}) is not on the first page of Hair, so the scenario could not put it back`)
-  }
-  return { card, equipped, start }
 }
 
 /** Press EQUIP on a card and wait for it to flip to UNEQUIP. The Backpack stays open: the look is
@@ -501,10 +521,11 @@ export async function restoreHair(explorer: Explorer, pick: HairPick): Promise<v
   await closePage(explorer, 'backpack')
   const version = await explorer.profileVersion()
   await openBackpack(explorer, 'wearables')
-  const cards = await showCategory(explorer, 'Hair')
+  let cards = await showCategory(explorer, 'Hair')
+  for (let page = 1; page < pick.page; page++) cards = await nextPage(explorer, wearableCards)
   const byName = (name: string): Card => {
     const found = cards.find((candidate) => normalize(candidate.name) === normalize(name))
-    if (!found) throw new Error(`the Hair page no longer lists "${name}", so the hair cannot be put back`)
+    if (!found) throw new Error(`Hair page ${pick.page} no longer lists "${name}", so the hair cannot be put back`)
     return found
   }
   let changed = false

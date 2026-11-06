@@ -146,20 +146,48 @@ describe('Explorer', () => {
   })
 
   test('hud.click refuses a synthetic click unless allowed', async () => {
-    const synthetic = new FakeConsole({ hud_click: control({ input: 'synthetic' }) })
+    const synthetic = new FakeConsole({ hud_wait: control(), hud_read: control(), hud_click: control({ input: 'synthetic' }) })
     await assert.rejects(new Explorer(synthetic).hud.click('Backpack'), /was synthetic/)
     const allowed = new Explorer(synthetic, { allowSyntheticInput: true })
     assert.equal((await allowed.hud.click('Backpack')).input, 'synthetic')
-    const trusted = new FakeConsole({ hud_click: control({ input: 'trusted' }) })
+    const trusted = new FakeConsole({ hud_wait: control(), hud_read: control(), hud_click: control({ input: 'trusted' }) })
     assert.equal((await new Explorer(trusted).hud.click({ name: 'Backpack', role: 'button' })).input, 'trusted')
-    assert.deepEqual(trusted.lines, ['/hud_click {"name":"Backpack","role":"button"}'])
+    assert.deepEqual(trusted.lines, [
+      '/hud_wait {"name":"Backpack","role":"button","state":"actionable","timeout":10000}',
+      '/hud_read {"name":"Backpack","role":"button"}',
+      '/hud_click {"name":"Backpack","role":"button"}'
+    ])
   })
 
-  test('hud.fill sends the selector with the text and returns the field', async () => {
-    const fake = new FakeConsole({ hud_fill: control({ role: 'textbox', value: 'Genesis', input: 'trusted' }) })
+  test('hud.click waits for the control to take a click, and fails naming what it saw', async () => {
+    const fake = new FakeConsole({
+      hud_wait: (line) => {
+        throw new ConsoleError(line, 'timed out after 10000 ms waiting for {"name":"Emotes","role":"tab"} to be actionable: the control can\'t be clicked: covered by <header>')
+      },
+      hud_click: control({ input: 'trusted' })
+    })
+    await assert.rejects(new Explorer(fake).hud.click({ name: 'Emotes', role: 'tab' }), /covered by <header>/)
+    assert.deepEqual(fake.sent('hud_click'), [])
+  })
+
+  test('hud.click waits for a sliding control to hold still, and aims where it stopped', async () => {
+    let reads = 0
+    const fake = new FakeConsole({
+      hud_wait: control({ y: 10 }),
+      // on its way in for two reads, then still
+      hud_read: () => control({ y: Math.min(40, 10 + 15 * ++reads) }),
+      hud_click: control({ y: 40, input: 'trusted' })
+    })
+    await new Explorer(fake).hud.click({ name: 'Emotes', role: 'tab' })
+    assert.equal(fake.sent('hud_read').length, 3)
+    assert.equal(fake.sent('hud_click').length, 1)
+  })
+
+  test('hud.fill waits for the field, sends the selector with the text and returns the field', async () => {
+    const fake = new FakeConsole({ hud_wait: control({ role: 'textbox' }), hud_read: control({ role: 'textbox' }), hud_fill: control({ role: 'textbox', value: 'Genesis', input: 'trusted' }) })
     const result = await new Explorer(fake).hud.fill('Search', 'Genesis')
     assert.equal(result.value, 'Genesis')
-    assert.deepEqual(fake.lines, ['/hud_fill {"name":"Search","text":"Genesis"}'])
+    assert.deepEqual(fake.lines, ['/hud_wait {"name":"Search","state":"actionable","timeout":10000}', '/hud_read Search', '/hud_fill {"name":"Search","text":"Genesis"}'])
   })
 
   test('hud.find is undefined when nothing matches and an error on ambiguity', async () => {
@@ -182,8 +210,8 @@ describe('Explorer', () => {
     ])
   })
 
-  test('hud.hover clicks the control centre', async () => {
-    const fake = new FakeConsole({ hud_read: control(), click_at: 'clicked at (30, 35)' })
+  test('hud.hover clicks the control centre once it takes a click', async () => {
+    const fake = new FakeConsole({ hud_wait: control(), hud_read: control(), click_at: 'clicked at (30, 35)' })
     await new Explorer(fake).hud.hover('Backpack')
     assert.deepEqual(fake.sent('click_at'), ['/click_at 30 35'])
   })
@@ -197,6 +225,22 @@ describe('Explorer', () => {
     await explorer.clickAt(1, 2)
     await explorer.clickAt(1, 2, 'right')
     assert.deepEqual(fake.lines, ['/press_key KeyB', '/press_key ShiftLeft --state down', '/press_key Escape', '/click_at 1 2', '/click_at 1 2 --button right'])
+  })
+
+  test("profileDeployWindow waits out the catalyst's window after the own profile changed, and only then", async () => {
+    let version = 3
+    const fake = new FakeConsole({ get_user_data: () => `tester (0x${'a'.repeat(40)}): v${version}, web3=true` })
+    const explorer = new Explorer(fake, { profileDeployWindowMs: 300 })
+    let started = Date.now()
+    await explorer.profileDeployWindow()
+    assert.ok(Date.now() - started < 200, 'a profile seen unchanged needs no wait')
+    version = 4
+    started = Date.now()
+    await explorer.profileDeployWindow()
+    assert.ok(Date.now() - started >= 290, 'a change seen now waits the whole window')
+    started = Date.now()
+    await explorer.profileDeployWindow()
+    assert.ok(Date.now() - started < 200, 'the window is spent once')
   })
 
   test('a long reply is cut in the record, not in the result', async () => {
@@ -269,6 +313,7 @@ describe('enterWorld', () => {
     const fake = new FakeConsole({
       world_state: () => world({ inWorld: jumped && ++reads > 1 }),
       hud_read: () => control({ name: 'Jump In', actionable: reads >= 0 }),
+      hud_wait: () => control({ name: 'Jump In' }),
       hud_click: () => {
         jumped = true
         return control({ name: 'Jump In', input: 'trusted' })
@@ -306,6 +351,7 @@ describe('enterWorld', () => {
     const fake = new FakeConsole({
       world_state: () => world(jumped ? {} : { inWorld: false, worldHeld: true, signedIn: true, realmConnected: true }),
       hud_read: () => (++reads > 1 ? control({ name: 'Jump In', actionable: true }) : '{"found":false}'),
+      hud_wait: () => control({ name: 'Jump In' }),
       hud_click: () => {
         jumped = true
         return control({ name: 'Jump In', input: 'trusted' })

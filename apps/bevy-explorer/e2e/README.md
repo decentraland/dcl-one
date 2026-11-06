@@ -12,9 +12,8 @@ and rewritten; no Unity code moved. Nothing here compares the two clients: every
 is recorded anew in dcl-one.
 
 **Status.** The driver and the tooling are covered by unit tests, which run in CI. The scenarios
-have not yet run against the engine: that needs the Windows GPU runner and the zone accounts
-(see [CI](#ci)). Until a run exists, every scenario's accessible names and waits are as read from
-the HUD's source, not as observed.
+run on the Windows GPU runner with the zone accounts ([CI](#ci)), and on a workstation with a GPU
+and an account's key ([Run it](#run-it)); a run's report says which pass.
 
 ## Run it
 
@@ -81,8 +80,10 @@ describes the gateway layouts and service overrides.
 The report goes to `report/`: `junit-<groups>.xml`, and per scenario `commands.jsonl` (every
 console command, its reply or error and its time; `/login_identity` and `/hud_login` payloads
 redacted) and
-`final.png` (the engine's frame as the scenario left it). A failed visual scenario adds
-`frame.png`, `reference.png` and `diff.png`. A client that fails to boot, at the open, at the
+`final.png` (the engine's frame as the scenario left it). A failed scenario adds `page.jpg`, the
+page as it looked, the HUD included (on the web the engine's frame has none), and `console.txt`,
+the page's last 200 console lines. A failed visual scenario adds `frame.png`, `reference.png` and
+`diff.png`. A client that fails to boot, at the open, at the
 console's coming or on the way into the world, leaves `boot-failures/boot-<n>.console.txt`, what
 the page said, and `boot-<n>.jpg`, how it looked; it is booted once more for the next scenario,
 and after a second failure every later scenario fails at once with that error, which the run logs
@@ -103,6 +104,24 @@ with their replies parsed. It asserts through the engine where it can (`/world_s
 (`specs/pages.ts` holds the pages); a control that appears on hover is reached with `hud.hover`
 first. Every wait is bounded and says what it waits for; nothing asserts zone's live listings as
 literals. A scenario that changes account state restores it.
+
+What the driver does for every scenario, so a spec need not:
+
+- **A rested HUD to start from.** Each scenario starts with Escape, a layer per press, until the
+  rail's top button takes a click (a page hides the rail, a popup covers it), no panel beside the
+  rail reads pressed and the chat input does not hold the keys. A HUD already at rest gets no
+  Escape. The web boot waits for the HUD's own world (the rail), which comes after the engine's.
+- **Clicks that land.** `hud.click`, `hud.fill` and `hud.hover` wait for the control to be
+  actionable and to hold still (two reads 60 ms apart): pages slide and fade in for a third of a
+  second, and a click aimed at a control on its way lands where it no longer is.
+- **The keyboard back.** The engine keeps the keyboard a few frames after a HUD text field lets it
+  go, and no command reports when: after an Escape out of a field, or a click that closed one, a
+  scenario calls `keyboardReleased()` (500 ms) before its next key.
+- **Profile deployments apart.** The catalyst takes one deployment of a profile per address every
+  3 s (`Entity rate limited`); closing the Backpack on a changed look and saving the passport are
+  deployments, so they first wait out that window since the profile was last seen to change
+  (`profileDeployWindow()`). A change and its restore would otherwise fail silently and leave the
+  shared account changed.
 
 The in-world scenario in `specs/debug-panel.test.ts` uses the lower-right bug button in development builds and Sidebar settings → Debug panel in release builds. It reads the current realm, observes a live FPS-target change and verifies an avatar action against the engine. The chat scenarios in `specs/chat.test.ts` also check that a slash keypress and Unicode text reach the composer.
 

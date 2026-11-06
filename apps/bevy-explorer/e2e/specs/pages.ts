@@ -28,6 +28,8 @@ export const PAGES: Record<PageName, Page> = {
 }
 
 export const PAGE_OPEN_TIMEOUT_MS = 20_000
+/** How long one Escape is given to close a page: its animation and the engine's relay of the key. */
+const ESCAPE_CLOSE_MS = 2_500
 
 /** Open a page by its key and wait for it. */
 export async function openWithKey(explorer: Explorer, page: PageName): Promise<void> {
@@ -53,15 +55,23 @@ export async function switchTab(explorer: Explorer, page: PageName): Promise<voi
   await explorer.hud.wait(marker, { timeoutMs: PAGE_OPEN_TIMEOUT_MS })
 }
 
-/** Close the open page with Escape, as explorer-automation's Panel.Close does, and the top bar's
- *  Close button when Escape leaves it open. */
+/** Close the open page with Escape, as explorer-automation's Panel.Close does: a second one when
+ *  the first only left a focused field (the HUD blurs it, and no action resolves while a field has
+ *  the keys), then the top bar's Close button when Escape leaves it open. Closing the Backpack
+ *  deploys the look it changed, so it waits out the catalyst's window since the last deployment
+ *  first. */
 export async function closePage(explorer: Explorer, page: PageName): Promise<void> {
   const { marker } = PAGES[page]
-  await explorer.escape()
-  try {
-    await explorer.hud.waitHidden(marker, 5000)
-  } catch {
-    await explorer.hud.click({ name: 'Close', role: 'button', index: 0 })
-    await explorer.hud.waitHidden(marker, 15_000)
+  if (page === 'backpack') await explorer.profileDeployWindow()
+  for (let press = 0; press < 2; press++) {
+    await explorer.escape()
+    try {
+      await explorer.hud.waitHidden(marker, ESCAPE_CLOSE_MS)
+      return
+    } catch {
+      // still open: the press left a field, or did not arrive
+    }
   }
+  await explorer.hud.click({ name: 'Close', role: 'button', index: 0 })
+  await explorer.hud.waitHidden(marker, 15_000)
 }

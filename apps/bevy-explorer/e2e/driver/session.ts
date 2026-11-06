@@ -119,10 +119,17 @@ export async function keepBootFailure(boot: number, error: BootError): Promise<v
 /** How long the world is waited for once signed in. */
 export const WORLD_TIMEOUT_MS = 300_000
 
+/** The HUD's world, by the rail's top button: the HUD puts it up once its own phase reaches the
+ *  world, which can come after the engine's. */
+export const WORLD_HUD = { name: 'Sidebar settings', role: 'button' } as const
+
+/** How long the HUD's world is waited for once the engine is in the world. */
+export const HUD_TIMEOUT_MS = 60_000
+
 /** How long a boot may take, the sum of its waits: the web transport's `ready` (300 s), the
- *  sign-in command (120 s) and the world (`WORLD_TIMEOUT_MS`). A scenario's own budget starts
- *  after it. */
-export const BOOT_ALLOWANCE_MS = 720_000
+ *  sign-in command (120 s), the world (`WORLD_TIMEOUT_MS`) and the HUD's (`HUD_TIMEOUT_MS`). A
+ *  scenario's own budget starts after it. */
+export const BOOT_ALLOWANCE_MS = 780_000
 
 async function boot(options: OpenOptions, target: Target): Promise<Session> {
   const realm = options.realm ?? target.realm
@@ -154,8 +161,13 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
   const explorer = new Explorer(console_)
   try {
     await signIn(explorer, target, options.signIn ?? 'account', options.firstLogin, { realm, position })
-    // the HUD's travel lands there; a realm that ignores the parcel (a world) is corrected by console
-    if (target.transport === 'web') await arrive(explorer, realm, position)
+    if (target.transport === 'web') {
+      // the HUD's travel lands there; a realm that ignores the parcel (a world) is corrected by console
+      await arrive(explorer, realm, position)
+      // the engine is in the world before the HUD has put up its own (the rail, and the chat,
+      // which opens with its input focused): a key sent sooner can land in that input
+      await explorer.hud.wait(WORLD_HUD, { timeoutMs: HUD_TIMEOUT_MS })
+    }
   } catch (error) {
     // a page that opened but never arrived: what it said and how it looks, with the error
     const evidence = console_ instanceof WebConsole ? await console_.evidence().catch(() => undefined) : undefined

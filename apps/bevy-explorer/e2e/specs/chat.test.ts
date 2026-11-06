@@ -56,20 +56,23 @@ async function openChat(explorer: Explorer): Promise<void> {
   await explorer.hud.wait(INPUT_FOCUSED, { timeoutMs: TEXT_TIMEOUT_MS })
 }
 
-/** The chat closed, with the rail's button. */
+/** The chat closed, with the rail's button; the input it had focused gives the engine the keys back. */
 async function closeChat(explorer: Explorer): Promise<void> {
   if (!(await explorer.hud.get(RAIL_CHAT)).checked) return
   await explorer.hud.click(RAIL_CHAT)
   await explorer.hud.waitHidden(CLOSE_CHAT, CONTROL_TIMEOUT_MS)
+  await explorer.keyboardReleased()
 }
 
 /** The chat closed and no control focused: Enter on a focused button clicks it, which would toggle
- *  the chat again. Closing from the open chat's own button leaves the focus on the page. */
+ *  the chat again. Closing from the open chat's own button leaves the focus on the page; the input
+ *  it had focused gives the engine the keys back, without which Enter never reaches it. */
 async function resetChat(explorer: Explorer): Promise<void> {
   await explorer.hud.click((await explorer.hud.isVisible(INPUT_FOCUSED)) ? INPUT_FOCUSED : INPUT_IDLE)
   await explorer.hud.wait(CLOSE_CHAT, { state: 'actionable', timeoutMs: CONTROL_TIMEOUT_MS })
   await explorer.hud.click(CLOSE_CHAT)
   await explorer.hud.waitHidden(CLOSE_CHAT, CONTROL_TIMEOUT_MS)
+  await explorer.keyboardReleased()
 }
 
 /** Type `text` in the chat input and send it with Enter; the message as /chat_history records it. */

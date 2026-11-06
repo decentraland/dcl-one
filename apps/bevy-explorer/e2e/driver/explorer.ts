@@ -4,7 +4,7 @@
 import { type Console, ConsoleError, redact, redactLine } from './console.ts'
 import { type AuthIdentity, encodeIdentity } from './identity.ts'
 import { type Selector, describeSelector, selectorArg, toSelectorObject } from './selectors.ts'
-import { until } from './wait.ts'
+import { sleep, until } from './wait.ts'
 
 export interface WorldState {
   inWorld: boolean
@@ -149,12 +149,36 @@ export interface ExplorerOptions {
   /** Accept `"input": "synthetic"` from the HUD commands (a run without the web driver). Off by
    *  default: a spec that passed on DOM events proves nothing about the browser's input path. */
   allowSyntheticInput?: boolean
+  /** The catalyst's window between two deployments of one profile (`PROFILE_DEPLOY_WINDOW_MS`). */
+  profileDeployWindowMs?: number
 }
+
+/** The catalyst takes one deployment of a profile per window: the reference catalyst's rate limit,
+ *  3 s per address, which zone's peers apply (a second one inside it fails with `Entity rate
+ *  limited`, and the HUD shows "failed to deploy"), with a margin for the deployment going out
+ *  after the engine reports the new version. */
+export const PROFILE_DEPLOY_WINDOW_MS = 4_000
+
+/** How long the engine keeps the keyboard after a HUD text field lets it go: the HUD relays its
+ *  focus through the bridge scene, a few frames, and no console command reports the engine's
+ *  side, so this is a settle, not a wait. A key sent sooner is typed into nothing (measured on
+ *  the web: lost at once, delivered 50 ms later at 60 fps; the runner's frames are slower). */
+export const KEYBOARD_RELEASE_MS = 500
 
 export type MouseButton = 'left' | 'right' | 'middle'
 
 const DEFAULT_HUD_TIMEOUT_MS = 10_000
+/** How long a click, a fill or a hover waits for its control to take a click: a page slides and
+ *  fades in for a third of a second, and a control on its way in reads as covered. */
+const ACTIONABLE_TIMEOUT_MS = 10_000
+/** How far apart two reads of a control's box must agree for it to count as still: a click is
+ *  aimed where the control is when it is read, and lands up to a few frames later. */
+const STILL_MS = 60
+
 const DEFAULT_ARRIVAL_TIMEOUT_MS = 180_000
+
+const sameBox = (a: Control, b: Control): boolean =>
+  Math.abs(a.x - b.x) <= 0.5 && Math.abs(a.y - b.y) <= 0.5 && Math.abs(a.width - b.width) <= 0.5 && Math.abs(a.height - b.height) <= 0.5
 
 /** The error as it may be rethrown: a transport's own error (a timeout, a closed driver) can
  *  quote the line, and the test runner prints the message and the stack. */
@@ -170,10 +194,15 @@ export class Explorer {
   readonly hud: Hud
   readonly #listeners = new Set<CommandListener>()
   readonly #allowSynthetic: boolean
+  readonly #deployWindowMs: number
+  /** The own profile's version as last read, and when it was last seen to change. */
+  #ownVersion: number | undefined
+  #ownVersionChangedAt = 0
 
   constructor(console: Console, options: ExplorerOptions = {}) {
     this.console = console
     this.#allowSynthetic = options.allowSyntheticInput ?? false
+    this.#deployWindowMs = options.profileDeployWindowMs ?? PROFILE_DEPLOY_WINDOW_MS
     this.hud = new Hud(this, this.#allowSynthetic)
   }
 
@@ -316,7 +345,21 @@ export class Explorer {
     const reply = await this.run(address ? `/get_user_data ${address}` : '/get_user_data')
     const match = /^(.*) \((0x[0-9a-fA-F]{40})\): v(\d+), web3=(true|false)$/s.exec(reply.trim())
     if (!match) throw new Error(`unparseable get_user_data: ${reply}`)
-    return { name: match[1]!, address: match[2]!, version: Number(match[3]), web3: match[4] === 'true' }
+    const data = { name: match[1]!, address: match[2]!, version: Number(match[3]), web3: match[4] === 'true' }
+    if (address === undefined) {
+      if (this.#ownVersion !== undefined && data.version !== this.#ownVersion) this.#ownVersionChangedAt = Date.now()
+      this.#ownVersion = data.version
+    }
+    return data
+  }
+
+  /** Before a step that deploys the own profile (closing the Backpack on a changed look, saving
+   *  the passport): wait out the catalyst's window since the profile was last seen to change, a
+   *  deployment of its own. A change since the last read counts from now. */
+  async profileDeployWindow(): Promise<void> {
+    await this.userData()
+    const left = this.#ownVersionChangedAt + this.#deployWindowMs - Date.now()
+    if (left > 0) await sleep(left)
   }
 
   /** The profile version, which bumps on every avatar change (an equip is observable here). */
@@ -390,6 +433,12 @@ export class Explorer {
 
   escape(): Promise<void> {
     return this.key('Escape')
+  }
+
+  /** After a HUD text field lost the focus (an Escape out of it, a click that closed it): give the
+   *  engine the keyboard back before the next key (`KEYBOARD_RELEASE_MS`). */
+  async keyboardReleased(): Promise<void> {
+    await sleep(KEYBOARD_RELEASE_MS)
   }
 
   /** A click at window pixels (as `/entity_screen_position` and `/hud_read` report them). */
@@ -469,16 +518,19 @@ export class Hud {
     return control
   }
 
-  /** A real click on the control's centre. Fails on a synthetic (DOM-event) click unless the
-   *  explorer allows it. */
+  /** A real click on the control's centre, once a click would land there (`actionable`). Fails
+   *  on a synthetic (DOM-event) click unless the explorer allows it. */
   async click(selector: Selector): Promise<HudInput> {
+    await this.waitActionable(selector)
     const result = await this.#explorer.json<HudInput>(`/hud_click ${selectorArg(selector)}`)
     this.#checkInput(result, `click on ${describeSelector(selector)}`)
     return result
   }
 
-  /** Replace a field's text; the reply holds the field as the typing left it. */
+  /** Replace a field's text, once a click would land on it; the reply holds the field as the
+   *  typing left it. */
   async fill(selector: Selector, text: string): Promise<HudInput> {
+    await this.waitActionable(selector)
     const result = await this.#explorer.json<HudInput>(`/hud_fill ${JSON.stringify({ ...toSelectorObject(selector), text })}`)
     this.#checkInput(result, `fill of ${describeSelector(selector)}`)
     return result
@@ -494,11 +546,32 @@ export class Hud {
     return this.wait(selector, { state: 'hidden', timeoutMs })
   }
 
+  /** The control once a click would land on it: visible, enabled, in the viewport, uncovered and
+   *  still (a control that slides in can read uncovered on its way, and a click aimed at it there
+   *  lands where it no longer is). */
+  async waitActionable(selector: Selector, timeoutMs = ACTIONABLE_TIMEOUT_MS): Promise<Control> {
+    const deadline = Date.now() + timeoutMs
+    const actionable = async (left: number): Promise<Control> => {
+      const read = await this.wait(selector, { state: 'actionable', timeoutMs: Math.max(0, left) })
+      if (!read.found) throw new Error(`no visible HUD control matches ${describeSelector(selector)}`)
+      return read
+    }
+    let seen = await actionable(timeoutMs)
+    for (;;) {
+      await sleep(STILL_MS)
+      const now = await this.read(selector)
+      if (now.found && now.actionable && sameBox(now, seen)) return now
+      const left = deadline - Date.now()
+      if (left <= 0) throw new Error(`${describeSelector(selector)} did not hold still for ${timeoutMs} ms`)
+      seen = now.found && now.actionable ? now : await actionable(left)
+    }
+  }
+
   /** Put the pointer on a control, for the controls that appear on hover: a real click at its
-   *  centre, which the browser precedes with a move. It also selects the control, as a user's
-   *  click would. */
+   *  centre once a click would land there, which the browser precedes with a move. It also
+   *  selects the control, as a user's click would. */
   async hover(selector: Selector): Promise<Control> {
-    const control = await this.get(selector)
+    const control = await this.waitActionable(selector)
     await this.#explorer.clickAt(control.x + control.width / 2, control.y + control.height / 2)
     return control
   }

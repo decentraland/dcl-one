@@ -8,20 +8,27 @@
     <button id="jump">Jump In</button>
     <script>
       // A stand-in for the app frame: `engine_console_command` answers a few commands the way the
-      // engine does (a string, or a rejection with the error text), and `/hud_click` reports a
-      // real click on the button through the DOM's `isTrusted`.
+      // engine does (a string, or a rejection with the error text), `/hud_wait` and `/hud_read`
+      // find the button at once, and `/hud_click` reports a real click on it through the DOM's
+      // `isTrusted`.
       let clicks = 0
       let trusted = false
       document.getElementById('jump').addEventListener('click', (event) => {
         clicks++
         trusted = event.isTrusted
       })
+      const jumpControl = () => {
+        const rect = document.getElementById('jump').getBoundingClientRect()
+        return { found: true, role: 'button', name: 'Jump In', text: 'Jump In', disabled: false, visible: true, actionable: true, x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+      }
       const replies = {
         '/world_state': () => JSON.stringify({ inWorld: clicks > 0, arrivals: clicks, signedIn: true, address: null, guest: false, realm: '', realmConnected: true, worldHeld: clicks === 0, outOfWorld: false, position: [0, 0, 0] }),
         '/player_position': () => '(1, 2, 3)',
+        '/hud_wait': () => JSON.stringify(jumpControl()),
+        '/hud_read': () => JSON.stringify(jumpControl()),
         '/hud_click': () => {
-          const rect = document.getElementById('jump').getBoundingClientRect()
-          const control = { found: true, role: 'button', name: 'Jump In', text: 'Jump In', disabled: false, visible: true, actionable: true, x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+          const control = jumpControl()
+          const rect = { x: control.x, y: control.y, width: control.width, height: control.height }
           if (typeof window.__dclTrustedInput !== 'function') {
             document.getElementById('jump').click()
             return JSON.stringify({ ...control, input: 'synthetic' })
