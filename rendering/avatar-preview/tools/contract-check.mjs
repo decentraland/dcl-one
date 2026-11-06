@@ -74,6 +74,8 @@ ws.onmessage = (m) => {
 await send('Runtime.enable'); await send('Page.enable'); await send('Network.enable');
 await send('Network.setCacheDisabled', { cacheDisabled: true });
 { const [w, h] = (process.env.WINDOW || '512,768').split(',').map(Number); await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false }); }
+// INIT_JS runs before the page's own scripts in every document (to hide `navigator.gpu`, say)
+if (process.env.INIT_JS) await send('Page.addScriptToEvaluateOnNewDocument', { source: process.env.INIT_JS });
 await send('Page.navigate', { url });
 // TIMELINE (comma-separated seconds after navigation) captures the page at each, as
 // `<outPrefix>-t<seconds>.png`: a host page's playback over time, whether or not it reports `load`

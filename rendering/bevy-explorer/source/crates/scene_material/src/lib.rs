@@ -115,7 +115,7 @@ impl From<&SceneBound> for SceneBoundKey {
 pub struct SceneBound {
     #[uniform(100)]
     pub data: SceneBoundData,
-    #[storage(101, read_only, visibility(fragment))]
+    #[cfg_attr(not(feature = "webgl2"), storage(101, read_only, visibility(fragment)))]
     pub cells: Handle<ShaderStorageBuffer>,
     /// Meshes that have 1 or 3 negative scale axis require special handling
     /// of the face culling

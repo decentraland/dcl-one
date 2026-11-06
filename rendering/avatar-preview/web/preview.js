@@ -6,14 +6,25 @@
 // revalidated): a browser that cached an earlier module keeps it for other urls only.
 let start;
 let preview_command;
+// The browser backend: one module per backend, as the engine cannot hold both. WebGPU where the
+// browser offers an adapter, else WebGL2 (`pkg-gl/`); `backend=webgpu|webgl2` forces one.
+async function backend() {
+  const asked = new URL(location.href).searchParams.get('backend');
+  if (asked === 'webgpu' || asked === 'webgl2') return asked;
+  try {
+    if (navigator.gpu && await navigator.gpu.requestAdapter()) return 'webgpu';
+  } catch { /* no usable adapter */ }
+  return 'webgl2';
+}
 async function loadModule() {
+  const dir = (await backend()) === 'webgl2' ? './pkg-gl/' : './pkg/';
   let build = 'dev';
   try {
-    const response = await fetch(new URL('./pkg/build.json', import.meta.url), { cache: 'no-store' });
+    const response = await fetch(new URL(`${dir}build.json`, import.meta.url), { cache: 'no-store' });
     if (response.ok) build = String((await response.json()).build);
   } catch { /* no build id: the module loads by its plain url */ }
-  const glue = new URL(`./pkg/dcl_avatar_preview.js?v=${build}`, import.meta.url);
-  const wasm = new URL(`./pkg/dcl_avatar_preview_bg.wasm?v=${build}`, import.meta.url);
+  const glue = new URL(`${dir}dcl_avatar_preview.js?v=${build}`, import.meta.url);
+  const wasm = new URL(`${dir}dcl_avatar_preview_bg.wasm?v=${build}`, import.meta.url);
   const module = await import(glue.href);
   await module.default(wasm);
   ({ start, preview_command } = module);

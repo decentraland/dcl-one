@@ -17,6 +17,13 @@ publish = false
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# The browser backend. Bevy cannot hold both in one module (WebGPU overrides WebGL2), so a page
+# that falls back builds twice and loads the module the browser supports.
+[features]
+default = ["webgpu"]
+webgpu = ["bevy/webgpu"]
+webgl2 = ["bevy/webgl2", "avatar/webgl2", "scene_material/webgl2"]
+
 [dependencies]
 # Explorer crates, by path. They inherit their own dependency pins from the Explorer workspace.
 assets = { path = "../bevy-explorer/source/crates/assets", features = ["preview"] }
@@ -29,8 +36,6 @@ scene_material = { path = "../bevy-explorer/source/crates/scene_material" }
 # the avatar renderer without the Explorer glue (players, scenes, comms)
 avatar = { path = "../bevy-explorer/source/crates/avatar", default-features = false }
 dcl_component = { path = "../bevy-explorer/source/crates/dcl_component" }
-# the scene material registers imposter-bake render commands; their draw functions come from here
-boimp = { git = "https://github.com/robtfm/boimp", branch = "feat/composite-bake-via-storage-texture" }
 
 bevy = { version = "0.16.1", default-features = false, features = [
   "animation",
@@ -63,7 +68,7 @@ base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-bevy = { version = "0.16.1", default-features = false, features = ["webgpu"] }
+bevy = { version = "0.16.1", default-features = false }
 wasm-bindgen = "0.2.92"
 wasm-bindgen-futures = "0.4.50"
 js-sys = "0.3"

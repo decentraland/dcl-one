@@ -9,14 +9,7 @@ mod stage;
 
 use assets::EmbedAssetsPlugin;
 use avatar::{AvatarRenderPlugin, AvatarSelection, AvatarShape};
-use bevy::{
-    asset::UnapprovedPathMode,
-    core_pipeline::core_3d::{AlphaMask3d, Opaque3d, Transparent3d},
-    prelude::*,
-    render::{render_phase::DrawFunctions, RenderApp},
-    window::WindowResolution,
-};
-use boimp::bake::ImposterPhaseItem;
+use bevy::{asset::UnapprovedPathMode, prelude::*, window::WindowResolution};
 use collectibles::CollectiblesPlugin;
 use common::structs::{AppConfig, AvatarDynamicState, PreviewMode, ShowOutOfBounds};
 use ipfs::{EndpointConfig, IpfsIoPlugin, IpfsResource, ServerAbout};
@@ -81,6 +74,13 @@ pub fn run(canvas: &str, base_domain: Option<&str>, flags: &str) {
     };
 
     let mut app = App::new();
+    // the Explorer's preview mode, set before its plugins build: the scene material then leaves
+    // out imposter baking, which the preview never does and which needs fragment-writable
+    // storage buffers WebGL2 does not have
+    app.insert_resource(PreviewMode {
+        is_preview: true,
+        ..default()
+    });
     app.add_plugins(
         DefaultPlugins
             .set(WindowPlugin {
@@ -89,10 +89,16 @@ pub fn run(canvas: &str, base_domain: Option<&str>, flags: &str) {
                     fit_canvas_to_parent: true,
                     resolution: WindowResolution::new(512.0, 768.0),
                     // the page decides the background: a colour, or none through the canvas.
-                    // The surface must present alpha too: the web default is opaque, which
-                    // discards it at presentation and shows black where nothing was drawn
+                    // The surface must present alpha too: the WebGPU default is opaque, which
+                    // discards it at presentation and shows black where nothing was drawn.
+                    // WebGL2 offers only `Opaque`, but its canvas keeps the browser's default
+                    // premultiplied alpha, so the transparent clear still shows through.
                     transparent: true,
-                    composite_alpha_mode: bevy::window::CompositeAlphaMode::PreMultiplied,
+                    composite_alpha_mode: if cfg!(feature = "webgl2") {
+                        bevy::window::CompositeAlphaMode::Opaque
+                    } else {
+                        bevy::window::CompositeAlphaMode::PreMultiplied
+                    },
                     ..default()
                 }),
                 ..default()
@@ -118,8 +124,6 @@ pub fn run(canvas: &str, base_domain: Option<&str>, flags: &str) {
             add_bevy_console: false,
         },
         EmbedAssetsPlugin,
-        ImposterDrawFunctionsPlugin,
-        boimp::bake::ImposterBakePlugin,
         SceneBoundPlugin,
         bevy_kira_audio::AudioPlugin,
         CollectiblesPlugin,
@@ -129,7 +133,6 @@ pub fn run(canvas: &str, base_domain: Option<&str>, flags: &str) {
         audio::PreviewAudioPlugin,
     ));
     app.insert_resource(AppConfig::default())
-        .insert_resource(PreviewMode::default())
         .insert_resource(ShowOutOfBounds(false))
         .insert_resource(AmbientLight {
             color: Color::srgb(0.85, 0.85, 1.0),
@@ -141,27 +144,6 @@ pub fn run(canvas: &str, base_domain: Option<&str>, flags: &str) {
     app.add_systems(Startup, (point_at_catalyst, setup_stage));
     app.add_systems(Update, spawn_avatar_on_first_outfit);
     app.run();
-}
-
-/// `boimp::bake::ImposterBakePlugin` creates its render-side resources in `build`, where the
-/// render sub-app does not exist yet when the renderer is created asynchronously (single-threaded
-/// wasm), so the scene material's imposter commands panic in `finish`. This creates the draw
-/// function registries in `finish`, ahead of the scene material plugin. The proper fix is in
-/// boimp: move that initialisation to `finish`.
-struct ImposterDrawFunctionsPlugin;
-
-impl Plugin for ImposterDrawFunctionsPlugin {
-    fn build(&self, _: &mut App) {}
-
-    fn finish(&self, app: &mut App) {
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
-            return;
-        };
-        render_app
-            .init_resource::<DrawFunctions<ImposterPhaseItem<Opaque3d>>>()
-            .init_resource::<DrawFunctions<ImposterPhaseItem<AlphaMask3d>>>()
-            .init_resource::<DrawFunctions<ImposterPhaseItem<Transparent3d>>>();
-    }
 }
 
 /// The collectible resolver asks the realm's content server for pointers; there is no realm
@@ -220,6 +202,16 @@ fn setup_stage(mut commands: Commands, orbit: Res<OrbitCamera>, flags: Res<Stage
     }
     if flags.no_msaa {
         camera.insert(Msaa::Off);
+    }
+    // WebGL2 can neither read a depth prepass back in a shader nor make multisampled textures:
+    // no prepasses (so no avatar outline, which edges on them) and FXAA in place of MSAA
+    if cfg!(feature = "webgl2") {
+        camera
+            .remove::<(
+                bevy::core_pipeline::prepass::DepthPrepass,
+                bevy::core_pipeline::prepass::NormalPrepass,
+            )>()
+            .insert((Msaa::Off, bevy::core_pipeline::fxaa::Fxaa::default()));
     }
 }
 

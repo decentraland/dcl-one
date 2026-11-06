@@ -29,14 +29,17 @@ for avatars, wearables and emotes, replacing the Unity renderer slot of
   lists the messages it sends (`?target=<origin>&page=<file>` plus the preview's own query).
   `web/blank.html` is a transparent page for checking the embedding itself.
 - `tools/contract-check.mjs`: drives a page in headless Chrome like a host (waits for `load`,
-  posts controller requests, saves the canvas, the screenshot and the page; `PROBE_JS`
-  evaluates an expression in the page at the end).
+  posts controller requests, saves the canvas, the screenshot and the page). `PROBE_JS`
+  evaluates an expression in the page at the end, or from the start with `PROBE_EARLY=1`;
+  `INIT_JS` runs before the page's own scripts (hiding `navigator.gpu` tests the WebGL2
+  fallback); `TIMELINE` captures the page at set seconds after it opens.
 - `web/ui/`: the Unity renderer's control icons, cursors and font (see its README).
 - `web/index.html`: the page, with the Unity renderer's controls laid out over the canvas; `?debug=1` or the backquote key shows the console and the commands on screen.
-- `build.sh`: `wasm-pack build --target web` into `web/pkg` with the Explorer's toolchain
-  (`nightly-2026-04-15`). `./build.sh` is the shipping build (size-first release profile,
-  wasm-opt, minutes); `./build.sh --fast` the iteration build (tuned dev profile, no wasm-opt,
-  about a minute, a larger module that never ships).
+- `build.sh`: `wasm-pack build --target web` with the Explorer's toolchain (`nightly-2026-04-15`),
+  twice: `web/pkg` for WebGPU and `web/pkg-gl` for WebGL2 (`--features webgl2`), since the engine
+  holds one backend per module. `./build.sh` is the shipping build (size-first release profile,
+  wasm-opt, minutes); `./build.sh --fast` the iteration build (tuned dev profile, no wasm-opt, a
+  larger module that never ships); `--webgpu-only` skips the WebGL2 module.
 
 ## Build and run
 
@@ -45,10 +48,18 @@ for avatars, wearables and emotes, replacing the Unity renderer slot of
 python3 tools/serve.py
 ```
 
-Open `http://localhost:5300/` in a WebGPU browser, or embed it in an iframe as a host embeds
-`wearable-preview`. `?flags=` takes camera pipeline switches for diagnosis: `nobloom`,
-`nomsaa`, `sdr` (no HDR), `clearsurface` (an explicit transparent surface clear). Release profile: `opt-level = "z"`, fat LTO, `panic = "abort"`,
-`wasm-opt -Oz`. Measured on 2026-11-05: 24.9 MB raw, 8.3 MB gzip.
+Open `http://localhost:5300/`, or embed it in an iframe as a host embeds `wearable-preview`. The
+page loads the WebGPU module where the browser offers a WebGPU adapter and the WebGL2 module
+otherwise; `?backend=webgpu` or `?backend=webgl2` forces one. The WebGL2 module leaves out what
+WebGL2 cannot do: the depth and normal prepasses (so the avatar has no outline), MSAA (FXAA
+smooths the edges instead) and the scene-bounds cell table, which a preview never reads.
+
+`?flags=` takes camera pipeline switches for diagnosis: `nobloom`, `nomsaa`, `sdr` (no HDR),
+`clearsurface` (an explicit transparent surface clear).
+
+Release profile: `opt-level = "z"`, fat LTO, `panic = "abort"`, `wasm-opt -Oz`. Measured: the
+WebGPU module 24.9 MB raw, 8.3 MB gzip (2026-11-05); the WebGL2 module 25.2 MB raw, 8.4 MB gzip,
+and an avatar on screen 3.2 s after the page opens, served locally (2026-11-06).
 
 ## The host surface (`src/host.rs`)
 

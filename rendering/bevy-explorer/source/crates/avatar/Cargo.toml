@@ -7,6 +7,8 @@ edition = "2021"
 
 [features]
 default = ["explorer"]
+# the materials without the scene-bounds cell table, for a WebGL2 build (see scene_material)
+webgl2 = ["scene_material/webgl2"]
 # The Explorer's glue around the avatar renderer: players and their profiles, scene-placed
 # avatars and their crdt reports, comms emote broadcast, colliders, nametags, IK, the photo
 # booth and the debug commands. Without it the crate is the renderer alone

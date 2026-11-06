@@ -3299,7 +3299,6 @@ dependencies = [
  "base64 0.22.1",
  "bevy",
  "bevy_kira_audio",
- "boimp",
  "collectibles",
  "common",
  "console",
