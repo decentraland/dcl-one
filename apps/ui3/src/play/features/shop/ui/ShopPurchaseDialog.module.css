@@ -1,0 +1,226 @@
+/* Text blocks are positioned so they paint over the badges' floor glow, as they do in the design. Their
+   line height is the design's "normal" for Inter (its ascent plus descent, 1.21): the browser's own rounds to
+   whole pixels, a pixel more per line. */
+.title {
+  position: relative;
+  width: 100%;
+  margin: 0;
+  font-size: var(--type-20);
+  font-weight: var(--fw-semibold);
+  line-height: 1.21;
+  text-align: center;
+}
+
+.balance {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  margin: 0;
+  font-size: var(--type-16);
+  line-height: 1.21;
+}
+.balanceAmount {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+}
+.balanceAmount img {
+  width: 13.291px;
+  height: 14.033px;
+}
+
+.note {
+  position: relative;
+  width: 100%;
+  margin: 0;
+  color: var(--pearl);
+  font-size: var(--type-14);
+  line-height: 1.334;
+  text-align: center;
+}
+.note strong {
+  font-weight: var(--fw-bold);
+}
+
+/* The design's CreditsItem: the tile, then 16px on, the name, creator and rarity over the price. */
+.item {
+  display: flex;
+  gap: 16px;
+  width: 100%;
+  border-radius: var(--r-slot);
+  background: var(--black-50);
+}
+.info {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 20px 11px;
+  overflow: hidden;
+}
+.about {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+.name {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: var(--type-16);
+  font-weight: var(--fw-semibold);
+  line-height: 1.21;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.creator {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: var(--type-12);
+  line-height: 1.21;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rarity {
+  padding: 3px 6px;
+  border-radius: var(--r-xs);
+  background: color-mix(in srgb, var(--rm) 20%, transparent);
+  color: var(--rm);
+  font-size: var(--type-12);
+  font-weight: var(--fw-semibold);
+  line-height: 1.21;
+  text-transform: uppercase;
+}
+.price {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--type-20);
+  font-weight: var(--fw-semibold);
+  line-height: 1.21;
+}
+
+/* The price's mark takes the design's 22.7×24 slot: the icon's 28.8px box, less its margins. */
+.mark {
+  position: relative;
+  flex: none;
+  width: 22.732px;
+  height: 24.002px;
+}
+.mark .markIcon {
+  position: absolute;
+  left: -3.116px;
+  top: -2.4px;
+}
+
+.working {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 150px;
+}
+
+/* The badges (Insufficient Funds' credit mark, the success check): 62px over a floor glow, in a 54px
+   (80px) slot that the badge overflows. */
+.badgeImg {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 54px;
+}
+.successImg {
+  height: 80px;
+}
+.floor {
+  position: absolute;
+  left: 23.587px;
+  top: 40.579px;
+  width: 349.847px;
+  height: 105.847px;
+  max-width: none;
+  pointer-events: none;
+}
+.successImg .floor {
+  top: 50.579px;
+}
+.badge {
+  position: absolute;
+  left: calc(50% - 31px);
+  top: -4px;
+  width: 62px;
+  height: 62px;
+}
+.successImg .badge {
+  top: 0;
+}
+.badge img {
+  position: absolute;
+  max-width: none;
+}
+.cb0 { left: 4.997px; top: 3.999px; width: 52px; height: 54.4px; }
+.cb1 { left: 10.955px; top: 9.684px; width: 40.413px; height: 42.67px; }
+.cb2 { left: 7.754px; top: 6.484px; width: 46.813px; height: 49.07px; }
+.cb3 { left: 11.315px; top: 10px; width: 39.609px; height: 41.821px; }
+.cb4 { left: 11.212px; top: 9.896px; width: 39.817px; height: 42.029px; }
+.cb5 { left: 13.526px; top: 12.213px; width: 35.116px; height: 37.397px; }
+.cb6 { left: 15.497px; top: 14.114px; width: 31.176px; height: 33.457px; }
+.cb7 { left: 16.399px; top: 14.943px; width: 29.379px; height: 31.66px; }
+.cbC { left: 19.591px; top: 17.655px; width: 22.024px; height: 26.783px; }
+.checkRingOuter { left: 0.903px; top: 0.903px; width: 60.194px; height: 60.194px; }
+.checkFill { left: 9px; top: 9px; width: 47px; height: 48px; }
+.checkRing { left: 3.903px; top: 3.903px; width: 54.194px; height: 54.194px; }
+.check {
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  width: 30px;
+  height: 30px;
+  overflow: hidden;
+}
+.check img {
+  left: 1.797px;
+  top: 5.137px;
+  width: 26.383px;
+  height: 24.629px;
+}
+
+/* Purchase successful's item: the tile in a 204px slot with its two glows behind it, both turned. */
+.bought {
+  position: relative;
+  display: block;
+  width: 204px;
+  height: 150px;
+}
+.boughtGlow,
+.boughtSpark {
+  position: absolute;
+  max-width: none;
+  transform: rotate(180deg);
+  pointer-events: none;
+}
+.boughtGlow {
+  left: -81.498px;
+  top: -106.485px;
+  width: 366.977px;
+  height: 363.977px;
+}
+.boughtSpark {
+  left: 17.13px;
+  top: -8.76px;
+  width: 168.739px;
+  height: 167.042px;
+  mix-blend-mode: plus-lighter;
+}
+.bought > .boughtTile {
+  position: absolute;
+  left: 27px;
+  top: 0;
+}
