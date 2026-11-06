@@ -509,6 +509,27 @@ describe('in-world shop', () => {
     expect(screen.queryByRole('button', { name: 'EXPLORE WEARABLES' })).toBeNull()
   })
 
+  it('says nothing is on sale, with nowhere wider to explore, when "On sale" is picked by hand over an empty feed', async () => {
+    serve({ listings: [[]] })
+    renderShop()
+    await openTab('Wearables')
+    await userEvent.click(screen.getByRole('button', { name: 'Filters' }))
+    await userEvent.click(screen.getByRole('radio', { name: 'On sale' }))
+    expect(await screen.findByText('Nothing on sale right now', {}, { timeout: 5000 })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'EXPLORE WEARABLES' })).toBeNull()
+  })
+
+  it('reads every status from the catalogue when "All" is picked', async () => {
+    const f = serve({ listings: [[listingRow()]], catalogue: [[catalogueRow()]] })
+    renderShop()
+    await openTab('Wearables')
+    await findCard()
+    await userEvent.click(screen.getByRole('button', { name: 'Filters' }))
+    await userEvent.click(screen.getByRole('radio', { name: 'All' }))
+    await waitFor(() => expect(calls(f, '/v3/catalog/items').at(-1)?.searchParams.get('category')).toBe('wearable'))
+    expect(calls(f, '/v3/catalog/items').at(-1)!.searchParams.get('isOnSale')).toBeNull()
+  })
+
   it('shows the error and retries', async () => {
     serve({ listings: ['down', [listingRow()]] })
     renderShop()
