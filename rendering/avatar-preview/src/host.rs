@@ -795,18 +795,21 @@ fn fit_to_bounds(
     time: Res<Time>,
     mut orbit: ResMut<OrbitCamera>,
     avatars: Query<(Entity, Ref<AvatarSelection>, Option<Ref<EmoteCommand>>), With<PreviewAvatar>>,
-    meshes: Query<
-        (
-            &GlobalTransform,
-            &bevy::render::primitives::Aabb,
-            &InheritedVisibility,
-            Option<&bevy::render::mesh::skinning::SkinnedMesh>,
-        ),
-        With<Mesh3d>,
-    >,
+    meshes: Query<(
+        &GlobalTransform,
+        &bevy::render::primitives::Aabb,
+        &InheritedVisibility,
+        Option<&bevy::render::mesh::skinning::SkinnedMesh>,
+        &Mesh3d,
+    )>,
     joints: Query<&GlobalTransform>,
     children: Query<&Children>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    mut reports: EventReader<AvatarLoadReport>,
+    (mesh_assets, bindposes): (
+        Res<Assets<Mesh>>,
+        Res<Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>,
+    ),
     mut state: Local<FitState>,
 ) {
     let Ok((root, selection, _emote)) = avatars.single() else {
@@ -814,9 +817,24 @@ fn fit_to_bounds(
     };
     let now = time.elapsed_secs();
     if selection.is_changed() {
-        *state = FitState::default();
+        *state = FitState {
+            changed_at: now,
+            ..default()
+        };
     }
-    if state.done {
+    for report in reports.read() {
+        if report.owner == root
+            && matches!(
+                report.state,
+                LoadingState::Finished | LoadingState::FinishedWithError
+            )
+        {
+            state.loaded = true;
+        }
+    }
+    // measure only the finished outfit: the body shows before its wearables, and a fit taken
+    // from it alone would stay too close for a big item (10 s is a fallback for a lost report)
+    if state.done || (!state.loaded && now - state.changed_at < 10.0) {
         return;
     }
     let before = state.seen;
@@ -827,21 +845,42 @@ fn fit_to_bounds(
         *max = max.max(point);
     };
     for entity in children.iter_descendants(root) {
-        let Ok((transform, aabb, visible, skin)) = meshes.get(entity) else {
+        let Ok((transform, aabb, visible, skin, mesh)) = meshes.get(entity) else {
             continue;
         };
         if !visible.get() {
             continue;
         }
         if let Some(skin) = skin {
-            // a skinned mesh's bounds are its rest pose; its skeleton is where the animation has
-            // it, and its surface lies around the joints: a margin covers it
-            const MARGIN: f32 = 0.35;
-            for joint in &skin.joints {
-                if let Ok(joint) = joints.get(*joint) {
-                    let at = joint.translation();
-                    grow(at - Vec3::splat(MARGIN));
-                    grow(at + Vec3::splat(MARGIN));
+            // a skinned mesh's box is its rest pose in the space it was bound in: skin the
+            // vertices on the CPU instead, as the GPU will draw them in this frame's pose
+            let skinned = mesh_assets
+                .get(&mesh.0)
+                .zip(bindposes.get(&skin.inverse_bindposes))
+                .map(|(data, inverse)| {
+                    let matrices: Vec<Mat4> = skin
+                        .joints
+                        .iter()
+                        .zip(inverse.iter())
+                        .map(|(joint, inverse)| {
+                            joints
+                                .get(*joint)
+                                .map(|joint| joint.compute_matrix() * *inverse)
+                                .unwrap_or(Mat4::ZERO)
+                        })
+                        .collect();
+                    skin_points(data, &matrices, &mut grow)
+                })
+                .unwrap_or(false);
+            if !skinned {
+                // no vertex data to skin: the skeleton, with a margin for the surface around it
+                const MARGIN: f32 = 0.35;
+                for joint in &skin.joints {
+                    if let Ok(joint) = joints.get(*joint) {
+                        let at = joint.translation();
+                        grow(at - Vec3::splat(MARGIN));
+                        grow(at + Vec3::splat(MARGIN));
+                    }
                 }
             }
             continue;
@@ -896,7 +935,12 @@ fn fit_to_bounds(
         let half = (AVATAR_BOX_MAX - AVATAR_BOX_MIN) / 2.0;
         half.y / tan_v + half.x.max(half.z)
     };
-    let fit = (needs(min, max) / ordinary).max(1.0);
+    // a little room around a big avatar, as the Unity renderer's fit keeps
+    const MARGIN: f32 = 1.06;
+    let fit = (needs(min, max) * MARGIN / ordinary).max(1.0);
+    if state.done {
+        warn!("FITDBG min={min} max={max} fit={fit}");
+    }
     let ordinary_centre = (AVATAR_BOX_MIN + AVATAR_BOX_MAX) / 2.0;
     // only the height moves: the turn axis stays on the avatar however its wearables reach out
     let fit_target = if fit > 1.0 {
@@ -916,9 +960,41 @@ fn fit_to_bounds(
     }
 }
 
+/// Grows a box by where a skinned mesh's vertices are in this frame's pose: each vertex blended
+/// by its joints' weights, as the GPU skins it. False when the mesh carries no skinning data.
+fn skin_points(mesh: &Mesh, matrices: &[Mat4], grow: &mut impl FnMut(Vec3)) -> bool {
+    use bevy::render::mesh::VertexAttributeValues as Values;
+    let (
+        Some(Values::Float32x3(positions)),
+        Some(Values::Uint16x4(indices)),
+        Some(Values::Float32x4(weights)),
+    ) = (
+        mesh.attribute(Mesh::ATTRIBUTE_POSITION),
+        mesh.attribute(Mesh::ATTRIBUTE_JOINT_INDEX),
+        mesh.attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT),
+    )
+    else {
+        return false;
+    };
+    for ((position, index), weight) in positions.iter().zip(indices).zip(weights) {
+        let mut blended = Mat4::ZERO;
+        for k in 0..4 {
+            if weight[k] > 0.0 {
+                if let Some(matrix) = matrices.get(index[k] as usize) {
+                    blended += *matrix * weight[k];
+                }
+            }
+        }
+        grow(blended.transform_point3(Vec3::from(*position)));
+    }
+    true
+}
+
 /// What `fit_to_bounds` has measured since the last outfit change.
 #[derive(Default)]
 struct FitState {
+    changed_at: f32,
+    loaded: bool,
     seen: Option<(Vec3, Vec3)>,
     started: Option<f32>,
     last_growth: f32,
