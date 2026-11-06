@@ -8,7 +8,7 @@
 // (badges/info/mutuals) by address; the 2D picture is the fallback meanwhile.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, Button, ContextMenu, ControlButton, EquippedItemCard, Icon, Kebab, Pencil, ReportFlag, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem } from '../../design'
+import { Avatar, BlockUserIcon, Button, ColorPicker, ContextMenu, ControlButton, EquippedItemCard, Icon, Kebab, Pencil, ReportFlag, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem } from '../../design'
 import { registerCancelLayer } from '../../lib/cancelLayers'
 import { CategoryIcon } from '../backpack/categoryIcons'
 import { catalystThumbUrl, shortAddr, splitName, userColor } from '../../lib/identity'
@@ -22,6 +22,11 @@ type Tab = 'overview' | 'badges' | 'photos'
 const PASSPORT_TABS: TabItem<Tab>[] = (['overview', 'badges', 'photos'] as const).map((t) => ({ id: t, label: t.toUpperCase() }))
 // A single selected-but-disabled tab: the same bar, holding the same height, with nothing to switch to.
 const EDIT_TAB: TabItem<'edit'>[] = [{ id: 'edit', label: 'EDIT PROFILE', disabled: true }]
+// unity-explorer's name colour presets (UI/ColorPicker/NameColors.asset), in its order.
+const NAME_COLOR_PRESETS = [
+  '#a140ff', '#d740ff', '#ff40ad', '#ff4046', '#ff9840', '#ffbd40',
+  '#ffe340', '#b1ff40', '#40ff45', '#40eaff', '#4092ff', '#4740ff'
+] as const
 
 function CopyButton({ value, label }: { value: string; label: string }): React.JSX.Element {
   return (
@@ -214,6 +219,8 @@ export interface PassportEditing {
   /** Open the name editor — its own popup, since picking a claimed NAME is a different shape of
    *  choice from the rest of the form (see NameEditModal). */
   editName: () => void
+  /** Preview a claimed name's colour; the passport's owner deploys it when the passport closes. */
+  pickNameColor: (hex: string) => void
 }
 
 export function ProfilePassport({
@@ -339,6 +346,7 @@ export function ProfilePassport({
   // (Escape is handled centrally by the popup stack — see popups.tsx.)
   const { base, tag } = splitName(profile.name)
   const claimed = profile.hasClaimedName
+  const nameColor = userColor(profile.address, profile.name, claimed, profile.nameColor)
   const fields = PROFILE_FIELDS.filter(({ key }) => profile.info?.[key])
   const hasBadges = unlockedBadges.length > 0
   const hasAbout = !!profile.description || fields.length > 0 || (profile.links?.length ?? 0) > 0
@@ -360,7 +368,7 @@ export function ProfilePassport({
         <header className={styles.head}>
           <div className={styles.idblock}>
             <div className={styles.nameRow}>
-              <span className={styles.name}>{base}</span>
+              <span className={styles.name} style={{ '--name-color': nameColor } as React.CSSProperties}>{base}</span>
               {claimed && <Verified />}
               {tag && <span className={styles.tag}>{tag}</span>}
               <CopyButton value={profile.name} label="name" />
@@ -368,6 +376,11 @@ export function ProfilePassport({
                 <button type="button" className={styles.iconBtn} aria-label="Edit name" onClick={editing.editName}>
                   <Pencil size={16} />
                 </button>
+              )}
+              {/* A claimed name's colour, as unity-explorer offers it: own passport only, since an
+                  unclaimed name always shows its derived colour. */}
+              {canEdit && claimed && (
+                <ColorPicker label="Name color" value={nameColor} presets={NAME_COLOR_PRESETS} hueOnly swatch onChange={editing.pickNameColor} />
               )}
             </div>
             <div className={styles.addrRow}>
@@ -454,7 +467,7 @@ export function ProfilePassport({
             ) : profile.bodyImage ? (
               <img className={styles.avatarImg} src={profile.bodyImage} alt={base} />
             ) : (
-              <Avatar src={profile.picture} name={base} color={userColor(profile.address, profile.name, profile.hasClaimedName, profile.nameColor)} size={180} status="online" />
+              <Avatar src={profile.picture} name={base} color={nameColor} size={180} status="online" />
             )}
           </div>
 

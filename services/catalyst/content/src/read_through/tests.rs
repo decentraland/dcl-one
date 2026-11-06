@@ -426,6 +426,20 @@ async fn a_profile_past_the_sync_age_limit_is_reachable_through_the_profile_look
     assert_eq!(docs.len(), 1);
     assert_eq!(docs[0].id, profile.id);
     assert_eq!(node.deployments(&profile.id).await, 1);
+
+    // A listed entity is left out of the answer, and its pointer counts as
+    // answered: hidden, never asked of the sources again.
+    let calls = fake.active_calls();
+    node.storage
+        .denylist()
+        .set_remote("https://registry.example/denylist", [profile.id.clone()]);
+    let docs = node
+        .read_through
+        .active_docs(false, std::slice::from_ref(&address))
+        .await
+        .unwrap();
+    assert!(docs.is_empty(), "{docs:?}");
+    assert_eq!(fake.active_calls(), calls);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

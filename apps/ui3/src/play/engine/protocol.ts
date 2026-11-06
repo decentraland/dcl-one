@@ -645,6 +645,9 @@ export interface SaveProfileRequest {
   description?: string
   links?: { title: string; url: string }[]
   info?: ProfileInfo
+  /** A claimed name's colour, sRGB channels 0–1. The engine applies it only while the name is
+   *  claimed; an unclaimed name keeps its derived colour. */
+  nameColor?: { r: number; g: number; b: number }
 }
 
 /** The outcome of a `saveProfile` — the engine acks the profile deploy, so a failed save is

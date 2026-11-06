@@ -1,0 +1,25 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://asset-bundle-registry.decentraland.zone",
+  "request": {
+    "method": "POST",
+    "path": "/profiles/metadata",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "ids": [
+        "0x0000000000000000000000000000000000000b00"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "2"
+    },
+    "body": []
+  },
+  "note": "The same production address as AB-1-one-known.json: the zone registry holds its own profiles."
+}
