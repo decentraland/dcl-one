@@ -676,6 +676,7 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
     if config.node.sync_enabled && config.content.sync_source.trim().is_empty() {
         anyhow::bail!("SYNC_ENABLED=true with an empty SYNC_SOURCE: there is no peer to sync from");
     }
+    config.content.denylist_urls()?;
     let Some(posture) = posture else {
         return Ok(());
     };

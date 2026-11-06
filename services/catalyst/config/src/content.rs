@@ -238,6 +238,34 @@ impl ContentConfig {
         }
         Ok(Some(raw.to_string()))
     }
+
+    /// `DENYLIST_URLS`: the URLs, split on commas and whitespace (upstream
+    /// splits on whitespace), deduplicated in order. Each must be an http(s)
+    /// URL, checked at startup (`posture::check`); the outbound guard decides
+    /// at fetch time whether its host may be dialled. The error never echoes
+    /// the value: a URL may carry a token.
+    pub fn denylist_urls(&self) -> anyhow::Result<Vec<String>> {
+        let mut urls: Vec<String> = Vec::new();
+        for token in self
+            .denylist_urls
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .filter(|t| !t.is_empty())
+        {
+            let url = url::Url::parse(token).map_err(|_| {
+                anyhow::anyhow!(
+                    "DENYLIST_URLS holds a value that is not a URL (not echoed: it may carry a token)"
+                )
+            })?;
+            anyhow::ensure!(
+                matches!(url.scheme(), "http" | "https"),
+                "DENYLIST_URLS: only http(s) URLs are allowed"
+            );
+            if !urls.iter().any(|u| u == token) {
+                urls.push(token.to_string());
+            }
+        }
+        Ok(urls)
+    }
 }
 
 /// The content validator: the access policy of local deploys.
@@ -354,6 +382,34 @@ mod tests {
             "the refusal must not print the URL: {err}"
         );
         assert!(cfg("not a url").content.eth_rpc_url().is_err());
+    }
+
+    #[test]
+    fn denylist_urls_split_on_commas_and_whitespace() {
+        let urls = |raw: &str| {
+            parse(&[
+                "x",
+                "--database-url",
+                "postgres:///catalyst",
+                "--denylist-urls",
+                raw,
+            ])
+            .unwrap()
+            .content
+            .denylist_urls()
+        };
+        assert!(urls("").unwrap().is_empty());
+        assert_eq!(
+            urls("https://a.example/denylist, https://b.example/x\nhttps://a.example/denylist")
+                .unwrap(),
+            vec![
+                "https://a.example/denylist".to_string(),
+                "https://b.example/x".to_string()
+            ]
+        );
+        assert!(urls("ftp://a.example/list").is_err());
+        let err = urls("not-a-url?token=SECRET").unwrap_err().to_string();
+        assert!(!err.contains("SECRET"), "{err}");
     }
 
     #[test]

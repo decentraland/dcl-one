@@ -284,6 +284,19 @@ fn a_mirror_reads_decentralands_moderation_denylist() {
             .to_string();
         assert!(err.contains("DENYLIST_URLS names"), "{err}");
     }
+    // A value that is not an http(s) URL fails the startup check, posture or
+    // not, before serve spawns anything.
+    for posture in [None, Some("mirror")] {
+        let mut pairs = vec![
+            ("DATABASE_URL", "postgres:///catalyst"),
+            ("DENYLIST_URLS", "ftp://registry.example/denylist"),
+        ];
+        pairs.extend(posture.map(|p| (ENV, p)));
+        let err = check(&parsed(&pairs), &lookup(&env(&pairs)))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("only http(s)"), "{posture:?}: {err}");
+    }
 }
 
 #[test]

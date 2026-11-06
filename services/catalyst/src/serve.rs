@@ -608,7 +608,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     // The remote moderation lists (DENYLIST_URLS; Decentraland's on a
     // mirror), fetched once before the routes serve and every 120 s after,
     // into the same projection; a failed fetch is logged, never fatal.
-    let denylist_urls = content::denylist::remote_urls(&config.content.denylist_urls)?;
+    let denylist_urls = config.content.denylist_urls()?;
     if !denylist_urls.is_empty() {
         let (remote, errors) = content
             .reload_remote_denylist(&http_client, &denylist_urls)

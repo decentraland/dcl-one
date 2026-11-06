@@ -142,29 +142,6 @@ pub fn refusal(entity: &Entity, denylist: &super::Denylist) -> Option<Vec<String
     (!errors.is_empty()).then_some(errors)
 }
 
-/// `DENYLIST_URLS`: the URLs, split on commas and whitespace (upstream
-/// splits on whitespace). Each must be an http(s) URL; the outbound guard
-/// decides at fetch time whether its host may be dialled.
-pub fn remote_urls(raw: &str) -> anyhow::Result<Vec<String>> {
-    let mut urls: Vec<String> = Vec::new();
-    for token in raw
-        .split(|c: char| c == ',' || c.is_whitespace())
-        .filter(|t| !t.is_empty())
-    {
-        let url = url::Url::parse(token).context(
-            "DENYLIST_URLS holds a value that is not a URL (not echoed: it may carry a token)",
-        )?;
-        anyhow::ensure!(
-            matches!(url.scheme(), "http" | "https"),
-            "DENYLIST_URLS: only http(s) URLs are allowed"
-        );
-        if !urls.iter().any(|u| u == token) {
-            urls.push(token.to_string());
-        }
-    }
-    Ok(urls)
-}
-
 /// What logs and the job report carry of a remote URL: host and path, no
 /// scheme, credentials or query.
 fn shown(url: &str) -> String {
@@ -430,23 +407,6 @@ mod tests {
         );
         assert!(parse_remote(b"[null]").is_err(), "a null entry");
         assert!(parse_remote(b"<html>").is_err(), "not JSON");
-    }
-
-    #[test]
-    fn remote_urls_split_on_commas_and_whitespace() {
-        assert!(remote_urls("").unwrap().is_empty());
-        assert_eq!(
-            remote_urls(
-                "https://a.example/denylist, https://b.example/x\nhttps://a.example/denylist"
-            )
-            .unwrap(),
-            vec![
-                "https://a.example/denylist".to_string(),
-                "https://b.example/x".to_string()
-            ]
-        );
-        assert!(remote_urls("ftp://a.example/list").is_err());
-        assert!(remote_urls("not a url").is_err());
     }
 
     #[test]
