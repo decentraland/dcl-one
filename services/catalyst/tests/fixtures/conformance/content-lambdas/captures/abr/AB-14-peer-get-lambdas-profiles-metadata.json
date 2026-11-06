@@ -1,0 +1,22 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/lambdas/profiles/metadata",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "51"
+    },
+    "body": {
+      "error": "Not Found",
+      "message": "Profile not found"
+    }
+  },
+  "note": "Answered by the application (it carries the application trace header)."
+}
