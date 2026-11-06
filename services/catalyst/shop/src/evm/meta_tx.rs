@@ -121,6 +121,12 @@ const CREDITS_DEPRECATED: AuditedDomain = AuditedDomain {
     label: "CreditsManager_DEPRECATED",
     ..CREDITS
 };
+/// dcl-one's own Amoy manager (`policy_entry::DCL_ONE_AMOY_MANAGER`): the same
+/// contract, so the same domain and `FunctionData` struct.
+const CREDITS_DCL_ONE: AuditedDomain = AuditedDomain {
+    label: "CreditsManager_DCL_ONE",
+    ..CREDITS
+};
 
 /// The contracts whose domain separator is not readable on-chain, with the
 /// domain their audited source declares, keyed by chain as well as address
@@ -145,6 +151,10 @@ fn audited_table(chain_id: u64) -> &'static [(&'static str, AuditedDomain)] {
             (
                 "0x037566bc90f85e76587e1b07f9184585f09c1420",
                 CREDITS_DEPRECATED,
+            ),
+            (
+                "0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c",
+                CREDITS_DCL_ONE,
             ),
         ],
         _ => &[],
@@ -331,5 +341,56 @@ mod tests {
             .count();
         assert_eq!(marketplaces, 3);
         assert_eq!(audited_domains_for(1).len(), 0);
+    }
+
+    /// dcl-one's Amoy manager is audited under the Credits domain on Amoy only, and
+    /// the digest built from that entry is the one the deployed contract checks: the
+    /// signature below, by the public test key 0x…01 over `paused()` at nonce 0, was
+    /// accepted by its `executeMetaTransaction` (an `eth_call` on Amoy, 2026-11-06),
+    /// while the same call signed under version "2" reverted.
+    #[test]
+    fn dcl_ones_amoy_manager_verifies_under_the_credits_domain_on_amoy_only() {
+        let manager = address!("0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c");
+        let domain = audited_domain_for(80002, manager).expect("audited on Amoy");
+        assert_eq!(
+            domain,
+            AuditedDomain {
+                label: "CreditsManager_DCL_ONE",
+                name: "Decentraland Credits",
+                version: "1.0.0",
+                struct_kind: MetaTxStruct::FunctionData
+            }
+        );
+        assert!(audited_domain_for(137, manager).is_none());
+        assert!(audited_domain_for(1, manager).is_none());
+
+        let signer = address!("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf");
+        let paused = [0x5c, 0x97, 0x5a, 0xbb];
+        let digest = meta_tx_digest(
+            build_domain_separator(domain.name, domain.version, manager, 80002),
+            U256::ZERO,
+            signer,
+            &paused,
+            domain.struct_kind,
+        );
+        assert_eq!(
+            hex::encode(digest),
+            "aa950e053665253dbe2a9034e91df040ea9adc2ca1987c153d991cee21a52e48"
+        );
+        let accepted = hex::decode(
+            "6fcafaaa6e9a609b8aefb9e8367e041c9f8db3db2def7b7ddc62e09a11dee69e\
+             309756f266f0dec282422430bf8ad59c2101dc466d65c0d8d27e552ce18010dc1b",
+        )
+        .unwrap();
+        assert_eq!(recover_meta_tx_signer(digest, &accepted), Ok(signer));
+        // Under the other struct the same signature names someone else.
+        let other = meta_tx_digest(
+            build_domain_separator(domain.name, domain.version, manager, 80002),
+            U256::ZERO,
+            signer,
+            &paused,
+            MetaTxStruct::FunctionSignature,
+        );
+        assert_ne!(recover_meta_tx_signer(other, &accepted), Ok(signer));
     }
 }
