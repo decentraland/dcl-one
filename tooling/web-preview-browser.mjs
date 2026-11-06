@@ -41,6 +41,7 @@ let browser
 let socket
 let profile
 let browserExit
+let browserLog = ''
 const pending = new Map()
 let nextId = 0
 const fetched = new Set()
@@ -51,10 +52,13 @@ async function waitFor(check, label, timeout = 15000) {
   const end = Date.now() + timeout
   while (Date.now() < end) {
     if (failures.length) throw new Error(failures.join('\n'))
+    if (browser && (browser.exitCode !== null || browser.signalCode !== null)) {
+      throw new Error(`Chromium exited before ${label}: ${browserLog}`)
+    }
     if (await check()) return
     await delay(100)
   }
-  throw new Error(`Timed out: ${label}`)
+  throw new Error(`Timed out: ${label}. ${browserLog}`)
 }
 
 function cdp(method, params = {}) {
@@ -120,8 +124,11 @@ try {
       '--remote-debugging-port=0',
       '--user-data-dir=' + profile
     ],
-    { stdio: 'ignore' }
+    { stdio: ['ignore', 'ignore', 'pipe'] }
   )
+  browser.stderr.on('data', (data) => {
+    browserLog = (browserLog + data).slice(-4000)
+  })
   browserExit = new Promise((resolve) => {
     browser.once('exit', resolve)
     browser.once('error', resolve)
