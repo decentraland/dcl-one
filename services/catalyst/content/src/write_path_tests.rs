@@ -1665,15 +1665,14 @@ async fn the_burst_limit_counts_a_direct_socket_not_its_header() {
     };
     let node = deploying_node("burst-direct-socket", settings).await;
     let router = node.router();
-    let from = |peer: [u8; 4], ip: &str| {
-        let mut request = form_request(ip, &entity_form());
-        request
-            .extensions_mut()
-            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
-                peer, 40000,
-            ))));
-        request
-    };
+    let from =
+        |peer: [u8; 4], ip: &str| {
+            let mut request = form_request(ip, &entity_form());
+            request.extensions_mut().insert(axum::extract::ConnectInfo(
+                std::net::SocketAddr::from((peer, 40000)),
+            ));
+            request
+        };
     // A direct client rotating its header: one budget, its socket's.
     for ip in ["203.0.113.30", "203.0.113.31"] {
         let (status, _, _) = call(&router, from([198, 51, 100, 7], ip)).await;
@@ -1691,7 +1690,11 @@ async fn the_burst_limit_counts_a_direct_socket_not_its_header() {
     let (status, _, _) = call(&router, from([10, 0, 0, 5], "203.0.113.33")).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
     let (status, _, _) = call(&router, from([10, 0, 0, 5], "203.0.113.34")).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "another client behind the proxy");
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "another client behind the proxy"
+    );
 }
 
 #[tokio::test]
