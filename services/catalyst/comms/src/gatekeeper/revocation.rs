@@ -177,3 +177,172 @@ fn world_batch(state: &CommsState, rooms: &[String]) -> Vec<WorldName> {
     selected
 }
 
+#[cfg(test)]
+mod recheck_regressions {
+    use super::*;
+    use crate::interfaces::test_support::{StubDirectory, StubPolicy, StubScenes};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[tokio::test]
+    async fn undecided_access_rechecks_persist_and_a_newer_edit_survives_an_older_pass() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let world = format!("recheck-{}.dcl.eth", uuid::Uuid::new_v4());
+        sqlx::query("INSERT INTO social.world_access_rechecks(world_name) VALUES($1)")
+            .bind(&world)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let newer = Arc::new(AtomicBool::new(false));
+        let fixture_pool = pool.clone();
+        let fixture_world = world.clone();
+        let fixture_newer = newer.clone();
+        let app=axum::Router::new().route("/twirp/livekit.RoomService/{method}",axum::routing::post(move |axum::extract::Path(method): axum::extract::Path<String>| {
+            let (pool,world,newer)=(fixture_pool.clone(),fixture_world.clone(),fixture_newer.clone());
+            async move {
+                if method == "ListRooms" {
+                    return axum::Json(serde_json::json!({"rooms":[{"name":format!("world-{world}")}]}));
+                }
+                // ListParticipants runs after the retry captured its revision.
+                if newer.swap(false,Ordering::SeqCst) {
+                    sqlx::query("UPDATE social.world_access_rechecks SET revision=gen_random_uuid() WHERE world_name=$1").bind(world).execute(&pool).await.unwrap();
+                }
+                axum::Json(serde_json::json!({"participants":[]}))
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut state = CommsState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            super::super::Settings::for_tests(),
+            None,
+            None,
+            Arc::new(StubPolicy {
+                protected: Err(AuthorityNotEstablished::store_unavailable(
+                    "worlds.worlds",
+                    &sqlx::Error::PoolTimedOut,
+                )),
+                ..Default::default()
+            }),
+            Arc::new(StubScenes::default()),
+            Arc::new(crate::presence::Presence::new()),
+            Arc::new(StubDirectory::default()),
+        );
+        state.livekit.configured = true;
+        state.livekit.api_url = url;
+        let rooms = state.room_service().list_rooms().await.unwrap();
+        retry_access_rechecks(&state, Some(&world), &rooms)
+            .await
+            .unwrap();
+        let initial = sqlx::query_scalar::<_, uuid::Uuid>(
+            "SELECT revision FROM social.world_access_rechecks WHERE world_name=$1",
+        )
+        .bind(&world)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        state.policy = Arc::new(StubPolicy::default());
+        newer.store(true, Ordering::SeqCst);
+        for retained in [true, true] {
+            sqlx::query("UPDATE social.world_access_rechecks SET next_attempt_at=timezone('UTC',now()) WHERE world_name=$1").bind(&world).execute(&pool).await.unwrap();
+            let rooms = state.room_service().list_rooms().await.unwrap();
+            retry_access_rechecks(&state, Some(&world), &rooms)
+                .await
+                .unwrap();
+            let revision = sqlx::query_scalar::<_, uuid::Uuid>(
+                "SELECT revision FROM social.world_access_rechecks WHERE world_name=$1",
+            )
+            .bind(&world)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+            assert_eq!(revision.is_some(), retained);
+            if let Some(revision) = revision {
+                assert_ne!(revision, initial);
+            }
+        }
+        sqlx::query("DELETE FROM social.world_access_rechecks WHERE world_name=$1")
+            .bind(&world)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // ABA: an old completion cannot remove a newly reinserted obligation.
+        let old = sqlx::query_scalar::<_, uuid::Uuid>(
+            "INSERT INTO social.world_access_rechecks(world_name) VALUES($1) RETURNING revision",
+        )
+        .bind(&world)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM social.world_access_rechecks WHERE world_name=$1")
+            .bind(&world)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let fresh = sqlx::query_scalar::<_, uuid::Uuid>(
+            "INSERT INTO social.world_access_rechecks(world_name) VALUES($1) RETURNING revision",
+        )
+        .bind(&world)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_ne!(old, fresh);
+        let deleted = sqlx::query(
+            "DELETE FROM social.world_access_rechecks WHERE world_name=$1 AND revision=$2",
+        )
+        .bind(&world)
+        .bind(old)
+        .execute(&pool)
+        .await
+        .unwrap()
+        .rows_affected();
+        assert_eq!(deleted, 0);
+        server.abort();
+    }
+}
+
+#[cfg(test)]
+mod roster_regressions {
+    use super::*;
+    use crate::interfaces::test_support::{StubDirectory, StubPolicy, StubScenes};
+    #[tokio::test]
+    async fn a_roster_fault_is_undecided_and_cannot_complete_a_secret_change() {
+        let fixture=axum::Router::new()
+            .route("/twirp/livekit.RoomService/ListRooms",axum::routing::post(||async{axum::Json(serde_json::json!({"rooms":[{"name":"w1:d:mixed.dcl.ethSceneA","sid":"RM_a","metadata":"{}"}]}))}))
+            .route("/twirp/livekit.RoomService/ListParticipants",axum::routing::post(||async{axum::http::StatusCode::SERVICE_UNAVAILABLE}));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, fixture).await.unwrap();
+        });
+        let mut state = CommsState::new(
+            sqlx::PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap(),
+            crate::http::Outbound::for_tests(),
+            super::super::Settings::for_tests(),
+            None,
+            None,
+            Arc::new(StubPolicy::default()),
+            Arc::new(StubScenes::default()),
+            Arc::new(crate::presence::Presence::new()),
+            Arc::new(StubDirectory::default()),
+        );
+        state.livekit.configured = true;
+        state.livekit.api_url = url;
+        assert!(
+            readmit_world_rooms_in_inventory(
+                &state,
+                &WorldName::parse("mixed.dcl.eth").unwrap(),
+                Some(chrono::Utc::now().naive_utc()),
+                &["w1:d:mixed.dcl.ethSceneA".into()]
+            )
+            .await
+            .is_err()
+        );
+        server.abort();
+    }
+}

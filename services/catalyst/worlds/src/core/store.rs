@@ -2429,7 +2429,6 @@ mod tests {
     }
 }
 
-
 async fn queue_access_recheck(
     conn: &mut sqlx::PgConnection,
     world: &WorldName,
