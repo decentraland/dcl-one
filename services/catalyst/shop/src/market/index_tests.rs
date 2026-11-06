@@ -2536,7 +2536,14 @@ async fn the_rentals_walk_feeds_rental_started_and_rental_ended() {
     .fetch_all(&st.pool)
     .await
     .unwrap();
-    let block = rented_at as i64;
+    let key: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT {} FROM shop.rental_event e WHERE e.kind = 'rented' AND e.block_number = $1",
+        crate::market::notice_cursor::tx_log_key("rental_event", "e", "coalesce(e.signature, '')")
+    )))
+    .bind(rented_at as i64)
+    .fetch_one(&st.pool)
+    .await
+    .unwrap();
     let (started, ended) = (time_of(rented_at), time_of(rented_at) + 86_400);
     let token = parcel.to_string();
     let link = format!("{base}/contracts/{land}/tokens/{token}/manage");
@@ -2551,7 +2558,7 @@ async fn the_rentals_walk_feeds_rental_started_and_rental_ended() {
         rows,
         vec![
             (
-                started_id("ethereum", block, 0),
+                started_id("ethereum", &key),
                 lessor.to_string(),
                 "rental_started".to_string(),
                 meta(
@@ -2560,7 +2567,7 @@ async fn the_rentals_walk_feeds_rental_started_and_rental_ended() {
                 )
             ),
             (
-                ended_id("ethereum", block, 0),
+                ended_id("ethereum", &key),
                 lessor.to_string(),
                 "rental_ended".to_string(),
                 meta(
