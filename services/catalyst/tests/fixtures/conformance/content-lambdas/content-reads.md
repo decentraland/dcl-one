@@ -155,8 +155,8 @@ that does not sync a type answers `[]` for it (upstream full nodes hold every ty
 |---|---|---|---|---|---|
 | `parseUrn` throws (e.g. `not-a-real-urn`) | 400 | `{"error":"Invalid URN format: <urn>"}` | `filter-by-urn-handler.ts:16-20` | `active_entities.rs:187-217` (scheme heuristic) | MATCH on the pinned test inputs (`test/unit/controllers/filter-by-urn-handler.spec.ts:102-110`, fixture `tests/fixtures/content/entities-by-collection-400-invalid-urn.json`) |
 | parsed but not a collection (LAND, ESTATE, `collections-thirdparty:<tp>:<collection>`, off-chain other registry) | 400 | `{"error":"Invalid collection urn param, it must be a valid urn prefix of a collection or a third party id, instead: '<urn>'"}` | `filter-by-urn-handler.ts:22-35` | `active_entities.rs:191-195,229-249` | MATCH on the pinned cases (`filter-by-urn-handler.spec.ts:33-77`); the hand-written grammar (`KNOWN_NETWORKS`, `collections-v1` only on `ethereum` unless hex) is not proven equal to `@dcl/urn-resolver` for other inputs |
-| `pageSize`/`pageNum` not a positive integer | 400 | `{"error":"pageSize must be a positive integer"}` / `{"error":"pageNum must be a positive integer"}` | `utils.ts:11-17` | `shared/src/query_params.rs` `parse_pagination_js` | MATCH: a present value is read with `parseInt` (`10abc` is 10, `1.5` is 1); an unparseable or empty one is a 400 (CR-10) |
-| `pageSize` > 1000 | 400 | `{"error":"max allowed pageSize is 1000"}` | `utils.ts:19-21` | `query_params.rs` `parse_pagination_js` | MATCH |
+| `pageSize`/`pageNum` not a positive integer | 400 | `{"error":"pageSize must be a positive integer"}` / `{"error":"pageNum must be a positive integer"}` | `utils.ts:11-17` | `shared/src/query_params.rs` `parse_content_pagination` | MATCH: a present value is read with `parseInt` (`10abc` is 10, `1.5` is 1); an unparseable or empty one is a 400 (CR-10) |
+| `pageSize` > 1000 | 400 | `{"error":"max allowed pageSize is 1000"}` | `utils.ts:19-21` | `query_params.rs` `parse_content_pagination` | MATCH |
 | success | 200 | `{"total": number, "entities": Entity[]}`; `total` counts matching pointers before the denylist filter | `filter-by-urn-handler.ts:40-55` | `active_entities.rs:264-281`, `queries.rs:277-310` | MATCH (entity shape as section 1) |
 | no match | 200 | `{"total":0,"entities":[]}` | `logic/active-entities/component.ts:373-375` | `queries.rs:284-290` | MATCH |
 
@@ -490,7 +490,7 @@ Verdict: MATCH under `/content/` (CR-11).
 10. **CR-10** GET /entities/active/collections/:collectionUrn: `parseInt` pagination. Status: MATCH, no work.
     - Upstream: present but NaN -> 400 `pageSize must be a positive integer` / `pageNum must be a positive integer`;
       a numeric prefix is used (`10abc` -> 10, `1.5` -> 1) (`decentraland/catalyst:src/controllers/utils.ts:7-26`).
-    - dcl-one: `shared/src/query_params.rs` `parse_pagination_js` (`js_parse_int`); test
+    - dcl-one: `shared/src/query_params.rs` `parse_content_pagination` (`js_parse_int`); test
       `js_pagination_reads_like_pagination_object`.
     - Severity: none (closed).
 

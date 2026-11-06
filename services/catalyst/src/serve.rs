@@ -933,17 +933,23 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         },
         eip1654.clone(),
     ));
-    let mana = Arc::new(shop::mana::State::new(
-        pool.clone(),
-        http_client.clone(),
-        market.clone(),
-        signatures.clone(),
-        shop::mana::Settings {
-            writes_enabled: config.writes.data_writes_enabled,
-            track_interval: Duration::from_secs(config.marketplace.marketplace_index_interval_secs),
-        },
-        eip1654.clone(),
-    ));
+    let mana = Arc::new(
+        shop::mana::State::new(
+            pool.clone(),
+            http_client.clone(),
+            market.clone(),
+            signatures.clone(),
+            shop::mana::Settings {
+                writes_enabled: config.writes.data_writes_enabled,
+                track_interval: Duration::from_secs(
+                    config.marketplace.marketplace_index_interval_secs,
+                ),
+                collections_chain_id: config.economy.collections_chain_id,
+            },
+            eip1654.clone(),
+        )
+        .context("the Shop's MANA settlement venues")?,
+    );
     shop::mana::spawn_jobs(&mana, &jobs);
     let social = social_states(
         &config,

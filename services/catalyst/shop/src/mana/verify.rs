@@ -506,6 +506,47 @@ mod tests {
         );
     }
 
+    /// A trade signed on Amoy's V3 verifies against the testnet book's Amoy
+    /// chain, and the same signature names another domain on Polygon's.
+    #[test]
+    fn an_amoy_trade_verifies_against_the_testnet_books_amoy_domain() {
+        let amoy = super::super::venues::Book::testnet(|_| None)
+            .chain(crate::types::ChainId::AMOY)
+            .unwrap()
+            .clone();
+        let marketplace = listings::offchain_marketplace_v3(listings::MATIC_AMOY).unwrap();
+        let creation = fixtures::signed_trade_on(listings::MATIC_AMOY, &marketplace);
+        let mut json: serde_json::Value = serde_json::from_str(&fixtures::trade_json_on(
+            &creation.signer,
+            &creation.signature,
+            listings::MATIC_AMOY,
+        ))
+        .unwrap();
+        json["id"] = serde_json::json!("t");
+        json["contract"] = serde_json::json!(marketplace.address);
+        let trade: TradeIn = serde_json::from_value(json).unwrap();
+        let venue: Address = marketplace.address.parse().unwrap();
+        assert_eq!(
+            trade_signing_hash(&trade, &amoy, venue).unwrap(),
+            listings::signing_hash(&creation, &marketplace).unwrap()
+        );
+        assert_eq!(trade_signature_check(&trade, &amoy, venue).ok, Some(true));
+        let polygon = super::super::venues::Book::production(|_| None)
+            .chain(crate::types::ChainId::POLYGON)
+            .unwrap()
+            .clone();
+        let polygon_v3: Address = listings::offchain_marketplace_v3(137)
+            .unwrap()
+            .address
+            .parse()
+            .unwrap();
+        assert_ne!(
+            trade_signature_check(&trade, &polygon, polygon_v3).ok,
+            Some(true),
+            "an Amoy signature never settles on Polygon"
+        );
+    }
+
     #[test]
     fn verdicts_and_times_read_as_the_contract_would() {
         assert_eq!(

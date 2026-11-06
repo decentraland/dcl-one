@@ -10,8 +10,8 @@ use super::errors::{AppError, AppResult, json_error};
 use super::formatters::{EntityField, MaskedEntity, mask_entity};
 use super::queries::{self, EntityDoc, MaskedColumns, retain_non_denylisted};
 use super::query_params::{
-    QueryParams, parse_entity_type, parse_pagination_js, parse_query_string, qs_get_filter_array,
-    qs_get_string,
+    QueryParams, parse_content_pagination, parse_entity_type, parse_query_string,
+    qs_get_filter_array, qs_get_string,
 };
 use super::validation::{
     BodyRefusal, ENTITIES_SELECTOR_MESSAGE, MAX_IDS_OR_POINTERS, active_entities_body,
@@ -310,7 +310,7 @@ pub async fn get_entities_by_collection(
     }
 
     let params = parse_query_string(request.uri().query().unwrap_or(""));
-    let pagination = parse_pagination_js(&params, 1000).map_err(AppError::invalid)?;
+    let pagination = parse_content_pagination(&params, 1000).map_err(AppError::invalid)?;
 
     let result = queries::active_entity_docs_by_prefix(
         &state.pool,

@@ -372,13 +372,18 @@ pub async fn step(
         .await?;
         return Ok("unknown-chain");
     };
-    let Some(reader) = state.reader(chain_id) else {
+    let (reader, why) = match state.reader(chain_id).await {
+        Ok(Some(reader)) => (Some(reader), String::new()),
+        Ok(None) => (None, "no JSON-RPC endpoint for the chain".to_string()),
+        Err(refusal) => (None, refusal.to_string()),
+    };
+    let Some(reader) = reader else {
         advance(
             &state.pool,
             row.id,
             &row.status,
             &stay(
-                Some("no JSON-RPC endpoint for the chain".into()),
+                Some(why),
                 if row.status == "mined" {
                     "mined"
                 } else {
