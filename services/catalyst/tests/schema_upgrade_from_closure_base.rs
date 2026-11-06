@@ -1045,3 +1045,58 @@ async fn earlier_event_hook_layouts_upgrade_without_losing_intents() {
     );
     old.drop().await;
 }
+
+#[tokio::test]
+async fn world_admission_object_upgrade_and_explicit_ban_release_preserve_existing_state() {
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    let pool = &old.pool;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(release_v3()))
+        .execute(pool)
+        .await
+        .unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    // The previous main has the same schema version and throttle relation,
+    // but not this additive queue. Only this test-owned database is changed.
+    sqlx::query("DROP TABLE social.world_access_rechecks")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::raw_sql("INSERT INTO worlds.worlds(name) VALUES('release.dcl.eth'); INSERT INTO worlds.world_scenes(world_name,entity_id,deployment_auth_chain,entity,deployer,parcels,size) VALUES('release.dcl.eth','scene-old','[]','{}','owner',ARRAY['2,3'],1); INSERT INTO social.scene_bans(place_id,banned_address,banned_by) VALUES('scene-old','wallet','owner'); INSERT INTO social.world_secret_attempts(world_name,subject,attempts,window_start) VALUES('release.dcl.eth','caller',2,'2026-01-01');").execute(pool).await.unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    let installed: bool =
+        sqlx::query_scalar("SELECT to_regclass('social.world_access_rechecks') IS NOT NULL")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert!(installed);
+    let release = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/releases/world-scene-ban-keys.sql"
+    ));
+    for _ in 0..2 {
+        sqlx::raw_sql(release).execute(pool).await.unwrap();
+    }
+    let bans: Vec<String> =
+        sqlx::query_scalar("SELECT place_id FROM social.scene_bans WHERE banned_address='wallet'")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+    assert_eq!(bans, vec!["release.dcl.eth:2,3"]);
+    let attempts: i32 = sqlx::query_scalar(
+        "SELECT attempts FROM social.world_secret_attempts WHERE world_name='release.dcl.eth'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(attempts, 2);
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    old.drop().await;
+}

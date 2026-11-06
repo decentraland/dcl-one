@@ -150,7 +150,10 @@ pub async fn replaced_world_scene(
         .collect();
     successors.sort();
     successors.dedup();
-    Ok(Some(crate::comms::rooms::ReplacedScene { base, successors }))
+    Ok(Some(crate::comms::rooms::ReplacedScene {
+        base,
+        successors,
+    }))
 }
 
 /// The world scene standing on `parcel` (newest first, like the about).
@@ -488,7 +491,11 @@ impl crate::comms::interfaces::SceneIdentity for SceneResolver {
         world_scene(&self.pool, world, scene).await
     }
 
-    async fn replaced_world_scene(&self, world: &WorldName, scene: &SceneId) -> Result<Option<crate::comms::rooms::ReplacedScene>, ResolveError> {
+    async fn replaced_world_scene(
+        &self,
+        world: &WorldName,
+        scene: &SceneId,
+    ) -> Result<Option<crate::comms::rooms::ReplacedScene>, ResolveError> {
         replaced_world_scene(&self.pool, world, scene, chrono::Utc::now().naive_utc()).await
     }
 
