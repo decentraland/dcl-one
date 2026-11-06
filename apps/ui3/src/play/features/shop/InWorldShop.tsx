@@ -318,10 +318,12 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
       if (!opened) showToast("The purchase couldn't open. Try again in a moment.", { tone: 'error' })
     })
   }
-  // An outfit's tile counts its items and prices them when every one of them sells in credits, as the web
-  // Shop's outfit card prices one. BUY buys the whole outfit in one purchase where purchases run (the web
-  // shell) and it is priced so; not the cart's purchase, so what it buys stays in the cart. Anywhere else, or
-  // when the shell can't open it, BUY opens the outfit on the web Shop, as an item's BUY does.
+  // An outfit's tile counts its items and prices them when every one of them has a credits price as a single
+  // item's BUY reads it (cardPrice: sold out, a closed mint or no credits sale leave none), as the web Shop's
+  // outfit page prices one; its overview card only checks each price. BUY buys the whole outfit in one
+  // purchase where purchases run (the web shell) and it is priced so; not the cart's purchase, so what it buys
+  // stays in the cart. Anywhere else, or when the shell can't open it, BUY opens the outfit on the web Shop, as
+  // an item's BUY does.
   const outfitOffer = (outfit: OutfitSummary): ShopHomeOutfitOffer => {
     if (outfit.items.length === 0) return { items: 0 }
     const read = outfitReads[outfits.data?.indexOf(outfit) ?? -1]

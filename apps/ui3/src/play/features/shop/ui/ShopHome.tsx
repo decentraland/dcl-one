@@ -95,7 +95,7 @@ export function ShopHome<T extends { id: string }, O extends ShopHomeOutfit>({
                     </span>
                   )}
                   {offer?.onBuy != null && (
-                    <Button size="card" className={styles.outfitBuy} onClick={(e) => offer.onBuy?.(pressedWith(e))}>
+                    <Button size="card" className={styles.outfitBuy} aria-label={`Buy ${o.name}`} onClick={(e) => offer.onBuy?.(pressedWith(e))}>
                       BUY
                     </Button>
                   )}

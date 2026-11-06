@@ -226,7 +226,7 @@ describe('the in-world Shop’s cart', () => {
     await waitFor(() => expect(cartButton()).toHaveAccessibleName('Cart, 1 item'))
     await userEvent.click(screen.getByRole('tab', { name: 'All' }))
     const tile = (await screen.findByRole('button', { name: 'Try on Neon Night' }, { timeout: 5000 })).parentElement!
-    await userEvent.click(await within(tile).findByRole('button', { name: 'BUY' }))
+    await userEvent.click(await within(tile).findByRole('button', { name: 'Buy Neon Night' }))
     await waitFor(() => expect(shell.request).toHaveBeenCalledWith('shop.buy', expect.anything()))
     const [, params] = shell.request.mock.calls.find(([m]) => m === 'shop.buy')!
     expect(params).toEqual({ v: 1, items: [{ contract: CONTRACT, itemId: '1', quantity: 1 }], method: 'credits', input: 'pointer' })
@@ -237,7 +237,7 @@ describe('the in-world Shop’s cart', () => {
   const HALF_KNOWN = { id: 'o2', name: 'Half Known', thumbnailHash: '', items: [{ contractAddress: CONTRACT, itemId: '1' }, { contractAddress: CONTRACT, itemId: '9' }], gradientFrom: '#ff0000', gradientTo: '#0000ff' }
   const outfitBuy = async (name: string): Promise<HTMLElement> => {
     const tile = (await screen.findByRole('button', { name: `Try on ${name}` }, { timeout: 5000 })).parentElement!
-    return within(tile).findByRole('button', { name: 'BUY' })
+    return within(tile).findByRole('button', { name: `Buy ${name}` })
   }
   const continueToWeb = async (): Promise<void> => {
     const dialog = await screen.findByRole('dialog', {}, { timeout: 5000 })
@@ -282,7 +282,7 @@ describe('the in-world Shop’s cart', () => {
     await new Promise((r) => setTimeout(r, 50))
     expect(within(tile).getByText('0 Items')).toBeInTheDocument()
     expect(within(tile).queryByText('0', { exact: true })).toBeNull()
-    expect(within(tile).queryByRole('button', { name: 'BUY' })).toBeNull()
+    expect(within(tile).queryByRole('button', { name: /^buy/i })).toBeNull()
   })
 
   const OP = (n: number): string => `0f0e0d0c-0000-4000-8000-${String(n).padStart(12, '0')}`

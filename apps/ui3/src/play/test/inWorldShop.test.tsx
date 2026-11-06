@@ -343,7 +343,7 @@ describe('in-world shop', () => {
     serve({ outfits: [TWO_PIECE], byIds: [catalogueRow(), boots()] })
     renderShop()
     await openTab('All')
-    await userEvent.click(within(await outfitTile()).getByRole('button', { name: 'BUY' }))
+    await userEvent.click(within(await outfitTile()).getByRole('button', { name: 'Buy Neon Night' }))
     const dialog = await screen.findByRole('dialog', {}, { timeout: 5000 })
     expect(within(dialog).getByText('You will be redirected to the web Shop')).toBeInTheDocument()
     await userEvent.click(within(dialog).getByRole('button', { name: 'CONTINUE' }))
@@ -351,21 +351,24 @@ describe('in-world shop', () => {
   })
 
   it('leaves an outfit unpriced when one of its items doesn’t sell in credits or didn’t load', async () => {
-    serve({ outfits: [TWO_PIECE], byIds: [catalogueRow(), boots({ priceCredits: 0, price: null, isOnSale: false })] })
+    const f = serve({ outfits: [TWO_PIECE], byIds: [catalogueRow(), boots({ priceCredits: 0, price: null, isOnSale: false })] })
     renderShop()
     await openTab('All')
     const tile = await outfitTile()
     await waitFor(() => expect(within(tile).getByText('2 Items')).toBeInTheDocument())
+    // The outfit's items were asked for, and their answer had its turn to land.
+    await waitFor(() => expect(calls(f, '/v3/catalog/items').some((u) => u.searchParams.has('id'))).toBe(true))
     await new Promise((r) => setTimeout(r, 50))
     expect(within(tile).queryByText('500')).toBeNull()
     expect(within(tile).queryByText('750')).toBeNull()
   })
 
   it('leaves an outfit unpriced when one of its items is missing from the catalogue', async () => {
-    serve({ outfits: [TWO_PIECE], byIds: [catalogueRow()] })
+    const f = serve({ outfits: [TWO_PIECE], byIds: [catalogueRow()] })
     renderShop()
     await openTab('All')
     const tile = await outfitTile()
+    await waitFor(() => expect(calls(f, '/v3/catalog/items').some((u) => u.searchParams.has('id'))).toBe(true))
     await new Promise((r) => setTimeout(r, 50))
     expect(within(tile).getByText('2 Items')).toBeInTheDocument()
     expect(within(tile).queryByText('500')).toBeNull()

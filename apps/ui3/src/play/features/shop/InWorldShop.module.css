@@ -236,8 +236,8 @@
 .stale {
   opacity: 0.5;
 }
-/* With the item panel open, the same 203px columns beside it (four at the design's 1920: 872px), the
-   thumb 9px past them and the panel 23px after that, 8px in from the right. */
+/* With the item panel open, the same 203px columns beside it (four at the design's 1920, 872px: the spread
+   leaves them 20px apart there), the thumb 9px past them and the panel 23px after that, 8px in from the right. */
 .withPanel .scroller {
   padding-right: 10px;
 }

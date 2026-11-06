@@ -15,9 +15,11 @@
    bottom 150px fading into the second colour. Hovered or focused, it takes the design's ring 4px off it,
    its render grows to the design's hover framing, and its name, items, price and BUY show at the bottom.
    Layers, as the design stacks them: the ring under everything (the render's head rises over it), then the
-   press target, the render, its fade and the hover row. */
+   press target, the render, its fade and the hover row. They stack inside the tile (isolation), so the
+   carousel's arrows still paint over it. */
 .outfit {
   position: relative;
+  isolation: isolate;
   flex: none;
   width: 295px;
   height: 354px;
@@ -164,6 +166,11 @@
   font-size: var(--type-14);
   font-weight: var(--fw-bold);
   text-transform: uppercase;
+  /* Pressable only while its row shows: at rest a press anywhere on the tile tries the outfit on. */
+  pointer-events: none;
+}
+.outfit:hover .outfitBuy,
+.outfit:has(:focus-visible) .outfitBuy {
   pointer-events: auto;
 }
 .row {
