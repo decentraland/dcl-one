@@ -5,7 +5,8 @@
 // and the shell reads the terms itself (shell/shop/purchase).
 //
 // Kept per account in localStorage (a signed-out cart under its own key, taken into the account's once
-// one signs in).
+// one signs in, as a transfer with an id of its own that the account records: taken once, however often
+// it is tried again or whichever tab takes it; see `adopt`).
 //
 // What a purchase from the cart bought leaves the cart of the account that bought it (whichever is active
 // now): as many of each item as it bought, once per operation, however often its success is heard (an
@@ -88,12 +89,30 @@ function isLine(v: unknown): v is InWorldCartLine {
   )
 }
 
-/** An account's cart: its lines, and the operations whose purchase already left it. */
+/** Units of an item a signed-out cart's transfer moved into an account's. */
+interface Taken {
+  contract: string
+  itemId: string
+  units: number
+}
+
+/**
+ * An account's cart: its lines, the operations whose purchase already left it, and the signed-out carts'
+ * transfers it already took (by the transfer's id, with what it took). A signed-out cart carries the id of
+ * its next transfer, written before any account takes it, so a transfer is taken once wherever it is
+ * tried again.
+ */
 interface CartRecord {
   lines: readonly InWorldCartLine[]
   applied: readonly string[]
+  adopted: readonly { id: string; taken: readonly Taken[] }[]
+  transfer?: string
 }
-const EMPTY: CartRecord = { lines: [], applied: [] }
+const EMPTY: CartRecord = { lines: [], applied: [], adopted: [] }
+/** Transfers remembered as taken (newest kept). */
+const MAX_ADOPTED = 20
+const isTaken = (t: unknown): t is Taken =>
+  t != null && typeof t === 'object' && typeof (t as Taken).contract === 'string' && ADDRESS.test((t as Taken).contract) && typeof (t as Taken).itemId === 'string' && UINT.test((t as Taken).itemId) && Number.isSafeInteger((t as Taken).units) && (t as Taken).units > 0
 
 /** A stored record in the shape this page writes, its lines each item once and within the cap; or null. */
 function parseRecord(raw: string): CartRecord | null {
@@ -104,7 +123,11 @@ function parseRecord(raw: string): CartRecord | null {
   const lines: InWorldCartLine[] = []
   for (const line of r.lines.filter(isLine)) if (!lines.some((k) => sameItem(k, line)) && cartUnits(lines) + line.quantity <= MAX_PURCHASE_UNITS) lines.push(line)
   const applied = r.applied.filter((id): id is string => typeof id === 'string' && OPERATION_ID.test(id)).slice(-MAX_APPLIED)
-  return { lines, applied }
+  const adopted = (Array.isArray(r.adopted) ? r.adopted : [])
+    .filter((a): a is { id: string; taken: Taken[] } => a != null && typeof a === 'object' && typeof a.id === 'string' && OPERATION_ID.test(a.id) && Array.isArray(a.taken) && a.taken.every(isTaken))
+    .slice(-MAX_ADOPTED)
+  const transfer = typeof r.transfer === 'string' && OPERATION_ID.test(r.transfer) ? r.transfer : undefined
+  return { lines, applied, adopted, ...(transfer ? { transfer } : {}) }
 }
 
 /** The most of one line a cart may hold: what is left of it, within the purchase's cap. */
@@ -160,8 +183,9 @@ function cartLock(): CartLock {
   }
 }
 
-export function createInWorldCart(opts: { storage?: () => CartStorage | null; now?: () => number; watch?: StorageWatch; lock?: CartLock } = {}): InWorldCart {
+export function createInWorldCart(opts: { storage?: () => CartStorage | null; now?: () => number; watch?: StorageWatch; lock?: CartLock; newId?: () => string } = {}): InWorldCart {
   const storage = opts.storage ?? defaultStorage
+  const newId = opts.newId ?? (() => crypto.randomUUID())
   const now = opts.now ?? Date.now
   const lock = opts.lock ?? cartLock()
   const listeners = new Set<() => void>()
@@ -171,12 +195,10 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
   type Change = (record: CartRecord) => CartRecord | null
   /** What storage last gave for each record (its text and the record parsed from it). */
   const stored = new Map<string, { raw: string | null; record: CartRecord }>()
-  /** A change storage didn't take yet, and what to do once it does. */
-  type Pending = { change: Change; written?: () => void }
   /** This page's changes to a record that storage didn't take yet, replayed on what storage holds. */
-  const pending = new Map<string, Pending[]>()
+  const pending = new Map<string, Change[]>()
   /** The last view of each record: what storage held, with the very list of pending changes put on it. */
-  const views = new Map<string, { base: CartRecord; changes: readonly Pending[]; record: CartRecord }>()
+  const views = new Map<string, { base: CartRecord; changes: readonly Change[]; record: CartRecord }>()
 
   /** The record as storage holds it now; what it last gave when it can't be read. */
   const fromStorage = (key: string): CartRecord => {
@@ -211,7 +233,7 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
     // The same base and the same list (each change makes a new one), or it is put together again.
     const view = views.get(key)
     if (view && view.base === base && view.changes === changes) return view.record
-    const record = changes.reduce((r, p) => p.change(r) ?? r, base)
+    const record = changes.reduce((r, change) => change(r) ?? r, base)
     views.set(key, { base, changes, record })
     return record
   }
@@ -220,11 +242,11 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
     try {
       const s = storage()
       if (!s) return false
-      if (next.lines.length === 0 && next.applied.length === 0) {
+      if (next.lines.length === 0 && next.applied.length === 0 && next.adopted.length === 0) {
         s.removeItem(key)
         stored.set(key, { raw: null, record: EMPTY })
       } else {
-        const raw = JSON.stringify({ v: RECORD_VERSION, lines: next.lines, applied: next.applied })
+        const raw = JSON.stringify({ v: RECORD_VERSION, lines: next.lines, applied: next.applied, adopted: next.adopted, ...(next.transfer ? { transfer: next.transfer } : {}) })
         s.setItem(key, raw)
         stored.set(key, { raw, record: next })
       }
@@ -234,23 +256,71 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
     }
   }
   /**
+   * `next`, derived from `who`'s record as it stands (its pending changes on it), written whole; storage
+   * taking it takes the pending changes with it. False when storage didn't.
+   */
+  const commitRecord = (who: string | null, next: CartRecord): boolean => {
+    const key = keyOf(who)
+    views.delete(key)
+    if (!persist(key, next)) return false
+    pending.delete(key)
+    return true
+  }
+  /**
    * One change applied to `who`'s record as it stands (call it holding the lock): written whole if storage
    * takes it, which takes this page's pending changes with it; otherwise kept to replay on whatever
-   * storage holds next, never written over another tab's record as a stale whole. `written` runs once
-   * storage holds the change, now or with a later write.
+   * storage holds next, never written over another tab's record as a stale whole.
    */
-  const apply = (who: string | null, change: Change, written?: () => void): boolean => {
-    const key = keyOf(who)
-    const waiting = pending.get(key) ?? []
+  const apply = (who: string | null, change: Change): boolean => {
     const next = change(read(who))
     if (!next) return false
-    views.delete(key)
-    if (persist(key, next)) {
-      pending.delete(key)
-      for (const p of waiting) p.written?.()
-      written?.()
-    } else pending.set(key, [...waiting, { change, written }])
+    if (!commitRecord(who, next)) pending.set(keyOf(who), [...(pending.get(keyOf(who)) ?? []), change])
     return true
+  }
+
+  /**
+   * The signed-out cart moved into `who`'s (call it holding the lock), as a transfer taken once: the
+   * transfer's id is written on the signed-out cart first; the account's cart takes its units within the
+   * cap and records the transfer, in one write; then the signed-out cart lets go of the units taken, and
+   * what didn't fit (or was added since) waits for its next transfer. A step storage refuses ends it, to be
+   * tried again after a later write that lands or the next sign-in; nothing of it waits in `pending`, so it
+   * is never added twice.
+   */
+  const adopt = (who: string): void => {
+    // A transfer found already taken is let go of first; then what is left (added since) can go.
+    for (let round = 0; round < 2; round++) {
+      const guest = read(null)
+      if (guest.lines.length === 0) return
+      const id = guest.transfer ?? newId()
+      if (!guest.transfer && !commitRecord(null, { ...guest, transfer: id })) return
+      const mine = read(who)
+      const done = mine.adopted.find((a) => a.id === id)
+      let taken = done?.taken
+      if (!taken) {
+        const merged = [...mine.lines]
+        const took: Taken[] = []
+        for (const g of guest.lines) {
+          const at = merged.findIndex((l) => sameItem(l, g))
+          const had = at >= 0 ? merged[at].quantity : 0
+          const quantity = Math.max(had, Math.min(had + g.quantity, capFor(g, cartUnits(merged) - had)))
+          if (quantity === had) continue
+          took.push({ contract: g.contract, itemId: g.itemId, units: quantity - had })
+          if (at >= 0) merged[at] = { ...merged[at], quantity }
+          else merged.push({ ...g, quantity })
+        }
+        // Nothing fits: the signed-out cart waits as it is.
+        if (took.length === 0) return
+        if (!commitRecord(who, { ...mine, lines: merged, adopted: [...mine.adopted, { id, taken: took }].slice(-MAX_ADOPTED) })) return
+        taken = took
+      }
+      const left = guest.lines.flatMap((l) => {
+        const units = taken.find((t) => sameItem(t, l))?.units ?? 0
+        return l.quantity > units ? [{ ...l, quantity: l.quantity - units }] : []
+      })
+      if (!commitRecord(null, left.length > 0 ? { ...guest, lines: left, transfer: newId() } : { ...EMPTY, applied: guest.applied })) return
+      // Freshly taken: what is left didn't fit, and waits. Found taken: what is left may go now.
+      if (!done) return
+    }
   }
   const notify = (): void => listeners.forEach((l) => l())
   /** The active account's record as it stands now, shown. */
@@ -269,6 +339,8 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
   const mutate = (who: string | null, change: Change): Promise<boolean> =>
     lock(() => {
       const changed = apply(who, change)
+      // A sign-in's transfer that storage refused before is tried again once this account's cart is written.
+      if (who !== null && who === account && !pending.has(keyOf(who))) adopt(who)
       if (who === account) refresh()
       return changed
     })
@@ -282,7 +354,7 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
     if (q < 1 || q === line.quantity) return null
     const lines = [...record.lines]
     lines[at] = { ...line, quantity: q }
-    return { lines, applied: record.applied }
+    return { ...record, lines }
   }
 
   current = read(null)
@@ -308,34 +380,8 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
       notify()
       if (who == null) return
       // A signed-out cart is the account's once it signs in: its lines join, within the cap, under the lock.
-      // The units taken leave the signed-out cart only once the account's cart holding them is written
-      // (now, or with a later write); the units that don't fit stay in it.
       void lock(() => {
-        const guest = read(null).lines
-        if (guest.length === 0) return
-        let taken = new Map<string, number>()
-        const merge: Change = (mine) => {
-          taken = new Map()
-          const merged = [...mine.lines]
-          for (const g of guest) {
-            const at = merged.findIndex((l) => sameItem(l, g))
-            const had = at >= 0 ? merged[at].quantity : 0
-            const quantity = Math.max(had, Math.min(had + g.quantity, capFor(g, cartUnits(merged) - had)))
-            if (quantity === had) continue
-            taken.set(`${g.contract}:${g.itemId}`, quantity - had)
-            if (at >= 0) merged[at] = { ...merged[at], quantity }
-            else merged.push({ ...g, quantity })
-          }
-          return taken.size > 0 ? { lines: merged, applied: mine.applied } : null
-        }
-        const leave: Change = (g) => {
-          const lines = g.lines.flatMap((l) => {
-            const units = taken.get(`${l.contract}:${l.itemId}`) ?? 0
-            return l.quantity > units ? [{ ...l, quantity: l.quantity - units }] : []
-          })
-          return lines.length === g.lines.length && lines.every((l, i) => l === g.lines[i]) ? null : { lines, applied: g.applied }
-        }
-        apply(who, merge, () => void apply(null, leave))
+        adopt(who)
         if (account === who) refresh()
       })
     },
@@ -351,18 +397,18 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
         const at = record.lines.findIndex((l) => sameItem(l, item))
         const others = cartUnits(record.lines) - (at >= 0 ? record.lines[at].quantity : 0)
         if ((at >= 0 ? record.lines[at].quantity : 0) + 1 > capFor(item, others)) return null
-        if (at < 0) return { lines: [...record.lines, { ...item, quantity: 1, addedAt: now() }], applied: record.applied }
+        if (at < 0) return { ...record, lines: [...record.lines, { ...item, quantity: 1, addedAt: now() }] }
         const lines = [...record.lines]
         // The newer snapshot (its price and stock as the listing reads them now), one more of it.
         lines[at] = { ...record.lines[at], ...item, quantity: record.lines[at].quantity + 1 }
-        return { lines, applied: record.applied }
+        return { ...record, lines }
       })
     },
     async setQuantity(item, quantity) {
       await mutate(account, (record) => withQuantity(record, item, quantity))
     },
     async remove(item) {
-      await mutate(account, (record) => (record.lines.some((l) => sameItem(l, item)) ? { lines: record.lines.filter((l) => !sameItem(l, item)), applied: record.applied } : null))
+      await mutate(account, (record) => (record.lines.some((l) => sameItem(l, item)) ? { ...record, lines: record.lines.filter((l) => !sameItem(l, item)) } : null))
     },
     async applyPurchase(buyer, operation, items) {
       // What it bought and that it was taken out, together: one record, one write, under the lock.
@@ -370,6 +416,7 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
         record.applied.includes(operation)
           ? null
           : {
+              ...record,
               lines: record.lines.flatMap((l) => {
                 const bought = items.reduce((n, i) => (sameItem(l, i) ? n + i.quantity : n), 0)
                 if (bought === 0) return [l]

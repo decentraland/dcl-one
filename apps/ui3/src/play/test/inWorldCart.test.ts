@@ -404,32 +404,111 @@ describe('the in-world cart', () => {
     expect(cart.getSnapshot().map((l) => `${l.itemId}x${l.quantity}`)).toEqual(['2x10'])
   })
 
-  it('leaves a signed-out cart as it is until the account’s cart that took it over is written', async () => {
+  /** A shared storage whose writes to the keys `refused` names throw. */
+  function guarded() {
     const shared = storage()
-    const refuse = { on: false }
-    const flakyStorage: CartStorage = {
+    const refused = new Set<string>()
+    const make = (): CartStorage => ({
       getItem: shared.getItem,
       setItem: (k, v) => {
-        if (refuse.on && k.endsWith(A)) throw new Error('full')
+        if (refused.has(k)) throw new Error('full')
         shared.setItem(k, v)
       },
-      removeItem: shared.removeItem
-    }
-    const cart = createInWorldCart({ storage: () => flakyStorage, watch: () => () => {} })
+      removeItem: (k) => {
+        if (refused.has(k)) throw new Error('full')
+        shared.removeItem(k)
+      }
+    })
+    return { shared, refused, make }
+  }
+  const ACCOUNT_KEY = `dcl-inworld-shop:cart:v2:${A}`
+  const GUEST_KEY = 'dcl-inworld-shop:cart:v2:guest'
+  const units = (cart: { getSnapshot(): readonly { itemId: string; quantity: number }[] }) => cart.getSnapshot().map((l) => `${l.itemId}x${l.quantity}`)
+
+  it('leaves a signed-out cart as it is until the account’s cart that took it over is written', async () => {
+    const g = guarded()
+    const cart = createInWorldCart({ storage: g.make, watch: () => () => {} })
     await cart.add(item('1'))
-    refuse.on = true
+    g.refused.add(ACCOUNT_KEY)
     cart.scopeTo(A)
-    await vi.waitFor(() => expect(cart.getSnapshot().map((l) => l.itemId)).toEqual(['1']))
-    // The account's write didn't land: a reload now still finds the signed-out cart.
-    const meanwhile = createInWorldCart({ storage: () => shared, watch: () => () => {} })
-    expect(meanwhile.getSnapshot().map((l) => l.itemId)).toEqual(['1'])
-    // Once a write lands, it carries the taken-over lines, and the signed-out cart lets them go.
-    refuse.on = false
+    // The account's write didn't land: a reload still finds the signed-out cart, and the account has none of it.
+    await vi.waitFor(() => expect(JSON.parse(g.shared.getItem(GUEST_KEY) ?? '{}').transfer).toBeTruthy())
+    const meanwhile = createInWorldCart({ storage: () => g.shared, watch: () => () => {} })
+    expect(units(meanwhile)).toEqual(['1x1'])
+    // The next write that lands takes it over, once.
+    g.refused.clear()
     await cart.add(item('2'))
-    const reloaded = createInWorldCart({ storage: () => shared, watch: () => () => {} })
+    expect(units(cart).sort()).toEqual(['1x1', '2x1'])
+    const reloaded = createInWorldCart({ storage: () => g.shared, watch: () => () => {} })
     expect(reloaded.getSnapshot()).toEqual([])
     reloaded.scopeTo(A)
-    expect(reloaded.getSnapshot().map((l) => l.itemId)).toEqual(['1', '2'])
+    expect(units(reloaded).sort()).toEqual(['1x1', '2x1'])
+  })
+
+  it('takes a signed-out cart over once when signing in is tried again after a refused write', async () => {
+    const g = guarded()
+    const cart = createInWorldCart({ storage: g.make, watch: () => () => {} })
+    await cart.add(item('1'))
+    g.refused.add(ACCOUNT_KEY)
+    cart.scopeTo(A)
+    await vi.waitFor(() => expect(g.shared.getItem(GUEST_KEY)).toContain('transfer'))
+    g.refused.clear()
+    cart.scopeTo(null)
+    cart.scopeTo(A)
+    await vi.waitFor(() => expect(units(cart)).toEqual(['1x1']))
+    const reloaded = createInWorldCart({ storage: () => g.shared, watch: () => () => {} })
+    reloaded.scopeTo(A)
+    expect(units(reloaded)).toEqual(['1x1'])
+  })
+
+  it('takes a signed-out cart over once when another tab took it over first', async () => {
+    const g = guarded()
+    const lock = sharedLock()
+    const tabA = createInWorldCart({ storage: g.make, lock, watch: () => () => {} })
+    const tabB = createInWorldCart({ storage: () => g.shared, lock, watch: () => () => {} })
+    await tabA.add(item('1'))
+    // Tab A can't write the account's cart; tab B signs in too, and takes the signed-out cart over.
+    g.refused.add(ACCOUNT_KEY)
+    tabA.scopeTo(A)
+    tabB.scopeTo(A)
+    await vi.waitFor(() => expect(units(tabB)).toEqual(['1x1']))
+    expect(g.shared.getItem(GUEST_KEY)).toBeNull()
+    g.refused.clear()
+    await tabA.add(item('2'))
+    const reloaded = createInWorldCart({ storage: () => g.shared, lock, watch: () => () => {} })
+    reloaded.scopeTo(A)
+    expect(units(reloaded).sort()).toEqual(['1x1', '2x1'])
+  })
+
+  it('lets go of a transfer the account already took, when letting go of it was refused', async () => {
+    const g = guarded()
+    const cart = createInWorldCart({ storage: g.make, watch: () => () => {} })
+    await cart.add(item('1'))
+    await cart.add(item('1'))
+    // The account takes the two; the signed-out cart can't let go of them yet.
+    const write = g.make()
+    let accountWritten = false
+    const failGuestAfterAccount: CartStorage = {
+      getItem: write.getItem,
+      setItem: (k, v) => {
+        if (k === GUEST_KEY && accountWritten) throw new Error('full')
+        write.setItem(k, v)
+        if (k === ACCOUNT_KEY) accountWritten = true
+      },
+      removeItem: (k) => {
+        if (k === GUEST_KEY && accountWritten) throw new Error('full')
+        write.removeItem(k)
+      }
+    }
+    const signing = createInWorldCart({ storage: () => failGuestAfterAccount, watch: () => () => {} })
+    signing.scopeTo(A)
+    await vi.waitFor(() => expect(units(signing)).toEqual(['1x2']))
+    expect(units(createInWorldCart({ storage: () => g.shared, watch: () => () => {} }))).toEqual(['1x2'])
+    // Signing in again finds the transfer taken: it lets go of it, adding nothing.
+    const again = createInWorldCart({ storage: () => g.shared, watch: () => () => {} })
+    again.scopeTo(A)
+    await vi.waitFor(() => expect(g.shared.getItem(GUEST_KEY)).toBeNull())
+    expect(units(again)).toEqual(['1x2'])
   })
 
   it('writes under the origin’s Web Lock when the browser has one', async () => {
