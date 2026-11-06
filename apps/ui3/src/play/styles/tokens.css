@@ -26,6 +26,8 @@
   --lavender: #c640cd; /* DCL/Lavender — secondary badge */
   --red: #ff0000; /* DCL/Red — blocked */
   --white-10: rgba(255, 255, 255, 0.1); /* DCL/White10% — dividers */
+  --shop-card-hover: rgba(255, 255, 255, 0.2); /* DCL/White20% — the Shop cart's hovered card */
+  --pale-black: #43404a; /* DCL/Pale Black — the Shop toast's rim */
   --divider-strong: rgba(255, 255, 255, 0.2); /* list section hairlines (friends) */
   --panel-translucent: rgba(0, 0, 0, 0.72); /* see-through side panel over the world */
   --panel-head: rgba(0, 0, 0, 0.55); /* header band layered on --panel-translucent */
@@ -39,6 +41,11 @@
   --danger-strong: #ff0000; /* destructive hover outline (remove friend / cancel request) */
   --black-40: rgba(0, 0, 0, 0.4);
   --black-30: rgba(0, 0, 0, 0.3);
+  --black-50: rgba(0, 0, 0, 0.5);
+  --black-90: rgba(0, 0, 0, 0.9); /* the Shop's dialog scrim */
+  --black-10: rgba(0, 0, 0, 0.1); /* the Shop toast's shadow */
+  --cart-badge-ring: #2b0044; /* the Shop cart badge's ring */
+  --shop-modal: #4c147c; /* the New Shop's dialogs (Buy Item, Purchase successful…) */
 
   /* status */
   --online: #57df41;
@@ -197,6 +204,9 @@
   --loading-pill-edge: #ba67f1;
 
   --r-xs: 6px;
+  --r-shop-cart-close: 7.5px; /* the Shop cart's close button */
+  --r-shop-cart-action: 5.429px; /* the Shop cart card's favourite and remove */
+  --r-shop-cart-price: 6.221px; /* the Shop cart card's price */
   --r-sm: 8px;
   --r-button: 9.6px;
   --r-md: 12px; /* light buttons and popups */
@@ -205,6 +215,7 @@
   --r-xl: 24px;
 
   --type-9: 9px;
+  --type-10: 10px;
   --type-11: 11px;
   --type-12: 12px;
   --type-13: 13px;
@@ -212,6 +223,8 @@
   --type-15: 15px;
   --type-16: 16px;
   --type-18: 18px;
+  --type-shop-cart-price: 18.664px; /* the Shop cart card's price */
+  --type-20: 20px;
   --type-22: 22px;
   --type-24: 24px;
   --type-30: 30px;

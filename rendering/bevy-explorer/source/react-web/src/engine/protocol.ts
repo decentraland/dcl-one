@@ -685,6 +685,12 @@ export interface NotificationsMessage {
   notifications: AppNotification[]
 }
 
+/** Unread notifications newer than any seen before, from the scene's poll (newest first). */
+export interface NotificationsNewMessage {
+  kind: 'notificationsNew'
+  notifications: AppNotification[]
+}
+
 export interface GetNotificationsRequest {
   kind: 'getNotifications'
 }
@@ -1817,6 +1823,7 @@ export type SceneToPage =
   | ProfileSavedMessage
   | OwnedNamesMessage
   | NotificationsMessage
+  | NotificationsNewMessage
   | EmotesMessage
   | MicMessage
   | WearablesMessage

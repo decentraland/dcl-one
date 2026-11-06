@@ -53,7 +53,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 203px;
+  /* 203px high, as the design's 197px and 203px cards draw it; a card widened to fill its row stays square. */
+  min-height: 203px;
+  aspect-ratio: 1;
   overflow: hidden;
   border-radius: var(--r-lg);
   background-size: cover;
@@ -189,11 +191,11 @@
   display: flex;
 }
 
-/* Loading: a dark card with the tile and two bars in the purple ramp. */
+/* Loading: a dark card with the tile and two bars in the purple ramp, 299px high under a 203px tile and
+   as much taller as a widened column's square tile is. */
 .skeleton {
   display: flex;
   flex-direction: column;
-  height: 299px;
   border-radius: var(--r-md) var(--r-md) var(--r-xl) var(--r-xl);
   background: var(--black-40);
 }
@@ -203,7 +205,8 @@
 }
 .skeletonTile {
   flex: none;
-  height: 203px;
+  min-height: 203px;
+  aspect-ratio: 1;
   margin-bottom: -14px;
   border-radius: var(--r-md);
 }
@@ -212,7 +215,8 @@
   flex-direction: column;
   justify-content: center;
   gap: 6px;
-  height: 80px;
+  flex: none;
+  height: 76px;
   margin: 22px 11px 12px;
 }
 .skeletonBar {

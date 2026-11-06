@@ -1,0 +1,185 @@
+import { Scene } from '@dcl/schemas'
+import path from 'path'
+import i18next from 'i18next'
+
+import { CliComponents } from '../components'
+import { colors } from '../components/log'
+import { printProgressInfo } from './beautiful-logs'
+import { CliError } from './error'
+import { getSceneFilePath, getValidSceneJson } from './scene-validations'
+import { getInstalledPackageVersion } from './config'
+import { getSmartWearableFile, getValidWearableJson } from './portable-experience-sw-validations'
+import { getPackageJson } from './project-files'
+
+export type BaseProject = { workingDirectory: string }
+export type SceneProject = { kind: 'scene'; scene: Scene } & BaseProject
+export type WearableProject = { kind: 'smart-wearable'; scene: Scene } & BaseProject
+export type ProjectUnion = SceneProject | WearableProject
+
+/**
+ * Asserts that the workingDirectory is a valid project
+ */
+export async function assertValidProjectFolder(
+  components: Pick<CliComponents, 'fs' | 'logger'>,
+  workingDirectory: string
+): Promise<ProjectUnion> {
+  // no validations for now, only check that it exists
+  if (!(await components.fs.fileExists(path.resolve(workingDirectory, 'package.json'))))
+    throw new CliError(
+      'PROJECT_VALIDATIONS_PACKAGE_JSON_REQUIRED',
+      i18next.t('errors.project_validations.package_json_required')
+    )
+
+  // now we will iterate over different file to evaluate the project kind
+  switch (true) {
+    case await components.fs.fileExists(getSmartWearableFile(workingDirectory)): {
+      await getValidWearableJson(components, workingDirectory)
+      return { kind: 'smart-wearable', scene: await getValidSceneJson(components, workingDirectory), workingDirectory }
+    }
+
+    case await components.fs.fileExists(getSceneFilePath(workingDirectory)): {
+      return { kind: 'scene', scene: await getValidSceneJson(components, workingDirectory), workingDirectory }
+    }
+
+    default: {
+      throw new CliError(
+        'PROJECT_VALIDATIONS_INVALID_PROJECT_KIND',
+        i18next.t('errors.project_validations.invalid_project_kind', { workingDirectory })
+      )
+    }
+  }
+}
+
+/*
+ * Returns true if the project contains an empty node_modules folder
+ */
+export async function needsDependencies(
+  components: Pick<CliComponents, 'fs'>,
+  workingDirectory: string
+): Promise<boolean> {
+  const nodeModulesPath = path.join(workingDirectory, 'node_modules')
+  const hasNodeModulesFolder = await components.fs.directoryExists(nodeModulesPath)
+  const isNodeModulesEmpty = hasNodeModulesFolder && (await components.fs.readdir(nodeModulesPath)).length === 0
+
+  return !hasNodeModulesFolder || isNodeModulesEmpty
+}
+
+/* istanbul ignore next */
+const npmBin = /^win/.test(process.platform) ? 'npm.cmd' : 'npm'
+
+/*
+ * Runs "npm install" for desired project
+ */
+export async function installDependencies(
+  components: Pick<CliComponents, 'logger' | 'spawner' | 'fs'>,
+  workingDirectory: string
+): Promise<void> {
+  printProgressInfo(components.logger, 'Installing dependencies...')
+  // TODO: test in windows
+  await components.spawner.exec(workingDirectory, npmBin, ['install'])
+  printProgressInfo(components.logger, colors.white('✅ Installing dependencies...'))
+}
+
+/**
+ * Run NPM commands
+ */
+export async function npmRun(
+  components: Pick<CliComponents, 'spawner'>,
+  cwd: string,
+  command: string,
+  ...args: string[]
+): Promise<void> {
+  // TODO: test in windows
+  await components.spawner.exec(cwd, npmBin, ['run', command, '--silent', '--', ...args], { env: process.env as any })
+}
+
+/**
+ * NPM commands
+ */
+export async function npmCommand(
+  components: Pick<CliComponents, 'spawner'>,
+  cwd: string,
+  command: string,
+  ...args: string[]
+): Promise<void> {
+  await components.spawner.exec(cwd, npmBin, [command, ...args, '--silent'], { env: process.env as any })
+}
+
+/**
+ * Start validations to make the scene work.
+ * Addd js-runtime package, so you can auto-import all the ~system modules.
+ */
+export async function startValidations(components: Pick<CliComponents, 'spawner' | 'fs' | 'logger'>, cwd: string) {
+  try {
+    const sdkVersion = await getInstalledPackageVersion(components, '@dcl/sdk', cwd)
+    const packageJsonPath = path.resolve(cwd, 'package.json')
+
+    if (!(await components.fs.fileExists(packageJsonPath))) {
+      return
+    }
+    const packageJson = await getPackageJson(components, cwd)
+
+    // Ignore relative or s3 versions
+    const sdkPackageVersion =
+      (packageJson.dependencies && packageJson.dependencies['@dcl/sdk']) ||
+      (packageJson.devDependencies && packageJson.devDependencies['@dcl/sdk'])
+    if (
+      sdkPackageVersion?.startsWith('https://') ||
+      sdkPackageVersion?.startsWith('file://') ||
+      sdkPackageVersion === '7.0.0'
+    ) {
+      return
+    }
+
+    if (
+      packageJson.dependencies &&
+      (packageJson.dependencies['@dcl/js-runtime'] || packageJson.dependencies['@dcl/sdk'])
+    ) {
+      packageJson.dependencies['@dcl/js-runtime'] = sdkVersion
+      if (packageJson.devDependencies && packageJson.devDependencies['@dcl/js-runtime']) {
+        delete packageJson.devDependencies['@dcl/js-runtime']
+      }
+    } else {
+      packageJson.devDependencies = packageJson.devDependencies || {}
+      packageJson.devDependencies['@dcl/js-runtime'] = sdkVersion
+    }
+    await components.fs.writeFile(packageJsonPath, JSON.stringify(packageJson, null, 2), 'utf-8')
+  } catch (e: any) {
+    components.logger.error('Failed to run scene validations', e.message)
+  }
+}
+
+/**
+ * Returns true if the scene is an "editor scene" that requires the asset-packs runtime.
+ *
+ * A scene is an editor scene when its main.composite file contains at least one
+ * asset-packs component other than `asset-packs::Script`. The Script component is
+ * a build-time-only construct (it defines JavaScript scripts bundled separately via
+ * `generateInitializeScriptsModule`) and does not require the `initAssetPacks` runtime.
+ * Only Action/Trigger/State and similar runtime components need `initAssetPacks`.
+ *
+ * Evaluated on every (re)build when `~sdk/script-utils` is generated.
+ */
+export async function isEditorScene(components: Pick<CliComponents, 'fs'>, workingDirectory: string): Promise<boolean> {
+  const mainCompositePath = path.resolve(workingDirectory, 'assets', 'scene', 'main.composite')
+  if (!(await components.fs.fileExists(mainCompositePath))) return false
+
+  try {
+    const fileBuffer = await components.fs.readFile(mainCompositePath)
+    const json = JSON.parse(new TextDecoder().decode(fileBuffer))
+    // asset-packs::Script is a build-time component — it doesn't require the initAssetPacks runtime entrypoint.
+    const SCRIPT_COMPONENT = 'asset-packs::Script'
+    return (
+      Array.isArray(json.components) &&
+      json.components.some(
+        (c: unknown) =>
+          typeof (c as Record<string, unknown>).name === 'string' &&
+          ((c as Record<string, unknown>).name as string).startsWith('asset-packs::') &&
+          (c as Record<string, unknown>).name !== SCRIPT_COMPONENT
+      )
+    )
+  } catch {
+    // Malformed composite — treat as non-editor scene to avoid bundling unnecessary code
+    return false
+  }
+}

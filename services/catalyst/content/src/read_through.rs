@@ -6,9 +6,9 @@
 //! then removes the entity file; so does an undecided verdict, recorded for the retry worker, which runs with sync off too), and [`LiveSyncDeployer`] writes the row as a synced
 //! deployment (the newest timestamp wins, nothing is marked local). What sync skips is skipped here too: entity types
 //! outside `SYNC_ENTITY_TYPES` (only `SYNC_PROFILE_MAX_AGE_DAYS` is not applied, so an old
-//! profile is still found), and a content file every local reference to which is a profile
-//! render (`social::profile_images` draws those). Any other content file is stored once it
-//! hashes to its name.
+//! profile is still found). A content file is stored once it hashes to its name, a profile's
+//! avatar renders included; a `/contents/{hash}` miss is filled the same way, so a file this
+//! node lists but lost (or synced before it stored renders) is fetched on its first read.
 //!
 //! [`Fills`] bounds it: one fill per key at a time (a second reader waits on the first), a
 //! fixed number of fills at once (a reader beyond that answers the miss), a reader waits at
@@ -30,7 +30,7 @@ use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, TryAcquireError, watc
 use tokio::time::Instant;
 
 use super::deploy_remote_entity::{
-    BufferSink, ByteBudget, ByteReservation, ContentSource, PROFILE_RENDER_FILES, RemoteDeployment,
+    BufferSink, ByteBudget, ByteReservation, ContentSource, RemoteDeployment,
     deploy_entity_streaming, fetch_verified, stream_body,
 };
 use super::queries::{self, EntityDoc};
@@ -892,43 +892,12 @@ impl Upstream {
         }
     }
 
-    /// Whether every local reference to `hash` is a profile render file, which sync does not
-    /// download either ([`PROFILE_RENDER_FILES`]). A hash nothing here references is not one.
-    async fn only_profile_renders(&self, hash: &str) -> Result<bool, sqlx::Error> {
-        let only: Option<bool> = sqlx::query_scalar(
-            r#"SELECT bool_and(d.entity_type = 'profile'
-                               AND lower(regexp_replace(f.key, '^\./', '')) = ANY($2))
-               FROM content.content_files f
-               JOIN content.deployments d ON d.id = f.deployment
-               WHERE f.content_hash = $1"#,
-        )
-        .bind(hash)
-        .bind(PROFILE_RENDER_FILES)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(only == Some(true))
-    }
-
     async fn fill_content(&self, hash: &str) {
         match self.storage.exist(hash).await {
             Ok(false) => {}
             Ok(true) => return,
             Err(e) => {
                 tracing::warn!(hash, error = %e, "read-through: storage check failed");
-                return;
-            }
-        }
-        match self.only_profile_renders(hash).await {
-            Ok(false) => {}
-            Ok(true) => {
-                tracing::debug!(
-                    hash,
-                    "read-through: a profile render is drawn here, not copied"
-                );
-                return;
-            }
-            Err(e) => {
-                tracing::warn!(hash, error = %e, "read-through: reference lookup failed");
                 return;
             }
         }
