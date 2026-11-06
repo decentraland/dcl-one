@@ -1,34 +1,39 @@
 //! `POST /entities` (root and `/content`): the local deploy. A
 //! `multipart/form-data` body carries the `entityId` field, the auth chain
-//! (an `authChain` JSON field, `authChain[i][type|payload|signature]`
-//! fields, or the legacy `ethAddress` + `signature` pair) and the files,
-//! the entity file among them. The write deployer
+//! (an `authChain` JSON field or the `authChain[i][type|payload|signature]`
+//! fields, checked as `@dcl/schemas`' `AuthChain.validate` checks it) and
+//! the files, the entity file among them. The write deployer
 //! ([`super::write_deployer::WriteDeployer::deploy_entity`]) hashes the
-//! uploads, verifies the chain (the shared EIP-1654 validator for contract
-//! wallets), refuses a denylisted id, runs the content validator (the LAND
-//! leg through `land_authz`) and persists the whole deployment in ONE call
-//! of the hash-named deploy function, `content.local_entities` provenance
-//! included for a local scene.
+//! uploads, refuses a denylisted id, checks the signature, then upstream's
+//! server checks, runs the content validator (the LAND leg through
+//! `land_authz`) and persists the whole deployment in ONE call of the
+//! hash-named deploy function, `content.local_entities` provenance included
+//! for a local scene.
 //!
 //! Answers: 200 `{creationTimestamp}`, the stored `local_timestamp`; an
 //! entity already deployed answers its stored one before any signature,
 //! TTL or rate-limit check, as upstream's idempotent deploy does. 400
 //! `{errors}` for a refused deployment and `{error}` for a malformed form,
 //! 413 `{error}` for one past a form limit (upstream's multipart limits and
-//! texts, the total capped at [`MAX_DEPLOYMENT_BYTES`]); 503 `{errors}` with
-//! `Retry-After` when this node could not decide (a source unset or down,
-//! the store unreadable), its cause logged, not answered. The gates of
+//! texts, the total capped at [`MAX_DEPLOYMENT_BYTES`]), 408 `{error}` for a
+//! body still arriving at the upload timeout (`MULTIPART_UPLOAD_TIMEOUT_MS`,
+//! upstream's text with what arrived); 503 `{errors}` with `Retry-After`
+//! when this node could not decide (a source unset or down, the store
+//! unreadable), its cause logged, not answered, or did not decide a read
+//! form within `DEPLOYMENT_PROCESSING_TIMEOUT_MS` (worlds' text). The gates of
 //! [`super::writes`] come before any of it (404 read-only, 503 disabled),
 //! then the 503 with `Retry-After: 60` while the node is bootstrapping.
-//! Before the body is read, a body that does not fit the in-memory upload
-//! budget answers 503 and a client address past its daily quota 429, both
-//! with `Retry-After` ([`super::upload_admission`], per process); a body
-//! that is not a form, or declares more than a form can hold, then answers
-//! 400 or 413 uncounted. The quota counts every other admitted request, a
-//! form refused for its limits included, and gives back only the ones the
-//! deployer could not decide for its own state (its 503). A contract-wallet
-//! signature this node cannot check (503) and an unsynced copy refusing the
-//! entity's type (503) still count: the client chose them.
+//! Before the body is read, in upstream's order: a client address past its
+//! daily quota 429, a body that does not fit the in-memory upload budget
+//! 503, and a client with its uploads or bytes in flight 429
+//! ([`super::upload_admission`], per process), each with `Retry-After`; a
+//! body that is not a form, or declares more than a form can hold, then
+//! answers 400 or 413. The quota counts a request once its form is read,
+//! as upstream's `withDeploymentQuota`, and gives back only the ones the
+//! deployer could not decide for its own state (its 503), which upstream
+//! keeps. A contract-wallet signature this node cannot check (503) and an
+//! unsynced copy refusing the entity's type (503) still count: the client
+//! chose them.
 //! Ahead of the bootstrapping gate, every request (partial batches
 //! included) counts toward upstream's per-client burst limit, 200 per
 //! 60 s by default, a 429 `{"error":"Too many requests"}` with
@@ -39,21 +44,25 @@
 //! A form with `partial=true` is a batch of a partial upload
 //! ([`super::partial_deployments`]): 202 `{missing}` until the upload is
 //! complete, then 200. `?partial=true` declares it before the body, so the
-//! quota is not counted on admission but once the form is read (the upload
-//! once, when created, and a batch refused with a 400 before joining it);
-//! the query flag on a form without the field is a 400. Once the fields
+//! quota is not checked on admission but once the form is read (the upload
+//! counted once, when created, and a batch refused with a 400 before joining
+//! it); the query flag on a form without the field is a 400. Once the fields
 //! before the first file are read, a batch from a source that spent its
 //! quota and not resuming its signer's own upload, or from an account over
 //! its byte rate, is turned away (429) before any file is buffered.
 
 use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use axum::Json;
-use axum::extract::multipart::{MultipartError, MultipartRejection};
-use axum::extract::{Multipart, RawQuery, State};
+use axum::extract::multipart::MultipartError;
+use axum::extract::{FromRequest, Multipart, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use bytes::{Bytes, BytesMut};
+use futures::StreamExt;
 use serde_json::{Value, json};
 
 use super::SharedState;
@@ -99,6 +108,9 @@ fn body_too_large(max_fields: usize) -> AppError {
         max_deployment_body_bytes(max_fields)
     ))
 }
+
+/// A form without the `entityId` field.
+const MISSING_ENTITY_ID_MESSAGE: &str = "Missing required field: entityId";
 
 /// A body that is not a `multipart/form-data` form.
 const NOT_MULTIPART_MESSAGE: &str = "Invalid request: expected a multipart/form-data body";
@@ -177,34 +189,56 @@ fn too_long_message() -> String {
     format!("Auth chain is too long; the maximum allowed is {MAX_AUTH_CHAIN_LINKS} elements")
 }
 
-/// The chain of a deploy form: the explicit one (every link with a string
-/// `type` and `payload`), else the legacy `ethAddress` + `signature` pair
-/// as a SIGNER + ECDSA_SIGNED_ENTITY chain.
-fn auth_chain_of(fields: &BTreeMap<String, String>, entity_id: &str) -> AppResult<Value> {
-    if let Some(chain) = extract_auth_chain_from_fields(fields).map_err(invalid)? {
-        if let Some(arr) = chain.as_array() {
-            for link in arr {
-                if link.get("type").and_then(|v| v.as_str()).is_none() {
-                    return Err(invalid(
-                        "invalid auth chain format: each link must have a \"type\" field",
-                    ));
-                }
-                if link.get("payload").and_then(|v| v.as_str()).is_none() {
-                    return Err(invalid(
-                        "invalid auth chain format: each link must have a \"payload\" field",
-                    ));
-                }
+/// The `type` values `@dcl/schemas` admits in an auth link.
+const AUTH_LINK_TYPES: [&str; 5] = [
+    "SIGNER",
+    "ECDSA_EPHEMERAL",
+    "ECDSA_SIGNED_ENTITY",
+    "ECDSA_EIP_1654_EPHEMERAL",
+    "ECDSA_EIP_1654_SIGNED_ENTITY",
+];
+
+/// `AuthChain.validate` of `@dcl/schemas`: at least one link, each an
+/// object with a known `type` and a string `payload`; `signature` a string
+/// or null, required on every link but a SIGNER, whose signature is absent,
+/// null or empty.
+fn is_valid_auth_chain(chain: &Value) -> bool {
+    let Some(links) = chain.as_array().filter(|links| !links.is_empty()) else {
+        return false;
+    };
+    links.iter().all(|link| {
+        let Some(link) = link.as_object() else {
+            return false;
+        };
+        let Some(link_type) = link
+            .get("type")
+            .and_then(Value::as_str)
+            .filter(|t| AUTH_LINK_TYPES.contains(t))
+        else {
+            return false;
+        };
+        let signer = link_type == "SIGNER";
+        link.get("payload").is_some_and(Value::is_string)
+            && match link.get("signature") {
+                None => signer,
+                Some(Value::Null) => true,
+                Some(Value::String(signature)) => !signer || signature.is_empty(),
+                Some(_) => false,
             }
-        }
-        return Ok(chain);
+    })
+}
+
+/// The chain of a deploy form, as upstream's handler takes it: a form
+/// without one is upstream's `No auth chain can be derivated` (sic), and a
+/// chain `AuthChain.validate` refuses its `Invalid auth chain`.
+fn auth_chain_of(fields: &BTreeMap<String, String>) -> AppResult<Value> {
+    let chain = extract_auth_chain_from_fields(fields)
+        .map_err(invalid)?
+        .ok_or_else(|| invalid("No auth chain can be derivated"))?;
+    if !is_valid_auth_chain(&chain) {
+        return Err(invalid("Invalid auth chain"));
     }
-    match (fields.get("ethAddress"), fields.get("signature")) {
-        (Some(addr), Some(sig)) => Ok(json!([
-            { "type": "SIGNER", "payload": addr, "signature": Value::Null },
-            { "type": "ECDSA_SIGNED_ENTITY", "payload": entity_id, "signature": sig }
-        ])),
-        _ => Err(invalid("No auth chain can be derived")),
-    }
+    Ok(chain)
 }
 
 /// A part is a file when it names one or carries a non-text body: the Explorer
@@ -343,6 +377,22 @@ pub fn deployment_failure_response(failure: DeployFailure) -> Response {
     response
 }
 
+/// The 503 of a read form not decided within `DEPLOYMENT_PROCESSING_TIMEOUT_MS`
+/// (worlds' text). Dropping the deploy there is safe: a client disconnect
+/// drops it at the same points, its guards release on drop, stored blobs are
+/// content-addressed and the write is one statement, so it either committed
+/// (a retry then answers the stored timestamp) or did not.
+fn processing_timed_out(timeout: Duration) -> Response {
+    tracing::warn!(
+        timeout_ms = timeout.as_millis() as u64,
+        "POST /entities: deployment processing timed out"
+    );
+    deployment_failure_response(DeployFailure::Unavailable(vec![format!(
+        "Deployment processing exceeded the {}ms deadline.",
+        timeout.as_millis()
+    )]))
+}
+
 /// `response` with a `Retry-After` of `value`.
 fn with_retry_after(mut response: Response, value: header::HeaderValue) -> Response {
     response.headers_mut().insert(header::RETRY_AFTER, value);
@@ -454,7 +504,7 @@ pub async fn create_entity(
     RawQuery(query): RawQuery,
     connect: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     headers: HeaderMap,
-    multipart: Result<Multipart, MultipartRejection>,
+    request: axum::extract::Request,
 ) -> AppResult<Response> {
     let request_started = std::time::Instant::now();
     if let Some(refused) = writes::refuse(&state) {
@@ -475,11 +525,17 @@ pub async fn create_entity(
     if !state.sync.takes_some_deploys() {
         return Ok(writes::bootstrapping_response());
     }
+    // A declared partial batch is checked against the daily quota once its
+    // form is read ([`partial_deployments`]): a source that spent its quota
+    // may still resume its own uploads. Any other request of a spent source
+    // is turned away here, unread and uncounted.
+    let declared_partial = partial_deployments::is_declared(query.as_deref());
+    if !declared_partial && let Some(retry_after) = state.deploy_quota.exhausted(&client_ip) {
+        return Ok(quota_exceeded_response(retry_after));
+    }
 
-    let Some(_reservation) = state
-        .upload_budget
-        .try_reserve(declared_body_bytes(&headers))
-    else {
+    let body_bytes = declared_body_bytes(&headers);
+    let Some(_reservation) = state.upload_budget.try_reserve(body_bytes) else {
         return Ok(with_retry_after(
             super::errors::json_error(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -488,66 +544,89 @@ pub async fn create_entity(
             header::HeaderValue::from_static(writes::UNAVAILABLE_RETRY_AFTER_SECS),
         ));
     };
-    // A declared partial batch is counted once its form is read
-    // ([`partial_deployments`]): a source that spent its quota may still
-    // resume its own uploads.
-    let declared_partial = partial_deployments::is_declared(query.as_deref());
-    // Upstream's parser refuses these before its quota counts the request,
-    // and after its pre-body check of a spent quota.
+    let Ok(_source_lease) = state.source_uploads.try_acquire(&client_ip, body_bytes) else {
+        return Ok(with_retry_after(
+            super::errors::json_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                super::upload_admission::SOURCE_BUSY_MESSAGE,
+            ),
+            header::HeaderValue::from(super::upload_admission::SOURCE_BUSY_RETRY_AFTER_SECS),
+        ));
+    };
+    let received = Arc::new(AtomicU64::new(0));
+    let multipart = Multipart::from_request(counting_body(request, Arc::clone(&received)), &())
+        .await
+        .map_err(|_| invalid(NOT_MULTIPART_MESSAGE))?;
     let max_fields = state.settings.max_upload_field_count;
-    let multipart = match multipart {
-        Err(_) => Err(invalid(NOT_MULTIPART_MESSAGE)),
-        Ok(_)
-            if declared_length(&headers)
-                .is_some_and(|n| n > max_deployment_body_bytes(max_fields) as u64) =>
-        {
-            Err(body_too_large(max_fields))
-        }
-        Ok(multipart) => Ok(multipart),
-    };
-    let multipart = match multipart {
-        Ok(multipart) => multipart,
-        Err(refusal) => {
-            if !declared_partial && let Some(retry_after) = state.deploy_quota.exhausted(&client_ip)
-            {
-                return Ok(quota_exceeded_response(retry_after));
-            }
-            return Err(refusal);
-        }
-    };
-    let charge = if declared_partial {
-        None
-    } else {
-        match state.deploy_quota.try_consume(&client_ip) {
-            Ok(charge) => charge,
-            Err(retry_after) => return Ok(quota_exceeded_response(retry_after)),
-        }
-    };
+    if declared_length(&headers).is_some_and(|n| n > max_deployment_body_bytes(max_fields) as u64) {
+        return Err(body_too_large(max_fields));
+    }
 
     let request = Request {
         headers: &headers,
         client_ip: &client_ip,
         declared_partial,
-        // Undeclared, the source was admitted under its quota above.
+        // Undeclared, a spent source was turned away above.
         quota_exhausted: if declared_partial {
             state.deploy_quota.exhausted(&client_ip)
         } else {
             None
         },
         started: request_started,
+        received: &received,
     };
-    Ok(
-        match deploy_form(&state, deployer, &request, multipart).await {
-            Ok(Answer::Decided(response)) => response,
-            Ok(Answer::Undecided(response)) | Ok(Answer::Partial(response)) => {
-                if let Some(charge) = charge {
-                    charge.refund();
-                }
-                response
+    deploy_form(&state, deployer, &request, multipart).await
+}
+
+/// `request` with its body's bytes added to `received` as they arrive.
+fn counting_body(
+    request: axum::extract::Request,
+    received: Arc<AtomicU64>,
+) -> axum::extract::Request {
+    request.map(|body| {
+        axum::body::Body::from_stream(body.into_data_stream().inspect(move |chunk| {
+            if let Ok(chunk) = chunk {
+                received.fetch_add(chunk.len() as u64, Ordering::Relaxed);
             }
-            Err(e) => e.into_response(),
-        },
+        }))
+    })
+}
+
+/// Upstream's 408 for a body that did not arrive within `timeout`, with
+/// what did arrive (`uploadTimedOutMessage`).
+fn upload_timed_out(timeout: Duration, received: u64, declared: Option<u64>) -> Response {
+    let timeout_ms = timeout.as_millis() as f64;
+    let received_text = match declared {
+        Some(declared) => format!("{received} of {declared}"),
+        None => received.to_string(),
+    };
+    let bytes_per_second = if timeout_ms > 0.0 {
+        received as f64 * 1000.0 / timeout_ms
+    } else {
+        0.0
+    };
+    super::errors::json_error(
+        StatusCode::REQUEST_TIMEOUT,
+        &format!(
+            "The upload did not finish within {} s: received {received_text} bytes ({} KiB/s). Retry on a faster connection or send smaller batches.",
+            js_fixed(timeout_ms / 1000.0, 3),
+            js_fixed(bytes_per_second / 1024.0, 2),
+        ),
     )
+}
+
+/// `String(Number(value.toFixed(digits)))`: the value rounded to `digits`
+/// decimals, without trailing zeros.
+fn js_fixed(value: f64, digits: usize) -> String {
+    let fixed = format!("{value:.digits$}");
+    if fixed.contains('.') {
+        fixed
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    } else {
+        fixed
+    }
 }
 
 /// The 200 of a deployed entity: its stored `local_timestamp` in ms.
@@ -567,31 +646,29 @@ struct Request<'a> {
     /// The daily quota's Retry-After when the source had spent it on arrival.
     quota_exhausted: Option<u64>,
     started: std::time::Instant,
+    /// The body's bytes read so far.
+    received: &'a AtomicU64,
 }
 
 /// An admitted deploy's answer: [`Answer::Undecided`] is the deployer's
-/// 503 for this node's own state, which the client's quota gets back;
-/// [`Answer::Partial`] a partial batch, which counted itself.
+/// 503 for this node's own state, which the client's quota gets back.
 enum Answer {
     Decided(Response),
     Undecided(Response),
-    Partial(Response),
 }
 
-/// Reads an admitted form and deploys it.
+/// Reads an admitted form, within the upload timeout, and deploys it.
 async fn deploy_form(
     state: &SharedState,
     deployer: std::sync::Arc<super::write_deployer::WriteDeployer>,
     request: &Request<'_>,
     mut multipart: Multipart,
-) -> AppResult<Answer> {
-    let headers = request.headers;
-    let request_started = request.started;
+) -> AppResult<Response> {
     let settings = &state.settings;
     let is_partial = |fields: &BTreeMap<String, String>| {
         fields.get("partial").map(String::as_str) == Some("true")
     };
-    let form = read_form(
+    let read = read_form(
         &mut multipart,
         settings.max_upload_field_count,
         settings.max_upload_field_bytes,
@@ -600,7 +677,7 @@ async fn deploy_form(
                 return None;
             }
             let entity_id = fields.get("entityId")?;
-            let chain = auth_chain_of(fields, entity_id).ok()?;
+            let chain = auth_chain_of(fields).ok()?;
             let signer = chain.get(0)?.get("payload")?.as_str()?;
             partial_deployments::admit_before_files(
                 &deployer,
@@ -611,29 +688,69 @@ async fn deploy_form(
             )
             .await
         },
-    )
-    .await?;
-    let (fields, files) = match form {
+    );
+    let timeout = settings.multipart_upload_timeout;
+    let Ok(form) = tokio::time::timeout(timeout, read).await else {
+        return Ok(upload_timed_out(
+            timeout,
+            request.received.load(Ordering::Relaxed),
+            declared_length(request.headers),
+        ));
+    };
+    let (fields, files) = match form? {
         Form::Read(fields, files) => (fields, files),
-        Form::Refused(response) => return Ok(Answer::Partial(response)),
+        Form::Refused(response) => return Ok(response),
     };
     if is_partial(&fields) {
         let answer = partial_batch(state, &deployer, request, fields, files).await;
-        return Ok(Answer::Partial(
-            answer.unwrap_or_else(IntoResponse::into_response),
-        ));
+        return Ok(answer.unwrap_or_else(IntoResponse::into_response));
     }
-    let entity_id = fields
-        .get("entityId")
-        .ok_or_else(|| invalid("Missing entityId field"))?
-        .clone();
     // Otherwise the query flag would carry a regular deploy past the quota.
     if request.declared_partial {
         return Err(invalid(
             "The 'partial=true' query parameter requires the 'partial=true' form field",
         ));
     }
-    let auth_chain = auth_chain_of(&fields, &entity_id)?;
+    // Counted once the form is read, as upstream's `withDeploymentQuota`:
+    // a form refused by the parser or its limits is not.
+    let charge = match state.deploy_quota.try_consume(request.client_ip) {
+        Ok(charge) => charge,
+        Err(retry_after) => return Ok(quota_exceeded_response(retry_after)),
+    };
+    let deploy = deploy_regular(state, &deployer, request, fields, files);
+    let Ok(answer) = tokio::time::timeout(settings.deployment_processing_timeout, deploy).await
+    else {
+        // Counted: the client may have chosen what stalled (its contract
+        // wallet's RPC), and the deploy may yet have committed.
+        return Ok(processing_timed_out(settings.deployment_processing_timeout));
+    };
+    Ok(match answer {
+        Ok(Answer::Decided(response)) => response,
+        Ok(Answer::Undecided(response)) => {
+            if let Some(charge) = charge {
+                charge.refund();
+            }
+            response
+        }
+        Err(e) => e.into_response(),
+    })
+}
+
+/// A regular (single-request) deploy of a read form.
+async fn deploy_regular(
+    state: &SharedState,
+    deployer: &super::write_deployer::WriteDeployer,
+    request: &Request<'_>,
+    fields: BTreeMap<String, String>,
+    files: Vec<(String, Bytes)>,
+) -> AppResult<Answer> {
+    let headers = request.headers;
+    let request_started = request.started;
+    let entity_id = fields
+        .get("entityId")
+        .ok_or_else(|| invalid(MISSING_ENTITY_ID_MESSAGE))?
+        .clone();
+    let auth_chain = auth_chain_of(&fields)?;
     // Deploys are idempotent: a replay answers the stored timestamp with no
     // signature, TTL or rate-limit check (its chain may have expired since).
     // A failed lookup goes on to the deploy, whose write answers a deployed
@@ -727,9 +844,9 @@ async fn partial_batch(
     };
     let Some(entity_id) = fields.get("entityId").cloned() else {
         count();
-        return Err(invalid("Missing entityId field"));
+        return Err(invalid(MISSING_ENTITY_ID_MESSAGE));
     };
-    let auth_chain = match auth_chain_of(&fields, &entity_id) {
+    let auth_chain = match auth_chain_of(&fields) {
         Ok(chain) => chain,
         Err(e) => {
             count();
@@ -749,14 +866,19 @@ async fn partial_batch(
             - request.started.elapsed().as_millis() as i64,
     };
     let mut admission = partial_deployments::Admission::default();
-    let response = partial_deployments::handle(
-        deployer,
-        &state.settings.partial_uploads,
-        batch,
-        request.quota_exhausted,
-        &mut admission,
+    let timeout = state.settings.deployment_processing_timeout;
+    let response = tokio::time::timeout(
+        timeout,
+        partial_deployments::handle(
+            deployer,
+            &state.settings.partial_uploads,
+            batch,
+            request.quota_exhausted,
+            &mut admission,
+        ),
     )
-    .await;
+    .await
+    .unwrap_or_else(|_| processing_timed_out(timeout));
     if admission.created || (response.status() == StatusCode::BAD_REQUEST && !admission.admitted) {
         count();
     }
@@ -924,37 +1046,48 @@ mod tests {
     }
 
     #[test]
-    fn a_chain_without_a_link_type_or_payload_is_malformed_and_the_legacy_pair_is_a_chain() {
-        let err =
-            auth_chain_of(&fields(&[("authChain", r#"[{"payload":"0x1"}]"#)]), "bafy").unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "invalid auth chain format: each link must have a \"type\" field"
-        );
-        let err =
-            auth_chain_of(&fields(&[("authChain", r#"[{"type":"SIGNER"}]"#)]), "bafy").unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "invalid auth chain format: each link must have a \"payload\" field"
-        );
-        let chain = auth_chain_of(
-            &fields(&[("ethAddress", "0xabc"), ("signature", "0xsig")]),
-            "bafy",
-        )
-        .unwrap();
-        assert_eq!(
-            chain,
-            json!([
-                { "type": "SIGNER", "payload": "0xabc", "signature": null },
-                { "type": "ECDSA_SIGNED_ENTITY", "payload": "bafy", "signature": "0xsig" }
-            ])
-        );
-        assert_eq!(
-            auth_chain_of(&fields(&[("ethAddress", "0xabc")]), "bafy")
-                .unwrap_err()
-                .to_string(),
-            "No auth chain can be derived"
-        );
+    fn a_chain_is_taken_as_auth_chain_validate_takes_it() {
+        let chain_of = |chain: &str| auth_chain_of(&fields(&[("authChain", chain)]));
+        let refused = |chain: &str| chain_of(chain).unwrap_err().to_string();
+        for bad in [
+            "[]",
+            "[null]",
+            r#"[{"payload":"0x1"}]"#,
+            r#"[{"type":"SIGNER"}]"#,
+            r#"[{"type":"SIGNER","payload":1}]"#,
+            r#"[{"type":"OTHER","payload":"0x1","signature":""}]"#,
+            r#"[{"type":"SIGNER","payload":"0x1","signature":"0xsig"}]"#,
+            r#"[{"type":"SIGNER","payload":"0x1"},{"type":"ECDSA_SIGNED_ENTITY","payload":"bafy"}]"#,
+            r#"[{"type":"SIGNER","payload":"0x1"},{"type":"ECDSA_SIGNED_ENTITY","payload":"bafy","signature":1}]"#,
+        ] {
+            assert_eq!(refused(bad), "Invalid auth chain", "{bad}");
+        }
+        for good in [
+            r#"[{"type":"SIGNER","payload":"0x1"}]"#,
+            r#"[{"type":"SIGNER","payload":"0x1","signature":null}]"#,
+            r#"[{"type":"SIGNER","payload":"0x1","signature":""},{"type":"ECDSA_EPHEMERAL","payload":"p","signature":"0xs"},{"type":"ECDSA_SIGNED_ENTITY","payload":"bafy","signature":null}]"#,
+            r#"[{"type":"SIGNER","payload":"0x1","signature":""},{"type":"ECDSA_EIP_1654_SIGNED_ENTITY","payload":"bafy","signature":"0xs","extra":1}]"#,
+        ] {
+            assert!(chain_of(good).is_ok(), "{good}");
+        }
+        // The legacy pair is no chain, as upstream's handler takes it.
+        for form in [
+            fields(&[("ethAddress", "0xabc"), ("signature", "0xsig")]),
+            fields(&[("entityId", "bafy")]),
+        ] {
+            assert_eq!(
+                auth_chain_of(&form).unwrap_err().to_string(),
+                "No auth chain can be derivated"
+            );
+        }
+    }
+
+    #[test]
+    fn an_upload_timeout_names_what_arrived_as_upstream_does() {
+        assert_eq!(js_fixed(300.0, 3), "300");
+        assert_eq!(js_fixed(0.05, 3), "0.05");
+        assert_eq!(js_fixed(1.5, 2), "1.5");
+        assert_eq!(js_fixed(0.0, 2), "0");
     }
 
     #[tokio::test]

@@ -111,7 +111,6 @@ use axum::routing::{delete, get, post};
 use bytes::Bytes;
 use parking_lot::RwLock;
 use sqlx::PgPool;
-use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::{DefaultOnFailure, TraceLayer};
 
 use crate::shared::cache::TtlMap;
@@ -165,6 +164,16 @@ pub struct Settings {
     pub post_entities_rate_limit_window: Duration,
     /// The partial-upload limits (`PENDING_DEPLOYMENT_TTL`, ...).
     pub partial_uploads: partial_deployments::Limits,
+    /// `MAX_CONCURRENT_UPLOADS_PER_SOURCE`, `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE`.
+    pub max_concurrent_uploads_per_source: u32,
+    pub max_in_flight_upload_bytes_per_source: u64,
+    /// `MULTIPART_UPLOAD_TIMEOUT_MS`: how long a deploy form may take to arrive.
+    pub multipart_upload_timeout: Duration,
+    /// `DEPLOYMENT_PROCESSING_TIMEOUT_MS`: how long a read deploy form may
+    /// take to be decided, the bound the blob collector's age floor assumes.
+    pub deployment_processing_timeout: Duration,
+    /// The deployer's request TTL and per-pointer rate limits.
+    pub deploy_limits: write_deployer::DeployLimits,
     /// `HTTP_TRUSTED_PROXY_CIDRS`: the only socket peers whose `X-Real-IP`
     /// names the client of the `POST /entities` limits.
     pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
@@ -260,6 +269,18 @@ impl Settings {
                     .max(1),
             ),
             partial_uploads: partial_deployments::Limits::from_config(config),
+            max_concurrent_uploads_per_source: config.content.max_concurrent_uploads_per_source,
+            max_in_flight_upload_bytes_per_source: config
+                .content
+                .max_in_flight_upload_bytes_per_source
+                .unwrap_or(create_entity::MAX_DEPLOYMENT_BYTES as u64),
+            multipart_upload_timeout: Duration::from_millis(
+                config.worlds.multipart_upload_timeout_ms.max(1),
+            ),
+            deployment_processing_timeout: Duration::from_millis(
+                config.worlds.deployment_processing_timeout_ms.max(1),
+            ),
+            deploy_limits: write_deployer::DeployLimits::from_config(&config.content),
             trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
         }
     }
@@ -295,6 +316,11 @@ impl Settings {
             post_entities_rate_limit_max: 200,
             post_entities_rate_limit_window: Duration::from_secs(60),
             partial_uploads: partial_deployments::Limits::default(),
+            max_concurrent_uploads_per_source: 4,
+            max_in_flight_upload_bytes_per_source: create_entity::MAX_DEPLOYMENT_BYTES as u64,
+            multipart_upload_timeout: Duration::from_secs(300),
+            deployment_processing_timeout: Duration::from_secs(300),
+            deploy_limits: write_deployer::DeployLimits::default(),
             trusted_proxy_cidrs: Vec::new(),
         }
     }
@@ -515,6 +541,8 @@ pub struct ContentState {
     pub deploy_quota: upload_admission::DailyQuota,
     /// `POST /entities` requests per client address and burst window.
     pub deploy_burst: upload_admission::DailyQuota,
+    /// `POST /entities` bodies and bytes in flight per client address.
+    pub source_uploads: upload_admission::SourceUploads,
 }
 
 /// See [`ContentState::attach_parcel_grid`].
@@ -546,6 +574,10 @@ impl ContentState {
             settings.post_entities_rate_limit_max,
             settings.post_entities_rate_limit_window,
         );
+        let source_uploads = upload_admission::SourceUploads::new(
+            settings.max_concurrent_uploads_per_source,
+            settings.max_in_flight_upload_bytes_per_source,
+        );
         Self {
             pool,
             settings,
@@ -565,6 +597,7 @@ impl ContentState {
             upload_budget,
             deploy_quota,
             deploy_burst,
+            source_uploads,
         }
     }
 
@@ -593,6 +626,7 @@ impl ContentState {
         enabled: bool,
         deployer: Arc<write_deployer::WriteDeployer>,
     ) -> bool {
+        deployer.configure(&self.settings.deploy_limits);
         self.writes.set(Writes { enabled, deployer }).is_ok()
     }
 
@@ -760,9 +794,22 @@ pub fn build_router(state: SharedState) -> Router {
         .layer(axum::middleware::from_fn(cors::cors_middleware))
         .layer(axum::middleware::from_fn(connection::keep_alive_hint));
     if let Some(timeout) = request_timeout {
-        app = app.layer(TimeoutLayer::with_status_code(
-            StatusCode::REQUEST_TIMEOUT,
-            timeout,
+        // A deploy form has its own, longer bounds in [`create_entity`]: the
+        // upload timeout (upstream's 408 with what arrived), then the
+        // processing deadline (503 with `Retry-After`).
+        app = app.layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| async move {
+                let path = request.uri().path();
+                if request.method() == axum::http::Method::POST
+                    && (path == "/entities" || path == "/content/entities")
+                {
+                    return next.run(request).await;
+                }
+                match tokio::time::timeout(timeout, next.run(request)).await {
+                    Ok(response) => response,
+                    Err(_) => StatusCode::REQUEST_TIMEOUT.into_response(),
+                }
+            },
         ));
     }
     app.with_state(state)

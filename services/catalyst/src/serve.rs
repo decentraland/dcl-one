@@ -1665,12 +1665,13 @@ async fn worlds_states(
                     deployment_processing_timeout_ms: config
                         .worlds
                         .deployment_processing_timeout_ms,
-                    max_concurrent_uploads_per_source: config
-                        .worlds
-                        .max_concurrent_uploads_per_source,
+                    max_concurrent_uploads_per_source: u64::from(
+                        config.content.max_concurrent_uploads_per_source,
+                    ),
                     max_in_flight_upload_bytes_per_source: config
-                        .worlds
-                        .max_in_flight_upload_bytes_per_source,
+                        .content
+                        .max_in_flight_upload_bytes_per_source
+                        .unwrap_or(worlds::core::upload_limits::DEFAULT_MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE),
                 },
             )
             .and_then(|s| {

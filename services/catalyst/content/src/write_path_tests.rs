@@ -79,6 +79,14 @@ fn scene(pointers: &[&str], files: &[(&str, &str)]) -> Value {
 
 /// The multipart form the SDK sends: `entityId`, `authChain` as JSON, and
 /// every file as a part named by its hash.
+/// A chain of the right shape for `entity_id` whose signature checks fail.
+fn unsigned_chain(entity_id: &str) -> Value {
+    json!([
+        {"type": "SIGNER", "payload": "0x0000000000000000000000000000000000000001", "signature": ""},
+        {"type": "ECDSA_SIGNED_ENTITY", "payload": entity_id, "signature": "0x01"}
+    ])
+}
+
 fn deploy_request(
     path: &str,
     entity_id: &str,
@@ -464,7 +472,12 @@ async fn an_unsynced_copy_takes_the_deploy_types_it_names() {
         let id = crate::auth::hash_bytes_v1(&file);
         let (status, _, body) = call(
             &node.router(),
-            deploy_request("/content/entities", &id, &json!([]), &[(&id, &file)]),
+            deploy_request(
+                "/content/entities",
+                &id,
+                &unsigned_chain(&id),
+                &[(&id, &file)],
+            ),
         )
         .await;
         let refused = (status, json_of(&body))
@@ -487,7 +500,7 @@ async fn an_unsynced_copy_takes_the_deploy_types_it_names() {
         deploy_request(
             "/content/entities",
             "bafynotthefile",
-            &json!([]),
+            &unsigned_chain("bafynotthefile"),
             &[("x", &other)],
         ),
     )
@@ -511,15 +524,16 @@ async fn pointers_differing_only_by_case_are_repeated() {
     node.state.sync.set_state(SyncState::Syncing);
     let pointer =
         "urn:decentraland:matic:collections-v2:0xAbC0000000000000000000000000000000000001:0";
-    let file = Bytes::from(
+    // Signed: the signature is checked before the validator's rules.
+    let (file, id, chain) = signed_entity(
+        &PrivateKeySigner::random(),
         json!({"version": "v3", "type": "wearable", "pointers": [pointer, pointer.to_lowercase()],
-               "timestamp": chrono::Utc::now().timestamp_millis(), "content": [], "metadata": {}})
-        .to_string(),
-    );
-    let id = crate::auth::hash_bytes_v1(&file);
+               "timestamp": chrono::Utc::now().timestamp_millis(), "content": [], "metadata": {}}),
+    )
+    .await;
     let (status, _, body) = call(
         &node.router(),
-        deploy_request("/content/entities", &id, &json!([]), &[(&id, &file)]),
+        deploy_request("/content/entities", &id, &chain, &[(&id, &file)]),
     )
     .await;
     assert_eq!(
@@ -1522,12 +1536,19 @@ fn form_request(ip: &str, fields: &[(String, String)]) -> Request<Body> {
         .unwrap()
 }
 
-/// A form that passes admission and is then refused by the deployer (400).
+/// A form that passes admission and is then refused by the deployer (400):
+/// a well-formed chain, no entity file.
 fn entity_form() -> Vec<(String, String)> {
     vec![
         ("entityId".to_string(), "bafy".to_string()),
-        ("ethAddress".to_string(), "0xabc".to_string()),
-        ("signature".to_string(), "0xsig".to_string()),
+        (
+            "authChain".to_string(),
+            json!([
+                {"type": "SIGNER", "payload": "0x0000000000000000000000000000000000000001", "signature": ""},
+                {"type": "ECDSA_SIGNED_ENTITY", "payload": "bafy", "signature": "0x01"}
+            ])
+            .to_string(),
+        ),
     ]
 }
 
@@ -1544,7 +1565,7 @@ async fn a_form_over_its_field_limits_is_refused() {
     let router = node.router();
 
     let mut many = entity_form();
-    many.extend((0..30).map(|i| (format!("extra{i}"), "x".to_string())));
+    many.extend((0..31).map(|i| (format!("extra{i}"), "x".to_string())));
     let (status, _, body) = call(&router, form_request("203.0.113.1", &many)).await;
     assert_eq!(
         (status, json_of(&body)),
@@ -1571,7 +1592,7 @@ async fn a_form_over_its_field_limits_is_refused() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(
         json_of(&body),
-        json!({"errors": ["The entity file was not part of the uploaded files."]}),
+        json!({"errors": ["Failed to find the entity file."]}),
         "a form at the limits reaches the deployer"
     );
 }
@@ -1851,8 +1872,11 @@ async fn a_repeated_form_name_is_refused() {
     );
 }
 
+/// Upstream counts a deploy once its form is read (`withDeploymentQuota`):
+/// forms the parser or its limits refuse are not counted, a form refused
+/// after it (no `entityId`, a bad chain) is.
 #[tokio::test]
-async fn forms_refused_for_their_field_limits_count_toward_the_quota() {
+async fn only_forms_that_were_read_count_toward_the_quota() {
     let settings = Settings {
         post_entities_daily_quota_max: 2,
         ..Settings::for_tests()
@@ -1861,12 +1885,126 @@ async fn forms_refused_for_their_field_limits_count_toward_the_quota() {
     let router = node.router();
     let mut large = entity_form();
     large.push(("big".to_string(), "x".repeat(32 * 1024 + 1)));
-    for _ in 0..2 {
+    for _ in 0..3 {
         let (status, _, _) = call(&router, form_request("203.0.113.10", &large)).await;
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
     }
+    assert_eq!(node.state.deploy_quota.counted_for("203.0.113.10"), 0);
+    let (status, _, body) = call(&router, form_request("203.0.113.10", &entity_form()[1..])).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"error": "Missing required field: entityId"})
+        )
+    );
     let (status, _, _) = call(&router, form_request("203.0.113.10", &entity_form())).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _, _) = call(&router, form_request("203.0.113.10", &large)).await;
+    assert_eq!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "a spent source is turned away before its body"
+    );
+}
+
+/// Upstream's order before the body: a spent quota answers 429 ahead of a
+/// full upload budget.
+#[tokio::test]
+async fn a_spent_quota_is_answered_before_the_upload_budget() {
+    let capacity = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
+    let settings = Settings {
+        post_entities_daily_quota_max: 1,
+        max_in_memory_deployment_bytes: capacity,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("quota-before-budget", settings).await;
+    let router = node.router();
+    let (status, _, _) = call(&router, form_request("203.0.113.16", &entity_form())).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let _held = node.state.upload_budget.try_reserve(capacity).unwrap();
+    let (status, _, _) = call(&router, form_request("203.0.113.16", &entity_form())).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    let (status, _, _) = call(&router, form_request("203.0.113.17", &entity_form())).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+}
+
+/// Upstream's per-source admission (`source-upload-admission.ts`): a client
+/// with its uploads or bytes in flight gets 429 with `Retry-After: 5`
+/// before its body is read; another client is admitted.
+#[tokio::test]
+async fn a_source_past_its_uploads_in_flight_is_turned_away() {
+    let settings = Settings {
+        max_concurrent_uploads_per_source: 1,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("source-uploads", settings).await;
+    let router = node.router();
+    let held = node
+        .state
+        .source_uploads
+        .try_acquire("203.0.113.18", 1)
+        .unwrap();
+    let (status, headers, body) = call(&router, form_request("203.0.113.18", &entity_form())).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            json!({"error": "Too many uploads in progress from this client, please retry shortly."})
+        )
+    );
+    assert_eq!(headers[header::RETRY_AFTER], "5");
+    let (status, _, _) = call(&router, form_request("203.0.113.19", &entity_form())).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    drop(held);
+    let (status, _, _) = call(&router, form_request("203.0.113.18", &entity_form())).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "admitted once its upload ends"
+    );
+}
+
+/// A body still arriving at the upload timeout answers upstream's 408 with
+/// what arrived (`multipart.ts`).
+#[tokio::test]
+async fn a_body_past_the_upload_timeout_is_408_with_what_arrived() {
+    use futures::StreamExt;
+    let settings = Settings {
+        multipart_upload_timeout: std::time::Duration::from_millis(50),
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("upload-timeout", settings).await;
+    let first = "--catalyst-admission-boundary\r\nContent-Disposition: form-data; name=\"entityId\"\r\n\r\nbafy\r\n";
+    let stalled = futures::stream::iter([Ok::<_, std::io::Error>(Bytes::from_static(
+        first.as_bytes(),
+    ))])
+    .chain(futures::stream::pending());
+    let request = Request::post("/content/entities")
+        .header(
+            header::CONTENT_TYPE,
+            "multipart/form-data; boundary=catalyst-admission-boundary",
+        )
+        .header(header::CONTENT_LENGTH, 1000)
+        .header("x-real-ip", "203.0.113.22")
+        .body(Body::from_stream(stalled))
+        .unwrap();
+    let (status, _, body) = call(&node.router(), request).await;
+    assert_eq!(status, StatusCode::REQUEST_TIMEOUT);
+    let kib_per_s = first.len() as f64 * 1000.0 / 50.0 / 1024.0;
+    assert_eq!(
+        json_of(&body),
+        json!({"error": format!(
+            "The upload did not finish within 0.05 s: received {} of 1000 bytes ({} KiB/s). Retry on a faster connection or send smaller batches.",
+            first.len(),
+            format!("{kib_per_s:.2}").trim_end_matches('0').trim_end_matches('.')
+        )})
+    );
+    assert_eq!(
+        node.state.deploy_quota.counted_for("203.0.113.22"),
+        0,
+        "an unread form is not counted"
+    );
 }
 
 /// An unsynced copy taking only scenes: a form with no typed entity file is
@@ -1898,7 +2036,12 @@ async fn an_unsynced_copys_refusals_count_toward_the_quota() {
     );
     let id = hash_bytes_v1(&file);
     let profile = || {
-        let mut req = deploy_request("/content/entities", &id, &json!([]), &[(&id, &file)]);
+        let mut req = deploy_request(
+            "/content/entities",
+            &id,
+            &unsigned_chain(&id),
+            &[(&id, &file)],
+        );
         req.headers_mut()
             .insert("x-real-ip", HeaderValue::from_static("203.0.113.11"));
         req
@@ -2023,10 +2166,11 @@ async fn a_chunked_body_reserves_the_whole_body_cap() {
 }
 
 #[tokio::test]
-async fn a_cancelled_request_returns_its_reservation() {
+async fn a_cancelled_request_returns_its_reservation_and_source_share() {
     let cap = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
     let settings = Settings {
         max_in_memory_deployment_bytes: cap,
+        max_concurrent_uploads_per_source: 1,
         ..Settings::for_tests()
     };
     let node = deploying_node("upload-budget-cancel", settings).await;
@@ -2055,6 +2199,11 @@ async fn a_cancelled_request_returns_its_reservation() {
         waited += 1;
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
+    let sources = &node.state.source_uploads;
+    assert!(
+        sources.try_acquire("203.0.113.13", 1).is_err(),
+        "the request holds its source's only upload"
+    );
     pending.abort();
     let _ = pending.await;
     drop(tx);
@@ -2062,4 +2211,150 @@ async fn a_cancelled_request_returns_its_reservation() {
         budget.try_reserve(cap).is_some(),
         "the aborted request gave its reservation back"
     );
+    assert!(
+        matches!(sources.try_acquire("203.0.113.13", 1), Ok(Some(_))),
+        "the aborted request gave its source's upload back"
+    );
+}
+
+/// A database that drops its first `fail_first` connections (a lookup that
+/// fails at once and is passed over) and holds every later one unanswered.
+async fn stalling_pool(fail_first: usize) -> (PgPool, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let mut accepted = 0;
+        let mut held = Vec::new();
+        while let Ok((socket, _)) = listener.accept().await {
+            accepted += 1;
+            if accepted > fail_first {
+                held.push(socket);
+            }
+        }
+    });
+    let pool = PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_secs(60))
+        .connect_lazy(&format!("postgres://nobody@{addr}/nowhere"))
+        .unwrap();
+    (pool, server)
+}
+
+async fn stalled_deploying_node(
+    tag: &str,
+    fail_first: usize,
+    settings: Settings,
+) -> (TestNode, tokio::task::JoinHandle<()>) {
+    let (pool, server) = stalling_pool(fail_first).await;
+    let node = TestNode::with_pool_settings(tag, pool, settings).await;
+    attach(&node.state, true, None, None);
+    node.state.sync.set_state(SyncState::Syncing);
+    (node, server)
+}
+
+/// `POST /entities` skips the whole-request timeout, which still answers
+/// any other route's stall with 408; a read form not decided within
+/// `DEPLOYMENT_PROCESSING_TIMEOUT_MS` answers 503 with `Retry-After`.
+#[tokio::test]
+async fn a_deploy_skips_the_request_timeout_and_answers_503_at_its_processing_deadline() {
+    let settings = Settings {
+        request_timeout: Some(std::time::Duration::from_millis(200)),
+        deployment_processing_timeout: std::time::Duration::from_millis(800),
+        ..Settings::for_tests()
+    };
+    let (node, server) = stalled_deploying_node("processing-deadline", 0, settings).await;
+    let router = node.router();
+
+    let active = Request::post("/content/entities/active")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({"pointers": ["0,0"]}).to_string()))
+        .unwrap();
+    let (status, _, _) = call(&router, active).await;
+    assert_eq!(
+        status,
+        StatusCode::REQUEST_TIMEOUT,
+        "another route over the stalled database"
+    );
+
+    let started = std::time::Instant::now();
+    let (status, headers, body) = call(&router, form_request("203.0.113.40", &entity_form())).await;
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(800),
+        "answered at {:?}, before its processing deadline",
+        started.elapsed()
+    );
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"errors": ["Deployment processing exceeded the 800ms deadline."]})
+        )
+    );
+    assert_eq!(headers[header::RETRY_AFTER], "30");
+    server.abort();
+}
+
+/// A deploy stalled after its pointer claim (the newer-entity lookup on a
+/// database that never answers) holds its upload budget, its source's share
+/// and its pointer until its processing deadline, then lets all three go.
+#[tokio::test]
+async fn a_deploy_past_its_processing_deadline_releases_its_budget_share_and_claim() {
+    let cap = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
+    let settings = Settings {
+        max_in_memory_deployment_bytes: cap,
+        max_concurrent_uploads_per_source: 1,
+        deployment_processing_timeout: std::time::Duration::from_secs(2),
+        ..Settings::for_tests()
+    };
+    // The replay lookup's connection fails at once; the next one stalls.
+    let (node, server) = stalled_deploying_node("processing-stall", 1, settings).await;
+    let router = node.router();
+    let parcel = "71,-71";
+    let (bytes, id, chain) = signed_entity(&key(OWNER_KEY), scene(&[parcel], &[])).await;
+    let mut req = deploy_request("/content/entities", &id, &chain, &[(&id, &bytes)]);
+    req.headers_mut()
+        .insert("x-real-ip", HeaderValue::from_static("203.0.113.41"));
+    let pending = {
+        let router = router.clone();
+        tokio::spawn(async move { call(&router, req).await })
+    };
+
+    let deployer = node.state.deployer().unwrap().clone();
+    let mut waited = 0;
+    while !deployer.holds_pointer("scene", parcel) {
+        assert!(waited < 150, "the deploy never claimed its pointer");
+        waited += 1;
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let (budget, sources) = (&node.state.upload_budget, &node.state.source_uploads);
+    assert!(
+        budget.try_reserve(cap).is_none(),
+        "the deploy holds its reservation"
+    );
+    assert!(
+        sources.try_acquire("203.0.113.41", 1).is_err(),
+        "the deploy holds its source's only upload"
+    );
+
+    let (status, headers, body) = pending.await.unwrap();
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"errors": ["Deployment processing exceeded the 2000ms deadline."]})
+        )
+    );
+    assert_eq!(headers[header::RETRY_AFTER], "30");
+    assert!(
+        !deployer.holds_pointer("scene", parcel),
+        "the claim is released"
+    );
+    assert!(
+        budget.try_reserve(cap).is_some(),
+        "the reservation is released"
+    );
+    assert!(
+        matches!(sources.try_acquire("203.0.113.41", 1), Ok(Some(_))),
+        "the source's upload is released"
+    );
+    server.abort();
 }

@@ -52,6 +52,11 @@ pub(crate) mod support {
             Self::build(tag, None, settings).await
         }
 
+        /// A node over `pool` (a stalling one, say) with `settings`.
+        pub async fn with_pool_settings(tag: &str, pool: sqlx::PgPool, settings: Settings) -> Self {
+            Self::build(tag, Some(pool), settings).await
+        }
+
         /// `None` (skip) without CATALYST_TEST_DATABASE_URL; otherwise over
         /// the process's scratch database (`db::scratch`).
         pub async fn with_db(tag: &str) -> Option<Self> {
