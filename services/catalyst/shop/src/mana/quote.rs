@@ -49,11 +49,12 @@ pub fn static_gas(listing: &Listing) -> u64 {
 }
 
 /// The Shop's MANA/USD as the rule's rate, exact, never a float: the
-/// marketplace's feed where it is wired ([`super::feed_rate::current`]; no
-/// current answer is no rate, so every line says the price is unavailable),
+/// marketplace's feed where it is wired, cut at the marketplace's tolerance
+/// ([`super::feed_rate::current_for_purchase`]; no current answer is no rate,
+/// so every line says the price is unavailable),
 /// else the newest price snapshot within its freshness budget.
 pub async fn mana_usd_rate(pool: &sqlx::PgPool) -> Result<Option<ManaUsdRate>, sqlx::Error> {
-    if let Some(feed) = super::feed_rate::current() {
+    if let Some(feed) = super::feed_rate::current_for_purchase() {
         return Ok(feed.ok().map(|shop| shop.rate));
     }
     let row: Option<(String, chrono::NaiveDateTime)> = sqlx::query_as(

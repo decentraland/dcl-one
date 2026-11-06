@@ -661,7 +661,7 @@ fn credits_quote(line: &Authoritative, rate: Option<&ManaUsdRate>) -> Result<Usd
 /// Whether the line's price is set in USD (a USD-pegged trade), which the
 /// marketplace converts to MANA at its own feed when the trade settles.
 pub fn prices_in_usd(line: &Authoritative) -> bool {
-    matches!(offer_price(&line.offer), Ok((OfferPrice::Usd(_), _)))
+    priced_in_usd(&line.offer)
 }
 
 /// The most a credit for `lines` may sign, from the lines alone: the one

@@ -63,6 +63,8 @@ pub struct FeedReading {
     pub updated_at_s: i64,
     pub block: u64,
     pub block_hash: B256,
+    /// The read block's timestamp: the chain's clock at the read.
+    pub block_time_s: i64,
 }
 
 #[async_trait]
@@ -232,6 +234,7 @@ impl ChainFeed {
             updated_at_s,
             block,
             block_hash,
+            block_time_s: block_time,
         })
     }
 }
