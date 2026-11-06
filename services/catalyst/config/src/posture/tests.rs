@@ -223,6 +223,22 @@ fn a_mirror_reads_the_third_party_registry() {
         assert!(err.contains(&format!("{KEY} is empty: unset it")), "{err}");
     }
     check_of(&[db, (ENV, "island")]).unwrap();
+
+    // Held in its credential file, the URL is out of the expansion's and the
+    // check's sight; it is checked once `resolve_secret_files` reads it.
+    let file = (
+        "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL_FILE",
+        "/run/credentials/tpr",
+    );
+    let pairs = [db, (ENV, "mirror"), file];
+    let mut c = parsed_with_files(&pairs);
+    assert_eq!(c.validator.third_party_registry_l2_subgraph_url, None);
+    check(&c, &lookup(&env(&pairs))).unwrap();
+    let err = refuse_remote_secrets(&mut c).unwrap_err().to_string();
+    assert!(err.contains(&format!("{KEY}_FILE holds no URL")), "{err}");
+    c.validator.third_party_registry_l2_subgraph_url =
+        Some("https://tpr.example.org/subgraph".into());
+    refuse_remote_secrets(&mut c).unwrap();
 }
 
 #[test]
