@@ -949,6 +949,16 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       }, 600)
       return
     }
+    if (msg.kind === 'deleteCommunity') {
+      const at = mockCommunities.findIndex((m) => m.id === msg.id)
+      if (at >= 0) mockCommunities.splice(at, 1)
+      setTimeout(() => {
+        reply({ kind: 'communityDeleted', id: msg.id })
+        reply({ kind: 'communities', communities: mockCommunities })
+        reply({ kind: 'myCommunities', communities: mockCommunities.filter((m) => m.role !== 'none') })
+      }, 300)
+      return
+    }
     if (msg.kind === 'updateCommunity') {
       // as createCommunity: a name with "flagged" or "unavailable" gets the content check's refusals
       const lower = (msg.name ?? '').toLowerCase()

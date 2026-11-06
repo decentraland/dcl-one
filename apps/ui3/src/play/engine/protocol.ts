@@ -207,6 +207,7 @@ export type PageToScene =
   | GetCommunityRequest
   | CreateCommunityRequest
   | UpdateCommunityRequest
+  | DeleteCommunityRequest
   | JoinCommunityRequest
   | LeaveCommunityRequest
   | RequestToJoinCommunityRequest
@@ -1149,6 +1150,17 @@ export interface UpdateCommunityRequest {
   thumbnail?: string
 }
 
+/** Delete a community the user owns (page → scene → signed DELETE to the social-api). */
+export interface DeleteCommunityRequest {
+  kind: 'deleteCommunity'
+  id: string
+}
+/** A community was deleted (scene → page): its card closes. */
+export interface CommunityDeletedMessage {
+  kind: 'communityDeleted'
+  id: string
+}
+
 /** The content check's findings per field: short tags, at most three each. */
 export interface CommunityModerationIssues {
   name: string[]
@@ -1191,7 +1203,7 @@ export interface CancelJoinRequestRequest {
   requestId: string
 }
 
-export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch'
+export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch' | 'delete'
 
 /** A community write, or the read of one community, the social-api rejected (scene → page), so the UI can say so. */
 export interface CommunityActionFailedMessage {
@@ -1817,6 +1829,7 @@ export type SceneToPage =
   | CommunityActionFailedMessage
   | CommunitySaveResultMessage
   | MyCommunitiesMessage
+  | CommunityDeletedMessage
   | TravelResultMessage
   | AvatarSaveFailedMessage
   | RequestFailedMessage

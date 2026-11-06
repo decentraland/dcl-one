@@ -385,6 +385,24 @@ export function registerCommunities(ctx: Ctx): void {
     // joining or leaving changes the chat channels too
     await sendMembership()
   }
+  ctx.on('deleteCommunity', async (msg) => {
+    // unity-explorer's delete: DELETE /v1/communities/{id}; on success the card closes. Not through
+    // `write`, which re-reads the community it acted on, and this one is gone.
+    const deleted = await signed(`${await base('v1')}/${encodeURIComponent(msg.id)}`, 'DELETE').then(
+      () => true,
+      (e: unknown) => {
+        console.error('[communities] delete failed', e)
+        ctx.send({ kind: 'communityActionFailed', id: msg.id, action: 'delete', message: e instanceof Error ? e.message : String(e) })
+        return false
+      }
+    )
+    if (deleted) {
+      savedThumbnails.delete(msg.id)
+      ctx.send({ kind: 'communityDeleted', id: msg.id })
+    }
+    ctx.send({ kind: 'communities', communities: await list() })
+    await sendMembership()
+  })
   ctx.on('joinCommunity', async (msg) => {
     await write(msg.id, 'join', async () => await signed(`${await base('v1')}/${encodeURIComponent(msg.id)}/members`, 'POST'))
   })

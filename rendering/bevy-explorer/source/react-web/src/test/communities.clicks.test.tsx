@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, act, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { CommunitiesPage } from '../features/communities/CommunitiesPage'
-import { CommunityModal } from '../features/communities/CommunityModal'
+import { CommunityModal, openCommunityModal } from '../features/communities/CommunityModal'
 import { openCommunityCreateModal, openCommunityEditModal, readCommunityPicture } from '../features/communities/CommunityCreateModal'
 import { SessionProvider } from '../features/session/SessionContext'
 import { PopupHost, ToastHost, closeTopPopup, resetPopups } from '../design'
@@ -339,6 +339,69 @@ describe('community edit', () => {
     expect(screen.getByRole('dialog', { name: 'Edit Community' })).toBeInTheDocument()
     act(() => setSave({ status: 'done', result: { kind: 'communitySaveResult', mode: 'update', id: 'c9' } }))
     expect(screen.queryByRole('dialog', { name: 'Edit Community' })).toBeNull()
+  })
+})
+
+// Delete Community, as unity-explorer's: the owner's ⋮ menu, asked first, and the card closes once
+// the community is gone.
+describe('community delete', () => {
+  const spies = () => ({ onJoin: vi.fn(), onRequestToJoin: vi.fn(), onCancelRequest: vi.fn(), onLeave: vi.fn(), onAddFriend: vi.fn(), onOpenChat: vi.fn(), onClose: vi.fn() })
+
+  it('is in the owner\'s menu only', async () => {
+    const onDelete = vi.fn()
+    const { rerender } = render(<CommunityModal community={community({ role: 'moderator' })} detail={null} onDelete={onDelete} {...spies()} />)
+    await userEvent.click(screen.getByRole('button', { name: 'More' }))
+    expect(screen.queryByRole('button', { name: 'Delete Community' })).toBeNull()
+    rerender(<CommunityModal community={community({ role: 'owner' })} detail={null} onDelete={onDelete} {...spies()} />)
+    expect(screen.getByRole('button', { name: 'Delete Community' })).toBeInTheDocument()
+  })
+
+  it('does not offer the owner Leave community', async () => {
+    render(<CommunityModal community={community({ role: 'owner' })} detail={null} {...spies()} />)
+    await userEvent.click(screen.getByRole('button', { name: 'More' }))
+    expect(screen.queryByRole('button', { name: 'Leave community' })).toBeNull()
+  })
+
+  it('asks first, and deletes only on CONTINUE', async () => {
+    const onDelete = vi.fn()
+    render(
+      <>
+        <CommunityModal community={community({ id: 'c7', name: 'Builders', role: 'owner' })} detail={null} onDelete={onDelete} {...spies()} />
+        <PopupHost />
+      </>
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'More' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Delete Community' }))
+    expect(screen.getByText('Are you sure you want to delete [Builders] Community?')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'CANCEL' }))
+    expect(onDelete).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole('button', { name: 'More' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Delete Community' }))
+    await userEvent.click(screen.getByRole('button', { name: 'CONTINUE' }))
+    expect(onDelete).toHaveBeenCalledWith('c7')
+  })
+
+  it('closes the card once the community is deleted', () => {
+    const session = fakeSession()
+    const owned = community({ id: 'c7', role: 'owner' })
+    const view = (deleted: string | null): React.JSX.Element => {
+      session.communities = { ...session.communities, list: [owned], deleted, loadDetail: vi.fn() }
+      return (
+        <SessionProvider value={{ ...session }}>
+          <PopupHost />
+        </SessionProvider>
+      )
+    }
+    const { rerender } = render(view(null))
+    const onClosed = vi.fn()
+    act(() => {
+      openCommunityModal('c7', onClosed)
+    })
+    expect(screen.getByRole('heading', { name: 'Builders' })).toBeInTheDocument()
+    rerender(view('c7'))
+    expect(screen.queryByRole('heading', { name: 'Builders' })).toBeNull()
+    expect(onClosed).toHaveBeenCalledTimes(1)
   })
 })
 

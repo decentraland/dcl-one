@@ -103,6 +103,7 @@ const COMMUNITY_ERROR: Record<CommunityAction, string> = {
   requestToJoin: 'There was an error requesting to join community. Please try again.',
   cancelJoinRequest: 'There was an error cancelling join request. Please try again.',
   leave: 'There was an error leaving the community. Please try again.',
+  delete: 'There was an error deleting the community. Please try again.',
   fetch: 'There was an error loading the community. Please try again.'
 }
 
@@ -226,6 +227,10 @@ export interface CommunitiesState {
   /** Create a community (name, description, Public/Private, discoverable, picture as a data URL).
    *  Its outcome arrives in `save`. */
   create: (input: CreateCommunityInput) => void
+  /** Delete a community the user owns. On success its id arrives in `deleted`. */
+  remove: (id: string) => void
+  /** The last community deleted, so its card closes. */
+  deleted: string | null
   /** Save an edit (only the changed fields). Its outcome arrives in `save`. */
   update: (input: UpdateCommunityInput) => void
   /** The create or update in flight, or how the last one ended, for the form. */
@@ -1114,6 +1119,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [communityError, setCommunityError] = useState<{ id: string; message: string } | null>(null)
   const [communitySave, setCommunitySave] = useState<CommunitySave | null>(null)
   const [myCommunities, setMyCommunities] = useState<Community[]>([])
+  const [deletedCommunity, setDeletedCommunity] = useState<string | null>(null)
   const [mapParcel, setMapParcel] = useState({ x: 0, y: 0 })
   const [mapOpen, setMapOpen] = useState(false)
   // Minimap pose: a ref, not state — see MinimapState.pose for why.
@@ -1595,6 +1601,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'myCommunities':
           setMyCommunities(msg.communities)
+          break
+        case 'communityDeleted':
+          setDeletedCommunity(msg.id)
+          setCommunityCards((prev) => {
+            const { [msg.id]: _gone, ...rest } = prev
+            return rest
+          })
           break
         case 'communityDetail':
           setCommunityDetail(msg)
@@ -2860,6 +2873,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     driverRef.current?.send({ kind: 'updateCommunity', ...input })
   }, [])
   const clearCommunitySave = useCallback(() => setCommunitySave(null), [])
+  const deleteCommunity = useCallback((id: string) => {
+    setCommunityError(null)
+    driverRef.current?.send({ kind: 'deleteCommunity', id })
+  }, [])
   const joinCommunity = useCallback((id: string) => {
     setCommunityError(null)
     driverRef.current?.send({ kind: 'joinCommunity', id })
@@ -3733,7 +3750,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       saveOutfit, deleteOutfit, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
-    communities: { list: communities, mine: myCommunities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, save: communitySave, clearSave: clearCommunitySave, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
+    communities: { list: communities, mine: myCommunities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
     map: mapSlice,
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces },
