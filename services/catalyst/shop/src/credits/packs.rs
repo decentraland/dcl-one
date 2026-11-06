@@ -1,6 +1,6 @@
 //! Packs, purchases and the Stripe side of the ledger: the active-pack memo,
 //! the pending purchase rows the intent/session flows insert, the webhook's
-//! `paid` flip (locked row, expected amount, one statement), the reversals
+//! `paid` flip (locked row, expected currency and amount, one statement), the reversals
 //! (bounded by the PURCHASE through `revoked_credits <= credits`, never by
 //! spend rows) and the completion-based event de-duplication.
 
@@ -19,6 +19,12 @@ pub enum MarkPaidOutcome {
     AmountMismatch {
         expected_cents: i64,
         charged_cents: i64,
+    },
+    /// The charge is in another currency: its minor units are not the
+    /// purchase's, so no amount comparison can approve it.
+    CurrencyMismatch {
+        expected: String,
+        charged: String,
     },
     NoPendingPurchase,
 }
@@ -309,7 +315,7 @@ impl Credits {
         &self,
         session_id: &str,
         event_id: &str,
-        charged_cents: i64,
+        charged: Charge<'_>,
         payment_intent: Option<&str>,
     ) -> Result<MarkPaidOutcome, ApiError> {
         let mut tx = self.pool.begin().await?;
@@ -318,7 +324,7 @@ impl Credits {
                 &mut tx,
                 session_id,
                 event_id,
-                charged_cents,
+                charged,
                 payment_intent,
             )
             .await?;
@@ -326,16 +332,16 @@ impl Credits {
         Ok(outcome)
     }
 
-    /// `payment_intent` is the session's `payment_intent`, stored on the
-    /// order so a later `charge.refunded` / `charge.dispute.*` (keyed by
-    /// payment intent) finds the purchase to revoke
-    /// (money-session-order-reversal).
+    /// Only for a session whose payment has SETTLED (the caller checks
+    /// `payment_status`). `payment_intent` is the session's `payment_intent`,
+    /// stored on the order so a later `charge.refunded` / `charge.dispute.*`
+    /// (keyed by payment intent) finds the purchase to revoke.
     pub(crate) async fn mark_order_paid_by_session_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         session_id: &str,
         event_id: &str,
-        charged_cents: i64,
+        charged: Charge<'_>,
         payment_intent: Option<&str>,
     ) -> Result<MarkPaidOutcome, ApiError> {
         Self::mark_paid_in_tx(
@@ -343,7 +349,7 @@ impl Credits {
             MARK_PAID_BY_SESSION,
             session_id,
             event_id,
-            charged_cents,
+            charged,
             payment_intent,
         )
         .await
@@ -358,6 +364,10 @@ impl Credits {
         Self::mark_order_status_by_session_on(&self.pool, session_id, status, failure_reason).await
     }
 
+    /// Retires a pending order. One whose payment is processing (see
+    /// [`Self::mark_order_processing_by_session_in_tx`]) is only ever retired
+    /// as `failed`, by its own payment's outcome; a cancel, an expiry or a
+    /// resume leaves it pending.
     pub(crate) async fn mark_order_status_by_session_on<'e, E>(
         executor: E,
         session_id: &str,
@@ -370,7 +380,8 @@ impl Credits {
         let res = sqlx::query(
             "UPDATE credits.purchases \
              SET status = $2, failure_reason = COALESCE($3, failure_reason), updated_at = timezone('UTC', now()) \
-             WHERE stripe_checkout_session = $1 AND status = 'pending'",
+             WHERE stripe_checkout_session = $1 AND status = 'pending' \
+               AND (stripe_payment_intent IS NULL OR $2 = 'failed')",
         )
         .bind(session_id)
         .bind(status)
@@ -380,15 +391,56 @@ impl Credits {
         Ok(res.rows_affected() > 0)
     }
 
+    /// The session completed but its payment is still processing (a bank
+    /// debit takes days): the order records the session's payment intent,
+    /// which marks it as awaiting that payment's outcome, and stays (or, if
+    /// a sweep or cancel retired it meanwhile, is again) `pending`, shown as
+    /// `processing`. Nothing but the outcome moves it from there.
+    pub(crate) async fn mark_order_processing_by_session_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        session_id: &str,
+        payment_intent: &str,
+    ) -> Result<bool, ApiError> {
+        let res = sqlx::query(
+            "UPDATE credits.purchases \
+             SET status = 'pending', failure_reason = NULL, \
+                 stripe_payment_intent = COALESCE(stripe_payment_intent, $2), \
+                 updated_at = timezone('UTC', now()) \
+             WHERE stripe_checkout_session = $1 AND status = ANY($3::text[])",
+        )
+        .bind(session_id)
+        .bind(payment_intent)
+        .bind(&SETTLEABLE_STATUSES[..])
+        .execute(&mut **tx)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// The current status of a session's order, for the webhook's logs.
+    pub(crate) async fn order_status_by_session_on<'e, E>(
+        executor: E,
+        session_id: &str,
+    ) -> Result<Option<String>, ApiError>
+    where
+        E: sqlx::PgExecutor<'e>,
+    {
+        Ok(sqlx::query_scalar(
+            "SELECT status FROM credits.purchases WHERE stripe_checkout_session = $1",
+        )
+        .bind(session_id)
+        .fetch_optional(executor)
+        .await?)
+    }
+
     pub async fn mark_purchase_paid(
         &self,
         payment_intent_id: &str,
         event_id: &str,
-        charged_cents: i64,
+        charged: Charge<'_>,
     ) -> Result<MarkPaidOutcome, ApiError> {
         let mut tx = self.pool.begin().await?;
         let outcome = self
-            .mark_purchase_paid_in_tx(&mut tx, payment_intent_id, event_id, charged_cents)
+            .mark_purchase_paid_in_tx(&mut tx, payment_intent_id, event_id, charged)
             .await?;
         tx.commit().await?;
         Ok(outcome)
@@ -399,35 +451,38 @@ impl Credits {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         payment_intent_id: &str,
         event_id: &str,
-        charged_cents: i64,
+        charged: Charge<'_>,
     ) -> Result<MarkPaidOutcome, ApiError> {
         Self::mark_paid_in_tx(
             tx,
             MARK_PAID_BY_PAYMENT_INTENT,
             payment_intent_id,
             event_id,
-            charged_cents,
+            charged,
             None,
         )
         .await
     }
 
     /// Locks the purchase row and flips it to `paid` in one statement when it
-    /// is still pending with the expected amount; the pre-update row decides
-    /// the outcome exactly as the separate SELECT FOR UPDATE + UPDATE did.
+    /// is still unpaid ([`SETTLEABLE_STATUSES`]) and the charge matches its
+    /// currency and amount; the pre-update row decides the outcome exactly as
+    /// the separate SELECT FOR UPDATE + UPDATE did.
     async fn mark_paid_in_tx(
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         sql: &'static str,
         key: &str,
         event_id: &str,
-        charged_cents: i64,
+        charged: Charge<'_>,
         payment_intent: Option<&str>,
     ) -> Result<MarkPaidOutcome, ApiError> {
         let row = sqlx::query(sql)
             .bind(key)
             .bind(event_id)
-            .bind(charged_cents)
+            .bind(charged.cents)
             .bind(payment_intent)
+            .bind(charged.currency)
+            .bind(&SETTLEABLE_STATUSES[..])
             .fetch_optional(&mut **tx)
             .await?;
         let Some(row) = row else {
@@ -436,6 +491,7 @@ impl Credits {
         let address: String = row.get("address");
         let credits: String = row.get("credits");
         let amount_cents: i64 = row.get("amount_cents");
+        let currency: String = row.get("currency");
         let status: String = row.get("status");
         let existing_event: Option<String> = row.get("stripe_event_id");
         let updated: bool = row.get("updated");
@@ -443,12 +499,18 @@ impl Credits {
         if updated || (status == "paid" && existing_event.as_deref() == Some(event_id)) {
             return Ok(MarkPaidOutcome::Granted { address, credits });
         }
-        if status != "pending" {
+        if !SETTLEABLE_STATUSES.contains(&status.as_str()) {
             return Ok(MarkPaidOutcome::NoPendingPurchase);
+        }
+        if !currency.eq_ignore_ascii_case(charged.currency) {
+            return Ok(MarkPaidOutcome::CurrencyMismatch {
+                expected: currency,
+                charged: charged.currency.to_string(),
+            });
         }
         Ok(MarkPaidOutcome::AmountMismatch {
             expected_cents: amount_cents,
-            charged_cents,
+            charged_cents: charged.cents,
         })
     }
 
@@ -645,22 +707,39 @@ impl Credits {
     }
 }
 
+/// The statuses a payment may still move: a settled one flips them to
+/// `paid`, a processing one back to `pending`. `abandoned` is one because
+/// the stale-order sweep (`orders::ABANDON_AFTER`) or a cancel can retire
+/// an order before Stripe's events for it arrive; a verified settled
+/// payment means the money arrived, so the order is credited. `failed`,
+/// `refunded` and `disputed` never come back.
+pub const SETTLEABLE_STATUSES: [&str; 2] = ["pending", "abandoned"];
+
+/// What a Stripe event says was charged: `cents` is in `currency`'s minor
+/// unit, so it only compares against a purchase in the same currency.
+#[derive(Debug, Clone, Copy)]
+pub struct Charge<'a> {
+    pub cents: i64,
+    pub currency: &'a str,
+}
+
 macro_rules! mark_paid_sql {
     ($column:literal) => {
         concat!(
             "WITH cur AS ( \
-                 SELECT id, address, credits::text AS credits, amount_cents, status, stripe_event_id \
+                 SELECT id, address, credits::text AS credits, amount_cents, currency, status, stripe_event_id \
                  FROM credits.purchases WHERE ",
             $column,
             " = $1 FOR UPDATE \
              ), upd AS ( \
                  UPDATE credits.purchases p \
                  SET status = 'paid', stripe_event_id = $2, stripe_payment_intent = COALESCE(p.stripe_payment_intent, $4::text), \
-                     updated_at = timezone('UTC', now()) \
-                 FROM cur WHERE p.id = cur.id AND cur.status = 'pending' AND cur.amount_cents = $3 \
+                     failure_reason = NULL, updated_at = timezone('UTC', now()) \
+                 FROM cur WHERE p.id = cur.id AND cur.status = ANY($6::text[]) \
+                     AND cur.amount_cents = $3 AND lower(cur.currency) = lower($5::text) \
                  RETURNING p.id \
              ) \
-             SELECT cur.address, cur.credits, cur.amount_cents, cur.status, cur.stripe_event_id, \
+             SELECT cur.address, cur.credits, cur.amount_cents, cur.currency, cur.status, cur.stripe_event_id, \
                     EXISTS (SELECT 1 FROM upd) AS updated \
              FROM cur"
         )
