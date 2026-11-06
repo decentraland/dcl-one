@@ -19,6 +19,24 @@ export interface WorldState {
   position: [number, number, number] | null
 }
 
+/**
+ * What `/hover_entity` and `/click_entity` report. A hit on an avatar or on another scene's
+ * entity reports `entity` and `container` as 4294967295.
+ */
+export interface PointerReport {
+  hit: { entity: number; container: number; scene: string; playerDistance: number; cameraDistance: number } | null
+  entries: { button: string; event: string; hoverText: string | null; enabled: boolean; tooFar: boolean }[]
+  events: { event: string; button: string; tick: number }[]
+  diagnosis: string | null
+}
+
+export interface RaycastStats {
+  budgetMs: number
+  ran: number
+  deferred: number
+  spentMs: number
+}
+
 export interface Control {
   found: true
   role: string
@@ -373,6 +391,49 @@ export class Explorer {
 
   entityScreenPosition(entity: string | number, options: { bounds?: boolean } = {}): Promise<ScreenPosition> {
     return this.json<ScreenPosition>(`/entity_screen_position ${entity}${options.bounds ? ' --bounds' : ''}`)
+  }
+
+  /** Aims the pointer at an entity and reports what it hovers; a failed diagnosis rejects. */
+  hoverEntity(entity: string | number, options: { bounds?: boolean; frames?: number; timeoutFrames?: number } = {}): Promise<PointerReport> {
+    let line = `/hover_entity ${entity}`
+    if (options.bounds) line += ' --bounds'
+    if (options.frames !== undefined) line += ` --frames ${options.frames}`
+    if (options.timeoutFrames !== undefined) line += ` --timeout-frames ${options.timeoutFrames}`
+    return this.json<PointerReport>(line)
+  }
+
+  async clearPointer(): Promise<void> {
+    await this.run('/hover_entity --clear')
+  }
+
+  clickEntity(
+    entity: string | number,
+    options: { bounds?: boolean; button?: 'pointer' | 'primary' | 'secondary'; event?: 'click' | 'down' | 'up'; timeoutFrames?: number } = {}
+  ): Promise<PointerReport> {
+    let line = `/click_entity ${entity}`
+    if (options.bounds) line += ' --bounds'
+    if (options.button) line += ` --button ${options.button}`
+    if (options.event) line += ` --event ${options.event}`
+    if (options.timeoutFrames !== undefined) line += ` --timeout-frames ${options.timeoutFrames}`
+    return this.json<PointerReport>(line)
+  }
+
+  raycastStats(): Promise<RaycastStats> {
+    return this.json<RaycastStats>('/raycast_stats')
+  }
+
+  /** The raycast budget in ms; with `ms`, sets it first. */
+  async raycastBudget(ms?: number): Promise<number> {
+    const reply = await this.run(ms === undefined ? '/raycast_budget' : `/raycast_budget ${ms}`)
+    const match = /^raycast budget: ([0-9.]+) ms$/.exec(reply.trim())
+    if (!match) throw new Error(`unexpected /raycast_budget reply: ${reply}`)
+    return Number(match[1])
+  }
+
+  /** The target scene's last log lines, oldest first; a leading "(+N older entries not retained)" line is kept. */
+  async sceneLogs(count = 20): Promise<string[]> {
+    const reply = await this.run(`/scene_logs ${count}`)
+    return reply === '(no logs)' ? [] : reply.split('\n')
   }
 
   async close(): Promise<void> {
