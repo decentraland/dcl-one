@@ -78,3 +78,12 @@ python3 tooling/image-smoke.py
 - APIs listen on 5210, Sites on 5212, as `1000:1000`. APIs need `DATABASE_URL`, posture, public URL, encryption key and integration secrets; Sites needs `CATALYST_URL`, `CATALYST_DATABASE_URL` and a session secret.
 - Sites' sign-in (`/auth/login`) offers each option only when its public identifier is set, the same ones decentraland.org ships: `THIRDWEB_CLIENT_ID` (email codes), `MAGIC_API_KEY` (Magic's publishable key: Google, Apple, Discord, X) and `WALLETCONNECT_PROJECT_ID`. A different identifier signs the same account into a different wallet. Magic must allow the site's origin and `<origin>/auth/callback`. `FEATURE_FLAGS_ORIGIN` names the site whose `dapps-sign-in-primary-option` rollout lays it out (decentraland.org when unset). Locally, `tooling/dev.py` takes the three identifiers, and nothing else of the shell's, from the environment it is started in.
 - Run `schema apply` (empty) or `schema migrate` as a job before the new API. Never reset an existing database.
+
+World-admission upgrade: the release script
+`schemas/releases/world-scene-ban-keys.sql` requires a maintenance window. Stop old API and
+scene-host replicas before `catalyst schema migrate`; the object pass installs the durable queue.
+Then run `psql -v ON_ERROR_STOP=1 -f schemas/releases/world-scene-ban-keys.sql`
+with the administrative role before starting the new binaries.
+Keep the pre-migration database backup: old binaries cannot read stable world ban
+keys, so rollback must restore the matching backup. See `DATABASE.md` for the
+retention and token-remint behavior.

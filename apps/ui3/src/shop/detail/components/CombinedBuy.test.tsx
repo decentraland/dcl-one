@@ -14,14 +14,15 @@ import { presentPayment, type MixedPayment } from "../../payment/present";
 import { BOOK, storeMint } from "../../payment/fixtures";
 import CombinedBuy from "./CombinedBuy";
 
-function setup() {
+function setup(signedFor?: string) {
   const demo = createDemo({
     session: "web3",
     handlers: {
       authorizeCredit: ({ body }) => {
         const cents = (body as { usdPriceCents: number }).usdPriceCents;
         const one = batchAuthorization([{ usdPriceCents: cents }]);
-        return { ...one, credit: { ...one.credit, amount: "1000000000000000000", availableAmount: "1000000000000000000" }, maxCreditedValue: "1000000000000000000", usdCents: cents };
+        const credit = { ...one.credit, amount: "1000000000000000000", availableAmount: "1000000000000000000", ...(signedFor ? { contract: signedFor } : {}) };
+        return { ...one, credit, maxCreditedValue: "1000000000000000000", usdCents: cents };
       },
     },
   });
@@ -61,6 +62,19 @@ describe("buying with Credits and MANA", () => {
     demo.wallet.next = "reject";
     await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
     expect(await screen.findByText("You cancelled the request in your wallet. Nothing was charged.", {}, { timeout: 5000 })).toBeTruthy();
+    expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(true);
+  });
+
+  it("refuses a credit signed for a manager the Shop does not know, before approving or relaying anything", async () => {
+    const stranger = "0x000000000000000000000000000000000000dead";
+    const { demo } = setup(stranger);
+    const manager = requireContracts(CHAIN.POLYGON).creditsManager!.address.toLowerCase();
+    demo.chain.allowances.set(`${CHAIN.POLYGON}:${BOOK.buyer.toLowerCase()}:${manager}`, 10n ** 21n);
+    const before = new Map(demo.chain.allowances);
+    await act(async () => fireEvent.click(screen.getByTestId("combined-confirm")));
+    expect(await screen.findByRole("alert", {}, { timeout: 5000 })).toBeTruthy();
+    expect(demo.relay.posts).toHaveLength(0);
+    expect(demo.chain.allowances).toEqual(before);
     expect(demo.shop.log.some((r) => r.name === "cancelCreditAuthorizations")).toBe(true);
   });
 });
