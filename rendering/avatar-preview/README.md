@@ -80,14 +80,15 @@ Commands, as JSON objects with an `op`:
 | `sound` | `enabled` | emote sound on or off |
 | `light` | `illuminance` (lux), `ambient`, `exposure` (stops), `yaw`, `pitch` (radians, relative to the camera), `shadow` (0..1), `shadowReach` (metres) | the light rig; unset fields keep their value. The toon shading ignores ambient light: `exposure` is what brightens or darkens the avatar |
 | `collectible` | `kind` (`wearable` or `emote`), `urn`, `definition` (an entity definition json, by url), `files` (name to url) | an item not on the catalyst; send it before the outfit or emote naming the urn |
-| `screenshot` | `id`, `width`, `height` | a PNG of the frame, scaled and cropped to fit |
+| `screenshot` | `id`, `width`, `height` (optional) | a PNG: with a size, rendered off screen at exactly that size (up to 4096 a side) by a camera copying the live one, its vertical framing kept and the requested aspect setting the width; without, the canvas as it is. Fails with `requestFailed` while a load is under way |
 | `metrics` | `id` | triangle, material, texture and mesh counts |
 
 Events reach `onEvent` as JSON strings with a `type`: `load` (the avatar is dressed and
 visible), `error {message}`, `emote {event, urn, time, length, sound}` (`event` is `play`,
 `end`, `interrupted`, `pause`, `resume`, `loop` or `playing`, the last about ten times a second;
 `sound` is whether the emote has any, once its definition has loaded), `screenshot {id,
-png}` (base64), `metrics {id, triangles, materials, textures, meshes, bodies, entities}`.
+png}` (base64), `metrics {id, triangles, materials, textures, meshes, bodies, entities}`, and
+`requestFailed {id, message}` for a request that could not be answered.
 
 ## The iframe contract (`web/preview.js`)
 
@@ -151,12 +152,15 @@ The target is the Unity renderer's behaviour, not only its look. In place so far
   the avatar's body shape locks the view to it, shown in the body shape it was made for, with the
   renderer's tooltip. The previewed items' categories are force-rendered on the avatar.
 
+- its screenshots: `getScreenshot(width, height)` renders the view off screen at exactly that size
+  with the live look and vertical framing, no controls; without a size, the canvas as it is; an
+  invalid size, one over 4096, or a request while loading fails as the renderer's does.
+
 A named default emote plays once in the marketplace, then the avatar idles; it loops in the
 builder.
 
 Still to come: builder mode's default wearables, profile, authentication and jesus modes, scene
-boundaries, sized screenshots rendered without the controls, social emotes, spring bones, and
-configurator mode.
+boundaries, social emotes, spring bones, and configurator mode.
 
 The emote controller follows the Unity renderer: `goTo` on a stopped emote starts it and holds
 it at that time, `play` resumes a paused one, and emote events wait for `load`.

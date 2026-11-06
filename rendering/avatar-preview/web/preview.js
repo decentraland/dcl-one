@@ -130,12 +130,17 @@ const state = {
 const options = () => ({ ...state.options, ...state.overrides });
 const nextId = (() => { let n = 0; return () => `p${++n}`; })();
 
+// before the engine has started there is nothing to command: the page sends its whole state once
+// it has (`apply`), so a controller call in between is dropped
 function command(cmd) {
+  if (typeof preview_command !== 'function') return;
   state.log(`-> ${JSON.stringify(cmd)}`);
   preview_command(JSON.stringify(cmd));
 }
 
 function request(op, extra = {}) {
+  // the Unity renderer's answer before the preview has loaded
+  if (!state.engineReady) return Promise.reject(new Error('The preview is reloading'));
   const id = nextId();
   return new Promise((resolve, reject) => {
     state.pending.set(id, { resolve, reject });
@@ -200,11 +205,13 @@ function onEngineEvent(json) {
       break;
     }
     case 'screenshot':
-    case 'metrics': {
+    case 'metrics':
+    case 'requestFailed': {
       const pending = state.pending.get(event.id);
       if (!pending) break;
       state.pending.delete(event.id);
-      pending.resolve(event);
+      if (event.type === 'requestFailed') pending.reject(new Error(event.message));
+      else pending.resolve(event);
       break;
     }
   }
@@ -519,7 +526,13 @@ async function apply() {
 const unsupported = (what) => Promise.reject(new Error(`${what} is not supported by the ${RENDERER} renderer yet`));
 const controller = {
   scene: {
-    getScreenshot: async (width, height) => `data:image/png;base64,${(await request('screenshot', { width: Math.max(1, width | 0), height: Math.max(1, height | 0) })).png}`,
+    // a pixel size renders the view off screen at exactly that size; without one, the canvas as it
+    // is, as the Unity renderer's wrapper asks for them
+    getScreenshot: async (width, height) => {
+      const sized = Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0;
+      const reply = await request('screenshot', sized ? { width, height } : {});
+      return `data:image/png;base64,${reply.png}`;
+    },
     getMetrics: async () => { const m = await request('metrics'); return { triangles: m.triangles, materials: m.materials, textures: m.textures, meshes: m.meshes, bodies: m.bodies, entities: m.entities }; },
     changeZoom: async (delta) => { state.camera.radius = Math.max(0.5, state.camera.radius - (delta || 0)); sendCamera(); },
     panCamera: async ({ x = 0, y = 0, z = 0 } = {}) => { const t = state.camera.target; state.camera.target = [t[0] + x, t[1] + y, t[2] + z]; sendCamera(); },

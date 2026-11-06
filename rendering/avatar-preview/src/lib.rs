@@ -182,9 +182,18 @@ fn setup_stage(mut commands: Commands, orbit: Res<OrbitCamera>, flags: Res<Stage
         },
         host::projection_for(&orbit),
         Transform::from_xyz(0.0, 1.0, 6.0).looking_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y),
+        PreviewCamera,
+    ));
+    dress_camera(&mut camera, &flags);
+}
+
+/// The preview's look on a camera: the Explorer's camera components, the exposure, and the bloom,
+/// anti-aliasing and prepasses the stage flags and the backend allow. The live camera and a sized
+/// screenshot's camera share it, so a capture looks as the view does.
+pub fn dress_camera(camera: &mut EntityCommands, flags: &StageFlags) {
+    camera.insert((
         platform::default_camera_components(),
         bevy::render::camera::Exposure::BLENDER,
-        PreviewCamera,
     ));
     if flags.no_bloom {
         camera.remove::<bevy::core_pipeline::bloom::Bloom>();

@@ -186,11 +186,14 @@ pub enum Command {
         exposure: Option<f32>,
         glow: Option<f32>,
     },
-    /// Capture the frame as PNG, `width` x `height` (the frame is scaled and cropped to fit).
+    /// A PNG of the view. With a size, rendered off screen at exactly `width` x `height` pixels
+    /// (up to 4096 a side), as the live camera frames it vertically, the requested aspect setting
+    /// the horizontal extent; without, the canvas as it is. The page's controls are HTML over the
+    /// canvas, so neither includes them.
     Screenshot {
         id: String,
-        width: u32,
-        height: u32,
+        width: Option<u32>,
+        height: Option<u32>,
     },
     Metrics {
         id: String,
@@ -223,6 +226,12 @@ pub enum Event {
         id: String,
         /// base64 PNG, no data-url prefix
         png: String,
+    },
+    /// A request (`id`) that could not be answered, and why.
+    #[serde(rename_all = "camelCase")]
+    RequestFailed {
+        id: String,
+        message: String,
     },
     #[serde(rename_all = "camelCase")]
     Metrics {
@@ -415,6 +424,7 @@ impl Plugin for HostPlugin {
                 report_load,
                 send_load,
                 report_emotes,
+                run_captures,
             )
                 .chain(),
         );
@@ -453,6 +463,11 @@ fn apply_commands(
         Res<Assets<SceneMaterial>>,
     ),
     (items, mut gate): (Query<Entity, With<PreviewItem>>, ResMut<LoadGate>),
+    (flags, mut images, views): (
+        Res<crate::StageFlags>,
+        ResMut<Assets<Image>>,
+        Query<(&Transform, &bevy::render::camera::Exposure), With<PreviewCamera>>,
+    ),
 ) {
     let queued: Vec<Command> = COMMANDS.with(|queue| queue.borrow_mut().drain(..).collect());
     let mut deferred = Vec::new();
@@ -727,24 +742,96 @@ fn apply_commands(
                 }
             }
             Command::Screenshot { id, width, height } => {
-                let Ok(window) = windows.single() else {
-                    emit(&Event::Error {
-                        message: "screenshot: no window".to_owned(),
+                let size = match (width, height) {
+                    (Some(w), Some(h)) if w > 0 && h > 0 => Some((w, h)),
+                    _ => None,
+                };
+                let Some((width, height)) = size else {
+                    // no size: the canvas as it is
+                    let Ok(window) = windows.single() else {
+                        emit(&Event::RequestFailed {
+                            id,
+                            message: "screenshot: no window".to_owned(),
+                        });
+                        continue;
+                    };
+                    let mut id = Some(id);
+                    commands.spawn(Screenshot::window(window)).observe(
+                        move |mut trigger: Trigger<ScreenshotCaptured>| {
+                            if let Some(id) = id.take() {
+                                reply_png(id, std::mem::take(&mut trigger.0));
+                            }
+                        },
+                    );
+                    continue;
+                };
+                const MAX_SIDE: u32 = 4096;
+                if width > MAX_SIDE || height > MAX_SIDE {
+                    emit(&Event::RequestFailed {
+                        id,
+                        message: format!(
+                            "Invalid screenshot size [{width},{height}], expected width,height up to {MAX_SIDE}"
+                        ),
+                    });
+                    continue;
+                }
+                // the Unity renderer's answer while a load is under way: the view is not settled
+                if gate.armed {
+                    emit(&Event::RequestFailed {
+                        id,
+                        message: "The preview is reloading".to_owned(),
+                    });
+                    continue;
+                }
+                let (Ok((_, live, projection)), Ok((transform, exposure))) =
+                    (cameras.single(), views.single())
+                else {
+                    emit(&Event::RequestFailed {
+                        id,
+                        message: "screenshot: no camera".to_owned(),
                     });
                     continue;
                 };
-                let mut id = Some(id);
-                commands.spawn(Screenshot::window(window)).observe(
-                    move |mut trigger: Trigger<ScreenshotCaptured>| {
-                        let Some(id) = id.take() else {
-                            return;
-                        };
-                        match encode_png(std::mem::take(&mut trigger.0), width, height) {
-                            Ok(png) => emit(&Event::Screenshot { id, png }),
-                            Err(message) => emit(&Event::Error { message }),
-                        }
+                // a second camera where the live one stands, rendering the view off screen at the
+                // requested size, with the same look
+                let mut image = Image::new_fill(
+                    bevy::render::render_resource::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
                     },
+                    bevy::render::render_resource::TextureDimension::D2,
+                    &[0, 0, 0, 0],
+                    bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+                    bevy::asset::RenderAssetUsages::default(),
                 );
+                image.texture_descriptor.usage =
+                    bevy::render::render_resource::TextureUsages::TEXTURE_BINDING
+                        | bevy::render::render_resource::TextureUsages::COPY_DST
+                        | bevy::render::render_resource::TextureUsages::COPY_SRC
+                        | bevy::render::render_resource::TextureUsages::RENDER_ATTACHMENT;
+                let image = images.add(image);
+                let mut capture = commands.spawn((
+                    Camera3d::default(),
+                    Camera {
+                        hdr: live.hdr,
+                        clear_color: live.clear_color,
+                        target: bevy::render::camera::RenderTarget::Image(image.clone().into()),
+                        order: 1,
+                        ..default()
+                    },
+                    projection.clone(),
+                    *transform,
+                ));
+                crate::dress_camera(&mut capture, &flags);
+                capture.insert((
+                    *exposure,
+                    Capture {
+                        id: Some(id),
+                        image,
+                        frames: 3,
+                    },
+                ));
             }
             Command::Metrics { id } => {
                 let (meshes, mesh_assets, materials) = &metrics;
@@ -1586,14 +1673,51 @@ struct EmoteProgress {
     last_elapsed: f32,
 }
 
-/// The captured frame as base64 PNG, scaled and cropped to `width` x `height`.
-fn encode_png(image: Image, width: u32, height: u32) -> Result<String, String> {
-    let mut dynamic = image
+/// A sized screenshot's camera, rendering off screen into `image`: read back once it has had
+/// `frames` frames to render (a new target's pipelines compile in that time), then removed.
+#[derive(Component)]
+pub struct Capture {
+    id: Option<String>,
+    image: Handle<Image>,
+    frames: u32,
+}
+
+fn run_captures(mut commands: Commands, mut captures: Query<(Entity, &mut Capture)>) {
+    for (camera, mut capture) in captures.iter_mut() {
+        if capture.frames > 0 {
+            capture.frames -= 1;
+            continue;
+        }
+        let Some(id) = capture.id.take() else {
+            continue;
+        };
+        let mut id = Some(id);
+        commands
+            .spawn(Screenshot::image(capture.image.clone()))
+            .observe(
+                move |mut trigger: Trigger<ScreenshotCaptured>, mut commands: Commands| {
+                    if let Some(id) = id.take() {
+                        reply_png(id, std::mem::take(&mut trigger.0));
+                        commands.entity(camera).despawn();
+                    }
+                },
+            );
+    }
+}
+
+/// Answers a screenshot request with the image as base64 PNG, or its failure.
+fn reply_png(id: String, image: Image) {
+    match encode_png(image) {
+        Ok(png) => emit(&Event::Screenshot { id, png }),
+        Err(message) => emit(&Event::RequestFailed { id, message }),
+    }
+}
+
+/// The captured frame as base64 PNG.
+fn encode_png(image: Image) -> Result<String, String> {
+    let dynamic = image
         .try_into_dynamic()
         .map_err(|e| format!("screenshot: could not read frame: {e:?}"))?;
-    if width > 0 && height > 0 && (dynamic.width() != width || dynamic.height() != height) {
-        dynamic = dynamic.resize_to_fill(width, height, image::imageops::FilterType::Triangle);
-    }
     let mut png = Vec::new();
     dynamic
         .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
