@@ -2,6 +2,7 @@ mod extensions;
 mod gltf_ext;
 
 use std::{
+    borrow::Cow,
     io::Error,
     path::{Path, PathBuf},
     sync::Arc,
@@ -152,6 +153,14 @@ pub(crate) fn resolve_uri(
     }
 }
 
+/// Re-encodes an embedded image (buffer view or `data:` URI) the loader cannot decode, given its
+/// bytes and MIME type, into bytes of a type it can, returned with their MIME type; `None` leaves
+/// the image as it is.
+///
+/// See [`GltfLoader::image_transcoder`].
+pub type GltfImageTranscoder =
+    Arc<dyn Fn(&[u8], &str) -> Option<(Vec<u8>, &'static str)> + Send + Sync>;
+
 /// Loads glTF files with all of their data as their corresponding bevy representations.
 pub struct GltfLoader {
     /// List of compressed image formats handled by the loader.
@@ -164,6 +173,10 @@ pub struct GltfLoader {
     /// namespace cannot express that through [`Path::join`] alone, since `join` treats every
     /// leading component as an ordinary directory.
     pub uri_resolver: Option<GltfUriResolver>,
+    /// Re-encodes embedded images whose type `Image::from_buffer` cannot decode, such as the
+    /// UASTC KTX2 images of `KHR_texture_basisu`. Images referenced by path go through the asset
+    /// server instead, where the host registers a loader for them.
+    pub image_transcoder: Option<GltfImageTranscoder>,
     /// Custom vertex attributes that will be recognized when loading a glTF file.
     ///
     /// Keys must be the attribute names as found in the glTF data, which must start with an underscore.
@@ -277,6 +290,7 @@ async fn load_gltf<'a, 'b, 'c>(
         }
         Err(e) => return Err(e.into()),
     };
+    let gltf = prefer_basisu_sources(gltf);
 
     let file_name = load_context
         .asset_path()
@@ -575,6 +589,7 @@ async fn load_gltf<'a, 'b, 'c>(
             &linear_textures,
             parent_path,
             loader.uri_resolver.as_ref(),
+            loader.image_transcoder.as_ref(),
             loader.supported_compressed_formats,
             settings.load_materials,
             settings.transfer_priority,
@@ -1014,6 +1029,67 @@ async fn load_gltf<'a, 'b, 'c>(
     })
 }
 
+/// The image index a texture's `KHR_texture_basisu` extension names, when the texture has no
+/// `source` of its own and the index is in range. A texture with a PNG/JPEG fallback keeps it:
+/// the fallback always decodes, while its KTX2 may be a codec the host can't transcode (ETC1S).
+fn basisu_source(texture: &gltf::json::Texture, image_count: usize) -> Option<u32> {
+    // `allow_empty_texture` stores a missing `source` as u32::MAX
+    if texture.source.value() != u32::MAX as usize {
+        return None;
+    }
+    let source = texture
+        .extensions
+        .as_ref()?
+        .others
+        .get("KHR_texture_basisu")?
+        .get("source")?
+        .as_u64()?;
+    (source < image_count as u64).then_some(source as u32)
+}
+
+/// Points every texture whose only image is its `KHR_texture_basisu` one at that image, so the
+/// rest of the loader reads the KTX2 as the texture's ordinary `source`: by path through the
+/// asset server (where the host registers a KTX2 loader), or embedded through
+/// [`GltfLoader::image_transcoder`]. `gltf`'s `allow_empty_texture` feature is what lets a file
+/// that requires the extension, and whose textures have no `source`, through validation.
+fn prefer_basisu_sources(gltf: gltf::Gltf) -> gltf::Gltf {
+    let image_count = gltf.document.images().len();
+    if !gltf
+        .document
+        .as_json()
+        .textures
+        .iter()
+        .any(|texture| basisu_source(texture, image_count).is_some())
+    {
+        return gltf;
+    }
+    let gltf::Gltf { document, blob } = gltf;
+    let mut root = document.into_json();
+    for texture in &mut root.textures {
+        if let Some(source) = basisu_source(texture, image_count) {
+            texture.source = gltf::json::Index::new(source);
+        }
+    }
+    gltf::Gltf {
+        // only in-range image indices were written, over a document that already validated
+        document: gltf::Document::from_json_without_validation(root),
+        blob,
+    }
+}
+
+/// The bytes and MIME type to decode an embedded image from: the image as it is, or what
+/// [`GltfLoader::image_transcoder`] re-encoded it to.
+fn transcoded<'a>(
+    transcoder: Option<&GltfImageTranscoder>,
+    bytes: &'a [u8],
+    mime_type: &'a str,
+) -> (Cow<'a, [u8]>, &'a str) {
+    match transcoder.and_then(|transcode| transcode(bytes, mime_type)) {
+        Some((bytes, mime_type)) => (Cow::Owned(bytes), mime_type),
+        None => (Cow::Borrowed(bytes), mime_type),
+    }
+}
+
 /// Loads a glTF texture as a bevy [`Image`] and returns it together with its label.
 fn load_image<'a, 'b>(
     gltf_texture: gltf::Texture<'a>,
@@ -1021,6 +1097,7 @@ fn load_image<'a, 'b>(
     linear_textures: &HashSet<usize>,
     parent_path: &'b Path,
     uri_resolver: Option<&GltfUriResolver>,
+    image_transcoder: Option<&GltfImageTranscoder>,
     supported_compressed_formats: CompressedImageFormats,
     render_asset_usages: RenderAssetUsages,
     transfer_priority: RenderAssetTransferPriority,
@@ -1039,12 +1116,18 @@ fn load_image<'a, 'b>(
     // Textures referencing an external file are left alone: `texture_handle` resolves
     // those to a path handle rather than the label, so a placeholder under the label
     // would be ignored while the real file loaded anyway.
-    let skip_texture_data = render_asset_usages.is_empty()
-        && match gltf_texture.source().source() {
-            Source::View { .. } => true,
-            Source::Uri { uri, .. } => DataUri::parse(uri).is_ok(),
-        };
-    if skip_texture_data {
+    //
+    // A texture with no image at all (`allow_empty_texture`: its only image is in an extension
+    // `prefer_basisu_sources` doesn't read) gets the same placeholder, which `texture_handle`
+    // points it at.
+    let source = gltf_texture.source().filter(|image| {
+        !(render_asset_usages.is_empty()
+            && match image.source() {
+                Source::View { .. } => true,
+                Source::Uri { uri, .. } => DataUri::parse(uri).is_ok(),
+            })
+    });
+    let Some(source) = source else {
         let mut image = Image::new_fill(
             bevy_render::render_resource::Extent3d {
                 width: 1,
@@ -1066,21 +1149,22 @@ fn load_image<'a, 'b>(
             image,
             label: GltfAssetLabel::Texture(gltf_texture.index()),
         });
-    }
+    };
 
     #[cfg(all(debug_assertions, feature = "dds"))]
     let name = gltf_texture
         .name()
         .map_or("Unknown GLTF Texture".to_string(), ToString::to_string);
-    match gltf_texture.source().source() {
+    match source.source() {
         Source::View { view, mime_type } => {
             let start = view.offset();
             let end = view.offset() + view.length();
             let buffer = &buffer_data[view.buffer().index()][start..end];
+            let (buffer, mime_type) = transcoded(image_transcoder, buffer, mime_type);
             let image = Image::from_buffer(
                 #[cfg(all(debug_assertions, feature = "dds"))]
                 name,
-                buffer,
+                &buffer,
                 ImageType::MimeType(mime_type),
                 supported_compressed_formats,
                 is_srgb,
@@ -1190,13 +1274,14 @@ fn load_image<'a, 'b>(
             let uri = uri.as_ref();
             if let Ok(data_uri) = DataUri::parse(uri) {
                 let bytes = data_uri.decode()?;
-                let image_type = ImageType::MimeType(data_uri.mime_type);
+                let mime_type = mime_type.unwrap_or(data_uri.mime_type);
+                let (bytes, mime_type) = transcoded(image_transcoder, &bytes, mime_type);
 
                 let image = Image::from_buffer(
                     #[cfg(all(debug_assertions, feature = "dds"))]
                     name,
                     &bytes,
-                    mime_type.map(ImageType::MimeType).unwrap_or(image_type),
+                    ImageType::MimeType(mime_type),
                     supported_compressed_formats,
                     is_srgb,
                     ImageSampler::Descriptor(sampler_descriptor),
@@ -2483,5 +2568,63 @@ mod test {
         assert_eq!(skinned_node.name, "skinned");
         assert_eq!(skinned_node.children.len(), 2);
         assert_eq!(skinned_node.skin.as_ref(), Some(&gltf_root.skins[0]));
+    }
+
+    /// `json` parsed with validation, then through `prefer_basisu_sources`.
+    fn parse_basisu(json: &str) -> gltf::Gltf {
+        super::prefer_basisu_sources(gltf::Gltf::from_slice(json.as_bytes()).unwrap())
+    }
+
+    /// The image index texture `texture` samples.
+    fn sampled_image(gltf: &gltf::Gltf, texture: usize) -> Option<usize> {
+        let texture = gltf.document.textures().nth(texture).unwrap();
+        texture.source().map(|image| image.index())
+    }
+
+    #[test]
+    fn required_basisu_texture_without_source_samples_its_ktx2() {
+        let gltf = parse_basisu(
+            r#"{"asset":{"version":"2.0"},
+                "extensionsUsed":["KHR_texture_basisu"],
+                "extensionsRequired":["KHR_texture_basisu"],
+                "images":[{"uri":"albedo.ktx2","mimeType":"image/ktx2"}],
+                "textures":[{"extensions":{"KHR_texture_basisu":{"source":0}}}]}"#,
+        );
+        assert_eq!(sampled_image(&gltf, 0), Some(0));
+    }
+
+    #[test]
+    fn basisu_texture_with_a_fallback_keeps_it() {
+        // the ktx2 may be ETC1S, which the host can't transcode; the png always decodes
+        let gltf = parse_basisu(
+            r#"{"asset":{"version":"2.0"},
+                "extensionsUsed":["KHR_texture_basisu"],
+                "images":[{"uri":"albedo.png"},{"uri":"albedo.ktx2","mimeType":"image/ktx2"}],
+                "textures":[{"source":0,"extensions":{"KHR_texture_basisu":{"source":1}}}]}"#,
+        );
+        assert_eq!(sampled_image(&gltf, 0), Some(0));
+    }
+
+    #[test]
+    fn out_of_range_basisu_source_leaves_no_image() {
+        let gltf = parse_basisu(
+            r#"{"asset":{"version":"2.0"},
+                "extensionsUsed":["KHR_texture_basisu"],
+                "extensionsRequired":["KHR_texture_basisu"],
+                "images":[{"uri":"albedo.ktx2","mimeType":"image/ktx2"}],
+                "textures":[{"extensions":{"KHR_texture_basisu":{"source":5}}}]}"#,
+        );
+        // no image: `load_image` registers the placeholder under the texture label
+        assert_eq!(sampled_image(&gltf, 0), None);
+    }
+
+    #[test]
+    fn texture_without_basisu_is_untouched() {
+        let gltf = parse_basisu(
+            r#"{"asset":{"version":"2.0"},
+                "images":[{"uri":"a.png"},{"uri":"b.png"}],
+                "textures":[{"source":1}]}"#,
+        );
+        assert_eq!(sampled_image(&gltf, 0), Some(1));
     }
 }
