@@ -38,12 +38,16 @@ async function fetchList(query: string): Promise<AppNotification[]> {
 export function registerNotifications(ctx: Ctx): void {
   // `from` is the server's own `occurred_at > from` bound, so the cursor is the newest timestamp
   // the server has sent us, never the local clock. Polling starts once the page has fetched the
-  // list (world entry), so the first poll never re-announces what the panel already holds.
+  // list (world entry), so the first poll never re-announces what the panel already holds. If
+  // that fetch fails, polling starts anyway with no cursor.
   let armed = false
   let cursor: number | undefined
   let inFlight = false
   let waitS = POLL_INTERVAL_S
   let elapsedS = 0
+  // Bumped on every account switch or disarm: an answer to a request sent under an older
+  // generation belongs to the previous account and is dropped.
+  let generation = 0
 
   const advance = (list: AppNotification[]): void => {
     for (const n of list) {
@@ -52,13 +56,28 @@ export function registerNotifications(ctx: Ctx): void {
     }
   }
 
-  identity.onChange(() => {
+  const disarm = (): void => {
+    generation++
     armed = false
     cursor = undefined
-  })
+    waitS = POLL_INTERVAL_S
+    elapsedS = 0
+  }
+
+  identity.onChange(disarm)
 
   ctx.on('getNotifications', async () => {
-    const notifications = await fetchList('limit=50&from=0')
+    const gen = generation
+    let notifications: AppNotification[]
+    try {
+      notifications = await fetchList('limit=50&from=0')
+    } catch (e) {
+      // Poll anyway, from no cursor: the backed-off poll keeps retrying, so a failed fetch at
+      // world entry doesn't leave toasts off for the session.
+      if (gen === generation) armed = true
+      throw e
+    }
+    if (gen !== generation) return
     advance(notifications)
     armed = true
     ctx.send({ kind: 'notifications', notifications })
@@ -73,12 +92,11 @@ export function registerNotifications(ctx: Ctx): void {
     })
   })
 
-  const poll = async (): Promise<void> => {
+  const poll = async (gen: number): Promise<void> => {
     const query = `onlyUnread=true&limit=50${cursor != null ? `&from=${cursor}` : ''}`
-    const polledFor = cursor
     const fresh = (await fetchList(query)).filter((n) => !n.read)
     // An account switch while the request was out: its answer belongs to the old account.
-    if (!armed || cursor !== polledFor) return
+    if (gen !== generation || !armed) return
     advance(fresh)
     if (fresh.length > 0) ctx.send({ kind: 'notificationsNew', notifications: fresh })
   }
@@ -87,7 +105,7 @@ export function registerNotifications(ctx: Ctx): void {
     const player = getPlayer()
     if (player == null || player.isGuest) {
       // Logged out (the engine clears the player) or a guest, who has no notifications.
-      armed = false
+      if (armed) disarm()
       return
     }
     if (!armed || inFlight) return
@@ -95,12 +113,13 @@ export function registerNotifications(ctx: Ctx): void {
     if (elapsedS < waitS) return
     elapsedS = 0
     inFlight = true
-    poll()
+    const gen = generation
+    poll(gen)
       .then(() => {
-        waitS = POLL_INTERVAL_S
+        if (gen === generation) waitS = POLL_INTERVAL_S
       })
       .catch((e: unknown) => {
-        waitS = Math.min(waitS * 2, POLL_BACKOFF_MAX_S)
+        if (gen === generation) waitS = Math.min(waitS * 2, POLL_BACKOFF_MAX_S)
         console.error('[notifications] poll failed', e)
       })
       .finally(() => {

@@ -87,20 +87,35 @@ describe('notificationsNew in the session', () => {
     h.driver.emit({ kind: 'notifications', notifications: [notif('a')] })
     vi.useFakeTimers()
     render(<NotificationToastHost notifications={h.session().notifications} />)
-    act(() => h.driver.emit({ kind: 'notificationsNew', notifications: [notif('c'), notif('b'), notif('a')] }))
-    expect(h.session().notifications.list.map((n) => n.id)).toEqual(['c', 'b', 'a'])
-    expect(h.session().notifications.unread).toBe(3)
-    expect(screen.getByText('Title b')).toBeTruthy()
-    act(() => vi.advanceTimersByTime(TOAST_MS))
-    expect(screen.getByText('Title c')).toBeTruthy()
+    const at = (minutesAgo: number): Partial<AppNotification> => ({ timestamp: String(Date.now() - minutesAgo * 60_000) })
+    // Shuffled on purpose: the session sorts them, newest first in the list, oldest first as toasts.
+    act(() =>
+      h.driver.emit({
+        kind: 'notificationsNew',
+        notifications: [notif('d', at(3)), notif('b', at(1)), notif('a', at(0)), notif('e', at(4)), notif('c', at(2))]
+      })
+    )
+    // 'a' was already in the list, so it is neither added again nor toasted.
+    expect(h.session().notifications.list.map((n) => n.id)).toEqual(['b', 'c', 'd', 'e', 'a'])
+    expect(h.session().notifications.unread).toBe(5)
+    for (const id of ['e', 'd', 'c', 'b']) {
+      expect(screen.getByText(`Title ${id}`)).toBeTruthy()
+      act(() => vi.advanceTimersByTime(TOAST_MS))
+    }
+    expect(screen.queryByRole('button')).toBeNull()
   })
 
   it('a repeated poll result adds and toasts nothing', async () => {
     vi.useRealTimers()
     const h = renderSession()
     await enterAsGuest(h)
+    vi.useFakeTimers()
+    render(<NotificationToastHost notifications={h.session().notifications} />)
     act(() => h.driver.emit({ kind: 'notificationsNew', notifications: [notif('a')] }))
     act(() => h.driver.emit({ kind: 'notificationsNew', notifications: [notif('a')] }))
     expect(h.session().notifications.list).toHaveLength(1)
+    expect(screen.getByText('Title a')).toBeTruthy()
+    act(() => vi.advanceTimersByTime(TOAST_MS))
+    expect(screen.queryByRole('button', { name: /Title a/ })).toBeNull()
   })
 })
