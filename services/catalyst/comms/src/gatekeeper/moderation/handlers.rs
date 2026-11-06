@@ -496,13 +496,45 @@ pub async fn unban_user(
         .await
         .into_result()?;
     let target = target_address(&state, &input, "banned_address", Some("banned_name")).await?;
-    let mut rooms = context.rooms.clone();
-    rooms.extend(context.replaced_scene_rooms(&state).await?);
     state
         .moderation
         .scene_unban(context.ban_key.as_str(), &target, &context.place_title)
         .await?;
-    scene::remove_ban(&state, &rooms, &target).await;
+    // Admission and retry cancellation commit even while LiveKit is unavailable.
+    // Inventory and derived room metadata are repaired by maintenance if this
+    // best-effort synchronization cannot finish.
+    let mut rooms = context.rooms.clone();
+    match context.replaced_scene_rooms(&state).await {
+        Ok(replaced) => rooms.extend(replaced),
+        Err(error) => {
+            tracing::warn!(error = %error.message, "unban committed; replaced-room metadata awaits maintenance")
+        }
+    }
+    match state
+        .moderation
+        .is_scene_banned(context.ban_key.as_str(), &target)
+        .await
+    {
+        Ok(false) => {
+            scene::remove_ban(&state, &rooms, &target).await;
+            // A re-ban may have committed and appended metadata while this
+            // request waited for an SFU write. Restore that newer authoritative
+            // ban instead of leaving the delayed unban's removal behind.
+            match state
+                .moderation
+                .is_scene_banned(context.ban_key.as_str(), &target)
+                .await
+            {
+                Ok(true) => scene::add_ban(&state, &rooms, &target).await,
+                Ok(false) => {}
+                Err(error) => tracing::warn!(%error, "unban metadata recheck awaits maintenance"),
+            }
+        }
+        Ok(true) => {}
+        Err(error) => {
+            tracing::warn!(%error, "unban committed; metadata synchronization awaits maintenance")
+        }
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
