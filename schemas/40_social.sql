@@ -578,6 +578,8 @@ CREATE TABLE social.world_access_rechecks (
     changed_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', clock_timestamp()),
     next_attempt_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now())
 );
+-- The due scan reads this index from the front. A completed check parks its
+-- row at infinity, at the end, so the scan never reads enforced history.
 CREATE INDEX world_access_rechecks_due_idx ON social.world_access_rechecks (next_attempt_at, world_name);
 
 CREATE TABLE social.user_warnings (
