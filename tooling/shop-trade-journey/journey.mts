@@ -215,6 +215,38 @@ async function trade(seller: Actor, buyer: Actor, s: Funds, b: Funds, token: { c
   }
   if (short.length) throw new Error(`not funded: ${short.join("; ")}`);
 
+  // A listing an earlier run left open is the token's order in /v1/nfts: the loop starts from an unlisted token.
+  await step("no listing of the seller is left open", seller, async () => {
+    type Order = { tradeId?: string | null; owner?: string };
+    const tokenOrder = async (): Promise<Order | null> => {
+      const res = await fetch(`${sites}/shop-api/v1/nfts?contractAddress=${token.contract}&tokenId=${token.tokenId}`);
+      if (!res.ok) {
+        await res.body?.cancel();
+        throw new Error(`/v1/nfts answered ${res.status}`);
+      }
+      const body = (await res.json()) as { data?: { order?: Order | null }[] };
+      if (!body.data?.length) throw new Error("/v1/nfts does not know the token");
+      return body.data[0]!.order ?? null;
+    };
+    const order = await tokenOrder();
+    if (!order) return "none open";
+    if (order.owner?.toLowerCase() !== seller.wallet.address.toLowerCase()) throw new Error(`the open listing is ${order.owner}'s, not the seller's`);
+    const before = seller.wallet.sent.length;
+    await seller.page.goto(`${tokenPath(token)}/cancel`);
+    await seller.page.getByRole("button", { name: "Confirm" }).click();
+    await seller.page.getByTestId("shop-remove-done").waitFor({ timeout: RELAYED });
+    relayed(seller, before);
+    // The cancellation is read from the chain: wait until the token shows no order.
+    const until = Date.now() + RELAYED;
+    for (;;) {
+      const again = await tokenOrder().catch(() => order);
+      if (!again) break;
+      if (Date.now() > until) throw new Error("the cancelled listing is still the token's order");
+      await new Promise((r) => setTimeout(r, 5_000));
+    }
+    return `cancelled ${order.tradeId || "a legacy order"} from an earlier run`;
+  });
+
   // The seller's listing: list, reprice, cancel (cancelSignature, relayed).
   await step(`seller lists for ${price} MANA`, seller, () => list(seller, token, price, "new"));
   await step(`seller changes the price to ${repriced} MANA`, seller, () => list(seller, token, repriced, "update"));

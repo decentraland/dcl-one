@@ -24,7 +24,7 @@ use std::str::FromStr;
 
 use analytics::{metrics::MetricsPlugin, segment_system::SegmentConfig};
 use assets::EmbedAssetsPlugin;
-use av::AVPlayerPlugin;
+use av::plugin::AVPlayerPlugin;
 use avatar::AvatarPlugin;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::window::{PresentMode, WindowResolution};
@@ -290,6 +290,10 @@ pub struct DecentralandArguments {
     /// harness's spelling `-logFile` is accepted too
     #[arg(long, value_name = "path", help_heading = DEBUG)]
     pub log_file: Option<std::path::PathBuf>,
+    /// Expose observed native engine HTTP transfers to Chrome DevTools on a loopback port
+    #[cfg(not(target_arch = "wasm32"))]
+    #[arg(long, value_name = "port", help_heading = DEBUG)]
+    pub network_devtools: Option<u16>,
     // `--automation-token` and `--automation-port`: the loopback console server
     #[cfg(not(target_arch = "wasm32"))]
     #[command(flatten)]
@@ -380,6 +384,9 @@ impl DecentralandApp {
         app.add_plugins(desktop_default_plugins(&decentraland_app_config));
         #[cfg(target_arch = "wasm32")]
         app.add_plugins(wasm_default_plugins(&decentraland_app_config));
+
+        #[cfg(all(not(target_arch = "wasm32"), feature = "ffmpeg"))]
+        media::init_ffmpeg();
 
         // we use kira for audio source asset management, regardless of native / wasm
         app.add_plugins(bevy_kira_audio::AudioPlugin);

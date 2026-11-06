@@ -156,8 +156,12 @@ export function storeMint(session: Session, kind: "wearable" | "emote" = "wearab
   );
 }
 
+/** Polygon's CollectionDiscountCoupon, the coupon a creator's sale is priced with. */
+export const CREATOR_COUPON_ADDRESS = "0xc914507fe297b2dddd1232ac3a8903f1c125e794";
+
+/** A creator's USD-pegged primary; with `couponPpm`, priced and keyed with the creator's live sale "sale-1", as the server sends it. */
 export function creatorOrder(session: Session, kind: "wearable" | "emote" = "wearable", couponPpm?: number): PurchaseOffer {
-  return serverOffer(
+  const offer = serverOffer(
     {
       asset: itemAsset(CHAIN.POLYGON, BOOK.collection, ITEM),
       kind,
@@ -169,6 +173,7 @@ export function creatorOrder(session: Session, kind: "wearable" | "emote" = "wea
     },
     session,
   );
+  return couponPpm ? { ...offer, coupon: { id: "sale-1", couponAddress: CREATOR_COUPON_ADDRESS, discountPpm: couponPpm } } : offer;
 }
 
 /** A minted token resold on the Polygon marketplace, by a reseller or by its own creator. */

@@ -1187,6 +1187,7 @@ fn coupon_join() -> String {
              AND {paired} \
              AND c.effective_since <= timezone('UTC', now()) AND c.expires_at > timezone('UTC', now()) \
              AND lower(mv.contract_address) = ANY(c.collections) \
+             AND c.discount_type = 1 AND c.discount_ppm > 0 AND c.discount_ppm < 1000000 \
              AND NOT COALESCE(cs.cancelled, false) AND NOT COALESCE(cs.revoked, false) \
              AND COALESCE(cs.uses, 0) < (c.checks->>'uses')::numeric \
            ORDER BY c.discount_ppm DESC, c.expires_at ASC, c.id ASC \
