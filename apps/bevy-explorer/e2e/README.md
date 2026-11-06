@@ -129,6 +129,12 @@ test is in the spec file's header. Port 40, Partial 32, Gap 15, Drop 2.
 | Visual (17) | `visual/visual` | 17 | | | | The scenes at their own parcels; references recorded anew |
 | UUAV PlayMode (unity-explorer's player tests) | `visual/video` | 2 | 1 | 4 | | One scenario on the `video` scene: the state reaches Playing, the clock runs, the frame is red; seek, audio capture and helper recovery stay in the UUAV workspace's tests |
 
+Beyond explorer-automation, `specs/community-chat.test.ts` covers community text chat: a
+member's community card opens its chat (`Open chat`), the rail shows a
+pressed `Chat in <name>` tab and the title bar its `Conversation options`, and a message typed there
+counts in `/community_state` and lands in `/dm_history community:<id>`. It needs an automation
+account that is a member of a community in the browse grid, and fails saying so otherwise.
+
 What the HUD would need for more Ports, found while porting: roles or labels on the minimap's
 name and coordinates, the chat message text, the communities titles and counts, the passport
 header and bio, the skybox slider and switch; `aria-selected` and `aria-pressed` readable through
