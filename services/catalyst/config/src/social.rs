@@ -630,6 +630,13 @@ pub struct SocialConfig {
         default_value_t = 90
     )]
     pub notifications_broadcast_horizon_days: u64,
+    /// Pending notification emails idle this long end skipped as expired (default 7 days).
+    #[arg(
+        long,
+        env = "NOTIFICATION_DELIVERY_MAX_AGE_SECS",
+        default_value_t = 604_800
+    )]
+    pub notification_delivery_max_age_secs: u64,
 
     // social/badges: the old catalyrst-badges settings (the art is embedded).
     /// Bearer of the badge grant/revoke routes; unset refuses them.

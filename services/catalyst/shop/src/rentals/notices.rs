@@ -27,29 +27,25 @@ use crate::jobs::{Jobs, PeriodicCfg};
 use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET};
 use crate::market::MarketplaceState;
 use crate::market::chain_walk::{self, ChainNet};
-use crate::market::transfer_notices::{Pass, advance_cursor, lock_cursor, seed_cursor};
+use crate::market::notice_cursor::{self, advance, lock, seed};
+use crate::market::transfer_notices::Pass;
 use crate::social::Address;
 use crate::social::notifications::store::{NewNotification, insert_notifications};
 
-pub const KIND_STARTED: &str = "rental_started";
-pub const KIND_ENDED: &str = "rental_ended";
+pub const KIND_STARTED: &str = notice_cursor::RENTAL_STARTED;
+pub const KIND_ENDED: &str = notice_cursor::RENTAL_ENDED;
 const PAGE_SIZE: i64 = 200;
 const POLL_SECS: u64 = 60;
 const DAY: i64 = 86_400;
 
-pub fn started_id(network: &str, block_number: i64, log_index: i32) -> Uuid {
-    Uuid::new_v5(
-        &Uuid::NAMESPACE_OID,
-        format!("rental-started:{network}:{block_number}:{log_index}").as_bytes(),
-    )
+/// Over the rent's [`notice_cursor::tx_log_key`].
+pub fn started_id(network: &str, key: &str) -> Uuid {
+    notice_cursor::notification_id("rental-started", network, key)
 }
 
-/// Keyed by the period's first rent.
-pub fn ended_id(network: &str, block_number: i64, log_index: i32) -> Uuid {
-    Uuid::new_v5(
-        &Uuid::NAMESPACE_OID,
-        format!("rental-ended:{network}:{block_number}:{log_index}").as_bytes(),
-    )
+/// Over the key of the period's first rent.
+pub fn ended_id(network: &str, key: &str) -> Uuid {
+    notice_cursor::notification_id("rental-ended", network, key)
 }
 
 /// Every published rent of the `tokens` (a select of `(rentals_address,
@@ -61,7 +57,7 @@ fn rents(tokens: &str) -> String {
     format!(
         "
 WITH r AS (
-    SELECT e.*, count(*) FILTER (WHERE NOT e.is_extension) OVER (
+    SELECT e.*, {key} AS id_key, count(*) FILTER (WHERE NOT e.is_extension) OVER (
         PARTITION BY e.rentals_address, e.contract_address, e.token_id
         ORDER BY e.block_number, e.log_index) AS period
     FROM shop.rental_event e
@@ -74,6 +70,7 @@ WITH r AS (
         first_value(r.block_number) OVER w AS head_block,
         first_value(r.log_index) OVER w AS head_log,
         first_value(r.block_time) OVER w AS head_time,
+        first_value(r.id_key) OVER w AS head_key,
         sum(r.rental_days) OVER w AS days_so_far,
         sum(r.rental_days) OVER whole AS total_days,
         last_value(r.operator) OVER whole AS last_operator
@@ -83,7 +80,8 @@ WITH r AS (
            whole AS (PARTITION BY r.rentals_address, r.contract_address, r.token_id, r.period
                      ORDER BY r.block_number, r.log_index
                      ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
-)"
+)",
+        key = notice_cursor::tx_log_key("rental_event", "e", "coalesce(e.signature, '')")
     )
 }
 
@@ -105,6 +103,7 @@ const PLACE_JOIN: &str = "
 
 #[derive(sqlx::FromRow)]
 struct RentRow {
+    id_key: String,
     block_number: i64,
     log_index: i32,
     started_at: i64,
@@ -207,17 +206,17 @@ pub async fn run_started(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
     .fetch_optional(pool)
     .await?;
     let (seed_block, seed_log) = latest.unwrap_or((0, -1));
-    seed_cursor(pool, KIND_STARTED, None, seed_block, seed_log).await?;
+    seed(pool, KIND_STARTED, None, seed_block, seed_log).await?;
     let (land, estate) = registries(pool).await?;
     let network = ChainNet::Ethereum.db_name();
     let mut emitted = 0;
     loop {
         let mut txn = pool.begin().await?;
-        let (_, since_block, since_log) = lock_cursor(&mut txn, KIND_STARTED).await?;
+        let (_, since_block, since_log) = lock(&mut txn, KIND_STARTED).await?;
         // Only the tokens rented after the cursor.
         let rents = rents("AND (x.block_number, x.log_index) > ($4, $5)");
         let rows: Vec<RentRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "{rents} SELECT p.block_number, p.log_index, p.block_time AS started_at, \
+            "{rents} SELECT p.id_key, p.block_number, p.log_index, p.block_time AS started_at, \
                     p.head_time + p.days_so_far * {DAY} AS ends_at, p.contract_address, p.token_id::text AS token_id, \
                     lower(p.signer) AS lessor, lower(p.tenant) AS tenant, lower(p.operator) AS operator, {PLACE} \
              FROM p {PLACE_JOIN} \
@@ -240,12 +239,12 @@ pub async fn run_started(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
         let batch: Vec<NewNotification> = rows
             .iter()
             .filter_map(|r| {
-                let id = started_id(network, r.block_number, r.log_index);
+                let id = started_id(network, &r.id_key);
                 notification(id, KIND_STARTED, r, base, r.started_at)
             })
             .collect();
         emitted += insert_notifications(&mut *txn, &batch).await?;
-        advance_cursor(&mut txn, KIND_STARTED, None, last_block, last_log).await?;
+        advance(&mut txn, KIND_STARTED, None, last_block, last_log).await?;
         txn.commit().await?;
         if rows.len() < PAGE_SIZE as usize {
             break;
@@ -261,13 +260,13 @@ pub async fn run_ended(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
         return Ok(Pass::Waiting(WAITING));
     };
     // Periods that ended before the first pass are history.
-    seed_cursor(pool, KIND_ENDED, Some(upto_time), upto, i32::MAX).await?;
+    seed(pool, KIND_ENDED, Some(upto_time), upto, i32::MAX).await?;
     let (land, estate) = registries(pool).await?;
     let network = ChainNet::Ethereum.db_name();
     let mut emitted = 0;
     loop {
         let mut txn = pool.begin().await?;
-        let (since_time, since_block, since_log) = lock_cursor(&mut txn, KIND_ENDED).await?;
+        let (since_time, since_block, since_log) = lock(&mut txn, KIND_ENDED).await?;
         // Only the tokens with a period that may end after the cursor: none
         // ends later than its token's last rent plus all the token's days.
         let rents = rents(&format!(
@@ -278,7 +277,7 @@ pub async fn run_ended(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
                 SELECT p.*, p.head_time + p.total_days * {DAY} AS ends_at FROM p
                 WHERE (p.block_number, p.log_index) = (p.head_block, p.head_log)
              )
-             SELECT p.block_number, p.log_index, p.head_time AS started_at, p.ends_at, p.contract_address, \
+             SELECT p.head_key AS id_key, p.block_number, p.log_index, p.head_time AS started_at, p.ends_at, p.contract_address, \
                     p.token_id::text AS token_id, lower(p.signer) AS lessor, lower(p.tenant) AS tenant, \
                     lower(p.last_operator) AS operator, {PLACE} \
              FROM ends p {PLACE_JOIN} \
@@ -303,12 +302,12 @@ pub async fn run_ended(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
         let batch: Vec<NewNotification> = rows
             .iter()
             .filter_map(|r| {
-                let id = ended_id(network, r.block_number, r.log_index);
+                let id = ended_id(network, &r.id_key);
                 notification(id, KIND_ENDED, r, base, r.ends_at)
             })
             .collect();
         emitted += insert_notifications(&mut *txn, &batch).await?;
-        advance_cursor(&mut txn, KIND_ENDED, Some(last_end), last_block, last_log).await?;
+        advance(&mut txn, KIND_ENDED, Some(last_end), last_block, last_log).await?;
         txn.commit().await?;
         if rows.len() < PAGE_SIZE as usize {
             break;
@@ -358,9 +357,18 @@ mod tests {
 
     #[test]
     fn ids_are_stable_and_distinct_per_kind_and_event() {
-        assert_eq!(started_id("ethereum", 1, 2), started_id("ethereum", 1, 2));
-        assert_ne!(started_id("ethereum", 1, 2), started_id("ethereum", 1, 3));
-        assert_ne!(started_id("ethereum", 1, 2), ended_id("ethereum", 1, 2));
+        assert_eq!(
+            started_id("ethereum", "0xa:0:0xs"),
+            started_id("ethereum", "0xa:0:0xs")
+        );
+        assert_ne!(
+            started_id("ethereum", "0xa:0:0xs"),
+            started_id("ethereum", "0xa:1:0xs")
+        );
+        assert_ne!(
+            started_id("ethereum", "0xa:0:0xs"),
+            ended_id("ethereum", "0xa:0:0xs")
+        );
     }
 
     /// Nothing before the index publishes; the first pass announces no past
@@ -450,13 +458,25 @@ mod tests {
         .await
         .unwrap();
         let ids: Vec<Uuid> = rows.iter().map(|r| r.0).collect();
+        let key = |block: i64| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, String>(
+                    "SELECT tx_hash || ':0:' || signature FROM shop.rental_event WHERE block_number = $1",
+                )
+                .bind(block)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
         assert_eq!(
             ids,
             vec![
-                started_id("ethereum", 21, 0),
-                started_id("ethereum", 22, 0),
-                ended_id("ethereum", 11, 0),
-                ended_id("ethereum", 21, 0),
+                started_id("ethereum", &key(21).await),
+                started_id("ethereum", &key(22).await),
+                ended_id("ethereum", &key(11).await),
+                ended_id("ethereum", &key(21).await),
             ]
         );
         assert!(rows.iter().all(|r| r.1 == lessor));
@@ -485,7 +505,7 @@ mod tests {
         // A rewind to block 20 moves both cursors back over the rents after
         // it; the replay announces nothing twice.
         let mut tx = pool.begin().await.unwrap();
-        chain_walk::replay_notifications(&mut tx, INDEXER_RENTALS, ChainNet::Ethereum, 20)
+        notice_cursor::replay(&mut tx, INDEXER_RENTALS, ChainNet::Ethereum, 20, 30)
             .await
             .unwrap();
         tx.commit().await.unwrap();

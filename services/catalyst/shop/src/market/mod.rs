@@ -76,6 +76,7 @@ pub mod mirrors;
 pub mod neighbours;
 pub mod nft_index;
 pub mod nft_reads;
+pub mod notice_cursor;
 pub mod nfts;
 pub mod orders;
 pub mod owners;

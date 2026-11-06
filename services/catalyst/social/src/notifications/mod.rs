@@ -82,6 +82,8 @@ pub struct Settings {
     pub delivery_interval: Duration,
     /// `NOTIFICATIONS_BROADCAST_HORIZON_DAYS` (default 90): broadcasts older are hidden and pruned.
     pub broadcast_horizon: Duration,
+    /// `NOTIFICATION_DELIVERY_MAX_AGE_SECS` (default 7 days): pending emails older end `expired`.
+    pub delivery_max_age: Duration,
     /// Deployment origin used by event notice links (`/whats-on/{id}`).
     pub events_base_url: String,
     /// Backend event asset origin and mount, distinct from notice links.
@@ -110,6 +112,7 @@ impl Default for Settings {
             first_wear: FirstWearSettings::default(),
             delivery_interval: Duration::from_secs(15),
             broadcast_horizon: store::DEFAULT_BROADCAST_HORIZON,
+            delivery_max_age: delivery::DEFAULT_MAX_AGE,
             events_base_url: "https://decentraland.org".into(),
             events_asset_base_url: "http://localhost/events".into(),
             current_version: None,
@@ -173,6 +176,7 @@ impl State {
     /// The outbox worker and broadcast retention always; the first-wear producer when enabled.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         let state = self.clone();
+        let max_age = self.settings.delivery_max_age;
         let configured = self.email.notifications_configured();
         if !configured {
             tracing::info!(
@@ -192,6 +196,10 @@ impl State {
                 let state = state.clone();
                 async move {
                     let pool = state.store.pool();
+                    let expired = delivery::expire(pool, crate::shared::now_utc(), max_age).await?;
+                    if expired > 0 {
+                        tracing::info!(expired, "stale notification deliveries expired");
+                    }
                     let summary = delivery::run_pass(pool, &state.email, configured).await?;
                     if summary.claimed > 0 {
                         tracing::info!(?summary, "notification deliveries pass");

@@ -106,6 +106,14 @@ fn list_sql(with_from: bool, only_unread: bool, touch: bool) -> String {
     )
 }
 
+/// The `details` flag at `path` (a `->` chain on `s.details`) when it is a JSON
+/// boolean, else `default`: a malformed flag never fails the statement.
+pub(crate) fn details_flag(path: &str, default: bool) -> String {
+    format!(
+        "COALESCE(CASE WHEN jsonb_typeof(s.details{path}) = 'boolean' THEN (s.details{path})::boolean END, {default})"
+    )
+}
+
 /// The `email` delivery row of every notification a CTE named `ins`
 /// (columns `id, address, type`) inserted: `pending` when the type has a
 /// template and the recipient can receive it, else `skipped` with the
@@ -125,13 +133,15 @@ pub(super) static DELIVERY_ROWS_SQL: LazyLock<String> = LazyLock::new(|| {
         SELECT CASE
             WHEN n.type NOT IN ({}) THEN 'no email template'
             WHEN s.email IS NULL THEN 'no confirmed email'
-            WHEN COALESCE((s.details->>'ignore_all_email')::boolean, false) THEN 'ignore_all_email'
-            WHEN NOT COALESCE((s.details->'message_type'->n.type->>'email')::boolean, true) THEN 'opted out of this type'
+            WHEN {} THEN 'ignore_all_email'
+            WHEN NOT {} THEN 'opted out of this type'
         END AS reason
     ) d
     ON CONFLICT (notification_id, channel) DO NOTHING
 "#,
-        templates::EMAILABLE_SQL_LIST
+        templates::EMAILABLE_SQL_LIST,
+        details_flag("->'ignore_all_email'", false),
+        details_flag("->'message_type'->n.type->'email'", true),
     )
 });
 
@@ -255,8 +265,8 @@ where
             LEFT JOIN social.subscriptions s ON s.address = n.address
             CROSS JOIN LATERAL (
                 SELECT NOT $6::boolean OR (
-                    NOT COALESCE((s.details->>'ignore_all_in_app')::boolean, false)
-                    AND COALESCE((s.details->'message_type'->n.type->>'in_app')::boolean, true)
+                    NOT {ignore_all}
+                    AND {in_app}
                 ) AS visible
             ) v
             ON CONFLICT (id) DO NOTHING
@@ -264,7 +274,9 @@ where
         )
         {delivery}
         "#,
-        delivery = *DELIVERY_ROWS_SQL
+        delivery = *DELIVERY_ROWS_SQL,
+        ignore_all = details_flag("->'ignore_all_in_app'", false),
+        in_app = details_flag("->'message_type'->n.type->'in_app'", true),
     );
     let res = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(&ids)

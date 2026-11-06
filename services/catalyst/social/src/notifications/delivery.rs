@@ -5,10 +5,12 @@
 //! The old crate had no out-of-process channel (rows were in-app only), so this
 //! is new behaviour with an explicit degraded mode: without
 //! `SENDGRID_NOTIFICATION_TEMPLATE_ID` every claimed row ends `skipped`;
-//! without `SIGNING_KEY` rows stay `pending` (backing off) until it is set.
-//! Opt-outs are checked again at claim time, so an unsubscribe stops queued rows.
-//! Terminal rows are pruned after [`RETENTION`].
+//! without `SIGNING_KEY` rows stay `pending`, unclaimed and with their retry
+//! budget intact, until it is set. Pending rows idle past the configured max
+//! age end `skipped` (`expired`). Opt-outs are checked again at claim time, so
+//! an unsubscribe stops queued rows. Terminal rows are pruned after [`RETENTION`].
 
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use chrono::NaiveDateTime;
@@ -18,6 +20,7 @@ use uuid::Uuid;
 
 use super::email::{EmailSender, SendFailure};
 use super::first_wear::creator_profile_name;
+use super::store::details_flag;
 use super::templates;
 use crate::shared::now_utc;
 
@@ -26,8 +29,14 @@ pub const MAX_ATTEMPTS: i32 = 5;
 pub const LEASE: Duration = Duration::from_secs(300);
 const BACKOFF_BASE: Duration = Duration::from_secs(30);
 const BACKOFF_MAX: Duration = Duration::from_secs(3600);
+/// A row the channel could not sign is due again after this, attempt uncounted.
+const HOLD: Duration = Duration::from_secs(300);
 pub const RETENTION: Duration = Duration::from_secs(30 * 86_400);
 pub const PRUNE_BATCH: i64 = 1000;
+/// The `last_error` of a pending row idle past the max age.
+pub const EXPIRED: &str = "expired";
+/// `NOTIFICATION_DELIVERY_MAX_AGE_SECS`'s default: 7 days.
+pub const DEFAULT_MAX_AGE: Duration = Duration::from_secs(7 * 86_400);
 /// The `last_error` of a row held for a missing `SIGNING_KEY`.
 const UNSIGNED: &str = "SIGNING_KEY unset";
 
@@ -49,6 +58,10 @@ pub struct Claimed {
 #[async_trait::async_trait]
 pub trait EmailChannel: Send + Sync {
     async fn send(&self, to: &str, claimed: &Claimed) -> Result<(), SendFailure>;
+    /// Whether unsubscribe links can be signed; `false` leaves rows unclaimed.
+    fn can_sign(&self) -> bool {
+        true
+    }
 }
 
 #[async_trait::async_trait]
@@ -62,6 +75,10 @@ impl EmailChannel for EmailSender {
             &claimed.metadata,
         )
         .await
+    }
+
+    fn can_sign(&self) -> bool {
+        self.has_signing_key()
     }
 }
 
@@ -90,7 +107,30 @@ pub async fn claim(
         Option<String>,
         Option<String>,
     );
-    let rows: Vec<Row> = sqlx::query_as(
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(CLAIM_SQL.as_str()))
+        .bind(now)
+        .bind(limit)
+        .bind(lease_until)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(notification_id, attempts, address, kind, metadata, email, opted_out)| Claimed {
+                notification_id,
+                attempts,
+                address,
+                kind,
+                metadata,
+                email,
+                opted_out,
+            },
+        )
+        .collect())
+}
+
+static CLAIM_SQL: LazyLock<String> = LazyLock::new(|| {
+    format!(
         r#"
         WITH due AS (
             SELECT d.notification_id
@@ -108,8 +148,8 @@ pub async fn claim(
         WHERE d.notification_id = due.notification_id AND d.channel = 'email'
         RETURNING d.notification_id, d.attempts, n.address, n.type, n.metadata, s.email,
             CASE
-                WHEN COALESCE((s.details->>'ignore_all_email')::boolean, false) THEN 'ignore_all_email'
-                WHEN NOT COALESCE((s.details->'message_type'->n.type->>'email')::boolean, true) THEN 'opted out of this type'
+                WHEN {} THEN 'ignore_all_email'
+                WHEN NOT {} THEN 'opted out of this type'
                 WHEN EXISTS (SELECT 1 FROM social.subscription_opt_outs o
                     WHERE o.address = n.address AND o.scope = 'community'
                       AND CASE WHEN pg_input_is_valid(o.scope_id, 'uuid') THEN o.scope_id::uuid END
@@ -117,34 +157,22 @@ pub async fn claim(
                     THEN 'opted out of this community'
             END
         "#,
+        details_flag("->'ignore_all_email'", false),
+        details_flag("->'message_type'->n.type->'email'", true),
     )
-    .bind(now)
-    .bind(limit)
-    .bind(lease_until)
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(
-            |(notification_id, attempts, address, kind, metadata, email, opted_out)| Claimed {
-                notification_id,
-                attempts,
-                address,
-                kind,
-                metadata,
-                email,
-                opted_out,
-            },
-        )
-        .collect())
-}
+});
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     Sent,
     Skipped(String),
     Failed(String),
-    Retry { after: Duration, error: String },
+    Retry {
+        after: Duration,
+        error: String,
+    },
+    /// Back to `pending` after [`HOLD`] without counting the claim's attempt.
+    Held,
 }
 
 /// The state transition for one claimed row's send result.
@@ -154,10 +182,7 @@ pub fn outcome_of(claimed: &Claimed, result: Result<(), SendFailure>) -> Outcome
         Err(SendFailure::NotConfigured) => {
             Outcome::Skipped("email delivery not configured".to_string())
         }
-        Err(SendFailure::NoSigningKey) => Outcome::Retry {
-            after: backoff(claimed.attempts),
-            error: UNSIGNED.to_string(),
-        },
+        Err(SendFailure::NoSigningKey) => Outcome::Held,
         Err(SendFailure::Permanent(e)) => Outcome::Failed(e),
         Err(SendFailure::Transient(e)) if claimed.attempts >= MAX_ATTEMPTS => {
             Outcome::Failed(format!("{e} (after {} attempts)", claimed.attempts))
@@ -175,20 +200,20 @@ pub async fn record(
     now: NaiveDateTime,
     outcome: &Outcome,
 ) -> Result<(), sqlx::Error> {
-    let (state, next_attempt_at, last_error): (&str, NaiveDateTime, Option<&str>) = match outcome {
-        Outcome::Sent => ("sent", now, None),
-        Outcome::Skipped(reason) => ("skipped", now, Some(reason)),
-        Outcome::Failed(error) => ("failed", now, Some(error)),
-        Outcome::Retry { after, error } => (
-            "pending",
-            now + chrono::Duration::from_std(*after).expect("backoff fits"),
-            Some(error),
-        ),
-    };
+    let after = |d: Duration| now + chrono::Duration::from_std(d).expect("backoff fits");
+    let (state, next_attempt_at, last_error, uncount): (&str, NaiveDateTime, Option<&str>, i32) =
+        match outcome {
+            Outcome::Sent => ("sent", now, None, 0),
+            Outcome::Skipped(reason) => ("skipped", now, Some(reason), 0),
+            Outcome::Failed(error) => ("failed", now, Some(error), 0),
+            Outcome::Retry { after: d, error } => ("pending", after(*d), Some(error), 0),
+            Outcome::Held => ("pending", after(HOLD), Some(UNSIGNED), 1),
+        };
     sqlx::query(
         r#"
         UPDATE social.notification_deliveries
-        SET state = $2, next_attempt_at = $3, last_error = $4, updated_at = $5
+        SET state = $2, next_attempt_at = $3, last_error = $4, updated_at = $5,
+            attempts = GREATEST(attempts - $6, 0)
         WHERE notification_id = $1 AND channel = 'email'
         "#,
     )
@@ -197,6 +222,7 @@ pub async fn record(
     .bind(next_attempt_at)
     .bind(last_error)
     .bind(now)
+    .bind(uncount)
     .execute(pool)
     .await?;
     Ok(())
@@ -209,6 +235,8 @@ pub struct PassSummary {
     pub skipped: usize,
     pub failed: usize,
     pub retried: usize,
+    /// Due rows left unclaimed for a missing `SIGNING_KEY` (at most [`BATCH`]).
+    pub held: usize,
 }
 
 /// The old processor's render-time names, never persisted: `userName` is the
@@ -256,6 +284,42 @@ pub async fn prune(pool: &PgPool, now: NaiveDateTime) -> Result<u64, sqlx::Error
     Ok(res.rows_affected())
 }
 
+/// Ends up to [`PRUNE_BATCH`] pending rows not due-touched since
+/// `now - max_age` as `skipped` (`expired`), over `notification_deliveries_due_idx`:
+/// a row held for a missing key keeps its insert time as `next_attempt_at`,
+/// and a retried row reaches a terminal state within hours.
+pub async fn expire(
+    pool: &PgPool,
+    now: NaiveDateTime,
+    max_age: Duration,
+) -> Result<u64, sqlx::Error> {
+    let cutoff = chrono::Duration::from_std(max_age)
+        .ok()
+        .and_then(|age| now.checked_sub_signed(age))
+        .unwrap_or(NaiveDateTime::MIN);
+    let res = sqlx::query(
+        r#"
+        UPDATE social.notification_deliveries d
+        SET state = 'skipped', last_error = $3, updated_at = $4
+        FROM (
+            SELECT notification_id, channel FROM social.notification_deliveries
+            WHERE state = 'pending' AND next_attempt_at < $1
+            ORDER BY next_attempt_at, notification_id
+            LIMIT $2
+            FOR UPDATE SKIP LOCKED
+        ) old
+        WHERE d.notification_id = old.notification_id AND d.channel = old.channel
+        "#,
+    )
+    .bind(cutoff)
+    .bind(PRUNE_BATCH)
+    .bind(EXPIRED)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
+}
+
 /// One pass: claim, send each outside any transaction, record. A row whose
 /// recipient lost their email between insert and send, or whose type has no
 /// template (rows written before the allowlist), is `skipped` without a send.
@@ -265,12 +329,36 @@ pub async fn run_pass(
     configured: bool,
 ) -> anyhow::Result<PassSummary> {
     let now = now_utc();
+    if configured && !channel.can_sign() {
+        let held: i64 = sqlx::query_scalar(
+            r#"
+            SELECT count(*) FROM (
+                SELECT 1 FROM social.notification_deliveries
+                WHERE state = 'pending' AND channel = 'email' AND next_attempt_at <= $1
+                LIMIT $2
+            ) due
+            "#,
+        )
+        .bind(now)
+        .bind(BATCH)
+        .fetch_one(pool)
+        .await?;
+        if held > 0 {
+            tracing::error!(
+                held,
+                "SIGNING_KEY unset: notification emails stay pending until it is set"
+            );
+        }
+        return Ok(PassSummary {
+            held: held as usize,
+            ..Default::default()
+        });
+    }
     let claimed = claim(pool, now, BATCH).await?;
     let mut summary = PassSummary {
         claimed: claimed.len(),
         ..Default::default()
     };
-    let mut unsigned = 0usize;
     for row in &claimed {
         let outcome = match (&row.email, configured) {
             (None, _) => Outcome::Skipped("no confirmed email at send time".to_string()),
@@ -292,20 +380,18 @@ pub async fn run_pass(
                 outcome_of(&row, result)
             }
         };
-        if matches!(&outcome, Outcome::Retry { error, .. } if error == UNSIGNED) {
-            unsigned += 1;
-        }
         match &outcome {
             Outcome::Sent => summary.sent += 1,
             Outcome::Skipped(_) => summary.skipped += 1,
             Outcome::Failed(_) => summary.failed += 1,
             Outcome::Retry { .. } => summary.retried += 1,
+            Outcome::Held => summary.held += 1,
         }
         record(pool, row.notification_id, now_utc(), &outcome).await?;
     }
-    if unsigned > 0 {
+    if summary.held > 0 {
         tracing::error!(
-            held = unsigned,
+            held = summary.held,
             "SIGNING_KEY unset: notification emails stay pending until it is set"
         );
     }
@@ -366,10 +452,7 @@ mod tests {
         ));
         assert_eq!(
             outcome_of(&claimed(MAX_ATTEMPTS + 3), Err(SendFailure::NoSigningKey)),
-            Outcome::Retry {
-                after: backoff(MAX_ATTEMPTS + 3),
-                error: "SIGNING_KEY unset".into()
-            },
+            Outcome::Held,
             "a missing signing key never ends the row"
         );
     }
@@ -386,6 +469,7 @@ mod pg_tests {
         sent: Mutex<Vec<(String, Uuid)>>,
         metadata: Mutex<Vec<(Uuid, Json)>>,
         fail_with: Mutex<Option<SendFailure>>,
+        unsigned: std::sync::atomic::AtomicBool,
     }
 
     impl Recorder {
@@ -394,6 +478,7 @@ mod pg_tests {
                 sent: Mutex::new(Vec::new()),
                 metadata: Mutex::new(Vec::new()),
                 fail_with: Mutex::new(None),
+                unsigned: Default::default(),
             }
         }
     }
@@ -412,6 +497,29 @@ mod pg_tests {
                 .push((claimed.notification_id, claimed.metadata.clone()));
             Ok(())
         }
+
+        fn can_sign(&self) -> bool {
+            !self.unsigned.load(std::sync::atomic::Ordering::Relaxed)
+        }
+    }
+
+    async fn make_due(pool: &PgPool, id: Uuid) {
+        sqlx::query("UPDATE social.notification_deliveries SET next_attempt_at = $2 WHERE notification_id = $1")
+            .bind(id)
+            .bind(now_utc() - chrono::Duration::seconds(1))
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn next_attempt(pool: &PgPool, id: Uuid) -> NaiveDateTime {
+        sqlx::query_scalar(
+            "SELECT next_attempt_at FROM social.notification_deliveries WHERE notification_id = $1",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
     }
 
     async fn pending_for(
@@ -783,48 +891,142 @@ mod pg_tests {
     }
 
     #[tokio::test]
-    async fn without_a_signing_key_rows_stay_pending_and_back_off() {
+    async fn without_a_signing_key_rows_stay_unclaimed_and_keep_their_retry_budget() {
         let Some(pool) = private_pool("dlv-unsigned").await else {
             return;
         };
-        let rows = pending_for(&pool, &fresh_address()).await;
+        let a = fresh_address();
+        deploy_profile(&pool, a.as_str(), "Held").await;
+        let rows = pending_for(&pool, &a).await;
+        let id = rows[0].id;
+        let recorder = Recorder::new();
+        recorder
+            .unsigned
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        for _ in 0..MAX_ATTEMPTS + 2 {
+            make_due(&pool, id).await;
+            let summary = run_pass(&pool, &recorder, true).await.unwrap();
+            assert_eq!((summary.claimed, summary.held), (0, 1), "{summary:?}");
+        }
+        assert_eq!(
+            delivery_state(&pool, id).await.unwrap(),
+            ("pending".into(), 0, None),
+            "holds neither claim nor count an attempt"
+        );
+        assert!(
+            recorder.metadata.lock().is_empty(),
+            "nothing enriched or sent"
+        );
+
+        // The key appears: the first transient failure retries with the first backoff.
+        recorder
+            .unsigned
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        *recorder.fail_with.lock() = Some(SendFailure::Transient("503".into()));
+        run_pass(&pool, &recorder, true).await.unwrap();
+        assert_eq!(
+            delivery_state(&pool, id).await.unwrap(),
+            ("pending".into(), 1, Some("503".into()))
+        );
+        assert!(next_attempt(&pool, id).await < now_utc() + chrono::Duration::seconds(60));
+
+        *recorder.fail_with.lock() = None;
+        make_due(&pool, id).await;
+        run_pass(&pool, &recorder, true).await.unwrap();
+        assert_eq!(delivery_state(&pool, id).await.unwrap().0, "sent");
+    }
+
+    #[tokio::test]
+    async fn a_send_refused_for_a_missing_key_is_held_without_counting_the_attempt() {
+        let Some(pool) = private_pool("dlv-held").await else {
+            return;
+        };
+        let id = pending_for(&pool, &fresh_address()).await[0].id;
         let recorder = Recorder::new();
         *recorder.fail_with.lock() = Some(SendFailure::NoSigningKey);
-        for _ in 0..MAX_ATTEMPTS + 1 {
-            sqlx::query("UPDATE social.notification_deliveries SET next_attempt_at = $2 WHERE notification_id = $1")
-                .bind(rows[0].id)
-                .bind(now_utc() - chrono::Duration::seconds(1))
+        for _ in 0..MAX_ATTEMPTS + 2 {
+            make_due(&pool, id).await;
+            assert_eq!(run_pass(&pool, &recorder, true).await.unwrap().held, 1);
+        }
+        assert_eq!(
+            delivery_state(&pool, id).await.unwrap(),
+            ("pending".into(), 0, Some("SIGNING_KEY unset".into()))
+        );
+        let next = next_attempt(&pool, id).await;
+        assert!(next > now_utc() + chrono::Duration::seconds(200));
+        assert!(next <= now_utc() + chrono::Duration::from_std(HOLD).unwrap());
+    }
+
+    #[tokio::test]
+    async fn expire_ends_only_pending_rows_idle_past_the_max_age() {
+        let Some(pool) = private_pool("dlv-expire").await else {
+            return;
+        };
+        let old = now_utc() - chrono::Duration::days(8);
+        let stale = pending_for(&pool, &fresh_address()).await[0].id;
+        let stale_sent = pending_for(&pool, &fresh_address()).await[0].id;
+        let fresh = pending_for(&pool, &fresh_address()).await[0].id;
+        for (id, state) in [(stale, "pending"), (stale_sent, "sent")] {
+            sqlx::query("UPDATE social.notification_deliveries SET state = $2, next_attempt_at = $3, updated_at = $3 WHERE notification_id = $1")
+                .bind(id)
+                .bind(state)
+                .bind(old)
                 .execute(&pool)
                 .await
                 .unwrap();
-            run_pass(&pool, &recorder, true).await.unwrap();
         }
-        let (state, attempts, err) = delivery_state(&pool, rows[0].id).await.unwrap();
+        assert_eq!(expire(&pool, now_utc(), DEFAULT_MAX_AGE).await.unwrap(), 1);
         assert_eq!(
-            (state.as_str(), attempts, err.as_deref()),
-            ("pending", MAX_ATTEMPTS + 1, Some("SIGNING_KEY unset"))
+            delivery_state(&pool, stale).await.unwrap(),
+            ("skipped".into(), 0, Some(EXPIRED.into()))
         );
-        let next: NaiveDateTime = sqlx::query_scalar(
-            "SELECT next_attempt_at FROM social.notification_deliveries WHERE notification_id = $1",
-        )
-        .bind(rows[0].id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert!(
-            next > now_utc() + chrono::Duration::seconds(600),
-            "backed off"
-        );
+        assert_eq!(delivery_state(&pool, stale_sent).await.unwrap().0, "sent");
+        assert_eq!(delivery_state(&pool, fresh).await.unwrap().0, "pending");
+        assert_eq!(expire(&pool, now_utc(), DEFAULT_MAX_AGE).await.unwrap(), 0);
 
-        *recorder.fail_with.lock() = None;
-        sqlx::query("UPDATE social.notification_deliveries SET next_attempt_at = $2 WHERE notification_id = $1")
-            .bind(rows[0].id)
-            .bind(now_utc() - chrono::Duration::seconds(1))
+        // An expired row is never sent once the key is set.
+        let recorder = Recorder::new();
+        run_pass(&pool, &recorder, true).await.unwrap();
+        assert!(recorder.sent.lock().iter().all(|(_, n)| *n != stale));
+    }
+
+    #[tokio::test]
+    async fn a_non_boolean_flag_is_treated_as_unset() {
+        let Some(pool) = private_pool("dlv-flags").await else {
+            return;
+        };
+        let a = fresh_address();
+        sqlx::query("INSERT INTO social.subscriptions (address, email, details) VALUES ($1, 'f@example.com', $2)")
+            .bind(&a)
+            .bind(serde_json::json!({
+                "ignore_all_email": "maybe",
+                "ignore_all_in_app": "nope",
+                "message_type": {"bid_received": {"email": "false", "in_app": 1}}
+            }))
             .execute(&pool)
             .await
             .unwrap();
+        let batch = vec![NewNotification::now(
+            a.clone(),
+            "bid_received",
+            serde_json::json!({"title": "t"}),
+        )];
+        assert_eq!(insert_notifications(&pool, &batch).await.unwrap(), 1);
+        let in_app: bool =
+            sqlx::query_scalar("SELECT in_app FROM social.notifications WHERE id = $1")
+                .bind(batch[0].id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(in_app, "malformed in-app flags default to shown");
+        assert_eq!(
+            delivery_state(&pool, batch[0].id).await.unwrap().0,
+            "pending"
+        );
+
+        let recorder = Recorder::new();
         run_pass(&pool, &recorder, true).await.unwrap();
-        assert_eq!(delivery_state(&pool, rows[0].id).await.unwrap().0, "sent");
+        assert_eq!(delivery_state(&pool, batch[0].id).await.unwrap().0, "sent");
     }
 
     /// Prune and claim racing on the same table: prune takes only terminal

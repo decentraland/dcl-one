@@ -17,18 +17,19 @@ use std::time::Duration;
 
 use chrono::Utc;
 use serde_json::{Map, Value, json};
-use sqlx::{PgConnection, PgPool};
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::MarketplaceState;
 use super::chain_walk::{self, ChainNet, INDEXER_NFT, INDEXER_TRADE_EVENTS};
+use super::notice_cursor;
 use crate::evm::contracts_addrs::DclContracts;
 use crate::jobs::{Jobs, PeriodicCfg};
 use crate::social::Address;
 use crate::social::notifications::store::{NewNotification, insert_notifications};
 
 pub const KIND: &str = "transfer_received";
-const PRODUCER: &str = "transfer_received";
+const PRODUCER: &str = notice_cursor::TRANSFER_RECEIVED;
 const PAGE_SIZE: i64 = 500;
 const POLL_SECS: u64 = 60;
 const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
@@ -36,11 +37,9 @@ const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 const COLLECTION_BASE_URI: &str =
     "https://peer.decentraland.org/lambdas/collections/standard/erc721/";
 
-pub fn notification_id(network: &str, block_number: i64, log_index: i32) -> Uuid {
-    Uuid::new_v5(
-        &Uuid::NAMESPACE_OID,
-        format!("nft-transfer:{network}:{block_number}:{log_index}").as_bytes(),
-    )
+/// The id over the log's [`notice_cursor::token_log_key`].
+pub fn notification_id(network: &str, key: &str) -> Uuid {
+    notice_cursor::notification_id("nft-transfer", network, key)
 }
 
 /// What one pass did: inserted notifications, or why it waited.
@@ -50,61 +49,10 @@ pub enum Pass {
     Waiting(&'static str),
 }
 
-/// The producer's `(block_number, log_index)` and `end_time`, locked for the page.
-pub(crate) async fn lock_cursor(
-    conn: &mut PgConnection,
-    producer: &str,
-) -> sqlx::Result<(Option<i64>, i64, i32)> {
-    sqlx::query_as("SELECT end_time, block_number, log_index FROM shop.notification_cursor WHERE producer = $1 FOR UPDATE")
-        .bind(producer)
-        .fetch_one(conn)
-        .await
-}
-
-/// Seeds the producer's row once; an existing row is left alone.
-pub(crate) async fn seed_cursor(
-    pool: &PgPool,
-    producer: &str,
-    end_time: Option<i64>,
-    block_number: i64,
-    log_index: i32,
-) -> sqlx::Result<()> {
-    sqlx::query(
-        "INSERT INTO shop.notification_cursor (producer, end_time, block_number, log_index) \
-         VALUES ($1, $2, $3, $4) ON CONFLICT (producer) DO NOTHING",
-    )
-    .bind(producer)
-    .bind(end_time)
-    .bind(block_number)
-    .bind(log_index)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-pub(crate) async fn advance_cursor(
-    conn: &mut PgConnection,
-    producer: &str,
-    end_time: Option<i64>,
-    block_number: i64,
-    log_index: i32,
-) -> sqlx::Result<()> {
-    sqlx::query(
-        "UPDATE shop.notification_cursor SET end_time = $2, block_number = $3, log_index = $4, \
-         updated_at = timezone('UTC', now()) WHERE producer = $1",
-    )
-    .bind(producer)
-    .bind(end_time)
-    .bind(block_number)
-    .bind(log_index)
-    .execute(conn)
-    .await?;
-    Ok(())
-}
-
 #[derive(sqlx::FromRow)]
 struct TransferRow {
     block_number: i64,
+    id_key: String,
     log_index: i32,
     block_time: i64,
     contract_address: String,
@@ -174,14 +122,14 @@ pub async fn run_once(pool: &PgPool, chain_id: i64) -> anyhow::Result<Pass> {
     .fetch_optional(pool)
     .await?;
     let (seed_block, seed_log) = latest.unwrap_or((0, -1));
-    seed_cursor(pool, PRODUCER, None, seed_block, seed_log).await?;
+    notice_cursor::seed(pool, PRODUCER, None, seed_block, seed_log).await?;
     let hops = sale_hops(pool, chain_id).await?;
     let mut emitted = 0;
     loop {
         let mut txn = pool.begin().await?;
-        let (_, since_block, since_log) = lock_cursor(&mut txn, PRODUCER).await?;
-        let rows: Vec<TransferRow> = sqlx::query_as(
-            "SELECT e.block_number, e.log_index, e.block_time, e.contract_address, \
+        let (_, since_block, since_log) = notice_cursor::lock(&mut txn, PRODUCER).await?;
+        let rows: Vec<TransferRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT e.block_number, {key} AS id_key, e.log_index, e.block_time, e.contract_address, \
                     lower(e.from_address) AS from_address, lower(e.to_address) AS to_address, \
                     n.item_id::text AS item_id, n.issued_id::text AS issued_id, \
                     (lower(e.from_address) <> $5 AND lower(e.to_address) <> $5 \
@@ -202,7 +150,8 @@ pub async fn run_once(pool: &PgPool, chain_id: i64) -> anyhow::Result<Pass> {
              WHERE e.network = $1 AND (e.block_number, e.log_index) > ($2, $3) AND e.block_number <= $4 \
                AND e.kind = 'transfer' \
              ORDER BY e.block_number, e.log_index LIMIT $7",
-        )
+            key = notice_cursor::token_log_key("e"),
+        )))
         .bind(network)
         .bind(since_block)
         .bind(since_log)
@@ -223,7 +172,7 @@ pub async fn run_once(pool: &PgPool, chain_id: i64) -> anyhow::Result<Pass> {
             .filter_map(|r| {
                 let to = Address::parse(r.to_address.as_deref()?).ok()?;
                 Some(NewNotification {
-                    id: notification_id(network, r.block_number, r.log_index),
+                    id: notification_id(network, &r.id_key),
                     address: to,
                     kind: KIND.to_string(),
                     metadata: metadata(r, chain_id),
@@ -234,7 +183,7 @@ pub async fn run_once(pool: &PgPool, chain_id: i64) -> anyhow::Result<Pass> {
             })
             .collect();
         emitted += insert_notifications(&mut *txn, &batch).await?;
-        advance_cursor(&mut txn, PRODUCER, None, last_block, last_log).await?;
+        notice_cursor::advance(&mut txn, PRODUCER, None, last_block, last_log).await?;
         txn.commit().await?;
         if rows.len() < PAGE_SIZE as usize {
             break;
@@ -355,22 +304,6 @@ pub(crate) mod tests {
         .unwrap();
     }
 
-    #[test]
-    fn transfer_id_is_stable_and_unique_per_event() {
-        assert_eq!(
-            notification_id("matic", 10, 1),
-            notification_id("matic", 10, 1)
-        );
-        assert_ne!(
-            notification_id("matic", 10, 1),
-            notification_id("matic", 10, 2)
-        );
-        assert_ne!(
-            notification_id("matic", 10, 1),
-            notification_id("ethereum", 10, 1)
-        );
-    }
-
     /// Nothing before both indexes publish; the first pass starts at the
     /// newest published transfer; a gift notifies its receiver with the old
     /// metadata; mints, burns, self-transfers, legacy order and Traded
@@ -484,7 +417,13 @@ pub(crate) mod tests {
         .await
         .unwrap();
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].0, notification_id("matic", 101, 0));
+        assert_eq!(
+            rows[0].0,
+            notification_id(
+                "matic",
+                &format!("{collection}:12:transfer:{alice}:{bob}::0")
+            )
+        );
         assert_eq!(rows[0].1, bob);
         assert_eq!(
             rows[0].2,
@@ -594,7 +533,7 @@ pub(crate) mod tests {
 
         // A reorg rewinds the nft index: block 102's log is replaced.
         let mut tx = pool.begin().await.unwrap();
-        chain_walk::replay_notifications(&mut tx, INDEXER_NFT, ChainNet::Matic, -1)
+        notice_cursor::replay(&mut tx, INDEXER_NFT, ChainNet::Matic, -1, 102)
             .await
             .unwrap();
         sqlx::query("DELETE FROM shop.nft_event WHERE network = 'matic' AND block_number > 101")
@@ -609,25 +548,27 @@ pub(crate) mod tests {
             cursor().await < (101, 0),
             "moved back below the rewritten rows"
         );
-        transfer(102, 1, 3, carol).await;
+        // A different gift where block 102's was; that one mined again later.
+        transfer(102, 0, 3, carol).await;
+        transfer(102, 4, 2, bob).await;
         publish(&pool, INDEXER_NFT, "matic", 102, 1_700_000_102).await;
         assert_eq!(
             run_once(&pool, 137).await.unwrap(),
             Pass::Emitted(1),
-            "the replacement log is announced, the rest not twice"
+            "the different log is announced, the moved one not twice"
         );
         assert_eq!(notified().await, vec![bob, bob, carol]);
 
         // A late backfill writes a gift below the cursor, within the replay window.
         let mut tx = pool.begin().await.unwrap();
         transfer(100, 5, 4, carol).await;
-        chain_walk::replay_notifications(&mut tx, INDEXER_NFT, ChainNet::Matic, 99)
+        notice_cursor::replay(&mut tx, INDEXER_NFT, ChainNet::Matic, 99, 100)
             .await
             .unwrap();
         tx.commit().await.unwrap();
         assert_eq!(cursor().await, (99, i32::MAX));
         assert_eq!(run_once(&pool, 137).await.unwrap(), Pass::Emitted(1));
-        assert_eq!(cursor().await, (102, 1));
+        assert_eq!(cursor().await, (102, 4));
         db.drop().await;
     }
 }

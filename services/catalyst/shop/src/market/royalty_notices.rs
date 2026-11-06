@@ -9,8 +9,8 @@
 //! marketplace, read only up to the published block while the index is
 //! ready; the first pass starts at the published block (no history is
 //! replayed). Progress is `shop.notification_cursor` (`royalties_earned`), advanced with the
-//! page's notifications in one transaction; the id is a v5 uuid of the log
-//! position, so a retried page inserts nothing twice.
+//! page's notifications in one transaction; the id is reorg-stable
+//! (`notice_cursor::token_log_key`), so a retried page inserts nothing twice.
 
 // TODO: on-chain ERC721Bid `BidAccepted` sales are not indexed, so they pay royalties without a `royalties_earned`.
 
@@ -21,12 +21,13 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::chain_walk::{self, ChainNet, INDEXER_NFT};
+use super::notice_cursor;
 use crate::jobs::{Jobs, PeriodicCfg};
 use crate::shared::identity::Address;
 use crate::social::notifications::store::{NewNotification, insert_notifications};
 use crate::social::notifications::templates::format_mana;
 
-pub const KIND: &str = "royalties_earned";
+pub const KIND: &str = notice_cursor::ROYALTIES_EARNED;
 /// MarketplaceV2 on Polygon, the one emitter whose sales carry royalties.
 pub const MARKETPLACE_V2: &str = "0x480a0f4e360e8964e68858dd231c2922f1df45ef";
 /// `royaltiesCutPerMillion()` of MarketplaceV2: 25000 on chain (2026-11-05) and on every royalty sale the subgraph recorded since its deployment.
@@ -35,15 +36,14 @@ const NET: ChainNet = ChainNet::Matic;
 const PAGE_SIZE: i64 = 200;
 const POLL_SECS: u64 = 60;
 
-pub fn notification_id(network: &str, block_number: i64, log_index: i32) -> Uuid {
-    Uuid::new_v5(
-        &Uuid::NAMESPACE_OID,
-        format!("royalty:{network}:{block_number}:{log_index}").as_bytes(),
-    )
+/// Over the sale's [`notice_cursor::token_log_key`].
+pub fn notification_id(network: &str, key: &str) -> Uuid {
+    notice_cursor::notification_id("royalty", network, key)
 }
 
 #[derive(sqlx::FromRow)]
 struct SaleRow {
+    id_key: String,
     block_number: i64,
     log_index: i32,
     block_time: i64,
@@ -111,15 +111,7 @@ pub async fn run_once(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
     else {
         return Ok(Pass::NotReady);
     };
-    sqlx::query(
-        "INSERT INTO shop.notification_cursor (producer, block_number, log_index) VALUES ($1, $2, $3) \
-         ON CONFLICT (producer) DO NOTHING",
-    )
-    .bind(KIND)
-    .bind(published)
-    .bind(i32::MAX)
-    .execute(pool)
-    .await?;
+    notice_cursor::seed(pool, KIND, None, published, i32::MAX).await?;
     let mut emitted = 0;
     loop {
         let mut txn = pool.begin().await?;
@@ -129,8 +121,8 @@ pub async fn run_once(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
         .bind(KIND)
         .fetch_one(&mut *txn)
         .await?;
-        let rows: Vec<SaleRow> = sqlx::query_as(
-            "SELECT e.block_number, e.log_index, e.block_time, e.contract_address, e.token_id::text AS token_id, \
+        let rows: Vec<SaleRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT {key} AS id_key, e.block_number, e.log_index, e.block_time, e.contract_address, e.token_id::text AS token_id, \
                     div(e.amount * $6, 1000000)::text AS cut, \
                     lower(CASE WHEN i.beneficiary IS NOT NULL AND i.beneficiary <> $7 THEN i.beneficiary ELSE i.creator END) AS collector, \
                     lower(e.from_address) AS seller, \
@@ -141,7 +133,8 @@ pub async fn run_once(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
              WHERE e.network = $1 AND (e.block_number, e.log_index) > ($2, $3) AND e.block_number <= $4 \
                AND e.kind = 'order_successful' AND e.emitter = $5 \
              ORDER BY e.block_number, e.log_index LIMIT $8",
-        )
+            key = notice_cursor::token_log_key("e"),
+        )))
         .bind(NET.db_name())
         .bind(since_block)
         .bind(since_log)
@@ -164,7 +157,7 @@ pub async fn run_once(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
                     .filter(|c| row.seller.as_deref() != Some(*c))
                     .and_then(|c| Address::parse(c).ok())?;
                 Some(NewNotification {
-                    id: notification_id(NET.db_name(), row.block_number, row.log_index),
+                    id: notification_id(NET.db_name(), &row.id_key),
                     metadata: metadata(row, cut, collector.as_str(), base),
                     address: collector,
                     kind: KIND.to_string(),
@@ -235,22 +228,6 @@ mod tests {
     const COLLECTION: &str = "0x00000000000000000000000000000000000000c0";
     const CREATOR: &str = "0x00000000000000000000000000000000000000c1";
     const BENEFICIARY: &str = "0x00000000000000000000000000000000000000b1";
-
-    #[test]
-    fn the_id_is_stable_and_unique_per_log() {
-        assert_eq!(
-            notification_id("matic", 10, 1),
-            notification_id("matic", 10, 1)
-        );
-        assert_ne!(
-            notification_id("matic", 10, 1),
-            notification_id("matic", 10, 2)
-        );
-        assert_ne!(
-            notification_id("matic", 10, 1),
-            notification_id("ethereum", 10, 1)
-        );
-    }
 
     async fn sale(pool: &PgPool, block: i64, log: i32, emitter: &str, token: &str, price: &str) {
         sqlx::query(
@@ -389,7 +366,16 @@ mod tests {
         assert_eq!(rows.len(), 2);
         let by = |a: &str| rows.iter().find(|r| r.1 == a).unwrap();
         let (id, _, m) = by(BENEFICIARY);
-        assert_eq!(*id, notification_id("matic", 101, 3));
+        assert_eq!(
+            *id,
+            notification_id(
+                "matic",
+                &format!(
+                    "{COLLECTION}:1:order_successful:0x00000000000000000000000000000000000000aa:0x00000000000000000000000000000000000000bb:20000000000000000000:1"
+                )
+            ),
+            "the second identical sale of the token"
+        );
         assert_eq!(
             *m,
             json!({

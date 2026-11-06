@@ -2377,6 +2377,7 @@ fn social_states(
                     .max(1)
                     .saturating_mul(86_400),
             ),
+            delivery_max_age: Duration::from_secs(config.social.notification_delivery_max_age_secs),
             current_version: config.social.social_rpc_current_version.clone(),
             commit_hash: config.node.commit_hash.clone(),
         },
