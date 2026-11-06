@@ -987,3 +987,39 @@ Private media credentials serialize same-call writers before a plain party read,
 then take sorted wallet transaction locks before locking/upserting the call.
 A conflict preserves its existing parties, creation time and prior participants.
 Pending expiry remains effective while a media writer waits for a wallet.
+
+### Durable world admission edits and stable bans
+
+World scene bans use `<world>:<base parcel>` keys. Genesis bans keep their entity
+keys. The release script `schemas/releases/world-scene-ban-keys.sql` consolidates active and retained
+world scene keys, keeping the newest ban when aliases overlap. It removes mapped
+legacy aliases so an unban cannot leave a hidden effective ban. Unmapped rows are
+retained. The existing retired-scene table supplies mappings during its configured
+retention period; a live world scene whose deployment is positively absent is
+removed during maintenance. Authority errors remain undecided.
+
+Access edits commit a unique revision and database-clock cutoff to
+`social.world_access_rechecks` in the same transaction. Community closures persist
+retry intent before their advisory wakeups. Maintenance shares one room inventory
+between 16 due edits and a rotating batch of 16 live worlds. Cutoffs stay after
+success so an old token cannot regain access by reconnecting. World tokens carry
+additive signed authorization attributes bound to world, wallet, room and mint
+start time. The short `FOR SHARE` stamp orders against existing access writers.
+The `dcl.worldAuthorization` participant attribute survives normal client metadata
+replacement. Previously issued signed metadata proofs remain readable when the
+attribute is absent; an invalid present attribute fails closed. Legacy unsigned
+tokens and key rotation may require a fresh mint after an access edit. Existing main ownership, ENS and scoped grant policy
+still decides admission.
+
+The caller secret budget keeps the existing `attempts/window_start` table and
+configured limit. Mint, adapter and scene-host paths share it. Attempts charge
+before verification; cancellation keeps the charge until expiry. Non-invalid-secret
+answers refund only their exact charged window. Expiry cleanup removes at most
+1,000 rows per scheduled pass. This does not add a cross-caller world ceiling.
+
+For rollout, stop all old API and scene-host replicas before running `catalyst schema migrate` and then applying
+`schemas/releases/world-scene-ban-keys.sql` with the administrative database role, then start the updated binaries. `catalyst serve` refuses startup while active or retained
+world scenes still have mapped entity-id bans awaiting this conversion; fresh databases and
+unmapped or Genesis bans do not require it. Old binaries cannot enforce the
+new stable ban keys. A binary-only rollback is not supported after rekeying;
+restore the matching pre-migration database backup. Do not reset a database.

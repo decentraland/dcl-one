@@ -219,6 +219,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     .await
     .context("connecting to DATABASE_URL")?;
     db::bootstrap(&pool).await?;
+    worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
 
     let storage_root = Path::new(&config.node.storage_root_folder);
     let storage = Arc::new(
@@ -1828,7 +1829,8 @@ async fn worlds_states(
                 settings,
                 eip1654.clone(),
             )
-            .context("building the scene host")?,
+            .context("building the scene host")?
+            .with_secret_max_attempts(config.worlds.shared_secret_max_attempts_per_minute),
         );
         host.spawn_jobs(jobs);
         Some(host)

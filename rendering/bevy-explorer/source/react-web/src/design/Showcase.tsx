@@ -581,6 +581,20 @@ export function Showcase(): React.JSX.Element {
             />
           ))}
         </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 108px)', gap: 12, marginTop: 12 }}>
+          {(['epic', 'legendary', 'rare'] as Rarity[]).map((r, i) => (
+            <EquippedItemCard
+              key={r}
+              name={`Pinned ${r}`}
+              rarity={r}
+              shopUrl="https://decentraland.org/shop/item/0xa42e166edac870aa5351b098ae6458d39ca0fca6/0"
+              shopLabel={i === 0 ? 'Buy' : 'View'}
+              price={i === 0 ? '25 Credits' : undefined}
+              pinShop
+              categoryIcon={<Icon name="emotes" size={15} />}
+            />
+          ))}
+        </div>
       </Section>
 
       <Section title="ScrollThumb (fixed length, as the Shop draws it)">
