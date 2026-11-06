@@ -27,14 +27,16 @@
 //! every [`REMOTE_RELOAD_INTERVAL`] ([`reload_remote`]), as the upstream
 //! catalyst does (`decentraland/catalyst:src/components.ts:134-137`), and
 //! held in memory only: they are not the operator's, so they never reach
-//! `content.denylist` or the console. A fetch that fails or answers anything
-//! but a non-empty array keeps that URL's last good list, and never touches
-//! the operator's half.
+//! `content.denylist` or the console. A fetch that fails, answers anything
+//! but an array or names more than [`MAX_ENTRIES`] ids keeps that URL's last
+//! good list, and never touches the operator's half; an empty array is a
+//! good list and lifts every id the URL named.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
+use serde::de::{self, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use sqlx::PgExecutor;
 
 use super::ContentState;
@@ -45,9 +47,9 @@ use crate::jobs::{Jobs, PeriodicCfg};
 /// How long an edit made outside this process can take to reach the reads.
 pub const RELOAD_INTERVAL: Duration = Duration::from_secs(60);
 
-/// The load's bound. The list is curated by hand (expected hundreds of
-/// rows); a table past this is a mistake the load reports instead of
-/// holding in memory.
+/// The load's bound, and a remote list's. The list is curated by hand
+/// (expected hundreds of rows); a table or remote list past this is a
+/// mistake reported instead of held in memory.
 pub const MAX_ENTRIES: i64 = 100_000;
 
 /// The remote lists' cadence (the upstream catalyst's `denylistReloadJob`).
@@ -57,7 +59,7 @@ pub const REMOTE_RELOAD_INTERVAL: Duration = Duration::from_secs(120);
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// A remote list's body cap (Decentraland's answers a few kilobytes).
-const REMOTE_BODY_CAP: usize = 16 * 1024 * 1024;
+const REMOTE_BODY_CAP: usize = 1024 * 1024;
 
 pub fn valid_id(s: &str) -> bool {
     !s.is_empty() && s.len() <= 512 && s.chars().all(|c| !c.is_control() && !c.is_whitespace())
@@ -151,35 +153,125 @@ fn shown(url: &str) -> String {
     }
 }
 
+/// One entry of a remote list: its `entity_id` when that is a string. The
+/// other fields and any other shape are skipped unread; `null` is refused.
+struct RemoteEntry(Option<String>);
+
+impl<'de> serde::Deserialize<'de> for RemoteEntry {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        d.deserialize_any(Lenient { entry: true }).map(RemoteEntry)
+    }
+}
+
+/// An `entity_id` value: the string, `None` for anything else.
+struct EntityId(Option<String>);
+
+impl<'de> serde::Deserialize<'de> for EntityId {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        d.deserialize_any(Lenient { entry: false }).map(EntityId)
+    }
+}
+
+/// Reads an entry (`entry`: an object's `entity_id`, `null` refused) or an
+/// `entity_id` value (a string), skipping everything else without building
+/// it.
+struct Lenient {
+    entry: bool,
+}
+
+impl<'de> Visitor<'de> for Lenient {
+    type Value = Option<String>;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("a denylist entry")
+    }
+
+    fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+        if self.entry {
+            return Err(E::custom("the denylist holds a null entry"));
+        }
+        Ok(None)
+    }
+
+    fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+        self.visit_unit()
+    }
+
+    fn visit_bool<E: de::Error>(self, _: bool) -> Result<Self::Value, E> {
+        Ok(None)
+    }
+
+    fn visit_i64<E: de::Error>(self, _: i64) -> Result<Self::Value, E> {
+        Ok(None)
+    }
+
+    fn visit_u64<E: de::Error>(self, _: u64) -> Result<Self::Value, E> {
+        Ok(None)
+    }
+
+    fn visit_f64<E: de::Error>(self, _: f64) -> Result<Self::Value, E> {
+        Ok(None)
+    }
+
+    fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+        Ok((!self.entry).then(|| v.to_string()))
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        while seq.next_element::<IgnoredAny>()?.is_some() {}
+        Ok(None)
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let mut id = None;
+        while let Some(key) = map.next_key::<std::borrow::Cow<'de, str>>()? {
+            if self.entry && key == "entity_id" {
+                // A repeated key: the last one wins, as in JavaScript.
+                id = map.next_value::<EntityId>()?.0;
+            } else {
+                map.next_value::<IgnoredAny>()?;
+            }
+        }
+        Ok(id)
+    }
+}
+
 /// The ids of one remote list's body: a JSON array whose entries carry
 /// `entity_id` (`decentraland/catalyst:src/adapters/denylist/component.ts:67-77`).
 /// As upstream: an entry whose `entity_id` is missing or not a string is
 /// skipped, ids are trimmed and blank or `#` ones dropped, and a body that
-/// is not an array or holds a `null` entry is an error.
+/// is not an array or holds a `null` entry is an error. Beyond upstream: an
+/// id this node could never list ([`valid_id`]) is dropped, and a list of
+/// more than [`MAX_ENTRIES`] ids is an error.
 pub fn parse_remote(body: &[u8]) -> anyhow::Result<Vec<String>> {
-    let doc: serde_json::Value =
-        serde_json::from_slice(body).context("the denylist body is not JSON")?;
-    let Some(entries) = doc.as_array() else {
-        anyhow::bail!("the denylist body is not an array");
-    };
-    let mut ids = Vec::with_capacity(entries.len());
-    for entry in entries {
-        anyhow::ensure!(!entry.is_null(), "the denylist holds a null entry");
-        let Some(id) = entry.get("entity_id").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        let id = id.trim();
-        if !id.is_empty() && !id.starts_with('#') {
-            ids.push(id.to_string());
+    let entries: Vec<RemoteEntry> = serde_json::from_slice(body).map_err(|e| {
+        if e.is_data() {
+            anyhow::anyhow!("the denylist body is not an array of entries: {e}")
+        } else {
+            anyhow::anyhow!("the denylist body is not JSON: {e}")
         }
-    }
+    })?;
+    let ids: Vec<String> = entries
+        .into_iter()
+        .filter_map(|RemoteEntry(id)| id)
+        .filter_map(|id| {
+            let id = id.trim();
+            (!id.starts_with('#') && valid_id(id)).then(|| id.to_string())
+        })
+        .collect();
+    anyhow::ensure!(
+        ids.len() as i64 <= MAX_ENTRIES,
+        "the denylist names {} ids, more than {MAX_ENTRIES}",
+        ids.len()
+    );
     Ok(ids)
 }
 
 /// Fetches one remote list through the outbound guard and replaces that
 /// URL's ids in `denylist`; the number of ids now held for it. On any error
-/// (transport, a non-2xx status, a body that [`parse_remote`] refuses, an
-/// empty list) the URL's previous ids stay.
+/// (transport, a non-2xx status, a body over the cap or that [`parse_remote`]
+/// refuses) the URL's previous ids stay. An empty array is a good answer: it
+/// lifts every id the URL named.
 pub async fn reload_remote(
     denylist: &super::Denylist,
     client: &Outbound,
@@ -199,10 +291,6 @@ pub async fn reload_remote(
         .await
         .with_context(|| format!("{shown}: reading the body"))?;
     let ids = parse_remote(&body).with_context(|| shown.clone())?;
-    anyhow::ensure!(
-        !ids.is_empty(),
-        "{shown} answered an empty denylist; keeping the last one"
-    );
     let n = ids.len();
     denylist.set_remote(url, ids);
     Ok(n)
@@ -407,6 +495,42 @@ mod tests {
         );
         assert!(parse_remote(b"[null]").is_err(), "a null entry");
         assert!(parse_remote(b"<html>").is_err(), "not JSON");
+        assert!(parse_remote(b"[]").unwrap().is_empty(), "an emptied list");
+        // A repeated key keeps the last value, as `JSON.parse` does; nested
+        // values and a non-string id are skipped unread.
+        assert_eq!(
+            parse_remote(
+                br#"[{"entity_id":"bafyfirst","x":{"a":[1,{"b":null}]},"entity_id":"bafylast"},
+                {"entity_id":{"nested":"bafyno"}},{"entity_id":null},[{"entity_id":"bafyno"}]]"#
+            )
+            .unwrap(),
+            vec!["bafylast".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_remote_list_holds_only_valid_ids_and_at_most_max_entries() {
+        let long = "a".repeat(513);
+        let body = format!(
+            r#"[{{"entity_id":"bafy inner space"}},{{"entity_id":"{long}"}},{{"entity_id":"bafy\u0000"}},{{"entity_id":"bafyok"}}]"#
+        );
+        assert_eq!(
+            parse_remote(body.as_bytes()).unwrap(),
+            vec!["bafyok".to_string()]
+        );
+
+        let entries = |n: i64| {
+            let ids: Vec<String> = (0..n)
+                .map(|i| format!(r#"{{"entity_id":"b{i}"}}"#))
+                .collect();
+            format!("[{}]", ids.join(","))
+        };
+        assert_eq!(
+            parse_remote(entries(MAX_ENTRIES).as_bytes()).unwrap().len() as i64,
+            MAX_ENTRIES
+        );
+        let err = parse_remote(entries(MAX_ENTRIES + 1).as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("more than"), "{err:#}");
     }
 
     #[test]
@@ -477,7 +601,10 @@ mod tests {
             (500, ABR_BODY.to_string()),
             (200, "<html>maintenance</html>".to_string()),
             (200, "{\"ok\":false}".to_string()),
-            (200, "[]".to_string()),
+            (
+                200,
+                format!("[{}]", "{\"entity_id\":\"bafy\"},".repeat(70_000) + "{}"),
+            ),
         ] {
             *answer.lock() = (status, body.clone());
             let err = reload_remote(&denylist, &client, &url).await.unwrap_err();
@@ -485,10 +612,16 @@ mod tests {
             assert!(denylist.contains("bafyoperator"), "{status} {body}");
         }
 
-        // A list without the first entry lifts it on the next good pass.
+        // A list without the first entry lifts it on the next good pass, and
+        // an emptied list lifts the rest.
         *answer.lock() = (200, r#"[{"entity_id":"bafyonly"}]"#.to_string());
         assert_eq!(reload_remote(&denylist, &client, &url).await.unwrap(), 1);
         assert!(!denylist.contains(ABR_FIRST) && denylist.contains("bafyonly"));
+        *answer.lock() = (200, "[]".to_string());
+        assert_eq!(reload_remote(&denylist, &client, &url).await.unwrap(), 0);
+        assert!(!denylist.contains("bafyonly") && denylist.contains("bafyoperator"));
+        *answer.lock() = (200, r#"[{"entity_id":"bafyonly"}]"#.to_string());
+        assert_eq!(reload_remote(&denylist, &client, &url).await.unwrap(), 1);
 
         // An unreachable URL fails the same way, and the guarded production
         // client never dials the loopback at all.
