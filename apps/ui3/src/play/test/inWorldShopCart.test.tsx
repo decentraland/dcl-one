@@ -104,13 +104,13 @@ async function addFromPanel(times = 1): Promise<void> {
 
 const cartButton = (): HTMLElement => screen.getByRole('button', { name: /^Cart/ })
 
-afterEach(() => {
+afterEach(async () => {
   resetPopups()
   primeRemoteFlags(null)
   shell.request.mockReset()
   shell.handlers.clear()
   vi.unstubAllGlobals()
-  for (const line of [...inWorldCart.getSnapshot()]) inWorldCart.remove(line)
+  for (const line of [...inWorldCart.getSnapshot()]) await inWorldCart.remove(line)
   localStorage.clear()
 })
 

@@ -78,7 +78,7 @@ export interface ShopPurchase {
  * transaction bought), once per operation however often it is heard.
  */
 function leaveCart(op: ShopOperation): void {
-  if (op.state === 'succeeded' && op.cart && op.buyer) inWorldCart.applyPurchase(op.buyer, op.operation, op.items)
+  if (op.state === 'succeeded' && op.cart && op.buyer) void inWorldCart.applyPurchase(op.buyer, op.operation, op.items)
 }
 
 /** Buying through the shell; `onBackpack` runs when the buyer leaves the success dialog for the Backpack. */

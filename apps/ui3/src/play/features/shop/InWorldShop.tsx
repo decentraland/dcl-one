@@ -295,7 +295,9 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     const input = purchase.available ? cartInputFor(item) : null
     if (input == null || !inWorldCart.canAdd(input)) return undefined
     return () => {
-      if (inWorldCart.add(input)) setToast((n) => n + 1)
+      void inWorldCart.add(input).then((added) => {
+        if (added) setToast((n) => n + 1)
+      })
     }
   }
   const checkout = (input: PressedWith): void => {
@@ -435,11 +437,11 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                   onClose={() => setCartOpen(false)}
                   onQuantity={(key, quantity) => {
                     const [contract, itemId] = key.split(':')
-                    inWorldCart.setQuantity({ contract, itemId }, quantity)
+                    void inWorldCart.setQuantity({ contract, itemId }, quantity)
                   }}
                   onRemove={(key) => {
                     const [contract, itemId] = key.split(':')
-                    inWorldCart.remove({ contract, itemId })
+                    void inWorldCart.remove({ contract, itemId })
                   }}
                   onCheckout={checkout}
                 />

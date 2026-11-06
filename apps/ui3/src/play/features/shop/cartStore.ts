@@ -12,9 +12,12 @@
 // event, the shell's status after a reload). The cart and the operations already taken out of it are one
 // record per account, written whole in one go: a write that sticks keeps both, one that doesn't keeps
 // neither, so a replay after a reload takes the purchase out exactly once either way. Within the page, the
-// record a write couldn't keep is the one in memory. Every change starts from the record as storage holds
-// it now, so a tab never writes over another tab's edit; another tab's write to the active account's
-// record is also read again as it lands (the `storage` event), so what is drawn follows it.
+// record a write couldn't keep is the one in memory.
+//
+// Every change, in every tab, is one read-change-write of the record under one Web Lock (`mutate`), so no
+// tab's change is written over by another's; another tab's write is also shown as it lands (the `storage`
+// event). Without Web Locks a page's own changes still go one at a time. localStorage itself has no
+// transactions: the lock orders the tabs' writes, and each reads what the browser gives it then.
 
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
 import { cardPrice } from '../../../shop/discovery/cardPrice'
@@ -113,14 +116,14 @@ export interface InWorldCart {
   subscribe(listener: () => void): () => void
   scopeTo(account: string | null): void
   /** One more of the item (a new line, or one more of its line). False when the cart can't take it. */
-  add(input: InWorldCartInput): boolean
-  setQuantity(item: { contract: string; itemId: string }, quantity: number): void
-  remove(item: { contract: string; itemId: string }): void
+  add(input: InWorldCartInput): Promise<boolean>
+  setQuantity(item: { contract: string; itemId: string }, quantity: number): Promise<void>
+  remove(item: { contract: string; itemId: string }): Promise<void>
   /**
    * What `operation`, a purchase from the cart by `buyer`, bought leaves that account's cart: as many of
    * each item as it bought. Once per operation; a repeat changes nothing.
    */
-  applyPurchase(buyer: string, operation: string, items: readonly ShopLine[]): void
+  applyPurchase(buyer: string, operation: string, items: readonly ShopLine[]): Promise<void>
   /** Whether one more unit of the item fits, against `item.available` (the stock as the caller reads it now). */
   canAdd(item: Pick<InWorldCartLine, 'contract' | 'itemId' | 'available'>): boolean
 }
@@ -135,9 +138,30 @@ const windowStorageEvents: StorageWatch = (onChange) => {
   return () => window.removeEventListener('storage', listener)
 }
 
-export function createInWorldCart(opts: { storage?: () => CartStorage | null; now?: () => number; watch?: StorageWatch } = {}): InWorldCart {
+/** Runs `fn` holding the cart's lock, which every tab's cart writes take; resolves with what it returns. */
+export type CartLock = <T>(fn: () => T) => Promise<T>
+
+const LOCK = 'dcl-inworld-shop:cart'
+
+/** Web Locks across the origin's tabs; without them, this page's own writes still go one at a time. */
+function cartLock(): CartLock {
+  let chain: Promise<unknown> = Promise.resolve()
+  const local: CartLock = (fn) => {
+    const run = chain.then(fn)
+    chain = run.catch(() => {})
+    return run
+  }
+  return <T,>(fn: () => T): Promise<T> => {
+    const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined
+    // `fn` is synchronous: the lock is held from the read to the write, and goes as it returns.
+    return locks ? (locks.request(LOCK, () => fn()) as Promise<T>) : local(fn)
+  }
+}
+
+export function createInWorldCart(opts: { storage?: () => CartStorage | null; now?: () => number; watch?: StorageWatch; lock?: CartLock } = {}): InWorldCart {
   const storage = opts.storage ?? defaultStorage
   const now = opts.now ?? Date.now
+  const lock = opts.lock ?? cartLock()
   const listeners = new Set<() => void>()
   let account: string | null = null
   /** The active account's record; its lines are the snapshot. */
@@ -195,24 +219,48 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
       unsaved.add(key)
     }
   }
-  /** The active account's record as it stands now (another tab may have written it). */
-  const fresh = (): CartRecord => (current = read(account))
-  const commit = (lines: readonly InWorldCartLine[]): void => {
-    current = { lines, applied: current.applied }
-    write(account, current)
-    listeners.forEach((l) => l())
+  const notify = (): void => listeners.forEach((l) => l())
+  /** The active account's record as storage holds it now, shown. */
+  const refresh = (): void => {
+    const next = read(account)
+    if (next === current) return
+    current = next
+    notify()
+  }
+
+  /**
+   * One change to `who`'s record, whole: read under the cart's lock (as every tab's last write left it),
+   * changed, and written before the lock goes, so no tab's change is written over by another's. `change`
+   * answers null to leave the record as it is.
+   */
+  const mutate = (who: string | null, change: (record: CartRecord) => CartRecord | null): Promise<boolean> =>
+    lock(() => {
+      const next = change(read(who))
+      if (next) write(who, next)
+      if (who === account) refresh()
+      return next != null
+    })
+
+  /** Lines with a line's quantity set, within its cap, or null when that changes nothing. */
+  const withQuantity = (record: CartRecord, item: { contract: string; itemId: string }, quantity: number, available?: number | null): CartRecord | null => {
+    const at = record.lines.findIndex((l) => sameItem(l, item))
+    if (at < 0) return null
+    const line = record.lines[at]
+    const cap = capFor({ available: available === undefined ? line.available : available }, cartUnits(record.lines) - line.quantity)
+    const q = Math.min(Math.max(1, Math.floor(quantity)), cap)
+    if (q < 1 || q === line.quantity) return null
+    const lines = [...record.lines]
+    lines[at] = { ...line, quantity: q }
+    return { lines, applied: record.applied }
   }
 
   current = read(null)
 
-  // Another tab wrote: the active account's record is read again; any other is read when next needed.
+  // Another tab wrote: the active account's record is shown again as it stands; any other is read when next needed.
   ;(opts.watch ?? windowStorageEvents)((key) => {
     if (key !== null && !key.startsWith(KEY_PREFIX)) return
-    const mine = keyOf(account)
     for (const k of key === null ? [...unsaved] : [key]) unsaved.delete(k)
-    if (key !== null && key !== mine) return
-    current = read(account)
-    listeners.forEach((l) => l())
+    if (key === null || key === keyOf(account)) refresh()
   })
 
   const cart: InWorldCart = {
@@ -225,79 +273,67 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
       const who = next?.toLowerCase() ?? null
       if (who === account) return
       account = who
-      let mine = read(who)
-      // A signed-out cart is the account's once it signs in: its lines join, within the cap.
-      if (who != null) {
+      current = read(who)
+      notify()
+      if (who == null) return
+      // A signed-out cart is the account's once it signs in: its lines join, within the cap, under the lock.
+      void lock(() => {
         const guest = read(null).lines
-        if (guest.length > 0) {
-          const merged = [...mine.lines]
-          for (const g of guest) {
-            const at = merged.findIndex((l) => sameItem(l, g))
-            const others = cartUnits(merged) - (at >= 0 ? merged[at].quantity : 0)
-            const quantity = Math.min((at >= 0 ? merged[at].quantity : 0) + g.quantity, capFor(g, others))
-            if (quantity <= 0) continue
-            if (at >= 0) merged[at] = { ...merged[at], quantity }
-            else merged.push({ ...g, quantity })
-          }
-          mine = { lines: merged, applied: mine.applied }
-          write(who, mine)
-          write(null, EMPTY)
+        if (guest.length === 0) return
+        const mine = read(who)
+        const merged = [...mine.lines]
+        for (const g of guest) {
+          const at = merged.findIndex((l) => sameItem(l, g))
+          const others = cartUnits(merged) - (at >= 0 ? merged[at].quantity : 0)
+          const quantity = Math.min((at >= 0 ? merged[at].quantity : 0) + g.quantity, capFor(g, others))
+          if (quantity <= 0) continue
+          if (at >= 0) merged[at] = { ...merged[at], quantity }
+          else merged.push({ ...g, quantity })
         }
-      }
-      current = mine
-      listeners.forEach((l) => l())
+        write(who, { lines: merged, applied: mine.applied })
+        write(null, EMPTY)
+        if (account === who) refresh()
+      })
     },
     canAdd(item) {
-      const { lines } = fresh()
+      const { lines } = read(account)
       const line = lines.find((l) => sameItem(l, item))
       const others = cartUnits(lines) - (line?.quantity ?? 0)
       return (line?.quantity ?? 0) + 1 <= capFor(item, others)
     },
     add(input) {
       const item = { ...input, contract: input.contract.toLowerCase() }
-      if (!cart.canAdd(item)) return false
-      const { lines } = fresh()
-      const at = lines.findIndex((l) => sameItem(l, item))
-      if (at >= 0) {
-        const next = [...lines]
+      return mutate(account, (record) => {
+        const at = record.lines.findIndex((l) => sameItem(l, item))
+        const others = cartUnits(record.lines) - (at >= 0 ? record.lines[at].quantity : 0)
+        if ((at >= 0 ? record.lines[at].quantity : 0) + 1 > capFor(item, others)) return null
+        if (at < 0) return { lines: [...record.lines, { ...item, quantity: 1, addedAt: now() }], applied: record.applied }
+        const lines = [...record.lines]
         // The newer snapshot (its price and stock as the listing reads them now), one more of it.
-        next[at] = { ...lines[at], ...item, quantity: lines[at].quantity + 1 }
-        commit(next)
-      } else commit([...lines, { ...item, quantity: 1, addedAt: now() }])
-      return true
+        lines[at] = { ...record.lines[at], ...item, quantity: record.lines[at].quantity + 1 }
+        return { lines, applied: record.applied }
+      })
     },
-    setQuantity(item, quantity) {
-      const { lines } = fresh()
-      const at = lines.findIndex((l) => sameItem(l, item))
-      if (at < 0) return
-      const line = lines[at]
-      const q = Math.min(Math.max(1, Math.floor(quantity)), capFor(line, cartUnits(lines) - line.quantity))
-      if (q < 1 || q === line.quantity) return
-      const next = [...lines]
-      next[at] = { ...line, quantity: q }
-      commit(next)
+    async setQuantity(item, quantity) {
+      await mutate(account, (record) => withQuantity(record, item, quantity))
     },
-    remove(item) {
-      const { lines } = fresh()
-      if (lines.some((l) => sameItem(l, item))) commit(lines.filter((l) => !sameItem(l, item)))
+    async remove(item) {
+      await mutate(account, (record) => (record.lines.some((l) => sameItem(l, item)) ? { lines: record.lines.filter((l) => !sameItem(l, item)), applied: record.applied } : null))
     },
-    applyPurchase(buyer, operation, items) {
-      const who = buyer.toLowerCase()
-      const mine = who === account ? fresh() : read(who)
-      if (mine.applied.includes(operation)) return
-      // What it bought and that it was taken out, together: one record, one write.
-      const next: CartRecord = {
-        lines: mine.lines.flatMap((l) => {
-          const bought = items.reduce((n, i) => (sameItem(l, i) ? n + i.quantity : n), 0)
-          if (bought === 0) return [l]
-          return l.quantity > bought ? [{ ...l, quantity: l.quantity - bought }] : []
-        }),
-        applied: [...mine.applied, operation].slice(-MAX_APPLIED)
-      }
-      write(who, next)
-      if (who !== account) return
-      current = next
-      listeners.forEach((l) => l())
+    async applyPurchase(buyer, operation, items) {
+      // What it bought and that it was taken out, together: one record, one write, under the lock.
+      await mutate(buyer.toLowerCase(), (record) =>
+        record.applied.includes(operation)
+          ? null
+          : {
+              lines: record.lines.flatMap((l) => {
+                const bought = items.reduce((n, i) => (sameItem(l, i) ? n + i.quantity : n), 0)
+                if (bought === 0) return [l]
+                return l.quantity > bought ? [{ ...l, quantity: l.quantity - bought }] : []
+              }),
+              applied: [...record.applied, operation].slice(-MAX_APPLIED)
+            }
+      )
     }
   }
   return cart
