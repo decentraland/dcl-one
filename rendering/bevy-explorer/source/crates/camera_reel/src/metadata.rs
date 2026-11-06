@@ -192,7 +192,6 @@ pub fn screen_rect(
             continue;
         }
         let ndc = clip.xy() / clip.w;
-        // viewport, origin top-left
         let viewport = Vec2::new((ndc.x + 1.0) * 0.5, (1.0 - ndc.y) * 0.5);
         let in_frame =
             ((viewport - (Vec2::splat(0.5) - frame * 0.5)) / frame).clamp(Vec2::ZERO, Vec2::ONE);

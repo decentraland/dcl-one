@@ -94,7 +94,6 @@ fn read_photo_mode_keys(
         return;
     };
 
-    // a scene taking the camera, or leaving the world, ends photo mode
     if primary.scene_override.is_some() || out_of_world {
         requests.write(PhotoModeRequest::Disable);
         return;
@@ -178,7 +177,6 @@ pub(crate) fn apply_photo_mode_requests(
         commands
             .entity(entity)
             .insert((PhotoMode, PhotoCamera::new(start, fov.to_degrees(), source)));
-        // from first person the camera eases to its start; from anywhere else it cuts
         if first_person {
             commands.entity(entity).insert(SystemTween {
                 target: start,

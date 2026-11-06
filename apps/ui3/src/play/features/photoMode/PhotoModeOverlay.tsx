@@ -74,7 +74,6 @@ export function PhotoModeOverlay({ photoMode, onOpenGallery }: Props): React.JSX
   // closing something underneath on the same press.
   useEffect(() => registerCancelLayer(() => photoMode.set(false)), [photoMode])
 
-  // the camera controls panel closes on a click anywhere else
   const [controlsOpen, setControlsOpen] = useState(false)
   const controlsRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -86,7 +85,6 @@ export function PhotoModeOverlay({ photoMode, onOpenGallery }: Props): React.JSX
     return () => document.removeEventListener('mousedown', onDown, true)
   }, [controlsOpen])
 
-  // the capture effect: the flash, a pause, then the photo flies into the Gallery button's icon
   const galleryIcon = useRef<HTMLSpanElement>(null)
   const [effect, setEffect] = useState<{ seq: number; preview: string } | null>(null)
   const [fly, setFly] = useState<React.CSSProperties | null>(null)
