@@ -237,6 +237,40 @@ impl Credits {
         .await
     }
 
+    /// What [`Self::reserve_credit_group`] would refuse for `address` asking
+    /// `charged_cents`, read without a lock: lets a caller refuse before
+    /// paying for an external read (the marketplace feed). The reservation
+    /// stays the arbiter; this only answers early what it would answer later.
+    pub async fn would_refuse(
+        &self,
+        address: &str,
+        charged_cents: i64,
+    ) -> Result<Option<ReserveRefusal>, ApiError> {
+        let (balance_cents, held, live): (i64, i64, i64) = sqlx::query_as(
+            "SELECT COALESCE((SELECT floor(available * $2::numeric)::bigint FROM credits.wallets WHERE address = $1), 0), \
+                    COALESCE(SUM(usd_cents), 0)::bigint, count(*)::bigint \
+             FROM credits.authorizations \
+             WHERE address = $1 AND status IN ('authorized', 'retired')",
+        )
+        .bind(address)
+        .bind(UsdCents::CENTS_PER_CREDIT)
+        .fetch_one(&self.pool)
+        .await?;
+        let spendable = (balance_cents - held).max(0);
+        Ok(if live >= MAX_LIVE_CREDITS_PER_WALLET {
+            Some(ReserveRefusal::TooManyLive {
+                balance_cents: spendable,
+            })
+        } else if charged_cents > balance_cents - held {
+            Some(ReserveRefusal::Insufficient {
+                balance_cents: spendable,
+                required_cents: charged_cents,
+            })
+        } else {
+            None
+        })
+    }
+
     async fn reserve_group(
         &self,
         g: &NewGroup<'_>,

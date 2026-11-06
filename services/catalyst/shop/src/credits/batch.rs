@@ -842,30 +842,59 @@ pub async fn authorize_group(
             .await?;
             return credit_out(&wallet, issued, lines, single, signer, true);
         }
+        // The feed costs RPC calls: a wallet the reservation would refuse
+        // (no balance, too many live credits) is refused before it is read.
+        match state
+            .credits
+            .would_refuse(signer, charged_total.get())
+            .await?
+        {
+            Some(ReserveRefusal::Insufficient {
+                balance_cents,
+                required_cents,
+            }) => {
+                return Err(AuthorizeError::Insufficient {
+                    balance_cents,
+                    required_cents,
+                });
+            }
+            Some(ReserveRefusal::TooManyLive { balance_cents }) => {
+                return Err(AuthorizeError::TooManyLive { balance_cents });
+            }
+            None => {}
+        }
         let reading = state
             .feed
             .read(venue.chain_id.0, venue.contract.address())
             .await
-            .map_err(|why| AuthorizeError::Unavailable {
-                source: super::feed::SOURCE,
-                configure: super::feed::CONFIGURE,
-                message: format!(
-                    "a credit for a USD-pegged trade is sized at its marketplace's MANA/USD feed, which cannot be used now: {why}"
-                ),
+            .map_err(|why| {
+                // The provider's own text stays in the log: it may name the
+                // endpoint's project or key in ways `redact` cannot see.
+                tracing::warn!(marketplace = %venue.contract.address(), error = %why, "the marketplace's MANA/USD feed cannot be used");
+                AuthorizeError::Unavailable {
+                    source: super::feed::SOURCE,
+                    configure: super::feed::CONFIGURE,
+                    message: "a credit for a USD-pegged trade is sized at its marketplace's MANA/USD feed, which cannot be read now; try again later".to_string(),
+                }
             })?;
         tracing::info!(marketplace = %venue.contract.address(), aggregator = %reading.aggregator, block = reading.block, updated_at = reading.updated_at_s, rate = %reading.rate.rate(), "sizing a USD-pegged credit group at its marketplace's feed");
         sizing = sizing.with_settlement_rate(reading.rate);
     }
     let value = policy::credit_cap(&authoritative, &sizing).map_err(|refusal| match refusal {
-        Refusal::SettlementNeedAboveReference { need, reference } => AuthorizeError::Unavailable {
-            source: super::feed::SOURCE,
-            configure: super::feed::CONFIGURE,
+        Refusal::SettlementNeedAboveReference { need, reference } => {
+            tracing::warn!(need = %need, reference = %reference, "a USD-pegged credit group needs more at its marketplace's feed than its quote allows");
+            AuthorizeError::Unavailable {
+            source: super::feed::DIVERGED_SOURCE,
+            configure: super::feed::DIVERGED_CONFIGURE,
             message: format!(
                 "at the marketplace's MANA/USD feed this purchase needs {need} wei, above the {reference} wei its quote allows a credit to carry; try again later"
             ),
-        },
+        }
+        }
         refusal => policy_refusal(refusal),
     })?;
+    // Defense in depth: the guard recomputes the same `credit_cap` from the
+    // same inputs, so it only fails if the sizing above stops using it.
     guard(value, sizing).map_err(policy_refusal)?;
     let recorded_rate = sizing.recorded_rate();
 
@@ -1045,10 +1074,13 @@ fn credit_out(
 }
 
 /// Whether `venue` is one of the off-chain marketplaces deployed on its chain.
+/// A marketplace the chain's CreditsManager lets `useCredits` call: the set
+/// the contract itself enforces (its allowed `marketplaces`), so a mirrored
+/// trade on any of them, the first off-chain marketplace included, can be
+/// paid with credits.
 fn listed_marketplace(venue: ContractRef) -> bool {
-    crate::market::listings::offchain_marketplaces(venue.chain_id.0 as i64)
-        .iter()
-        .any(|m| EvmAddress::parse(m.address).is_ok_and(|a| a == venue.contract))
+    crate::policy_entry::manager_routes(venue.chain_id)
+        .is_some_and(|routes| routes.marketplaces.contains(&venue.contract.address()))
 }
 
 fn getrandom_32() -> Option<[u8; 32]> {

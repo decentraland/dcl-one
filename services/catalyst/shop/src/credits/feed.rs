@@ -37,6 +37,11 @@ use crate::types::ManaUsdRate;
 
 pub const SOURCE: &str = "credits-usd-pegged-feed";
 pub const CONFIGURE: &str = "RPC_ENDPOINT_POLYGON";
+/// The feed was read, but at it the purchase needs more than its quote lets
+/// a credit carry: the snapshot and the feed diverged past the margin, which
+/// is the buffer (with the headroom), not the endpoint.
+pub const DIVERGED_SOURCE: &str = "credits-usd-pegged-feed-divergence";
+pub const DIVERGED_CONFIGURE: &str = "CREDITS_ORACLE_BUFFER_BPS";
 pub const READ_DEADLINE: Duration = Duration::from_secs(5);
 /// How far a round's `updatedAt` may run ahead of this node's clock.
 const CLOCK_SKEW_SECS: i64 = 60;

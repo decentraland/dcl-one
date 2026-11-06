@@ -2543,12 +2543,6 @@ async fn a_five_dollar_pack_signs_the_mana_of_five_hundred_cents_on_the_authoriz
     db.drop().await;
 }
 
-/// The crafted-API suite for the authorize lane (SHOP.md backend 3; the
-/// relay's is `economy::tests`, the broker's beside it, the cart's below):
-/// a signed credit is never issued against a resale, whoever signed the
-/// listing, nor against a LAND token, nor for a batch that hides a resale
-/// beside an item order; the line's kind comes from the decoded trade and
-/// the mirror, never from the request. Eligible primaries still pledge.
 /// The tests' MANA/USD feed: a rate (or a refusal) per marketplace, and the
 /// marketplaces it was asked about.
 #[derive(Default)]
@@ -2651,11 +2645,13 @@ async fn a_usd_pegged_credit_is_sized_at_its_listed_marketplaces_feed_within_the
         .execute(&pool)
         .await
         .unwrap();
-    // The Polygon marketplace this node knows, one it does not, and the
-    // Amoy deployment named on a Polygon trade.
+    // Polygon's V3 marketplace and its first off-chain marketplace (both
+    // allowed by the CreditsManager), a contract it does not allow, and
+    // Amoy's V3 deployment named on a Polygon trade.
     const LISTED: &str = "0xe38ef22abe871513555cba89adfe45ab4f548ada";
-    const UNLISTED: &str = "0x540fb08edb56aae562864b390542c97f562825ba";
-    const AMOY_V3: &str = "0x257db44ac97789c16ab277eae87dcde0c246cc9f";
+    const FIRST_OFFCHAIN: &str = "0x540fb08edb56aae562864b390542c97f562825ba";
+    const UNLISTED: &str = "0x00000000000000000000000000000000000000e1";
+    const AMOY_V3: &str = "0x36fd1434a6c4b8ade80c9847c1d15033ce34488c";
     const MANA_POLYGON: &str = "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4";
     let marketplace = Address::from_str(LISTED).unwrap();
     let trade = |contract: &str, received: Value| {
@@ -2671,7 +2667,8 @@ async fn a_usd_pegged_credit_is_sized_at_its_listed_marketplaces_feed_within_the
         .with_trade("be6e", trade(LISTED, usd_two.clone()))
         .with_trade("0bad", trade(UNLISTED, usd_two.clone()))
         .with_trade("0bad-1", trade(UNLISTED, mana_four))
-        .with_trade("a0e1", trade(AMOY_V3, usd_two))
+        .with_trade("a0e1", trade(AMOY_V3, usd_two.clone()))
+        .with_trade("f1a5", trade(FIRST_OFFCHAIN, usd_two))
         .with_mana_usd("0.5");
     let feed = Arc::new(FakeFeed::default());
     let state: SharedState = Arc::new(
@@ -2806,6 +2803,14 @@ async fn a_usd_pegged_credit_is_sized_at_its_listed_marketplaces_feed_within_the
     let (status, v) = authorize(pegged.clone()).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{v}");
     assert_eq!(
+        (&v["source"], &v["configure"]),
+        (
+            &json!(super::feed::DIVERGED_SOURCE),
+            &json!(super::feed::DIVERGED_CONFIGURE)
+        ),
+        "a feed that answered but diverged is told apart from one that could not be read: {v}"
+    );
+    assert_eq!(
         rows(wallet.address.clone()).await.len(),
         1,
         "nothing more reserved"
@@ -2839,9 +2844,15 @@ async fn a_usd_pegged_credit_is_sized_at_its_listed_marketplaces_feed_within_the
         "4 MANA at 0.50, times 1.02"
     );
     assert_eq!(held(wallet.address.clone()).await, 400);
+    let reads = feed.asked().len();
     let (status, v) = authorize(pegged.clone()).await;
     assert_eq!(status, StatusCode::PAYMENT_REQUIRED, "{v}");
     assert_eq!(held(wallet.address.clone()).await, 400);
+    assert_eq!(
+        feed.asked().len(),
+        reads,
+        "a wallet without the balance is refused before the feed is read"
+    );
 
     // Past the retired credit's expiry by the clock, but the index has not
     // read the chain that far: the reservation is kept.
@@ -2924,9 +2935,35 @@ async fn a_usd_pegged_credit_is_sized_at_its_listed_marketplaces_feed_within_the
     assert_eq!(feed.asked().len(), asked);
     assert_eq!(v["oracleRate"], "500000000000000000");
 
+    // A mirrored trade on the first off-chain marketplace is one the
+    // CreditsManager accepts: not refused as unlisted, and sized at that
+    // marketplace's own feed (here unreadable, so a 503 with nothing held).
+    let (status, v) = call(
+        &lane,
+        &third,
+        "post",
+        "/credits/credits/authorize",
+        &[],
+        Some(json!({ "usdPriceCents": 200, "tradeId": "f1a5" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{v}");
+    assert_eq!(v["source"], super::feed::SOURCE, "{v}");
+    assert_eq!(
+        feed.asked().last(),
+        Some(&(137, Address::from_str(FIRST_OFFCHAIN).unwrap())),
+        "read at the marketplace that settles it"
+    );
+
     db.drop().await;
 }
 
+/// The crafted-API suite for the authorize lane (SHOP.md backend 3; the
+/// relay's is `economy::tests`, the broker's beside it, the cart's below):
+/// a signed credit is never issued against a resale, whoever signed the
+/// listing, nor against a LAND token, nor for a batch that hides a resale
+/// beside an item order; the line's kind comes from the decoded trade and
+/// the mirror, never from the request. Eligible primaries still pledge.
 #[tokio::test]
 async fn the_authorize_lane_refuses_every_resale_spelling_and_pledges_primaries_only() {
     let Some(db) = OwnDatabase::create("rule").await else {
@@ -2959,7 +2996,7 @@ async fn the_authorize_lane_refuses_every_resale_spelling_and_pledges_primaries_
         .execute(&pool)
         .await
         .unwrap();
-    const MARKETPLACE_V3: &str = "0xe38ef22abe871513555cba89adfe45ab4f548ada";
+    const MARKETPLACE_V3: &str = "0x540fb08edb56aae562864b390542c97f562825ba";
     const LAND_REGISTRY: &str = "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d";
     const STRANGER: &str = "0x00000000000000000000000000000000000000d1";
     const MANA_POLYGON: &str = "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4";
