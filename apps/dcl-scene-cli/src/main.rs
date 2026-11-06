@@ -298,6 +298,17 @@ enum Command {
             help = "The web explorer --talk opens; DCL_SCENE_CLI_WEB_EXPLORER otherwise, and the build's site player (<DCL_SCENE_CLI_SITE>/play) when neither is set"
         )]
         player: Option<String>,
+        #[arg(
+            long,
+            help = "Convert the textures GLB and glTF models use to UASTC KTX2 (KHR_texture_basisu) and serve those: the files a deploy from this preview uploads, staged under .dcl-one/optimized-textures; your files are never changed. Clients without KTX2 support show those models untextured"
+        )]
+        optimize_textures: bool,
+        #[arg(
+            long,
+            requires = "optimize_textures",
+            help = "With --optimize-textures, still publish every original image, including those only models used"
+        )]
+        keep_source_textures: bool,
     },
     #[command(
         about = "Run the scene's authoritative-server isolate against a running preview's room"
@@ -379,6 +390,17 @@ enum Command {
             help = "Port for the local signing page (default: loopback, ephemeral)"
         )]
         port: Option<u16>,
+        #[arg(
+            long,
+            help = "Convert the textures GLB and glTF models use to UASTC KTX2 (KHR_texture_basisu) and publish those, staged under .dcl-one/optimized-textures; your files are never changed. Clients without KTX2 support show those models untextured"
+        )]
+        optimize_textures: bool,
+        #[arg(
+            long,
+            requires = "optimize_textures",
+            help = "With --optimize-textures, still publish every original image, including those only models used"
+        )]
+        keep_source_textures: bool,
     },
     #[command(
         about = "Remove a LAND scene published to a dcl-one-style content server (signed request)"
@@ -818,6 +840,8 @@ async fn run(command: Command) -> Result<()> {
             no_host,
             talk,
             player,
+            optimize_textures,
+            keep_source_textures,
         } => {
             if tunnel.as_deref().map(str::trim) == Some("help") {
                 println!("{}", dcl_scene_cli::tunnel::tunnel_help());
@@ -888,6 +912,7 @@ async fn run(command: Command) -> Result<()> {
                     player,
                     open_browser: !no_browser,
                 }),
+                textures: texture_settings(optimize_textures, keep_source_textures),
             })
             .await
         }
@@ -909,6 +934,8 @@ async fn run(command: Command) -> Result<()> {
             no_browser,
             ci,
             port,
+            optimize_textures,
+            keep_source_textures,
         } => deploy::deploy(&deploy::DeployOptions {
             dir,
             target,
@@ -927,6 +954,7 @@ async fn run(command: Command) -> Result<()> {
             quiet: false,
             host_signer: None,
             identity: None,
+            textures: texture_settings(optimize_textures, keep_source_textures),
         })
         .await
         .map(|_| ()),
@@ -951,6 +979,18 @@ async fn run(command: Command) -> Result<()> {
         Command::Storage { command } => dcl_scene_cli::storage_cli::run(command).await,
         Command::Sync { opts } => dcl_scene_cli::project_sync::run(opts).await,
     }
+}
+
+/// `--optimize-textures` and `--keep-source-textures` as the settings
+/// `start` and `deploy` take; `None` leaves every payload as it was.
+fn texture_settings(
+    optimize: bool,
+    keep_sources: bool,
+) -> Option<dcl_scene_cli::textures::Settings> {
+    optimize.then(|| dcl_scene_cli::textures::Settings {
+        keep_source_textures: keep_sources,
+        ..Default::default()
+    })
 }
 
 async fn run_world(command: WorldCommand) -> Result<()> {

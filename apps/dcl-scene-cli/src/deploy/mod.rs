@@ -60,6 +60,9 @@ pub struct DeployOptions {
     /// A delegated identity that signs headlessly instead of hosting a
     /// browser signing page, while unexpired.
     pub identity: Option<DeployIdentity>,
+    /// `--optimize-textures`: publish models' textures as UASTC KTX2, staged
+    /// after the build and before the payload is read ([`crate::textures`]).
+    pub textures: Option<crate::textures::Settings>,
 }
 
 /// A throwaway key the wallet authorized once, and the proof it did; signs

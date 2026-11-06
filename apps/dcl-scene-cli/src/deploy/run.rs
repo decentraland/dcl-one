@@ -78,6 +78,22 @@ async fn build_unless_skipped(opts: &DeployOptions) -> Result<()> {
     Ok(())
 }
 
+/// `--optimize-textures`, after the build and before `prepare` reads the
+/// payload: the release bundle the ignore rule searches is the one uploaded.
+/// A failure stops the deploy rather than publishing the originals instead.
+async fn optimize_textures(opts: &DeployOptions, project: &Project) -> Result<()> {
+    let Some(settings) = opts.textures else {
+        return Ok(());
+    };
+    crate::textures::enable(&project.root, settings);
+    let root = project.root.clone();
+    let quiet = opts.quiet;
+    tokio::task::spawn_blocking(move || crate::textures::refresh_and_report(&root, quiet, false))
+        .await
+        .context("optimizing textures")?
+        .context("optimizing textures (drop --optimize-textures to publish the original files)")
+}
+
 /// Eight leading and six trailing characters tell two CIDs apart by eye.
 fn short_hash(h: &str) -> String {
     match h.len() > 15 {
@@ -168,6 +184,7 @@ pub async fn deploy(opts: &DeployOptions) -> Result<String> {
 
     if opts.dry_run {
         build_unless_skipped(opts).await?;
+        optimize_textures(opts, &project).await?;
         let packed = pack(opts, &prepare(&project)?, 1)?;
         tracing::info!("dry run — not uploading");
         ux::note("dry run \u{2014} entity not uploaded");
@@ -190,6 +207,7 @@ pub async fn deploy(opts: &DeployOptions) -> Result<String> {
     };
 
     build_unless_skipped(opts).await?;
+    optimize_textures(opts, &project).await?;
     let prepared = {
         let project = project.clone();
         tokio::task::spawn_blocking(move || prepare(&project))

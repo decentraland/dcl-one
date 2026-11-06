@@ -709,6 +709,8 @@ fn launch(st: Arc<AppState>, root: PathBuf, id: u64) {
         quiet: true,
         host_signer,
         identity,
+        // what this preview serves is what it publishes
+        textures: crate::textures::settings(&root),
     };
     tokio::spawn(async move {
         let handle = tokio::spawn(async move { deploy::deploy(&opts).await });

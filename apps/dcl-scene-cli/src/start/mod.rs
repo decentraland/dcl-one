@@ -109,6 +109,10 @@ pub struct StartOptions {
     pub no_host: bool,
     /// `--talk`: hands-free listening in the web explorer's Scene assistant.
     pub talk: Option<Talk>,
+    /// `--optimize-textures`: the preview serves models' textures as UASTC
+    /// KTX2, the same staged files a deploy from it uploads
+    /// ([`crate::textures`]).
+    pub textures: Option<crate::textures::Settings>,
 }
 
 /// `--talk`: the web explorer that will be opened is let through the
@@ -781,6 +785,23 @@ pub async fn start(opts: StartOptions) -> Result<()> {
         prepare_single(&opts, first.clone(), &state).await?
     };
 
+    if let Some(settings) = opts.textures {
+        for project in &workspace.projects {
+            crate::textures::enable(&project.root, settings);
+            let root = project.root.clone();
+            let done = tokio::task::spawn_blocking(move || {
+                crate::textures::refresh_and_report(&root, false, false)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("the texture optimizer stopped: {e}"))
+            .and_then(|r| r);
+            if let Err(e) = done {
+                let e = e.context("optimizing textures; the preview serves the original files");
+                ux::report_watch(&e);
+            }
+        }
+    }
+
     let app = build_router(state.clone(), comms_state);
 
     if let Some(lk) = state.voice() {
@@ -1394,6 +1415,7 @@ async fn retry_initial_build(
 /// listening".
 fn notify_reload(root: &Path, scene: &str, state: &AppState, event: ReloadEvent) {
     state.refresh_scene_json(root);
+    refresh_textures(root);
     lock_cache(state).remove(root);
     state.follow_reload(root, &event);
     let mut clients = 0;
@@ -1405,6 +1427,27 @@ fn notify_reload(root: &Path, scene: &str, state: &AppState, event: ReloadEvent)
         n => ux::note_arrow(reload_note(n)),
     }
     tracing::info!("scene update pushed to {clients} client(s)");
+}
+
+/// `--optimize-textures`: re-stage what the change touched before the
+/// reload goes out, so the client fetches the new bytes. Unchanged inputs
+/// return at once; changed textures not in the cache are encoded here,
+/// blocking this watch batch rather than serving a half-optimized scene.
+fn refresh_textures(root: &Path) {
+    if crate::textures::settings(root).is_none() {
+        return;
+    }
+    let run = || crate::textures::refresh_and_report(root, false, true);
+    let multi_thread = tokio::runtime::Handle::try_current()
+        .is_ok_and(|h| h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread);
+    let result = match multi_thread {
+        true => tokio::task::block_in_place(run),
+        false => run(),
+    };
+    if let Err(e) = result {
+        let e = e.context("optimizing textures; the preview keeps the last optimized files");
+        ux::report_watch(&e);
+    }
 }
 
 fn reload_note(clients: usize) -> String {
