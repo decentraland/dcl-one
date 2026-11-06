@@ -198,7 +198,7 @@ Upstream merges duplicates by URN, last one winning (fetch-third-party-wearables
 ### Data dependency
 
 - Upstream: the third-party registry subgraph, the NFT worker, and the content server's collection prefix query.
-- dcl-one: the registry subgraph (`THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL`), synced third-party entities in its content DB, and either the NFT worker (`NFT_WORKER_BASE_URL`, set under `NODE_POSTURE=mirror`) or the JSON-RPC endpoints of each `ContractNetwork` (`TRADE_RPC_URLS`, `ETH_RPC_URL`, `RPC_ENDPOINT_POLYGON`). On the RPC path, a network with no endpoint is logged and reports nothing owned (third_party.rs:407-411).
+- dcl-one: the registry subgraph (`THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL`, set to lamb2's default `tpr-matic-mainnet` under `NODE_POSTURE=mirror`, which refuses it empty), synced third-party entities in its content DB, and either the NFT worker (`NFT_WORKER_BASE_URL`, set under `NODE_POSTURE=mirror`) or the JSON-RPC endpoints of each `ContractNetwork` (`TRADE_RPC_URLS`, `ETH_RPC_URL`, `RPC_ENDPOINT_POLYGON`). On the RPC path, a network with no endpoint is logged and reports nothing owned (third_party.rs:407-411).
 
 ---
 
@@ -566,7 +566,7 @@ Data dependency: the `shop.items` mirror (or the collections subgraphs) and emot
 
 - Status: MATCH, no work.
 - Upstream (decentraland/lamb2:src/logic/third-party-providers-storage.ts:33-52; decentraland/lamb2:src/adapters/elements-fetcher.ts:265-274): a failed registry read serves the cached list however old; with none, the listings, the explorer and `/collections/*-by-owner/:owner?collectionId=` answer 502 `Cannot fetch elements for <address>` and `/third-party-integrations` 502 `Cannot fetch third party providers`.
-- dcl-one: the same (`third_party_providers`, `fetch_all_third_party_wearables`, `third_party_integrations` in services/catalyst/shop/src/market/third_party.rs; `TtlMap::get_stale` in services/catalyst/shared/src/cache.rs). With no registry URL configured the routes still answer an empty list (deployment condition).
+- dcl-one: the same (`third_party_providers`, `fetch_all_third_party_wearables`, `third_party_integrations` in services/catalyst/shop/src/market/third_party.rs; `TtlMap::get_stale` in services/catalyst/shared/src/cache.rs). With no registry URL configured (possible only outside `NODE_POSTURE=mirror`) the routes answer an empty list.
 - Severity: none (closed).
 
 **LI-11 (no work). Third-party routes have no `pageSize` maximum.**
