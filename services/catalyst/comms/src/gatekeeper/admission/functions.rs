@@ -167,24 +167,58 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exported_functions_are_idempotent_on_existing_databases() {
+    async fn the_schema_object_pass_installs_functions_without_changing_existing_rows() {
         let Some(pool) = crate::db::scratch::pool(2).await else {
             return;
         };
-        // The operator's exported object SQL is idempotent and supports existing tables.
-        for _ in 0..2 {
-            sqlx::raw_sql(&social_functions_sql(true))
-                .execute(&pool)
+        let schema = format!("admission_upgrade_{}", uuid::Uuid::new_v4().simple());
+        sqlx::raw_sql(&format!("CREATE SCHEMA {schema}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Isolate function names so parallel library tests retain their installed versions.
+        let objects =
+            social_functions_sql(false).replace("FUNCTION social.", &format!("FUNCTION {schema}."));
+        let layout = format!("CREATE SCHEMA {schema};\n{objects}");
+        let world = format!("upgrade-{}.dcl.eth", uuid::Uuid::new_v4());
+        sqlx::query("INSERT INTO social.world_secret_attempts(world_name,subject,attempts,window_start) VALUES($1,'caller',2,timezone('UTC',now()))")
+            .bind(&world).execute(&pool).await.unwrap();
+        let before: Vec<(i32, chrono::NaiveDateTime)> = sqlx::query_as(
+            "SELECT attempts,window_start FROM social.world_secret_attempts WHERE world_name=$1",
+        )
+        .bind(&world)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let done = crate::db::schema_migrate::migrate(&pool, &layout, "")
+            .await
+            .unwrap();
+        assert_eq!(done.created.len(), 2);
+        assert!(
+            crate::db::schema_migrate::migrate(&pool, &layout, "")
                 .await
-                .unwrap();
-        }
-        for function in ALL {
-            let present: bool = sqlx::query_scalar("SELECT to_regprocedure($1) IS NOT NULL")
-                .bind(function.signature())
-                .fetch_one(&pool)
+                .unwrap()
+                .created
+                .is_empty()
+        );
+        assert!(
+            crate::db::schema_migrate::gaps(&pool, &layout)
                 .await
-                .unwrap();
-            assert!(present);
-        }
+                .unwrap()
+                .fatal()
+                .is_empty()
+        );
+        let after: Vec<(i32, chrono::NaiveDateTime)> = sqlx::query_as(
+            "SELECT attempts,window_start FROM social.world_secret_attempts WHERE world_name=$1",
+        )
+        .bind(&world)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(after, before);
+        sqlx::raw_sql(&format!("DROP SCHEMA {schema} CASCADE"))
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 }
