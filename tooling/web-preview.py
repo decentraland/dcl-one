@@ -164,7 +164,14 @@ def api(path, *, method='GET', body=None, paginate=False, collection=None):
         else:
             if result.returncode:
                 status = re.search(r'HTTP[ /](\d{3})', result.stderr or '')
-                if (status and int(status[1]) < 500) or attempt == attempts - 1:
+                limited = status and (
+                    int(status[1]) == 429
+                    or (
+                        int(status[1]) == 403
+                        and re.search(r'rate.?limit|secondary limit|abuse', result.stderr, re.I)
+                    )
+                )
+                if (status and int(status[1]) < 500 and not limited) or attempt == attempts - 1:
                     print(result.stderr, file=sys.stderr)
                     result.check_returncode()
             else:
@@ -278,12 +285,14 @@ def newest_run_for_pr(repository, run_id, run, pr):
         return False
     for candidate in runs:
         candidate_id = int(candidate['id'])
-        if candidate_id <= run_id or candidate.get('conclusion') == 'skipped':
+        if candidate_id <= run_id or candidate.get('conclusion') in ('skipped', 'cancelled'):
             continue
         associations = candidate.get('pull_requests')
         if associations and not any(same_pull_request(item, pr) for item in associations):
             continue
         jobs = api(f'repos/{repository}/actions/runs/{candidate_id}/jobs?per_page=100')['jobs']
+        if not jobs:
+            continue
         selection = selection_job(jobs)
         if selection and selection.get('conclusion') == 'skipped':
             continue
@@ -301,6 +310,9 @@ def selection_job(jobs):
 
 def resolve(repository, run_id):
     run = api(f'repos/{repository}/actions/runs/{run_id}')
+    expected_attempt = os.environ.get('SOURCE_RUN_ATTEMPT')
+    if expected_attempt and str(run.get('run_attempt')) != expected_attempt:
+        return run, None
     if (
         run.get('event') != 'pull_request'
         or run.get('path') != WORKFLOW

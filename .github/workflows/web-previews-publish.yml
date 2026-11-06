@@ -4,6 +4,8 @@ on:
     workflows: ['Web previews / Build']
     types: [completed]
 permissions: {}
+env:
+  SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
 jobs:
   source:
     if: github.event.workflow_run.event == 'pull_request'
@@ -116,7 +118,7 @@ jobs:
         run: |
           set -o pipefail
           node library/ui/figma/key-guard.mjs --no-worktree --no-range \
-            --path .preview/input | tee "$RUNNER_TEMP/preview-key-scan.txt"
+            --artifact .preview/input | tee "$RUNNER_TEMP/preview-key-scan.txt"
           grep -qx 'check key: ran' "$RUNNER_TEMP/preview-key-scan.txt"
       - name: Validate the source and prepare a package without lifecycle scripts
         env:

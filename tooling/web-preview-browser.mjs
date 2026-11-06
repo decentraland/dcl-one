@@ -48,6 +48,8 @@ const fetched = new Set()
 const loaded = new Set()
 const requestUrls = new Map()
 
+class DevToolsContextChanged extends Error {}
+
 async function waitFor(check, label, timeout = 15000) {
   const end = Date.now() + timeout
   while (Date.now() < end) {
@@ -55,7 +57,11 @@ async function waitFor(check, label, timeout = 15000) {
     if (browser && (browser.exitCode !== null || browser.signalCode !== null)) {
       throw new Error(`Chromium exited before ${label}: ${browserLog}`)
     }
-    if (await check()) return
+    try {
+      if (await check()) return
+    } catch (error) {
+      if (!(error instanceof DevToolsContextChanged)) throw error
+    }
     await delay(100)
   }
   throw new Error(`Timed out: ${label}. ${browserLog}`)
@@ -174,8 +180,14 @@ try {
       if (!callback) return
       pending.delete(message.id)
       clearTimeout(callback.timer)
-      if (message.error) callback.reject(new Error(JSON.stringify(message.error)))
-      else callback.resolve(message.result)
+      if (message.error) {
+        const contextChanged =
+          /execution context was destroyed|cannot find (?:default execution )?context/i.test(
+            message.error.message
+          )
+        const ErrorType = contextChanged ? DevToolsContextChanged : Error
+        callback.reject(new ErrorType(JSON.stringify(message.error)))
+      } else callback.resolve(message.result)
     } else if (message.method === 'Network.requestWillBeSent') {
       const url = message.params.request.url
       requestUrls.set(message.params.requestId, url)

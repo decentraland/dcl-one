@@ -567,7 +567,11 @@ class WebPreviewTests(unittest.TestCase):
         with patch.object(preview, 'api', return_value=runs):
             self.assertTrue(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
         runs.append({'id': 125, 'pull_requests': [pr]})
-        with patch.object(preview, 'api', side_effect=[runs, {'jobs': []}]):
+        with patch.object(
+            preview,
+            'api',
+            side_effect=[runs, {'jobs': [{'name': 'changes', 'conclusion': 'success'}]}],
+        ):
             self.assertFalse(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
 
     def test_newest_run_without_pr_metadata_is_resolved_before_matching(self):
@@ -576,7 +580,11 @@ class WebPreviewTests(unittest.TestCase):
         for candidate, expected in ((review_pr(10), True), (pr, False), (None, True)):
             with (
                 self.subTest(candidate=candidate),
-                patch.object(preview, 'api', side_effect=[runs, {'jobs': []}]),
+                patch.object(
+                    preview,
+                    'api',
+                    side_effect=[runs, {'jobs': [{'name': 'changes', 'conclusion': 'success'}]}],
+                ),
                 patch.object(preview, 'resolve', return_value=({}, candidate)),
             ):
                 self.assertEqual(
@@ -702,7 +710,11 @@ class WebPreviewTests(unittest.TestCase):
             {'id': 123},
             {'id': 124, 'pull_requests': [review_pr(base_sha='c' * 40)]},
         ]
-        with patch.object(preview, 'api', side_effect=[runs, {'jobs': []}]):
+        with patch.object(
+            preview,
+            'api',
+            side_effect=[runs, {'jobs': [{'name': 'changes', 'conclusion': 'success'}]}],
+        ):
             self.assertFalse(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
 
     def test_other_bot_actors_and_pr_authors_cannot_publish(self):
@@ -1037,6 +1049,74 @@ class WebPreviewTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'escapes'):
                 preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123)
             sleep.assert_not_called()
+
+    def test_cancelled_or_queued_newer_runs_do_not_block_a_successful_report(self):
+        pr = review_pr()
+        for candidate, responses in (
+            ({'id': 124, 'conclusion': 'cancelled'}, []),
+            ({'id': 124, 'status': 'queued'}, [{'jobs': []}]),
+        ):
+            runs = [{'id': 123}, candidate]
+            with (
+                self.subTest(candidate=candidate),
+                patch.object(preview, 'api', side_effect=[runs, *responses]),
+            ):
+                self.assertTrue(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
+
+    def test_api_retries_rate_limits_without_retrying_other_forbidden_errors(self):
+        success = subprocess.CompletedProcess(['gh'], 0, '{"ok": true}', '')
+        for error in (
+            'HTTP 429: Too many requests',
+            'HTTP 403: API rate limit exceeded',
+            'HTTP 403: secondary rate-limit',
+        ):
+            failure = subprocess.CompletedProcess(['gh'], 1, '', error)
+            with (
+                self.subTest(error=error),
+                patch.object(preview.subprocess, 'run', side_effect=[failure, success]),
+                patch.object(preview.time, 'sleep') as sleep,
+            ):
+                self.assertEqual(preview.api('repos/example/one'), {'ok': True})
+                sleep.assert_called_once_with(1)
+
+    def test_artifact_guard_rejects_links_and_oversized_files(self):
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / '.github/workflows/web-previews-publish.yml').read_text()
+        command = re.search(r'(node library/ui/figma/key-guard.mjs[^|]+) \| tee', workflow).group(1)
+        args = shlex.split(command.replace('\\\n', ''))
+        self.assertIn('--artifact', args)
+        for case in ('symlink', 'size'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                artifact = Path(directory) / 'asset.js'
+                if case == 'symlink':
+                    artifact.symlink_to('/etc/hosts')
+                else:
+                    with artifact.open('wb') as output:
+                        output.truncate(17 * 1024**2)
+                result = subprocess.run(
+                    [directory if arg == '.preview/input' else arg for arg in args],
+                    cwd=root,
+                    env={**os.environ, 'FIGMA_FILE_KEY': 'synthetic_preview_guard_key'},
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('FAIL artifact', result.stdout)
+
+    def test_rerun_cannot_reuse_an_earlier_attempts_publication_approval(self):
+        pr = review_pr()
+        run = {**build_run(pr), 'run_attempt': 2}
+        with (
+            patch.dict(os.environ, {'SOURCE_RUN_ATTEMPT': '1'}),
+            patch.object(preview, 'api', return_value=run) as request,
+        ):
+            self.assertEqual(preview.resolve('example/one', 123), (run, None))
+            request.assert_called_once()
+        with (
+            patch.dict(os.environ, {'SOURCE_RUN_ATTEMPT': '2'}),
+            patch.object(preview, 'api', side_effect=[run, pr]),
+        ):
+            self.assertEqual(preview.resolve('example/one', 123), (run, pr))
 
     def test_build_summary_distinguishes_artifacts_and_live_publication(self):
         for enabled, message in (

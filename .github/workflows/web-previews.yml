@@ -11,6 +11,7 @@ jobs:
   changes:
     if: github.event.action != 'edited' || github.event.changes.base != null
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       sites: ${{ steps.changes.outputs.sites }}
       reviewer: ${{ steps.changes.outputs.reviewer }}
@@ -60,6 +61,7 @@ jobs:
           path: library/ui/figma/review/review-dist/
           if-no-files-found: error
           retention-days: 7
+          overwrite: true
   summary:
     name: Preview status
     needs: [changes, reviewer, sites]
@@ -113,3 +115,4 @@ jobs:
           path: apps/sites/build/
           if-no-files-found: error
           retention-days: 7
+          overwrite: true
