@@ -7,8 +7,8 @@
 # `requested`: once *Changes* has selected an explorer job, both sections go to pending, so the
 # previous run's links never linger as current. `completed`: both sections are filled from the
 # run's jobs and artifacts (the trusted Actions API; the run's own code reaches the comment only as
-# job and artifact names, rendered inside table cells). A cancelled run of a commit the pull request
-# has moved past says nothing: the newer commit's run already reset the sections.
+# job and artifact names, rendered inside table cells). A run of a commit the pull request
+# has moved past says nothing, so a delayed report cannot restore an older preview.
 #
 # This runs in the base context with write permission after the CI run, which has none, and
 # checks out only the action, at the workflow's own commit (the default branch's).
@@ -116,7 +116,7 @@ jobs:
       HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
       RUN_ID: ${{ github.event.workflow_run.id }}
       RUN_URL: ${{ github.event.workflow_run.html_url }}
-      CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+      RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -124,34 +124,32 @@ jobs:
           persist-credentials: false
           sparse-checkout: .github/actions/bevy-explorer-ci-status
           sparse-checkout-cone-mode: false
-      # A newer commit's run cancels this one (CI's concurrency group), and its own `requested`
-      # event has already reset the sections to pending: writing "cancelled" over that would be
-      # wrong. A cancelled run of the pull request's head is reported: nothing else will.
-      - name: Skip a cancelled run of a commit the pull request moved past
-        id: current
-        run: |
-          if [ "$CONCLUSION" = cancelled ]; then
-            live=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid --jq '.headRefOid')
-            if [ "$live" != "$HEAD_SHA" ]; then
-              echo "::notice::The cancelled run of ${HEAD_SHA:0:7} is not of #$PR_NUMBER's head ${live:0:7}; its sections stay as the newer run left them."
-              echo "write=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          fi
-          echo "write=true" >> "$GITHUB_OUTPUT"
       - name: Compose the sections from the run's jobs and artifacts
-        if: steps.current.outputs.write == 'true'
         env:
+          RUN_FILE: run.json
           JOBS_FILE: jobs.json
           ARTIFACTS_FILE: artifacts.json
           OUT_DIR: sections
-          PR_PREVIEW: ${{ github.event.workflow_run.event == 'pull_request' }}
         run: |
+          if ! gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT" > "$RUN_FILE"; then
+            echo "::warning::Could not verify the web build's checkout for run $RUN_ID attempt $RUN_ATTEMPT."
+            echo '{}' > "$RUN_FILE"
+          fi
           gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" > jobs.json
           gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" > artifacts.json
           mkdir -p sections
           bash .github/actions/bevy-explorer-ci-status/explorer-ci-sections.sh
           cat sections/build.md sections/tests.md
+      - name: Check that the run still matches the PR head
+        id: current
+        run: |
+          live=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid --jq '.headRefOid')
+          if [ "$live" = "$HEAD_SHA" ]; then
+            echo "write=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::The run for ${HEAD_SHA:0:7} is older than #$PR_NUMBER's head ${live:0:7}."
+            echo "write=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Update the build section
         if: steps.current.outputs.write == 'true'
         uses: ./.github/actions/bevy-explorer-ci-status
