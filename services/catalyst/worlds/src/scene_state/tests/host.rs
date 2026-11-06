@@ -486,7 +486,7 @@ async fn an_authority_outage_keeps_secret_and_owner_grants_through_the_sweep() {
         return;
     };
     let visitor_key = format!("0x{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
-    let previous = Address::parse(&Wallet::from_hex(&visitor_key).unwrap().address()).unwrap();
+    let previous = Address::parse("0x3333333333333333333333333333333333333333").unwrap();
     let holder = Address::parse("0x4444444444444444444444444444444444444444").unwrap();
     let world = world_name();
     let hash = bcrypt::hash("open sesame", 4).unwrap();
@@ -509,13 +509,6 @@ async fn an_authority_outage_keeps_secret_and_owner_grants_through_the_sweep() {
     )
     .await;
     let addr = serve(h.state.clone()).await;
-    // The stored owner cannot establish independent ownership during the outage.
-    // A wrong secret remains denied; a valid one retries the full policy under budget.
-    assert!(
-        join(addr, &world, &visitor_key, r#"{"secret":"wrong"}"#)
-            .await
-            .is_none()
-    );
     let (mut visitor_ws, _) = join(addr, &world, &visitor_key, r#"{"secret":"open sesame"}"#)
         .await
         .expect("the secret admits without asking the authority");
@@ -542,6 +535,47 @@ async fn an_authority_outage_keeps_secret_and_owner_grants_through_the_sweep() {
     assert!(closed(&mut visitor_ws).await);
     let left: Vec<String> = scene.clients().iter().map(|c| c.address.clone()).collect();
     assert_eq!(left, vec![holder.as_str().to_string()]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stored_owner_can_join_with_a_valid_secret_during_an_authority_outage() {
+    let Some(h) = host_with_names_down().await else {
+        return;
+    };
+    let visitor_key = format!("0x{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let previous = Address::parse(&Wallet::from_hex(&visitor_key).unwrap().address()).unwrap();
+    let world = world_name();
+    let hash = bcrypt::hash("open sesame", 4).unwrap();
+    sqlx::query("INSERT INTO worlds.worlds (name, owner, access_type, access_secret_hash) VALUES ($1, $2, 'shared-secret', $3)")
+        .bind(world.key())
+        .bind(&previous)
+        .bind(&hash)
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    seed_scene(
+        &h.state,
+        &world,
+        "bafyOwnerOutage",
+        "",
+        None,
+        "0,0",
+        &["0,0"],
+        false,
+    )
+    .await;
+    let addr = serve(h.state.clone()).await;
+    // The stored owner cannot establish independent ownership during the outage.
+    // A wrong secret remains denied; a valid one retries the full policy under budget.
+    assert!(
+        join(addr, &world, &visitor_key, r#"{"secret":"wrong"}"#)
+            .await
+            .is_none()
+    );
+    let (_visitor_ws, _) = join(addr, &world, &visitor_key, r#"{"secret":"open sesame"}"#)
+        .await
+        .expect("the secret admits without asking the authority");
+    assert_eq!(h.state.scenes.get(world.key()).unwrap().clients().len(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
