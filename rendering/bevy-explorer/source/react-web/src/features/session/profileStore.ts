@@ -8,7 +8,7 @@
 // Liveness is by subscription. `useProfile` subscribes its component to one address for as long as
 // it is mounted, so a chat line on screen keeps its sender resolved however long ago they left; an
 // entry nobody has shown for a while is swept. The engine announces profile changes (the
-// `profileChanged` stream); an entry someone is still showing is re-read, the rest are dropped.
+// `profileChanged` stream); an entry someone is still showing is re-read, the rest forget their copy.
 import { looksClaimed } from '../../engine/mention'
 import { useCallback, useSyncExternalStore } from 'react'
 import type { Profile } from '../../engine/protocol'
@@ -36,11 +36,11 @@ interface Entry {
   extras: boolean
   /** When the engine last answered that it holds nothing for this address. */
   missingAt: number | undefined
-  /** The version the engine last announced (`profileChanged`). */
+  /** The version the engine last announced (`profileChanged`); kept when the copy is forgotten. */
   announced: number | undefined
-  /** Set when the engine announces a version below the last one: it put an earlier profile back (the
-   *  local player's edit failed to deploy). A copy above it was read before that, so it is not taken
-   *  until the engine announces a newer version. */
+  /** Set when the engine announces a version below the last one it announced, or, before any, below
+   *  the copy held: it put an earlier profile back (the local player's edit failed to deploy). A copy
+   *  above it was read before that, so it is not taken until the engine announces a newer version. */
   revertedTo: number | undefined
   pending: boolean
   subscribers: number
@@ -66,10 +66,22 @@ let lastSweep = 0
 const isAddress = (key: string): boolean => key.startsWith('0x')
 const notify = (key: string): void => listeners.get(key)?.forEach((l) => l())
 
+const blank = (): Entry => ({
+  profile: undefined,
+  full: false,
+  extras: false,
+  missingAt: undefined,
+  announced: undefined,
+  revertedTo: undefined,
+  pending: false,
+  subscribers: 0,
+  idleSince: Date.now()
+})
+
 function entry(key: string): Entry {
   let e = entries.get(key)
   if (e == null) {
-    e = { profile: undefined, full: false, extras: false, missingAt: undefined, announced: undefined, revertedTo: undefined, pending: false, subscribers: 0, idleSince: Date.now() }
+    e = blank()
     entries.set(key, e)
   }
   return e
@@ -162,10 +174,11 @@ export function seedProfiles(seeds: readonly ProfileSeed[]): void {
 export function receiveProfile(address: string, profile: Profile | null): void {
   const key = profileKey(address)
   const e = entry(key)
+  // Any reply settles the read in flight, even one dropped below, or the entry could never be swept.
+  e.pending = false
   // Read before the engine put an earlier profile back but answered after it (a passport read also
   // waits on other services): the re-read that announcement asked for brings what it holds now.
   if (profile?.version != null && e.revertedTo != null && profile.version > e.revertedTo) return
-  e.pending = false
   if (profile == null) {
     e.missingAt = Date.now()
     return
@@ -211,20 +224,23 @@ export function requestPassport(address: string): void {
 
 /** The engine's copy of a profile changed: a new version, server-filled fields (the snapshots) at
  *  the same one, or an earlier version put back after the local player's edit failed to deploy.
- *  Re-read it if someone is showing it, whatever the version: the engine's is the one to show. Drop
- *  it if nobody is (the next subscriber fetches fresh); ignore an address never seen. */
+ *  Re-read it if someone is showing it, whatever the version: the engine's is the one to show. If
+ *  nobody is, forget the copy (the next subscriber fetches fresh) but keep what was announced, so a
+ *  revert announced while that subscriber's read is in flight is still recognised. Ignore an address
+ *  never seen. */
 export function profileChanged(address: string, version: number): void {
   const key = profileKey(address)
   const e = entries.get(key)
   if (e == null) return
+  const last = e.announced ?? (e.full ? e.profile?.version : undefined)
+  if (last != null && version < last) e.revertedTo = version
+  else if (e.revertedTo != null && version > e.revertedTo) e.revertedTo = undefined
+  e.announced = version
   if (e.subscribers === 0) {
-    entries.delete(key)
+    entries.set(key, { ...blank(), announced: e.announced, revertedTo: e.revertedTo })
     listeners.delete(key)
     return
   }
-  if (e.announced != null && version < e.announced) e.revertedTo = version
-  else if (e.revertedTo != null && version > e.revertedTo) e.revertedTo = undefined
-  e.announced = version
   e.pending = true
   e.missingAt = undefined
   request(key, e.extras)

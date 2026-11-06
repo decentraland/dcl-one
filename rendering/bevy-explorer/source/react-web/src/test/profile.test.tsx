@@ -86,6 +86,8 @@ describe('profile domain', () => {
     h.driver.emit({ kind: 'userProfile', address: '0xme', profile: { ...before, version: 4, description: 'gm from the beach' } })
     h.driver.emit({ kind: 'userProfile', address: '0xme', profile: before })
 
+    // the order is the check: a store without the revert mark shows the late read of the edit again;
+    // the session's own copy goes back either way
     expect(shown).toEqual(['gm from the beach', 'hi', 'hi'])
     expect(h.session().profile.data?.description).toBe('hi')
   })

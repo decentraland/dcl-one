@@ -178,6 +178,38 @@ describe('profile store: your own edit rejected by the deploy', () => {
     expect(result.current).toMatchObject({ version: 3, equippedWearables: [hat] })
   })
 
+  it('recognises the revert when the edit was announced while nobody showed the profile', () => {
+    // your profile is shown nowhere when the Backpack's edit is announced: the copy is forgotten
+    receiveProfile('0xme', mine(3, hat))
+    profileChanged('0xme', 4)
+    // the passport opens while the edit deploys
+    const { result } = renderHook(() => useProfile('0xme'))
+    act(() => requestPassport('0xme'))
+    // the deploy fails; the read made after the revert is answered before the passport's first one
+    act(() => {
+      profileChanged('0xme', 3)
+      receiveProfile('0xme', mine(3, hat))
+      receiveProfile('0xme', mine(4, cap))
+    })
+    expect(result.current).toMatchObject({ version: 3, equippedWearables: [hat] })
+  })
+
+  it('recognises the revert when the edit was learned from a read, not an announcement', () => {
+    // the store had no entry when the edit was announced; a reader then fetched it
+    const { result } = renderHook(() => useProfile('0xme'))
+    act(() => {
+      receiveProfile('0xme', mine(4, cap))
+      requestPassport('0xme')
+    })
+    // the deploy fails; the passport's read of the edit is answered last
+    act(() => {
+      profileChanged('0xme', 3)
+      receiveProfile('0xme', mine(3, hat))
+      receiveProfile('0xme', mine(4, cap))
+    })
+    expect(result.current).toMatchObject({ version: 3, equippedWearables: [hat] })
+  })
+
   it('takes the edit again once the engine announces it after a revert', () => {
     const { result } = renderHook(() => useProfile('0xme'))
     act(() => {
@@ -202,5 +234,23 @@ describe('profile store: your own edit rejected by the deploy', () => {
       receiveProfile('0xabc', full({ version: 4, name: 'Alicia' }))
     })
     expect(result.current).toMatchObject({ version: 4, name: 'Alicia' })
+  })
+
+  it('a dropped read still settles its request, so the entry goes once nobody shows it', () => {
+    vi.useFakeTimers()
+    try {
+      const off = subscribeProfile('0xabc', vi.fn())
+      // another player's copy reaches the engine's cache before their avatar announces it, so the
+      // late announcement reads as a revert of the copy held, and the re-read it asks for is dropped
+      receiveProfile('0xabc', full({ version: 4 }))
+      profileChanged('0xabc', 3)
+      receiveProfile('0xabc', full({ version: 4 }))
+      off()
+      vi.advanceTimersByTime(200_000) // past the idle time and the sweep interval
+      seedProfiles([]) // any store call sweeps
+      expect(peekProfile('0xabc')).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
