@@ -1,0 +1,160 @@
+/* The FILTERS popover: the HUD's light popover (OptionMenu's surface), sections split by hairlines. */
+.menu {
+  width: 240px;
+  padding: 0;
+  overflow: hidden;
+  border-radius: var(--r-md);
+  background: var(--surface-light);
+  box-shadow: var(--shadow-popup);
+  color: var(--ink-on-light);
+}
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 20px;
+}
+.section + .section {
+  border-top: 1px solid var(--row-hover);
+}
+.label {
+  color: var(--ink-subtle);
+  font-size: var(--type-15);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+}
+
+.price {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bounds {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.input {
+  width: 0;
+  flex: 1;
+  height: 42px;
+  padding: 0 10px;
+  border: 1px solid var(--row-press);
+  border-radius: var(--r-md);
+  background: var(--surface-light);
+  color: var(--ink-on-light);
+  font-family: inherit;
+  font-size: var(--type-15);
+}
+.input::placeholder {
+  color: var(--ink-muted);
+}
+.to {
+  font-size: var(--type-15);
+  font-weight: var(--fw-semibold);
+}
+/* Two range inputs share one track; the span between the thumbs is painted from --lo / --hi. */
+.track {
+  position: relative;
+  height: 18px;
+  background: linear-gradient(var(--row-hover), var(--row-hover)) center / 100% 4px no-repeat;
+}
+.track::before {
+  content: '';
+  position: absolute;
+  top: 7px;
+  left: var(--lo);
+  right: calc(100% - var(--hi));
+  height: 4px;
+  background: var(--accent);
+}
+.thumb {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  margin: 0;
+  background: none;
+  pointer-events: none;
+  appearance: none;
+}
+.thumb::-webkit-slider-thumb {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--surface-light);
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  pointer-events: auto;
+  cursor: pointer;
+  appearance: none;
+}
+.ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--type-13);
+  font-weight: var(--fw-semibold);
+}
+.ends > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.rarities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+/* --rm from data-rarity (tokens.css): a tint until picked, filled once picked. */
+.rarity {
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--rm) 25%, var(--surface-light));
+  color: var(--ink-on-light);
+  font-family: inherit;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.rarity[aria-pressed='true'] {
+  background: var(--rm);
+  color: var(--white);
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink-on-light);
+  font-family: inherit;
+  font-size: var(--type-16);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+.radio,
+.box {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--ink-subtle);
+  background: var(--surface-light);
+}
+.radio {
+  border-radius: var(--r-pill);
+}
+.box {
+  border-radius: var(--r-xs);
+}
+.choice[aria-checked='true'] .radio {
+  border-color: var(--accent);
+  background: radial-gradient(circle, var(--accent) 0 5px, var(--surface-light) 5.5px);
+}
+.choice[aria-checked='true'] .box {
+  border-color: var(--accent);
+  background: var(--accent);
+}

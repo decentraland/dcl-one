@@ -89,9 +89,10 @@ fn main() {
             init_runtime().unwrap();
             // the autopilot ends its run with a code, success or failure
             let exit = decentraland_app.build(decentraland_app_config).run();
-            // the app is gone: stop the video helper process it spawned
-            #[cfg(feature = "uuav")]
-            media::uuav_shutdown();
+            // the app is gone, so its av threads are leaving: let them, rather than have
+            // process teardown kill one inside ffmpeg
+            #[cfg(feature = "ffmpeg")]
+            av::video_stream::join_av_threads(std::time::Duration::from_secs(2));
             match exit {
                 AppExit::Success => 0,
                 AppExit::Error(code) => code.get().into(),
@@ -294,6 +295,14 @@ fn decentraland_app_arguments() -> Result<DecentralandArguments, UserError> {
         error!("{e}");
         UserError(USAGE_ERROR)
     })?;
+
+    if let Some(port) = args.network_devtools {
+        let address = platform::devtools::start(port).map_err(|e| {
+            error!("Could not start Network inspector: {e}");
+            UserError(USAGE_ERROR)
+        })?;
+        info!("Explorer Network inspector http://{address}/json/list");
+    }
 
     // An explicit --system-scene (a scene source, or "none" for the engine's builtin ui) opts out of the
     // react HUD entirely — the given ui scene drives instead (see lib.rs).
@@ -620,6 +629,24 @@ mod tests {
         let path = log_file_in_a_missing_folder().with_file_name("run.csv");
         assert!(check_csv_folder(Some(&path), false).is_ok());
         assert!(check_csv_folder(None, true).is_ok());
+    }
+
+    #[test]
+    fn network_inspection_requires_an_explicit_native_flag() {
+        let link = DecentralandArguments::try_parse_from([
+            "explorer",
+            "decentraland://?position=1,2&networkDevtools=9223&network-devtools=9223",
+        ])
+        .unwrap();
+        assert!(link.network_devtools.is_none());
+        let args =
+            DecentralandArguments::try_parse_from(["explorer", "--network-devtools", "9223"])
+                .unwrap();
+        assert_eq!(args.network_devtools, Some(9223));
+        assert!(DecentralandArguments::try_parse_from(
+            ["explorer", "--network-devtools", "65536",]
+        )
+        .is_err());
     }
 
     #[test]

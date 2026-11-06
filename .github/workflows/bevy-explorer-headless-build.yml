@@ -59,8 +59,12 @@ jobs:
         with:
           key: bevy-explorer-headless-${{ matrix.platform }}
           workspaces: rendering/bevy-explorer/source -> target
+      - name: Restore the vendored Bevy's cached file times
+        run: python "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Build the local headless app
         run: python ../../../apps/bevy-explorer/build-headless.py --target ${{ matrix.target }}
+      - name: Record the vendored Bevy's file times for the cache
+        run: python "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Stamp snapshot version
         uses: decentraland/oddish-action@a4e98664bf53d4aae1f6d20d1a43ff2c79b555b3 # v1.0.1
         with:
