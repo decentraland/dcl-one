@@ -511,6 +511,57 @@ describe('the in-world cart', () => {
     expect(units(again)).toEqual(['1x2'])
   })
 
+  it('never lets another account take a transfer one account took, when letting go of it was refused', async () => {
+    const g = guarded()
+    const lock = sharedLock()
+    const first = createInWorldCart({ storage: g.make, lock, watch: () => () => {} })
+    await first.add(item('1'))
+    // A takes it, and the signed-out cart can't let go of it.
+    let taken = false
+    const refuseGuestOnceTaken: CartStorage = {
+      getItem: g.shared.getItem,
+      setItem: (k, v) => {
+        if (k === GUEST_KEY && taken) throw new Error('full')
+        g.shared.setItem(k, v)
+        if (k === ACCOUNT_KEY) taken = true
+      },
+      removeItem: (k) => {
+        if (k === GUEST_KEY && taken) throw new Error('full')
+        g.shared.removeItem(k)
+      }
+    }
+    const tabA = createInWorldCart({ storage: () => refuseGuestOnceTaken, lock, watch: () => () => {} })
+    tabA.scopeTo(A)
+    await vi.waitFor(() => expect(units(tabA)).toEqual(['1x1']))
+    expect(JSON.parse(g.shared.getItem(GUEST_KEY) ?? '{}').transfer).toMatchObject({ to: A })
+    // Storage works again; B signs in: the transfer is A's, so B takes nothing, and the signed-out cart lets go.
+    const tabB = createInWorldCart({ storage: () => g.shared, lock, watch: () => () => {} })
+    tabB.scopeTo(B)
+    await vi.waitFor(() => expect(g.shared.getItem(GUEST_KEY)).toBeNull())
+    expect(units(tabB)).toEqual([])
+    const reloaded = createInWorldCart({ storage: () => g.shared, lock, watch: () => () => {} })
+    reloaded.scopeTo(A)
+    expect(units(reloaded)).toEqual(['1x1'])
+  })
+
+  it('lets another account take a transfer the first never took', async () => {
+    const g = guarded()
+    const lock = sharedLock()
+    const cart = createInWorldCart({ storage: g.make, lock, watch: () => () => {} })
+    await cart.add(item('1'))
+    g.refused.add(ACCOUNT_KEY)
+    cart.scopeTo(A)
+    await vi.waitFor(() => expect(JSON.parse(g.shared.getItem(GUEST_KEY) ?? '{}').transfer).toMatchObject({ to: A }))
+    g.refused.clear()
+    const other = createInWorldCart({ storage: () => g.shared, lock, watch: () => () => {} })
+    other.scopeTo(B)
+    await vi.waitFor(() => expect(units(other)).toEqual(['1x1']))
+    expect(g.shared.getItem(GUEST_KEY)).toBeNull()
+    const reloaded = createInWorldCart({ storage: () => g.shared, lock, watch: () => () => {} })
+    reloaded.scopeTo(A)
+    expect(units(reloaded)).toEqual([])
+  })
+
   it('writes under the origin’s Web Lock when the browser has one', async () => {
     const request = vi.fn((_name: string, fn: () => unknown) => Promise.resolve(fn()))
     Object.defineProperty(navigator, 'locks', { value: { request }, configurable: true })

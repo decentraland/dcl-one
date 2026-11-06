@@ -98,15 +98,15 @@ interface Taken {
 
 /**
  * An account's cart: its lines, the operations whose purchase already left it, and the signed-out carts'
- * transfers it already took (by the transfer's id, with what it took). A signed-out cart carries the id of
- * its next transfer, written before any account takes it, so a transfer is taken once wherever it is
- * tried again.
+ * transfers it already took (by the transfer's id, with what it took). A signed-out cart carries its
+ * transfer under way, its id and the account it goes to, written before that account takes it: tried
+ * again, from whichever login, it is settled against that account, so it is taken once and by it alone.
  */
 interface CartRecord {
   lines: readonly InWorldCartLine[]
   applied: readonly string[]
   adopted: readonly { id: string; taken: readonly Taken[] }[]
-  transfer?: string
+  transfer?: { id: string; to: string }
 }
 const EMPTY: CartRecord = { lines: [], applied: [], adopted: [] }
 /** Transfers remembered as taken (newest kept). */
@@ -126,7 +126,8 @@ function parseRecord(raw: string): CartRecord | null {
   const adopted = (Array.isArray(r.adopted) ? r.adopted : [])
     .filter((a): a is { id: string; taken: Taken[] } => a != null && typeof a === 'object' && typeof a.id === 'string' && OPERATION_ID.test(a.id) && Array.isArray(a.taken) && a.taken.every(isTaken))
     .slice(-MAX_ADOPTED)
-  const transfer = typeof r.transfer === 'string' && OPERATION_ID.test(r.transfer) ? r.transfer : undefined
+  const t = r.transfer as Record<string, unknown> | undefined
+  const transfer = t != null && typeof t === 'object' && typeof t.id === 'string' && OPERATION_ID.test(t.id) && typeof t.to === 'string' && ADDRESS.test(t.to) ? { id: t.id, to: t.to } : undefined
   return { lines, applied, adopted, ...(transfer ? { transfer } : {}) }
 }
 
@@ -279,49 +280,68 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
   }
 
   /**
-   * The signed-out cart moved into `who`'s (call it holding the lock), as a transfer taken once: the
-   * transfer's id is written on the signed-out cart first; the account's cart takes its units within the
-   * cap and records the transfer, in one write; then the signed-out cart lets go of the units taken, and
-   * what didn't fit (or was added since) waits for its next transfer. A step storage refuses ends it, to be
-   * tried again after a later write that lands or the next sign-in; nothing of it waits in `pending`, so it
-   * is never added twice.
+   * The signed-out cart moved into `who`'s (call it holding the lock), as a transfer taken once and by one
+   * account: the transfer (its id, and `who` as where it goes) is written on the signed-out cart first;
+   * the account's cart takes its units within the cap and records the transfer, in one write; then the
+   * signed-out cart lets go of the units taken, and what didn't fit (or was added since) waits for a next
+   * transfer. A transfer under way to another account is settled against that one first: let go of if it
+   * took it, free for `who` if it never did. A step storage refuses ends it, to be tried again after a
+   * later write that lands or the next sign-in; nothing of it waits in `pending`, so it is never added
+   * twice.
    */
   const adopt = (who: string): void => {
-    // A transfer found already taken is let go of first; then what is left (added since) can go.
-    for (let round = 0; round < 2; round++) {
-      const guest = read(null)
-      if (guest.lines.length === 0) return
-      const id = guest.transfer ?? newId()
-      if (!guest.transfer && !commitRecord(null, { ...guest, transfer: id })) return
-      const mine = read(who)
-      const done = mine.adopted.find((a) => a.id === id)
-      let taken = done?.taken
-      if (!taken) {
-        const merged = [...mine.lines]
-        const took: Taken[] = []
-        for (const g of guest.lines) {
-          const at = merged.findIndex((l) => sameItem(l, g))
-          const had = at >= 0 ? merged[at].quantity : 0
-          const quantity = Math.max(had, Math.min(had + g.quantity, capFor(g, cartUnits(merged) - had)))
-          if (quantity === had) continue
-          took.push({ contract: g.contract, itemId: g.itemId, units: quantity - had })
-          if (at >= 0) merged[at] = { ...merged[at], quantity }
-          else merged.push({ ...g, quantity })
-        }
-        // Nothing fits: the signed-out cart waits as it is.
-        if (took.length === 0) return
-        if (!commitRecord(who, { ...mine, lines: merged, adopted: [...mine.adopted, { id, taken: took }].slice(-MAX_ADOPTED) })) return
-        taken = took
-      }
-      const left = guest.lines.flatMap((l) => {
+    /** The signed-out cart less what a transfer took, with no transfer under way; false when refused. */
+    const letGo = (guest: CartRecord, taken: readonly Taken[]): boolean => {
+      const lines = guest.lines.flatMap((l) => {
         const units = taken.find((t) => sameItem(t, l))?.units ?? 0
         return l.quantity > units ? [{ ...l, quantity: l.quantity - units }] : []
       })
-      if (!commitRecord(null, left.length > 0 ? { ...guest, lines: left, transfer: newId() } : { ...EMPTY, applied: guest.applied })) return
-      // Freshly taken: what is left didn't fit, and waits. Found taken: what is left may go now.
-      if (!done) return
+      return commitRecord(null, { lines, applied: guest.applied, adopted: [] })
+    }
+    // A transfer found taken is let go of first; then what is left (added since, or that didn't fit) can go.
+    for (let round = 0; round < 3; round++) {
+      const guest = read(null)
+      if (guest.lines.length === 0) return
+      let transfer = guest.transfer
+      if (transfer && transfer.to !== who) {
+        const theirs = read(transfer.to).adopted.find((a) => a.id === transfer!.id)
+        if (theirs) {
+          if (!letGo(guest, theirs.taken)) return
+          continue
+        }
+        // That account never took it: it is free to go to this one, as a transfer of its own.
+        transfer = undefined
+      }
+      if (!transfer) {
+        transfer = { id: newId(), to: who }
+        if (!commitRecord(null, { ...guest, transfer })) return
+      }
+      const mine = read(who)
+      const done = mine.adopted.find((a) => a.id === transfer!.id)
+      if (done) {
+        if (!letGo(guest, done.taken)) return
+        continue
+      }
+      const merged = [...mine.lines]
+      const took: Taken[] = []
+      for (const g of guest.lines) {
+        const at = merged.findIndex((l) => sameItem(l, g))
+        const had = at >= 0 ? merged[at].quantity : 0
+        const quantity = Math.max(had, Math.min(had + g.quantity, capFor(g, cartUnits(merged) - had)))
+        if (quantity === had) continue
+        took.push({ contract: g.contract, itemId: g.itemId, units: quantity - had })
+        if (at >= 0) merged[at] = { ...merged[at], quantity }
+        else merged.push({ ...g, quantity })
+      }
+      // Nothing fits: the signed-out cart waits as it is.
+      if (took.length === 0) return
+      if (!commitRecord(who, { ...mine, lines: merged, adopted: [...mine.adopted, { id: transfer.id, taken: took }].slice(-MAX_ADOPTED) })) return
+      // Freshly taken: let go of it; what is left didn't fit, and waits.
+      letGo(guest, took)
+      return
     }
   }
+
   const notify = (): void => listeners.forEach((l) => l())
   /** The active account's record as it stands now, shown. */
   const refresh = (): void => {
