@@ -115,13 +115,8 @@ without intermediate hops.
 Coverage is limited to these transports. Direct reqwest callers such as wallet sign-in,
 world access and profile uploads do not appear. Native scene and HUD Fetch run in a separate
 process and need IPC event forwarding to join this target. Cache hits, admission wait time,
-deduplicated readers, initiators and DNS/TLS timing are also outside the transfer traces.
-The web client continues to use the browser's Network panel.
-
-Run `cargo test --locked -p platform -p ipfs --lib -- --test-threads=1` for the protocol
-fixture, URL display rules and scheduler lifetime tests. From repository-root
-`apps/bevy-explorer/e2e`, run `npm test` and `npm run typecheck` for native launch argument
-forwarding. A packaged desktop run with Chrome is needed to verify the actual frontend.
+deduplicated readers, initiators, incremental body events and DNS/TLS timing are also outside
+the transfer traces. The web client continues to use the browser's Network panel.
 
 ## Web
 

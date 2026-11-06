@@ -1,6 +1,6 @@
 # ADR: Native engine Network inspection
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-05
 
 ## Context
@@ -29,17 +29,12 @@ scheduler permit lifetime. Service JSON wrappers keep the trace through body con
 as well. Completion reports consumed body bytes; a deliberately discarded response body
 reports zero. Redirects expose the initial request and final response only.
 
-## Coverage and next work
+## Scope and validation
 
-The target observes content-budget downloads, active-entity POSTs, font metadata, realm
-about/scenes requests, registry profile requests, signed comms login and gatekeeper adapters.
-It does not cover every native HTTP caller. Direct reqwest paths including wallet sign-in,
-world access and profile uploads remain outside it. Scene and HUD Fetch run in the separate
-scene runtime process; joining those events requires an explicit IPC contract. The headless
-executable does not start the target.
+The [running guide](../../rendering/bevy-explorer/docs/guidelines/running.md#native-network-inspector)
+lists the instrumented transports and coverage gaps. Comprehensive transport coverage remains
+follow-up work.
 
-Cache hits, admission waits, deduplicated readers, initiators, incremental body events and
-DNS/TLS timing are not represented. Comprehensive transport coverage remains follow-up work
-for this draft. The protocol fixture validates discovery, connection restrictions, request
-completion and failure, cancellation, URL display rules and scheduler lifetime. A packaged
-native session remains the acceptance check for the Chrome frontend.
+The protocol fixture validates discovery, connection restrictions, request completion and
+failure, cancellation, URL display rules and scheduler lifetime. A packaged native session
+remains the acceptance check for the Chrome frontend.

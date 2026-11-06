@@ -40,7 +40,8 @@ struct Reporter {
     events: broadcast::Sender<String>,
 }
 
-/// Allocate no socket or queue unless explicitly requested at native startup.
+/// Start a read-only Chrome DevTools Network target on loopback for engine HTTP requests.
+/// Called only when explicitly requested at native startup.
 pub fn start(port: u16) -> Result<SocketAddr> {
     let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port))?;
     listener.set_nonblocking(true)?;
@@ -364,15 +365,35 @@ mod tests {
             serde_json::from_str::<Value>(&ws.read().unwrap().into_text().unwrap()).unwrap(),
             json!({"id":1,"result":{}})
         );
-        ws.send(Message::Text(
-            r#"{"id":2,"method":"Runtime.evaluate"}"#.into(),
-        ))
-        .unwrap();
-        assert!(ws.read().unwrap().into_text().unwrap().contains("-32601"));
         // The Chrome frontend sends sizeable initial configuration messages. Unsupported
         // commands get an error and leave the observer connected.
-        ws.send(Message::Text(json!({"id":3,"method":"Debugger.setBlackboxPatterns","params":{"patterns":["x".repeat(22000)]}}).to_string())).unwrap();
-        assert!(ws.read().unwrap().into_text().unwrap().contains("-32601"));
+        for command in [
+            json!({"id":2,"method":"Runtime.evaluate"}),
+            json!({"id":3,"method":"Debugger.setBlackboxPatterns","params":{"patterns":["x".repeat(22000)]}}),
+        ] {
+            let notification_request = reqwest::Request::new(
+                reqwest::Method::GET,
+                format!("http://{addr}/command-notification/{}", command["id"])
+                    .parse()
+                    .unwrap(),
+            );
+            drop(Trace::start(&notification_request).unwrap());
+            // Queue a notification before the reply, as concurrent HTTP requests can do.
+            if let tungstenite::stream::MaybeTlsStream::Plain(tcp) = ws.get_mut() {
+                assert!(tcp.peek(&mut [0; 1]).unwrap() > 0);
+            }
+            ws.send(Message::Text(command.to_string())).unwrap();
+            let response = loop {
+                let message: Value =
+                    serde_json::from_str(&ws.read().unwrap().into_text().unwrap()).unwrap();
+                if message["id"] == command["id"] {
+                    break message;
+                }
+                assert!(message["id"].is_null(), "{message}");
+            };
+            assert_eq!(response["error"]["code"], -32601);
+            assert_eq!(response["error"]["message"], "Method not supported");
+        }
         let fixture = TcpListener::bind("127.0.0.1:0").unwrap();
         let origin = fixture.local_addr().unwrap();
         let server = std::thread::spawn(move || {
@@ -462,6 +483,63 @@ mod tests {
         assert_eq!(ids[0], ids[2]);
         assert_ne!(ids[0], ids[3]);
         assert_eq!(ids[3], ids[4]);
+
+        let cancelled_server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cancelled_url = format!(
+            "http://{}/contents/cancelled-body",
+            cancelled_server.local_addr().unwrap()
+        );
+        let (finish, resume) = std::sync::mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = cancelled_server.accept().unwrap();
+            let mut request = [0; 1024];
+            stream.read(&mut request).unwrap();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nb")
+                .unwrap();
+            let _ = resume.recv();
+        });
+        async_std::task::block_on(async_compat::Compat::new(async {
+            let client = reqwest::Client::new();
+            let (chunks, first_chunk) = async_std::channel::bounded(1);
+            let mut fetch = Box::pin(crate::http::fetch_with_permit(
+                Granted,
+                client.get(&cancelled_url).build().unwrap(),
+                |request| client.execute(request),
+                Duration::from_secs(5),
+                Duration::from_secs(5),
+                |_| {
+                    let _ = chunks.try_send(());
+                },
+            ));
+            let ready = timeout(
+                Duration::from_secs(5),
+                futures_util::future::select(Box::pin(first_chunk.recv()), &mut fetch),
+            )
+            .await
+            .unwrap();
+            assert!(matches!(
+                ready,
+                futures_util::future::Either::Left((Ok(()), _))
+            ));
+            drop(fetch);
+        }));
+        drop(finish);
+        server.join().unwrap();
+        let mut cancelled_id = None;
+        for method in ["requestWillBeSent", "responseReceived", "loadingFailed"] {
+            let (_, event) = next_event(&cancelled_url);
+            assert_eq!(event["method"], format!("Network.{method}"));
+            let params = &event["params"];
+            let id = params["requestId"].as_str().unwrap();
+            assert_eq!(
+                cancelled_id.get_or_insert_with(|| id.to_owned()).as_str(),
+                id
+            );
+            if method == "loadingFailed" {
+                assert_eq!(params["errorText"], "Request cancelled");
+            }
+        }
 
         let json_server = TcpListener::bind("127.0.0.1:0").unwrap();
         let json_url = format!(

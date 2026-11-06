@@ -76,10 +76,6 @@ the page said, and `boot-<n>.jpg`, how it looked; it is booted once more for the
 and after a second failure every later scenario fails at once with that error, which the run logs
 as it happens.
 
-For the native engine's optional Network inspector, add
-`DCL_E2E_NATIVE_ARGS="--network-devtools 9223"`. Its activation and observed transports are
-listed in the [running guide](../../../rendering/bevy-explorer/docs/guidelines/running.md#native-network-inspector).
-
 ## How a spec is written
 
 One file per explorer-automation fixture under `specs/`, headed by a table of its Unity tests
@@ -256,7 +252,6 @@ change on the left updates what is on the right in the same change, then runs th
 | A key binding | The keys in `specs/pages.ts`; the shortcuts spec's header | the same |
 | A console command's name, arguments or reply, in the engine or in `hudAutomation.ts` | `driver/explorer.ts` and `test/explorer.test.ts`; the Explorer readme's "Agents and tests" | `npm test` |
 | `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `npm test`; the web driver's tests |
-| `--network-devtools` and native launch argument forwarding | `test/target.test.ts`, native argument parser tests and the running guide | `npm test`; `npm run typecheck`; native parser tests |
 | A scene under `scenes/`, its parcels or spawn, `specs/visual/scenes.ts`, the 960x540 window or the tolerance | The references, re-recorded in CI (`record`) and committed in a PR; `scenes/README.md` | the visual scenarios in CI |
 | The `video` scene, its fixture (`scenes/video/generate-fixture.sh`), the engine's `VideoEvent` reporting or the video player's source resolution (`crates/media/src/uuav`, `crates/av`) | `specs/visual/video.test.ts` (the states, the clock mark, the colour probe); `scenes/README.md`; the scenes workflow's video steps | `npm run typecheck`; the video scenario on the web (this workflow) and on the standalone (the scenes workflow) |
 | A path moved under `apps/bevy-explorer/e2e`, `tooling/bevy-e2e-*.py` or the workflow | The workflow's `paths` filters, `tooling/bevy-ci.py` and `tooling/tests/test_bevy_ci.py`, the LFS patterns in `.gitattributes`, the links in this README | the tooling tests |

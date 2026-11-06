@@ -46,6 +46,9 @@ pub enum FetchError<E> {
 pub trait HttpAttemptPermit {}
 
 /// Trace one transport attempt while its scheduler grant is held.
+///
+/// Buffer the response body so the permit covers the full transfer. Call `on_chunk`
+/// as chunks arrive so callers count partial transfers even when the request fails.
 pub async fn fetch_with_permit<P, E, F>(
     _permit: P,
     request: reqwest::Request,
@@ -86,8 +89,7 @@ async fn fetch_traced<E, F: Future<Output = Result<reqwest::Response, E>>>(
     idle_timeout: Duration,
     on_chunk: impl FnMut(usize),
 ) -> Result<FetchedResponse, FetchError<E>> {
-    #[cfg(not(target_arch = "wasm32"))]
-    let mut trace = crate::devtools::Trace::start(&request);
+    let mut trace = crate::Trace::start(&request);
     let result = async {
         let response = match with_timeout(headers_timeout, send(request)).await {
             Ok(Ok(response)) => response,
@@ -95,7 +97,6 @@ async fn fetch_traced<E, F: Future<Output = Result<reqwest::Response, E>>>(
             Err(Elapsed) => return Err(FetchError::Headers),
         };
 
-        #[cfg(not(target_arch = "wasm32"))]
         if let Some(trace) = trace.as_ref() {
             trace.response(&response);
         }
@@ -103,7 +104,6 @@ async fn fetch_traced<E, F: Future<Output = Result<reqwest::Response, E>>>(
         read_response(response, idle_timeout, on_chunk).await
     }
     .await;
-    #[cfg(not(target_arch = "wasm32"))]
     if let Some(trace) = trace.as_mut() {
         match &result {
             Ok(response) => trace.finish(response.body.len() as u64),
@@ -145,18 +145,15 @@ async fn read_response<E>(
 /// A JSON response whose Network trace includes the body transfer.
 pub struct TracedJsonResponse {
     response: reqwest::Response,
-    #[cfg(not(target_arch = "wasm32"))]
-    trace: Option<crate::devtools::Trace>,
+    trace: Option<crate::Trace>,
 }
 
 impl TracedJsonResponse {
     pub async fn send(builder: reqwest::RequestBuilder) -> Result<Self, reqwest::Error> {
         let (client, request) = builder.build_split();
         let request = request?;
-        #[cfg(not(target_arch = "wasm32"))]
-        let mut trace = crate::devtools::Trace::start(&request);
+        let mut trace = crate::Trace::start(&request);
         let response = client.execute(request).await;
-        #[cfg(not(target_arch = "wasm32"))]
         if let Some(trace) = &mut trace {
             match &response {
                 Ok(response) => trace.response(response),
@@ -165,7 +162,6 @@ impl TracedJsonResponse {
         }
         Ok(Self {
             response: response?,
-            #[cfg(not(target_arch = "wasm32"))]
             trace,
         })
     }
@@ -180,7 +176,6 @@ impl TracedJsonResponse {
 
     /// The caller deliberately stops at the HTTP status, without consuming the body.
     pub fn discard(self) -> reqwest::StatusCode {
-        #[cfg(not(target_arch = "wasm32"))]
         if let Some(mut trace) = self.trace {
             trace.finish(0);
         }
@@ -189,7 +184,6 @@ impl TracedJsonResponse {
 
     pub async fn json<T: serde::de::DeserializeOwned>(self) -> anyhow::Result<T> {
         let bytes = self.response.bytes().await;
-        #[cfg(not(target_arch = "wasm32"))]
         if let Some(mut trace) = self.trace {
             match &bytes {
                 Ok(body) => trace.finish(body.len() as u64),
