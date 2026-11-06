@@ -602,6 +602,34 @@ mod tests {
         );
     }
 
+    /// `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE` is shared with content's
+    /// deploys: the config refuses what this check would refuse at startup.
+    #[test]
+    fn the_shared_per_source_byte_floor_is_one_world_deploy() {
+        let max_upload = super::super::deploy::MAX_UPLOAD_SIZE_BYTES as u64;
+        let parse = |bytes: u64| {
+            crate::config::Config::parse_for_tests(&[
+                "x",
+                "--database-url",
+                "postgres:///c",
+                "--max-in-flight-upload-bytes-per-source",
+                &bytes.to_string(),
+            ])
+        };
+        assert!(parse(max_upload - 1).is_err());
+        let set = parse(max_upload)
+            .unwrap()
+            .content
+            .max_in_flight_upload_bytes_per_source
+            .unwrap();
+        let limits = UploadLimits {
+            max_in_flight_upload_bytes_per_source: set,
+            ..UploadLimits::default()
+        };
+        assert!(limits.validate(max_upload).is_ok());
+        assert!(DEFAULT_MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE >= max_upload);
+    }
+
     #[test]
     fn byte_budget_must_cover_the_deploy_payload_cap() {
         let max_upload = super::super::deploy::MAX_UPLOAD_SIZE_BYTES as u64;

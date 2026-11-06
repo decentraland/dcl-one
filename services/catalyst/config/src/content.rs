@@ -237,13 +237,17 @@ pub struct ContentConfig {
     pub max_concurrent_uploads_per_source: u32,
 
     /// Bytes of `POST /entities` bodies (declared, else the 200 MiB cap) one
-    /// client address may have in flight; unset, one maximum-size upload.
-    /// Below that startup fails. The worlds uploads read it too; unset, they
-    /// default to one 350 MiB world deploy.
+    /// client address may have in flight. The worlds uploads read it too, so
+    /// a set value must fit one 350 MiB world deploy; below that the config
+    /// is refused. Unset, each route keeps one maximum-size upload of its
+    /// own (content 200 MiB, worlds 350 MiB): a source with one large or
+    /// undeclared-length (chunked) body in flight is turned away (429) until
+    /// it ends, whatever `MAX_CONCURRENT_UPLOADS_PER_SOURCE` allows; raise it
+    /// to let one source upload several large bodies at once.
     #[arg(
         long,
         env = "MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE",
-        value_parser = clap::value_parser!(u64).range(MAX_UPLOAD_TOTAL_BYTES..)
+        value_parser = clap::value_parser!(u64).range(MIN_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE..)
     )]
     pub max_in_flight_upload_bytes_per_source: Option<u64>,
 
@@ -291,9 +295,11 @@ pub struct ContentConfig {
     pub deployment_rate_limit_max_outfits: Option<u64>,
 }
 
-/// The total of every value one `POST /entities` form may carry (the
-/// content crate's `MAX_DEPLOYMENT_BYTES`).
-const MAX_UPLOAD_TOTAL_BYTES: u64 = 200 * 1024 * 1024;
+/// The least `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE`: one maximum-size
+/// upload of either route reading it, the larger being a world deploy
+/// (worlds' `MAX_UPLOAD_SIZE_BYTES`, 350 MiB; content's `MAX_DEPLOYMENT_BYTES`
+/// is 200 MiB).
+const MIN_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE: u64 = 350 * 1024 * 1024;
 
 /// A partial batch of the entity file (10 MiB) and one maximum-size
 /// (100 MiB) file.
@@ -494,9 +500,19 @@ mod tests {
         assert_eq!(cli.content.deployment_rate_limit_ttl_profile_ms, Some(1500));
         assert!(with(&["--request-ttl-backwards-ms", "soon"]).is_err());
         // A rate below one entity file and one maximal file, a source share
-        // below one maximal upload, or no upload at all refuse to start.
+        // below one maximal upload of either route (a world deploy, 350 MiB),
+        // or no upload at all refuse to start.
         assert!(with(&["--max-partial-upload-bytes-per-minute", "1048576"]).is_err());
         assert!(with(&["--max-in-flight-upload-bytes-per-source", "1048576"]).is_err());
+        let mib = |n: u64| (n * 1024 * 1024).to_string();
+        assert!(with(&["--max-in-flight-upload-bytes-per-source", &mib(300)]).is_err());
+        assert_eq!(
+            with(&["--max-in-flight-upload-bytes-per-source", &mib(350)])
+                .unwrap()
+                .content
+                .max_in_flight_upload_bytes_per_source,
+            Some(350 * 1024 * 1024)
+        );
         assert!(with(&["--max-concurrent-uploads-per-source", "0"]).is_err());
     }
 
