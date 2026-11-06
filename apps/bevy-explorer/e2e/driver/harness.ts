@@ -45,13 +45,15 @@ export const DEFAULT_SCENARIO_TIMEOUT_MS = 180_000
 
 /** How many of the page's last console lines a failed scenario keeps. */
 export const CONSOLE_TAIL_LINES = 200
+/** How long the page's screenshot may take: a page that stopped answering must not hold the run. */
+export const EVIDENCE_TIMEOUT_MS = 30_000
 
 /** What a failed scenario keeps beside its command log and the engine's frame, where the transport
  *  can tell: the page as it looks, the HUD included (`page.jpg`: on the web the engine's frame has
  *  no HUD), and the page's last console lines (`console.txt`). */
-export async function failureEvidence(console_: Console): Promise<Record<string, Uint8Array | string>> {
+export async function failureEvidence(console_: Console, timeoutMs = EVIDENCE_TIMEOUT_MS): Promise<Record<string, Uint8Array | string>> {
   if (!console_.evidence) return {}
-  const evidence = await console_.evidence()
+  const evidence = await withinBudget(console_.evidence(), timeoutMs, "the page's screenshot and console")
   const files: Record<string, Uint8Array | string> = { 'console.txt': `${evidence.console.slice(-CONSOLE_TAIL_LINES).join('\n')}\n` }
   if (evidence.screenshot) files['page.jpg'] = evidence.screenshot
   return files

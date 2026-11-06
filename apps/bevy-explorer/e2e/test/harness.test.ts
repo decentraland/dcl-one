@@ -77,6 +77,11 @@ describe('failureEvidence', () => {
     assert.equal(kept[0], 'line 5')
   })
 
+  test('gives up on a page that does not answer', async () => {
+    const console_ = Object.assign(new FakeConsole(), { evidence: () => new Promise<never>(() => {}) })
+    await assert.rejects(failureEvidence(console_, 30), TimeoutError)
+  })
+
   test('is nothing for a transport that cannot tell', async () => {
     assert.deepEqual(await failureEvidence(new FakeConsole()), {})
   })
