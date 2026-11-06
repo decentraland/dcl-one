@@ -1,9 +1,10 @@
 //! `/lambdas/users/{address}/{wearables,emotes,names}` and the grouped
 //! `/lambdas/collections/*-by-owner/{owner}` lists over the subgraph readers.
 //! The old queries grouped in SQL over the squid; here the owner's copies
-//! come back from the subgraph newest first and are grouped, filtered, sorted
-//! (UCA order) and paged in Rust exactly as the old handler did after its
-//! query. Definitions come from the content entities peer sync ingested.
+//! come back from the subgraph newest first and are grouped, filtered,
+//! sorted (UCA order, only when `orderBy` is given) and paged in Rust.
+//! Definitions come from the content entities peer sync ingested. A reader
+//! that fails answers lamb2's 502 `FetcherError`.
 //! Without a reader the routes answer the unavailable envelope, as their
 //! `/marketplace-api/v1/users` twins do: the explorer reads these lambdas,
 //! and an empty page from an unconfigured node showed every avatar owning
@@ -17,9 +18,10 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
 use crate::content::queries::active_entity_docs_by_pointers;
+use crate::shared::http_util::fetcher_error;
 use crate::shared::query_params::{
-    MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy, Pagination, QueryParams,
-    parse_pagination_with, parse_query_string, qs_get_string,
+    JsPagination, MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy, Pagination, QueryParams,
+    js_slice_range, parse_pagination_js, parse_pagination_with, parse_query_string, qs_get_string,
 };
 
 use super::definitions::{
@@ -32,14 +34,8 @@ use super::{MarketplaceState, SharedState, bad_request, service_unavailable};
 fn pagination_object(
     params: &QueryParams,
     max_page_size: i64,
-) -> Result<Pagination, Box<Response>> {
-    parse_pagination_with(
-        params,
-        max_page_size,
-        OversizePolicy::Reject,
-        NonPositivePolicy::PassThrough,
-    )
-    .map_err(|msg| Box::new(bad_request(&msg)))
+) -> Result<JsPagination, Box<Response>> {
+    parse_pagination_js(params, max_page_size).map_err(|msg| Box::new(bad_request(&msg)))
 }
 
 struct GroupedItem {
@@ -93,6 +89,17 @@ fn group_copies(copies: &[OwnedCopy]) -> Vec<GroupedItem> {
     groups
 }
 
+/// `(category, rarity, name)`: the first value of each, `category` and
+/// `rarity` lowercased as lamb2's `extractFiltersFromURL` does
+/// (decentraland/lamb2:src/controllers/handlers/utils.ts:12-19).
+fn owned_filters(params: &QueryParams) -> (Option<String>, Option<String>, Option<String>) {
+    (
+        qs_get_string(params, "category").map(|c| c.to_lowercase()),
+        qs_get_string(params, "rarity").map(|r| r.to_lowercase()),
+        qs_get_string(params, "name"),
+    )
+}
+
 fn filter_groups(
     items: &mut Vec<GroupedItem>,
     filter_category: Option<&str>,
@@ -111,10 +118,25 @@ fn filter_groups(
     }
 }
 
+/// lamb2 validates and sorts only when `orderBy` is present
+/// (decentraland/lamb2:src/controllers/handlers/utils.ts:45-48,
+/// src/logic/fetch-elements/fetch-items.ts:82-85): without it the groups keep
+/// the source's order and a lone `direction` is ignored. That source is the
+/// marketplace API, whose groups come rarest first, then by urn (the
+/// 2026-11-04 capture `LI-18-marketplace-api-wearables-grouped.json`), and
+/// the subgraph copies are put in that order here.
 fn validate_and_sort(items: &mut [GroupedItem], params: &QueryParams) -> Result<(), String> {
+    if !params.contains_key("orderBy") {
+        items.sort_by(|a, b| {
+            rarity_rank(&b.rarity)
+                .cmp(&rarity_rank(&a.rarity))
+                .then_with(|| locale_cmp(&a.urn, &b.urn))
+        });
+        return Ok(());
+    }
     let sort = qs_get_string(params, "orderBy")
         .map(|s| s.to_lowercase())
-        .unwrap_or_else(|| "rarity".to_string());
+        .unwrap_or_default();
     let direction = qs_get_string(params, "direction")
         .map(|s| s.to_uppercase())
         .unwrap_or_else(|| {
@@ -185,19 +207,6 @@ fn grouped_to_json(item: &GroupedItem) -> Value {
     })
 }
 
-/// JavaScript `slice` semantics on the sorted list: a negative offset counts
-/// from the end, an end past the length clamps.
-fn js_page(len: i64, offset: i64, limit: i64) -> (usize, usize) {
-    let js_index = |i: i64| -> i64 { if i < 0 { (len + i).max(0) } else { i.min(len) } };
-    let start = js_index(offset);
-    let end = js_index(offset.saturating_add(limit));
-    if start < end {
-        (start as usize, end as usize)
-    } else {
-        (0, 0)
-    }
-}
-
 async fn entities_by_pointer(
     state: &MarketplaceState,
     pointers: &[String],
@@ -225,12 +234,8 @@ async fn owned_items_response(
     item_category: &str,
     query_string: &str,
 ) -> Response {
-    // Before any reader call, as the old lambdas did: an arbitrary path
-    // string is otherwise forwarded to the subgraphs as `$owner` (two
-    // queries per distinct string) and cached under it.
-    if !super::is_valid_eth_address(address) {
-        return bad_request("Address must be a valid Ethereum address");
-    }
+    // The 502 names the address as the path spelled it, as lamb2's does.
+    let path_address = address;
     let address = &address.to_lowercase();
     let params = parse_query_string(query_string);
 
@@ -248,6 +253,19 @@ async fn owned_items_response(
         return bad_request(&msg);
     }
 
+    // lamb2 takes any `:address`; one that is not an Ethereum address owns
+    // nothing. It is answered here, before any reader call, so an arbitrary
+    // path string is never forwarded to the subgraphs as `$owner`.
+    if !super::is_valid_eth_address(address) {
+        return Json(json!({
+            "elements": [],
+            "totalAmount": 0,
+            "pageNum": pagination.page_num,
+            "pageSize": pagination.page_size,
+        }))
+        .into_response();
+    }
+
     if let Err(envelope) = readers::require_both_collections(state) {
         return envelope;
     }
@@ -255,16 +273,16 @@ async fn owned_items_response(
     let copies = match graph::owned_copies(&state.index, address, item_category).await {
         Ok(c) => c,
         Err(e) => {
-            tracing::warn!(error = %e, address, item_category, "owned items reader failed");
-            return service_unavailable("ownership readers unavailable");
+            return super::third_party::fetch_error(path_address, &e);
         }
     };
     let mut items = group_copies(&copies);
+    let (category, rarity, name) = owned_filters(&params);
     filter_groups(
         &mut items,
-        qs_get_string(&params, "category").as_deref(),
-        qs_get_string(&params, "rarity").as_deref(),
-        qs_get_string(&params, "name").as_deref(),
+        category.as_deref(),
+        rarity.as_deref(),
+        name.as_deref(),
     );
 
     if let Err(msg) = validate_and_sort(&mut items, &params) {
@@ -272,7 +290,7 @@ async fn owned_items_response(
     }
 
     let total_amount = items.len();
-    let (start, end) = js_page(total_amount as i64, pagination.offset, pagination.limit);
+    let (start, end) = pagination.slice_range(total_amount);
     let page: Vec<&GroupedItem> = items[start..end].iter().collect();
 
     let by_pointer = if include_definitions || include_entities {
@@ -282,26 +300,27 @@ async fn owned_items_response(
         HashMap::new()
     };
 
+    // A missing definition or entity leaves its key out, as lamb2's
+    // `undefined` does (decentraland/lamb2:src/controllers/handlers/utils.ts:56-67).
     let content_public_url = &state.settings.content_public_url;
     let elements: Vec<Value> = page
         .iter()
         .map(|item| {
             let mut obj = grouped_to_json(item);
-            let ent = by_pointer
-                .get(&item.urn.to_lowercase())
-                .cloned()
-                .unwrap_or(Value::Null);
-            if include_definitions {
-                obj["definition"] = if ent.is_null() {
-                    Value::Null
-                } else if item_category == "emote" {
-                    extract_emote_definition(&ent, content_public_url).unwrap_or(Value::Null)
-                } else {
-                    extract_wearable_definition(&ent, content_public_url).unwrap_or(Value::Null)
-                };
+            let ent = by_pointer.get(&item.urn.to_lowercase());
+            if include_definitions
+                && let Some(def) = ent.and_then(|ent| {
+                    if item_category == "emote" {
+                        extract_emote_definition(ent, content_public_url)
+                    } else {
+                        extract_wearable_definition(ent, content_public_url)
+                    }
+                })
+            {
+                obj["definition"] = def;
             }
-            if include_entities {
-                obj["entity"] = ent;
+            if include_entities && let Some(ent) = ent {
+                obj["entity"] = ent.clone();
             }
             obj
         })
@@ -334,42 +353,46 @@ pub async fn user_emotes(
     owned_items_response(&state, &address, "emote", &query_string).await
 }
 
-/// Names page with the land routes' pagination: an oversized page clamps to
-/// 1000 and a non-positive page or size clamps to 1.
+/// Names page: a `pageSize` over 1000 answers lamb2's 400 (`max allowed
+/// pageSize is 1000`), a non-positive page or size clamps to 1. A failed
+/// reader answers the owner's last good list fetched within lamb2's 120 s
+/// (`graph::owned_names_or_stale`), else lamb2's 502 `FetcherError`. A
+/// string that is not an
+/// address owns nothing: an empty page, as lamb2's fallback answers it,
+/// without a reader call.
 pub async fn user_names(
     State(state): State<SharedState>,
     Path(address): Path<String>,
     request: Request,
 ) -> Response {
-    if !super::is_valid_eth_address(&address) {
-        return bad_request("Address must be a valid Ethereum address");
-    }
-    let address = address.to_lowercase();
+    let requested = address;
+    let address = requested.to_lowercase();
     let params = parse_query_string(request.uri().query().unwrap_or(""));
-    let p = parse_pagination_with(
+    let p = match parse_pagination_with(
         &params,
         MAX_PAGE_SIZE as i64,
-        OversizePolicy::Clamp,
+        OversizePolicy::Reject,
         NonPositivePolicy::ClampToOne,
-    )
-    .unwrap_or(Pagination {
-        page_size: 1,
-        page_num: 1,
-        offset: 0,
-        limit: 1,
-    });
+    ) {
+        Ok(p) => p,
+        Err(msg) => return bad_request(&msg),
+    };
     if let Err(envelope) = readers::require_marketplace(&state) {
         return envelope;
     }
-    let names = match graph::owned_names(&state.index, &address).await {
-        Ok(n) => n,
-        Err(e) => {
-            tracing::warn!(error = %e, address, "names reader failed");
-            return service_unavailable("ownership readers unavailable");
+    let names = if !super::is_valid_eth_address(&address) {
+        Default::default()
+    } else {
+        match graph::owned_names_or_stale(&state.index, &address).await {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::warn!(error = %e, address, "names reader failed");
+                return fetcher_error(&requested);
+            }
         }
     };
     let total = names.len();
-    let (start, end) = js_page(total as i64, p.offset, p.limit);
+    let (start, end) = js_slice_range(total, p.offset, p.limit);
     Json(json!({
         "elements": names[start..end],
         "totalAmount": total,
@@ -467,10 +490,7 @@ async fn items_by_owner(
         .await;
     match body {
         Ok(body) => Json(body).into_response(),
-        Err(e) => {
-            tracing::warn!(error = %e, owner, category, "items by owner reader failed");
-            service_unavailable("ownership readers unavailable")
-        }
+        Err(e) => super::third_party::fetch_error(owner, &e),
     }
 }
 
@@ -787,22 +807,67 @@ mod tests {
     }
 
     #[test]
-    fn default_orderby_is_rarity_desc() {
-        let mut items = vec![
-            item("urn:b", "B", "common", 0, 0),
-            item("urn:a", "A", "legendary", 0, 0),
-        ];
+    fn without_order_by_the_groups_come_in_the_marketplace_order() {
+        // The marketplace API's grouped order (captures/lambdas-items/
+        // LI-18-marketplace-api-wearables-grouped.json): rarest first, then urn.
+        let mk = || {
+            vec![
+                item("urn:c", "C", "exotic", 0, 0),
+                item("urn:b", "B", "common", 0, 0),
+                item("urn:a", "A", "exotic", 0, 0),
+                item("urn:d", "D", "mythic", 0, 0),
+            ]
+        };
+        let mut items = mk();
         validate_and_sort(&mut items, &parse_query_string("")).unwrap();
-        assert_eq!(urns(&items), vec!["urn:a", "urn:b"]);
+        assert_eq!(urns(&items), vec!["urn:d", "urn:a", "urn:c", "urn:b"]);
+        let mut items = mk();
+        validate_and_sort(&mut items, &parse_query_string("direction=sideways")).unwrap();
+        assert_eq!(
+            urns(&items),
+            vec!["urn:d", "urn:a", "urn:c", "urn:b"],
+            "a lone direction is ignored"
+        );
+        let mk = || {
+            vec![
+                item("urn:b", "B", "common", 0, 0),
+                item("urn:a", "A", "legendary", 0, 0),
+            ]
+        };
+        let mut items = mk();
+        validate_and_sort(&mut items, &parse_query_string("orderBy=rarity")).unwrap();
+        assert_eq!(
+            urns(&items),
+            vec!["urn:a", "urn:b"],
+            "rarity defaults to DESC"
+        );
+        let err = validate_and_sort(&mut mk(), &parse_query_string("orderBy=")).unwrap_err();
+        assert_eq!(
+            err, "Invalid sorting requested:  DESC",
+            "an empty orderBy is present"
+        );
+    }
+
+    #[test]
+    fn category_and_rarity_filters_are_lowercased() {
+        let (category, rarity, name) =
+            owned_filters(&parse_query_string("category=HaT&rarity=EPIC&name=Hat"));
+        assert_eq!(
+            (category.as_deref(), rarity.as_deref(), name.as_deref()),
+            (Some("hat"), Some("epic"), Some("Hat"))
+        );
+        let mut items = group_copies(&inventory());
+        filter_groups(&mut items, category.as_deref(), rarity.as_deref(), None);
+        assert_eq!(urns(&items), vec![HAT]);
     }
 
     #[test]
     fn js_page_slices_like_javascript() {
-        assert_eq!(js_page(10, 0, 3), (0, 3));
-        assert_eq!(js_page(10, 8, 5), (8, 10));
-        assert_eq!(js_page(10, 12, 5), (0, 0));
-        assert_eq!(js_page(10, -3, 2), (7, 9));
-        assert_eq!(js_page(0, 0, 100), (0, 0));
+        assert_eq!(js_slice_range(10, 0, 3), (0, 3));
+        assert_eq!(js_slice_range(10, 8, 5), (8, 10));
+        assert_eq!(js_slice_range(10, 12, 5), (0, 0));
+        assert_eq!(js_slice_range(10, -3, 2), (7, 9));
+        assert_eq!(js_slice_range(0, 0, 100), (0, 0));
     }
 
     #[test]

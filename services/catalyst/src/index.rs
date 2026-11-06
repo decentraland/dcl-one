@@ -91,6 +91,10 @@ pub(crate) fn market_settings(
             trades_serve_partial: config.market_upstreams.trades_serve_partial,
             profile_cdn_base_url: config.market_upstreams.profile_cdn_base_url.clone(),
             nft_worker_base_url: config.market_upstreams.nft_worker_base_url.clone(),
+            explorer_escrow_grants_enabled: config.market_upstreams.explorer_escrow_grants_enabled,
+            lambdas_catalog_extensions_enabled: config
+                .market_upstreams
+                .lambdas_catalog_extensions_enabled,
         },
     )?
     .with_market(
@@ -177,6 +181,7 @@ pub(crate) fn credits_settings(config: &Config) -> anyhow::Result<shop::credits:
             }
             config.shop.mana_price_max_staleness_secs
         },
+        credits_usd_pegged_feed_max_age_secs: config.shop.credits_usd_pegged_feed_max_age_secs,
         checkout_fulfillment_mode: config.shop.checkout_fulfillment_mode.clone(),
         require_purchase_intent: config.shop.credits_require_purchase_intent,
         checkout_worker_interval_secs: config.shop.checkout_worker_interval_secs,

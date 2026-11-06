@@ -27,10 +27,31 @@ pub fn service_unavailable(message: &str) -> Response {
     )
 }
 
+/// lamb2's answer to an error its `errorHandler` does not map:
+/// `500 {"error":"Internal Server Error"}`, with no `message`.
+pub fn lambdas_internal_error() -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "error": "Internal Server Error" })),
+    )
+        .into_response()
+}
+
 pub fn internal_server_error() -> Response {
     lambdas_error(
         StatusCode::INTERNAL_SERVER_ERROR,
         "Internal Server Error",
         "Internal Server Error",
+    )
+}
+
+/// lamb2's `FetcherError` (`errorHandler.ts`): the 502 a lambdas elements
+/// route answers when its configured source failed for `key` (the address,
+/// or the name for the name owner), `Cannot fetch elements for <key>`.
+pub fn fetcher_error(key: &str) -> Response {
+    lambdas_error(
+        StatusCode::BAD_GATEWAY,
+        "The requested items cannot be fetched right now",
+        &format!("Cannot fetch elements for {key}"),
     )
 }

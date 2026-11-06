@@ -26,7 +26,7 @@ export interface TabsProps<T extends string> {
   items: readonly TabItem<T>[]
   value: T
   onChange: (id: T) => void
-  variant?: 'pill' | 'underline' | 'section' | 'subtab'
+  variant?: 'pill' | 'underline' | 'section' | 'shop' | 'subtab'
   /** Equal-width tabs filling the strip, labels centred (the friends panel header). */
   fill?: boolean
   /** Positional overrides only (margins, padding, gap); the look stays the variant's. */

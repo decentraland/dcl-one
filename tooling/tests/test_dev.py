@@ -459,6 +459,91 @@ class DevTest(unittest.TestCase):
         for key in ('STORAGE_ROOT_FOLDER', 'AB_CDN_CACHE_DIR', 'PROFILE_IMAGES_CACHE_DIR', 'BVIMPOSTERS_STORE_ROOT'):
             self.assertTrue(Path(env[key]).is_relative_to(self.state))
 
+    def test_the_testnet_profile_trades_and_relays_on_amoy(self):
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        mirror = dev.runtime_env({**self.config, 'profile': 'mirror'})
+        self.assertEqual(env['VITE_SHOP_CHAIN_ID'], '80002')
+        self.assertEqual(env['COLLECTIONS_CHAIN_ID'], '80002')
+        self.assertEqual(env['CONTRACT_ADDRESSES_CHAIN_KEY'], 'amoy')
+        self.assertTrue(env['CONTRACT_ADDRESSES_URL'].startswith('https://'))
+        # On-chain cancels and executions close local trades: the trade-events index walks the testnets.
+        self.assertEqual(env['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'true')
+        self.assertEqual((env['MARKETPLACE_INDEX_CHAIN_ID_MATIC'], env['MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM']), ('80002', '11155111'))
+        self.assertEqual(mirror['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'false')
+        self.assertNotIn('MARKETPLACE_INDEX_CHAIN_ID_MATIC', mirror)
+        # The NFT index knows mainnet's contracts only, so it does not walk the testnets.
+        self.assertEqual(env['MARKETPLACE_NFT_INDEX_ENABLED'], 'false')
+        self.assertEqual(mirror['MARKETPLACE_NFT_INDEX_ENABLED'], 'true')
+        self.assertIn('decentraland.zone', env['TRADES_SYNC_UPSTREAM_URL'])
+        self.assertIn('decentraland.zone', env['TRANSACTIONS_UPSTREAM_URL'])
+        self.assertTrue(env['RPC_ENDPOINT_POLYGON'].endswith('/amoy'))
+        for key in ('VITE_SHOP_CHAIN_ID', 'COLLECTIONS_CHAIN_ID', 'CONTRACT_ADDRESSES_CHAIN_KEY', 'CONTRACT_ADDRESSES_URL'):
+            self.assertNotIn(key, mirror, key)
+        # MANA settles on Amoy's venues, which the node accepts only with a testnet ETH_NETWORK, the Matic index on
+        # Amoy and Amoy's own endpoint; USD prices convert at the feed and tolerance of Amoy's marketplaces.
+        self.assertEqual(env['ETH_NETWORK'], 'sepolia')
+        self.assertEqual(env['POLYGON_CHAIN_ID'], env['COLLECTIONS_CHAIN_ID'])
+        self.assertNotIn('POLYGON_CHAIN_ID', mirror)
+        self.assertIn('80002=https://', env['TRADE_RPC_URLS'])
+        self.assertEqual(env['MANA_USD_AGGREGATOR_ADDRESS'], '0xdcf00f5f60b62b07e668a84c0cedaf6f453d416e')
+        self.assertEqual(env['USD_PEGGED_ORACLE_MAX_AGE_SECS'], '27')
+        for key in ('MANA_USD_AGGREGATOR_ADDRESS', 'USD_PEGGED_ORACLE_MAX_AGE_SECS'):
+            self.assertNotIn(key, mirror, key)
+        # Otherwise the mirror profile's catalogue passes, against the testnet subgraphs.
+        self.assertEqual(env['MARKETPLACE_MIRRORS_ENABLED'], 'true')
+        self.assertIn('index', dev.project({**self.config, 'profile': 'testnet'})['processes'])
+
+    def test_the_testnet_profile_settles_credits_on_amoy(self):
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        mirror = dev.runtime_env({**self.config, 'profile': 'mirror'})
+        self.assertEqual(env['CREDITS_MANAGER_CONTRACT'], '0x8052a560e6e6ac86eeb7e711a4497f639b322fb3')
+        self.assertEqual((env['CREDITS_USAGE_INDEX_ENABLED'], env['CREDITS_MOCK_CARD']), ('true', 'true'))
+        for key in ('CREDITS_MANAGER_CONTRACT', 'CREDITS_MOCK_CARD', 'CREDITS_SIGNER_KEY_FILE'):
+            self.assertNotIn(key, mirror, key)
+        # Without a signer key in the stack's state, nothing signs credits on chain.
+        self.assertEqual(env['CREDITS_ONCHAIN_AUTHORIZE_ENABLED'], 'false')
+        self.assertNotIn('CREDITS_SIGNER_KEY_FILE', env)
+        key = self.state / 'credits-signer.key'
+        key.write_text('  \n')  # empty: the server would read no key, so authorization stays off
+        self.assertEqual(dev.runtime_env({**self.config, 'profile': 'testnet'})['CREDITS_ONCHAIN_AUTHORIZE_ENABLED'], 'false')
+        key.write_text('not a real key')
+        key.chmod(0o644)
+        warning = io.StringIO()
+        with contextlib.redirect_stderr(warning):
+            dev.runtime_env({**self.config, 'profile': 'testnet'})
+        self.assertIn('chmod 600', warning.getvalue())
+        key.chmod(0o600)
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        self.assertEqual(env['CREDITS_ONCHAIN_AUTHORIZE_ENABLED'], 'true')
+        self.assertEqual(env['CREDITS_SIGNER_KEY_FILE'], str(key))
+        # The file's path is passed, never its contents.
+        self.assertNotIn('not a real key', '\n'.join(env.values()))
+
+    def test_testnet_data_never_shares_a_database_with_another_profile(self):
+        (self.state / 'postgres').mkdir()
+        (self.state / 'postgres' / 'PG_VERSION').write_text('18')
+        def run(*argv):
+            with patch.object(dev.sys, 'argv', ['foundation-dev', *argv]), \
+                    patch.object(dev, 'supervisor_running', return_value=False):
+                return dev.main()
+        with self.assertRaisesRegex(RuntimeError, 'offline profile'):
+            run('profile', 'testnet')
+        self.assertEqual(dev.settings()['profile'], 'offline')
+        run('profile', 'mirror')  # neither is testnet: allowed over existing data
+        self.assertEqual(dev.settings()['profile'], 'mirror')
+        dev.save_json(dev.SETTINGS, {**dev.settings(), 'profile': 'testnet'})
+        with self.assertRaisesRegex(RuntimeError, 'testnet profile'):
+            run('profile', 'mirror')
+        with self.assertRaisesRegex(RuntimeError, 'not a snapshot'), patch.object(dev, 'export_trades_snapshot') as export:
+            run('trades-snapshot', str(self.state / 'out.sql.gz'))
+        export.assert_not_called()
+
+    def test_a_different_profile_in_the_environment_keeps_the_saved_one_and_says_so(self):
+        warning = io.StringIO()
+        with patch.dict(os.environ, {'FOUNDATION_DEV_PROFILE': 'testnet'}), contextlib.redirect_stderr(warning):
+            self.assertEqual(dev.settings(create=True)['profile'], 'offline')
+        self.assertIn('Using saved profile offline', warning.getvalue())
+
     def test_env_names_the_running_stack_for_shell_evaluation(self):
         out = io.StringIO()
         with patch.object(dev.sys, 'argv', ['foundation-dev', 'env']), contextlib.redirect_stdout(out):
@@ -466,6 +551,7 @@ class DevTest(unittest.TestCase):
         values = dict(line.split('=', 1) for line in out.getvalue().splitlines())
         self.assertEqual(values['FOUNDATION_DEV_API_URL'], f"http://127.0.0.1:{self.config['port']}")
         self.assertEqual(values['FOUNDATION_DEV_DATABASE_URL'], dev.database_url(self.config))
+        self.assertEqual(values['FOUNDATION_DEV_STACK_PROFILE'], 'offline')
         result = subprocess.run(['bash', '-c', 'eval "$1"; echo "$FOUNDATION_DEV_SITES_URL"', '-', out.getvalue()],
                                 capture_output=True, text=True, check=True)
         self.assertEqual(result.stdout.strip(), f"http://127.0.0.1:{self.config['port'] + 2}")

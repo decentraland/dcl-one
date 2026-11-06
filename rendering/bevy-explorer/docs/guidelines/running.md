@@ -25,6 +25,53 @@ then `cargo build`. This loop is verified on macOS, the only platform where the 
 to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` (see
 `source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs.
 
+### Gateway routing
+
+For a deployment serving the APIs on one origin, run `just native-debug --gateway https://example.org`.
+The native client and HUD use that origin's service prefixes, including `/comms-gatekeeper` and
+`/camera-reel-service`. The peer's `/content` and `/lambdas` are at the root. To use the gateway
+virtual host, pass `--gateway https://gateway.example.org`. A hostname beginning with
+`gateway.` selects this layout. Every other hostname selects the apex layout.
+The client uses the virtual host's service aliases
+(for example `/peer/content`). For a service base under a gateway alias, the signature covers
+the path after the alias. For example, `/social-api/v1/communities` signs `/v1/communities`.
+A bare `/social-api` signs `/social-api`, while `/social-api/` signs `/`. A service base at the
+gateway root and a direct-origin URL both keep the full public path. If the gateway URL includes
+a mount prefix, configure the front proxy to strip that prefix before forwarding.
+
+`--base-domain example.org` selects which deployment's backend-supplied `profile-images` URLs are
+eligible for routing. Only HTTPS image URLs on that exact host qualify.
+
+The HUD bridge reads the engine's service URLs through `getServiceUrls()`. Explicit service
+flags take precedence over gateway defaults. For example, `--events https://events.example.org`
+selects that backend for both the Events panel and community events. `--camera-reel` selects
+the photo API. `--reels` selects the public share page where a photo link opens. On the
+integrated web client, Sites supplies its origin's service URLs at boot.
+
+On desktop, native HTTP Fetch from the bundled bridge or an operator-selected
+`--system-scene` can reach loopback and LAN services outside preview, including through
+an explicit HTTP service override. The HTTP client blocks link-local and metadata addresses.
+Ordinary and authoritative hosted scenes use their own address policies. For native scene
+WebSockets, access to private resolved addresses is preview-only.
+
+Use HTTPS for remote deployments. Plain HTTP sends signed headers and any request
+credentials in cleartext.
+
+The gateway flag leaves Pulse, social RPC, Ethereum RPC and storage on their explicit
+overrides or base-domain defaults. The default base domain is `decentraland.org`.
+Pulse also accepts the `PULSE_SERVER` environment variable. Configure a private deployment with
+`--pulse-server <host[:port]>`, `--social-rpc wss://example.org/social-rpc`,
+`--ethereum-rpc wss://example.org/rpc` and `--storage https://storage.example.org`
+as appropriate for that deployment. Storage delegates authorize an origin, so select
+the intended storage origin explicitly. The authentication page and public Reels links
+also keep their configured destinations, set with `--auth-page https://example.org/auth`
+and `--reels https://example.org/reels` when needed.
+
+With Python 3 and Node.js 24 installed, run
+`cargo test --locked -p common gateway_routes_match_deployment -- --ignored` from the
+Explorer workspace to compare its resolved routes with the HUD resolver and the rendered nginx maps.
+This also checks signature paths and the intentionally separate RPC and storage defaults.
+
 To package, follow the [desktop workflow](../../../../.github/workflows/bevy-explorer-desktop.yml):
 pinned Rust, protoc, CEF and platform libraries, including `CEF_PATH`. With those installed:
 
@@ -40,6 +87,36 @@ cargo build --release --locked
 The workflow also stages the CEF helper, runtime libraries, assets and sidecar. Follow its
 platform packaging steps, then launch the packaged executable with `--realm <about-url>
 --position x,y`. A Cargo build alone does not bundle the HUD or package those runtime files.
+
+### Native Network inspector
+
+Explorer engineers and deployment integrators can inspect selected native Rust HTTP
+transfers in Chrome DevTools. These requests run outside the embedded browser and do not
+appear in its Network panel. Start the desktop client with
+`just native-debug --network-devtools 9223`, open `http://127.0.0.1:9223/json/list`, and open
+its `devtoolsFrontendUrl` in Chrome. Attach before reproducing a transfer: the target retains
+no history for future subscribers. The headless executable does not start this target.
+
+The target reports methods, request paths, final response status, elapsed transfer time
+and consumed body bytes. Full normalized paths retain content hashes and identifiers;
+URLs are capped at 4,096 characters. Userinfo, query strings, fragments, headers and bodies
+are excluded. Any values embedded in the path remain visible. The target is read-only,
+binds only to loopback and accepts Chrome DevTools origins or local clients without an Origin
+header. It supports at most eight concurrent clients and disconnects a slow subscriber
+instead of delaying requests.
+
+Observed transports are content-budget downloads (including asset and catalog blobs),
+active-entity POSTs, font metadata, realm `/about` and `/scenes`, registry profiles,
+signed comms login and gatekeeper adapters. Each admitted retry has its own trace; the
+existing scheduler permit remains held through the response body. A status-only response
+reports zero consumed body bytes. Redirects show the initial request and final response,
+without intermediate hops.
+
+Coverage is limited to these transports. Direct reqwest callers such as wallet sign-in,
+world access and profile uploads do not appear. Native scene and HUD Fetch run in a separate
+process and need IPC event forwarding to join this target. Cache hits, admission wait time,
+deduplicated readers, initiators, incremental body events and DNS/TLS timing are also outside
+the transfer traces. The web client continues to use the browser's Network panel.
 
 ## Web
 

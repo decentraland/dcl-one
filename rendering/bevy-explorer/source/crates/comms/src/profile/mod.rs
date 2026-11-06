@@ -347,8 +347,8 @@ impl ProfileManager<'_, '_> {
                 if snapshots.face256.is_empty() {
                     None
                 } else {
-                    // let url = format!("{}{}", profile.base_url, snapshots.face256);
-                    let ipfs_path = IpfsPath::new_from_url(&snapshots.face256, "png");
+                    let url = common::base_domain::profile_image(&snapshots.face256);
+                    let ipfs_path = IpfsPath::new_from_url(&url, "png");
                     Some(PathBuf::from(&ipfs_path))
                 }
             })
@@ -1137,10 +1137,18 @@ fn registry_url(endpoint: Option<&str>) -> String {
             return common::base_domain::url(registry, "/profiles");
         }
         if host.rsplit('.').next() == Some("zone") {
-            return REGISTRY_ZONE.to_owned();
+            return if base == "decentraland.zone" {
+                common::base_domain::url(registry, "/profiles")
+            } else {
+                REGISTRY_ZONE.to_owned()
+            };
         }
     }
-    REGISTRY_ORG.to_owned()
+    if common::base_domain::get() == "decentraland.org" {
+        common::base_domain::url(registry, "/profiles")
+    } else {
+        REGISTRY_ORG.to_owned()
+    }
 }
 
 /// One registry POST for a chunk of ids, reported per item: Ok(Some) found, Ok(None)
@@ -1160,18 +1168,18 @@ async fn fetch_registry_profiles(
     debug!("requesting {} profiles from {registry_url}", ids.len());
 
     let outcome: Result<Vec<LambdaProfiles>, anyhow::Error> = async {
-        let response = ipfs
-            .client()
-            .post(&registry_url)
-            .timeout(std::time::Duration::from_secs(10))
-            .body(serde_json::json!({ "ids": ids }).to_string())
-            .header("content-type", "application/json")
-            .send()
-            .await?;
+        let response = platform::TracedJsonResponse::send(
+            ipfs.client()
+                .post(&registry_url)
+                .timeout(std::time::Duration::from_secs(10))
+                .body(serde_json::json!({ "ids": ids }).to_string())
+                .header("content-type", "application/json"),
+        )
+        .await?;
         if response.status() != StatusCode::OK {
-            anyhow::bail!("bad response: {}", response.status());
+            anyhow::bail!("bad response: {}", response.discard());
         }
-        Ok(response.json::<Vec<LambdaProfiles>>().await?)
+        response.json::<Vec<LambdaProfiles>>().await
     }
     .await;
 

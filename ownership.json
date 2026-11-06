@@ -205,7 +205,8 @@
       "paths": [
         "/apps/ui3/src/shop/",
         "/apps/sites/src/routes/shop/",
-        "/tooling/shop-parity/"
+        "/tooling/shop-parity/",
+        "/tooling/shop-trade-journey/"
       ]
     },
     {
@@ -234,7 +235,7 @@
       "id": "explorer-client",
       "description": "Explorer source, local app builds and component workflows",
       "owners": [
-        "@decentraland/client"
+        "@robtfm"
       ],
       "paths": [
         "/rendering/bevy-explorer/",
