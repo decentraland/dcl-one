@@ -39,6 +39,7 @@ describe('editor scene', () => {
     const deps: EditorHostDeps = {
       busSession: '',
       defaultRealm: '',
+      features: { experimental: false, advanced: false },
       engineConsole: async () => '',
       identity: () => ({ address: null, isGuest: true }),
       login: async () => null,

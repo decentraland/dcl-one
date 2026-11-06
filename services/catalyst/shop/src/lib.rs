@@ -63,6 +63,8 @@ pub mod types;
 
 #[cfg(test)]
 mod parity_tests;
+#[cfg(test)]
+mod test_db;
 
 use std::sync::Arc;
 

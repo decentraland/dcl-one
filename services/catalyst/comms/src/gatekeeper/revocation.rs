@@ -12,7 +12,15 @@ use crate::Address;
 use crate::world_identity::WorldName;
 
 use super::CommsState;
-use super::admission::scene::{kick, live_world_rooms, readmit_world_rooms};
+use super::admission::scene::{kick, live_world_rooms, readmit_until_settled};
+
+/// Waits before re-running an access-change pass that left a decision or eviction undone.
+const READMIT_RETRY_DELAYS: [std::time::Duration; 4] = [
+    std::time::Duration::from_secs(1),
+    std::time::Duration::from_secs(5),
+    std::time::Duration::from_secs(30),
+    std::time::Duration::from_secs(120),
+];
 
 /// What an edit revoked, in the rooms' terms.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,8 +60,8 @@ impl CommsState {
                     kick(&state, &rooms, address).await;
                 }
                 RoomRevocation::WorldAccess { world } => {
-                    if let Err(error) = readmit_world_rooms(&state, world).await {
-                        tracing::warn!(%error, %world, "revocation inventory incomplete; no completion claimed");
+                    if !readmit_until_settled(&state, world, &READMIT_RETRY_DELAYS).await {
+                        tracing::warn!(%world, "access-change revocation incomplete after retries; no completion claimed");
                         return;
                     }
                 }

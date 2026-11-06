@@ -76,23 +76,6 @@ async fn ranking_event_handlers_preserve_clamps_receipts_fanout_and_atomic_retri
         receipts, 2,
         "photo fanout has one durable receipt per community"
     );
-    let event = json!({"type":"event","subType":"event-ended","metadata":{"communityId":a.as_uuid(),"totalAttendees":10000.9}});
-    for _ in 0..2 {
-        assert!(
-            ranking::apply_external_event(&rig.pool, &event)
-                .await
-                .unwrap()
-        );
-    }
-    assert_eq!(
-        counters(&rig, a).await,
-        (2, 1, 0, 2000, 0),
-        "external events retain source at-least-once deltas"
-    );
-    let negative = json!({"type":"event","subType":"event-ended","metadata":{"communityId":a.as_uuid(),"totalAttendees":-2}});
-    ranking::apply_external_event(&rig.pool, &negative)
-        .await
-        .unwrap();
     let directory = crate::comms_directory::Directory::new(rig.pool.clone());
     let stream = json!({"metadata":{"communityId":a.as_uuid(),"totalParticipants":9999.8}});
     for _ in 0..2 {
@@ -101,40 +84,34 @@ async fn ranking_event_handlers_preserve_clamps_receipts_fanout_and_atomic_retri
             .await
             .unwrap();
     }
-    assert_eq!(counters(&rig, a).await, (3, 1, 1, 2000, 500));
-    let solo = json!({"type":"streaming","subType":"community-streaming-ended","metadata":{"communityId":a.as_uuid(),"totalParticipants":1}});
-    ranking::apply_external_event(&rig.pool, &solo)
-        .await
-        .unwrap();
-    assert_eq!(counters(&rig, a).await.2, 1);
-    let fractional = json!({"type":"streaming","subType":"community-streaming-ended","metadata":{"communityId":a.as_uuid(),"totalParticipants":1.9}});
-    ranking::apply_external_event(&rig.pool, &fractional)
-        .await
-        .unwrap();
-    assert_eq!(counters(&rig, a).await.4, 501);
-    let photo = json!({"type":"camera","subType":"photo-taken","metadata":{"placeId":place}});
-    ranking::apply_external_event(&rig.pool, &photo)
-        .await
-        .unwrap();
-    assert_eq!(
-        counters(&rig, mirrored).await.1,
-        1,
-        "source external photo fans out to every attached community"
-    );
-    sqlx::query("UPDATE social.communities SET ranking_events_count=2147483647,ranking_events_total_attendees=2147483640 WHERE id=$1").bind(a).execute(&rig.pool).await.unwrap();
-    ranking::apply_external_event(&rig.pool, &event)
+    assert_eq!(counters(&rig, a).await, (0, 1, 1, 0, 500));
+    for (key, participants) in [("solo", 1.0), ("fractional", 1.9)] {
+        directory
+            .notify_community_voice_ended(
+                a,
+                key,
+                &json!({"metadata":{"totalParticipants":participants}}),
+                now,
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(counters(&rig, a).await, (0, 1, 2, 0, 501));
+    sqlx::query("UPDATE social.communities SET ranking_streams_count=2147483647,ranking_streams_total_participants=2147483640 WHERE id=$1").bind(a).execute(&rig.pool).await.unwrap();
+    directory
+        .notify_community_voice_ended(a, "saturation", &stream, now)
         .await
         .unwrap();
     let values = counters(&rig, a).await;
     assert_eq!(
-        (values.0, values.3),
+        (values.2, values.4),
         (i32::MAX, i32::MAX),
-        "addition widens before INT4 saturation"
+        "local additions saturate INT4"
     );
-    assert!(
-        !ranking::apply_external_event(&rig.pool, &json!({"type":"other"}))
-            .await
-            .unwrap()
+    assert_eq!(
+        counters(&rig, mirrored).await,
+        (0, 0, 0, 0, 0),
+        "native contributions exclude upstream mirrors"
     );
     rig.finish();
 }

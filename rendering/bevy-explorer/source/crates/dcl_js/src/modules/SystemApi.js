@@ -687,13 +687,36 @@ module.exports.social = {
     return stream;
   },
 
-  // local DM history. Which conversations are shown is the HUD's own state.
-  // type DmHistoryEntryData = { from: string, message: string, timestamp: number, receivedAt: number }
+  // local DM history (a community channel, `community:<id>`, is stored the same way). Which
+  // conversations are shown is the HUD's own state.
+  // type DmHistoryEntryData = { from: string, message: string, receivedAt: number, messageId: string, reactions: DmReactionData[] }
   getDmHistory: async function(address) {
     return await Deno.core.ops.op_get_dm_history(address);
   },
   deleteDmHistory: function(address) {
     Deno.core.ops.op_delete_dm_history(address);
+  },
+
+  // community member presence as a stream: `away` is never sent. The local user's own updates
+  // say which communities they are in.
+  // type CommunityMemberConnectivityData = { communityId: string, address: string, status: "online" | "offline" }
+  getCommunityConnectivityStream: async function() {
+    const rid = await Deno.core.ops.op_get_community_connectivity_stream();
+
+    async function* streamGenerator() {
+      while (true) {
+        const next = await Deno.core.ops.op_read_community_connectivity_stream(rid);
+        if (next === null) break;
+        yield next;
+      }
+    }
+
+    return streamGenerator();
+  },
+
+  // the community channels the local user listens to (community ids); replaces the previous set
+  setCommunityChannels: function(ids) {
+    Deno.core.ops.op_set_community_channels(ids);
   }
 }
 

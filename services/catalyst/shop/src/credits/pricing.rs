@@ -144,6 +144,15 @@ pub trait Market: Send + Sync {
 
     async fn trade(&self, trade_id: &str) -> Result<TradeLookup, ApiError>;
 
+    /// The creator's coupon a primary trade's purchase offer carries, chosen
+    /// by the server's rule (`mana::facts::primary_trade_coupon`), never the
+    /// client's. `None` for anything but an item order.
+    async fn trade_coupon(
+        &self,
+        trade: &crate::types::SignedTrade,
+        trade_type: &str,
+    ) -> Result<Option<crate::types::TradeCoupon>, ApiError>;
+
     /// The MANA/USD spot as a decimal string, refused when older than the staleness budget.
     async fn mana_usd(&self) -> Result<String, ApiError>;
 }
@@ -290,6 +299,16 @@ impl Market for LocalMarket {
         )?))
     }
 
+    async fn trade_coupon(
+        &self,
+        trade: &crate::types::SignedTrade,
+        trade_type: &str,
+    ) -> Result<Option<crate::types::TradeCoupon>, ApiError> {
+        crate::mana::facts::primary_trade_coupon(&self.pool, trade, trade_type)
+            .await
+            .map_err(|e| ApiError::Internal(format!("coupon read failed: {e}")))
+    }
+
     async fn mana_usd(&self) -> Result<String, ApiError> {
         let Some(price) = self.price.as_ref() else {
             return Err(ApiError::service_unavailable(
@@ -378,6 +397,14 @@ impl Pricing {
         self.mana_usd
             .get_or_fetch((), || self.market.mana_usd())
             .await
+    }
+
+    pub async fn fetch_trade_coupon(
+        &self,
+        trade: &crate::types::SignedTrade,
+        trade_type: &str,
+    ) -> Result<Option<crate::types::TradeCoupon>, ApiError> {
+        self.market.trade_coupon(trade, trade_type).await
     }
 
     pub async fn fetch_trade(&self, trade_id: &str) -> Result<TradeLookup, ApiError> {

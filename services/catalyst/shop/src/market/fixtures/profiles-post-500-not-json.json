@@ -1,0 +1,24 @@
+{
+  "description": "POST /lambdas/profiles with a body that is not JSON: request.json() throws before any check, an error errorHandler does not map, so lamb2's bare 500.",
+  "request": {
+    "method": "POST",
+    "path": "/lambdas/profiles",
+    "query": {},
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_raw": "not json"
+  },
+  "response": {
+    "status": 500,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Internal Server Error"
+    }
+  },
+  "captured_from": "hand-authored from lamb2 02a37f5 src/controllers/handlers/profiles-handler.ts, src/controllers/handlers/errorHandler.ts",
+  "captured_at": "2026-11-04T00:00:00Z",
+  "volatile_paths": []
+}
