@@ -16,6 +16,25 @@ BROAD = "tooling/catalyst-test.sh " + SELECTION
 VENDOR = "cargo test --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --lib"
 VENDOR_CHECK = "cargo check --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --all-features --all-targets"
 BEVY = "cargo test --all --profile ci-test --locked -- --test-threads=1"
+TEST_SCRIPT = """set -euo pipefail
+cd "$(dirname "$0")/../services/catalyst"
+logs="${CARGO_TARGET_DIR:-target}/test-logs"
+mkdir -p "$logs"
+cargo test --locked "$@" --no-run --message-format=json-render-diagnostics | python3 -c '
+import json, sys
+for line in sys.stdin:
+    artifact = json.loads(line)
+    if artifact.get("executable") and artifact.get("profile", {}).get("test"):
+        print(artifact["executable"])
+' > "$logs/binaries"
+cores=$(getconf _NPROCESSORS_ONLN)
+xargs -P "${CATALYST_TEST_JOBS:-$(( cores < 16 ? cores : 16 ))}" -I{} sh -c '
+log="$2/$(basename "$1").log"
+"$1" > "$log" 2>&1 || { cat "$log"; exit 1; }
+sed -n "s|^test result|$(basename "$1")|p" "$log"
+' _ {} "$logs" < "$logs/binaries"
+cargo test --locked "$@" --doc
+"""
 
 
 def require(condition, message):
@@ -65,6 +84,13 @@ def validate_runtime_script(script):
     require(compile_lines == [VENDOR_CHECK], "vendor compile gate must check locked all-features/all-targets exactly once")
     sequence = "      python3 tooling/dev-regressions.py\n      " + VENDOR_CHECK + "\n      " + VENDOR + "\n"
     require(logical.count(sequence) == 1, "vendor compile gate must run unconditionally before the default runtime")
+
+
+def validate_test_script(script):
+    # Fixed contract: the script compiles the make selection unfiltered, runs every test
+    # binary without arguments and then the doc-tests. Comment lines are inert.
+    body = "\n".join(line for line in script.splitlines() if line.strip() and not line.lstrip().startswith("#")) + "\n"
+    require(body == TEST_SCRIPT, "catalyst-test.sh must compile the selection unfiltered, run every test binary without arguments and the doc-tests exactly once; update the guard's contract with the script")
 
 
 def validate_bevy_workflow(workflow):
@@ -157,6 +183,7 @@ def main():
         verify_targets(manifest["bevy"], targets)
         return
     validate_runtime_script((ROOT / "tooling/dev-test.sh").read_text())
+    validate_test_script((ROOT / "tooling/catalyst-test.sh").read_text())
     validate_invocation(run(["make", "--no-print-directory", "-n", "catalyst-test"]), os.environ)
     required = manifest["catalyst"]
     if os.name != "nt":

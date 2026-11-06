@@ -143,9 +143,10 @@ class InventoryTests(unittest.TestCase):
             mock.patch.object(guard, "run", side_effect=[guard.BROAD, ""]) as execute,
             mock.patch.object(guard.sys, "argv", ["dev-regressions.py"]),
             mock.patch.dict(guard.os.environ, clear=True),
-            mock.patch.object(Path, "read_text", side_effect=[manifest, ""]),
+            mock.patch.object(Path, "read_text", side_effect=[manifest, "", ""]),
             mock.patch.object(guard, "verify_resolution"),
             mock.patch.object(guard, "validate_runtime_script"),
+            mock.patch.object(guard, "validate_test_script"),
             self.assertRaisesRegex(ValueError, "missing required target: required"),
         ):
             guard.main()
@@ -192,6 +193,19 @@ class InventoryTests(unittest.TestCase):
             with self.subTest(bad=bad[-100:]), self.assertRaises(ValueError):
                 guard.validate_runtime_script(bad)
 
+
+    def test_actual_test_script_rejects_filters_skipped_binaries_and_early_exit(self):
+        script = (ROOT / "tooling/catalyst-test.sh").read_text()
+        guard.validate_test_script(script)
+        guard.validate_test_script(script.replace("# Run the node", "# Runs the node"))
+        for bad in [script.replace('"$@" --no-run', '"$@" --test unrelated --no-run'),
+                    script.replace('"$1" > "$log"', '"$1" --skip required > "$log"'),
+                    script.replace('< "$logs/binaries"', '< <(head -n 1 "$logs/binaries")'),
+                    script.replace('print(artifact["executable"])', 'print(artifact["executable"]) if "comms" not in artifact["executable"] else None'),
+                    script.replace('cargo test --locked "$@" --doc\n', ''),
+                    script.replace("cores=", "exit 0\ncores=")]:
+            with self.subTest(bad=bad[-100:]), self.assertRaisesRegex(ValueError, "catalyst-test.sh"):
+                guard.validate_test_script(bad)
 
     def test_vendor_examples_compile_gate_cannot_be_removed_filtered_or_conditional(self):
         script = (ROOT / "tooling/dev-test.sh").read_text()
