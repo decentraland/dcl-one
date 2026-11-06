@@ -3,8 +3,8 @@
 
 import styles from './Button.module.css'
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'light' | 'outline' | 'accent'
-type Size = 'sm' | 'md' | 'lg' | 'row' | 'card' | 'cardSm' | 'header'
+type Variant = 'primary' | 'secondary' | 'ghost' | 'light' | 'outline' | 'accent' | 'dark' | 'tint'
+type Size = 'sm' | 'md' | 'lg' | 'row' | 'card' | 'cardSm' | 'header' | 'modal'
 
 interface Common {
   variant?: Variant
