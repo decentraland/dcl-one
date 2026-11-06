@@ -54,14 +54,33 @@ pub(super) async fn root(State(st): State<Arc<AppState>>, req: Request) -> Respo
             // has completed gets every reload sent from then on, including one
             // sent before the socket's task first runs.
             let rx = st.reload_tx.subscribe();
-            upgrade.on_upgrade(move |socket| handle_ws(socket, rx))
+            // the texture import's last status, so a client that connects
+            // mid-run or after a run it missed can still offer the reload
+            let first = super::texture_status_frames(&st);
+            upgrade.on_upgrade(move |socket| handle_ws(socket, rx, first))
         }
         Err(e) => e.into_response(),
     }
 }
 
-async fn handle_ws(socket: axum::extract::ws::WebSocket, mut rx: broadcast::Receiver<ReloadFrame>) {
+fn ws_message(frame: ReloadFrame) -> Message {
+    match frame {
+        ReloadFrame::Text(text) => Message::Text(text.into()),
+        ReloadFrame::Binary(bytes) => Message::Binary(bytes.into()),
+    }
+}
+
+async fn handle_ws(
+    socket: axum::extract::ws::WebSocket,
+    mut rx: broadcast::Receiver<ReloadFrame>,
+    first: Vec<ReloadFrame>,
+) {
     let (mut sink, mut stream) = socket.split();
+    for frame in first {
+        if sink.send(ws_message(frame)).await.is_err() {
+            return;
+        }
+    }
     let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(20));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     tracing::info!("scene-update websocket client connected");
@@ -74,11 +93,7 @@ async fn handle_ws(socket: axum::extract::ws::WebSocket, mut rx: broadcast::Rece
             },
             msg = rx.recv() => match msg {
                 Ok(frame) => {
-                    let message = match frame {
-                        ReloadFrame::Text(text) => Message::Text(text.into()),
-                        ReloadFrame::Binary(bytes) => Message::Binary(bytes.into()),
-                    };
-                    if sink.send(message).await.is_err() {
+                    if sink.send(ws_message(frame)).await.is_err() {
                         break;
                     }
                 }
@@ -441,7 +456,9 @@ pub(super) async fn contents(
         tracing::info!(target: "access", "contents <scene-entity-json> 200");
         return Json(scene_entity(&st, &project)).into_response();
     }
-    let Ok(canonical) = dunce::canonicalize(project.root.join(&rel)) else {
+    let source = crate::textures::staged_source(&project.root, &rel)
+        .unwrap_or_else(|| project.root.join(&rel));
+    let Ok(canonical) = dunce::canonicalize(source) else {
         return not_found();
     };
     if !canonical.starts_with(&project.root) {
@@ -647,7 +664,7 @@ fn build_and_cache(st: &AppState, project: &Project) -> (Value, PublishedPaths) 
 pub(super) fn build_scene_entity(project: &Project, machine: &str) -> Value {
     let root = &project.root;
     let rels = match collect_publishable_files(root) {
-        Ok(rels) => rels,
+        Ok(rels) => crate::textures::publishable(root, rels),
         Err(e) => {
             tracing::warn!(
                 "collecting scene files under {} failed ({e:#}); serving an empty scene entity",
@@ -658,9 +675,11 @@ pub(super) fn build_scene_entity(project: &Project, machine: &str) -> Value {
     };
     let tag = root_tag(root, machine);
     let content: Vec<Value> = crate::scene::parallel_map(&rels, |rel| {
+        let source =
+            crate::textures::staged_source(root, rel).unwrap_or_else(|| root.join(rel));
         json!({
             "file": rel,
-            "hash": b64_content_hash_in_root(&tag, rel, &root.join(rel)),
+            "hash": b64_content_hash_in_root(&tag, rel, &source),
         })
     });
     let ts = SystemTime::now()

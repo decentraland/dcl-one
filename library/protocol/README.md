@@ -15,7 +15,9 @@ its `.github`, `.devcontainer` and agent files were left behind. The Rust comms 
 signed challenges. Application-relay message types support a dormant internal implementation;
 public admission cannot negotiate that capability. `WsPeerUpdate.recipients` (rfc5) is the
 scene preview's mini-comms addressing, proposed upstream as `feat/ws-peer-update-recipients`
-(decentraland/protocol #505). The package is marked
+(decentraland/protocol #505). `WsSceneMessage.texture_optimization`
+(`sdk/development`, `TextureOptimization`) is `dcl-scene-cli start`'s background texture import
+status on the preview's live-reload socket; it is not in decentraland/protocol. The package is marked
 `private` until `@dcl/protocol` publishes from here; until then that repository publishes it.
 
 Checks: `make install` (dependencies and the `google/` well-known types), `make buf-lint`,

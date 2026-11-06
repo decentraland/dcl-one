@@ -1,0 +1,21 @@
+# The Basis Universal encoder that `--optimize-textures` runs in-process.
+#
+# The official single-threaded WASI build of the basisu command-line tool,
+# bin/basisu_st.wasm at tag v2_50 of github.com/BinomialLLC/basis_universal
+# (git blob c5592163b2f5f5400cf97afd550a0891bcb94852, 8,416,429 bytes),
+# Apache-2.0: LICENSE.basis_universal and NOTICE.basis_universal beside this
+# file are upstream's LICENSE and NOTICE at that tag.
+#
+# build.rs reads this file, downloads the module into a shared cache, verifies
+# it against the sha256 below, and embeds it. BASISU_EMBED_WASM names an
+# already-downloaded copy instead (offline builds); it is verified the same way.
+#
+# Only this module may be embedded: its sha256 is part of every encoded
+# texture's identity (src/textures/basisu.rs), and the wasm build is used, not a
+# native one, because it encodes byte-identically on every host. Never the
+# multithreaded build (basisu_mt.wasm): its output varies run to run.
+
+version = v2_50
+url = https://raw.githubusercontent.com/BinomialLLC/basis_universal/{version}/bin/basisu_st.wasm
+
+basisu_st.wasm = b42d951b1bf146133578e8c7927ad4a4a857552846a46a3ee33b541b2a06bc7d
