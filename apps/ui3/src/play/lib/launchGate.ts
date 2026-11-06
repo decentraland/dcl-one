@@ -49,6 +49,15 @@ const GATES: Record<string, Gate> = {
       'Fetches every scene and asset from this server instead of the realm’s own. Whoever runs it decides what you see and what runs.',
     read: () => new URLSearchParams(location.search).get('contentServer'),
     isTrusted: isTrustedContentServer
+  },
+  // Swaps scene textures and models for the ones this server lists. Each is checked against the
+  // id the server itself gives it, not against the scene's own file, so the server decides what
+  // those scenes look like. Same rule as the content server.
+  bevyVariants: {
+    warning:
+      'Replaces the textures and models of the scenes you visit with versions from this server. Whoever runs it decides what those scenes look like.',
+    read: () => new URLSearchParams(location.search).get('bevyVariants'),
+    isTrusted: isTrustedContentServer
   }
 }
 

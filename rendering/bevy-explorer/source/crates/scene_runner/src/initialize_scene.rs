@@ -237,6 +237,7 @@ pub(crate) fn load_scene_json(
             None,
             definition.metadata.as_ref().map(|v| v.to_string()),
         );
+        ipfas.ipfs().request_bevy_variants(&definition.id);
 
         let crdt = definition.content.hash("main.crdt").map(|_| {
             ipfas

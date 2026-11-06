@@ -101,6 +101,12 @@ pub struct ClientOptions {
     #[arg(long, value_name = "url", help_heading = SERVICES)]
     pub imposter_source: Option<String>,
 
+    /// Base url of an abgen Bevy variants service (prototype); absent = off. Scene textures and
+    /// models it has GPU-ready variants of load as those variants, each checked against its
+    /// content id; anything else, or any failure, loads the original
+    #[arg(long = "bevy-variants-url", value_name = "url", help_heading = SERVICES)]
+    pub bevy_variants: Option<String>,
+
     /// Benchmark run, unattended: sign in as the local guest (an account of its own, made once
     /// and kept with this install, so its address never changes; a stored account is never used
     /// or replaced), wait until in world, stand at spawn for 90 s of real time while the CSV
@@ -180,6 +186,7 @@ impl EngineRunOptions {
             &mut self.client.system_scene,
             &mut self.client.portables,
             &mut self.client.imposter_source,
+            &mut self.client.bevy_variants,
             &mut self.client.session_id,
             &mut self.client.campaign_anon_user_id,
         ] {

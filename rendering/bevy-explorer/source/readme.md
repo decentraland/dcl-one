@@ -144,6 +144,27 @@ cargo build --release --bin headless --no-default-features --features headless,l
 
 The launch parameters shared with the web build — realm, spawn parcel, ui scene, portables, preview, editor, content server, pulse server, imposter source, base domain, fps logging, gpu bytes per frame — are declared once, in `crates/system_api_types/src/launch_options.rs`: each field is the native `--flag`, the `engine_run` options key and the entry-url query param, and the react page's parameter table is generated from it. Which of those a link may set without a warning is the page's own policy (`react-web/src/lib/launchGate.ts`). Native-only flags (rendering, imposters, debug, the `--builtin-*` ui pieces) live on `DecentralandArguments` in `src/lib.rs`.
 
+### Bevy variants (prototype)
+
+abgen can publish, per scene entity, GPU-ready variants of the scene's textures (BC7, BC1 or BC5 DDS with full mip chains) and models (GLB with Draco decoded and DDS textures embedded). The explorer uses them only when a variants base url is given: `--bevy-variants-url <url>` natively, `?bevyVariants=<url>` on web, or the `bevy_variants_url` field of the config file. Without one nothing changes.
+
+With a base url set:
+
+- For each scene entity it loads, the explorer fetches `{base}/bevy/manifest/{entityId}.json` once per session. A 404 means no variants for that scene. The manifest (schema `v: 1`) maps each original content CID to its variants, each with its own raw-leaf CID (`bafkrei…`).
+- Preview and local scenes ask for no manifest: preview mode, `b64-` entity ids, and scenes served from a loopback or `file://` content server.
+- When a scene's `.png`, `.jpg`, `.jpeg`, `.webp` or `.ktx2` file has a `dds-bc7`, `dds-bc1` or `dds-bc5` variant, or its `.glb` or `.gltf` file has a `glb` variant, and the GPU supports BC textures, the file is read from `{base}/bevy/contents/{variantCid}` instead. The bytes must hash to the variant CID, and are cached under that CID only, never under the original's. The asset keeps its original path: image loaders detect DDS from the bytes, and the glTF loader reads GLB.
+- Any failure falls back to the original for that file: no variant in a supported format, a failed fetch, bytes that do not match the CID, or an image or model that fails to load from the variant. A failed variant is not tried again that session. Five consecutive failed requests to the service turn variants off for the session.
+- Image processing skips assets loaded from a variant, so their bytes are never re-encoded or written over the original's cache entry.
+- The runtime debug panel's "Optimized variants" section, and the `/bevy_variants` console command, show the base url, each scene's manifest state, how many variants were served, and recent fallbacks with their reasons.
+
+On web, a link that sets `?bevyVariants=` to a host outside Decentraland's own deployments stops on the launch gate, as `?contentServer=` does. The variants service decides what those scenes look like. On web the service must also send CORS headers for the explorer's origin.
+
+To try it against a local abgen:
+
+```bash
+just native-release --realm https://realm-provider-ea.decentraland.org/main --position 0,0 --bevy-variants-url http://localhost:5147
+```
+
 ## Testing
 
 ```bash
