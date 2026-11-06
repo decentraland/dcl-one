@@ -68,8 +68,10 @@ pub const MAX_DEPLOY_FILES: usize = 3000;
 pub const MAX_DEPLOY_FILE_BYTES: usize = 100 * 1024 * 1024;
 
 /// The bytes of every file and field value a form may carry (upstream's
-/// `MAX_UPLOAD_TOTAL_SIZE`, 2 GiB there): the proxy's `client_max_body_size
-/// 200m` on the same route, and the old `MAX_DEPLOYMENT_SIZE_BYTES` default.
+/// `MAX_UPLOAD_TOTAL_SIZE`, 2 GiB there): the old `MAX_DEPLOYMENT_SIZE_BYTES`
+/// default. The gateway's body cap on the route (`CONTENT_DEPLOY_CAP` in
+/// `infra/gateway/gateway.py`) sits just above [`max_deployment_body_bytes`];
+/// a gateway test reads these constants.
 pub const MAX_DEPLOYMENT_BYTES: usize = 200 * 1024 * 1024;
 
 /// The most framing a part adds (upstream `MULTIPART_PART_FRAMING_BYTES`):

@@ -45,7 +45,7 @@ docker run --rm --network dcl-one --read-only --cap-drop ALL --security-opt no-n
 - Never trust arbitrary client networks as proxies; a trusted proxy must set `X-Forwarded-For` and `X-Forwarded-Proto`.
 - The gateway overwrites client IP, forwarding, `X-Catalyst-Admin-Gate` and `x-original-path` headers and removes `True-Client-IP`.
 - `/internal/pulse` and `/metrics` are not public; internal callers use the APIs' private address.
-- Limits: bodies 1 MiB (deployments 200, builder 21, reports 11); 30 r/s per client (content 100, deployments 2); `%3F` in paths returns 400.
+- Limits: bodies 1 MiB (content deployments 248, worlds deployments 360, world settings 12, builder 21, reports 11); 30 r/s per client (content 100, deployments 5 with a burst of 200 for content and 4 for worlds); 10 deployment uploads in flight per client, then 429; `%3F` in paths returns 400.
 
 A service subdomain `<sub>.<domain>` reaches the APIs under `/<sub>`, except
 upstream host names served under another prefix: `abcdn` and `abgen-cdn` →
