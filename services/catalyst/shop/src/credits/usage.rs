@@ -385,16 +385,22 @@ pub async fn ensure_cursor(
     Ok(row)
 }
 
+/// Advances the cursor of `contract`'s log. A cursor rebound to another
+/// manager meanwhile is not this pass's: no row matches, and the window's
+/// transaction rolls back.
 pub async fn set_cursor(
     conn: &mut PgConnection,
     chain_id: i64,
+    contract: &str,
     block: i64,
 ) -> Result<(), sqlx::Error> {
     let updated = sqlx::query(
-        "UPDATE credits.usage_index_cursor SET last_block = $2, updated_at = timezone('UTC', now()) WHERE chain_id = $1",
+        "UPDATE credits.usage_index_cursor SET last_block = $2, updated_at = timezone('UTC', now()) \
+         WHERE chain_id = $1 AND contract = $3",
     )
     .bind(chain_id)
     .bind(block)
+    .bind(contract)
     .execute(conn)
     .await?;
     if updated.rows_affected() != 1 {
@@ -444,17 +450,19 @@ pub async fn begin_replay(
 pub async fn mark_folded(
     pool: &PgPool,
     chain_id: i64,
+    contract: &str,
     through: BlockRef,
     now: DateTime<Utc>,
 ) -> Result<bool, sqlx::Error> {
     let updated = sqlx::query(
         "UPDATE credits.usage_index_cursor SET folded_block = last_block, folded_block_time = $3, folded_at = $4 \
-         WHERE chain_id = $1 AND last_block = $2 AND full_replay_started",
+         WHERE chain_id = $1 AND last_block = $2 AND full_replay_started AND contract = $5",
     )
     .bind(chain_id)
     .bind(through.number as i64)
     .bind(through.time)
     .bind(now.naive_utc())
+    .bind(contract)
     .execute(pool)
     .await?;
     Ok(updated.rows_affected() == 1)
@@ -655,7 +663,7 @@ impl UsageIndex {
             }
             let mut tx = self.pool.begin().await?;
             let written = insert_usages(&mut tx, chain_id, &usages).await?;
-            set_cursor(&mut tx, chain_id, upper as i64).await?;
+            set_cursor(&mut tx, chain_id, contract, upper as i64).await?;
             tx.commit().await?;
             outcome.usages_written += written;
             outcome.indexed_to = upper as i64;
@@ -728,9 +736,13 @@ impl UsageIndex {
         let mut row = ensure_cursor(&self.pool, settings, contract).await?;
         if let Some(from) = replay {
             if full.is_none() {
-                begin_replay(&self.pool, settings, contract, from)
+                let written = begin_replay(&self.pool, settings, contract, from)
                     .await
                     .context("beginning the replay")?;
+                anyhow::ensure!(
+                    written,
+                    "the usage cursor was rebound to another manager during the replay"
+                );
                 self.replay_requested.store(true, Ordering::SeqCst);
             }
             row = cursor(&self.pool, settings.chain_id)
@@ -809,9 +821,10 @@ impl UsageIndex {
         } else {
             block_at(&rpc, target).await.context("the target block")?
         };
-        outcome.published = mark_folded(&self.pool, settings.chain_id, through, Utc::now())
-            .await
-            .context("publishing the fold")?;
+        outcome.published =
+            mark_folded(&self.pool, settings.chain_id, contract, through, Utc::now())
+                .await
+                .context("publishing the fold")?;
         if !outcome.published {
             tracing::warn!(
                 chain_id = settings.chain_id,
@@ -833,10 +846,17 @@ impl UsageIndex {
 /// configured the chain time it has folded through (never a pledge whose
 /// expiry the chain has not been read past; `-infinity` before a first
 /// fold). Spliced into the sweep statements with the chain as `$chain`.
+///
+/// The fold only speaks for its own manager's log. A credit signed for
+/// another manager (`credits.authorizations.contract`, kept from before a
+/// manager switch) is bounded by `-infinity`: no sweep releases it, since
+/// nothing reads the chain it could have been used on. It stays held until
+/// it is settled against that manager's log or released by hand.
 pub(crate) fn expiry_bound_sql(now_param: &str, chain_param: &str) -> String {
     format!(
         "LEAST({now_param}, CASE WHEN {chain_param}::bigint IS NULL THEN {now_param} ELSE \
-         COALESCE((SELECT folded_block_time FROM credits.usage_index_cursor WHERE chain_id = {chain_param}::bigint), \
+         COALESCE((SELECT c.folded_block_time FROM credits.usage_index_cursor c WHERE c.chain_id = {chain_param}::bigint \
+                   AND (credits.authorizations.contract IS NULL OR c.contract = credits.authorizations.contract)), \
                   '-infinity'::timestamp) END)"
     )
 }

@@ -727,6 +727,44 @@ async fn the_usage_index_resumes_after_a_kill_folds_each_credit_once_and_gates_t
         "a partial rewind for another manager writes nothing"
     );
 
+    // After the switch, the new manager's fold never releases a credit signed for the
+    // old one: it could have been used on a chain nothing reads any more.
+    sqlx::query(
+        "UPDATE credits.usage_index_cursor SET folded_block = last_block, \
+         folded_block_time = timezone('UTC', now()), folded_at = timezone('UTC', now()) WHERE chain_id = $1",
+    )
+    .bind(chain_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let old_pledge: String = sqlx::query_scalar(
+        "UPDATE credits.authorizations SET expires_at = timezone('UTC', now()) - interval '1 hour' \
+         WHERE address = $1 AND contract = $2 AND status = 'authorized' RETURNING id",
+    )
+    .bind(&w1.address)
+    .bind(&contract)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(credits().expire_stale_authorizations().await.unwrap(), 0);
+    assert_eq!(
+        auth_status(&pool, &old_pledge).await,
+        "authorized",
+        "the old manager's pledge stays held"
+    );
+    sqlx::query("UPDATE credits.authorizations SET contract = $2 WHERE id = $1")
+        .bind(&old_pledge)
+        .bind(new_manager)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        credits().expire_stale_authorizations().await.unwrap(),
+        1,
+        "the same pledge on the indexed manager lapses once folded past its expiry"
+    );
+    assert_eq!(auth_status(&pool, &old_pledge).await, "expired");
+
     db.drop().await;
 }
 
