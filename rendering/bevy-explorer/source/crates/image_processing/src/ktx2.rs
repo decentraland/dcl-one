@@ -133,9 +133,7 @@ mod tests {
     #[test]
     fn ktx2_is_transcoded_and_stashed() {
         let path = AssetPath::from("ktx2_tests/stashed.ktx2");
-        let (dds, format) = transcode_ktx2_image(UASTC_8, Some(&path))
-            .unwrap()
-            .unwrap();
+        let (dds, format) = transcode_ktx2_image(UASTC_8, Some(&path)).unwrap().unwrap();
         assert!(dds.starts_with(DDS_MAGIC));
         assert!(matches!(format, ImageFormat::Dds));
         // the dds the cache write takes is the one bevy decodes
@@ -188,9 +186,17 @@ mod tests {
         assert_eq!(image.asset_usage, RenderAssetUsages::RENDER_WORLD);
         assert!(matches!(image.sampler, ImageSampler::Descriptor(_)));
         let linear = decode(UASTC_8, ImageType::MimeType("image/ktx2"), false).unwrap();
-        assert_eq!(linear.texture_descriptor.format, TextureFormat::Bc7RgbaUnorm);
+        assert_eq!(
+            linear.texture_descriptor.format,
+            TextureFormat::Bc7RgbaUnorm
+        );
         // recognised by its magic when the mime type is missing or wrong
-        assert!(decode(UASTC_8, ImageType::MimeType("application/octet-stream"), true).is_ok());
+        assert!(decode(
+            UASTC_8,
+            ImageType::MimeType("application/octet-stream"),
+            true
+        )
+        .is_ok());
         // a ktx2 the transcoder rejects goes to bevy's decoder, which can't read it either
         assert!(decode(b"not a ktx2", ImageType::MimeType("image/ktx2"), true).is_err());
     }
