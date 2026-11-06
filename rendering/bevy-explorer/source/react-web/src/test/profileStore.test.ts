@@ -7,6 +7,7 @@ import {
   requestPassport,
   resetProfileStore,
   seedProfiles,
+  setOwnProfile,
   setProfileRequester,
   subscribeProfile,
   useProfile
@@ -137,6 +138,8 @@ describe('profile store: your own edit rejected by the deploy', () => {
     version,
     equippedWearables: [worn]
   })
+  // the session tells the store whose profile is the local player's
+  beforeEach(() => setOwnProfile('0xme'))
 
   it('re-reads the lower version, and what the engine put back reaches the passport and profile card', () => {
     const { result } = renderHook(() => useProfile('0xme'))
@@ -210,6 +213,27 @@ describe('profile store: your own edit rejected by the deploy', () => {
     expect(result.current).toMatchObject({ version: 3, equippedWearables: [hat] })
   })
 
+  it('keeps your own entry, and its revert, through the idle sweep', () => {
+    vi.useFakeTimers()
+    try {
+      const off = subscribeProfile('0xme', vi.fn())
+      act(() => {
+        receiveProfile('0xme', mine(4, cap))
+        profileChanged('0xme', 4)
+        profileChanged('0xme', 3)
+        receiveProfile('0xme', mine(3, hat))
+      })
+      off()
+      // a passport read of the edit outlasts the idle time and the sweep
+      vi.advanceTimersByTime(200_000)
+      seedProfiles([]) // any store call sweeps
+      receiveProfile('0xme', mine(4, cap))
+      expect(peekProfile('0xme')).toMatchObject({ version: 3, equippedWearables: [hat] })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('takes the edit again once the engine announces it after a revert', () => {
     const { result } = renderHook(() => useProfile('0xme'))
     act(() => {
@@ -258,21 +282,25 @@ describe('profile store: your own edit rejected by the deploy', () => {
     expect(result.current).toMatchObject({ version: 4, name: 'Alicia' })
   })
 
-  it('a dropped read still settles its request, so the entry goes once nobody shows it', () => {
-    vi.useFakeTimers()
-    try {
-      const off = subscribeProfile('0xabc', vi.fn())
-      // another player's copy reaches the engine's cache before their avatar announces it, so the
-      // late announcement reads as a revert of the copy held, and the re-read it asks for is dropped
+  // another player's profile can reach the engine's cache before their avatar announces an older
+  // version; only the local player's own failed deploy puts a version back
+  it('does not take another player\'s late, lower announcement for a revert', () => {
+    const { result } = renderHook(() => useProfile('0xabc'))
+    act(() => {
       receiveProfile('0xabc', full({ version: 4 }))
       profileChanged('0xabc', 3)
-      receiveProfile('0xabc', full({ version: 4 }))
-      off()
-      vi.advanceTimersByTime(200_000) // past the idle time and the sweep interval
-      seedProfiles([]) // any store call sweeps
-      expect(peekProfile('0xabc')).toBeUndefined()
-    } finally {
-      vi.useRealTimers()
-    }
+      requestPassport('0xabc')
+      receiveProfile('0xabc', full({ version: 4, badges: [{ id: 'b', name: 'Badge' }] }))
+    })
+    expect(result.current).toMatchObject({ version: 4, badges: [{ id: 'b', name: 'Badge' }] })
+  })
+
+  it('a later reader gets another player\'s copy after their late, lower announcement', () => {
+    // nobody shows them when the older version is announced: the copy is forgotten
+    receiveProfile('0xabc', full({ version: 4 }))
+    profileChanged('0xabc', 3)
+    const { result } = renderHook(() => useProfile('0xabc'))
+    act(() => receiveProfile('0xabc', full({ version: 4 })))
+    expect(result.current).toMatchObject({ version: 4 })
   })
 })

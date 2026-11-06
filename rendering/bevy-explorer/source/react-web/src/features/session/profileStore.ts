@@ -39,9 +39,11 @@ interface Entry {
   /** The version the engine last announced (`profileChanged`): the engine already holds it, so a reply
    *  below it was read before the announcement. Kept when the copy is forgotten. */
   announced: number | undefined
-  /** Set when the engine announces a version below the last one it announced, or, before any, below
-   *  the copy held: it put an earlier profile back (the local player's edit failed to deploy). A copy
-   *  above it was read before that, so it is not taken until the engine announces a newer version. */
+  /** The local player's profile only: set when the engine announces a version below the last one it
+   *  announced, or, before any, below the copy held. It put an earlier profile back (an edit failed
+   *  to deploy), so a copy above it was read before that, and is not taken until the engine announces
+   *  a newer version. Another player's profile can reach the engine's cache before their avatar
+   *  announces an older version, which is no revert. */
   revertedTo: number | undefined
   pending: boolean
   subscribers: number
@@ -62,6 +64,8 @@ const entries = new Map<string, Entry>()
 const listeners = new Map<string, Set<() => void>>()
 let request: (address: string, extras: boolean) => void = () => {}
 let lastSweep = 0
+/** The local player's address, the one profile the engine can put back to an earlier version. */
+let own: string | undefined
 
 /** Only wallet addresses are worth asking the engine about — not the mock's 'You', nor a system line's ''. */
 const isAddress = (key: string): boolean => key.startsWith('0x')
@@ -92,7 +96,9 @@ function sweep(now: number): void {
   if (now - lastSweep < SWEEP_EVERY) return
   lastSweep = now
   for (const [key, e] of entries) {
-    if (e.subscribers === 0 && !e.pending && now - e.idleSince > IDLE_TTL) {
+    // The local player's entry stays: it carries what was announced, which a read still in flight
+    // when the entry would go (a hung passport read, say) is checked against.
+    if (key !== own && e.subscribers === 0 && !e.pending && now - e.idleSince > IDLE_TTL) {
       entries.delete(key)
       listeners.delete(key)
     }
@@ -236,7 +242,7 @@ export function profileChanged(address: string, version: number): void {
   const key = profileKey(address)
   const e = entries.get(key)
   if (e == null) return
-  const last = e.announced ?? (e.full ? e.profile?.version : undefined)
+  const last = key === own ? (e.announced ?? (e.full ? e.profile?.version : undefined)) : undefined
   if (last != null && version < last) e.revertedTo = version
   else if (e.revertedTo != null && version > e.revertedTo) e.revertedTo = undefined
   e.announced = version
@@ -250,14 +256,19 @@ export function profileChanged(address: string, version: number): void {
   request(key, e.extras)
 }
 
-/** The account signed out. What the engine announced for it belonged to that session (an edit whose
- *  revert it never got to announce, say), so the next session, maybe the same account, starts without
- *  it. */
-export function profileSignedOut(address: string): void {
-  const e = entries.get(profileKey(address))
-  if (e == null) return
-  e.announced = undefined
-  e.revertedTo = undefined
+/** Whose profile is the local player's: the session's own profile, or null once it signs out. What
+ *  the engine announced for an outgoing account belonged to that session (an edit whose revert it
+ *  never got to announce, say), so the next session, maybe the same account, starts without it. */
+export function setOwnProfile(address: string | null): void {
+  const next = address == null ? undefined : profileKey(address)
+  if (own != null && own !== next) {
+    const e = entries.get(own)
+    if (e != null) {
+      e.announced = undefined
+      e.revertedTo = undefined
+    }
+  }
+  own = next
 }
 
 /** Tests: back to empty, requests to nowhere. */
@@ -266,6 +277,7 @@ export function resetProfileStore(): void {
   listeners.clear()
   request = () => {}
   lastSweep = 0
+  own = undefined
 }
 
 /** A person's name colour from what the store knows of them (chosen colour, claimed name). */
