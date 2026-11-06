@@ -7,6 +7,7 @@ import subprocess
 import os
 import re
 import shlex
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -39,8 +40,10 @@ def build_run(pr):
     }
 
 
-def cdn_responses():
-    identity = io.BytesIO(json.dumps({'revision': 'a' * 40, 'run': 123, 'attempt': 1}).encode())
+def cdn_responses(attempt=1):
+    identity = io.BytesIO(
+        json.dumps({'revision': 'a' * 40, 'run': 123, 'attempt': attempt}).encode()
+    )
     html = io.BytesIO(b'<html><script src="./assets/main-Abc123.js"></script></html>')
     html.status = 200
     html.headers = {'Content-Type': 'text/html'}
@@ -64,7 +67,226 @@ def cdn_event():
     }
 
 
+class PreviewGitHub:
+    """External GitHub boundary with real resolve/report code above it."""
+
+    def __init__(self):
+        self.pr = review_pr()
+        self.run = {
+            **build_run(self.pr),
+            'run_attempt': 2,
+            'html_url': 'https://github.com/example/one/actions/runs/123',
+        }
+        self.comments = []
+        self.writes = []
+        self.run_reads = 0
+        self.supersede_on_read = None
+
+    def request(self, path, *, method='GET', body=None, **kwargs):
+        if method in ('POST', 'PATCH'):
+            self.writes.append(body['body'])
+            self.comments[:] = [
+                {'id': 5, 'user': {'login': 'github-actions[bot]'}, 'body': body['body']}
+            ]
+            return {}
+        if path.endswith('/actions/runs/123'):
+            self.run_reads += 1
+            if self.run_reads == self.supersede_on_read:
+                self.run = {**self.run, 'run_attempt': 3}
+            return self.run
+        if path.endswith('/pulls/9'):
+            return self.pr
+        if '/actions/runs/123/jobs?' in path:
+            return {'jobs': [{'name': 'UI reviewer', 'conclusion': 'success'}]}
+        if '/issues/9/comments?' in path:
+            return self.comments
+        if '/actions/workflows/web-previews.yml/runs?' in path:
+            return [{'id': 123, 'pull_requests': [self.pr]}]
+        raise AssertionError(f'Unexpected GitHub request: {method} {path}')
+
+
 class WebPreviewTests(unittest.TestCase):
+    def test_workflow_reports_successful_uploads_and_keeps_other_events_out(self):
+        workflow = (
+            Path(__file__).parents[2] / '.github/workflows/web-previews-publish.yml'
+        ).read_text()
+        jobs = dict(
+            re.findall(r'(?ms)^  (\w+):\n(.*?)(?=^  \w+:|\Z)', workflow.split('jobs:\n', 1)[1])
+        )
+        job = jobs['report']
+        guard = re.search(r'^    if: \$\{\{ (.+) \}\}$', job, re.M).group(1)
+        result = re.search(r'^          PUBLICATION_RESULT: \$\{\{ (.+) \}\}$', job, re.M).group(1)
+        for event, cancelled, enabled, reviewer, eligible, expected in (
+            ('pull_request', False, 'true', 'success', 'true', 'uploading'),
+            ('pull_request', False, 'true', 'failure', 'true', 'failure'),
+            ('pull_request', False, 'true', 'skipped', 'true', 'not eligible for publication'),
+            (
+                'pull_request',
+                False,
+                'false',
+                'success',
+                'true',
+                'disabled pending CDN base verification',
+            ),
+            ('pull_request', False, 'true', 'success', 'false', 'not eligible for publication'),
+            ('', False, 'true', 'success', 'true', None),
+            ('pull_request', True, 'true', 'success', 'true', None),
+        ):
+            with self.subTest(
+                event=event,
+                cancelled=cancelled,
+                enabled=enabled,
+                reviewer=reviewer,
+                eligible=eligible,
+            ):
+                context = {
+                    'github': SimpleNamespace(
+                        event=SimpleNamespace(workflow_run=SimpleNamespace(event=event))
+                    ),
+                    'needs': SimpleNamespace(
+                        source=SimpleNamespace(
+                            result='success', outputs=SimpleNamespace(publish=eligible)
+                        ),
+                        reviewer=SimpleNamespace(result=reviewer),
+                    ),
+                    'vars': SimpleNamespace(WEB_PREVIEW_REVIEWER_ENABLED=enabled),
+                    'cancelled': lambda: cancelled,
+                }
+
+                def evaluate(expression):
+                    expression = (
+                        expression.replace('&&', 'and')
+                        .replace('||', 'or')
+                        .replace('!cancelled()', 'not cancelled()')
+                    )
+                    return eval(expression, {'__builtins__': {}}, context)
+
+                if expected is None:
+                    self.assertFalse(evaluate(guard))
+                    continue
+                self.assertTrue(evaluate(guard))
+                state = evaluate(result)
+                self.assertEqual(state, expected)
+                if state == 'uploading':
+                    github = PreviewGitHub()
+                    with patch.object(preview, 'api', side_effect=github.request):
+                        preview.report('example/one', 123, '', state, expected_attempt=2)
+                    self.assertIn('Upload in progress', github.comments[0]['body'])
+                    self.assertIn(
+                        '/actions/workflows/web-previews-publish.yml', github.comments[0]['body']
+                    )
+
+    def test_publication_and_completion_use_the_workflow_commit_instead_of_a_moving_ref(self):
+        workflow = (
+            Path(__file__).parents[2] / '.github/workflows/web-previews-publish.yml'
+        ).read_text()
+        jobs = dict(
+            re.findall(r'(?ms)^  (\w+):\n(.*?)(?=^  \w+:|\Z)', workflow.split('jobs:\n', 1)[1])
+        )
+        github = SimpleNamespace(
+            workflow_sha='b' * 40,
+            event=SimpleNamespace(repository=SimpleNamespace(default_branch='main')),
+        )
+        for name in ('reviewer', 'cdn'):
+            with self.subTest(job=name):
+                ref = re.search(r'^          ref: \$\{\{ (.+) \}\}$', jobs[name], re.M).group(1)
+                self.assertEqual(eval(ref, {'__builtins__': {}}, {'github': github}), 'b' * 40)
+
+    def test_completion_retries_the_initial_receipt_and_posts_the_real_attempt(self):
+        github = PreviewGitHub()
+        responses = [
+            preview.HTTPError('https://cdn.example', 503, 'temporary', {}, None),
+            cdn_responses(attempt=2)[0],
+            *cdn_responses(attempt=2),
+        ]
+        with (
+            patch.object(preview, 'urlopen', side_effect=responses),
+            patch.object(preview, 'api', side_effect=github.request),
+            patch.object(preview.time, 'sleep') as sleep,
+        ):
+            preview.complete_cdn('example/one', cdn_event())
+        self.assertEqual(len(github.writes), 1)
+        self.assertIn('[Preview](https://cdn.decentraland.org/', github.writes[0])
+        sleep.assert_called_once_with(5)
+
+    def test_completion_retries_a_transient_resource_error_before_posting(self):
+        github = PreviewGitHub()
+        responses = [
+            cdn_responses(attempt=2)[0],
+            *cdn_responses(attempt=2)[:2],
+            preview.HTTPError('https://cdn.example', 503, 'temporary', {}, None),
+            *cdn_responses(attempt=2),
+        ]
+        with (
+            patch.object(preview, 'urlopen', side_effect=responses),
+            patch.object(preview, 'api', side_effect=github.request),
+            patch.object(preview.time, 'sleep') as sleep,
+        ):
+            preview.complete_cdn('example/one', cdn_event())
+        self.assertEqual(len(github.writes), 1)
+        self.assertIn('[Preview](', github.writes[0])
+        sleep.assert_called_once_with(5)
+
+    def test_an_unavailable_initial_receipt_exhausts_one_minute_without_posting(self):
+        clock = [0]
+        github = PreviewGitHub()
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        def unavailable(*args, **kwargs):
+            raise preview.HTTPError('https://cdn.example', 503, 'temporary', {}, None)
+
+        with (
+            patch.object(preview, 'urlopen', side_effect=unavailable),
+            patch.object(preview, 'api', side_effect=github.request),
+            patch.object(preview.time, 'monotonic', side_effect=lambda: clock[0]),
+            patch.object(preview.time, 'sleep', side_effect=sleep),
+        ):
+            with self.assertRaises(TimeoutError):
+                preview.complete_cdn('example/one', cdn_event())
+        self.assertEqual(clock[0], 60)
+        self.assertEqual(github.writes, [])
+
+    def test_late_upload_progress_preserves_the_verified_link_for_the_same_attempt(self):
+        github = PreviewGitHub()
+        with (
+            patch.object(preview, 'urlopen', side_effect=[cdn_responses(2)[0], *cdn_responses(2)]),
+            patch.object(preview, 'api', side_effect=github.request),
+        ):
+            preview.complete_cdn('example/one', cdn_event())
+            preview.report('example/one', 123, '', 'uploading', expected_attempt=2)
+        self.assertEqual(len(github.writes), 1)
+        self.assertIn('[Preview](', github.comments[0]['body'])
+
+    def test_new_attempt_upload_progress_replaces_the_previous_verified_link(self):
+        github = PreviewGitHub()
+        with (
+            patch.object(preview, 'urlopen', side_effect=[cdn_responses(2)[0], *cdn_responses(2)]),
+            patch.object(preview, 'api', side_effect=github.request),
+        ):
+            preview.complete_cdn('example/one', cdn_event())
+            github.run = {**github.run, 'run_attempt': 3}
+            preview.report('example/one', 123, '', 'uploading', expected_attempt=3)
+        self.assertEqual(len(github.writes), 2)
+        self.assertNotIn('[Preview](', github.comments[0]['body'])
+        self.assertIn('Upload in progress', github.comments[0]['body'])
+        self.assertIn('6-10 minutes', github.comments[0]['body'])
+        self.assertIn(
+            'https://github.com/example/one/actions/workflows/web-previews-publish.yml',
+            github.comments[0]['body'],
+        )
+
+    def test_completion_rechecks_the_real_source_attempt_immediately_before_writing(self):
+        github = PreviewGitHub()
+        github.supersede_on_read = 3
+        with (
+            patch.object(preview, 'urlopen', side_effect=[cdn_responses(2)[0], *cdn_responses(2)]),
+            patch.object(preview, 'api', side_effect=github.request),
+        ):
+            preview.complete_cdn('example/one', cdn_event())
+        self.assertEqual(github.writes, [])
+
     def test_cdn_completion_cli_uses_the_event_without_a_source_run_environment(self):
         event = cdn_event()
         with tempfile.TemporaryDirectory() as directory:
@@ -84,7 +306,7 @@ class WebPreviewTests(unittest.TestCase):
 
     def test_all_cdn_requests_send_the_preview_user_agent(self):
         with patch.object(preview, 'urlopen', side_effect=cdn_responses()) as fetch:
-            preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, timeout=0)
+            preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, timeout=0, attempt=1)
         self.assertEqual(fetch.call_count, 4)
         for call in fetch.call_args_list:
             self.assertIsInstance(call.args[0], preview.Request)
@@ -155,15 +377,27 @@ class WebPreviewTests(unittest.TestCase):
         pr = review_pr()
         run = {**build_run(pr), 'run_attempt': 1}
         source = {'revision': 'a' * 40, 'run': 123, 'attempt': 1}
-        failed = [
-            io.BytesIO(json.dumps(source).encode()),
-            *cdn_responses()[:2],
-            preview.HTTPError('https://cdn.example', 404, 'propagating', {}, None),
-        ]
+        failed = iter(
+            [
+                io.BytesIO(json.dumps(source).encode()),
+                *cdn_responses()[:2],
+                preview.HTTPError('https://cdn.example', 404, 'propagating', {}, None),
+            ]
+        )
+        clock = [0]
+
+        def fetch_failed(*args, **kwargs):
+            response = next(failed)
+            if isinstance(response, Exception):
+                clock[0] = 60
+                raise response
+            return response
+
         with (
-            patch.object(preview, 'urlopen', side_effect=failed),
+            patch.object(preview, 'urlopen', side_effect=fetch_failed),
             patch.object(preview, 'api', side_effect=[run, pr]),
             patch.object(preview, 'report') as report,
+            patch.object(preview.time, 'monotonic', side_effect=lambda: clock[0]),
         ):
             with self.assertRaises(TimeoutError):
                 preview.complete_cdn('example/one', event)
@@ -303,7 +537,7 @@ class WebPreviewTests(unittest.TestCase):
             (source / 'dcl-ui-review/index.html').write_text('<html></html>')
             (source / 'assets').mkdir()
             (source / 'assets/main.js').write_text('console.log("review")')
-            preview.package_reviewer(source, target, 'a' * 40, 123)
+            preview.package_reviewer(source, target, 'a' * 40, 123, 1)
             metadata = json.loads((target / 'package.json').read_text())
             self.assertEqual(metadata['name'], '@dcl-regenesislabs/dcl-one-ui-review')
             self.assertEqual(
@@ -351,14 +585,14 @@ class WebPreviewTests(unittest.TestCase):
                 (root / 'input/dcl-ui-review/index.html').write_text('ok')
                 (root / 'input' / name).write_text('untrusted')
                 with self.assertRaises(ValueError):
-                    preview.package_reviewer(root / 'input', root / 'output', 'a' * 40, 123)
+                    preview.package_reviewer(root / 'input', root / 'output', 'a' * 40, 123, 1)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'input/dcl-ui-review').mkdir(parents=True)
             (root / 'input/dcl-ui-review/index.html').write_text('ok')
             (root / 'input/link.js').symlink_to('/etc/passwd')
             with self.assertRaises(ValueError):
-                preview.package_reviewer(root / 'input', root / 'output', 'a' * 40, 123)
+                preview.package_reviewer(root / 'input', root / 'output', 'a' * 40, 123, 1)
 
     def test_static_package_requires_the_reviewer_entry_and_valid_source_identity(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -366,23 +600,23 @@ class WebPreviewTests(unittest.TestCase):
             source = root / 'input'
             source.mkdir()
             with self.assertRaises(ValueError):
-                preview.package_reviewer(source, root / 'output', 'a' * 40, 123)
+                preview.package_reviewer(source, root / 'output', 'a' * 40, 123, 1)
             (source / 'dcl-ui-review').mkdir()
             (source / 'dcl-ui-review/index.html').write_text('ok')
             for sha, run in [('bad', 123), ('a' * 40, 0)]:
                 with self.subTest(sha=sha, run=run), self.assertRaises(ValueError):
-                    preview.package_reviewer(source, root / 'output', sha, run)
+                    preview.package_reviewer(source, root / 'output', sha, run, 1)
 
     def test_cdn_requires_the_expected_source_build(self):
         response = io.BytesIO(json.dumps({'revision': 'b' * 40, 'run': 123}).encode())
         with patch.object(preview, 'urlopen', return_value=response):
             with self.assertRaisesRegex(ValueError, 'different source'):
-                preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, timeout=0)
+                preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, timeout=0, attempt=1)
 
     def test_cdn_checks_the_html_entry_before_returning_a_link(self):
         with patch.object(preview, 'urlopen', side_effect=cdn_responses()) as fetch:
             self.assertEqual(
-                preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, timeout=0),
+                preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, timeout=0, attempt=1),
                 'https://cdn.decentraland.org/@dcl-regenesislabs/dcl-one-ui-review/'
                 '0.1.0-123.commit-abcdef0/dcl-ui-review/index.html',
             )
@@ -402,7 +636,7 @@ class WebPreviewTests(unittest.TestCase):
         html.headers = {'Content-Type': 'application/json'}
         with patch.object(preview, 'urlopen', side_effect=[identity, html]):
             with self.assertRaises(TimeoutError):
-                preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, timeout=0)
+                preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, timeout=0, attempt=1)
         for version in ['../other', '0.1.0-123.commit-abcdef0\n', 'latest']:
             with self.subTest(version=version), self.assertRaises(ValueError):
                 preview.cdn_url(version)
@@ -477,9 +711,9 @@ class WebPreviewTests(unittest.TestCase):
                     patch.object(preview.time, 'sleep') as sleep,
                 ):
                     self.assertTrue(
-                        preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123).endswith(
-                            'index.html'
-                        )
+                        preview.verify_cdn(
+                            '0.1.0-123.commit-abcdef0', 'a' * 40, 123, attempt=1
+                        ).endswith('index.html')
                     )
                     sleep.assert_called_once_with(5)
 
@@ -561,7 +795,7 @@ class WebPreviewTests(unittest.TestCase):
             patch.object(preview, 'urlopen', side_effect=responses),
             self.assertRaises(TimeoutError),
         ):
-            preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, timeout=0)
+            preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, timeout=0, attempt=1)
 
     def test_cdn_retries_missing_fidelity_data(self):
         failed = cdn_responses()[:3] + [
@@ -571,7 +805,7 @@ class WebPreviewTests(unittest.TestCase):
             patch.object(preview, 'urlopen', side_effect=failed + cdn_responses()),
             patch.object(preview.time, 'sleep') as sleep,
         ):
-            preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123)
+            preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, attempt=1)
             sleep.assert_called_once_with(5)
 
     def test_workflow_key_guard_cli_scans_artifacts_and_rejects_secrets(self):
@@ -1222,9 +1456,9 @@ class WebPreviewTests(unittest.TestCase):
                 patch.object(preview.time, 'sleep') as sleep,
             ):
                 self.assertTrue(
-                    preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123).endswith(
-                        'index.html'
-                    )
+                    preview.verify_cdn(
+                        '0.1.0-123.commit-abcdef0', 'a' * 40, 123, attempt=1
+                    ).endswith('index.html')
                 )
                 sleep.assert_called_once_with(5)
 
@@ -1238,7 +1472,7 @@ class WebPreviewTests(unittest.TestCase):
             patch.object(preview.time, 'sleep') as sleep,
         ):
             with self.assertRaisesRegex(ValueError, 'escapes'):
-                preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123)
+                preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, attempt=1)
             sleep.assert_not_called()
 
     def test_cancelled_or_queued_newer_runs_do_not_block_a_successful_report(self):
@@ -1298,13 +1532,11 @@ class WebPreviewTests(unittest.TestCase):
         pr = review_pr()
         run = {**build_run(pr), 'run_attempt': 2}
         with (
-            patch.dict(os.environ, {'SOURCE_RUN_ATTEMPT': '1'}),
             patch.object(preview, 'api', return_value=run) as request,
         ):
             self.assertEqual(preview.resolve('example/one', 123, expected_attempt=1), (run, None))
             request.assert_called_once()
         with (
-            patch.dict(os.environ, {'SOURCE_RUN_ATTEMPT': '2'}),
             patch.object(preview, 'api', side_effect=[run, pr]),
         ):
             self.assertEqual(preview.resolve('example/one', 123, expected_attempt=2), (run, pr))
