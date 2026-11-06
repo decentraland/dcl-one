@@ -31,7 +31,7 @@ import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot
 import { dispatchCancelLayer } from '../../lib/cancelLayers'
 import { isInputLocked, subscribeInputLock } from '../../lib/inputLock'
 import { applyProfileEdit } from '../../engine/profileEdit'
-import { peekProfile, profileChanged, receiveProfile, seedProfiles, setProfileRequester, updateProfile } from './profileStore'
+import { peekProfile, profileChanged, profileSignedOut, receiveProfile, seedProfiles, setProfileRequester, updateProfile } from './profileStore'
 import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
 import { getCursor } from '../pointer/cursorStore'
 import { openProfileCard } from '../profileCard/ProfileCard'
@@ -2946,6 +2946,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     // Backpack look is dropped rather than committed after the engine has let the account go.
     backpackWasOpen.current = false
     profileRevertRef.current = null
+    if (meRef.current != null) profileSignedOut(meRef.current.address)
     setProfile(null)
     setPrevUserId(null)
     setOwnedNames([])

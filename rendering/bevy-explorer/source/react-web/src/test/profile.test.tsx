@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { act } from '@testing-library/react'
+import { act, waitFor } from '@testing-library/react'
 import type { Profile } from '../engine/protocol'
 import { renderSession, enterAsGuest } from './harness'
 import { peekProfile, requestPassport, subscribeProfile } from '../features/session/profileStore'
@@ -90,6 +90,23 @@ describe('profile domain', () => {
     // the session's own copy goes back either way
     expect(shown).toEqual(['gm from the beach', 'hi', 'hi'])
     expect(h.session().profile.data?.description).toBe('hi')
+  })
+
+  it('a sign-out leaves no announced version behind to hold back the next session\'s profile', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile: { ...profile, version: 3 } })
+    // a chat line of yours keeps your profile shown
+    subscribeProfile('0xme', () => {})
+    // a Backpack edit is announced and read, and the account signs out before its deploy result
+    h.driver.emit({ kind: 'profileChanged', address: '0xme', version: 4 })
+    h.driver.emit({ kind: 'userProfile', address: '0xme', profile: { ...profile, version: 4, description: 'edited' } })
+    act(() => h.session().logout())
+    await waitFor(() => expect(h.session().phase).toBe('login'))
+    // the same account signs in again, and the engine loads the version the failed deploy left
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile: { ...profile, version: 3 } })
+    expect(peekProfile('0xme')).toMatchObject({ version: 3, description: 'hi' })
   })
 
   it('keeps a successful edit and holds no error', async () => {

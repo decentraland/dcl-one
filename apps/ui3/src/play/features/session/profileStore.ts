@@ -250,6 +250,16 @@ export function profileChanged(address: string, version: number): void {
   request(key, e.extras)
 }
 
+/** The account signed out. What the engine announced for it belonged to that session (an edit whose
+ *  revert it never got to announce, say), so the next session, maybe the same account, starts without
+ *  it. */
+export function profileSignedOut(address: string): void {
+  const e = entries.get(profileKey(address))
+  if (e == null) return
+  e.announced = undefined
+  e.revertedTo = undefined
+}
+
 /** Tests: back to empty, requests to nowhere. */
 export function resetProfileStore(): void {
   entries.clear()
