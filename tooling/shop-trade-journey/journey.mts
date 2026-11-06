@@ -220,7 +220,10 @@ async function trade(seller: Actor, buyer: Actor, s: Funds, b: Funds, token: { c
     type Order = { tradeId?: string | null; owner?: string };
     const tokenOrder = async (): Promise<Order | null> => {
       const res = await fetch(`${sites}/shop-api/v1/nfts?contractAddress=${token.contract}&tokenId=${token.tokenId}`);
-      if (!res.ok) throw new Error(`/v1/nfts answered ${res.status}`);
+      if (!res.ok) {
+        await res.body?.cancel();
+        throw new Error(`/v1/nfts answered ${res.status}`);
+      }
       const body = (await res.json()) as { data?: { order?: Order | null }[] };
       if (!body.data?.length) throw new Error("/v1/nfts does not know the token");
       return body.data[0]!.order ?? null;

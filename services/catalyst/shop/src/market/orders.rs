@@ -252,7 +252,7 @@ fn trade_row_order(r: &sqlx::postgres::PgRow) -> Order {
 pub async fn open_trade_orders(
     state: &MarketplaceState,
     wanted: &[(String, String, String, String)],
-) -> Result<std::collections::HashMap<(String, String), Order>, ApiError> {
+) -> Result<std::collections::HashMap<(String, String, String), Order>, ApiError> {
     let mut out = std::collections::HashMap::new();
     if wanted.is_empty() {
         return Ok(out);
@@ -290,6 +290,7 @@ pub async fn open_trade_orders(
         let order = trade_row_order(r);
         out.insert(
             (
+                order.network.db_name().to_string(),
                 order.contract_address.clone(),
                 order.token_id.clone().unwrap_or_default(),
             ),

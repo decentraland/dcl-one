@@ -1185,7 +1185,11 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         .await
         .unwrap();
     let order = listed
-        .get(&(c_nft.to_ascii_lowercase(), resold_token.clone()))
+        .get(&(
+            "matic".to_string(),
+            c_nft.to_ascii_lowercase(),
+            resold_token.clone(),
+        ))
         .expect("the owner's open listing");
     assert_eq!(
         (order.id.as_str(), order.trade_id.as_deref()),
