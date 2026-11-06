@@ -496,9 +496,13 @@ class DevTest(unittest.TestCase):
     def test_the_testnet_profile_settles_credits_on_amoy(self):
         env = dev.runtime_env({**self.config, 'profile': 'testnet'})
         mirror = dev.runtime_env({**self.config, 'profile': 'mirror'})
-        self.assertEqual(env['CREDITS_MANAGER_CONTRACT'], '0x8052a560e6e6ac86eeb7e711a4497f639b322fb3')
+        # dcl-one's own manager: the settlement gate refuses the shared upstream one (0x8052…2fb3).
+        self.assertEqual(env['CREDITS_MANAGER_CONTRACT'], '0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c')
+        self.assertNotEqual(env['CREDITS_MANAGER_CONTRACT'], '0x8052a560e6e6ac86eeb7e711a4497f639b322fb3')
+        # The Sites build trusts the same manager.
+        self.assertEqual(env['VITE_SHOP_CREDITS_MANAGER'], env['CREDITS_MANAGER_CONTRACT'])
         self.assertEqual((env['CREDITS_USAGE_INDEX_ENABLED'], env['CREDITS_MOCK_CARD']), ('true', 'true'))
-        for key in ('CREDITS_MANAGER_CONTRACT', 'CREDITS_MOCK_CARD', 'CREDITS_SIGNER_KEY_FILE'):
+        for key in ('CREDITS_MANAGER_CONTRACT', 'VITE_SHOP_CREDITS_MANAGER', 'CREDITS_MOCK_CARD', 'CREDITS_SIGNER_KEY_FILE'):
             self.assertNotIn(key, mirror, key)
         # Without a signer key in the stack's state, nothing signs credits on chain.
         self.assertEqual(env['CREDITS_ONCHAIN_AUTHORIZE_ENABLED'], 'false')
