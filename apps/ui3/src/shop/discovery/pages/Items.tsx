@@ -3,7 +3,7 @@
 //       marketplace@f3956826:webapp/src/components/Routes/Routes.tsx (`/browse`), webapp/src/modules/item/actions.ts (FETCH_ITEMS_REQUEST)
 // Licence of the Marketplace parts: Apache-2.0, Copyright 2020 Metaverse Holdings Ltd.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router";
 
 import Button from "../../../atoms/Button";
@@ -13,6 +13,7 @@ import BrowseLayout from "../components/BrowseLayout";
 import FilterBar, { RARITIES, type FilterChip } from "../components/FilterBar";
 import Filters, { type FilterStatus } from "../components/Filters";
 import IndexNotice from "../components/IndexNotice";
+import { useCollectionName, useCreatorNames } from "../components/PickerFilters";
 import LoadMore from "../components/LoadMore";
 import SkeletonCards from "../components/SkeletonCards";
 import { indexUnavailable, type IndexFreshness } from "../freshness";
@@ -20,7 +21,7 @@ import { shopFlags } from "../flags";
 import { useListingsFreshness, useScrollTopOnChange, useSeo, useUrlFilters } from "../hooks";
 import { t } from "../intl";
 import type { CatalogItem } from "../lib/catalogItem";
-import { dealsRequestedIn, defaultSortFor, itemsFilterDefaults, itemsGrid, itemsQuery } from "../lib/itemsGrid";
+import { dealsRequestedIn, defaultSortFor, emoteFilterBindings, ITEMS_PAGE_SIZE, itemsFilterDefaults, itemsGrid, itemsQuery } from "../lib/itemsGrid";
 import { listingKey } from "../lib/listingKey";
 import { rarityLabel } from "../lib/rarity";
 import { NAMES_ROUTE } from "../lib/routes";
@@ -52,26 +53,39 @@ export default function Items({ contracts, hideNames = false, seo, lockStatus }:
   const filterDefaults = useMemo(() => itemsFilterDefaults(q, dealsRequested), [dealsRequested, q]);
   const [filterState, setFilters] = useUrlFilters(filterDefaults);
   const { subCategory, rarities, priceMin, priceMax, smart } = filterState;
-  const { defaultStatus, deals, category, status, isUnified, min, max, bodyShape, listingType, wearableGenders, sortOptions, sortOption, key, fetchPage } = itemsGrid(filterState, q, { contracts, hideNames, lockStatus });
+  const { defaultStatus, deals, category, status, isUnified, min, max, bodyShape, listingType, wearableGenders, creators, collection, sortOptions, sortOption, key, fetchPage } = itemsGrid(filterState, q, { contracts, hideNames, lockStatus });
+  const emoteFilters = emoteFilterBindings(category, filterState, setFilters);
   useScrollTopOnChange(`${category}:${subCategory ?? ""}`);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const creatorNames = useCreatorNames(creators);
+  const collectionName = useCollectionName(collection);
 
   const grid = useInfiniteShopQuery<CatalogItem, { freshness: IndexFreshness | null }>(key, (skip, signal) => fetchPage(skip, { signal }));
 
   const listingsFreshness = useListingsFreshness(isUnified && category !== "names");
 
+  // How many cards the grid last showed, at most one page (see skeletonCount). Kept in state, set once the grid has
+  // settled, rather than written during render; declared before the early return, as every hook.
+  const [shownCount, setShownCount] = useState(0);
+  const settledCount = grid.isLoading || grid.isPlaceholder ? null : Math.min(grid.items.length, ITEMS_PAGE_SIZE);
+  useEffect(() => {
+    if (settledCount !== null) setShownCount(settledCount);
+  }, [settledCount]);
   if (category === "names") return <Navigate to={NAMES_ROUTE} replace />;
 
-  const pickCategory = (key: string) => setFilters({ category: key, subCategory: null });
+  const pickCategory = (key: string) => setFilters({ category: key, subCategory: null, ...emoteFilters.resetFor(key) });
   const toggleRarity = (r: string) => setFilters({ rarities: rarities.includes(r) ? rarities.filter((x) => x !== r) : [...rarities, r] });
   const clearFilters = () => setFilters(filterDefaults);
 
   const chips: FilterChip[] = [];
-  if (min != null || max != null) chips.push({ key: "price", label: t("filter.price"), onRemove: () => setFilters({ priceMin: "", priceMax: "" }) });
+  if (status !== "not_for_sale" && (min != null || max != null)) chips.push({ key: "price", label: t("filter.price"), onRemove: () => setFilters({ priceMin: "", priceMax: "" }) });
   for (const r of RARITIES) if (rarities.includes(r)) chips.push({ key: `rarity-${r}`, label: rarityLabel(r), onRemove: () => toggleRarity(r) });
   if (wearableGenders) chips.push({ key: "bodyShape", label: t(`itemDetail.gender${bodyShape[0]!.toUpperCase()}${bodyShape.slice(1)}`), onRemove: () => setFilters({ bodyShape: "all" }) });
   if (isUnified && listingType) chips.push({ key: "listingType", label: t(`filter.${listingType}`), onRemove: () => setFilters({ listingType: "all" }) });
+  for (const a of creators) chips.push({ key: `creator-${a}`, label: creatorNames[a]!, onRemove: () => setFilters({ creators: creators.filter((x) => x !== a) }) });
+  if (collection) chips.push({ key: "collection", label: collectionName!, onRemove: () => setFilters({ collection: "" }) });
   if (smart) chips.push({ key: "smart", label: t("filter.smart"), onRemove: () => setFilters({ smart: false }) });
+  chips.push(...emoteFilters.chips);
   if (deals) chips.push({ key: "deals", label: t("filter.deals"), onRemove: () => setFilters({ deals: false, sort: defaultSortFor(!!q, false) }) });
   if (!lockStatus && status !== defaultStatus)
     chips.push({
@@ -82,7 +96,10 @@ export default function Items({ contracts, hideNames = false, seo, lockStatus }:
 
   const unavailable = indexUnavailable(grid.error);
   const showSkeletons = grid.isLoading || grid.isPlaceholder;
-  const skeletonCount = grid.isLoading ? 15 : Math.max(grid.items.length, 1);
+  // While a filter's results load over the previous ones, as many skeletons as cards were showing, up to a page
+  // (upstream's gridSkeletonCount reads them from the kept page): the grid keeps its height instead of collapsing to
+  // one card. The infinite query hides the kept page during a placeholder, so the count is remembered above.
+  const skeletonCount = grid.isLoading ? 15 : Math.max(shownCount, 1);
 
   return (
     <div className="shop-page shop-items" data-testid="items-page">
@@ -108,9 +125,17 @@ export default function Items({ contracts, hideNames = false, seo, lockStatus }:
             status={status}
             onStatus={(s) => setFilters({ status: s })}
             hideStatus={!!lockStatus}
+            hidePrice={status === "not_for_sale"}
             hideNames={hideNames}
             smart={smart}
             onSmart={(v) => setFilters({ smart: v })}
+            creators={creators}
+            onCreators={contracts ? undefined : (v) => setFilters({ creators: v })}
+            collection={collection}
+            onCollection={contracts ? undefined : (v) => setFilters({ collection: v ?? "" })}
+            // The collections route's on-sale flag means "the creator still sells it"; resales in the grid need every collection.
+            collectionOnSale={isUnified && (!flags.secondarySales || listingType === "primary")}
+            {...emoteFilters.props}
             deals={deals}
             onDeals={flags.creatorSales ? (v) => setFilters({ deals: v, sort: defaultSortFor(!!q, v) }) : undefined}
           />

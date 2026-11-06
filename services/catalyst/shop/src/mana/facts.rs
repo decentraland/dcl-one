@@ -55,6 +55,9 @@ pub enum Listing {
         /// executions, when the index is published; None when it is not.
         verdict: Option<(String, i32)>,
         index_ready: bool,
+        /// The creator's live coupon a primary sale settles with, in full,
+        /// so the calldata is the `acceptWithCoupon` the offer prices.
+        coupon: Option<super::calls::CouponIn>,
     },
     LegacyOrder {
         order: LegacyOrder,
@@ -744,7 +747,150 @@ async fn resolve_store(
     })
 }
 
-async fn resolve_trade(
+/// The coupon managers wired into the marketplace `venue` on `chain_id`: a
+/// coupon is redeemable only through those (the catalogue's pairings).
+pub(crate) fn paired_managers(chain_id: ChainId, venue: Address) -> Vec<String> {
+    let venue = format!("{venue:#x}");
+    crate::market::shop::coupon_pairings()
+        .into_iter()
+        .filter(|(chain, marketplace, _)| *chain == chain_id.0 as i64 && *marketplace == venue)
+        .map(|(_, _, manager)| manager)
+        .collect()
+}
+
+/// The coupon a primary trade's purchase offer carries ([`resolve_trade`]),
+/// as the policy prices it: the same selection, so the credits lane
+/// authorizes the price the offer quoted.
+pub(crate) async fn primary_trade_coupon(
+    pool: &PgPool,
+    trade: &SignedTrade,
+    trade_type: &str,
+) -> Result<Option<crate::types::TradeCoupon>, ResolveError> {
+    Ok(trade_coupon(pool, trade, trade_type)
+        .await?
+        .map(|c| crate::types::TradeCoupon {
+            contract: EvmAddress::new(c.coupon_address),
+            discount_ppm: c.discount_ppm,
+        }))
+}
+
+/// The creator's coupon a trade settles with, by the catalogue's rule: only
+/// a `public_item_order` that sells collection items for USD-pegged MANA
+/// (the native branch `coupon_join` joins), and only a coupon that covers
+/// every collection the trade sells, since `acceptWithCoupon` needs a proof
+/// for each sent asset. Anything else settles at the signed price.
+async fn trade_coupon(
+    pool: &PgPool,
+    trade: &SignedTrade,
+    trade_type: &str,
+) -> Result<Option<super::calls::CouponIn>, ResolveError> {
+    let eligible = trade_type == "public_item_order"
+        && !trade.sent.is_empty()
+        && trade
+            .sent
+            .iter()
+            .all(|a| a.asset_type == TradeAssetType::CollectionItem)
+        && !trade.received.is_empty()
+        && trade
+            .received
+            .iter()
+            .all(|a| a.asset_type == TradeAssetType::UsdPeggedMana);
+    if !eligible {
+        return Ok(None);
+    }
+    let coupon = live_coupon(
+        pool,
+        trade.venue.chain_id,
+        trade.venue.contract.address(),
+        &trade.signer.to_string(),
+        trade.sent[0].contract.address(),
+    )
+    .await?;
+    Ok(coupon.filter(|c| {
+        trade.sent.iter().all(|a| {
+            let collection = format!("{:#x}", a.contract.address());
+            c.collections
+                .iter()
+                .any(|covered| covered.eq_ignore_ascii_case(&collection))
+        })
+    }))
+}
+
+/// The best live creator coupon for a primary trade, by the catalogue's rule
+/// (`market::shop::coupon_join`): signed by the trade's signer on its chain,
+/// against a manager paired with its marketplace, covering its collection,
+/// inside its window, neither cancelled nor revoked, with uses left as of the
+/// last on-chain read. Biggest discount wins, then the one ending soonest.
+async fn live_coupon(
+    pool: &PgPool,
+    chain_id: ChainId,
+    venue: Address,
+    signer: &str,
+    collection: Address,
+) -> Result<Option<super::calls::CouponIn>, ResolveError> {
+    let managers = paired_managers(chain_id, venue);
+    if managers.is_empty() {
+        return Ok(None);
+    }
+    type Row = (
+        String,
+        String,
+        i16,
+        i32,
+        String,
+        Vec<String>,
+        String,
+        serde_json::Value,
+    );
+    let row: Option<Row> = sqlx::query_as(
+        "SELECT c.id::text, c.coupon_address, c.discount_type, c.discount_ppm, c.root, c.collections, c.signature, c.checks \
+         FROM shop.coupons c \
+         LEFT JOIN shop.coupon_state cs ON cs.coupon_id = c.id \
+         WHERE c.signer = lower($1) \
+           AND c.chain_id = $2 \
+           AND lower(c.coupon_manager) = ANY($3) \
+           AND c.effective_since <= timezone('UTC', now()) AND c.expires_at > timezone('UTC', now()) \
+           AND lower($4) = ANY(c.collections) \
+           AND NOT COALESCE(cs.cancelled, false) AND NOT COALESCE(cs.revoked, false) \
+           AND COALESCE(cs.uses, 0) < (c.checks->>'uses')::numeric \
+         ORDER BY c.discount_ppm DESC, c.expires_at ASC, c.id ASC \
+         LIMIT 1",
+    )
+    .bind(signer)
+    .bind(chain_id.0 as i32)
+    .bind(&managers)
+    .bind(format!("{collection:#x}"))
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| ResolveError::Db(e.to_string()))?;
+    let Some((id, address, discount_type, ppm, root, collections, signature, checks)) = row else {
+        return Ok(None);
+    };
+    let bad = |what: String| ResolveError::Db(format!("coupon {id}: {what}"));
+    let coupon_address: Address = address
+        .trim()
+        .parse()
+        .map_err(|_| bad(format!("address {address}")))?;
+    let discount_ppm = u32::try_from(ppm)
+        .ok()
+        .filter(|p| *p > 0 && *p < crate::types::TradeCoupon::PPM)
+        .ok_or_else(|| bad(format!("discount {ppm} ppm")))?;
+    let discount_type =
+        u64::try_from(discount_type).map_err(|_| bad(format!("discount type {discount_type}")))?;
+    let checks = serde_json::from_value(checks).map_err(|e| bad(format!("checks: {e}")))?;
+    Ok(Some(super::calls::CouponIn {
+        id,
+        coupon_address,
+        discount_type,
+        discount_ppm,
+        root,
+        collections,
+        signature,
+        checks,
+    }))
+}
+
+pub(crate) async fn resolve_trade(
     pool: &PgPool,
     chain: Chain,
     session: Session,
@@ -811,9 +957,16 @@ async fn resolve_trade(
             (item, token, None)
         }
     };
+    // A primary sale carries the creator's best live coupon, as the catalogue
+    // shows it: priced and settled through acceptWithCoupon, never at the list
+    // price while the page shows the sale.
+    let coupon = trade_coupon(pool, &signed, &trade.trade_type).await?;
     let offer = Offer::Trade {
         trade: signed,
-        coupon: None,
+        coupon: coupon.as_ref().map(|c| crate::types::TradeCoupon {
+            contract: EvmAddress::new(c.coupon_address),
+            discount_ppm: c.discount_ppm,
+        }),
     };
     Ok(Resolved {
         facts: Facts {
@@ -832,6 +985,7 @@ async fn resolve_trade(
             hashed_signature,
             verdict,
             index_ready,
+            coupon,
         },
         available,
     })
@@ -1004,5 +1158,274 @@ mod tests {
         };
         assert_eq!(listing_count(&two), 2);
         assert_eq!(listing_count(&ListingRef::default()), 0);
+    }
+
+    /// A primary trade on Polygon's V3 is offered with the creator's best coupon
+    /// whose manager is paired with V3, as the catalogue joins it: a bigger
+    /// coupon of the V2 manager never applies, nor an expired, not-yet-effective,
+    /// cancelled, revoked, used-up, foreign-signer or other-collection one.
+    #[tokio::test]
+    async fn a_primary_trade_carries_the_creators_live_coupon_for_its_venue() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let fresh = || -> Address {
+            format!(
+                "0x{}{}",
+                &uuid::Uuid::new_v4().simple().to_string()[..32],
+                "00000000"
+            )
+            .parse()
+            .unwrap()
+        };
+        let creator = format!("{:#x}", fresh());
+        let collection = fresh();
+        let other = fresh();
+        let v3: Address = "0xe38ef22abe871513555cba89adfe45ab4f548ada"
+            .parse()
+            .unwrap();
+        let v3_manager = "0x655fdfa91d69ea49f4ce1a8f7f7e2622c8630813";
+        let v2_manager = "0x3fd3056ee72a2a85e9392fab3a450e7736536081";
+        let live =
+            "timezone('UTC', now()) - interval '1 day', timezone('UTC', now()) + interval '1 day'";
+        let expired =
+            "timezone('UTC', now()) - interval '2 days', timezone('UTC', now()) - interval '1 day'";
+        let future =
+            "timezone('UTC', now()) + interval '1 day', timezone('UTC', now()) + interval '2 days'";
+        let mut created: Vec<String> = Vec::new();
+        let insert = async |created: &mut Vec<String>,
+                            manager: &str,
+                            ppm: i32,
+                            window: &str,
+                            covered: Address,
+                            signer: &str,
+                            state: Option<&str>| {
+            let sig = format!("0x{}", uuid::Uuid::new_v4().simple());
+            let id: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "INSERT INTO shop.coupons (network, chain_id, signer, signature, hashed_signature, state_key, coupon_manager, coupon_address, checks, \
+                    discount_type, discount_ppm, root, collections, effective_since, expires_at) \
+                 VALUES ('MATIC', 137, $1, $2, $2, $2, $3, '0xc914507fe297b2dddd1232ac3a8903f1c125e794', \
+                    '{{\"uses\": 10, \"expiration\": 4102444800000, \"effective\": 0, \"salt\": \"0x01\", \"contractSignatureIndex\": 0, \"signerSignatureIndex\": 0, \"allowedRoot\": \"0x\", \"externalChecks\": []}}'::jsonb, \
+                    1, $4, '0x{root}', ARRAY[$5], {window}) RETURNING id::text",
+                root = "00".repeat(32)
+            )))
+            .bind(signer)
+            .bind(&sig)
+            .bind(manager)
+            .bind(ppm)
+            .bind(format!("{covered:#x}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            if let Some(state) = state {
+                sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "INSERT INTO shop.coupon_state (coupon_id, {state}) VALUES ($1::uuid, {})",
+                    if state == "uses" { "10" } else { "true" }
+                )))
+                .bind(&id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+            created.push(id.clone());
+            id
+        };
+        let lookup = async |venue: Address| {
+            live_coupon(&pool, ChainId::POLYGON, venue, &creator, collection)
+                .await
+                .unwrap()
+        };
+        assert!(lookup(v3).await.is_none(), "no coupon yet");
+        insert(
+            &mut created,
+            v2_manager,
+            700_000,
+            live,
+            collection,
+            &creator,
+            None,
+        )
+        .await;
+        insert(
+            &mut created,
+            v3_manager,
+            300_000,
+            expired,
+            collection,
+            &creator,
+            None,
+        )
+        .await;
+        insert(
+            &mut created,
+            v3_manager,
+            350_000,
+            future,
+            collection,
+            &creator,
+            None,
+        )
+        .await;
+        insert(
+            &mut created,
+            v3_manager,
+            400_000,
+            live,
+            other,
+            &creator,
+            None,
+        )
+        .await;
+        insert(
+            &mut created,
+            v3_manager,
+            450_000,
+            live,
+            collection,
+            "0x00000000000000000000000000000000000000aa",
+            None,
+        )
+        .await;
+        insert(
+            &mut created,
+            v3_manager,
+            600_000,
+            live,
+            collection,
+            &creator,
+            Some("uses"),
+        )
+        .await;
+        insert(
+            &mut created,
+            v3_manager,
+            550_000,
+            live,
+            collection,
+            &creator,
+            Some("cancelled"),
+        )
+        .await;
+        insert(
+            &mut created,
+            v3_manager,
+            500_000,
+            live,
+            collection,
+            &creator,
+            Some("revoked"),
+        )
+        .await;
+        assert!(
+            lookup(v3).await.is_none(),
+            "none of these is a live V3 coupon of this creator's collection"
+        );
+        insert(
+            &mut created,
+            v3_manager,
+            100_000,
+            live,
+            collection,
+            &creator,
+            None,
+        )
+        .await;
+        let best = insert(
+            &mut created,
+            v3_manager,
+            200_000,
+            live,
+            collection,
+            &creator,
+            None,
+        )
+        .await;
+        let coupon = lookup(v3).await.expect("the live V3 coupon");
+        assert_eq!(
+            (coupon.id.as_str(), coupon.discount_ppm),
+            (best.as_str(), 200_000),
+            "the biggest live discount wins"
+        );
+        assert_eq!(
+            format!("{:#x}", coupon.coupon_address),
+            "0xc914507fe297b2dddd1232ac3a8903f1c125e794"
+        );
+        let v2: Address = "0xa40b1d129b8906888720686f3a01921ddf37716f"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            lookup(v2).await.unwrap().discount_ppm,
+            700_000,
+            "a V2 trade takes the V2 manager's coupon"
+        );
+        assert!(paired_managers(ChainId::POLYGON, Address::ZERO).is_empty());
+
+        // Which trades settle with it: the catalogue's native primaries only,
+        // and only when it covers every collection they sell.
+        use crate::types::{TradeAsset, TradeAssetType as T};
+        let asset = |asset_type: T, contract: Address| TradeAsset {
+            asset_type,
+            contract: EvmAddress::new(contract),
+            value: U256::from(1u8),
+        };
+        let mana: Address = "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4"
+            .parse()
+            .unwrap();
+        let signed = |sent: Vec<TradeAsset>, paid: T| SignedTrade {
+            venue: ContractRef {
+                chain_id: ChainId::POLYGON,
+                contract: EvmAddress::new(v3),
+            },
+            signer: EvmAddress::parse(&creator).unwrap(),
+            sent,
+            received: vec![asset(paid, mana)],
+        };
+        let settles = async |trade: SignedTrade, kind: &str| {
+            trade_coupon(&pool, &trade, kind)
+                .await
+                .unwrap()
+                .map(|c| c.discount_ppm)
+        };
+        let item = asset(T::CollectionItem, collection);
+        assert_eq!(
+            settles(
+                signed(vec![item.clone()], T::UsdPeggedMana),
+                "public_item_order"
+            )
+            .await,
+            Some(200_000),
+            "a USD-pegged item order takes it"
+        );
+        assert_eq!(
+            settles(signed(vec![item.clone()], T::Erc20), "public_item_order").await,
+            None,
+            "a MANA-priced primary is not in the catalogue's coupon branch: no hidden discount"
+        );
+        assert_eq!(
+            settles(
+                signed(
+                    vec![item.clone(), asset(T::CollectionItem, other)],
+                    T::UsdPeggedMana
+                ),
+                "public_item_order"
+            )
+            .await,
+            None,
+            "a coupon that does not cover every sold collection cannot be proven for each asset"
+        );
+        assert_eq!(
+            settles(
+                signed(vec![item.clone()], T::UsdPeggedMana),
+                "public_nft_order"
+            )
+            .await,
+            None,
+            "a resale never takes a creator coupon"
+        );
+        sqlx::query("DELETE FROM shop.coupons WHERE id = ANY($1::uuid[])")
+            .bind(&created)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 }

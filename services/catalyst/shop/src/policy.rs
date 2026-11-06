@@ -762,13 +762,22 @@ fn usd_pegged_settlement(
 fn mana_quote(line: &Authoritative, rate: Option<&ManaUsdRate>) -> Result<ManaWei, Refusal> {
     let asset = line.asset;
     let (price, discount) = offer_price(&line.offer)?;
+    // The coupon applies where the contract applies it: to each received
+    // amount as signed (`amount - floor(amount * ppm / 1e6)`), so a USD price
+    // is discounted in USD and only then converted at the rate.
     let amount = match price {
-        OfferPrice::Usd(usd_wei) => ManaWei::from_usd_wei(usd_wei, need_rate(rate)?),
-        OfferPrice::Mana(amount) => Some(amount),
-    };
-    let amount = match discount {
-        Some(ppm) => amount.and_then(|amount| amount.discounted(ppm)),
-        None => amount,
+        OfferPrice::Usd(usd_wei) => {
+            let usd_wei = match discount {
+                Some(ppm) => ManaWei::new(usd_wei).discounted(ppm).map(ManaWei::get),
+                None => Some(usd_wei),
+            };
+            let rate = need_rate(rate)?;
+            usd_wei.and_then(|usd_wei| ManaWei::from_usd_wei(usd_wei, rate))
+        }
+        OfferPrice::Mana(amount) => match discount {
+            Some(ppm) => amount.discounted(ppm),
+            None => Some(amount),
+        },
     }
     .ok_or(Refusal::AmountOverflow { asset })?;
     if amount.is_zero() {

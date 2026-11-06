@@ -6,11 +6,15 @@ edition = "2021"
 [lib]
 
 [features]
-ffmpeg = ["media/ffmpeg"]
+uuav = ["media/uuav"]
 html = ["media/html", "dep:web-sys", "dep:wasm-bindgen"]
 av_player_debug = ["bevy/bevy_picking"]
 
 [dependencies]
+console = { workspace = true }
+bevy_console = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
 common = { workspace = true }
 dcl_types = { workspace = true }
 dcl_component = { workspace = true }
@@ -55,11 +59,6 @@ futures-lite = { workspace = true }
 once_cell = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-ffmpeg-next = "6.0.0"
-
 [dev-dependencies]
 wasm-bindgen-test = { workspace = true }
 js-sys = { workspace = true }
-
-bevy_console = { workspace = true }

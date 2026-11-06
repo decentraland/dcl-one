@@ -1,11 +1,14 @@
-// from: shop@94584a5c:app/src/components/SearchDropdown/SearchDropdown.tsx
+// from: shop@94584a5c:app/src/components/SearchDropdown/SearchDropdown.tsx (behaviour);
+//       shop@3a322cf9:app/src/components/SearchDropdown/SearchDropdown.tsx + .styles.ts (the panel: popular searches
+//       as chips, recent rows with their removals beside the listbox, 40px thumbs, "By {creator}" sublines, the
+//       collection mosaic, bold matches, the pinned See all)
 // The Shop's search box as an ARIA combobox: recent and popular searches while empty; while typing,
 // a category/rarity facet when the whole query names one, then items, collections and creators from
 // one /v3/catalog/suggest request (debounced, the stale one aborted) and "See all (N)". Enter with no
 // active row runs the search on the grid; a repeat of the same destination replaces the history entry.
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router";
 
 import { SHOP_BASE } from "../../routes";
 import { EMPTY_SUGGESTIONS, fetchSuggestions, type Suggestions } from "../api";
@@ -15,10 +18,12 @@ import { popularSearchesFor } from "../lib/popularSearches";
 import { clearRecentSearches, getRecentSearches, recordSearch, removeRecentSearch } from "../lib/recent-searches";
 import { detailRouteFor } from "../lib/routes";
 import { clearedSearchUrl } from "../lib/searchClear";
-import { facetId, facetsFor, facetUrl } from "../lib/searchFacets";
+import { facetId, facetsFor, facetUrl, type Facet } from "../lib/searchFacets";
 import { searchHistoryMode } from "../lib/searchHistory";
 import { NO_ACTIVE_ROW, searchKeyAction, suggestionRowId, type SuggestionRow } from "../lib/suggestionNavigation";
-import { rarityLabel } from "../lib/rarity";
+import { shortAddress } from "../../model/address";
+import { rarityColor, rarityLabel } from "../lib/rarity";
+import { CollectionThumb } from "./CollectionCard";
 import { subCategoryLabel } from "./Filters";
 import Icon from "./Icon";
 import "./search.css";
@@ -32,6 +37,36 @@ function Highlighted({ text, query }: { text: string; query: string }) {
     </>
   );
 }
+
+/** "By {creator}": the name the suggestion carries, else the short address (no profile fetched per row). */
+function byCreator(address: string | null | undefined, name: string | null | undefined): string | undefined {
+  if (!address && !name) return undefined;
+  return t("search.byCreator", { name: name || shortAddress(address ?? "") });
+}
+
+function facetLabel(f: Facet): string {
+  if (f.kind === "rarity") return rarityLabel(f.key);
+  return subCategoryLabel(f.key) === f.key ? t(f.labelKey) : subCategoryLabel(f.key);
+}
+
+/** Where a facet sits: "Wearables · Accessories" for a category, "Rarity" for a rarity. */
+function facetPath(f: Facet): string {
+  return f.kind === "category" ? f.parents.map((key) => t(key)).join(" · ") : t("assets.rarity");
+}
+
+function IconThumb({ children }: { children: ReactNode }) {
+  return (
+    <span className="shop-search__thumb" data-variant="icon">
+      {children}
+    </span>
+  );
+}
+
+function FacetThumb({ facet }: { facet: Facet }) {
+  return <IconThumb>{facet.kind === "rarity" ? <span className="shop-search__dot" style={{ background: rarityColor(facet.key) }} /> : <Icon name={facet.icon ?? "search"} size={18} />}</IconThumb>;
+}
+
+type Row = SuggestionRow & { section: string; label: ReactNode; title?: string; sub?: string; thumb?: ReactNode };
 
 export default function SearchDropdown({ debounceMs = DEBOUNCE_MS }: { debounceMs?: number }) {
   const navigate = useNavigate();
@@ -95,20 +130,22 @@ export default function SearchDropdown({ debounceMs = DEBOUNCE_MS }: { debounceM
   const facets = useMemo(() => (query ? facetsFor(query) : []), [query]);
   const data = state.query === query ? state.data : EMPTY_SUGGESTIONS;
 
-  const rows: (SuggestionRow & { label: React.ReactNode; sub?: string; section: string; thumb?: string })[] = useMemo(() => {
+  const rows: Row[] = useMemo(() => {
     if (!query) {
       const recents = recent.map((r) => ({ id: suggestionRowId("recent", r), kind: "recent" as const, section: "recent", label: r, activate: () => submit(r) }));
       const popular = popularSearchesFor(recent).map((p) => ({ id: suggestionRowId("popular", p), kind: "popular" as const, section: "popular", label: p, activate: () => submit(p) }));
       return [...recents, ...popular];
     }
-    const out: (SuggestionRow & { label: React.ReactNode; sub?: string; section: string; thumb?: string })[] = [];
+    const out: Row[] = [];
     for (const f of facets) {
       out.push({
         id: suggestionRowId("facet", facetId(f)),
         kind: "facet",
         section: "facets",
-        label: f.kind === "rarity" ? rarityLabel(f.key) : subCategoryLabel(f.key) === f.key ? t(f.labelKey) : subCategoryLabel(f.key),
-        sub: t("search.explore"),
+        label: facetLabel(f),
+        title: facetLabel(f),
+        sub: facetPath(f) || undefined,
+        thumb: <FacetThumb facet={f} />,
         activate: () => go(facetUrl(f)),
       });
     }
@@ -119,8 +156,9 @@ export default function SearchDropdown({ debounceMs = DEBOUNCE_MS }: { debounceM
         kind: "item",
         section: "items",
         label: <Highlighted text={item.name} query={query} />,
-        sub: item.creatorName ? t("search.byCreator", { name: item.creatorName }) : undefined,
-        thumb: item.thumbnail,
+        title: item.name,
+        sub: byCreator(item.creator, item.creatorName),
+        thumb: <span className="shop-search__thumb">{item.thumbnail ? <img src={item.thumbnail} alt="" /> : null}</span>,
         activate: () => path && go(path),
       });
     }
@@ -130,7 +168,19 @@ export default function SearchDropdown({ debounceMs = DEBOUNCE_MS }: { debounceM
         kind: "collection",
         section: "collections",
         label: <Highlighted text={col.name} query={query} />,
-        sub: col.creatorName ? t("search.byCreator", { name: col.creatorName }) : undefined,
+        title: col.name,
+        sub: byCreator(col.creator, col.creatorName),
+        thumb: (
+          <CollectionThumb
+            contractAddress={col.contractAddress}
+            className="shop-search__coll"
+            fallback={
+              <IconThumb>
+                <Icon name="search" size={18} />
+              </IconThumb>
+            }
+          />
+        ),
         activate: () => go(`${SHOP_BASE}/collection/${col.contractAddress}`),
       });
     }
@@ -140,11 +190,16 @@ export default function SearchDropdown({ debounceMs = DEBOUNCE_MS }: { debounceM
         kind: "creator",
         section: "creators",
         label: <Highlighted text={cr.name} query={query} />,
-        thumb: cr.face,
+        title: cr.name,
+        thumb: (
+          <span className="shop-search__thumb" data-variant="round">
+            {cr.face ? <img src={cr.face} alt="" /> : null}
+          </span>
+        ),
         activate: () => go(`${SHOP_BASE}/items/creator/${cr.address}`),
       });
     }
-    if (data.total > 0) out.push({ id: suggestionRowId("see-all", query), kind: "see-all", section: "see-all", label: t("search.seeAll", { count: data.total }), activate: () => submit(query) });
+    if (data.total > 0) out.push({ id: suggestionRowId("see-all", query), kind: "see-all", section: "see-all", label: t("search.seeAll", { count: data.total.toLocaleString() }), activate: () => submit(query) });
     return out;
   }, [query, recent, facets, data, go, submit]);
 
@@ -196,7 +251,7 @@ export default function SearchDropdown({ debounceMs = DEBOUNCE_MS }: { debounceM
           submit(value);
         }}
       >
-        <Icon name="search" size={18} className="shop-search__icon" />
+        <Icon name="search" size={20} className="shop-search__icon" />
         <input
           ref={inputRef}
           type="search"
@@ -225,88 +280,129 @@ export default function SearchDropdown({ debounceMs = DEBOUNCE_MS }: { debounceM
         ) : null}
       </form>
       {open ? (
-        <div className="shop-search__panel" data-testid="search-panel">
-          {state.loading && query ? (
-            <p className="shop-search__status" role="status">
+        <div className="shop-search__panel" data-testid="search-panel" onMouseDown={(e) => (e.target as HTMLElement).closest("button") || e.preventDefault()}>
+          {state.loading && query && data.items.length === 0 ? (
+            <p className="shop-search__empty" role="status">
               {t("search.searching")}
             </p>
           ) : null}
           {state.error && query ? (
-            <p className="shop-search__status" role="alert">
+            <p className="shop-search__empty" role="alert">
               {t("search.error")}{" "}
-              <button type="button" onClick={() => setRetry((n) => n + 1)}>
+              <button type="button" className="shop-search__link" onClick={() => setRetry((n) => n + 1)}>
                 {t("search.retry")}
               </button>
             </p>
           ) : null}
           {empty ? (
-            <p className="shop-search__status" role="status">
+            <p className="shop-search__empty" role="status">
               {t("search.noEntities", { query })}
             </p>
           ) : null}
-          <ul id={listboxId} role="listbox" aria-label={t("search.suggestions")}>
-            {sections.map(([section, heading]) => {
-              const inSection = rows.map((r, i) => [r, i] as const).filter(([r]) => r.section === section);
-              if (inSection.length === 0) return null;
-              return (
-                <li key={section} role="presentation">
-                  {heading ? (
-                    <div className="shop-search__heading" role="presentation">
-                      <span>{heading}</span>
-                      {section === "recent" ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            clearRecentSearches();
-                            setRecent([]);
-                          }}
-                        >
-                          {t("search.clearRecent")}
-                        </button>
-                      ) : null}
+          {!query && recent.length > 0 ? (
+            <div className="shop-search__head">
+              <span>{t("search.recent")}</span>
+              <button
+                type="button"
+                className="shop-search__link"
+                onClick={() => {
+                  clearRecentSearches();
+                  setRecent([]);
+                }}
+              >
+                {t("search.clearRecent")}
+              </button>
+            </div>
+          ) : null}
+          <div className={query ? undefined : "shop-search__recentarea"}>
+            <div id={listboxId} role="listbox" aria-label={t("search.suggestions")}>
+              {sections.map(([section, heading]) => {
+                const inSection = rows.map((r, i) => [r, i] as const).filter(([r]) => r.section === section);
+                if (inSection.length === 0) return null;
+                const option = (row: Row, i: number) => ({
+                  id: row.id,
+                  role: "option" as const,
+                  "aria-selected": i === active,
+                  "data-active": i === active || undefined,
+                  "data-kind": row.kind,
+                  onClick: () => row.activate("click"),
+                });
+                if (section === "recent") {
+                  return (
+                    <div key={section} role="group" aria-label={heading}>
+                      {inSection.map(([row, i]) => (
+                        <div key={row.id} className="shop-search__recent" {...option(row, i)}>
+                          <Icon name="search" size={16} className="shop-search__recenticon" />
+                          <span className="shop-search__recenttext">{row.label}</span>
+                        </div>
+                      ))}
                     </div>
-                  ) : null}
-                  <ul role="group" aria-label={heading || undefined}>
+                  );
+                }
+                if (section === "popular") {
+                  return (
+                    <div key={section} role="group" aria-label={heading}>
+                      <div className="shop-search__head" role="presentation">
+                        <span>{heading}</span>
+                      </div>
+                      <div className="shop-search__chips" role="none">
+                        {inSection.map(([row, i]) => (
+                          <span key={row.id} className="shop-search__chip" {...option(row, i)}>
+                            {row.label}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+                if (section === "see-all") {
+                  return inSection.map(([row, i]) => (
+                    <div key={row.id} className="shop-search__seeall" {...option(row, i)}>
+                      {row.label}
+                    </div>
+                  ));
+                }
+                return (
+                  <div key={section} role="group" aria-label={heading}>
+                    <div className="shop-search__head" role="presentation">
+                      <span>{heading}</span>
+                    </div>
                     {inSection.map(([row, i]) => (
-                      <li
-                        key={row.id}
-                        id={row.id}
-                        role="option"
-                        aria-selected={i === active}
-                        className="shop-search__row"
-                        data-kind={row.kind}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => row.activate("click")}
-                      >
-                        {row.thumb ? <img src={row.thumb} alt="" width={32} height={32} /> : null}
-                        <span className="shop-search__label">{row.label}</span>
-                        {row.sub ? <span className="shop-search__sub">{row.sub}</span> : null}
-                        {row.kind === "recent" ? (
-                          <button
-                            type="button"
-                            className="shop-search__remove"
-                            aria-label={t("search.removeRecent", { query: String(row.label) })}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              removeRecentSearch(String(row.label));
-                              setRecent(getRecentSearches());
-                            }}
-                          >
-                            <Icon name="close" size={14} />
-                          </button>
-                        ) : null}
-                      </li>
+                      <div key={row.id} className="shop-search__row" {...option(row, i)}>
+                        {row.thumb}
+                        <span className="shop-search__text">
+                          <span className="shop-search__name" title={row.title}>
+                            {row.label}
+                          </span>
+                          {row.sub ? <span className="shop-search__sub">{row.sub}</span> : null}
+                        </span>
+                      </div>
                     ))}
-                  </ul>
-                </li>
-              );
-            })}
-          </ul>
-          {query && data.total > 0 ? null : query ? null : (
-            <Link className="shop-search__browse" to={`${SHOP_BASE}/items`} onClick={() => setOpen(false)}>
-              {t("assets.empty.cta")}
-            </Link>
-          )}
+                  </div>
+                );
+              })}
+            </div>
+            {/* The removals are controls, not options: beside the listbox, one per recent row, in the tab order. */}
+            {!query && recent.length > 0 ? (
+              <ul className="shop-search__removes" aria-label={t("search.recent")}>
+                {recent.map((term) => (
+                  <li key={term}>
+                    <button
+                      type="button"
+                      className="shop-search__remove"
+                      aria-label={t("search.removeRecent", { query: term })}
+                      onClick={() => {
+                        removeRecentSearch(term);
+                        setRecent(getRecentSearches());
+                      }}
+                    >
+                      <Icon name="close" size={14} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
         </div>
       ) : null}
     </div>

@@ -56,6 +56,18 @@ the data and its operations.
    records it in `meta.schema_steps`; `services/catalyst/tests/`). A step
    that drops, renames, retypes or deletes is refused: that change is its own
    reviewed release (record the data-safe release procedure and evidence in the task report).
+   A changed body of a hash-named write function (`content.deploy_entity_<hash>`,
+   `content.unpublish_scene_<hash>`) is a new function; `migrate` creates it and
+   leaves the old one for binaries still calling it. `catalyst schema status`
+   lists the old ones as superseded after migrate (run before `migrate`, that
+   includes the one the running binary still calls); drop them by hand once no
+   process runs an older binary.
+   The `deleter_deployment` repair runs once per database and repair version
+   (`content.system_properties` key `deleter_repair_version`, only ever
+   raised), at a sync leader's bootstrap or a non-syncing process's startup.
+   During a rolling deploy an older binary still writing can leave rows the
+   repair's rules would change after the marker is set; the next sync leader
+   bootstrap repairs them, or restart a sync leader once the rollout is done.
 
 ## Worlds, persistent storage and scene hosting
 
@@ -66,6 +78,17 @@ from a deployment's content hash. Each world scene has a stable identity
 (`explore.world_scene_place`) following Places' overlap rule: overlapping
 exactly one active scene retains it, including a moved base; overlapping none
 or several creates a new identity. Retired identities keep their storage rows.
+
+Partial (multi-request) world publishes stage in `worlds.pending_scenes` and
+`worlds.pending_scene_files`, with no world row until the completing batch's
+publish transaction consumes the upload and writes its
+`worlds.completed_scene_uploads` receipt. Upload counts and staged bytes are
+admitted under advisory locks (deployer, world, node budget); the per-world
+count and byte sums read `pending_scenes (world_name, created_at)`. The blob
+collector keeps every file a pending row names, and a leased job reclaims
+expired uploads under the exclusive store lock, unlinking only files a
+batch of that upload wrote (`pending_scene_files.written`).
+
 Genesis storage management requires LAND rights at the requested parcel, using
 the published LAND manager index or its configured document source. Without a
 document source, only ownership at that parcel grants authority; scene-admin
@@ -226,6 +249,10 @@ Optional selections are
 `key = ANY` / `player_address = ANY` filters on that prefix. Not measured:
 a scene at its quota (10 MB world plus 1 MB per player).
 
+Scene-host storage requests sign the pathname, allowing `Storage.getValues`
+listing queries. Verification still binds the method and declared storage mount;
+the unsigned-query trade-off requires security acceptance.
+
 Comms (`services/catalyst/comms`) uses the worlds/content identities and world
 permission decisions through shared queries and local calls. World permissions
 keep one authoritative representation; social keeps message/call membership
@@ -249,6 +276,141 @@ Expected scale is thousands of grants and tens of room joins per second;
 these are estimates, not measured throughput.
 
 ## Queries, ingest and derived state
+
+The `/social-api` gateway reads `HTTP_MAX_REQUEST_BODY_BYTES` at startup: the
+default is 1 MiB and the accepted range is an integer from 1 byte through 16 MiB.
+A declared oversize receives a plain 413 before auth or routing, with the actual
+response CORS headers and `Connection: close`. Social handlers defer body reads
+until their existing auth gate and count streamed bytes against this cap. The
+source schema boundary returns its own 400 for a failed read; multipart and raw
+mute readers retain the source generic 500 for a global stream overflow.
+The independent multipart total remains 1 MiB, even with a larger HTTP cap;
+thumbnail bytes have a separate 1 KiB through 500 KiB range. A multipart limit
+failure returns 400. The process's existing outer drain still handles bodies
+dropped without a handler read, under its shared upload budget; per-social
+unread-stream limiting and close timing remain outside these consumed-body
+checks. Other domains keep their existing body and drain policy.
+
+Community and friendship producers write native notification rows through the
+existing SQL pool. Notification insertion also creates the email delivery row;
+the existing delivery worker owns email attempts. Community recipients follow
+membership and subscription opt-outs. These producers do not publish an AWS
+event or depend on an external notifications worker. Failure behavior at each
+producer remains explicit: best-effort community/friendship notifications do
+not undo their preceding mutation; referral grant and accepted notification
+are one transaction.
+
+Native ended-event metrics live in Social. `social.event_ended_occurrences`
+records one immutable fact per `(event_id, occurrence_start)`; its RSVP count
+comes from explicit local attendance, and its community must resolve to an
+active, unsuspended local community. The fact and community metric contribution
+commit together. Removing a catalogue event does not erase facts; deleting a community removes its aggregate. The first scan starts at
+activation and does not import historical endings. Each subsequent pass reconciles
+currently ended occurrences against the immutable fact keys. Duration-only edits
+that move an end behind an earlier scan are reconsidered. A DTSTART or recurrence
+change records a private database-clock cutoff in the authoring transaction.
+Unchanged eligible starts shared by the old and new materialized schedules
+remain eligible, including live occurrences and deferred endings. A private
+lookup stores only those pre-edit starts still in the current schedule, bounded
+by that schedule rather than growing across edits. Newly introduced backdated
+starts cannot contribute. Creation and each transition into approved state start
+an eligibility window using the database clock: already-ended occurrences are
+excluded, while an already eligible occurrence still in progress is retained.
+Thus a late first submission counts its ongoing occurrence without importing
+historical attendance, and later approval cannot backfill endings from pending
+review or resurrect a newly backdated schedule identity. These keys
+are excluded from the public event projection and notification snapshots.
+Existing immutable facts remain intact. Ordinary
+owners must obtain moderation again after changing dates or durations. Recovery
+is limited to the latest 30 days: older unrecorded endings require a separate
+backfill, and existing immutable facts remain untouched. The approved
+`(finish_at,id)` index prefilters series before date expansion; attendance and
+community resolution occur after the candidate LIMIT. Each pass handles
+at most 100 occurrences with transaction-local statement and lock timeouts and
+an independent scan budget, so metric contention cannot stop notification
+delivery. Expected workload is one periodic scan per minute; throughput at
+production catalogue size remains unmeasured.
+
+The optional event moderation webhook uses an Explore-owned transactional
+outbox with public labels and moderation reasons only. Delivery is at least
+once, bounded to six attempts with five-second HTTP timeouts, and starts at its
+first capture cutoff, written atomically with the intent using the database clock.
+Exhausted delivery attempts remain distinct from successful completion. A creator
+can enqueue at most two edited notices per rolling minute; unsent edits
+coalesce per event. Every submission retains its own durable alert. Approvals,
+rejections and deletions precede all submissions, and submissions precede edits;
+submission volume therefore cannot delay operator moderation alerts. Deployment configuration supplies the secret endpoint;
+operator writes and deployment posture gate outbound delivery. Unconfigured or
+operator-write-disabled authoring captures no webhook intent. The same worker
+performs bounded cleanup even when its endpoint is disabled: at most 1000 rows
+per pass, with a one-second client budget and transaction-local statement/lock
+timeouts. Completed and exhausted rows are retained for 30 days, as is legacy
+history before activation; eligible unfinished retries and the rolling-minute
+edit throttle window are preserved. `(created_at,id)` supports retention order. Migration `0018` adds missing creator
+and edit-bucket columns on earlier shared development layouts without removing
+intents, and the object pass recreates the changed due/creator indexes.
+
+Event notification delivery is owned by Social in
+`social.event_notification_intents`. Explore inserts an event transition snapshot
+through qualified SQL in the same transaction as the event change; Social owns
+recipient progress and completion. This shared-database edge has no reverse Rust
+dependency or internal HTTP transport. No event foreign key is used: committed
+host notices must survive removal of a mirrored catalogue row.
+
+The lifecycle scanner considers live occurrences in a rolling one-hour catch-up
+window with a local audience, including on first deployment. Separate scan
+budgets prevent reminder work from starving starts. Stable occurrence keys and a unique queue index
+deduplicate repeated scans, including late approvals and equal due times. A
+recipient page commits its cursor with notification and email-outbox inserts.
+Completed queue rows have 30-day retention, exceeding the catch-up window;
+bounded cleanup retains unfinished work. Stale reminders and ended occurrences
+are suppressed before delivery. Cleanup has a bounded opportunity before dispatch,
+including when there is a backlog. Claims rotate queue order durably before page
+work; transaction-local database timeouts bound slow queries and lock waits.
+Recipient branches are bounded before merging the page. Notification timestamps
+use the delivery clock so incremental polling sees catch-up deliveries; source
+timing remains in metadata. The worker uses a five-second dispatch budget rather than a
+fixed number of audience pages. Independent three-second scan budgets and
+two-second scan statement timeouts allow more time for catalogue discovery than
+for recipient pages. Scan timeouts and budget exhaustion emit error-level
+diagnostics without activating job backoff; other scan failures reach job error
+reporting after dispatch. Cleanup failures and budget exhaustion emit error-level
+diagnostics without stopping delivery. Committed stale or
+obsolete suppression logs the intent and reason, including expiry after lock
+contention. Community opt-out UUIDs are canonicalized on write and lookup;
+event and community delivery recognize existing non-canonical UUID scopes too.
+Lookup binds optional UUID parameters parsed in Rust, preserving opaque legacy
+scope IDs without relying on guarded casts of SQL parameters.
+Catalogue-scale capacity is not established by
+bounded result sizes alone. See the
+[event notification ADR](docs/adr/2026-11-01-event-notification-delivery.md).
+
+Event RSVP state in `explore.event_attendance_local` is authoritative for that
+wallet: cancellation markers override mirrored attendee previews in reads,
+personal filters and attendee listings, and survive mirror refreshes. Counts
+apply a signed local delta to the mirrored aggregate, deduplicating wallets
+known in the mirrored preview. The preview is incomplete: an additional local
+going wallet may already be included in the upstream aggregate. Without an
+authoritative upstream membership list, the combined total remains an estimate;
+it does not guarantee exact deduplication outside the known preview. Local-only
+events do not have this ambiguity.
+The read projection materializes the normalized preview once per event row and
+excludes SQL-null preview entries. Local membership probes retain the
+`event_attendance_local` primary-key lookup; cancellation and going deltas share
+that preview instead of expanding its JSON separately for every local RSVP.
+
+Event authoring distinguishes generated posters from explicit images and clears
+inside the existing event document. Generated images may follow location
+changes; an explicit clear must survive later edits. Missing profile or place
+lookups must not erase stored facts on an unrelated edit. Location-derived facts
+must be refreshed or cleared when their source location changes. This metadata
+does not establish owner identity or grant permissions. Existing nonempty posters
+without authoring provenance remain explicit: their source cannot be inferred
+reliably from the URL alone. There is no historical provenance backfill.
+The internal `_image_source` key can travel with raw document copies. Public API
+and export paths must use an explicit field projection instead of publishing the
+stored document unfiltered. `EventRecord` omits this key, and notification
+snapshots use their own allowlist.
 
 For Shop: keep explicit asset/chain/order identities, separate accounting
 facts from rebuildable projections, bound reconciliation, use exact currency
@@ -281,6 +443,18 @@ stored client-supplied sale category never establishes eligibility.
   required offset APIs. Define tie-breaking, replay windows and deletion
   handling; a cursor alone does not give snapshot consistency.
 
+The public What's On calendar caches completed, parsed catalogue responses
+for 30 seconds in each Sites process. Its key is the catalogue base, search,
+recurrence selector and exact date window; catalogue page offsets and accounts
+are not inputs. At most eight entries of up to 500 records are retained, with
+expired and least-recently-used entries evicted on reads. Parsed responses
+retain malformed-row counts so a damaged record does not bypass the cache. Concurrent reads of one key share one upstream request with
+an independent five-second budget; each request can cancel only its own wait.
+At most eight shared reads run at once; a new key at capacity fails retryably.
+Failed or timed-out reads are not retained, and process restart rebuilds from
+the events API. Page views reuse the same calendar read within the freshness
+budget while live/catalogue reads stay uncached.
+
 ## Measurement and acceptance
 
 Use read-only PostgreSQL catalogue and statistics queries through psql for a
@@ -307,17 +481,485 @@ database holding local authority changes only through a data-safe release
 `schemas/migrations/` applied once by `catalyst schema migrate`; anything that
 drops, renames or retypes is its own reviewed release under `schemas/releases/`.
 
-The Shop schema requires schema version 2. For a database stamped version 1,
-stop the node and verify a backup restore, then apply the reviewed release
-(it keeps column, index and row shapes and moves Shop relations to `shop`):
+The binary requires schema version 3. Stop all writers, pollers and administrative
+write paths, and verify a backup restore before a release. A version-1 database
+first takes `schemas/releases/v2-shop-schema.sql`, then a compatible version-2
+binary runs `catalyst schema migrate` and `catalyst schema status`. Do not use the
+version-3 binary to prepare version 2 or edit `meta.schema_steps` to bypass
+preparation.
+
+The Social voice release accepts shipped main version 2 without historical step
+`0020_social_voice_notifications` or its retired objects, and genuinely prepared
+version 2 with that step's matching real receipt and complete legacy layout:
 
 ```sh
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f schemas/releases/v2-shop-schema.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f schemas/releases/v3-private-voice-pending.sql
 catalyst schema migrate
+catalyst schema status
 ```
 
-`db::bootstrap` refuses version 1, and `migrate` alone would create an empty
-`shop` beside `marketplace`. A version change is never rollback-compatible
-(`services/catalyst/tests/schema_upgrade_from_closure_base.rs` exercises the upgrade; deployment restore and rollback evidence remains a separate acceptance gate).
+Keep every writer stopped through that sequence. The release refuses mixed
+layouts, changed receipt hashes and a pre-existing destination. It audits pending
+wallets across both roles and refuses overlapping or non-normalized pending state.
+The canonical future definitions live once under `schemas/releases/v3/`; the
+compatible version-3 build explicitly enrolls them in the single fresh bootstrap.
+A version-2 build does not discover that nested directory. Merging dormant
+release artifacts does not activate version 3 or establish cutover readiness.
+In one transaction the release creates the canonical exact-key notification relation,
+preserves prepared legacy generations and TTLs, verifies the backfill both ways,
+retires the legacy layout when present, creates the canonical caller/callee
+indexes, drops the former uniqueness constraints and stamps version 3 last. It
+neither renews expired facts nor rewrites a call or participant. Legacy UUID
+columns have already lost raw identifier spelling: their backfill uses `id::text`
+and cannot reconstruct historical aliases.
+
+Run the current `schema migrate` for the remaining additive layout, and verify a
+clean schema status before traffic resumes. On shipped main version 2, step
+`0021_social_referral_lifecycle` adds `referral_progress.id` with a volatile
+default: PostgreSQL rewrites the table and builds its unique index under ACCESS
+EXCLUSIVE and mints one id per existing row (see METRICS.md for a measured size).
+Its other columns take constant defaults or are nullable, and step
+`0023_social_referral_pending_reward` adds two nullable columns without a rewrite.
+`0024_social_referral_reward_receipt` adds nullable claim, response and retry
+columns, imports confirmed `reward_paid` receipts without losing notification
+completion, and quarantines older uncertain pending rewards. The backfill touches
+only paid or pending rewards.
+
+**Migration 0024 does not support a rolling deployment from a pre-0024 binary,
+even when both binaries require schema version 3.** A pre-0024 binary treats any
+non-null `reward_tier` as permission to POST and ignores the new claim and lock.
+It could issue a reward already claimed or quarantined by the new code. Before
+running `catalyst schema migrate` for 0024:
+
+1. Pause referral/login ingress and stop every login consumer, retry worker and
+   administrative writer. Drain or stop in-flight reward work. Pending native
+   login observations retain their client event IDs and may retry within their
+   acceptance window. Legacy SQS messages cannot be replayed into the signed
+   native endpoint: they lack the user signature, and no queue importer exists.
+   Any undrained legacy messages will not advance referral progress after cutover.
+2. Stop every pre-0024 binary sharing this database and disable its automatic
+   restart or rollback. A fleet lease or `FLEET_JOBS_ENABLED=false` alone is not
+   this gate: older login consumers do not honor the new reward lock.
+3. With all writers stopped and a verified backup/restore procedure, run migrate
+   and schema status using the compatible binary. Inspect imported paid receipts
+   and quarantined pending claims before resuming only compatible processes.
+
+This gate applies even when the database is already version 3; the version stamp
+cannot distinguish the two reward implementations. Schema migration does not
+automatically enforce the process shutdown. Do not roll an old binary back onto
+the migrated database; use a reviewed forward fix or a coordinated restore and
+provider reconciliation, since restoring SQL cannot undo an external reward.
+No production deployment history is assumed to waive this gate.
+
+The owned upgrade test
+`populated_main_v2_referrals_survive_the_upgrade_with_minted_ids` checks a
+populated shipped-main table keeps every value, gains unique ids and marks its
+granted rows. A database prepared at the captured version 2 also holds
+`referral_progress_ip_idx`, which the bootstrap does not define and no query uses;
+schema status does not report it. From version 3 onward, the exact
+immutable historical 0020 is retired: apply/migrate never execute it or invent a
+receipt. Status/bootstrap verify any genuine receipt and reject the five known
+retired columns, constraint and index if present. A failed release transaction
+preserves the version-2 stamp, facts and constraints. Both older and newer
+binaries refuse a mismatched stamp.
+
+Retained media and independent raw notification aliases can coexist in version 3.
+Reinstalling the former uniqueness or single-row layout is not a general rollback.
+Quiesce and use a reviewed forward fix or restore; never delete or deduplicate
+media calls or notification facts to force old constraints back. Owned upgrade
+tests exercise the composed release and real migrator against captured, genuinely
+prepared and shipped-main version-2 state; deployment backup, restore, historical
+raw-alias loss and cutover validation remain separate operating gates.
 
 Peer sync is not a backup of local state. Keep local write paths disabled until a backup restore of the node's database, blobs and credentials has been demonstrated. Record the restore and rollback evidence in the task report before enabling writes. Development and commit builds sharing a database must agree on its schema; do not reset or silently migrate shared state to fit a working tree.
+
+
+## Social realtime notification workload
+
+Social keeps each notification scope, generation UUID and 24-hour expiry in
+`social.community_voice_notifications`. Its case-sensitive `raw_community_id`
+text primary key preserves the source cache key, while `community_id` is the
+canonical foreign key used for membership and media. Several spellings of the
+same UUID may retain independent facts. Non-null fields and identity/scope checks
+couple their lifecycle. START upserts one exact key with a new generation; a
+45-second default poll reads raw keys in ordered PK pages of 64. It refreshes an
+active key's expiry, or clears an inactive/expired key, by exact key plus generation.
+A media closure does not identify a raw key; explicit END handles only its supplied
+spelling, and other aliases await polling. No SQL lock spans a media or NATS await.
+Generation CAS protects metadata from stale cleanup, without making external
+media teardown atomic with a competing START. The raw primary key supports all
+runtime reads/writes; expiry is checked in the bounded pages, so it needs no
+separate expiry index.
+
+`social.event_payloads` is an optional immutable transport cache for community
+voice metadata whose event exceeds the existing 64 KiB NATS admission limit.
+The writer inserts opaque binary protobuf bytes under a random UUID, capped at
+512 MiB and expiring after 24 hours. Normal events require no insert. Receivers
+perform one fresh-only PK lookup for an oversized event; separate snapshots cannot
+overwrite each other. Private-call credentials never use this relation. The
+`event_payloads_expiry_idx(expires_at,id)` supports ordered deletion of at most 64
+expired rows with `FOR UPDATE SKIP LOCKED` per polling pass. This relation does not
+record delivery, retry, or replay work.
+
+The expected hot set is tracked active raw voice keys plus oversized events
+published during the preceding day, rather than all communities or subscribers.
+Membership fanout uses set probes of at most 256 subscriber addresses per SQL
+statement. A community voice update snapshots eligible subscribers and completes
+all membership reads before emitting. Any failed page suppresses the entire
+member-scoped update; a public start instead clears all membership annotations and
+announces to the whole snapshot with `isMember=false`. A public end skips
+membership reads. The snapshot and membership set each hold at most one entry per
+eligible subscriber. Production active-room counts, oversized-event frequency and
+a 512 MiB payload's memory/latency cost have not been measured; the byte limit is
+an admission bound, not a demonstrated capacity. Operators can observe transport
+drops through `social_event_delivery_dropped` and retain the existing SQL/job instrumentation.
+
+Private-call accept, reject and end RPCs first run the parameterized scalar query
+`SELECT $1::text::uuid` through the existing pool. This adds one SQL round trip per
+RPC so PostgreSQL controls accepted UUID spellings and syntax-error messages before
+the stricter media identifier check. It reads no application row, takes no row
+lock and needs no index. HTTP keeps its own canonical UUID validation and calls
+the typed operation directly. Query-only observations are recorded in `METRICS.md`;
+they do not establish equal latency with the source's combined lookup.
+
+## Social community ranking and compliance workload
+
+Community ranking reads current membership, posts, places and thumbnail facts in
+pages of 100 communities. Five lifetime counters on `social.communities` retain
+photos, ended events, event attendees, ended streams and ended voice chats. The
+ranking job updates local authoritative communities only. Mirrored ranking scores
+remain upstream facts. `ranking_tracking_since` bounds local event occurrences
+eligible for collection; zero counter defaults do not reconstruct history. An
+authoritative cutover must import the lifetime counters, collection watermark and
+local producer receipts together before enabling local ranking ownership.
+
+The existing leased event collector keeps a scalar source-key cursor and a
+recurrence ordinal window. It selects 100 event keys through the existing primary
+key before reading schedules, expanding at most 100 recurrence positions per
+event or probing receipts. One pass shares a three-second budget across at most
+1,024 pages and commits at most 100 new occurrences. Page receipts and lifetime
+counter changes commit before cursor advancement. Cancellation, SQL failure and
+process restart retain durable deduplication; cursor state is only local work
+progress. Full cyclic revisits reconsider backdated inserts, duration edits and
+appended recurrences. No end-time watermark hides these changes. A long catalogue
+or recurrence list can take multiple minute passes; these bounds do not establish
+ranking freshness in production.
+
+`social.community_ranking_events` retains local producer receipts with primary key
+`(kind,event_key,community_id)`. One photo may contribute to several communities;
+receipt insertion and counter changes share a transaction. Receipts have no expiry.
+External decoded events preserve the upstream consumer's repeated increments,
+including its finally-acknowledge behavior on handler failure. The receipt relation
+does not turn that transport into an exactly-once consumer.
+
+Community deletion probes `community_voice_notifications.community_id` and
+`community_ranking_events.community_id` through their cascading foreign keys.
+Both have a leading community-id index. The raw notification key and the ranking
+receipt's `(kind,event_key,community_id)` key serve different access patterns.
+Synthetic warm measurements and insertion costs are recorded in `METRICS.md`;
+they are not production capacity measurements.
+
+New camera uploads start with `ranking_published=false`. After both blobs are
+written, one transaction marks the row and applies local photo contributions.
+Existing photos receive `true` during migration, preserving the history boundary.
+The existing leased minute job keeps two scalar UUID cursors over the partial
+`images_ranking_pending_idx`. Each query fetches 100 pending keys before age
+classification. Recent and cold sweeps alternate while due, with a frozen
+ten-minute age boundary per sweep. A pass visits at most 32 pages under one
+three-second budget, including storage and SQL. Cold retries wait an hour after
+the full cold sweep; recent sweeps wait a minute. These are bounded candidate
+policies, not a production freshness guarantee: a large backlog adds whole-sweep
+latency, as measured in `METRICS.md`.
+
+Both blobs must exist before the publication transaction. A candidate one-second
+row budget covers both existence checks and publication; repair transactions set
+a local SQL statement timeout from the remaining row budget. The direct upload
+finalizer keeps its existing timeout behavior. A row error or row-budget timeout
+logs and advances that pending row so later rows can proceed and a later sweep
+can retry it. Job cancellation or the shared pass deadline retains the in-flight
+row and unvisited tail. Restart resets only the two local cursors and delays. Durable markers and receipts prevent repeat
+contributions. Missing blobs retain their pending rows for later completion;
+nothing is expired or marked published merely to shrink the backlog. Deletion
+does not decrement lifetime counters. A failed best-effort publication followed by
+photo deletion before repair can lose the contribution.
+
+Community create and edit compliance share `social.community_compliance_cache`
+through the existing pool. Its primary key is `(model,input_hash)`, where the hash
+is 32 bytes of SHA-256 over the source's name, description and image-digest
+serialization. Rows store the whole validated provider result, including rejected
+content, for two hours; they do not store the input text or image. Reads require a
+fresh expiry. The expiry index supports removal of at most 1,000 expired rows per
+hour, rechecking expiry to preserve concurrent refreshes. Provider failures are not
+cached. Cache-read SQL failures remain handler failures; a cache-write failure is
+reported by the source's compliance-unavailable branch.
+
+The compliance adapter retains one lazy Outbound provider profile per community
+State. Its 600-second SDK budget ends at response headers; a progressing body may
+continue beyond that budget. The native connect and read inactivity budgets are
+10 and 300 seconds. Provider bodies have no separate 4 MiB cap. Source-paired
+factory/SDK and native-fetch probes cover these boundaries, missing versus empty
+credentials and compliance metric outcomes. Delayed DNS, combined network phases
+and deployed providers remain unverified; the probes do not establish exhaustive
+provider equivalence.
+
+## Shared social registry profile facts
+
+RPC and community profile readers share `social.registry_profile_cache` through
+one existing pool. The primary key is the source registry cache key. A single
+read writes the requested wallet key; a batch writes the public `avatar.userId`
+key. Public profile identity never replaces the actor used for authorization or
+relationship storage. Batch reads retain cached-first order and newly fetched
+aliases, including duplicates admitted by the pinned source registry.
+
+Each successful write retains the minimal public profile for 600 seconds, measured
+by the database clock. Reads ignore expired rows even if cleanup is delayed.
+Missing or invalid profiles are not cached. Accepted content updates do not
+invalidate these facts; the source retains its previous value until expiry. The
+six V1 profile-enriched community reads (community listing, members, bans,
+community requests, member requests and posts) propagate cache-read failures to
+their handler error boundary. Consumers that intentionally use the best-effort
+profile wrapper retain that behavior. V1 members, bans and community requests
+omit unresolved profile rows after database pagination, preserving the database
+total; their V2 responses retain those rows without profiles. Post-author and
+strict single-owner behavior remain separate. Cache writes are best effort: a
+batch first uses one set write and retries individual keys if it fails, so one
+failed key does not prevent successful keys from being retained.
+
+The workload consists of indexed key/`ANY` reads, existing active-pointer/profile
+lookups on misses and bounded page writes. No external await occurs inside an SQL
+transaction. `registry_profile_cache_expiry_idx(expires_at,profile_key)` supports
+the existing one-second leased expiry job, selecting and deleting at most 1,000
+expired rows per pass. Delayed cleanup affects storage growth, not freshness.
+Production new-key rates and sustained reclamation capacity remain unmeasured.
+An authoritative cutover must import cached values with their remaining TTL or
+drain the source cache before switching readers; this runtime procedure is not
+established by the local reader and migration tests.
+
+A newly inserted referral performs one recent-invitation query by referrer,
+ordered by `created_at DESC` with a result limit of two. The existing
+`referral_progress_referrer_idx(referrer,status)` supports its equality filter;
+the database sorts matching history to select the two newest rows. The result is
+bounded, while the scanned history grows with that referrer. A query failure after
+the insert retains attribution and reaches the source handler's error boundary.
+Configured timing/IP Slack calls occur after insertion and the hundred-invite
+alert after the grant and accepted notification; no external await holds an SQL
+transaction. Each complete Slack effect has a ten-second absolute deadline, at
+most three attempts and a two-second Retry-After cap, including shared provider
+permit and pause waits. A failure retains the committed state and is swallowed
+at the existing boundary. Same-referrer retries exit before alert delivery.
+These timing limits deliberately differ from the pinned source SDK defaults.
+
+Registry cache keys retain the requested spelling, including case; batch key
+uniqueness is case-sensitive. Only the physical content-pointer lookup normalizes
+case and resolves one document per normalized pointer. Batch cache-hit matching
+compares the normalized public user ID to each requested key lowercased, while
+single-read errors retain the original requested key. This keeps mixed-case cache
+facts separate from authenticated wallet normalization and from the public ID.
+
+Community analytics reuses the configured Social analytics adapter and Outbound
+client. It adds no SQL storage, delivery receipt, retry queue or transaction that
+waits for HTTP. Join and opposite-request acceptance report the removed request
+ID when one exists; no ID property is sent when none exists. Making a community
+public reports the IDs of removed non-banned `request_to_join` rows, including
+historical status values, as the pinned source adapter's acceptance query does.
+That write can return one ID per matching request, so its returned data and
+analytics payload grow with that community's matching requests. The regression
+covers two accepted rows and one retained banned row; sustained large-community
+load is unmeasured. Analytics fetch failures do not change the mutation response.
+
+Client community writes retain the pinned Social source's commit boundaries.
+BAN commits membership removal, then removal of that wallet's likes, emits
+analytics, commits the ban, and removes its requests. A later failure preserves
+completed stages; voice eviction, member-status publication and the ban
+notification follow successful request removal. These are separate statements
+on the existing pool, with no transaction around external delivery. Updating a
+community commits its fields before thumbnail and place changes. Place removal
+and insertion commit separately. Changing privacy to public then accepts
+non-banned join requests in its own transaction: membership insertion and request
+deletion roll back together on failure, while the earlier privacy change stays.
+The atomic join-and-remove-requests operation remains separate from these
+workflows. Trigger-injected regressions cover one affected member, like and
+request, plus place replacement; they do not measure concurrent cutover or
+large-community workloads.
+
+## Private voice pending and media workload
+
+`social.private_voice_chats` records call identity and both parties. Absence of
+participant rows means a pending intent; accepting inserts both participants
+atomically. Only pending creation commits a call without participants. It
+normalizes and sorts both wallets, acquires their transaction advisory locks,
+and probes pending rows in a fresh statement under explicit `READ COMMITTED`,
+including when the role default is stronger. Those locks enforce one pending
+per wallet across both roles. Pending expiry, rejection and disconnect delete
+whole pending calls; media cleanup deletes whole media calls and cascades their
+participants. No path removes the last participant while retaining its call.
+
+Live media presence still refuses a new Social call. Historical or expired media
+can coexist with a new pending intent until its own lifecycle removes it. The two
+nonunique address indexes support the caller/callee membership probes without
+constraining that history. Pending creation does not delete media. Expected
+traffic is low-rate two-wallet writes and indexed existence probes, with at most
+one pending per normalized wallet; retained media depends on its connection and
+cleanup lifecycle. Capacity and production latency are not established by the
+functional tests.
+
+Community detail, listing and member-request reads fetch voice status separately
+through the existing comms `VoiceDb` on the same pool and presence configuration.
+An ordinary page uses one primary-key-bounded bulk read for its community IDs;
+core community query errors remain fallible. Voice-query errors become idle
+statuses, matching the pinned companion's SQL catch. Active-room filters and the
+active-room endpoint first read all active rooms; an empty or failed voice read
+returns an empty response before community SQL. This all-room query still grows
+with stored voice presence. These local SQL catches do not describe direct
+HTTP-provider errors in the separate Social deployment.
+
+Signed community listings, members, bans and member-request summaries propagate
+relationship-query failures through their handler boundary on the existing pool.
+Members and bans read relationship facts before V1 profiles, including empty
+pages; anonymous listing and member reads omit those relationship queries.
+Community-request rows carry `friendshipStatus: NONE` without a relationship
+read. Ordinary signed community pages use the existing accepted-friend read and
+at most three matching member addresses per community; no index or storage was
+added. The legacy best-effort friendship-status wrapper remains available to
+its existing consumers outside these community reads.
+
+Member-request summaries read the pending request page and its total before any
+community lookup. An empty raw page returns immediately. A nonempty page adds
+one community-summary query bounded to its community IDs, followed by the
+existing relationship read even if every community is inactive or bans the
+caller. Voice and profile enrichment operate on surviving summaries. Results
+follow the saved raw request order, and total/page metadata still describe all
+pending requests; visibility filtering can leave a page empty. These statements
+use the same pool without a transaction or a repeated read of request rows.
+
+Signed V1 member and ban rows retain `lastFriendshipAction` and `actingUser`
+from the existing latest-action query, including SQL null when no action exists.
+Their numeric status uses those same facts; this adds no SQL statement, table,
+index or pool. Anonymous members omit the aliases and relationship read, and V2
+returns only the numeric status. The pinned source's complete response bodies
+are compared for accepted, sent/received requests, absent friendship and empty
+history, with V2 and anonymous controls; no performance change was measured.
+
+## Native referral login workload
+
+`POST /social-api/v1/client-login` derives the invited wallet from ADR-44 signed
+fetch. Its signed metadata contains `loginId` and `occurredAt`; the timestamp
+limits admission to the preceding 24 hours with five minutes of future tolerance,
+matching the signed-fetch clock window.
+The client preserves these values across retries and signs each request afresh.
+The occurrence timestamp bounds replay acceptance, while login-day accounting
+continues to use the database's UTC processing date.
+
+Most logins have no referral attribution and require only the indexed invited
+wallet lookup. For an attributed wallet, `social.referral_login_receipts` stores
+one receipt keyed by `(invited_user, login_id)` in the same transaction as the
+login-day update or grant and its accepted notification/email delivery row.
+Duplicate receipts do not evaluate the threshold again. The FK to referral
+progress shares its deletion/restore lifecycle and cascades on deletion.
+
+Under the invited-user row lock, admission caps distinct new IDs at 120 per
+wallet in a rolling 24-hour window of server `received_at` values. A duplicate
+does not consume another slot. Finished or rejected referrals return success
+without adding receipts; banned referrers are a no-op on this native ingress,
+without exposing their identity or stored IP. Those acknowledged login
+observations are not retained or replayed if the ban is later lifted; a new
+login observation is required. The referrer-wide advisory lock
+is acquired only when the login can grant a tier, after receipt checks and
+login-day processing. Lock or statement timeouts return a retryable 503.
+
+Expiry is the later of server reception and signed occurrence, plus 24 hours.
+Backdating cannot shorten quota retention. Future-dated events can retain a
+receipt for up to 24 hours and five minutes, so retained receipts are not the
+same count as the rolling admission limit. The primary key's invited-user
+prefix serves this bounded per-wallet count; no separate receipt-time index
+is needed. The existing minute worker locks and deletes at most 1,000 expired
+receipts with `FOR UPDATE SKIP LOCKED`, using
+`referral_login_receipts_expiry_idx(expires_at, invited_user, login_id)`.
+Cleanup failure is logged and does not skip the reward pass. Delayed cleanup
+does not extend accepted event age or the admission window. These are
+implementation bounds, not measured production rates or throughput.
+
+The bootstrap defines this new relation and index. Run `catalyst schema
+migrate` before rolling out the new server. On an existing database, the
+production migrator creates missing objects from that same definition. Step
+`0025_social_referral_login_received_at` also upgrades databases that already
+have the earlier receipt table without `received_at`, preserving its rows,
+keys and original expiry timestamps. Each backfilled timestamp uses the UTC
+server clock after the DDL lock is acquired; future inserts use the same
+server-clock default. Existing `received_at` values remain unchanged. The step
+is recorded once and a second migrate does not change the timestamps. The
+volatile default can rewrite the table under the DDL lock; no production-sized
+migration duration has been measured.
+
+Both receipt cleanup paths require `expires_at` to have passed and
+`received_at` to be at least 24 hours old. This preserves the backfilled quota
+window even when a legacy expiry is already in the past. The effective
+retention for such upgraded rows is at least 24 hours from each row’s
+backfilled timestamp. The
+workload remains the existing per-wallet receipts; no new table or index is
+added, and no receipt or referral progress is reset.
+
+Referral attribution serializes quota decisions with a transaction-scoped
+referrer/IP advisory key; count and insertion share that transaction. The IP is
+the actual TCP peer unless an explicitly trusted backend proxy supplies one
+valid overwritten X-Real-IP. New facts use canonical addresses; the count uses
+guarded inet equality over historical text, including mapped IPv4 aliases.
+Malformed historical values remain stored and do not abort the count. The
+existing referrer-leading index bounds the prefix; alias conversion is still
+per matching row and has a measured CPU cost (see METRICS.md). No index on the
+stored IP text serves this inet comparison, so the schema defines none. Finalizing
+a referral serializes its referrer and counts the milestone before committing
+the grant. A grant that reaches a reward tier records it in the nullable
+`referral_progress.reward_tier` in the same transaction. Optional milestone Slack alerts occur after commit. At most eight such tasks
+per adapter are admitted before spawning; saturation drops and logs the alert.
+Admitted effects retain the ten-second deadline. Reward requests run in the existing
+leased worker after login recording commits; they do not delay login acknowledgement. One nullable receipt per milestone stores a
+pre-POST `reward_requested_at`, confirmed provider `reward_response` and
+`reward_retry_at`. The expected workload is at most one receipt per milestone,
+with a 64-row due batch every minute; this bound is not a throughput measurement.
+The partial due index excludes completed and ambiguous requests. A session
+advisory guard serializes attempts without an open transaction across HTTP; its
+connection closes on cancellation.
+
+Configuration failures leave the request unclaimed. After the POST claim commits,
+transport errors, non-success statuses, malformed replies and a crash before
+response persistence leave an ambiguous receipt that is never automatically
+reissued. Operators must reconcile the outcome before restoring it to pending or
+supplying a confirmed response. Additive step `0024_social_referral_reward_receipt`
+imports previously confirmed object-valued `reward_paid` responses, including
+receipts with missing or invalid image metadata, and quarantines uncertain pending
+markers. A confirmed receipt with unusable image metadata remains confirmed and
+needs metadata repair for image delivery; it must not authorize another POST. This avoids automatic duplicate issuance but cannot guarantee
+exactly-once external delivery.
+
+`reward_paid` retains the historical `{tier, reward, notified}` receipt while
+outstanding effects remain. A confirmed response permits the worker to retry
+local completion without issuing another reward. Image persistence, the native
+notification and email delivery row, and clearing `reward_tier`/`reward_paid`
+share one transaction. A SQL failure rolls back those effects together. An
+imported receipt already marked notified does not send another notification.
+Images remain unique per referrer and tier. External reward issuance still
+cannot be made exactly once without a provider idempotency contract.
+
+Community membership mutations use one PostgreSQL session advisory guard per
+community on the shared pool. BAN, direct join, request acceptance, bulk public
+acceptance, the SQL phase of ownership transfer and every federation role action
+(join, leave, role, ban, unban) serialize under that guard. A federation action
+that grants membership re-checks the active ban inside its guarded transaction,
+so a ban committed after its pre-check refuses it.
+BAN retains separate committed kick, unlike, analytics, ban and request-removal
+phases. Ownership NAME validation precedes its guard; external notification,
+voice and provider awaits follow release. SQLx 0.9 native acquire already owns
+its cancellation cleanup. Acquisition has one absolute one-second budget
+covering pool checkout, temporary BEGIN, SET LOCAL, native acquire and COMMIT.
+The local server lock timeout is 750ms; the connection is marked close-on-drop
+until COMMIT is confirmed, then disarmed synchronously. This bounds waiting
+backend retention while preserving the same connection, autocommit and previous
+GUC values after success, including a pool of size one. Normal release remains
+native guard Drop. These limits strengthen coordination and bound contention;
+the separate source commit phases remain independently committed.
+
+Private media credentials serialize same-call writers before a plain party read,
+then take sorted wallet transaction locks before locking/upserting the call.
+A conflict preserves its existing parties, creation time and prior participants.
+Pending expiry remains effective while a media writer waits for a wallet.

@@ -1,4 +1,4 @@
-/* from: shop@2d3bf62:app/src/pages/Cart.styles.ts (Checkout, Top, Back, Body, Left, Panel, PanelHead,
+/* from: shop@3a322cf9:app/src/pages/Cart.styles.ts (Crumbs, Back, Fitting, Cta); shop@2d3bf62:app/src/pages/Cart.styles.ts (Checkout, Top, Back, Body, Left, Panel, PanelHead,
    PanelBack, PanelTitle, Fitting, Utils, Summary, SummaryTitle, SummaryBody, Cta, Msg, Upsell, CartEmpty)
    and app/src/components/EmptyState/EmptyState.styles.ts. Scoped to .shop-cart.
 
@@ -24,8 +24,36 @@
 
 .shop-cart__band {
   width: 100%;
-  padding: 32px var(--shop-gutter, 54px) 107px;
+  padding: 28px var(--shop-gutter, 54px) 107px;
   background: rgba(0, 0, 0, 0.2);
+}
+
+.shop-cart__crumbs {
+  display: flex;
+  align-items: center;
+  max-width: 1510px;
+  margin: 0 auto 48px;
+}
+
+.shop-cart__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #ecebed;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.shop-cart__back:hover {
+  color: #fcfcfc;
 }
 
 .shop-cart__inner {
@@ -148,13 +176,23 @@
 }
 
 .shop-cart__panelhead {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: -24px -24px 16px;
+  margin: -24px -24px 24px;
   padding: 12px 12px 12px 24px;
   min-height: 64px;
+}
+/* The rule is inset to the card's padding, spanning exactly the lines below it, as under the summary's title. */
+.shop-cart__panelhead::after {
+  content: "";
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: 0;
+  border-bottom: 1px solid rgba(160, 155, 168, 0.25);
 }
 
 .shop-cart__panelback {
@@ -176,9 +214,9 @@
   gap: 8px;
   height: 40px;
   padding: 0 12px;
-  border: 2px solid #fcfcfc;
-  border-radius: var(--shop-radius-btn, 8px);
-  background: none;
+  border: 0;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.2);
   color: #fcfcfc;
   font: inherit;
   font-size: 13px;
@@ -193,8 +231,10 @@
     filter 0.15s ease;
 }
 
-.shop-cart__fitting:hover:not(:disabled) {
-  background: color-mix(in srgb, currentColor 6%, transparent);
+@media (hover: hover) {
+  .shop-cart__fitting:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.3);
+  }
 }
 
 .shop-cart__fitting:active:not(:disabled) {
@@ -272,14 +312,16 @@
 .shop-cart__confirm {
   width: 100%;
   height: 56px;
+  padding: 0 12px;
   border: 0;
-  border-radius: var(--shop-radius-btn, 8px);
+  border-radius: 12px;
   background: var(--shop-buy-btn, linear-gradient(180.93deg, #ff7439 2.82%, #ff2d55 97.47%));
   color: #fcfcfc;
   font: inherit;
   font-size: 15px;
   font-weight: 600;
-  letter-spacing: 0.046em;
+  line-height: 24px;
+  letter-spacing: 0.46px;
   text-transform: uppercase;
   cursor: pointer;
   transition: background-image 0.15s ease;
@@ -350,6 +392,11 @@
 }
 
 @media (max-width: 880px) {
+  /* The panel's own back arrow takes over here, as upstream hides its crumbs at MOBILE_MAX (880). */
+  .shop-cart__crumbs {
+    display: none;
+  }
+
   .shop-cart {
     padding-bottom: 188px;
   }
@@ -365,7 +412,7 @@
 
   .shop-cart__panelhead {
     gap: 8px;
-    margin: -16px -16px 12px;
+    margin: -16px -16px 16px;
     padding: 8px 16px;
     min-height: 0;
   }
@@ -385,10 +432,6 @@
     flex: 1;
     min-width: 0;
     font-size: 16px;
-  }
-
-  .shop-cart__fitting {
-    border-width: 1px;
   }
 
   .shop-cart__side {

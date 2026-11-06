@@ -42,9 +42,17 @@ Common to every target:
 
 Platform libraries (needed by the native and headless builds):
 
-- **linux**: `sudo apt-get install --no-install-recommends libasound2-dev libudev-dev ninja-build clang cmake pkg-config libssl-dev libx11-dev libgl1-mesa-dev libxext-dev` plus ffmpeg dev packages (`libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev`)
-- **macos**: `brew install ffmpeg@6 pkg-config ninja` and `export PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@6/lib/pkgconfig`
-- **windows**: install [clang/LLVM](https://github.com/llvm/llvm-project/releases/) and set `LIBCLANG_PATH`; unzip [ffmpeg 6.0 shared](https://github.com/GyanD/codexffmpeg/releases/download/6.0/ffmpeg-6.0-full_build-shared.7z), set `FFMPEG_DIR` to its root and add `ffmpeg\bin` to `PATH` (ninja and cmake ship with visual studio)
+- **linux**: `sudo apt-get install --no-install-recommends libasound2-dev libudev-dev ninja-build clang cmake pkg-config libssl-dev libx11-dev libgl1-mesa-dev libxext-dev`
+- **macos**: `brew install pkg-config ninja`
+- **windows**: install [clang/LLVM](https://github.com/llvm/llvm-project/releases/) and set `LIBCLANG_PATH` (ninja and cmake ship with visual studio)
+
+Scene video and audio streams play through the UUAV player (`library/uuav`): a sandboxed
+`uuav-helper` process with its own FFmpeg, decoding in hardware where the platform has it. The
+native binary spawns the helper from its own directory, so the committed runtime set has to sit
+next to it: `git lfs pull --include 'library/uuav/dist/**'` once, then
+`python3 ../../../tooling/uuav/stage-dist.py host target/release` (the `just native-*` recipes
+do this; `just stage-uuav-tests` stages it for `cargo test`). Windows builds play the audio of a
+video but do not show its frames yet (`crates/media/src/uuav/platform_windows.rs`).
 
 ## Web client
 
@@ -59,7 +67,7 @@ cargo install wasm-pack
 just wasm     # builds the wasm into deploy/web/engine/pkg, then serves react-web and opens a browser
 ```
 
-`just wasm` is the whole loop: `wasm-pack build` for the engine and for the scene runtime (`crates/dcl_scene_wasm`, into `pkg-scene`), re-bundle the sandbox worker (it inlines the wasm glue, so it must be rebuilt with the wasm), `npm install` in `react-web` and `react-web/bridge-scene`, then `npm run dev`.
+`just wasm` is the whole loop: `just ts-bindings` (the HUD imports the generated types), `wasm-pack build` on the pinned nightly for the engine and for the scene runtime (`crates/dcl_scene_wasm`, into `pkg-scene`), re-bundle the sandbox worker (it inlines the wasm glue, so it must be rebuilt with the wasm), `npm install` in `react-web` and `react-web/bridge-scene`, then `npm run dev`.
 
 Useful URLs once the dev server is up:
 
@@ -115,7 +123,7 @@ cargo run --release
 To build without CEF at all (the engine's own bevy-ui HUD instead of React):
 
 ```bash
-cargo run --release --no-default-features --features "livekit,ffmpeg,inspect,social"
+cargo run --release --no-default-features --features "livekit,uuav,inspect,social"
 ```
 
 ## Headless server
@@ -150,6 +158,14 @@ npm test --prefix react-web           # HUD, deterministic (vitest, no engine)
 npm run test:e2e --prefix react-web   # HUD against a real engine (playwright, needs a GPU)
 ```
 
+CI's Test Suite builds the engine tests with the `ci-test` profile. The `dcl_deno_ipc` integration
+test makes Cargo build the runnable sidecar in the same profile directory, where the scene tests
+look for it.
+
+```bash
+cargo test --all --profile ci-test --locked -- --test-threads=1
+```
+
 `react-web/review.md` is the pre-merge checklist for anything under `react-web/`.
 
 ## Agents and tests
@@ -164,6 +180,16 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   after a teleport reads it first), `/avatar_state [all|<address>]`, `/chat_history [count]`,
   `/voice_state`, `/entity_screen_position <entity> [--bounds]`, plus the older `/player_position`,
   `/get_user_data`, `/connected_players`, `/time` and the scene commands.
+- In development builds the lower-right bug button toggles the debug panel. In all builds,
+  open **Sidebar settings (•••) → Debug panel** or type `/debug` in chat. Search by
+  section or control, or enter `/debug Performance` directly. Expanded sections refresh
+  about once per second. `/debug help` lists the available sections. Engine plugins
+  advertise their queries, fields and controls through `/debug_panel`. The HUD offers session actions
+  and checks `/debug_panel --dev-build` for the engine's compile-time development flag.
+  Use the panel to inspect a scene, compare frame and memory measurements, diagnose
+  room and media connections, and exercise supported controls. Availability depends
+  on the build, platform and preview mode. `/performance_state` reports the effective
+  frame-rate target and session override independently of the panel.
 - The HUD, by role and accessible name (`react-web/src/lib/hudAutomation.ts`): `/hud_list [role]`,
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
   `hidden`, `enabled`, `actionable`; `"timeout"` ms). A selector is the name or JSON

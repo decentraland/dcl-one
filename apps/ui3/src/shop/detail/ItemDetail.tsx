@@ -26,7 +26,7 @@ import { shopClient } from "../api/shop";
 import { fetchCatalogItems, fetchCollection, fetchCollectionItems, fetchRelatedItems, type UnifiedListing } from "../discovery/api";
 import { cardEligibility } from "../discovery/cardPrice";
 import { cartInputFor } from "../discovery/components/AssetCard";
-import { CreatorBadge } from "../discovery/components/Hero";
+import { BadgeSkeleton, DetailCollection, DetailCreator } from "./components/DetailBadges";
 import Icon from "../discovery/components/Icon";
 import IndexNotice from "../discovery/components/IndexNotice";
 import Rail from "../discovery/components/Rail";
@@ -42,7 +42,7 @@ import type { CatalogItem } from "../discovery/lib/catalogItem";
 import { categoryHref, rarityHref, smartHref } from "../discovery/lib/chip-links";
 import { categoryIcon, genderIcon } from "../discovery/lib/itemIcons";
 import { isListingForSale } from "../discovery/lib/pricing";
-import { MAX_SUPPLY, rarityColor, rarityDescription, rarityGlowCoreRgb, rarityGlowRgb, rarityLabel } from "../discovery/lib/rarity";
+import { MAX_SUPPLY, rarityCardPalette, rarityDescription, rarityGlowCoreRgb, rarityGlowRgb, rarityLabel } from "../discovery/lib/rarity";
 import { recordViewed } from "../discovery/lib/recently-viewed";
 import { itemRoute, routeSegment, tokenRoute } from "../discovery/lib/routes";
 import { saleDiscountPct, saleUnitsHint } from "../discovery/lib/sale";
@@ -68,6 +68,7 @@ import NotifyMe from "./components/NotifyMe";
 import { pdpText } from "./copy";
 import PaymentPanel from "./components/PaymentPanel";
 import ResaleOffers from "./components/ResaleOffers";
+import { ItemOwners, LatestSales } from "./components/TradeHistory";
 import { itemIdFromTokenId } from "./lib/token-id";
 import { itemUrn } from "./lib/urn";
 import { fetchVrmExportBlocked } from "./lib/wearable-rules";
@@ -551,12 +552,15 @@ export default function ItemDetail() {
     emoteHasSound: traitRows.find((r) => r.emoteHasSound !== undefined)?.emoteHasSound,
     emoteHasProps: traitRows.find((r) => r.emoteHasProps !== undefined)?.emoteHasProps,
   };
+  // Upstream's collectionPending: the collection badge holds its place while the name is on its way; a settled
+  // empty answer shows nothing rather than a hanging shimmer.
+  const collectionPending = validContract && !collectionQ.data?.name && collectionQ.isLoading;
   const showCreator = !!current.creator && network !== "ethereum" && (!isTokenRoute || isLand);
   const showOwner = isTokenRoute && isLand && !!current.seller;
   const collectionThumbs = siblings.map((s) => s.thumbnail).filter(Boolean).slice(0, 4);
 
   return (
-    <div className="shop-page shop-detail shop-pdp" data-testid="item-detail" data-route={isTokenRoute ? "token" : "item"}>
+    <div className="shop-page shop-detail shop-pdp" data-route={isTokenRoute ? "token" : "item"}>
       <nav className="shop-pdp__crumbs" aria-label={t("itemDetail.breadcrumbAria")}>
         <Link to={`${SHOP_BASE}/items`}>{t("nav.collectibles")}</Link>
         <span aria-hidden>/</span>
@@ -564,7 +568,7 @@ export default function ItemDetail() {
       </nav>
 
       <div className="shop-detail__main" style={{ "--glow-rgb": rarityGlowRgb(rarity), "--glow-core": rarityGlowCoreRgb(rarity) } as CSSProperties}>
-        <div className="shop-detail__preview">
+        <div className="shop-detail__preview" data-testid="item-preview">
           {current.name ? <ItemPreview item={current} /> : <div className="shop-preview" aria-busy="true" aria-label={t("itemDetail.previewLoading")} />}
           {favItemId ? <FavoriteButton contractAddress={contractAddress} itemId={favItemId} name={current.name} placement="preview" /> : null}
           <div className="shop-detail__preview-actions">
@@ -605,11 +609,11 @@ export default function ItemDetail() {
               <div className="shop-detail__chips">
                 <Tooltip label={rarityTip(rarity)} side="top" className="shop-pdp__tip">
                   {rarityHref(rarity) ? (
-                    <Link className="shop-detail__chip" data-variant="rarity" to={rarityHref(rarity)!} style={{ background: rarityColor(rarity) }} data-testid="detail-rarity-link">
+                    <Link className="shop-detail__chip" data-variant="rarity" to={rarityHref(rarity)!} style={{ "--chip-bg": rarityCardPalette(rarity).label } as CSSProperties} data-testid="detail-rarity-link">
                       {rarityLabel(rarity)}
                     </Link>
                   ) : (
-                    <span className="shop-detail__chip" data-variant="rarity" tabIndex={0} style={{ background: rarityColor(rarity) }}>
+                    <span className="shop-detail__chip" data-variant="rarity" tabIndex={0} style={{ "--chip-bg": rarityCardPalette(rarity).label } as CSSProperties}>
                       {rarityLabel(rarity)}
                     </span>
                   )}
@@ -693,26 +697,13 @@ export default function ItemDetail() {
                 </div>
               ) : null}
 
-              {showCreator || collectionQ.data?.name || showOwner ? (
-                <div className="shop-detail__meta">
-                  {showCreator ? (
-                    <div className="shop-pdp__col">
-                      <h2 className="shop-detail__label">{t("itemDetail.creator")}</h2>
-                      <CreatorBadge address={current.creator} />
-                    </div>
-                  ) : null}
+              {showCreator || collectionQ.data?.name || collectionPending || showOwner ? (
+                <div className="shop-detail__meta" data-testid="detail-meta">
+                  {showCreator ? <DetailCreator address={current.creator} /> : null}
                   {collectionQ.data?.name ? (
-                    <div className="shop-pdp__col">
-                      <h2 className="shop-detail__label">{t("itemDetail.collection")}</h2>
-                      <Link className="shop-badge shop-pdp__collection" to={`${SHOP_BASE}/collection/${contractAddress}`} data-testid="collection-badge">
-                        <span className="shop-badge__avatar" data-count={collectionThumbs.length || undefined}>
-                          {collectionThumbs.map((src) => (
-                            <img key={src} src={src} alt="" loading="lazy" />
-                          ))}
-                        </span>
-                        <span className="shop-badge__name">{collectionQ.data.name}</span>
-                      </Link>
-                    </div>
+                    <DetailCollection contractAddress={contractAddress} name={collectionQ.data.name} thumbnails={collectionThumbs} label={(name) => <>{t("itemDetail.collection")} {name}</>} />
+                  ) : collectionPending ? (
+                    <BadgeSkeleton testId="collection-loading" />
                   ) : null}
                   {showOwner ? (
                     <div className="shop-pdp__col">
@@ -856,6 +847,13 @@ export default function ItemDetail() {
         <ResaleOffers contractAddress={contractAddress} resales={resales} classic={classicQ.data ?? []} network={network} currentTokenId={routeTokenId ?? undefined} viewer={account} />
       ) : null}
 
+      {/* A token route waits for its token: until then the category is the placeholder's, and LAND has its
+          own sales table. */}
+      {validContract && !isTokenRoute && !isLand && pageItemId ? <ItemOwners contractAddress={contractAddress} itemId={pageItemId} /> : null}
+      {validContract && !isLand && (isTokenRoute ? routeTokenId && token : pageItemId) ? (
+        <LatestSales contractAddress={contractAddress} tokenId={isTokenRoute ? routeTokenId! : undefined} itemId={isTokenRoute ? undefined : pageItemId!} />
+      ) : null}
+
       <SuggestedForYouRow exclude={personalExclude} title={pdpText("itemDetail.becauseYouOwn")} first={PERSONAL_RAIL_SIZE} />
       {personalHidden !== null && rail.items.length > 0 ? (
         <Rail
@@ -864,6 +862,8 @@ export default function ItemDetail() {
           source="related"
           viewAllTo={rail.isCollectionOnly ? `${SHOP_BASE}/collection/${contractAddress}` : undefined}
           testId="detail-rail"
+          variant="collection"
+          className="shop-pdp__rail"
         />
       ) : null}
 

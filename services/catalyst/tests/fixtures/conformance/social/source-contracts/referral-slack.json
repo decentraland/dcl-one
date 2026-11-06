@@ -1,0 +1,461 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+    "sources": [
+      {
+        "path": "src/utils/slackMessages.ts",
+        "sha256": "a1870e2de098e190d9d59d32c60bb2cdbba0cf5e99255e9ee78e6dddbcc24348"
+      },
+      {
+        "path": "src/logic/referral/referral.ts",
+        "sha256": "b0020c89a7e69b428771c2fbe3902a5254ec822b2bf40bcb6e5c0777a8edf466"
+      },
+      {
+        "path": "node_modules/@dcl/slack-component/dist/src/component.js",
+        "sha256": "525409bef2723681249a4bc4b9a843079da873d20c821de04f1bc79f7468228a"
+      },
+      {
+        "path": "node_modules/@slack/web-api/dist/WebClient.js",
+        "sha256": "3c4375a0a220918da2460571ea7223b11a387428a05b1813a3cad21a0133c8a2"
+      },
+      {
+        "path": "node_modules/@slack/web-api/dist/retry-policies.js",
+        "sha256": "2fdcd54eec36b4733bf625de5de564853fa6b176e9407691627af0c39f4db677"
+      },
+      {
+        "path": "node_modules/retry/lib/retry.js",
+        "sha256": "3142d1f03e5f1e78a0c0b00a25b4626c94a3de8389898c96bb26e96616277bcb"
+      }
+    ]
+  },
+  "runtime": {
+    "node": "v26.12.0",
+    "slack_sdk": "6.13.0"
+  },
+  "scope": "Actual source Slack payloads/component/SDK with an in-process axios adapter. Form/auth fields and retry classifications/counts are executed; transport test waits are reduced to <=1ms. Default retry durations are separately captured with deterministic Math.random=0.5. No external Slack calls, deployed success or equality beyond the existing Outbound timeouts/guards is claimed.",
+  "cases": [
+    {
+      "kind": "timing",
+      "is_dev": true,
+      "referrer": "0x9111111111111111111111111111111111111111",
+      "invited": "0x9222222222222222222222222222222222222222",
+      "dashboard": "https://dashboard.example.org/referrals",
+      "newest_ms": 1767268801234,
+      "previous_ms": 1767268680000,
+      "message": {
+        "channel": "notifications-dev",
+        "text": "⚠️ Suspicious Referral Timing - Multiple invitations within 5 minutes",
+        "blocks": [
+          {
+            "type": "header",
+            "text": {
+              "type": "plain_text",
+              "text": "⚠️ Suspicious Referral Timing",
+              "emoji": true
+            }
+          },
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*🕒 Rapid Invitations Detected*\n\n*Referrer:* `0x9111111111111111111111111111111111111111`\n*Time Between Invitations:* 2.02 minutes"
+            }
+          },
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*📊 Invitation Details:*\n*New Invited User:* `1767268801234`\n*Time:* 2026-01-01T12:00:01.234Z\n\n*Previous Invited User:* `1767268680000`\n*Time:* 2026-01-01T11:58:00.000Z"
+            }
+          },
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*🔍 Analysis:*\n• Two invitations created within 2.02 minutes\n• Potential automated behavior or coordination\n• May require manual review"
+            }
+          },
+          {
+            "type": "actions",
+            "elements": [
+              {
+                "type": "button",
+                "text": {
+                  "type": "plain_text",
+                  "text": "View Referral Dashboard",
+                  "emoji": true
+                },
+                "url": "https://dashboard.example.org/referrals",
+                "style": "primary"
+              }
+            ]
+          }
+        ]
+      },
+      "request": {
+        "method": "post",
+        "path": "chat.postMessage",
+        "authorization": "Bearer fixture-token",
+        "content_type": "application/x-www-form-urlencoded",
+        "body": "channel=notifications-dev&text=%E2%9A%A0%EF%B8%8F%20Suspicious%20Referral%20Timing%20-%20Multiple%20invitations%20within%205%20minutes&blocks=%5B%7B%22type%22%3A%22header%22%2C%22text%22%3A%7B%22type%22%3A%22plain_text%22%2C%22text%22%3A%22%E2%9A%A0%EF%B8%8F%20Suspicious%20Referral%20Timing%22%2C%22emoji%22%3Atrue%7D%7D%2C%7B%22type%22%3A%22section%22%2C%22text%22%3A%7B%22type%22%3A%22mrkdwn%22%2C%22text%22%3A%22*%F0%9F%95%92%20Rapid%20Invitations%20Detected*%5Cn%5Cn*Referrer%3A*%20%600x9111111111111111111111111111111111111111%60%5Cn*Time%20Between%20Invitations%3A*%202.02%20minutes%22%7D%7D%2C%7B%22type%22%3A%22section%22%2C%22text%22%3A%7B%22type%22%3A%22mrkdwn%22%2C%22text%22%3A%22*%F0%9F%93%8A%20Invitation%20Details%3A*%5Cn*New%20Invited%20User%3A*%20%601767268801234%60%5Cn*Time%3A*%202026-01-01T12%3A00%3A01.234Z%5Cn%5Cn*Previous%20Invited%20User%3A*%20%601767268680000%60%5Cn*Time%3A*%202026-01-01T11%3A58%3A00.000Z%22%7D%7D%2C%7B%22type%22%3A%22section%22%2C%22text%22%3A%7B%22type%22%3A%22mrkdwn%22%2C%22text%22%3A%22*%F0%9F%94%8D%20Analysis%3A*%5Cn%E2%80%A2%20Two%20invitations%20created%20within%202.02%20minutes%5Cn%E2%80%A2%20Potential%20automated%20behavior%20or%20coordination%5Cn%E2%80%A2%20May%20require%20manual%20review%22%7D%7D%2C%7B%22type%22%3A%22actions%22%2C%22elements%22%3A%5B%7B%22type%22%3A%22button%22%2C%22text%22%3A%7B%22type%22%3A%22plain_text%22%2C%22text%22%3A%22View%20Referral%20Dashboard%22%2C%22emoji%22%3Atrue%7D%2C%22url%22%3A%22https%3A%2F%2Fdashboard.example.org%2Freferrals%22%2C%22style%22%3A%22primary%22%7D%5D%7D%5D"
+      }
+    },
+    {
+      "kind": "ip",
+      "is_dev": true,
+      "referrer": "0x9111111111111111111111111111111111111111",
+      "invited": "0x9222222222222222222222222222222222222222",
+      "dashboard": "https://dashboard.example.org/referrals",
+      "newest_ms": 1767268801234,
+      "previous_ms": 1767268680000,
+      "message": {
+        "channel": "notifications-dev",
+        "text": "🚨 IP Match Rejection - Referral blocked due to IP limit exceeded",
+        "blocks": [
+          {
+            "type": "header",
+            "text": {
+              "type": "plain_text",
+              "text": "🚨 IP Match Rejection Detected",
+              "emoji": true
+            }
+          },
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*⚠️ Suspicious Activity Detected*\n\n*Invited User:* `0x9222222222222222222222222222222222222222`\n*IP Address:* `192.0.2.1`\n*Referrer:* `0x9111111111111111111111111111111111111111`"
+            }
+          },
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*📊 Details:*\n• IP address has reached maximum of 2 referrals\n• Potential abuse or automated system detected\n• Referral automatically rejected\n\n*🔍 Next Steps:*\n• Monitor for similar patterns\n• Review IP address activity"
+            }
+          },
+          {
+            "type": "actions",
+            "elements": [
+              {
+                "type": "button",
+                "text": {
+                  "type": "plain_text",
+                  "text": "View Referral Dashboard",
+                  "emoji": true
+                },
+                "url": "https://dashboard.example.org/referrals",
+                "style": "danger"
+              }
+            ]
+          }
+        ]
+      },
+      "request": {
+        "method": "post",
+        "path": "chat.postMessage",
+        "authorization": "Bearer fixture-token",
+        "content_type": "application/x-www-form-urlencoded",
+        "body": "channel=notifications-dev&text=%F0%9F%9A%A8%20IP%20Match%20Rejection%20-%20Referral%20blocked%20due%20to%20IP%20limit%20exceeded&blocks=%5B%7B%22type%22%3A%22header%22%2C%22text%22%3A%7B%22type%22%3A%22plain_text%22%2C%22text%22%3A%22%F0%9F%9A%A8%20IP%20Match%20Rejection%20Detected%22%2C%22emoji%22%3Atrue%7D%7D%2C%7B%22type%22%3A%22section%22%2C%22text%22%3A%7B%22type%22%3A%22mrkdwn%22%2C%22text%22%3A%22*%E2%9A%A0%EF%B8%8F%20Suspicious%20Activity%20Detected*%5Cn%5Cn*Invited%20User%3A*%20%600x9222222222222222222222222222222222222222%60%5Cn*IP%20Address%3A*%20%60192.0.2.1%60%5Cn*Referrer%3A*%20%600x9111111111111111111111111111111111111111%60%22%7D%7D%2C%7B%22type%22%3A%22section%22%2C%22text%22%3A%7B%22type%22%3A%22mrkdwn%22%2C%22text%22%3A%22*%F0%9F%93%8A%20Details%3A*%5Cn%E2%80%A2%20IP%20address%20has%20reached%20maximum%20of%202%20referrals%5Cn%E2%80%A2%20Potential%20abuse%20or%20automated%20system%20detected%5Cn%E2%80%A2%20Referral%20automatically%20rejected%5Cn%5Cn*%F0%9F%94%8D%20Next%20Steps%3A*%5Cn%E2%80%A2%20Monitor%20for%20similar%20patterns%5Cn%E2%80%A2%20Review%20IP%20address%20activity%22%7D%7D%2C%7B%22type%22%3A%22actions%22%2C%22elements%22%3A%5B%7B%22type%22%3A%22button%22%2C%22text%22%3A%7B%22type%22%3A%22plain_text%22%2C%22text%22%3A%22View%20Referral%20Dashboard%22%2C%22emoji%22%3Atrue%7D%2C%22url%22%3A%22https%3A%2F%2Fdashboard.example.org%2Freferrals%22%2C%22style%22%3A%22danger%22%7D%5D%7D%5D"
+      }
+    },
+    {
+      "kind": "milestone",
+      "is_dev": true,
+      "referrer": "0x9111111111111111111111111111111111111111",
+      "invited": "0x9222222222222222222222222222222222222222",
+      "dashboard": "https://dashboard.example.org/referrals",
+      "newest_ms": 1767268801234,
+      "previous_ms": 1767268680000,
+      "message": {
+        "channel": "notifications-dev",
+        "text": "🎉 Referral Milestone Reached! - 100 Invites Tier Achieved by referrer 0x9111111111111111111111111111111111111111",
+        "blocks": [
+          {
+            "type": "header",
+            "text": {
+              "type": "plain_text",
+              "text": "🎉 Referral Milestone Reached!",
+              "emoji": true
+            }
+          },
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*🎯 100 Invites Tier Achieved!*\n\n*Referrer Wallet:* `0x9111111111111111111111111111111111111111`"
+            }
+          },
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*📊 Details:*\n• Referrer has successfully invited 100 users\n• Tier milestone unlocked\n• Ready for outreach and communication\n\n*💬 Next Steps:*\n• Monitor for email submission from referrer"
+            }
+          },
+          {
+            "type": "actions",
+            "elements": [
+              {
+                "type": "button",
+                "text": {
+                  "type": "plain_text",
+                  "text": "View Referral Dashboard",
+                  "emoji": true
+                },
+                "url": "https://dashboard.example.org/referrals",
+                "style": "primary"
+              }
+            ]
+          }
+        ]
+      },
+      "request": {
+        "method": "post",
+        "path": "chat.postMessage",
+        "authorization": "Bearer fixture-token",
+        "content_type": "application/x-www-form-urlencoded",
+        "body": "channel=notifications-dev&text=%F0%9F%8E%89%20Referral%20Milestone%20Reached!%20-%20100%20Invites%20Tier%20Achieved%20by%20referrer%200x9111111111111111111111111111111111111111&blocks=%5B%7B%22type%22%3A%22header%22%2C%22text%22%3A%7B%22type%22%3A%22plain_text%22%2C%22text%22%3A%22%F0%9F%8E%89%20Referral%20Milestone%20Reached!%22%2C%22emoji%22%3Atrue%7D%7D%2C%7B%22type%22%3A%22section%22%2C%22text%22%3A%7B%22type%22%3A%22mrkdwn%22%2C%22text%22%3A%22*%F0%9F%8E%AF%20100%20Invites%20Tier%20Achieved!*%5Cn%5Cn*Referrer%20Wallet%3A*%20%600x9111111111111111111111111111111111111111%60%22%7D%7D%2C%7B%22type%22%3A%22section%22%2C%22text%22%3A%7B%22type%22%3A%22mrkdwn%22%2C%22text%22%3A%22*%F0%9F%93%8A%20Details%3A*%5Cn%E2%80%A2%20Referrer%20has%20successfully%20invited%20100%20users%5Cn%E2%80%A2%20Tier%20milestone%20unlocked%5Cn%E2%80%A2%20Ready%20for%20outreach%20and%20communication%5Cn%5Cn*%F0%9F%92%AC%20Next%20Steps%3A*%5Cn%E2%80%A2%20Monitor%20for%20email%20submission%20from%20referrer%22%7D%7D%2C%7B%22type%22%3A%22actions%22%2C%22elements%22%3A%5B%7B%22type%22%3A%22button%22%2C%22text%22%3A%7B%22type%22%3A%22plain_text%22%2C%22text%22%3A%22View%20Referral%20Dashboard%22%2C%22emoji%22%3Atrue%7D%2C%22url%22%3A%22https%3A%2F%2Fdashboard.example.org%2Freferrals%22%2C%22style%22%3A%22primary%22%7D%5D%7D%5D"
+      }
+    },
+    {
+      "kind": "timing",
+      "is_dev": false,
+      "referrer": "0x9111111111111111111111111111111111111111",
+      "invited": "0x9222222222222222222222222222222222222222",
+      "dashboard": "https://dashboard.example.org/referrals",
+      "newest_ms": 1767268801234,
+      "previous_ms": 1767268680000,
+      "message": {
+        "channel": "referral-notifications",
+        "text": "⚠️ Suspicious Referral Timing - Multiple invitations within 5 minutes",
+        "blocks": [
+          {
+            "type": "header",
+            "text": {
+              "type": "plain_text",
+              "text": "⚠️ Suspicious Referral Timing",
+              "emoji": true
+            }
+          },
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*🕒 Rapid Invitations Detected*\n\n*Referrer:* `0x9111111111111111111111111111111111111111`\n*Time Between Invitations:* 2.02 minutes"
+            }
+          },
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*📊 Invitation Details:*\n*New Invited User:* `1767268801234`\n*Time:* 2026-01-01T12:00:01.234Z\n\n*Previous Invited User:* `1767268680000`\n*Time:* 2026-01-01T11:58:00.000Z"
+            }
+          },
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*🔍 Analysis:*\n• Two invitations created within 2.02 minutes\n• Potential automated behavior or coordination\n• May require manual review"
+            }
+          },
+          {
+            "type": "actions",
+            "elements": [
+              {
+                "type": "button",
+                "text": {
+                  "type": "plain_text",
+                  "text": "View Referral Dashboard",
+                  "emoji": true
+                },
+                "url": "https://dashboard.example.org/referrals",
+                "style": "primary"
+              }
+            ]
+          }
+        ]
+      },
+      "request": {
+        "method": "post",
+        "path": "chat.postMessage",
+        "authorization": "Bearer fixture-token",
+        "content_type": "application/x-www-form-urlencoded",
+        "body": "channel=referral-notifications&text=%E2%9A%A0%EF%B8%8F%20Suspicious%20Referral%20Timing%20-%20Multiple%20invitations%20within%205%20minutes&blocks=%5B%7B%22type%22%3A%22header%22%2C%22text%22%3A%7B%22type%22%3A%22plain_text%22%2C%22text%22%3A%22%E2%9A%A0%EF%B8%8F%20Suspicious%20Referral%20Timing%22%2C%22emoji%22%3Atrue%7D%7D%2C%7B%22type%22%3A%22section%22%2C%22text%22%3A%7B%22type%22%3A%22mrkdwn%22%2C%22text%22%3A%22*%F0%9F%95%92%20Rapid%20Invitations%20Detected*%5Cn%5Cn*Referrer%3A*%20%600x9111111111111111111111111111111111111111%60%5Cn*Time%20Between%20Invitations%3A*%202.02%20minutes%22%7D%7D%2C%7B%22type%22%3A%22section%22%2C%22text%22%3A%7B%22type%22%3A%22mrkdwn%22%2C%22text%22%3A%22*%F0%9F%93%8A%20Invitation%20Details%3A*%5Cn*New%20Invited%20User%3A*%20%601767268801234%60%5Cn*Time%3A*%202026-01-01T12%3A00%3A01.234Z%5Cn%5Cn*Previous%20Invited%20User%3A*%20%601767268680000%60%5Cn*Time%3A*%202026-01-01T11%3A58%3A00.000Z%22%7D%7D%2C%7B%22type%22%3A%22section%22%2C%22text%22%3A%7B%22type%22%3A%22mrkdwn%22%2C%22text%22%3A%22*%F0%9F%94%8D%20Analysis%3A*%5Cn%E2%80%A2%20Two%20invitations%20created%20within%202.02%20minutes%5Cn%E2%80%A2%20Potential%20automated%20behavior%20or%20coordination%5Cn%E2%80%A2%20May%20require%20manual%20review%22%7D%7D%2C%7B%22type%22%3A%22actions%22%2C%22elements%22%3A%5B%7B%22type%22%3A%22button%22%2C%22text%22%3A%7B%22type%22%3A%22plain_text%22%2C%22text%22%3A%22View%20Referral%20Dashboard%22%2C%22emoji%22%3Atrue%7D%2C%22url%22%3A%22https%3A%2F%2Fdashboard.example.org%2Freferrals%22%2C%22style%22%3A%22primary%22%7D%5D%7D%5D"
+      }
+    },
+    {
+      "kind": "ip",
+      "is_dev": false,
+      "referrer": "0x9111111111111111111111111111111111111111",
+      "invited": "0x9222222222222222222222222222222222222222",
+      "dashboard": "https://dashboard.example.org/referrals",
+      "newest_ms": 1767268801234,
+      "previous_ms": 1767268680000,
+      "message": {
+        "channel": "referral-notifications",
+        "text": "🚨 IP Match Rejection - Referral blocked due to IP limit exceeded",
+        "blocks": [
+          {
+            "type": "header",
+            "text": {
+              "type": "plain_text",
+              "text": "🚨 IP Match Rejection Detected",
+              "emoji": true
+            }
+          },
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*⚠️ Suspicious Activity Detected*\n\n*Invited User:* `0x9222222222222222222222222222222222222222`\n*IP Address:* `192.0.2.1`\n*Referrer:* `0x9111111111111111111111111111111111111111`"
+            }
+          },
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*📊 Details:*\n• IP address has reached maximum of 2 referrals\n• Potential abuse or automated system detected\n• Referral automatically rejected\n\n*🔍 Next Steps:*\n• Monitor for similar patterns\n• Review IP address activity"
+            }
+          },
+          {
+            "type": "actions",
+            "elements": [
+              {
+                "type": "button",
+                "text": {
+                  "type": "plain_text",
+                  "text": "View Referral Dashboard",
+                  "emoji": true
+                },
+                "url": "https://dashboard.example.org/referrals",
+                "style": "danger"
+              }
+            ]
+          }
+        ]
+      },
+      "request": {
+        "method": "post",
+        "path": "chat.postMessage",
+        "authorization": "Bearer fixture-token",
+        "content_type": "application/x-www-form-urlencoded",
+        "body": "channel=referral-notifications&text=%F0%9F%9A%A8%20IP%20Match%20Rejection%20-%20Referral%20blocked%20due%20to%20IP%20limit%20exceeded&blocks=%5B%7B%22type%22%3A%22header%22%2C%22text%22%3A%7B%22type%22%3A%22plain_text%22%2C%22text%22%3A%22%F0%9F%9A%A8%20IP%20Match%20Rejection%20Detected%22%2C%22emoji%22%3Atrue%7D%7D%2C%7B%22type%22%3A%22section%22%2C%22text%22%3A%7B%22type%22%3A%22mrkdwn%22%2C%22text%22%3A%22*%E2%9A%A0%EF%B8%8F%20Suspicious%20Activity%20Detected*%5Cn%5Cn*Invited%20User%3A*%20%600x9222222222222222222222222222222222222222%60%5Cn*IP%20Address%3A*%20%60192.0.2.1%60%5Cn*Referrer%3A*%20%600x9111111111111111111111111111111111111111%60%22%7D%7D%2C%7B%22type%22%3A%22section%22%2C%22text%22%3A%7B%22type%22%3A%22mrkdwn%22%2C%22text%22%3A%22*%F0%9F%93%8A%20Details%3A*%5Cn%E2%80%A2%20IP%20address%20has%20reached%20maximum%20of%202%20referrals%5Cn%E2%80%A2%20Potential%20abuse%20or%20automated%20system%20detected%5Cn%E2%80%A2%20Referral%20automatically%20rejected%5Cn%5Cn*%F0%9F%94%8D%20Next%20Steps%3A*%5Cn%E2%80%A2%20Monitor%20for%20similar%20patterns%5Cn%E2%80%A2%20Review%20IP%20address%20activity%22%7D%7D%2C%7B%22type%22%3A%22actions%22%2C%22elements%22%3A%5B%7B%22type%22%3A%22button%22%2C%22text%22%3A%7B%22type%22%3A%22plain_text%22%2C%22text%22%3A%22View%20Referral%20Dashboard%22%2C%22emoji%22%3Atrue%7D%2C%22url%22%3A%22https%3A%2F%2Fdashboard.example.org%2Freferrals%22%2C%22style%22%3A%22danger%22%7D%5D%7D%5D"
+      }
+    },
+    {
+      "kind": "milestone",
+      "is_dev": false,
+      "referrer": "0x9111111111111111111111111111111111111111",
+      "invited": "0x9222222222222222222222222222222222222222",
+      "dashboard": "https://dashboard.example.org/referrals",
+      "newest_ms": 1767268801234,
+      "previous_ms": 1767268680000,
+      "message": {
+        "channel": "referral-notifications",
+        "text": "🎉 Referral Milestone Reached! - 100 Invites Tier Achieved by referrer 0x9111111111111111111111111111111111111111",
+        "blocks": [
+          {
+            "type": "header",
+            "text": {
+              "type": "plain_text",
+              "text": "🎉 Referral Milestone Reached!",
+              "emoji": true
+            }
+          },
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*🎯 100 Invites Tier Achieved!*\n\n*Referrer Wallet:* `0x9111111111111111111111111111111111111111`"
+            }
+          },
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*📊 Details:*\n• Referrer has successfully invited 100 users\n• Tier milestone unlocked\n• Ready for outreach and communication\n\n*💬 Next Steps:*\n• Monitor for email submission from referrer"
+            }
+          },
+          {
+            "type": "actions",
+            "elements": [
+              {
+                "type": "button",
+                "text": {
+                  "type": "plain_text",
+                  "text": "View Referral Dashboard",
+                  "emoji": true
+                },
+                "url": "https://dashboard.example.org/referrals",
+                "style": "primary"
+              }
+            ]
+          }
+        ]
+      },
+      "request": {
+        "method": "post",
+        "path": "chat.postMessage",
+        "authorization": "Bearer fixture-token",
+        "content_type": "application/x-www-form-urlencoded",
+        "body": "channel=referral-notifications&text=%F0%9F%8E%89%20Referral%20Milestone%20Reached!%20-%20100%20Invites%20Tier%20Achieved%20by%20referrer%200x9111111111111111111111111111111111111111&blocks=%5B%7B%22type%22%3A%22header%22%2C%22text%22%3A%7B%22type%22%3A%22plain_text%22%2C%22text%22%3A%22%F0%9F%8E%89%20Referral%20Milestone%20Reached!%22%2C%22emoji%22%3Atrue%7D%7D%2C%7B%22type%22%3A%22section%22%2C%22text%22%3A%7B%22type%22%3A%22mrkdwn%22%2C%22text%22%3A%22*%F0%9F%8E%AF%20100%20Invites%20Tier%20Achieved!*%5Cn%5Cn*Referrer%20Wallet%3A*%20%600x9111111111111111111111111111111111111111%60%22%7D%7D%2C%7B%22type%22%3A%22section%22%2C%22text%22%3A%7B%22type%22%3A%22mrkdwn%22%2C%22text%22%3A%22*%F0%9F%93%8A%20Details%3A*%5Cn%E2%80%A2%20Referrer%20has%20successfully%20invited%20100%20users%5Cn%E2%80%A2%20Tier%20milestone%20unlocked%5Cn%E2%80%A2%20Ready%20for%20outreach%20and%20communication%5Cn%5Cn*%F0%9F%92%AC%20Next%20Steps%3A*%5Cn%E2%80%A2%20Monitor%20for%20email%20submission%20from%20referrer%22%7D%7D%2C%7B%22type%22%3A%22actions%22%2C%22elements%22%3A%5B%7B%22type%22%3A%22button%22%2C%22text%22%3A%7B%22type%22%3A%22plain_text%22%2C%22text%22%3A%22View%20Referral%20Dashboard%22%2C%22emoji%22%3Atrue%7D%2C%22url%22%3A%22https%3A%2F%2Fdashboard.example.org%2Freferrals%22%2C%22style%22%3A%22primary%22%7D%5D%7D%5D"
+      }
+    }
+  ],
+  "transport": [
+    {
+      "scenario": "success",
+      "attempts": 1,
+      "result": "ok"
+    },
+    {
+      "scenario": "platform-error",
+      "attempts": 1,
+      "result": "error"
+    },
+    {
+      "scenario": "http-then-success",
+      "attempts": 2,
+      "result": "ok"
+    },
+    {
+      "scenario": "rate-then-success",
+      "attempts": 2,
+      "result": "ok"
+    },
+    {
+      "scenario": "rate-missing-header",
+      "attempts": 1,
+      "result": "error"
+    },
+    {
+      "scenario": "transport-then-success",
+      "attempts": 2,
+      "result": "ok"
+    },
+    {
+      "scenario": "exhausted",
+      "attempts": 11,
+      "result": "error"
+    },
+    {
+      "scenario": "redirect",
+      "attempts": 11,
+      "result": "error"
+    }
+  ],
+  "retry_timeout_ms_at_random_half": [
+    1500,
+    2952,
+    5811,
+    11437,
+    22510,
+    44305,
+    87201,
+    171629,
+    337802,
+    664866
+  ]
+}

@@ -890,6 +890,50 @@ mod stream_access {
         let Some(pool) = catalyst::db::scratch::pool(4).await else {
             return;
         };
+        let admin_key = random_key();
+        let admin = Address::parse(&address_of(&admin_key)).unwrap();
+        let land_owner = Address::parse(&address_of(&random_key())).unwrap();
+        let token = Uuid::new_v4().as_u128();
+        let (x, y) = (
+            (token % 301) as i32 - 150,
+            ((token >> 64) % 301) as i32 - 150,
+        );
+        let parcel = format!("{x},{y}");
+        let document = serde_json::json!({ "owner": land_owner.as_str() });
+        let land_app = axum::Router::new().route(
+            &format!("/parcels/{x}/{y}/operators"),
+            axum::routing::get(move || {
+                let document = document.clone();
+                async move { Json(document) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let land_url = format!("http://{}", listener.local_addr().unwrap());
+        let land_server =
+            tokio::spawn(async move { axum::serve(listener, land_app).await.unwrap() });
+        let policy = Arc::new(
+            Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), None).with_land_operators(
+                Some(catalyst::worlds::policy::LandOperatorsReader::new(
+                    Outbound::for_tests().allowing_private_hosts(),
+                    &land_url,
+                )),
+            ),
+        );
+        let document = policy
+            .land_document(catalyst::comms::world_identity::Parcel::parse(&parcel).unwrap())
+            .await
+            .expect("LAND operators fixture must answer the notification owner's parcel")
+            .expect("LAND operators reader must be configured");
+        assert_eq!(
+            document
+                .as_ref()
+                .as_ref()
+                .expect("fixture parcel must have a LAND document")
+                .owner,
+            land_owner.as_str(),
+        );
+        let directory =
+            Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default());
         let (host, deleted) = ingress_stub().await;
         let settings = Settings {
             livekit: LiveKit {
@@ -904,22 +948,15 @@ mod stream_access {
             settings,
             None,
             None,
-            Arc::new(Policy::new(
-                pool.clone(),
-                PersonalWorldsPolicy::disabled(),
-                None,
-            )),
+            policy,
             Arc::new(SceneResolver::new(pool.clone())),
             Arc::new(catalyst::comms::presence::Presence::new()),
-            Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),
+            directory.clone(),
         ));
         let app = axum::Router::new().nest("/comms-gatekeeper", router(state.clone()));
         let place_id = Uuid::new_v4().to_string();
-        let parcel = format!("stream-test-{}", Uuid::new_v4().simple());
-        let admin_key = random_key();
-        let admin = Address::parse(&address_of(&admin_key)).unwrap();
-        // The place has an owner, as every catalogue row does: the reset and revoke
-        // notifications resolve their recipient from it.
+        // The signer administers the scene, but LAND determines reset/revoke recipients.
+        // Self-declared catalogue ownership must not redirect those notifications.
         sqlx::query(
             "INSERT INTO explore.place (id, base_position, raw) VALUES ($1, $2, $3::jsonb)",
         )
@@ -1016,6 +1053,11 @@ mod stream_access {
         .await
         .unwrap();
         assert_eq!(rows, 2, "the replaced credential is kept, inactive");
+        {
+            let notifications = directory.streaming_notifications.lock().unwrap();
+            assert_eq!(notifications.len(), 1);
+            assert_eq!(notifications[0].recipient, land_owner);
+        }
 
         let stranger = random_key();
         let (status, body) = call(&app, &stranger, "POST", &metadata).await;
@@ -1064,8 +1106,18 @@ mod stream_access {
             deleted.lock().unwrap().as_slice(),
             ["IN_1".to_string(), "IN_2".to_string()]
         );
+        {
+            let notifications = directory.streaming_notifications.lock().unwrap();
+            assert_eq!(notifications.len(), 2);
+            assert!(
+                notifications
+                    .iter()
+                    .all(|event| event.recipient == land_owner)
+            );
+        }
         let (status, _) = call(&app, &admin_key, "DELETE", &metadata).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+        land_server.abort();
     }
 }
 
@@ -1205,6 +1257,32 @@ mod world_mint {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
+        // A world without a row is 404 (WCS InvalidWorldError), not a retryable 503.
+        let unknown = world();
+        for path in [
+            format!("/worlds/{}/comms", unknown.display()),
+            format!("/worlds/{}/scenes/bafyany/comms", unknown.display()),
+        ] {
+            let (status, body, _) = post(&app, &visitor, &path, "{}").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body}");
+            assert_eq!(
+                body["message"],
+                format!("World \"{}\" is invalid or blocked.", unknown.display())
+            );
+        }
+        // Blocked (operator disable): 404 at once.
+        let blocked = world();
+        sqlx::query(
+            "INSERT INTO worlds.worlds (name, blocked_since) VALUES ($1, timezone('UTC', now()))",
+        )
+        .bind(blocked.key())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let blocked_path = format!("/worlds/{}/comms", blocked.display());
+        state.presence.complete_empty_fixture();
+        let (status, body, _) = post(&app, &visitor, &blocked_path, "{}").await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "blocked: {body}");
         let (status, body, _) = post(&app, &visitor, "/get-comms-adapter/scene-x", handshake).await;
         assert_eq!(
             (status, body["message"].as_str().or(body["error"].as_str())),
@@ -1280,15 +1358,19 @@ mod world_mint {
         let hash = bcrypt::hash("open sesame", 4).unwrap();
         sqlx::query("INSERT INTO worlds.worlds (name, access_type, access_secret_hash) VALUES ($1, 'shared-secret', $2)").bind(secret.key()).bind(&hash).execute(&pool).await.unwrap();
         let path = format!("/worlds/{}/comms", secret.display());
-        for attempt in 0..2 {
+        // WCS: three wrong secrets answer 403, the next attempt 429.
+        for attempt in 0..3 {
             let (status, _, _) = post(&app, &visitor, &path, r#"{"secret":"wrong"}"#).await;
             assert_eq!(status, StatusCode::FORBIDDEN, "attempt {attempt}");
         }
-        let (status, _, retry) = post(&app, &visitor, &path, r#"{"secret":"wrong"}"#).await;
+        // The count lives in Postgres: another replica's state sees it.
+        let replica = Arc::new(mint_state(&pool, Arc::new(Presence::new())));
+        let (status, _, retry) =
+            post(&router(replica), &visitor, &path, r#"{"secret":"wrong"}"#).await;
         assert_eq!(
             (status, retry.as_deref()),
             (StatusCode::TOO_MANY_REQUESTS, Some("60")),
-            "the third wrong secret"
+            "the fourth attempt, on another replica"
         );
         let (status, _, _) = post(&app, &visitor, &path, r#"{"secret":"open sesame"}"#).await;
         assert_eq!(

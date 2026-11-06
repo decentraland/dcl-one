@@ -144,6 +144,14 @@ impl Market for FakeMarket {
             .unwrap_or(TradeLookup::NotFound))
     }
 
+    async fn trade_coupon(
+        &self,
+        _trade: &crate::types::SignedTrade,
+        _trade_type: &str,
+    ) -> Result<Option<crate::types::TradeCoupon>, ApiError> {
+        Ok(None)
+    }
+
     async fn mana_usd(&self) -> Result<String, ApiError> {
         self.oracle_reads.fetch_add(1, Ordering::SeqCst);
         self.mana_usd
@@ -319,6 +327,12 @@ fn state_with(pool: PgPool, cfg: StateCfg, market: FakeMarket, broker: MockBroke
     let settings = Settings::parse(RawSettings {
         writes_enabled: cfg.writes_enabled,
         mock_card: cfg.mock_card,
+        // The mock card runs only on Amoy (Settings::parse); the HTTP routes under test do not read the chain.
+        usage_chain_id: if cfg.mock_card {
+            super::usage::CHAIN_AMOY
+        } else {
+            super::usage::CHAIN_POLYGON
+        },
         checkout_fulfillment_mode: cfg.fulfillment_mode.to_string(),
         stripe_webhook_secret: cfg.stripe_webhook_secret.map(str::to_string),
         credits_onchain_authorize_enabled: cfg.onchain_authorize_enabled,
@@ -2348,6 +2362,8 @@ async fn a_five_dollar_pack_signs_the_mana_of_five_hundred_cents_on_the_authoriz
     let mut settings = Settings::parse(RawSettings {
         writes_enabled: true,
         mock_card: true,
+        // Parsed as Amoy, where the mock card may run; the lane below is then pointed at 137 by hand.
+        usage_chain_id: super::usage::CHAIN_AMOY,
         credits_onchain_authorize_enabled: true,
         credits_signer_key: Some(signer_key.into()),
         credits_manager_contract: Some(contract.clone()),
@@ -2972,6 +2988,8 @@ async fn the_authorize_lane_refuses_every_resale_spelling_and_pledges_primaries_
     let mut settings = Settings::parse(RawSettings {
         writes_enabled: true,
         mock_card: true,
+        // Parsed as Amoy, where the mock card may run; the lane below is then pointed at 137 by hand.
+        usage_chain_id: super::usage::CHAIN_AMOY,
         credits_onchain_authorize_enabled: true,
         credits_signer_key: Some(signer_key.into()),
         credits_manager_contract: Some(contract.clone()),
@@ -5483,4 +5501,283 @@ async fn the_write_gate_refuses_every_credits_write_and_serves_reads_and_quotes(
     .await;
     assert_eq!(status, StatusCode::OK, "a quote is a read: {v}");
     assert_eq!(v["amounts"], json!(["5"]));
+}
+
+/// The fake catalogue and spot, with the trade book and the creator coupons
+/// read from the database as the node reads them (`pricing::LocalMarket`).
+struct DbTrades {
+    fake: FakeMarket,
+    local: super::pricing::LocalMarket,
+}
+
+#[async_trait]
+impl Market for DbTrades {
+    async fn items(
+        &self,
+        pairs: &[(String, String)],
+    ) -> Result<Vec<Result<ItemInfo, ApiError>>, ApiError> {
+        self.fake.items(pairs).await
+    }
+
+    async fn open_orders(
+        &self,
+        pairs: &[(String, String)],
+        per_contract: usize,
+    ) -> Result<Vec<ListingRow>, ApiError> {
+        self.fake.open_orders(pairs, per_contract).await
+    }
+
+    async fn trade(&self, trade_id: &str) -> Result<TradeLookup, ApiError> {
+        self.local.trade(trade_id).await
+    }
+
+    async fn trade_coupon(
+        &self,
+        trade: &crate::types::SignedTrade,
+        trade_type: &str,
+    ) -> Result<Option<crate::types::TradeCoupon>, ApiError> {
+        self.local.trade_coupon(trade, trade_type).await
+    }
+
+    async fn mana_usd(&self) -> Result<String, ApiError> {
+        self.fake.mana_usd().await
+    }
+}
+
+/// A primary trade with the creator's live coupon: the price its purchase
+/// offer quotes for credits (USD first, less the coupon) is the price the
+/// authorize lane reserves and signs, over the same server-chosen coupon,
+/// with the coupon's settlement call and the cap of the discounted quote.
+/// The undiscounted price, and the discounted one once the coupon is
+/// cancelled, are refused as changed.
+#[tokio::test]
+async fn a_discounted_purchase_offer_authorizes_its_discounted_credits_price() {
+    use crate::mana::venues::Book;
+    use crate::policy::{Authoritative, CartLine, Quote};
+    use crate::types::{
+        AssetId, ChainId, EvmAddress, ManaUsdRate, PaymentMethod, Session, SettlementCall,
+    };
+    let Some(db) = OwnDatabase::create("coupon").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let contract = "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5".to_string();
+    let signer_key = "0x4c0883a69102937d6231471b5dbb6204fe512961708279f2e3e8a5d4b8e3e3e3";
+    let mut settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        mock_card: true,
+        usage_chain_id: super::usage::CHAIN_AMOY,
+        credits_onchain_authorize_enabled: true,
+        credits_signer_key: Some(signer_key.into()),
+        credits_manager_contract: Some(contract.clone()),
+        mana_price_max_staleness_secs: 3600,
+        ..RawSettings::default()
+    })
+    .unwrap();
+    settings.usage = super::usage::Settings {
+        enabled: true,
+        rpc_url: Some("http://127.0.0.1:9/".into()),
+        chain_id: 137,
+        contract: Some(contract.clone()),
+        ..super::usage::Settings::default()
+    };
+    sqlx::query("INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_at) VALUES (137, $1, 100, 100, timezone('UTC', now()))")
+        .bind(&contract)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // A $2 USD-pegged item order of CREATOR's, and CREATOR's live 25% coupon
+    // on its collection against the manager paired with the venue.
+    let chain = Book::production(|_| None)
+        .chain(ChainId::POLYGON)
+        .unwrap()
+        .clone();
+    let venue = chain.latest_marketplace().unwrap().address;
+    let mana = chain.mana;
+    sqlx::query("INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) VALUES ('items','matic','fixture',now()), ('collections','matic','fixture',now()) ON CONFLICT (mirror,network) DO UPDATE SET last_complete_pass_at = now()")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO shop.collections (network,contract_address,chain_id,name,creator,owner,urn,is_completed,is_approved,is_editable,created_at,updated_at,reviewed_at,mirrored_at) VALUES ('matic',$1,137,'Coupon fixture',$2,$2,'urn:coupon-credits',true,true,false,0,0,0,now())")
+        .bind(COLLECTION).bind(CREATOR).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO shop.items (network,contract_address,item_id,chain_id,item_type,urn,creator,rarity,total_supply,max_supply,available,price,name,category,search_is_store_minter,search_is_collection_approved,created_at,updated_at,reviewed_at,mirrored_at) VALUES ('matic',$1,0,137,'wearable_v2','urn:coupon-credits:0',$2,'common',0,10,10,0,'Hat','hat',false,true,0,0,0,now())")
+        .bind(COLLECTION).bind(CREATOR).execute(&pool).await.unwrap();
+    let trade = crate::market::listings::test_support::parse(&format!(
+        r#"{{"signer":"{CREATOR}","signature":"0x{sig}","type":"public_item_order","network":"MATIC","chainId":137,
+          "checks":{{"uses":10,"expiration":4102444800000,"effective":0,"salt":"0x{salt}","contractSignatureIndex":0,"signerSignatureIndex":0,"allowedRoot":"0x","externalChecks":[]}},
+          "sent":[{{"assetType":4,"contractAddress":"{COLLECTION}","itemId":"0","extra":"0x"}}],
+          "received":[{{"assetType":2,"contractAddress":"{mana:#x}","amount":"2000000000000000000","extra":"0x","beneficiary":"{CREATOR}"}}]}}"#,
+        sig = "11".repeat(65),
+        salt = uuid::Uuid::new_v4().simple(),
+    ));
+    let trade_id =
+        crate::market::listings::insert_trade(&pool, &trade, "MATIC", &format!("{venue:#x}"))
+            .await
+            .unwrap();
+    let coupon_id: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO shop.coupons (network, chain_id, signer, signature, hashed_signature, state_key, coupon_manager, coupon_address, checks, \
+            discount_type, discount_ppm, root, collections, effective_since, expires_at) \
+         VALUES ('MATIC', 137, $1, $2, $2, $2, '0x655fdfa91d69ea49f4ce1a8f7f7e2622c8630813', '0xc914507fe297b2dddd1232ac3a8903f1c125e794', \
+            '{{\"uses\": 10, \"expiration\": 4102444800000, \"effective\": 0, \"salt\": \"0x02\", \"contractSignatureIndex\": 0, \"signerSignatureIndex\": 0, \"allowedRoot\": \"0x\", \"externalChecks\": []}}'::jsonb, \
+            1, 250000, '0x{root}', ARRAY[$3], timezone('UTC', now()) - interval '1 day', timezone('UTC', now()) + interval '1 day') RETURNING id::text",
+        root = "00".repeat(32)
+    )))
+    .bind(CREATOR)
+    .bind(format!("0x{}", "22".repeat(65)))
+    .bind(COLLECTION)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // What purchase-offers quotes for credits: the server-resolved coupon,
+    // the USD price less it.
+    let wallet = scratch_wallet();
+    let buyer = EvmAddress::parse(&wallet.address).unwrap();
+    let session = Session::Web3 { wallet: buyer };
+    let rate = ManaUsdRate::parse_usd_per_mana("0.5").unwrap();
+    let asset = AssetId::item(
+        ChainId::POLYGON,
+        EvmAddress::parse(COLLECTION).unwrap(),
+        alloy_primitives::U256::ZERO,
+    );
+    let resolved =
+        crate::mana::facts::resolve_trade(&pool, chain.clone(), session, asset, &trade_id)
+            .await
+            .unwrap();
+    let offer_line = Authoritative::derive(resolved.facts.clone()).unwrap();
+    let offered =
+        match crate::policy::quote(&offer_line, PaymentMethod::Credits, Some(&rate)).unwrap() {
+            Quote::Credits { quoted } => quoted.get(),
+            other => panic!("not a credits quote: {other:?}"),
+        };
+    assert_eq!(offered, 150, "200 cents less the 25% coupon");
+    let key = |line: &Authoritative| {
+        crate::policy::partition(
+            &[CartLine {
+                line: line.clone(),
+                method: PaymentMethod::Credits,
+            }],
+            Some(&rate),
+        )
+        .unwrap()
+        .remove(0)
+        .key
+    };
+    assert_eq!(key(&offer_line).call, SettlementCall::AcceptWithCoupon);
+
+    let state: SharedState = Arc::new(
+        State::with_sources(
+            pool.clone(),
+            Outbound::for_tests(),
+            settings,
+            Arc::new(DbTrades {
+                fake: FakeMarket::default()
+                    .with_item(COLLECTION, "0", "0", false)
+                    .with_mana_usd("0.5"),
+                local: super::pricing::LocalMarket {
+                    pool: pool.clone(),
+                    market: None,
+                    price: None,
+                    max_staleness_secs: 3600,
+                },
+            }),
+            Arc::new(MockBroker::configured()),
+            None,
+        )
+        .with_gate(Arc::new(super::settlement::FixedGate(Ok(())))),
+    );
+
+    // The authorize lane derives the same line: the coupon's call, and the
+    // offer's settlement key.
+    let line = |cents: i64| super::batch::ValidatedLine {
+        quoted_cents: cents,
+        charged_cents: cents,
+        trade_id: Some(trade_id.clone()),
+        contract_address: None,
+        item_id: None,
+        registered_name: None,
+    };
+    let derived =
+        super::batch::derive_line(&state, ChainId::POLYGON, session, rate, 0, &line(offered))
+            .await
+            .unwrap();
+    assert_eq!(derived.quoted.get(), 150);
+    assert_eq!(
+        key(&derived.line),
+        key(&offer_line),
+        "the authorized line settles as the offer does"
+    );
+
+    let lane = app(state.clone());
+    let (status, v) = call(
+        &lane,
+        &wallet,
+        "post",
+        "/credits/packs/credits_usd_5/mock-purchase",
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    let authorize = |cents: i64| {
+        let lane = &lane;
+        let wallet = &wallet;
+        let trade_id = trade_id.clone();
+        async move {
+            call(
+                lane,
+                wallet,
+                "post",
+                "/credits/credits/authorize/batch",
+                &[],
+                Some(json!({ "items": [{ "usdPriceCents": cents, "tradeId": trade_id }] })),
+            )
+            .await
+        }
+    };
+
+    let (status, v) = authorize(200).await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "the list price is not the offer's: {v}"
+    );
+    let (status, v) = authorize(offered).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the offer's discounted price authorizes: {v}"
+    );
+    assert_eq!(v["usdCents"], 150, "{v}");
+    let sizing = crate::types::CreditSizing::new(
+        rate,
+        state.settings.credit_buffer_bps,
+        state.settings.credit_cap_headroom_pct,
+    )
+    .unwrap();
+    assert_eq!(
+        v["maxCreditedValue"].as_str(),
+        Some(
+            sizing
+                .cap(crate::types::UsdCents::new(150))
+                .unwrap()
+                .get()
+                .to_string()
+                .as_str()
+        ),
+        "the cap is the discounted quote's: {v}"
+    );
+    let reserved: Vec<(i64, i64)> = sqlx::query_as("SELECT l.quoted_cents::bigint, l.charged_cents::bigint FROM credits.authorization_lines l JOIN credits.authorizations a ON a.id = l.authorization_id WHERE a.address = $1")
+        .bind(&wallet.address).fetch_all(&pool).await.unwrap();
+    assert_eq!(
+        reserved,
+        vec![(150, 150)],
+        "the reservation is the discounted price"
+    );
+
+    // A coupon cancelled since the offer is a changed price.
+    sqlx::query("INSERT INTO shop.coupon_state (coupon_id, cancelled) VALUES ($1::uuid, true) ON CONFLICT (coupon_id) DO UPDATE SET cancelled = true")
+        .bind(&coupon_id).execute(&pool).await.unwrap();
+    let (status, v) = authorize(offered).await;
+    assert_eq!(status, StatusCode::CONFLICT, "the discount ended: {v}");
+    db.drop().await;
 }

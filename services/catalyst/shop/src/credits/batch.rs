@@ -349,9 +349,9 @@ pub fn refusal_code(r: &Refusal) -> &'static str {
 }
 
 /// A line the rule accepted, with what the store records for it.
-struct DerivedLine {
-    line: Authoritative,
-    quoted: UsdCents,
+pub(super) struct DerivedLine {
+    pub(super) line: Authoritative,
+    pub(super) quoted: UsdCents,
     charged: UsdCents,
     record: GroupLine,
 }
@@ -466,7 +466,7 @@ async fn item_lookup(
 
 /// One line's authoritative facts from the mirrors and the decoded order,
 /// through the rule; `chain_id` is the credits chain this node serves.
-async fn derive_line(
+pub(super) async fn derive_line(
     state: &State,
     chain_id: ChainId,
     session: Session,
@@ -488,11 +488,17 @@ async fn derive_line(
             message: "NAME registration with credits is unavailable: no executor builds the registration on chain yet (docs/shop/CONTRACTS.md); register the NAME with MANA".to_string(),
         });
     } else if let Some(trade_id) = &v.trade_id {
-        let trade = match state.pricing.fetch_trade(trade_id).await? {
-            TradeLookup::Open(json) => decode_trade(&json).map_err(|m| AuthorizeError::Line {
-                index,
-                message: format!("trade {trade_id} cannot be decoded: {m}"),
-            })?,
+        let (trade, trade_type) = match state.pricing.fetch_trade(trade_id).await? {
+            TradeLookup::Open(json) => (
+                decode_trade(&json).map_err(|m| AuthorizeError::Line {
+                    index,
+                    message: format!("trade {trade_id} cannot be decoded: {m}"),
+                })?,
+                json.get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            ),
             TradeLookup::NotFound => {
                 return Err(AuthorizeError::Line {
                     index,
@@ -512,6 +518,13 @@ async fn derive_line(
                 got: trade.venue.chain_id,
             }));
         }
+        // The coupon the line's purchase offer was priced with, chosen again
+        // here by the same server rule: the authorized price is the offer's,
+        // and a coupon that ended or was outbid since is a changed price.
+        let coupon = state
+            .pricing
+            .fetch_trade_coupon(&trade, &trade_type)
+            .await?;
         let mut contract = Lookup::Unknown;
         let mut item = Lookup::Unknown;
         let mut identity = (None, None);
@@ -540,10 +553,7 @@ async fn derive_line(
         (
             Facts {
                 session,
-                offer: Offer::Trade {
-                    trade,
-                    coupon: None,
-                },
+                offer: Offer::Trade { trade, coupon },
                 contract,
                 item,
                 token: Lookup::Unknown,

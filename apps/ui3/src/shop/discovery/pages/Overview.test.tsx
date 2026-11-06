@@ -5,7 +5,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { PRIMARY_WEARABLE, RESALE_WEARABLE, ShopHarness, type CatalogAnswers, type CatalogScenario, type SessionKind } from "../fixtures";
+import { PRIMARY_WEARABLE, RESALE_WEARABLE, saleWearable, ShopHarness, type CatalogAnswers, type CatalogScenario, type SessionKind } from "../fixtures";
 import { invalidateShopQueries } from "../query";
 import Overview from "./Overview";
 
@@ -15,9 +15,9 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-function overview(scenario: CatalogScenario = "ok", session: SessionKind = "signedOut", overrides?: CatalogAnswers) {
+function overview(scenario: CatalogScenario = "ok", session: SessionKind = "signedOut", overrides?: CatalogAnswers, remoteFlags?: Record<string, boolean>) {
   return render(
-    <ShopHarness path="/shop/overview" entry="/shop/overview" scenario={scenario} session={session} overrides={overrides}>
+    <ShopHarness path="/shop/overview" entry="/shop/overview" scenario={scenario} session={session} overrides={overrides} remoteFlags={remoteFlags}>
       <Overview />
     </ShopHarness>,
   );
@@ -31,24 +31,24 @@ describe("the Shop overview", () => {
     overview("loading");
     await settle();
     expect(screen.getByTestId("hero-title")).toHaveTextContent("A New Way to Shop");
-    expect(within(screen.getByTestId("new-creations-rail")).getAllByTestId("skeleton-card").length).toBeGreaterThan(0);
+    expect(within(screen.getByRole("region", { name: "New Creations" })).getAllByTestId("skeleton-card").length).toBeGreaterThan(0);
     expect(within(screen.getByTestId("trending-rail")).getAllByTestId("skeleton-card").length).toBeGreaterThan(0);
   });
 
   it("renders the rails with credits-first cards, the deals rail only with enough deals", async () => {
     overview();
-    const creations = await screen.findByTestId("new-creations-rail");
+    const creations = await screen.findByRole("region", { name: "New Creations" });
     const cards = await within(creations).findAllByTestId("card");
     expect(cards.length).toBeGreaterThan(0);
     const hat = cards.find((c) => within(c).queryByText("Nacho Hat") && !within(c).queryByTestId("card-resale"))!;
-    expect(within(hat).getByTestId("card-price-now")).toHaveTextContent("12");
+    expect(within(hat).getByTestId("card-price")).toHaveTextContent("12");
     expect(screen.queryByTestId("best-deals-rail")).toBeNull();
     expect(screen.getByTestId("hero-credits-cta").getAttribute("href")).toBe("/shop/credits");
   });
 
   it("New Creations asks for primaries only; a resale in Trending is MANA only, never its credit figure", async () => {
     overview("ok", "web3", { "/v3/catalog/trending": { data: [PRIMARY_WEARABLE, RESALE_WEARABLE] } });
-    const creations = await screen.findByTestId("new-creations-rail");
+    const creations = await screen.findByRole("region", { name: "New Creations" });
     expect(within(creations).queryByTestId("card-resale")).toBeNull();
     const rail = await screen.findByTestId("trending-rail");
     const resale = (await within(rail).findAllByTestId("card")).find((c) => within(c).queryByTestId("card-resale"));
@@ -57,10 +57,31 @@ describe("the Shop overview", () => {
     expect(resale!.textContent).not.toMatch(/Credit/);
   });
 
+  it("shows Best Deals once decentraland.org's creator-sales rollout is on, and not before", async () => {
+    const deals = [1, 2, 3].map((n) => ({ ...saleWearable(), tradeId: `trade-sale-${n}`, itemId: `${n}` }));
+    const asked: string[] = [];
+    const answers: CatalogAnswers = {
+      "/v3/catalog/unified": (url: URL) => {
+        asked.push(url.search);
+        return url.searchParams.get("discounted") === "true" ? { data: deals, total: deals.length } : { data: [PRIMARY_WEARABLE], total: 1 };
+      },
+    };
+    const off = overview("ok", "signedOut", answers, {});
+    await screen.findByRole("region", { name: "New Creations" });
+    expect(screen.queryByTestId("best-deals-rail")).toBeNull();
+    expect(asked.some((q) => q.includes("discounted=true"))).toBe(false);
+    off.unmount();
+
+    invalidateShopQueries();
+    overview("ok", "signedOut", answers, { "dapps-shop-creator-sales": true });
+    expect(await screen.findByTestId("best-deals-rail")).toBeTruthy();
+    expect(asked.some((q) => q.includes("discounted=true"))).toBe(true);
+  });
+
   it("hides the credits CTA in the iOS web view", async () => {
     window.history.pushState({}, "", "/?view=mobile-iap");
     overview();
-    await within(await screen.findByTestId("new-creations-rail")).findAllByTestId("card");
+    await within(await screen.findByRole("region", { name: "New Creations" })).findAllByTestId("card");
     expect(screen.queryByTestId("hero-credits-cta")).toBeNull();
     window.history.pushState({}, "", "/");
   });
@@ -91,7 +112,7 @@ describe("the Shop overview", () => {
     overview("ok", "web3");
     const rail = await screen.findByTestId("trending-rail");
     const sax = (await within(rail).findAllByTestId("card")).find((c) => within(c).queryByText("Hot Sax"))!;
-    expect(within(sax).getByTestId("card-price-now")).toHaveTextContent("21");
+    expect(within(sax).getByTestId("card-price")).toHaveTextContent("21");
     expect(within(sax).getByTestId("card-price-mana")).toHaveTextContent("or 4.02 MANA");
   });
 

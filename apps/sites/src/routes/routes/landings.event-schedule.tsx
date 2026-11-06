@@ -6,6 +6,7 @@ import {
   fetchSchedules,
   emptyDraft,
   scheduleToDraft,
+  buildScheduleSubmit,
   type Schedule,
   type ScheduleDraft,
 } from "@/data/lib/catalyst/landings/schedules";
@@ -22,6 +23,9 @@ import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
 import { pageLoader } from "@/core/lib/telemetry/page-loader";
 
 import ScheduleWizard from "@/features/explorer/event-schedule/ScheduleWizard";
+import { useAuth } from "@/data/lib/auth/context";
+import { getIdentity } from "@/data/lib/auth/session";
+import { openSignIn } from "@/features/components/auth/signin-store";
 
 import type { Route } from "./+types/landings.event-schedule";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
@@ -49,7 +53,7 @@ export async function loader({ request }: Route.LoaderArgs) {
           source: (live.length > 0 ? "live" : "empty") as ScheduleSource,
         }))
         .catch(() => ({ schedules: [] as Schedule[], source: "error" as ScheduleSource })),
-    fetchEvents({ list: "live", limit: 8 }, { signal: request.signal })
+    fetchEvents({ list: "live", limit: 8, with_connected_users: true }, { signal: request.signal })
       .then((r) => r.data)
       .catch(() => [] as Event[]),
     fetchEvents({ list: "active", limit: 100 }, { signal: request.signal })
@@ -59,12 +63,13 @@ export async function loader({ request }: Route.LoaderArgs) {
   const now = new Date();
   const sortedActive = [...activeEvents].sort(
     (a, b) =>
-      new Date(effectiveStartAt(a, now) ?? 8.64e15).getTime() -
-      new Date(effectiveStartAt(b, now) ?? 8.64e15).getTime(),
+      new Date(effectiveStartAt(a) ?? 8.64e15).getTime() -
+      new Date(effectiveStartAt(b) ?? 8.64e15).getTime(),
   );
   const liveNow: LiveNowCard[] = liveEvents.map(toLiveNowCard);
+  const liveById = new Map(liveEvents.map((event) => [event.id, event]));
   const { allDays, dayLabels } = groupEventsByDay(
-    sortedActive,
+    sortedActive.map((event) => liveById.get(event.id) ?? event),
     new Set(liveEvents.map((e) => e.id)),
     7,
     now,
@@ -108,6 +113,7 @@ type LoaderData = {
 export default function EventScheduleRoute({ loaderData }: Route.ComponentProps) {
   const d = loaderData as LoaderData;
   const navigate = useNavigate();
+  const auth = useAuth();
 
   return (
     <LdEventSchedulePage
@@ -118,6 +124,7 @@ export default function EventScheduleRoute({ loaderData }: Route.ComponentProps)
       }}
     >
       <ScheduleWizard
+        key={`${auth.address ?? "signed-out"}:${d.mode}:${d.scheduleId ?? "new"}`}
         trackCtx={{
           sid: d.sid,
           story: STORY,
@@ -130,6 +137,9 @@ export default function EventScheduleRoute({ loaderData }: Route.ComponentProps)
         dayLabels={d.dayLabels}
         scheduleId={d.scheduleId ?? undefined}
         draft={d.draft ?? undefined}
+        submit={buildScheduleSubmit(getIdentity, d.schedules.find((schedule) => schedule.id === d.scheduleId))}
+        signedIn={auth.isConnected}
+        onSignIn={openSignIn}
       />
     </LdEventSchedulePage>
   );

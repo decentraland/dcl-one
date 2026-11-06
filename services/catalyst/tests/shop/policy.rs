@@ -1790,6 +1790,29 @@ fn quotes_come_from_the_offer_and_the_rate_only() {
     );
     assert_eq!(quote(&discounted, Mana, Some(&rate())), mana_wei(1_400));
 
+    // The coupon applies to the signed USD amount first, as the contract does
+    // (`amount - floor(amount * ppm / 1e6)`), and only that converts: 7 USD-wei
+    // at $0.30 and 50% off is 4 USD-wei, so 13 MANA-wei; converting first and
+    // discounting after would quote 12 (floor(70 / 3) = 23, then ceil(11.5)).
+    let half = TradeCoupon {
+        discount_ppm: 500_000,
+        ..coupon()
+    };
+    let tiny = order_with(
+        TradeAsset {
+            value: n(7),
+            ..usd(0)
+        },
+        Some(half),
+    );
+    let thirty_cents = ManaUsdRate::new(n(30_000_000), 8).unwrap();
+    assert_eq!(
+        quote(&tiny, Mana, Some(&thirty_cents)),
+        Ok(Quote::Mana {
+            amount: ManaWei::new(n(13))
+        })
+    );
+
     let mint = derive(store_mint_facts(&b, web3(&b), ItemKind::Wearable));
     assert_eq!(quote(&mint, Credits, Some(&rate())), credits(115));
     assert_eq!(quote(&mint, Mana, None), mana_wei(2_300));

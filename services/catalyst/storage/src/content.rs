@@ -15,6 +15,14 @@ use super::{
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
+/// `store_file` calls that copied because the hard link failed.
+static COPY_FALLBACKS: AtomicU64 = AtomicU64::new(0);
+
+/// How many `store_file` calls copied instead of linking since the process started.
+pub fn store_file_copy_fallbacks() -> u64 {
+    COPY_FALLBACKS.load(Ordering::Relaxed)
+}
+
 /// Read surface contract: `Ok(None)` means provably absent, `Err` a storage fault -- a fault reported
 /// as absence makes a broken node advertise itself as empty to peers.
 ///
@@ -99,6 +107,44 @@ impl Storage {
         }
 
         debug!(kind = self.kind, hash, bytes = data.len(), "stored");
+        Ok(())
+    }
+
+    /// A directory beside the blob tree (`<STORAGE_ROOT_FOLDER>/tmp`): same filesystem, never walked as content.
+    pub fn scratch_dir(&self) -> PathBuf {
+        self.root.parent().unwrap_or(&self.root).join("tmp")
+    }
+
+    /// Stores the bytes of `src` under `hash` without reading them into memory; `src` is left in place.
+    /// A hard link when `src` shares the filesystem (see [`scratch_dir`](Self::scratch_dir)), else a copy.
+    /// Runs detached on the blocking pool, so a dropped caller never leaks a staging file.
+    pub async fn store_file(&self, hash: &str, src: &Path) -> Result<(), StorageError> {
+        let path = ensure_file_path(&self.root, hash, &self.known_shards).await?;
+        let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+        let staging_target = staging_path(&path, self.kind, seq);
+        let src = src.to_path_buf();
+        tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+            let mut staging = super::StagingGuard::new(staging_target.clone());
+            if let Err(error) = std::fs::hard_link(&src, &staging_target) {
+                if COPY_FALLBACKS.fetch_add(1, Ordering::Relaxed) == 0 {
+                    warn!(%error, src = %src.display(), "store_file: hard link failed, copying instead (is the upload spool on another filesystem?)");
+                }
+                metrics::counter!("storage_store_file_copy_fallbacks").increment(1);
+                std::fs::copy(&src, &staging_target)?;
+            }
+            std::fs::File::open(&staging_target)?.sync_all()?;
+            std::fs::rename(&staging_target, &path)?;
+            staging.disarm();
+            if let Some(parent) = path.parent()
+                && let Ok(dir) = std::fs::File::open(parent)
+            {
+                let _ = dir.sync_all();
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| std::io::Error::other(e.to_string()))??;
+        debug!(kind = self.kind, hash, "stored from file");
         Ok(())
     }
 
@@ -363,6 +409,26 @@ impl OpenedContent {
         }
         buf.truncate(filled);
         Ok(Bytes::from(buf))
+    }
+
+    /// Streams the bytes in `start..=end` clamped to the file, without buffering the window.
+    pub async fn into_range_body(
+        mut self,
+        start: u64,
+        end: u64,
+    ) -> Result<axum::body::Body, StorageError> {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+        if start >= self.size {
+            return Ok(axum::body::Body::empty());
+        }
+        let len = end.min(self.size - 1) - start + 1;
+        self.file.seek(std::io::SeekFrom::Start(start)).await?;
+        let stream = tokio_util::io::ReaderStream::with_capacity(
+            self.file.take(len),
+            len.min(64 * 1024) as usize,
+        );
+        Ok(axum::body::Body::from_stream(stream))
     }
 
     /// Streams the file from the start; `consumed` is whatever a preceding `read_range(0, ..)`

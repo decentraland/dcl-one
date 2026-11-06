@@ -2413,7 +2413,7 @@
       "props": {
         "launch_url": {
           "kind": "string",
-          "optional": true
+          "optional": false
         },
         "place_id": {
           "kind": "string",
@@ -2426,7 +2426,7 @@
       "props": {
         "error": {
           "kind": "string",
-          "optional": true
+          "optional": false
         },
         "place_id": {
           "kind": "string",
@@ -2837,10 +2837,6 @@
         "event_id": {
           "kind": "string",
           "optional": true
-        },
-        "stub": {
-          "kind": "unknown",
-          "optional": false
         }
       }
     },
@@ -3091,10 +3087,6 @@
         "schedule_id": {
           "kind": "string",
           "optional": true
-        },
-        "stub": {
-          "kind": "unknown",
-          "optional": false
         }
       }
     },

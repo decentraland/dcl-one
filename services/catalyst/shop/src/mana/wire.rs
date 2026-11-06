@@ -207,8 +207,21 @@ pub struct PurchaseOffer {
     pub settlement: Vec<SettlementFor>,
     pub available: Option<i64>,
     pub quoted_at: i64,
+    /// The creator coupon the quotes are discounted by, when the sale has
+    /// one: the buyer's settlement must use this coupon, or none of it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coupon: Option<OfferCoupon>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mana: Option<ManaExecution>,
+}
+
+/// The identity and economics of the coupon an offer was priced with.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OfferCoupon {
+    pub id: String,
+    pub coupon_address: String,
+    pub discount_ppm: u32,
 }
 
 /// A line that could not be quoted at all: the rule's refusal or the

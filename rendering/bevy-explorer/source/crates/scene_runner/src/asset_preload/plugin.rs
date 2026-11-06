@@ -56,13 +56,13 @@ struct PreloadedAssetOf(Entity);
 struct Preloader(Vec<Entity>);
 
 #[derive(Component)]
-struct PreloadedAsset {
-    file_path: String,
+pub(crate) struct PreloadedAsset {
+    pub(crate) file_path: String,
     handle: UntypedHandle,
 }
 
 #[derive(Component)]
-struct LoadingPreloadedAsset;
+pub(crate) struct LoadingPreloadedAsset;
 
 fn asset_load_on_insert(
     trigger: Trigger<OnInsert, AssetLoad>,

@@ -4,7 +4,6 @@ pub mod crash_report;
 pub mod login;
 pub mod oow;
 pub mod sysinfo;
-pub mod version_check;
 
 use std::collections::BTreeMap;
 
@@ -141,6 +140,9 @@ pub fn handle_scene_permissions(
             SystemApi::GetPermissionRequestStream(stream) => {
                 // send any current outstanding requests when a new stream is attached
                 for (handle, req) in permission_ids.iter().zip(manager.pending.iter()) {
+                    if req.sender.is_cancelled() {
+                        continue;
+                    }
                     let (Some(handle), Ok(hash)) =
                         (handle, scenes.get(req.scene).map(|ctx| &ctx.hash))
                     else {
@@ -259,7 +261,7 @@ pub fn handle_scene_permissions(
                 resolved.insert(i, false);
                 false
             }
-            PermissionValue::Ask => true,
+            PermissionValue::Ask => !req.sender.is_cancelled(),
         };
 
         let next_id = needs_request.then(|| {
@@ -285,7 +287,7 @@ pub fn handle_scene_permissions(
 
     // clean up any failed requests
     for (i, req) in manager.pending.iter().enumerate() {
-        if req.realm != current_realm.about_url && !req.is_portable {
+        if req.sender.is_cancelled() || (req.realm != current_realm.about_url && !req.is_portable) {
             resolved.insert(i, false);
         }
     }

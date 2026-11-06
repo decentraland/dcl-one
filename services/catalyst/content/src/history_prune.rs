@@ -18,11 +18,9 @@
 //! covers what a restart can replay (minutes); the cost of a re-offer is a
 //! download, never a wrong pointer.
 //!
-//! An authoritative node (`CONTENT_WRITES_ENABLED`) keeps its history: an
-//! unpublish there restores the scene the local deployment superseded
-//! (`land_publish`), which needs the superseded row, so the job refuses to
-//! run beside the switch, and a pass with the switch off still keeps every
-//! row a local deployment superseded, for when writes come back on.
+//! An authoritative node (`CONTENT_WRITES_ENABLED`) keeps its history, so
+//! the job refuses to run beside the switch, and a pass with the switch off
+//! still keeps every row a local deployment superseded.
 //!
 //! Superseded at: a row has no such column; it is the later of the row's own
 //! `local_timestamp` (a late replay lands already superseded) and its
@@ -90,6 +88,8 @@ pub struct PruneOptions {
     pub pause_between_batches: Duration,
     /// Pause between two passes (`CONTENT_HISTORY_PRUNE_INTERVAL_HOURS`).
     pub interval: Duration,
+    /// `GLOBAL_SCENES_URN`: scenes whose files are never unlinked.
+    pub global_scenes_urn: Vec<String>,
 }
 
 impl PruneOptions {
@@ -112,6 +112,12 @@ impl PruneOptions {
                     .max(1)
                     .saturating_mul(3600),
             ),
+            global_scenes_urn: config
+                .worlds_content
+                .global_scenes_urn
+                .as_deref()
+                .map(|r| r.split_whitespace().map(str::to_string).collect())
+                .unwrap_or_default(),
         }
     }
 
@@ -149,8 +155,7 @@ pub struct PruneReport {
 }
 
 /// The candidates of one batch: not the active entity of any pointer, not
-/// this node's own nor superseded by it (its unpublish restores that row),
-/// and out of `active_pointers` for longer than the grace;
+/// this node's own nor superseded by it, and out of `active_pointers` for longer than the grace;
 /// keyset-paged on id inside one `ID_WINDOW`, rows a concurrent flush holds
 /// are left for the next pass. `$1` last id seen, `$2` grace in seconds,
 /// `$3` batch, `$4` the window's last id.
@@ -248,13 +253,16 @@ async fn unlink(storage: &Storage, key: &str) -> Result<u64, crate::storage::Sto
 async fn unlink_unreferenced(
     pool: &PgPool,
     storage: &Storage,
+    global_scenes_urn: &[String],
     keys: &[String],
     report: &mut PruneReport,
 ) -> anyhow::Result<()> {
     if keys.is_empty() {
         return Ok(());
     }
-    let referenced: HashSet<String> = gc::referenced_among(pool, keys).await?;
+    let mut lock = gc::lock_store_exclusive(pool).await?;
+    let referenced: HashSet<String> =
+        gc::referenced_among_on(&mut lock, gc::Pins::new(storage, global_scenes_urn), keys).await?;
     for key in keys {
         if referenced.contains(key) {
             report.blobs_kept += 1;
@@ -271,6 +279,7 @@ async fn unlink_unreferenced(
             }
         }
     }
+    lock.commit().await?;
     Ok(())
 }
 
@@ -315,7 +324,14 @@ async fn run(
         report.batches += 1;
         report.deployments += pruned.deployments;
         report.content_files += pruned.content_files;
-        unlink_unreferenced(pool, storage, &pruned.keys, &mut report).await?;
+        unlink_unreferenced(
+            pool,
+            storage,
+            &opts.global_scenes_urn,
+            &pruned.keys,
+            &mut report,
+        )
+        .await?;
         counter!(DEPLOYMENTS_PRUNED).increment(pruned.deployments);
         counter!(CONTENT_FILES_PRUNED).increment(pruned.content_files);
         tracing::debug!(
@@ -450,6 +466,7 @@ mod tests {
             batch,
             pause_between_batches: Duration::ZERO,
             interval: Duration::from_secs(3600),
+            global_scenes_urn: Vec::new(),
         }
     }
 
@@ -746,11 +763,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The scene a local deployment superseded is what that deployment's
-    /// unpublish restores: a pass that runs while writes are off (a node that
-    /// had them on and turns them on again) keeps it, however old.
+    /// A pass that runs while writes are off (a node that had them on and
+    /// turns them on again) keeps the scene a local deployment superseded,
+    /// however old; the local scene's unpublish leaves it superseded.
     #[tokio::test]
-    async fn the_predecessor_of_a_local_deployment_stays_for_its_unpublish() {
+    async fn the_predecessor_of_a_local_deployment_is_kept() {
         let Some((pool, admin, name)) = own_database().await else {
             return;
         };
@@ -780,10 +797,17 @@ mod tests {
             "{report:?}"
         );
         assert!(entity_exists(&pool, &peer_entity).await);
-        let out = crate::land_publish::tombstone_and_repoint(&pool, &p)
+        let out = crate::land_publish::unpublish_local_scene(&pool, &p, &local_entity)
             .await
             .unwrap();
-        assert_eq!(out.repointed, vec![(p.clone(), Some(peer_entity.clone()))]);
+        assert_eq!(out.parcels, vec![p.clone()]);
+        let active: Option<String> =
+            sqlx::query_scalar("SELECT entity_id FROM content.active_pointers WHERE pointer = $1")
+                .bind(&p)
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        assert_eq!(active, None, "the predecessor is not restored");
 
         pool.close().await;
         let _ = sqlx::query(sqlx::AssertSqlSafe(format!(

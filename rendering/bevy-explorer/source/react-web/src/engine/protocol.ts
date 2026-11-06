@@ -128,6 +128,7 @@ export type NavAction =
   | 'notifications'
   | 'emotes'
   | 'mic'
+  | 'support'
 
 export interface NavActionRequest {
   kind: 'navAction'
@@ -189,10 +190,16 @@ export type PageToScene =
   | RevertAvatarRequest
   | PreviewAvatarRequest
   | PreviewFocusRequest
+  | PreviewStageRequest
+  | PreviewEmoteRequest
   | GetOutfitsRequest
   | SaveOutfitRequest
   | DeleteOutfitRequest
   | EquipOutfitRequest
+  | RandomizeOutfitRequest
+  | UndoOutfitRequest
+  | RedoOutfitRequest
+  | ResetOutfitHistoryRequest
   | SetAvatarColorRequest
   | SetForceRenderRequest
   | GetCommunitiesRequest
@@ -1372,6 +1379,22 @@ export interface PreviewFocusRequest {
   focus: PreviewFocus
 }
 
+/** The Shop's stage around the preview avatar: where the page draws its stage image on screen, in CSS
+ *  pixels like engineViewport's rect. The scene draws the same image (its images/shop-stage.jpg, the HUD's
+ *  assets/shop/stage.jpg) there behind the avatar, so the avatar's window shows no seam, and drops the
+ *  Backpack's podium: the stage's floor is in the image. `null` gives the preview its own backdrop back. */
+export interface PreviewStageRequest {
+  kind: 'previewStage'
+  rect: { x: number; y: number; width: number; height: number } | null
+}
+
+/** Play an emote on the preview avatar once (the Shop trying one on); asked again, it plays again.
+ *  `null` stops it. */
+export interface PreviewEmoteRequest {
+  kind: 'previewEmote'
+  urn: string | null
+}
+
 /** RGB color, components 0..1 (matches PBAvatarBase / the deployed avatar entity). */
 export interface RGBColor {
   r: number
@@ -1430,6 +1453,35 @@ export interface DeleteOutfitRequest {
 export interface EquipOutfitRequest {
   kind: 'equipOutfit'
   slot: number
+}
+
+/** Put a random look from the owned and base wearables on the Backpack's look, keeping the body
+ *  shape and colors (re-emits wearables and outfitHistory). */
+export interface RandomizeOutfitRequest {
+  kind: 'randomizeOutfit'
+}
+
+/** Go back to the look before the last randomize, undo or redo of the Backpack session. */
+export interface UndoOutfitRequest {
+  kind: 'undoOutfit'
+}
+
+/** Go forward to the look the last undo left. */
+export interface RedoOutfitRequest {
+  kind: 'redoOutfit'
+}
+
+/** Forget the randomize history and the cached catalog: the Backpack closed. */
+export interface ResetOutfitHistoryRequest {
+  kind: 'resetOutfitHistory'
+}
+
+/** Whether the randomize bar's undo and redo have a step, and whether a roll is loading. */
+export interface OutfitHistoryMessage {
+  kind: 'outfitHistory'
+  canUndo: boolean
+  canRedo: boolean
+  rolling: boolean
 }
 
 export interface GetEmotesRequest {
@@ -1622,6 +1674,7 @@ export type SceneToPage =
   | WearablesMessage
   | CatalogPageMessage
   | OutfitsMessage
+  | OutfitHistoryMessage
   | CommunitiesMessage
   | VoiceActivityMessage
   | CommunityActionFailedMessage

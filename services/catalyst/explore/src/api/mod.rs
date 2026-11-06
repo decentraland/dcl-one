@@ -239,12 +239,7 @@ impl Settings {
                 config.explore.explorer_map_min_refresh_secs.max(1),
             ),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            commit_hash: config
-                .node
-                .commit_hash
-                .clone()
-                .or_else(|| option_env!("CATALYST_COMMIT_HASH").map(str::to_string))
-                .unwrap_or_default(),
+            commit_hash: config.commit_hash().unwrap_or_default(),
             allow_private_sources: false,
             own_hosts: crate::content::own_hosts(config),
             mirrors_enabled: config.explore.explorer_mirrors_enabled,
@@ -471,7 +466,8 @@ pub struct State {
     /// local-first path arrives with the lambdas module.
     pub content: Arc<ContentState>,
     pub registry: registry::Cache,
-    pub denylist: denylist::Snapshot,
+    /// Shared with social's referral checks, which read it in place.
+    pub denylist: Arc<denylist::Snapshot>,
     pub flags: feature_flags::Snapshot,
     pub map: map::MapState,
     pub ab_cdn: ab_cdn::Cache,
@@ -516,7 +512,7 @@ impl State {
             http,
             content,
             registry: registry::Cache::new(),
-            denylist: denylist::Snapshot::default(),
+            denylist: Arc::default(),
             flags: feature_flags::Snapshot::default(),
             map: map::MapState::new(),
             ab_cdn,
@@ -559,10 +555,11 @@ impl State {
 
     /// The four mirror loops, each a periodic job: a failed pass backs off
     /// (doubling to an hour) and the next one starts over from the persisted
-    /// marker. Nothing is spawned unless `EXPLORER_MIRRORS_ENABLED` is set,
-    /// like every other mirror's flag.
+    /// marker. Upstream mirrors require `EXPLORER_MIRRORS_ENABLED`; local
+    /// maintenance and denylist snapshot reload run on every process.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         auth_api::spawn_identity_sweeper(self, jobs);
+        denylist::spawn_reload(self, jobs, denylist::RELOAD_INTERVAL);
         let pool = self.pool.clone();
         jobs.spawn_periodic_leased(
             "opensea-cache-expiry",

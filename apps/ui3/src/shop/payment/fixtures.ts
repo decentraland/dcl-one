@@ -92,10 +92,13 @@ function creditsQuote(spec: Spec): UsdCents | null {
   return spec.couponPpm ? discountedCents(cents, spec.couponPpm) : cents;
 }
 
+/** As the contract and `policy::mana_quote` apply a coupon: to the signed amount first, then a USD price converts. */
 function manaQuote(spec: Spec): ManaWei | null {
-  const wei = "usdWei" in spec.price ? manaFromUsdWei(spec.price.usdWei, RATE) : spec.price.manaWei;
-  if (wei === null) return null;
-  return spec.couponPpm ? discountedMana(wei, spec.couponPpm) : wei;
+  if ("usdWei" in spec.price) {
+    const usd = spec.couponPpm ? discountedMana(spec.price.usdWei as ManaWei, spec.couponPpm) : spec.price.usdWei;
+    return usd === null ? null : manaFromUsdWei(usd, RATE);
+  }
+  return spec.couponPpm ? discountedMana(spec.price.manaWei, spec.couponPpm) : spec.price.manaWei;
 }
 
 /** What the server answers for `spec` and `session`: policy::eligibility, quote and settlement_key. */

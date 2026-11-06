@@ -186,6 +186,15 @@ pub fn handle_out_of_world(
 
     let (maybe_context, maybe_loadstate, maybe_collider_data) = scenes.get_mut(*scene).unwrap();
 
+    // A failed load is terminal, with or without a context: a scene whose main js could not be
+    // fetched has one and never ticks past its spawn tick.
+    if matches!(maybe_loadstate, Some(SceneLoading::Failed)) {
+        debug!("failed, returning to world");
+        commands.entity(player).remove::<OutOfWorld>();
+        returned.write(ReturnedToWorld::SceneLoadFailed);
+        return;
+    }
+
     if let Some(context) = maybe_context {
         // A frozen scene (inspector /freeze_scene, or the editor-mode auto-freeze at tick 3) is as
         // loaded as it's going to get — it never advances its tick or clears `blocked` to become
@@ -281,16 +290,85 @@ pub fn handle_out_of_world(
     }
 
     match maybe_loadstate {
-        Some(SceneLoading::Failed) => {
-            debug!("failed, returning to world");
-            commands.entity(player).remove::<OutOfWorld>();
-            returned.write(ReturnedToWorld::SceneLoadFailed);
-        }
         Some(_) => {
             debug!("scene not loaded");
         }
         None => {
             panic!("no context or loadstate?!");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::{ecs::event::Events, ecs::system::RunSystemOnce, platform::collections::HashSet};
+    use dcl_types::SceneId;
+
+    use super::*;
+
+    // A scene whose main js could not be fetched fails after it has a context, still at its first
+    // tick: the player waiting outside it goes in, as for a scene that failed before it had one.
+    #[test]
+    fn a_scene_that_failed_with_a_context_lets_the_player_in() {
+        let mut world = World::new();
+        let mut pointers = ScenePointers::default();
+        pointers.set_realm(IVec2::splat(-1), IVec2::splat(1));
+        pointers.insert(
+            IVec2::ZERO,
+            PointerResult::Exists {
+                hash: "scene".to_owned(),
+                urn: None,
+            },
+        );
+        world.insert_resource(pointers);
+        let scene = world
+            .spawn((
+                SceneHash("scene".to_owned()),
+                SceneLoading::Failed,
+                RendererSceneContext::new(
+                    SceneId::DUMMY,
+                    "scene".to_owned(),
+                    String::new(),
+                    false,
+                    0,
+                    String::new(),
+                    IVec2::ZERO,
+                    HashSet::from_iter([IVec2::ZERO]),
+                    vec![],
+                    Default::default(),
+                    vec![],
+                    Entity::PLACEHOLDER,
+                    0.0,
+                    false,
+                    "",
+                    false,
+                    false,
+                ),
+            ))
+            .id();
+        let mut live_scenes = LiveScenes::default();
+        live_scenes.scenes.insert("scene".to_owned(), scene);
+        world.insert_resource(live_scenes);
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest();
+        world.insert_resource(wallet);
+        world.init_resource::<Events<ReturnedToWorld>>();
+        let player = world
+            .spawn((
+                PrimaryUser::default(),
+                OutOfWorld,
+                Transform::from_xyz(8.0, 0.0, -8.0),
+            ))
+            .id();
+
+        world.run_system_once(handle_out_of_world).unwrap();
+
+        assert!(!world.entity(player).contains::<OutOfWorld>());
+        let returned = world
+            .resource::<Events<ReturnedToWorld>>()
+            .iter_current_update_events()
+            .copied()
+            .collect::<Vec<_>>();
+        assert_eq!(returned, vec![ReturnedToWorld::SceneLoadFailed]);
     }
 }

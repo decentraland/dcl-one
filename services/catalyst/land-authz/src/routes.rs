@@ -2,10 +2,10 @@
 //! comms' `COMMS_LAND_OPERATORS_URL` fetches), the reverse lookup of an
 //! update operator, the per-address permission flags (single and batch) and
 //! the index status. Each names its source per the module doc: the index
-//! once ready, the marketplace reader's owner leg for the flags routes and
-//! the land-manager subgraph (`LAND_SUBGRAPH_URL`, `marketplace::land_graph`,
-//! the old handlers' second source) for the operators and the reverse lookup
-//! before that, the unavailable envelope otherwise.
+//! once ready; before that the land-manager subgraph (`LAND_SUBGRAPH_URL`,
+//! `chain_index::land_graph`, lamb2's only source) for the operators, the
+//! single permissions route and the reverse lookup, and the marketplace
+//! reader's owner leg for the batch; the unavailable envelope otherwise.
 
 use std::collections::HashSet;
 
@@ -17,21 +17,18 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use serde_json::{Value, json};
 
+use super::resolve::operator_flags;
 use super::{
-    Decision, DecisionSource, ParcelPermissionFlags, SharedState, Unavailable, Verdict,
+    DecisionSource, LandOperators, ParcelPermissionFlags, SharedState, Unavailable, Verdict,
     can_deploy_batch, indexer, is_address,
 };
 use crate::chain_index::source::{Source, unavailable};
 use crate::chain_index::{ChainIndex, land_graph};
-use crate::shared::http_util::{bad_request, internal_server_error, lambdas_error};
-use crate::shared::query_params::{
-    MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy, Pagination, parse_pagination_with,
-    parse_query_string,
-};
+use crate::shared::http_util::{bad_request, fetcher_error, internal_server_error, lambdas_error};
+use crate::shared::parcel::is_inside_world_limits;
+use crate::shared::query_params::{JsPagination, js_parse_int, parse_query_string};
 use crate::shared::{cors, nul_guard};
 
-const PARCEL_MIN: i64 = -150;
-const PARCEL_MAX: i64 = 150;
 const COORDS_ERR: &str = "Coordinates X and Y must be valid numbers in a valid range";
 /// One footprint's worth of `"x,y"` parcels; a request above this answers 400,
 /// never a truncated batch.
@@ -81,12 +78,14 @@ fn land_graph_reader(state: &SharedState) -> Option<&ChainIndex> {
         .filter(|m| land_graph::configured(m))
 }
 
-fn land_graph_failed(route: &'static str, error: &str) -> Response {
-    tracing::warn!(route, error, "land-authz: LAND subgraph reader failed");
-    unavailable(
-        Source::LandSubgraph,
-        "the LAND subgraph reader did not answer",
+/// lamb2's answer to any error it does not map (`errorHandler.ts`): 500 and
+/// no `message`.
+fn upstream_internal_error() -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "error": "Internal Server Error" })),
     )
+        .into_response()
 }
 
 fn unavailable_response(why: &Unavailable) -> Response {
@@ -106,25 +105,38 @@ fn unavailable_response(why: &Unavailable) -> Response {
     }
 }
 
+/// An integer pair inside Genesis City, the parcels `Parcel.validate`
+/// accepts upstream ([`is_inside_world_limits`]).
 pub(crate) fn validate_coords(x: &str, y: &str) -> Result<(i64, i64), Box<Response>> {
     let xi: i64 = x.parse().map_err(|_| bad_request(COORDS_ERR))?;
     let yi: i64 = y.parse().map_err(|_| bad_request(COORDS_ERR))?;
-    if !(PARCEL_MIN..=PARCEL_MAX).contains(&xi) || !(PARCEL_MIN..=PARCEL_MAX).contains(&yi) {
+    if !is_inside_world_limits(xi, yi) {
         return Err(Box::new(bad_request(COORDS_ERR)));
     }
     Ok((xi, yi))
+}
+
+/// The single-parcel routes' coordinates as lamb2 reads them: `parseInt(x)`
+/// (white space, a sign, a `0x` prefix; anything after the digits ignored),
+/// then the same [`is_inside_world_limits`]. The batch keeps
+/// [`validate_coords`].
+fn validate_path_coords(x: &str, y: &str) -> Result<(i64, i64), Box<Response>> {
+    match (js_parse_int(x, true), js_parse_int(y, true)) {
+        (Some(xi), Some(yi)) if is_inside_world_limits(xi, yi) => Ok((xi, yi)),
+        _ => Err(Box::new(bad_request(COORDS_ERR))),
+    }
 }
 
 /// `GET /lambdas/parcels/{x}/{y}/operators`: the subject and the four legs
 /// from the index; 404 for an unindexed parcel; before the index is ready
 /// the land-manager subgraph, as the old route (owner-only from the
 /// marketplace reader would misreport the operators); the envelope with
-/// neither.
+/// neither. A failed subgraph or index read answers lamb2's bare 500.
 async fn parcel_operators(
     State(state): State<SharedState>,
     Path((x, y)): Path<(String, String)>,
 ) -> Response {
-    let (xi, yi) = match validate_coords(&x, &y) {
+    let (xi, yi) = match validate_path_coords(&x, &y) {
         Ok(c) => c,
         Err(resp) => return *resp,
     };
@@ -142,7 +154,10 @@ async fn parcel_operators(
             }))
             .into_response(),
             Ok(None) => parcel_or_estate_not_found(xi, yi),
-            Err(e) => land_graph_failed("parcel-operators", &e),
+            Err(e) => {
+                tracing::warn!(error = %e, "land-authz: LAND subgraph reader failed on parcel operators");
+                upstream_internal_error()
+            }
         };
     }
     match state.store().rights(xi as i32, yi as i32).await {
@@ -157,14 +172,16 @@ async fn parcel_operators(
         Ok(None) => parcel_or_estate_not_found(xi, yi),
         Err(e) => {
             tracing::warn!(x = xi, y = yi, error = %e, "land-authz: local parcel operators lookup failed");
-            internal_server_error()
+            upstream_internal_error()
         }
     }
 }
 
 /// `GET /lambdas/users/{address}/lands-permissions`: the parcels whose own
-/// update operator is `address`, paged (`pageSize` clamps to 1000, a
-/// non-positive page or size to 1), `totalAmount` from the same query.
+/// update operator is `address`, paged as lamb2's `fetchAndPaginate`
+/// ([`JsPagination`], no `pageSize` maximum: `Number.MAX_VALUE`),
+/// `totalAmount` from the same query. A failed LAND subgraph answers
+/// lamb2's 502 `FetcherError`.
 async fn user_lands_permissions(
     State(state): State<SharedState>,
     Path(addr): Path<String>,
@@ -172,19 +189,10 @@ async fn user_lands_permissions(
 ) -> Response {
     let update_operator = addr.to_lowercase();
     let params = parse_query_string(req.uri().query().unwrap_or(""));
-    let p = parse_pagination_with(
-        &params,
-        MAX_PAGE_SIZE as i64,
-        OversizePolicy::Clamp,
-        NonPositivePolicy::ClampToOne,
-    )
-    .unwrap_or(Pagination {
-        page_size: 1,
-        page_num: 1,
-        offset: 0,
-        limit: 1,
-    });
-    let offset = p.page_num.saturating_sub(1).saturating_mul(p.page_size);
+    let p = match JsPagination::parse(&params, i64::MAX) {
+        Ok(p) => p,
+        Err(msg) => return bad_request(&msg),
+    };
     if state.ready().await.is_none() {
         let Some(market) = land_graph_reader(&state) else {
             return not_ready();
@@ -192,28 +200,42 @@ async fn user_lands_permissions(
         return match land_graph::parcels_by_update_operator(market, &update_operator).await {
             Ok(elements) => {
                 let total = elements.len() as i64;
-                let page: Vec<Value> = elements
-                    .iter()
-                    .skip(offset.max(0) as usize)
-                    .take(p.page_size.max(0) as usize)
-                    .cloned()
-                    .collect();
+                let page: Vec<Value> = elements[p.range(elements.len())].to_vec();
                 Json(json!({ "elements": page, "totalAmount": total, "pageNum": p.page_num, "pageSize": p.page_size })).into_response()
             }
-            Err(e) => land_graph_failed("lands-permissions", &e),
+            Err(e) => {
+                tracing::warn!(error = %e, "land-authz: LAND subgraph reader failed on lands-permissions");
+                fetcher_error(&addr)
+            }
         };
     }
-    match state
-        .store()
-        .parcels_with_update_operator_page(&update_operator, p.page_size, offset)
-        .await
-    {
+    let store = state.store();
+    // A negative bound counts from the end of the list: its length first.
+    let window = match p.sql_window() {
+        Some(window) => Ok(window),
+        None => store
+            .parcels_with_update_operator_page(&update_operator, 0, 0)
+            .await
+            .map(|(_, total)| {
+                let r = p.range(total.max(0) as usize);
+                (r.start as i64, r.len() as i64)
+            }),
+    };
+    let page = match window {
+        Ok((offset, limit)) => {
+            store
+                .parcels_with_update_operator_page(&update_operator, limit, offset)
+                .await
+        }
+        Err(e) => Err(e),
+    };
+    match page {
         Ok((parcels, total)) => {
             let elements: Vec<Value> = parcels
                 .into_iter()
                 .map(|parcel| {
                     json!({
-                        "id": parcel.token_id,
+                        "id": parcel.id,
                         "x": parcel.x.to_string(),
                         "y": parcel.y.to_string(),
                         "owner": parcel.owner,
@@ -226,7 +248,7 @@ async fn user_lands_permissions(
         }
         Err(e) => {
             tracing::error!(update_operator = %update_operator, error = %e, "land-authz: lands-permissions lookup failed");
-            internal_server_error()
+            upstream_internal_error()
         }
     }
 }
@@ -252,43 +274,71 @@ fn flags_value(flags: ParcelPermissionFlags, source: &DecisionSource) -> Value {
     v
 }
 
-fn with_source(mut resp: Response, source: &DecisionSource) -> Response {
+fn with_source(mut resp: Response, source: &'static str) -> Response {
     resp.headers_mut().insert(
         HeaderName::from_static(SOURCE_HEADER),
-        HeaderValue::from_static(source.header_value()),
+        HeaderValue::from_static(source),
     );
     resp
 }
 
-/// `GET /lambdas/users/{address}/parcels/{x}/{y}/permissions`: the flags
-/// [`can_deploy`](super::can_deploy) decides from, so this route cannot
-/// report a right the write path would then refuse to honour; the legs the
-/// fallback source cannot decide are `null` ([`flags_value`]).
+/// `GET /lambdas/users/{address}/parcels/{x}/{y}/permissions`: five
+/// booleans, never `null`. From the index once ready (the flags
+/// [`can_deploy`](super::can_deploy) decides from); before that from the
+/// land-manager subgraph's operators, lamb2's `getParcelPermissions`; with
+/// neither, lamb2's 500.
 async fn parcel_permissions(
     State(state): State<SharedState>,
     Path((address, x, y)): Path<(String, String, String)>,
 ) -> Response {
-    let (xi, yi) = match validate_coords(&x, &y) {
+    let (xi, yi) = match validate_path_coords(&x, &y) {
         Ok(c) => c,
         Err(resp) => return *resp,
     };
-    let addr = address.to_lowercase();
-    if !is_address(&addr) {
+    // `EthAddress.validate`: `^0x[a-fA-F0-9]{40}$`, so `0X…` is refused.
+    if !(address.starts_with("0x") && is_address(&address)) {
         return bad_request("Address must be a valid Ethereum address");
     }
-    match can_deploy_batch(&state, &[(xi as i32, yi as i32)], &addr).await {
-        Ok(mut decisions) => {
-            let Decision {
-                verdict,
-                source,
-                flags,
-            } = decisions.pop().expect("one parcel in, one decision out");
-            match verdict {
-                Verdict::Unknown => with_source(parcel_or_estate_not_found(xi, yi), &source),
-                _ => with_source(Json(flags_value(flags, &source)).into_response(), &source),
+    let addr = address.to_lowercase();
+    if state.ready().await.is_none() {
+        let Some(market) = land_graph_reader(&state) else {
+            tracing::warn!(
+                "land-authz: parcel permissions have no source (index not ready, no LAND_SUBGRAPH_URL)"
+            );
+            return upstream_internal_error();
+        };
+        let source = Source::LandSubgraph.name();
+        return match land_graph::parcel_operators(market, xi, yi).await {
+            Ok(Some(ops)) => {
+                let mut flags = operator_flags(
+                    &addr,
+                    &LandOperators {
+                        operator: ops.operator,
+                        update_operator: ops.update_operator,
+                        update_managers: ops.update_managers,
+                        approved_for_all: ops.approved_for_all,
+                    },
+                );
+                flags.owner = ops.owner.eq_ignore_ascii_case(&addr);
+                with_source(Json(flags).into_response(), source)
             }
+            Ok(None) => with_source(parcel_or_estate_not_found(xi, yi), source),
+            Err(e) => {
+                tracing::warn!(error = %e, "land-authz: LAND subgraph reader failed on parcel permissions");
+                upstream_internal_error()
+            }
+        };
+    }
+    match state.store().rights(xi as i32, yi as i32).await {
+        Ok(Some(rights)) => with_source(
+            Json(rights.flags_for(&addr)).into_response(),
+            "land-authz-index",
+        ),
+        Ok(None) => with_source(parcel_or_estate_not_found(xi, yi), "land-authz-index"),
+        Err(e) => {
+            tracing::warn!(x = xi, y = yi, error = %e, "land-authz: parcel permissions lookup failed");
+            upstream_internal_error()
         }
-        Err(why) => unavailable_response(&why),
     }
 }
 
@@ -298,7 +348,7 @@ pub struct BatchParcelPermissionsRequest {
 }
 
 /// Per-entry rule is exactly `validate_coords` (integer parse plus the
-/// +/-150 range); any invalid entry rejects the whole request, naming the
+/// Genesis City bounds); any invalid entry rejects the whole request, naming the
 /// entry. Duplicates collapse silently to their first occurrence, so the
 /// response stays one element per distinct parcel in request order.
 pub(crate) fn parse_batch_parcels(entries: &[String]) -> Result<Vec<(i64, i64)>, String> {
@@ -363,7 +413,7 @@ async fn parcels_permissions_batch(
             if coords.is_empty() {
                 resp
             } else {
-                with_source(resp, &source)
+                with_source(resp, source.header_value())
             }
         }
         Err(why) => unavailable_response(&why),
@@ -428,6 +478,11 @@ mod tests {
         let entries = ["1,2", "x,4"].map(String::from);
         let err = parse_batch_parcels(&entries).unwrap_err();
         assert!(err.starts_with("Invalid parcel \"x,4\""), "{err}");
+        let exception_block = ["62,151", "162,158"].map(String::from);
+        assert_eq!(
+            parse_batch_parcels(&exception_block).unwrap(),
+            vec![(62, 151), (162, 158)]
+        );
         let out_of_range = ["1,2", "151,0"].map(String::from);
         assert!(
             parse_batch_parcels(&out_of_range)
@@ -453,9 +508,12 @@ mod tests {
     }
 
     #[test]
-    fn coordinates_must_be_integers_in_the_genesis_range() {
+    fn coordinates_must_be_integers_inside_genesis_city() {
         assert_eq!(validate_coords("-150", "150").unwrap(), (-150, 150));
+        assert_eq!(validate_coords("160", "155").unwrap(), (160, 155));
+        assert_eq!(validate_coords("163", "59").unwrap(), (163, 59));
         assert!(validate_coords("151", "0").is_err());
+        assert!(validate_coords("164", "100").is_err());
         assert!(validate_coords("1.5", "0").is_err());
         assert!(validate_coords("", "0").is_err());
     }

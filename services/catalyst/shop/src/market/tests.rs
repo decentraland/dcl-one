@@ -108,6 +108,10 @@ struct Fixture {
     response: FixtureResponse,
     #[serde(default)]
     volatile_paths: Vec<String>,
+    /// `"unspecified"`: the upstream answer has no stable order, so a
+    /// top-level array is compared as a multiset.
+    #[serde(default)]
+    order: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -120,6 +124,9 @@ struct FixtureRequest {
     headers: BTreeMap<String, String>,
     #[serde(default)]
     body: Option<Value>,
+    /// A body sent as these bytes, for one that is not JSON.
+    #[serde(default)]
+    body_raw: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -144,7 +151,6 @@ const DB_FIXTURES: &[&str] = &[
 const READER_FIXTURES: &[&str] = &[
     "users-wearables-200-unknown-address",
     "users-emotes-200-unknown-address",
-    "users-names-200-pagesize-cap-1000",
     "collections-wearables-by-owner-200-unknown",
 ];
 
@@ -195,6 +201,9 @@ fn fixture_request(fx: &FixtureRequest) -> Request<Body> {
     let mut builder = Request::builder().method(fx.method.as_str()).uri(uri);
     for (k, v) in &fx.headers {
         builder = builder.header(k.as_str(), v.as_str());
+    }
+    if let Some(raw) = &fx.body_raw {
+        return builder.body(Body::from(raw.clone())).unwrap();
     }
     match &fx.body {
         Some(body) => builder
@@ -251,6 +260,13 @@ async fn replay_one(router: Router, fx: &Fixture) -> Vec<String> {
                 for path in &fx.volatile_paths {
                     scrub(&mut baseline, path);
                     scrub(&mut candidate, path);
+                }
+                if fx.order.as_deref() == Some("unspecified") {
+                    for v in [&mut baseline, &mut candidate] {
+                        if let Some(items) = v.as_array_mut() {
+                            items.sort_by_cached_key(|i| i.to_string());
+                        }
+                    }
                 }
                 if baseline != candidate {
                     notes.push(format!("body: fixture={baseline} candidate={candidate}"));
@@ -337,7 +353,7 @@ async fn post_json(router: Router, uri: &str, body: Value) -> (StatusCode, Value
 }
 
 #[tokio::test]
-async fn status_carries_version_commit_and_time_and_cors_reflects_the_origin() {
+async fn status_carries_version_commit_and_time_and_lamb2_cors() {
     let state = state_without_db();
     let (status, body) = get_json(router(state.clone()), "/lambdas/status").await;
     assert_eq!(status, StatusCode::OK);
@@ -358,7 +374,7 @@ async fn status_carries_version_commit_and_time_and_cors_reflects_the_origin() {
         resp.headers()
             .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
             .unwrap(),
-        "https://example.org"
+        "*"
     );
 }
 
@@ -388,25 +404,15 @@ async fn profiles_reject_too_many_ids_and_malformed_json() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    // lamb2's `request.json()` throws: its bare 500.
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
+/// lamb2 takes any `:address` on the item routes: one that is not an
+/// Ethereum address owns nothing, answered before any reader call, so a
+/// configured subgraph never sees the string. The names route still refuses it.
 #[tokio::test]
-async fn default_profiles_are_synthesized_without_a_database() {
-    let state = state_without_db();
-    let (status, body) = get_json(router(state.clone()), "/lambdas/profiles/default7").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["avatars"][0]["userId"], "default7");
-    assert_eq!(body["avatars"][0]["hasClaimedName"], false);
-    let (status, body) = get_json(router(state), "/lambdas/profile/DEFAULT").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["avatars"][0]["ethAddress"], "DEFAULT");
-}
-
-/// The old lambdas answered 400 before touching a reader; a configured
-/// subgraph must not see the string.
-#[tokio::test]
-async fn user_item_routes_reject_a_malformed_address_before_any_reader_call() {
+async fn user_item_routes_answer_a_malformed_address_empty_before_any_reader_call() {
     let settings = Settings {
         eth_collections_subgraph_url: Some("http://127.0.0.1:1/collections".into()),
         marketplace_subgraph_url: Some("http://127.0.0.1:1/marketplace".into()),
@@ -415,16 +421,36 @@ async fn user_item_routes_reject_a_malformed_address_before_any_reader_call() {
     let state = support::state_without_db_settings(settings);
     for path in [
         "/lambdas/users/not-an-address/wearables",
-        "/lambdas/users/0xZZ/emotes",
-        "/lambdas/users/0x8d6f/names",
+        "/lambdas/users/0xZZ/emotes?pageSize=10abc",
     ] {
         let (status, body) = get_json(router(state.clone()), path).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
-        assert_eq!(
-            body["message"], "Address must be a valid Ethereum address",
-            "{path}"
-        );
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert_eq!(body["elements"], json!([]), "{path}");
+        assert_eq!(body["totalAmount"], 0, "{path}");
     }
+    let (_, body) = get_json(
+        router(state.clone()),
+        "/lambdas/users/0xZZ/emotes?pageSize=10abc&pageNum=x",
+    )
+    .await;
+    assert_eq!(
+        (&body["pageSize"], &body["pageNum"]),
+        (&json!(10), &Value::Null)
+    );
+    // lamb2's names answer an empty page for a string that owns nothing
+    // (the unreachable reader would answer the 502 if it were asked).
+    let (status, body) = get_json(
+        router(state),
+        "/lambdas/users/0x8d6f/names?pageSize=2&pageNum=3",
+    )
+    .await;
+    assert_eq!(
+        (status, body),
+        (
+            StatusCode::OK,
+            json!({ "elements": [], "totalAmount": 0, "pageNum": 3, "pageSize": 2 })
+        )
+    );
 }
 
 #[tokio::test]
@@ -451,12 +477,17 @@ async fn a_configured_but_unreachable_reader_fails_closed() {
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert_eq!(body["error"], "Service Unavailable");
-    let (status, _) = get_json(
+    // Names answer lamb2's 502 `FetcherError`, still never an empty page.
+    let (status, body) = get_json(
         router(state.clone()),
         "/lambdas/users/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef/names",
     )
     .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert_eq!(
+        body["message"],
+        "Cannot fetch elements for 0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    );
     let (status, _) = get_json(
         router(state),
         "/lambdas/collections/emotes-by-owner/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
@@ -650,6 +681,37 @@ mod settings {
         assert_eq!(s.commit_hash, "unknown");
         assert_eq!(s.trades_sync_interval.as_secs(), 60);
     }
+
+    #[test]
+    fn the_third_party_registry_is_a_public_https_upstream() {
+        let registry = |url: &str| {
+            let cfg = config(&[
+                "--public-url",
+                "https://node.example",
+                "--third-party-registry-l2-subgraph-url",
+                url,
+            ]);
+            Settings::from_config(&cfg, &Upstreams::default()).map_err(|e| e.to_string())
+        };
+        assert_eq!(
+            registry("https://subgraph.example/tp/")
+                .unwrap()
+                .third_party_registry_subgraph_url
+                .as_deref(),
+            Some("https://subgraph.example/tp")
+        );
+        for (url, needle) in [
+            ("http://subgraph.example/tp", "not https"),
+            ("https://127.0.0.1/tp", "publicly routable"),
+            ("https://node.example/tp", "own host"),
+        ] {
+            let err = registry(url).unwrap_err();
+            assert!(
+                err.contains("THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL") && err.contains(needle),
+                "{url}: {err}"
+            );
+        }
+    }
 }
 
 fn tag() -> String {
@@ -690,6 +752,83 @@ async fn unseed_profile(pool: &sqlx::PgPool, address: &str, entity_id: &str) {
 }
 
 #[tokio::test]
+async fn profiles_metadata_validates_ids_as_asset_bundle_registry() {
+    let state = state_without_db();
+    let msg = "The ids property must be an array of non-empty strings";
+    for body in [
+        json!({}),
+        json!({ "ids": "0xabc" }),
+        json!({ "ids": ["0xabc", ""] }),
+        json!({ "ids": [1] }),
+    ] {
+        let (status, resp) =
+            post_json(router(state.clone()), "/lambdas/profiles/metadata", body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(resp, json!({ "error": "Bad request", "message": msg }));
+    }
+    let (status, resp) = post_json(
+        router(state.clone()),
+        "/lambdas/profiles/metadata",
+        json!({ "ids": [] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(resp, json!([]));
+}
+
+#[tokio::test]
+async fn profiles_metadata_caps_distinct_ids_and_answers_bad_json_with_a_bare_500() {
+    let state = state_without_db();
+    let resp = router(state.clone())
+        .oneshot(
+            Request::post("/lambdas/profiles/metadata")
+                .header("content-type", "application/json")
+                .body(Body::from("{"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&bytes).unwrap(),
+        json!({ "error": "Internal Server Error" })
+    );
+    let ids: Vec<String> = (0..=1000).map(|i| format!("0x{i:040x}")).collect();
+    let (status, body) = post_json(
+        router(state),
+        "/lambdas/profiles/metadata",
+        json!({ "ids": ids }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body["message"],
+        "Too many profile ids were specified. Maximum allowed is 1000"
+    );
+}
+
+/// Both paths, the per-id cache (50 ids or fewer) and the batch read, turn a
+/// failed database read into the bare 500.
+#[tokio::test]
+async fn profiles_metadata_answers_a_failed_read_with_a_bare_500_on_both_paths() {
+    let state = state_without_db();
+    for n in [3, 60] {
+        let ids: Vec<String> = (0..n).map(|i| format!("0x{i:040x}")).collect();
+        let (status, body) = post_json(
+            router(state.clone()),
+            "/lambdas/profiles/metadata",
+            json!({ "ids": ids }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{n} ids");
+        assert_eq!(body, json!({ "error": "Internal Server Error" }), "{n} ids");
+    }
+}
+
+#[tokio::test]
 async fn a_synced_profile_is_served_shaped_and_cached() {
     let Some(state) = state_with_db(Settings::for_tests()).await else {
         return;
@@ -701,8 +840,9 @@ async fn a_synced_profile_is_served_shaped_and_cached() {
         &state.pool,
         &address,
         &entity_id,
-        json!({ "avatars": [{
+        json!({ "timestamp": 5, "extra": true, "avatars": [{
             "name": "tester",
+            "hasClaimedName": true,
             "links": [{ "title": "ok", "url": "https://decentraland.org/" }, { "title": "bad", "url": "javascript:x" }],
             "avatar": {
                 "wearables": ["urn:decentraland:off-chain:base-avatars:eyebrows_00", "urn:decentraland:matic:collections-v2:0xabc:1"],
@@ -721,7 +861,18 @@ async fn a_synced_profile_is_served_shaped_and_cached() {
     let avatar = &body["avatars"][0];
     assert_eq!(avatar["userId"], address);
     assert_eq!(avatar["ethAddress"], address);
-    assert_eq!(body["timestamp"], 1_700_000_000_000_i64);
+    let mut keys: Vec<_> = body.as_object().unwrap().keys().collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        ["avatars", "timestamp"],
+        "lamb2 answers {{ timestamp, avatars }} only: {body}"
+    );
+    assert_eq!(
+        body["timestamp"], 1_700_000_000_000_i64,
+        "the entity's timestamp, not the deployed one"
+    );
+    assert_eq!(avatar["avatar"]["emotes"], json!([]));
     assert_eq!(avatar["links"].as_array().unwrap().len(), 1);
     assert_eq!(
         avatar["avatar"]["snapshots"]["face256"],
@@ -732,9 +883,9 @@ async fn a_synced_profile_is_served_shaped_and_cached() {
         2,
         "without a configured reader the inventory is served unfiltered, as the old squid-less path did"
     );
-    assert!(
-        avatar.get("hasClaimedName").is_none(),
-        "no names reader: the flag is not synthesized"
+    assert_eq!(
+        avatar["hasClaimedName"], false,
+        "no name is proven owned without a names reader"
     );
 
     let (status, batch) = post_json(
@@ -745,6 +896,39 @@ async fn a_synced_profile_is_served_shaped_and_cached() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(batch.as_array().unwrap().len(), 1, "duplicate ids collapse");
+
+    // If-Modified-Since: ISO 8601 as lamb2's `Date.parse` reads it, the
+    // entity time rounded down to the second; an unknown id alone is 304.
+    for (ims, ids, expected) in [
+        (
+            "2023-11-14T22:13:20.000Z",
+            json!([address]),
+            StatusCode::NOT_MODIFIED,
+        ),
+        (
+            "Tue, 14 Nov 2023 22:13:20 GMT",
+            json!([address]),
+            StatusCode::NOT_MODIFIED,
+        ),
+        ("2023-11-14T22:13:19.000Z", json!([address]), StatusCode::OK),
+        (
+            "2000-01-01T00:00:00.000Z",
+            json!(["0x00000000000000000000000000000000000000ff"]),
+            StatusCode::NOT_MODIFIED,
+        ),
+    ] {
+        let resp = router(state.clone())
+            .oneshot(
+                Request::post("/lambdas/profiles")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::IF_MODIFIED_SINCE, ims)
+                    .body(Body::from(json!({ "ids": ids }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), expected, "{ims} {ids}");
+    }
 
     // The 10 s cache answers after the row is gone.
     unseed_profile(&state.pool, &address, &entity_id).await;
@@ -765,6 +949,133 @@ async fn a_synced_profile_is_served_shaped_and_cached() {
     let (status, body) = get_json(router(state), &format!("/lambdas/profile/{address}")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!({ "avatars": [], "timestamp": 0 }));
+}
+
+/// A `default*` pointer is served from its deployed entity (lamb2 has no
+/// built-in default): nothing is owned, so only base items stay, no name is
+/// claimed and the deployed identity is kept. Undeployed, it is 404 (the
+/// stub on the alias).
+#[tokio::test]
+async fn default_profiles_are_the_deployed_entities_owning_nothing() {
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let pointer = format!("default{}", u64::from_str_radix(&tag()[..12], 16).unwrap());
+    let entity_id = format!("bafydefault{}", tag());
+    seed_profile(
+        &state.pool,
+        &pointer,
+        &entity_id,
+        json!({ "avatars": [{
+            "name": "Default",
+            "userId": "deployed",
+            "hasClaimedName": true,
+            "avatar": {
+                "wearables": ["urn:decentraland:off-chain:base-avatars:eyebrows_00", "urn:decentraland:matic:collections-v2:0xabc:1"],
+                "emotes": [{ "slot": 0, "urn": "wave" }, { "slot": 1, "urn": "urn:decentraland:matic:collections-v2:0xabc:2" }]
+            }
+        }] }),
+    )
+    .await;
+    let (status, body) = get_json(
+        router(state.clone()),
+        &format!("/lambdas/profiles/{pointer}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let avatar = &body["avatars"][0];
+    assert_eq!(avatar["userId"], "deployed");
+    assert_eq!(avatar["hasClaimedName"], false);
+    assert_eq!(
+        avatar["avatar"]["wearables"],
+        json!(["urn:decentraland:off-chain:base-avatars:eyebrows_00"])
+    );
+    assert_eq!(
+        avatar["avatar"]["emotes"],
+        json!([{ "slot": 0, "urn": "wave" }])
+    );
+    unseed_profile(&state.pool, &pointer, &entity_id).await;
+    state.profile_cache.clear();
+    let (status, _) = get_json(router(state.clone()), "/lambdas/profiles/default99999999").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, body) = get_json(router(state), "/lambdas/profile/default99999999").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({ "avatars": [], "timestamp": 0 }));
+}
+
+#[tokio::test]
+async fn compact_profiles_agree_with_the_full_answer() {
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let t = tag();
+    let address = format!("0x{}00000001", &t[..32]);
+    let unknown = format!("0x{}00000002", &t[..32]);
+    let entity_id = format!("bafymeta{t}");
+    seed_profile(
+        &state.pool,
+        &address,
+        &entity_id,
+        json!({ "avatars": [{
+            "name": "tester",
+            "avatar": { "snapshots": { "face256": "bafyface", "body": "bafybody" } }
+        }] }),
+    )
+    .await;
+
+    let ids = json!({ "ids": [address.to_uppercase(), unknown, address] });
+    let (status, full) = post_json(router(state.clone()), "/lambdas/profiles", ids.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    let face = full[0]["avatars"][0]["avatar"]["snapshots"]["face256"].clone();
+    let claimed = full[0]["avatars"][0]["hasClaimedName"].clone();
+    let (status, compact) =
+        post_json(router(state.clone()), "/lambdas/profiles/metadata", ids).await;
+    unseed_profile(&state.pool, &address, &entity_id).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        compact,
+        json!([{
+            "pointer": address, "name": "tester", "hasClaimedName": claimed, "thumbnailUrl": face
+        }])
+    );
+}
+
+/// Above 50 ids the batch read serves the same compact answer, once per
+/// pointer whatever its case.
+#[tokio::test]
+async fn compact_profiles_above_the_cache_batch() {
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let t = tag();
+    let address = format!("0x{}00000003", &t[..32]);
+    let entity_id = format!("bafymetabatch{t}");
+    seed_profile(
+        &state.pool,
+        &address,
+        &entity_id,
+        json!({ "avatars": [{
+            "name": "batched",
+            "avatar": { "snapshots": { "face256": "bafyface", "body": "bafybody" } }
+        }] }),
+    )
+    .await;
+    let mut ids: Vec<String> = (0..60).map(|i| format!("0x{}{i:08x}", &t[..32])).collect();
+    ids[30] = address.to_uppercase();
+    ids.push(address.clone());
+
+    let (status, compact) = post_json(
+        router(state.clone()),
+        "/lambdas/profiles/metadata",
+        json!({ "ids": ids }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{compact}");
+    assert_eq!(compact.as_array().unwrap().len(), 1, "{compact}");
+    assert_eq!(compact[0]["pointer"], address);
+    assert_eq!(compact[0]["name"], "batched");
+
+    unseed_profile(&state.pool, &address, &entity_id).await;
 }
 
 fn head(t: &str, i: u64, created_ms: i64) -> Value {
@@ -1850,4 +2161,28 @@ mod data_plane_shared_types {
             "the test settings keep writes off"
         );
     }
+}
+
+#[tokio::test]
+async fn the_venues_read_eth_rpc_url_on_mainnet_only() {
+    let settings = |network: &str, trade: Option<&str>| {
+        let mut s = Settings::for_tests();
+        s.eth_network = network.to_string();
+        s.eth_rpc_url = Some("https://eth.example/".into());
+        s.market.trade_rpc_urls = super::listings::RpcEndpoints::from_env(trade);
+        support::state_without_db_settings(s)
+    };
+    let mainnet = settings("mainnet", None);
+    assert_eq!(
+        mainnet.venue_rpc_url(1).as_deref(),
+        Some("https://eth.example/")
+    );
+    assert_eq!(mainnet.venue_rpc_url(137), None);
+    let sepolia = settings("sepolia", None);
+    assert_eq!(sepolia.venue_rpc_url(1), None);
+    let sepolia = settings("sepolia", Some("1=https://mainnet.example/"));
+    assert_eq!(
+        sepolia.venue_rpc_url(1).as_deref(),
+        Some("https://mainnet.example/")
+    );
 }

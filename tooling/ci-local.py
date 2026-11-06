@@ -50,9 +50,9 @@ def clean_env():
     return {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
 
 
-def workflow_paths(name, event='pull_request'):
+def workflow_paths(name, event='pull_request', source=None):
     """The `paths:` list of a workflow's event (as checked out for the run), or None when it runs on every change."""
-    source = TREE if (TREE / '.github/workflows' / name).exists() else ROOT
+    source = source or (TREE if (TREE / '.github/workflows' / name).exists() else ROOT)
     if name in ('apis-sites-images.yml', 'bevy-explorer-headless.yml'):
         spec = importlib.util.spec_from_file_location('bevy_selection', source / 'tooling/bevy-ci.py')
         selection = importlib.util.module_from_spec(spec)
@@ -169,7 +169,8 @@ def image_system():
 
 def pre_push_steps(changed):
     steps = list(STRUCTURE)
-    development = triggered('development.yml', changed)
+    # Pull requests run it unfiltered (its CI gate always reports); what it tests is its push.paths.
+    development = triggered('development.yml', changed, event='push')
     images = triggered('apis-sites-images.yml', changed)
     gateway = triggered('gateway-images.yml', changed)
     if gateway:

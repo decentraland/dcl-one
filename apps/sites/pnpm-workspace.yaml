@@ -1,6 +1,11 @@
 allowBuilds:
   esbuild: true
   protobufjs: false
+  bufferutil: false
+  es5-ext: false
+  keccak: false
+  secp256k1: false
+  utf-8-validate: false
 minimumReleaseAgeExclude:
   - '@types/react-dom@19.3.0'
   - '@types/react@19.3.0'

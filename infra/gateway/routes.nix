@@ -59,10 +59,17 @@
     {
       path = "/places/place";
       probe = "/places/place";
+      exact = true;
     }
     {
       path = "/places/world";
       probe = "/places/world";
+      exact = true;
+    }
+    {
+      path = "/events/assets/event-default.webp";
+      probe = "/events/assets/event-default.webp";
+      exact = true;
     }
     {
       path = "/events/api";

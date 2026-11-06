@@ -47,7 +47,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 
 - Read the [layout ADR](docs/adr/2026-10-19-organizing-library-services-folders.md) before adding, moving or renaming a folder or crate; record layout changes as a new ADR.
 - `library/` depends only on library code.
-- `library/protocol/proto` is the only `.proto` source ([ADR](docs/adr/2026-10-25-protocol-in-dcl-one.md)); `tooling/proto-source-check.py` allowlists the copies still to be removed.
+- `library/protocol/proto` is the only `.proto` source ([ADR](docs/adr/2026-10-25-protocol-in-dcl-one.md)); `tooling/proto-source-check.py` fails on any other copy.
 - Reach other files through `env!("DCL_ONE_ROOT")`, never `../` chains.
 - Domain crates follow `docs/module-layers.toml`; no upward dependency.
 - Keep the fresh-schema bootstrap single.
@@ -84,8 +84,31 @@ Code that serves none of these deliverables is removed, not kept for reference:
 
 - Never add a dependency on a sibling checkout.
 - `rendering/bevy-explorer/source` is its own workspace; integration lives in `apps/bevy-explorer`.
-- Keep component licenses and pins (`upstream.lock.json`, `abgen-release.lock`, `livekit-release.lock`).
+- Keep component licenses and pins (`upstream.lock.json`, `abgen-release.lock`, `livekit-release.lock`, `tooling/uuav/uuav-binaries.lock.json`).
 - Regenerate `.github/CODEOWNERS` from `ownership.json` with `tooling/owners.py`.
 - No machine names, private addresses, home paths, personal emails or the operator's domain; deployments supply them via gitignored config.
 - Never delete the gitignored `credentials` and `data` directories.
 - `/docs` data is `apps/sites/content/docs` (`pnpm gen:docs-content`); media is Git LFS.
+
+## UI standards
+
+Before changing web UI in `apps/` (including the Play HUD in
+`apps/ui3/src/play/`, which keeps its current design primitives until Sites
+migrates), `library/ui/` or
+`rendering/bevy-explorer/source/react-web/`, read and follow
+[`docs/ui-standards.md`](docs/ui-standards.md). It defines component styling,
+shared foundations and components, accessibility, migration and verification.
+
+## Explorer automation
+
+The end-to-end suite in `apps/bevy-explorer/e2e` and the Explorer's console surface it drives
+(`rendering/bevy-explorer/source`: `src/automation.rs`, `src/world_state.rs`,
+`react-web/src/lib/hudAutomation.ts`, `local-harness/web-driver`, documented in the readme's
+"Agents and tests") read the code they test, so a change to that code updates them in the same
+change. That is any of: a HUD control's role, accessible name, placeholder, `aria-*` state or
+visibility; a page's heading or tablist; a key binding; a console command's name, arguments or
+reply; a launch option or the trusted-input contract; a visual scene, its parcels or the capture
+window; a move of a path under `apps/bevy-explorer`, `tooling/bevy-e2e-*.py` or the workflow
+`bevy-explorer-e2e.yml`; a rename of the CI workflow, its jobs or the web artifact.
+`apps/bevy-explorer/e2e/README.md`, "Keeping the suite true", maps each change to what it touches
+and the checks to run.

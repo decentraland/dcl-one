@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react'
 import type { AvatarLook } from '../../engine/avatarEquip'
 import type { Color3 } from '../../engine/generated'
-import { serviceUrl } from '../../lib/baseDomain'
+import { nativeProfileImage, serviceUrl } from '../../lib/baseDomain'
 
 type LookColor = { color?: Color3 }
 interface ProfileResponse {
@@ -55,7 +55,7 @@ export async function fetchStoredProfile(address: string): Promise<StoredProfile
             skin: color(a.avatar.skin),
             forceRender: []
           }
-    return { name: a?.name, body: a?.avatar?.snapshots?.body, look, exists: true }
+    return { name: a?.name, body: nativeProfileImage(a?.avatar?.snapshots?.body), look, exists: true }
   } catch {
     return undefined
   }

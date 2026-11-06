@@ -6,6 +6,8 @@
 
 use std::collections::HashMap;
 
+use bytes::Bytes;
+
 use crate::auth::AuthChain;
 pub use crate::entity::{ContentMapping, Entity, EntityType};
 
@@ -18,7 +20,7 @@ pub type Timestamp = i64;
 #[derive(Clone, Copy)]
 pub struct Deployment<'a> {
     pub entity: &'a Entity,
-    pub files: &'a HashMap<String, Vec<u8>>,
+    pub files: &'a HashMap<String, Bytes>,
     pub auth_chain: &'a AuthChain,
 }
 
@@ -36,7 +38,7 @@ impl Deployment<'_> {
 #[cfg(test)]
 pub(crate) struct OwnedDeployment {
     pub entity: Entity,
-    pub files: HashMap<String, Vec<u8>>,
+    pub files: HashMap<String, Bytes>,
     pub auth_chain: AuthChain,
 }
 

@@ -31,6 +31,7 @@ async fn owner(state: &CommsState, context: &PlaceContext) -> Result<Address, Ap
         .owner_address
         .as_deref()
         .and_then(|a| Address::parse(a).ok())
+        .filter(|_| context.world)
     {
         return Ok(address);
     }
@@ -513,6 +514,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn genesis_owner_ignores_captured_scene_metadata() {
+        let actual = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let state = owner_state(StubPolicy {
+            land: Ok(Some(Arc::new(Some(crate::access::LandOperators {
+                owner: actual.into(),
+                operator: None,
+                update_operator: None,
+                update_managers: vec![],
+                approved_for_all: vec![],
+            })))),
+            ..Default::default()
+        });
+        let mut context = world_context(Some("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
+        context.world = false;
+        context.world_name = None;
+        assert_eq!(owner(&state, &context).await.unwrap().as_str(), actual);
+        assert_eq!(
+            owner(&owner_state(StubPolicy::default()), &context)
+                .await
+                .unwrap_err()
+                .code,
+            503
+        );
+    }
+
+    #[tokio::test]
     async fn captured_owner_precedes_unavailable_world_fallback() {
         let captured = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         let state = owner_state(StubPolicy {
@@ -619,6 +646,15 @@ mod tests {
             } else {
                 self.stub.notify_streaming_notification(n).await
             }
+        }
+        async fn notify_user_notifications(
+            &self,
+            transaction: &mut sqlx::PgConnection,
+            notifications: &[crate::interfaces::UserNotification],
+        ) -> Result<(), sqlx::Error> {
+            self.stub
+                .notify_user_notifications(transaction, notifications)
+                .await
         }
     }
     async fn setup(pool: sqlx::PgPool) -> (CommsState, Arc<Directory>, RemovedPlace) {
@@ -1105,12 +1141,28 @@ mod tests {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
         };
-        let (state, directory, event) = setup(pool.clone()).await;
+        let (mut state, directory, event) = setup(pool.clone()).await;
+        // Notification authority comes from LAND, independently of captured catalogue metadata.
+        let land_owner = "0xcccccccccccccccccccccccccccccccccccccccc";
+        state.policy = Arc::new(StubPolicy {
+            land: Ok(Some(Arc::new(Some(crate::access::LandOperators {
+                owner: land_owner.into(),
+                operator: None,
+                update_operator: None,
+                update_managers: vec![],
+                approved_for_all: vec![],
+            })))),
+            ..Default::default()
+        });
         let wallet = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by, banned_at) VALUES ($1, $2, $2, $3)").bind(&event.place_id).bind(wallet).bind(event.removed_at - chrono::Duration::seconds(1)).execute(&pool).await.unwrap();
         directory.fail.store(true, Ordering::SeqCst);
         let feed = RemovedPlaces::new(pool.clone());
-        assert!(cleanup(&state, &feed, &event).await.is_err());
+        assert_eq!(
+            cleanup(&state, &feed, &event).await.unwrap_err().code,
+            500,
+            "the injected notification failure must follow successful LAND resolution"
+        );
         let saved: RemovedPlace = sqlx::query_as("SELECT event_id, place_id, owner_address, world, world_name, base_position, positions, removed_at, cleaned_at FROM explore.place_removal_pending WHERE event_id = $1").bind(event.event_id).fetch_one(&pool).await.unwrap();
         assert!(
             saved.cleaned_at.is_some(),
@@ -1134,10 +1186,9 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(count, 0, "ack follows successful notification");
-        assert_eq!(
-            directory.stub.streaming_notifications.lock().unwrap().len(),
-            1
-        );
+        let notifications = directory.stub.streaming_notifications.lock().unwrap();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].recipient.as_str(), land_owner);
     }
     #[tokio::test]
     async fn unknown_owner_does_not_block_cleanup_and_notification_remains_pending() {

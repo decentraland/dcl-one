@@ -1,5 +1,7 @@
-/* from: shop@2d3bf62:app/src/pages/Overview.styles.ts (Carousel, Viewport, Track, Arrow, Dots), app/src/styles/row.styles.ts,
-   app/src/styles/card.styles.ts (railGutter: 18px of room so a lifted, ringed card is not clipped) */
+/* from: shop@3a322cf9:app/src/styles/row.styles.ts (Head, Title, Arrow), app/src/pages/Overview.styles.ts (Carousel);
+   shop@2d3bf62:app/src/pages/Overview.styles.ts (Carousel, Viewport, Track, Arrow, Dots), app/src/styles/row.styles.ts,
+   app/src/styles/card.styles.ts (railGutter: 18px of room so a lifted, ringed card is not clipped);
+   shop@3a322cf9:app/src/components/CollectionCarousel/CollectionCarousel.styles.ts (the collection variant) */
 .shop-rail {
   display: flex;
   flex-direction: column;
@@ -8,6 +10,7 @@
 .shop-rail__head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
   margin-bottom: 10px;
 }
@@ -17,7 +20,7 @@
   font-weight: var(--ui-title-weight, 600);
   line-height: 1.5;
   letter-spacing: var(--ui-title-tracking, 0);
-  flex: 1;
+  color: #fcfcfc;
   min-width: 0;
 }
 .shop-rail__all {
@@ -74,7 +77,7 @@
 }
 .shop-rail__arrow {
   position: absolute;
-  top: var(--rail-arrow-top, 105px);
+  top: var(--rail-arrow-top, 106px);
   transform: translateY(-50%);
   z-index: 5;
   width: 44px;
@@ -145,3 +148,11 @@
 .shop-suggested__reason a {
   color: inherit;
 }
+
+.shop-rail[data-variant="collection"] .shop-rail__head { margin-bottom: 20px; }
+.shop-rail[data-variant="collection"] .shop-rail__title { font-size: 22px; font-weight: 700; line-height: normal; }
+.shop-rail[data-variant="collection"] .shop-rail__arrow { top: 112px; width: 53px; height: 53px; }
+.shop-rail[data-variant="collection"] .shop-rail__arrow[data-side="left"] { left: -53px; }
+.shop-rail[data-variant="collection"] .shop-rail__arrow[data-side="right"] { right: -53px; }
+.shop-rail[data-variant="collection"] .shop-rail__dots { min-height: 10px; margin-top: 18px; }
+.shop-rail[data-variant="collection"] .shop-rail__dot { width: 10px; height: 10px; }

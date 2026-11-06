@@ -4,8 +4,13 @@
 pub mod automation;
 mod autopilot;
 mod commands;
+mod debug_panel;
 mod deep_link;
 mod ext;
+mod gpu_memory;
+mod memory;
+#[cfg(test)]
+mod memory_tests;
 #[cfg(target_arch = "wasm32")]
 mod web;
 pub mod world_state;
@@ -197,6 +202,17 @@ pub struct DecentralandArguments {
     pub launch: LaunchOptions,
     #[command(flatten)]
     pub client: ClientOptions,
+    /// Route first-party HTTP APIs through this gateway; other services keep their configured destinations.
+    ///
+    /// A hostname beginning with `gateway.` selects service aliases and gateway signing paths;
+    /// any other hostname uses direct Catalyst paths. Explicit service flags take precedence.
+    /// Pulse, social/Ethereum WebSockets, storage delegations and auth/reels pages are not remapped:
+    /// use --pulse-server HOST[:PORT], --social-rpc WS(S)://..., --ethereum-rpc WS(S)://...,
+    /// --storage HTTPS://..., --auth-page or --reels as needed. Otherwise they use --base-domain
+    /// (decentraland.org by default); Pulse also honors PULSE_SERVER before the domain fallback.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[arg(long, value_name = "url", help_heading = system_api_types::launch_options::help_heading::SERVICES)]
+    pub gateway: Option<String>,
     /// Skip the sign-in screen with an auto guest-login (default HUD only; `?guest=1` on web)
     #[arg(long)]
     pub guest: bool,
@@ -364,9 +380,6 @@ impl DecentralandApp {
         app.add_plugins(desktop_default_plugins(&decentraland_app_config));
         #[cfg(target_arch = "wasm32")]
         app.add_plugins(wasm_default_plugins(&decentraland_app_config));
-
-        #[cfg(all(not(target_arch = "wasm32"), feature = "ffmpeg"))]
-        media::init_ffmpeg();
 
         // we use kira for audio source asset management, regardless of native / wasm
         app.add_plugins(bevy_kira_audio::AudioPlugin);
@@ -613,7 +626,8 @@ impl DecentralandApp {
         app.insert_resource(decentraland_app_config.app_config);
 
         // Plugins
-        app.add_plugins(SceneRunnerPlugin)
+        app.add_plugins((memory::MemoryStatusPlugin, gpu_memory::GpuMemoryPlugin))
+            .add_plugins(SceneRunnerPlugin)
             .add_plugins(AVPlayerPlugin)
             .add_plugins(RestrictedActionsPlugin)
             .add_plugins(UtilsPlugin)
@@ -701,6 +715,7 @@ impl DecentralandApp {
         app.add_console_command::<SceneThreadsCommand, _>(scene_threads);
         app.add_console_command::<FpsCommand, _>(set_fps);
         app.add_console_command::<SessionGraphicsCommand, _>(session_graphics);
+        debug_panel::register(&mut app);
 
         app
     }

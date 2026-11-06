@@ -883,6 +883,8 @@ pub struct GraphicsSettings {
     pub cel_shading: bool,
     /// draw the dark edge outline around avatars
     pub avatar_outline: bool,
+    /// show a hologram ghost where an avatar is still loading
+    pub avatar_ghosts: bool,
     pub gpu_bytes_per_frame: usize,
     /// share of the screen's device pixels the web canvas renders at
     pub render_scale: f32,
@@ -910,6 +912,7 @@ impl Default for GraphicsSettings {
             ambient_brightness: 50,
             cel_shading: true,
             avatar_outline: true,
+            avatar_ghosts: true,
             gpu_bytes_per_frame: if cfg!(target_arch = "wasm32") {
                 10_000_000
             } else {
@@ -1069,6 +1072,12 @@ pub enum AudioDecoderError {
     StreamClosed,
     Other(String),
 }
+
+/// Hold native video textures while a requested snapshot waits for render readiness and GPU
+/// readback. The resource exists only when the scene test harness is enabled; it is extracted
+/// to the render world, where the video backend presents frames.
+#[derive(Resource, Clone, Default, bevy::render::extract_resource::ExtractResource)]
+pub struct SnapshotInProgress(pub bool);
 
 #[derive(Resource)]
 pub struct SceneLoadDistance {
@@ -1807,6 +1816,8 @@ pub struct CurrentRealm {
     pub config: ServerConfiguration,
     pub comms: Option<CommsConfig>,
     pub public_url: String,
+    /// The parcel the realm (a world) spawns players on, from its manifest; none for a city
+    pub spawn_parcel: Option<IVec2>,
 }
 
 impl CurrentRealm {

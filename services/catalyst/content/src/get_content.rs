@@ -84,6 +84,33 @@ fn apply_headers(response: &mut Response, headers: &[(&'static str, String)]) {
     }
 }
 
+/// How a mount serves `/contents/{hash}`: the root content server's contract, or
+/// worlds-content-server's (legacy SHA-256 hex keys, always sniffed).
+#[derive(Clone, Copy)]
+struct Mount {
+    legacy_sha256: bool,
+    always_sniff: bool,
+}
+
+impl Mount {
+    fn sniff(self, head: &[u8]) -> &'static str {
+        // WCS serves its GIF thumbnails as image/gif.
+        if self.always_sniff && (head.starts_with(b"GIF87a") || head.starts_with(b"GIF89a")) {
+            return "image/gif";
+        }
+        detect_content_type(head)
+    }
+}
+
+const ROOT: Mount = Mount {
+    legacy_sha256: false,
+    always_sniff: false,
+};
+const WORLDS: Mount = Mount {
+    legacy_sha256: true,
+    always_sniff: true,
+};
+
 /// GET and HEAD /contents/{hash}. A malformed hash is a 404 like any other
 /// miss (the fixtures pin that); a storage fault is a 500, never a 404, so a
 /// broken node gets retried instead of advertising the content as absent.
@@ -94,7 +121,43 @@ pub async fn get_content(
     method: Method,
     headers: HeaderMap,
 ) -> AppResult<Response> {
-    if !crate::auth::is_canonical_cid(&hash_id) || state.denylist.contains(&hash_id) {
+    let sniff = query.include_mime_type.is_some();
+    serve(state, hash_id, sniff, method, headers, ROOT).await
+}
+
+/// The worlds mount's GET and HEAD /contents/{hash}: worlds-content-server
+/// always sniffs the Content-Type and also answers a thumbnail's legacy
+/// SHA-256 hex key, read here as the raw-leaf CIDv1 with that digest.
+pub async fn get_world_content(
+    State(state): State<SharedState>,
+    Path(hash_id): Path<String>,
+    method: Method,
+    headers: HeaderMap,
+) -> AppResult<Response> {
+    serve(state, hash_id, true, method, headers, WORLDS).await
+}
+
+async fn serve(
+    state: SharedState,
+    hash_id: String,
+    sniff: bool,
+    method: Method,
+    headers: HeaderMap,
+    mount: Mount,
+) -> AppResult<Response> {
+    // `key` names the blob on disk; `hash_id` stays the client's ETag.
+    let key = if crate::auth::is_canonical_cid(&hash_id) {
+        hash_id.clone()
+    } else if let Some(cid) = mount
+        .legacy_sha256
+        .then(|| crate::auth::raw_cid_v1_from_sha256_hex(&hash_id))
+        .flatten()
+    {
+        cid
+    } else {
+        return Err(missing(&hash_id));
+    };
+    if state.denylist.contains(&hash_id) || state.denylist.contains(&key) {
         return Err(missing(&hash_id));
     }
 
@@ -104,12 +167,12 @@ pub async fn get_content(
         return Ok(response);
     }
 
-    let mut opened = match state.storage.open(&hash_id).await? {
+    let mut opened = match state.storage.open(&key).await? {
         Some(opened) => opened,
         None => match state.read_through() {
-            Some(read_through) if read_through.fill_content(&hash_id).await => state
+            Some(read_through) if read_through.fill_content(&key).await => state
                 .storage
-                .open(&hash_id)
+                .open(&key)
                 .await?
                 .ok_or_else(|| missing(&hash_id))?,
             _ => return Err(missing(&hash_id)),
@@ -134,20 +197,17 @@ pub async fn get_content(
             return Ok(response);
         }
         Some(ParsedRange::Range { start, end }) => {
-            let content = if method == Method::HEAD && query.include_mime_type.is_none() {
-                Bytes::new()
-            } else {
-                opened.read_range(start, end).await?
-            };
-
-            if query.include_mime_type.is_some() {
-                set_content_type(&mut base_headers, detect_content_type(&content));
+            if sniff {
+                // The worlds mount sniffs the file's head, as WCS does; the root the range's.
+                let from = if mount.always_sniff { 0 } else { start };
+                let head = opened.read_range(from, from + 31).await?;
+                set_content_type(&mut base_headers, mount.sniff(&head));
             }
 
-            let body: Bytes = if method == Method::HEAD {
-                Bytes::new()
+            let body = if method == Method::HEAD {
+                Body::empty()
             } else {
-                content
+                opened.into_range_body(start, end).await?
             };
 
             let content_len = end - start + 1;
@@ -166,21 +226,24 @@ pub async fn get_content(
     }
 
     if method == Method::HEAD {
+        if mount.always_sniff {
+            let head = opened.read_range(0, 31).await?;
+            set_content_type(&mut base_headers, mount.sniff(&head));
+        }
         let mut response = StatusCode::OK.into_response();
         apply_headers(&mut response, &base_headers);
         return Ok(response);
     }
 
-    let head = if query.include_mime_type.is_some() {
+    let head = if sniff {
         let head = opened.read_range(0, 31).await?;
-        set_content_type(&mut base_headers, detect_content_type(&head));
+        set_content_type(&mut base_headers, mount.sniff(&head));
         head
     } else {
         Bytes::new()
     };
 
-    if let Some(accel) =
-        x_accel_redirect_path(state.settings.storage_x_accel_base.as_deref(), &hash_id)
+    if let Some(accel) = x_accel_redirect_path(state.settings.storage_x_accel_base.as_deref(), &key)
     {
         base_headers.retain(|(n, _)| *n != "Content-Length");
         let mut response = (StatusCode::OK, Body::empty()).into_response();
@@ -393,6 +456,68 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
     }
 
+    async fn body_of(resp: Response) -> Bytes {
+        axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_range_past_the_start_sniffs_from_the_range_start() {
+        let mut blob = vec![b'x'; 4096];
+        blob[1000..1008].copy_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        let blob = Bytes::from(blob);
+        let node = TestNode::without_db("content-range-offset").await;
+        node.store(TEST_CID, blob.clone()).await;
+
+        let resp = get(&node, Method::GET, Some(""), Some("bytes=1000-1999"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(header(&resp, "content-type").unwrap(), "image/png");
+        assert_eq!(header(&resp, "content-length").unwrap(), "1000");
+        assert_eq!(
+            header(&resp, "content-range").unwrap(),
+            "bytes 1000-1999/4096"
+        );
+        assert_eq!(body_of(resp).await, blob.slice(1000..2000));
+    }
+
+    #[tokio::test]
+    async fn head_with_a_range_sends_the_window_length_and_no_body() {
+        let node = TestNode::without_db("content-range-head").await;
+        node.store(TEST_CID, Bytes::from_static(b"0123456789"))
+            .await;
+
+        let resp = get(&node, Method::HEAD, None, Some("bytes=2-5"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(header(&resp, "content-length").unwrap(), "4");
+        assert_eq!(header(&resp, "content-range").unwrap(), "bytes 2-5/10");
+        assert!(body_of(resp).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_empty_file_rejects_a_range_and_ignores_a_malformed_one() {
+        let node = TestNode::without_db("content-range-empty").await;
+        node.store(TEST_CID, Bytes::new()).await;
+
+        let resp = get(&node, Method::GET, None, Some("bytes=0-"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(header(&resp, "content-range").unwrap(), "bytes */0");
+
+        for malformed in ["bytes=abc", "bytes=0-1,2-3"] {
+            let resp = get(&node, Method::GET, None, Some(malformed))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK, "{malformed}");
+            assert!(body_of(resp).await.is_empty());
+        }
+    }
+
     #[tokio::test]
     async fn etag_match_short_circuits_to_304() {
         let node = TestNode::without_db("content-etag").await;
@@ -412,6 +537,121 @@ mod tests {
         .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
         assert_eq!(header(&resp, "etag").unwrap(), format!("\"{TEST_CID}\""));
+    }
+
+    async fn world_get(
+        node: &TestNode,
+        hash: &str,
+        method: Method,
+        range: Option<&str>,
+    ) -> AppResult<Response> {
+        let mut headers = HeaderMap::new();
+        if let Some(r) = range {
+            headers.insert("range", r.parse().unwrap());
+        }
+        get_world_content(
+            State(node.state.clone()),
+            Path(hash.to_string()),
+            method,
+            headers,
+        )
+        .await
+    }
+
+    fn sha256_hex(data: &[u8]) -> String {
+        use sha2::Digest;
+        sha2::Sha256::digest(data)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn the_worlds_mount_always_sniffs_and_the_root_does_not() {
+        let gif = Bytes::from_static(b"GIF89a\x01\x00\x01\x00rest-of-the-image");
+        let png = Bytes::from_static(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3]);
+        let node = TestNode::without_db("content-world-sniff").await;
+        let gif_cid = crate::auth::hash_bytes_v1(&gif);
+        node.store(&gif_cid, gif.clone()).await;
+        node.store(TEST_CID, png.clone()).await;
+
+        for method in [Method::GET, Method::HEAD] {
+            let resp = world_get(&node, TEST_CID, method.clone(), None)
+                .await
+                .unwrap();
+            assert_eq!(
+                header(&resp, "content-type").unwrap(),
+                "image/png",
+                "{method}"
+            );
+            let resp = world_get(&node, &gif_cid, method.clone(), None)
+                .await
+                .unwrap();
+            assert_eq!(
+                header(&resp, "content-type").unwrap(),
+                "image/gif",
+                "{method}"
+            );
+        }
+        let resp = world_get(&node, TEST_CID, Method::GET, None).await.unwrap();
+        assert_eq!(body_of(resp).await, png);
+        // A range sniffs the file's head, not the window's.
+        let resp = world_get(&node, TEST_CID, Method::GET, Some("bytes=8-10"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(header(&resp, "content-type").unwrap(), "image/png");
+        assert_eq!(body_of(resp).await, png.slice(8..11));
+
+        let resp = get(&node, Method::GET, None, None).await.unwrap();
+        assert_eq!(
+            header(&resp, "content-type").unwrap(),
+            "application/octet-stream"
+        );
+        let resp = get(&node, Method::HEAD, Some(""), None).await.unwrap();
+        assert_eq!(
+            header(&resp, "content-type").unwrap(),
+            "application/octet-stream"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_worlds_mount_answers_a_legacy_sha256_key_and_the_root_does_not() {
+        let thumb = Bytes::from_static(&[0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10, b'J', b'F']);
+        let node = TestNode::without_db("content-world-sha256").await;
+        node.store(&crate::auth::hash_bytes_v1(&thumb), thumb.clone())
+            .await;
+        let hex = sha256_hex(&thumb);
+
+        let resp = world_get(&node, &hex, Method::GET, None).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(header(&resp, "content-type").unwrap(), "image/jpeg");
+        assert_eq!(header(&resp, "etag").unwrap(), format!("\"{hex}\""));
+        assert_eq!(body_of(resp).await, thumb);
+        let resp = world_get(&node, &hex, Method::HEAD, None).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        for bad in [hex.to_uppercase(), hex[..63].to_string()] {
+            let err = world_get(&node, &bad, Method::GET, None).await.unwrap_err();
+            assert_eq!(err.into_response().status(), StatusCode::NOT_FOUND, "{bad}");
+        }
+        let err = get_content(
+            State(node.state.clone()),
+            Path(hex.clone()),
+            Query(ContentQuery {
+                include_mime_type: None,
+            }),
+            Method::GET,
+            HeaderMap::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.into_response().status(), StatusCode::NOT_FOUND);
+
+        // The denylist withholds the blob under either name.
+        node.state.denylist.add(&hex);
+        let err = world_get(&node, &hex, Method::GET, None).await.unwrap_err();
+        assert_eq!(err.into_response().status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

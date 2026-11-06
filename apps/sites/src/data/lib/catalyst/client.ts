@@ -21,7 +21,7 @@ export class CatalystError extends Error {
   }
 }
 
-async function errorFromResponse(res: Response, url: string): Promise<CatalystError> {
+export async function errorFromResponse(res: Response, url: string): Promise<CatalystError> {
   let server: string | null = null;
   try {
     const body: unknown = JSON.parse(await res.text());
@@ -94,6 +94,7 @@ async function fetchText(
     );
   }
   if (!res.ok) {
+    await res.body?.cancel().catch(() => {});
     throw new CatalystError(
       `Catalyst returned ${res.status} ${res.statusText}`,
       url,
