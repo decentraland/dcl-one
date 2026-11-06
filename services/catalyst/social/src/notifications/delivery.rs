@@ -37,14 +37,36 @@ pub const PRUNE_BATCH: i64 = 1000;
 pub const EXPIRED: &str = "expired";
 /// `NOTIFICATION_DELIVERY_MAX_AGE_SECS`'s default: 7 days.
 pub const DEFAULT_MAX_AGE: Duration = Duration::from_secs(7 * 86_400);
+/// The smallest non-zero max age; shorter values would drop mail before a pass sends it.
+pub const MIN_MAX_AGE: Duration = Duration::from_secs(3600);
 /// The `last_error` of a row held for a missing `SIGNING_KEY`.
 const UNSIGNED: &str = "SIGNING_KEY unset";
+
+/// `NOTIFICATION_DELIVERY_MAX_AGE_SECS` as the worker uses it: `0` disables
+/// expiry (`None`), any other value is floored to [`MIN_MAX_AGE`].
+pub fn max_age_from_secs(secs: u64) -> Option<Duration> {
+    if secs == 0 {
+        return None;
+    }
+    let age = Duration::from_secs(secs);
+    if age < MIN_MAX_AGE {
+        tracing::warn!(
+            configured_secs = secs,
+            floor_secs = MIN_MAX_AGE.as_secs(),
+            "NOTIFICATION_DELIVERY_MAX_AGE_SECS below the floor: clamped up"
+        );
+        return Some(MIN_MAX_AGE);
+    }
+    Some(age)
+}
 
 /// A claimed `email` row with what the send needs, read in the claim.
 #[derive(Debug, Clone)]
 pub struct Claimed {
     pub notification_id: Uuid,
     pub attempts: i32,
+    /// The notification's insert time: the age reference of a held row.
+    pub created_at: NaiveDateTime,
     pub address: String,
     pub kind: String,
     pub metadata: Json,
@@ -101,6 +123,7 @@ pub async fn claim(
     type Row = (
         Uuid,
         i32,
+        NaiveDateTime,
         String,
         String,
         Json,
@@ -116,14 +139,17 @@ pub async fn claim(
     Ok(rows
         .into_iter()
         .map(
-            |(notification_id, attempts, address, kind, metadata, email, opted_out)| Claimed {
-                notification_id,
-                attempts,
-                address,
-                kind,
-                metadata,
-                email,
-                opted_out,
+            |(notification_id, attempts, created_at, address, kind, metadata, email, opted_out)| {
+                Claimed {
+                    notification_id,
+                    attempts,
+                    created_at,
+                    address,
+                    kind,
+                    metadata,
+                    email,
+                    opted_out,
+                }
             },
         )
         .collect())
@@ -146,7 +172,7 @@ static CLAIM_SQL: LazyLock<String> = LazyLock::new(|| {
         JOIN social.notifications n ON n.id = due.notification_id
         LEFT JOIN social.subscriptions s ON s.address = n.address
         WHERE d.notification_id = due.notification_id AND d.channel = 'email'
-        RETURNING d.notification_id, d.attempts, n.address, n.type, n.metadata, s.email,
+        RETURNING d.notification_id, d.attempts, n.created_at, n.address, n.type, n.metadata, s.email,
             CASE
                 WHEN {} THEN 'ignore_all_email'
                 WHEN NOT {} THEN 'opted out of this type'
@@ -237,6 +263,8 @@ pub struct PassSummary {
     pub retried: usize,
     /// Due rows left unclaimed for a missing `SIGNING_KEY` (at most [`BATCH`]).
     pub held: usize,
+    /// Held rows ended `expired` (also counted in `skipped`).
+    pub expired: usize,
 }
 
 /// The old processor's render-time names, never persisted: `userName` is the
@@ -286,13 +314,17 @@ pub async fn prune(pool: &PgPool, now: NaiveDateTime) -> Result<u64, sqlx::Error
 
 /// Ends up to [`PRUNE_BATCH`] pending rows not due-touched since
 /// `now - max_age` as `skipped` (`expired`), over `notification_deliveries_due_idx`:
-/// a row held for a missing key keeps its insert time as `next_attempt_at`,
-/// and a retried row reaches a terminal state within hours.
+/// a row left unclaimed for a missing key keeps its insert time as
+/// `next_attempt_at`, and a retried row reaches a terminal state within hours.
+/// `None` (expiry disabled) ends nothing.
 pub async fn expire(
     pool: &PgPool,
     now: NaiveDateTime,
-    max_age: Duration,
+    max_age: Option<Duration>,
 ) -> Result<u64, sqlx::Error> {
+    let Some(max_age) = max_age else {
+        return Ok(0);
+    };
     let cutoff = chrono::Duration::from_std(max_age)
         .ok()
         .and_then(|age| now.checked_sub_signed(age))
@@ -323,10 +355,13 @@ pub async fn expire(
 /// One pass: claim, send each outside any transaction, record. A row whose
 /// recipient lost their email between insert and send, or whose type has no
 /// template (rows written before the allowlist), is `skipped` without a send.
+/// A row held at send time past `max_age` (or [`DEFAULT_MAX_AGE`] with expiry
+/// disabled) since its notification was created ends `expired`.
 pub async fn run_pass(
     pool: &PgPool,
     channel: &dyn EmailChannel,
     configured: bool,
+    max_age: Option<Duration>,
 ) -> anyhow::Result<PassSummary> {
     let now = now_utc();
     if configured && !channel.can_sign() {
@@ -380,6 +415,15 @@ pub async fn run_pass(
                 outcome_of(&row, result)
             }
         };
+        // `EmailSender` never gets here: `can_sign` and its `NoSigningKey` read
+        // the same key, fixed at construction, so the gate above returns first.
+        let outcome = match outcome {
+            Outcome::Held if held_too_long(row, now, max_age) => {
+                summary.expired += 1;
+                Outcome::Skipped(EXPIRED.to_string())
+            }
+            other => other,
+        };
         match &outcome {
             Outcome::Sent => summary.sent += 1,
             Outcome::Skipped(_) => summary.skipped += 1,
@@ -395,7 +439,21 @@ pub async fn run_pass(
             "SIGNING_KEY unset: notification emails stay pending until it is set"
         );
     }
+    if summary.expired > 0 {
+        tracing::warn!(
+            expired = summary.expired,
+            "notification emails held past the max age expired unsent"
+        );
+    }
     Ok(summary)
+}
+
+/// Bounds `Outcome::Held`, whose attempt is uncounted: the age runs from the
+/// notification's insert, which a hold never moves.
+fn held_too_long(row: &Claimed, now: NaiveDateTime, max_age: Option<Duration>) -> bool {
+    let age = chrono::Duration::from_std(max_age.unwrap_or(DEFAULT_MAX_AGE))
+        .unwrap_or(chrono::Duration::MAX);
+    now.signed_duration_since(row.created_at) >= age
 }
 
 #[cfg(test)]
@@ -417,6 +475,7 @@ mod tests {
         Claimed {
             notification_id: Uuid::nil(),
             attempts,
+            created_at: now_utc(),
             address: "0xa".into(),
             kind: "bid_received".into(),
             metadata: serde_json::json!({}),
@@ -455,6 +514,15 @@ mod tests {
             Outcome::Held,
             "a missing signing key never ends the row"
         );
+    }
+
+    #[test]
+    fn max_age_zero_disables_and_small_values_are_floored() {
+        assert_eq!(max_age_from_secs(0), None);
+        assert_eq!(max_age_from_secs(1), Some(MIN_MAX_AGE));
+        assert_eq!(max_age_from_secs(600), Some(MIN_MAX_AGE));
+        assert_eq!(max_age_from_secs(3600), Some(MIN_MAX_AGE));
+        assert_eq!(max_age_from_secs(604_800), Some(DEFAULT_MAX_AGE));
     }
 }
 
@@ -562,7 +630,9 @@ mod pg_tests {
         let id = batch[0].id;
         let recorder = Recorder::new();
 
-        let summary = run_pass(&pool, &recorder, true).await.unwrap();
+        let summary = run_pass(&pool, &recorder, true, Some(DEFAULT_MAX_AGE))
+            .await
+            .unwrap();
         assert_eq!(
             summary,
             PassSummary {
@@ -580,7 +650,9 @@ mod pg_tests {
             ("sent".into(), 1, None)
         );
 
-        let summary = run_pass(&pool, &recorder, true).await.unwrap();
+        let summary = run_pass(&pool, &recorder, true, Some(DEFAULT_MAX_AGE))
+            .await
+            .unwrap();
         assert_eq!(
             summary,
             PassSummary::default(),
@@ -597,7 +669,9 @@ mod pg_tests {
         };
         let a = pending_for(&pool, &fresh_address()).await;
         let recorder = Recorder::new();
-        run_pass(&pool, &recorder, false).await.unwrap();
+        run_pass(&pool, &recorder, false, Some(DEFAULT_MAX_AGE))
+            .await
+            .unwrap();
         assert_eq!(
             delivery_state(&pool, a[0].id).await.unwrap(),
             (
@@ -615,7 +689,9 @@ mod pg_tests {
             .execute(&pool)
             .await
             .unwrap();
-        run_pass(&pool, &recorder, true).await.unwrap();
+        run_pass(&pool, &recorder, true, Some(DEFAULT_MAX_AGE))
+            .await
+            .unwrap();
         assert_eq!(
             delivery_state(&pool, b[0].id).await.unwrap(),
             (
@@ -637,7 +713,9 @@ mod pg_tests {
         let recorder = Recorder::new();
         *recorder.fail_with.lock() = Some(SendFailure::Transient("503".into()));
 
-        run_pass(&pool, &recorder, true).await.unwrap();
+        run_pass(&pool, &recorder, true, Some(DEFAULT_MAX_AGE))
+            .await
+            .unwrap();
         let (state, attempts, err) = delivery_state(&pool, id).await.unwrap();
         assert_eq!(
             (state.as_str(), attempts, err.as_deref()),
@@ -655,7 +733,9 @@ mod pg_tests {
             "backed off 30 s, not due now"
         );
 
-        run_pass(&pool, &recorder, true).await.unwrap();
+        run_pass(&pool, &recorder, true, Some(DEFAULT_MAX_AGE))
+            .await
+            .unwrap();
         assert_eq!(
             delivery_state(&pool, id).await.unwrap().1,
             1,
@@ -695,7 +775,9 @@ mod pg_tests {
                 .execute(&pool)
                 .await
                 .unwrap();
-            run_pass(&pool, &recorder, true).await.unwrap();
+            run_pass(&pool, &recorder, true, Some(DEFAULT_MAX_AGE))
+                .await
+                .unwrap();
         }
         let (state, attempts, err) = delivery_state(&pool, id).await.unwrap();
         assert_eq!(state, "failed");
@@ -709,7 +791,9 @@ mod pg_tests {
         // A permanent refusal is terminal at once.
         let other = pending_for(&pool, &fresh_address()).await;
         *recorder.fail_with.lock() = Some(SendFailure::Permanent("400 bad template".into()));
-        run_pass(&pool, &recorder, true).await.unwrap();
+        run_pass(&pool, &recorder, true, Some(DEFAULT_MAX_AGE))
+            .await
+            .unwrap();
         assert_eq!(
             delivery_state(&pool, other[0].id).await.unwrap(),
             ("failed".into(), 1, Some("400 bad template".into()))
@@ -748,7 +832,9 @@ mod pg_tests {
             .await
             .unwrap();
         let recorder = Recorder::new();
-        run_pass(&pool, &recorder, true).await.unwrap();
+        run_pass(&pool, &recorder, true, Some(DEFAULT_MAX_AGE))
+            .await
+            .unwrap();
         assert_eq!(
             delivery_state(&pool, rows[0].id).await.unwrap(),
             ("skipped".into(), 1, Some("no email template".into()))
@@ -774,7 +860,9 @@ mod pg_tests {
         .await;
         let anon = pending_for(&pool, &fresh_address()).await;
         let recorder = Recorder::new();
-        run_pass(&pool, &recorder, true).await.unwrap();
+        run_pass(&pool, &recorder, true, Some(DEFAULT_MAX_AGE))
+            .await
+            .unwrap();
         let seen: std::collections::HashMap<Uuid, Json> =
             recorder.metadata.lock().iter().cloned().collect();
         assert_eq!(seen[&tip[0].id]["userName"], "Recipient");
@@ -871,7 +959,9 @@ mod pg_tests {
             .unwrap();
 
         let recorder = Recorder::new();
-        run_pass(&pool, &recorder, true).await.unwrap();
+        run_pass(&pool, &recorder, true, Some(DEFAULT_MAX_AGE))
+            .await
+            .unwrap();
         for (id, reason) in [
             (rows_all[0].id, "ignore_all_email"),
             (rows_typed[0].id, "opted out of this type"),
@@ -905,7 +995,9 @@ mod pg_tests {
             .store(true, std::sync::atomic::Ordering::Relaxed);
         for _ in 0..MAX_ATTEMPTS + 2 {
             make_due(&pool, id).await;
-            let summary = run_pass(&pool, &recorder, true).await.unwrap();
+            let summary = run_pass(&pool, &recorder, true, Some(DEFAULT_MAX_AGE))
+                .await
+                .unwrap();
             assert_eq!((summary.claimed, summary.held), (0, 1), "{summary:?}");
         }
         assert_eq!(
@@ -923,7 +1015,9 @@ mod pg_tests {
             .unsigned
             .store(false, std::sync::atomic::Ordering::Relaxed);
         *recorder.fail_with.lock() = Some(SendFailure::Transient("503".into()));
-        run_pass(&pool, &recorder, true).await.unwrap();
+        run_pass(&pool, &recorder, true, Some(DEFAULT_MAX_AGE))
+            .await
+            .unwrap();
         assert_eq!(
             delivery_state(&pool, id).await.unwrap(),
             ("pending".into(), 1, Some("503".into()))
@@ -932,7 +1026,9 @@ mod pg_tests {
 
         *recorder.fail_with.lock() = None;
         make_due(&pool, id).await;
-        run_pass(&pool, &recorder, true).await.unwrap();
+        run_pass(&pool, &recorder, true, Some(DEFAULT_MAX_AGE))
+            .await
+            .unwrap();
         assert_eq!(delivery_state(&pool, id).await.unwrap().0, "sent");
     }
 
@@ -946,7 +1042,13 @@ mod pg_tests {
         *recorder.fail_with.lock() = Some(SendFailure::NoSigningKey);
         for _ in 0..MAX_ATTEMPTS + 2 {
             make_due(&pool, id).await;
-            assert_eq!(run_pass(&pool, &recorder, true).await.unwrap().held, 1);
+            assert_eq!(
+                run_pass(&pool, &recorder, true, Some(DEFAULT_MAX_AGE))
+                    .await
+                    .unwrap()
+                    .held,
+                1
+            );
         }
         assert_eq!(
             delivery_state(&pool, id).await.unwrap(),
@@ -955,6 +1057,91 @@ mod pg_tests {
         let next = next_attempt(&pool, id).await;
         assert!(next > now_utc() + chrono::Duration::seconds(200));
         assert!(next <= now_utc() + chrono::Duration::from_std(HOLD).unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_row_held_at_send_time_expires_once_its_notification_is_past_the_max_age() {
+        let Some(pool) = private_pool("dlv-held-cap").await else {
+            return;
+        };
+        let old = pending_for(&pool, &fresh_address()).await[0].id;
+        let young = pending_for(&pool, &fresh_address()).await[0].id;
+        let set_created = |id: Uuid, at: NaiveDateTime| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query("UPDATE social.notifications SET created_at = $2 WHERE id = $1")
+                    .bind(id)
+                    .bind(at)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+        };
+        set_created(old, now_utc() - chrono::Duration::days(8)).await;
+        let recorder = Recorder::new();
+        *recorder.fail_with.lock() = Some(SendFailure::NoSigningKey);
+        let summary = run_pass(&pool, &recorder, true, Some(MIN_MAX_AGE))
+            .await
+            .unwrap();
+        assert_eq!((summary.held, summary.expired), (1, 1), "{summary:?}");
+        assert_eq!(
+            delivery_state(&pool, old).await.unwrap(),
+            ("skipped".into(), 1, Some(EXPIRED.into()))
+        );
+
+        // A hold moves `next_attempt_at` but never the age reference.
+        for _ in 0..3 {
+            make_due(&pool, young).await;
+            run_pass(&pool, &recorder, true, Some(MIN_MAX_AGE))
+                .await
+                .unwrap();
+        }
+        assert_eq!(delivery_state(&pool, young).await.unwrap().0, "pending");
+        set_created(young, now_utc() - chrono::Duration::hours(2)).await;
+        make_due(&pool, young).await;
+        let summary = run_pass(&pool, &recorder, true, Some(MIN_MAX_AGE))
+            .await
+            .unwrap();
+        assert_eq!((summary.held, summary.expired), (0, 1), "{summary:?}");
+        assert_eq!(
+            delivery_state(&pool, young).await.unwrap(),
+            ("skipped".into(), 1, Some(EXPIRED.into()))
+        );
+
+        // With expiry disabled a hold is still bounded by the default age.
+        let stale = pending_for(&pool, &fresh_address()).await[0].id;
+        let fresh = pending_for(&pool, &fresh_address()).await[0].id;
+        set_created(stale, now_utc() - chrono::Duration::days(8)).await;
+        let summary = run_pass(&pool, &recorder, true, None).await.unwrap();
+        assert_eq!((summary.held, summary.expired), (1, 1), "{summary:?}");
+        assert_eq!(delivery_state(&pool, stale).await.unwrap().0, "skipped");
+        assert_eq!(delivery_state(&pool, fresh).await.unwrap().0, "pending");
+        assert!(recorder.sent.lock().is_empty());
+    }
+
+    #[tokio::test]
+    async fn expire_with_the_max_age_disabled_ends_nothing() {
+        let Some(pool) = private_pool("dlv-expire-off").await else {
+            return;
+        };
+        let stale = pending_for(&pool, &fresh_address()).await[0].id;
+        sqlx::query("UPDATE social.notification_deliveries SET next_attempt_at = $2 WHERE notification_id = $1")
+            .bind(stale)
+            .bind(now_utc() - chrono::Duration::days(400))
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(expire(&pool, now_utc(), None).await.unwrap(), 0);
+        assert_eq!(delivery_state(&pool, stale).await.unwrap().0, "pending");
+        // The floor keeps a just-inserted row from expiring before a pass sends it.
+        let fresh = pending_for(&pool, &fresh_address()).await[0].id;
+        assert_eq!(
+            expire(&pool, now_utc(), max_age_from_secs(1))
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(delivery_state(&pool, fresh).await.unwrap().0, "pending");
     }
 
     #[tokio::test]
@@ -975,18 +1162,30 @@ mod pg_tests {
                 .await
                 .unwrap();
         }
-        assert_eq!(expire(&pool, now_utc(), DEFAULT_MAX_AGE).await.unwrap(), 1);
+        assert_eq!(
+            expire(&pool, now_utc(), Some(DEFAULT_MAX_AGE))
+                .await
+                .unwrap(),
+            1
+        );
         assert_eq!(
             delivery_state(&pool, stale).await.unwrap(),
             ("skipped".into(), 0, Some(EXPIRED.into()))
         );
         assert_eq!(delivery_state(&pool, stale_sent).await.unwrap().0, "sent");
         assert_eq!(delivery_state(&pool, fresh).await.unwrap().0, "pending");
-        assert_eq!(expire(&pool, now_utc(), DEFAULT_MAX_AGE).await.unwrap(), 0);
+        assert_eq!(
+            expire(&pool, now_utc(), Some(DEFAULT_MAX_AGE))
+                .await
+                .unwrap(),
+            0
+        );
 
         // An expired row is never sent once the key is set.
         let recorder = Recorder::new();
-        run_pass(&pool, &recorder, true).await.unwrap();
+        run_pass(&pool, &recorder, true, Some(DEFAULT_MAX_AGE))
+            .await
+            .unwrap();
         assert!(recorder.sent.lock().iter().all(|(_, n)| *n != stale));
     }
 
@@ -1025,7 +1224,9 @@ mod pg_tests {
         );
 
         let recorder = Recorder::new();
-        run_pass(&pool, &recorder, true).await.unwrap();
+        run_pass(&pool, &recorder, true, Some(DEFAULT_MAX_AGE))
+            .await
+            .unwrap();
         assert_eq!(delivery_state(&pool, batch[0].id).await.unwrap().0, "sent");
     }
 
