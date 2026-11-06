@@ -13,7 +13,7 @@ import subprocess
 import sys
 import time
 from urllib.error import HTTPError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 from urllib.parse import urljoin
 
 WORKFLOW = '.github/workflows/web-previews.yml'
@@ -26,6 +26,7 @@ PIPELINE_INPUTS = {
 }
 PACKAGE = '@dcl-regenesislabs/dcl-one-ui-review'
 MARKER = '<!-- web-pr-previews -->'
+CDN_USER_AGENT = 'dcl-one-web-preview/1.0 (+https://github.com/decentraland/dcl-one)'
 STATIC_EXTENSIONS = {
     '.html',
     '.js',
@@ -102,8 +103,13 @@ def require_reviewer(repository, run_id):
     return reviewer_ready(jobs, artifacts)
 
 
-def package_reviewer(source, target, revision, run_id):
-    if not re.fullmatch(r'[0-9a-f]{40}', revision) or run_id < 1:
+def package_reviewer(source, target, revision, run_id, attempt=1):
+    if (
+        not re.fullmatch(r'[0-9a-f]{40}', revision)
+        or run_id < 1
+        or type(attempt) is not int
+        or attempt < 1
+    ):
         raise ValueError('Invalid preview source identity')
     if not (source / 'dcl-ui-review/index.html').is_file():
         raise ValueError('Missing built reviewer entry: dcl-ui-review/index.html')
@@ -141,7 +147,7 @@ def package_reviewer(source, target, revision, run_id):
         + '\n'
     )
     (target / 'preview-source.json').write_text(
-        json.dumps({'revision': revision, 'run': run_id}) + '\n'
+        json.dumps({'revision': revision, 'run': run_id, 'attempt': attempt}) + '\n'
     )
 
 
@@ -312,10 +318,9 @@ def selection_job(jobs):
     return next((job for job in jobs if job['name'] == 'changes'), None)
 
 
-def resolve(repository, run_id):
+def resolve(repository, run_id, *, expected_attempt=None):
     run = api(f'repos/{repository}/actions/runs/{run_id}')
-    expected_attempt = os.environ.get('SOURCE_RUN_ATTEMPT')
-    if expected_attempt and str(run.get('run_attempt')) != expected_attempt:
+    if expected_attempt is not None and str(run.get('run_attempt')) != str(expected_attempt):
         return run, None
     if (
         run.get('event') != 'pull_request'
@@ -335,7 +340,9 @@ def resolve(repository, run_id):
 
 
 def cdn_url(version):
-    if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.commit-[0-9a-f]+', version):
+    if not isinstance(version, str) or not re.fullmatch(
+        r'[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.commit-[0-9a-f]+', version
+    ):
         raise ValueError('Invalid published preview version')
     return f'https://cdn.decentraland.org/{PACKAGE}/{version}'
 
@@ -362,6 +369,10 @@ class CdnResourceNotReady(ValueError):
     pass
 
 
+def cdn_open(url):
+    return urlopen(Request(url, headers={'User-Agent': CDN_USER_AGENT}), timeout=15)
+
+
 def verify_reviewer_resources(url, entry, html):
     parser = ReviewerAssets()
     parser.feed(html)
@@ -370,27 +381,27 @@ def verify_reviewer_resources(url, entry, html):
     asset = urljoin(entry, parser.assets[0])
     if not asset.startswith(url + '/'):
         raise ValueError('Reviewer asset escapes the versioned CDN prefix')
-    with urlopen(asset, timeout=15) as response:
+    with cdn_open(asset) as response:
         content_type = response.headers.get('Content-Type', '')
         expected = 'text/css' if asset.endswith('.css') else 'javascript'
         if expected not in content_type or not response.read(1):
             raise CdnResourceNotReady('CDN reviewer asset is not JavaScript or CSS')
-    with urlopen(f'{url}/dcl-ui-review/fidelity.json', timeout=15) as response:
+    with cdn_open(f'{url}/dcl-ui-review/fidelity.json') as response:
         fidelity = json.load(response)
         if not isinstance(fidelity, (dict, list)):
             raise CdnResourceNotReady('CDN reviewer fidelity data is not a JSON object or array')
 
 
-def verify_cdn(version, revision, run_id, timeout=300):
+def verify_cdn(version, revision, run_id, timeout=300, *, attempt=1):
     url = cdn_url(version)
     deadline = time.monotonic() + timeout
     while True:
         try:
-            with urlopen(f'{url}/preview-source.json', timeout=15) as response:
+            with cdn_open(f'{url}/preview-source.json') as response:
                 identity = json.load(response)
-            if identity != {'revision': revision, 'run': run_id}:
+            if identity != {'revision': revision, 'run': run_id, 'attempt': attempt}:
                 raise ValueError('CDN preview belongs to a different source build')
-            with urlopen(f'{url}/dcl-ui-review/index.html', timeout=15) as response:
+            with cdn_open(f'{url}/dcl-ui-review/index.html') as response:
                 if response.status == 200 and 'text/html' in response.headers.get(
                     'Content-Type', ''
                 ):
@@ -414,8 +425,46 @@ def verify_cdn(version, revision, run_id, timeout=300):
         time.sleep(5)
 
 
-def report(repository, run_id, reviewer_url, publication_result):
-    run, pr = resolve(repository, run_id)
+def complete_cdn(repository, event):
+    deployment = event.get('deployment') or {}
+    payload = deployment.get('payload') or {}
+    if (
+        not isinstance(payload, dict)
+        or deployment.get('environment') != 'cdn'
+        or deployment.get('task') != 'upload-to-cdn'
+        or payload.get('packageName') != PACKAGE
+        or (event.get('deployment_status') or {}).get('state') != 'success'
+    ):
+        print('Not a successful reviewer CDN upload')
+        return
+    version = payload.get('packageVersion', '')
+    with cdn_open(f'{cdn_url(version)}/preview-source.json') as response:
+        source = json.load(response)
+    if (
+        not isinstance(source, dict)
+        or not isinstance(source.get('revision'), str)
+        or not re.fullmatch(r'[0-9a-f]{40}', source['revision'])
+        or type(source.get('run')) is not int
+        or source['run'] < 1
+        or type(source.get('attempt')) is not int
+        or source['attempt'] < 1
+    ):
+        raise ValueError('Invalid CDN source receipt')
+    run, pr = resolve(repository, source['run'], expected_attempt=source['attempt'])
+    if pr is None:
+        print('CDN upload no longer matches a current open PR build')
+        return
+    if run['head_sha'] != source['revision']:
+        raise ValueError('CDN receipt does not match the source build revision')
+    # Upload readiness comes from deployment_status. A retry of this job probes the same version.
+    url = verify_cdn(
+        version, source['revision'], source['run'], timeout=0, attempt=source['attempt']
+    )
+    report(repository, source['run'], url, 'success', expected_attempt=source['attempt'])
+
+
+def report(repository, run_id, reviewer_url, publication_result, *, expected_attempt=None):
+    run, pr = resolve(repository, run_id, expected_attempt=expected_attempt)
     if pr is None:
         print('No current same-repository pull request to report into')
         return
@@ -474,7 +523,7 @@ def report(repository, run_id, reviewer_url, publication_result):
         print('No selected web products to report')
         return
     # Recheck after the API reads so an outdated source cannot replace the current preview.
-    _, live = resolve(repository, run_id)
+    _, live = resolve(repository, run_id, expected_attempt=expected_attempt)
     if live is None or not same_pull_request(live, pr):
         return
     if not newest_run_for_pr(repository, run_id, run, live):
@@ -497,6 +546,7 @@ def main():
     sub.add_parser('check-publication')
     sub.add_parser('check-environment')
     sub.add_parser('build-summary')
+    sub.add_parser('complete-cdn')
     package = sub.add_parser('package-reviewer')
     package.add_argument('source', type=Path)
     package.add_argument('target', type=Path)
@@ -529,16 +579,21 @@ def main():
     if args.command == 'check-environment':
         require_publication_environment(repository)
         return
+    if args.command == 'complete-cdn':
+        complete_cdn(repository, json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text()))
+        return
     run_id = int(os.environ['SOURCE_RUN_ID'])
+    expected_attempt = os.environ.get('SOURCE_RUN_ATTEMPT') or None
     if args.command == 'report':
         report(
             repository,
             run_id,
             os.environ.get('REVIEWER_URL', ''),
             os.environ.get('PUBLICATION_RESULT', 'not published'),
+            expected_attempt=expected_attempt,
         )
         return
-    run, pr = resolve(repository, run_id)
+    run, pr = resolve(repository, run_id, expected_attempt=expected_attempt)
     if args.command == 'resolve':
         print(f'pr={pr["number"] if pr else ""}')
         print(f'publish={str(pr is not None).lower()}')
@@ -552,9 +607,11 @@ def main():
         require_publication_environment(repository)
         return
     if args.command == 'package-reviewer':
-        package_reviewer(args.source, args.target, run['head_sha'], run_id)
+        package_reviewer(args.source, args.target, run['head_sha'], run_id, run['run_attempt'])
     elif args.command == 'verify-cdn':
-        print('url=' + verify_cdn(args.version, run['head_sha'], run_id))
+        print(
+            'url=' + verify_cdn(args.version, run['head_sha'], run_id, attempt=run['run_attempt'])
+        )
 
 
 if __name__ == '__main__':

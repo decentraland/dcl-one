@@ -3,6 +3,7 @@ on:
   workflow_run:
     workflows: ['Web previews / Build']
     types: [completed]
+  deployment_status:
 permissions: {}
 env:
   SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
@@ -38,7 +39,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     concurrency:
-      group: web-previews-comment-${{ github.event.workflow_run.head_branch }}
+      group: web-previews-comments
       cancel-in-progress: false
       queue: max
     permissions:
@@ -56,7 +57,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
-          PUBLICATION_RESULT: waiting for human approval
+          PUBLICATION_RESULT: pending human approval and CDN upload
         run: python3 tooling/web-preview.py report
   reviewer:
     name: 'Publish UI reviewer: PR ${{ needs.source.outputs.pr }}'
@@ -66,7 +67,6 @@ jobs:
     timeout-minutes: 15
     environment:
       name: web-preview
-      url: ${{ steps.cdn.outputs.url }}
     concurrency:
       group: web-preview-reviewer-publish-${{ needs.source.outputs.pr }}
       cancel-in-progress: true
@@ -75,8 +75,6 @@ jobs:
       actions: read
       pull-requests: read
       id-token: write
-    outputs:
-      url: ${{ steps.cdn.outputs.url }}
     env:
       SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
     steps:
@@ -144,19 +142,13 @@ jobs:
           gitlab-pipeline-url: ${{ secrets.GITLAB_CDN_DEPLOYER_URL }}
         env:
           BRANCH_NAME: web-preview-publication
-      - name: Verify CDN propagation and source identity before linking
-        id: cdn
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.publish.outputs.version }}
-        run: python3 tooling/web-preview.py verify-cdn "$VERSION" >> "$GITHUB_OUTPUT"
   report:
     needs: [source, reviewer]
-    if: ${{ !cancelled() && github.event.workflow_run.event == 'pull_request' }}
+    if: ${{ !cancelled() && github.event.workflow_run.event == 'pull_request' && needs.reviewer.result != 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     concurrency:
-      group: web-previews-comment-${{ github.event.workflow_run.head_branch }}
+      group: web-previews-comments
       cancel-in-progress: false
       queue: max
     permissions:
@@ -174,6 +166,29 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
-          REVIEWER_URL: ${{ needs.reviewer.outputs.url }}
           PUBLICATION_RESULT: ${{ vars.WEB_PREVIEW_REVIEWER_ENABLED != 'true' && 'disabled pending CDN base verification' || needs.source.result != 'success' && 'source validation failed' || needs.source.outputs.publish != 'true' && 'not eligible for publication' || needs.reviewer.result == 'skipped' && 'not eligible for publication' || needs.reviewer.result }}
         run: python3 tooling/web-preview.py report
+  cdn:
+    name: Verify uploaded reviewer and report its URL
+    if: vars.WEB_PREVIEW_REVIEWER_ENABLED == 'true' && github.event_name == 'deployment_status' && github.event.deployment.environment == 'cdn' && github.event.deployment.task == 'upload-to-cdn' && github.event.deployment.payload.packageName == '@dcl-regenesislabs/dcl-one-ui-review' && github.event.deployment_status.state == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: web-previews-comments
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: tooling/web-preview.py
+          sparse-checkout-cone-mode: false
+      - name: Verify the completed CDN upload and update the source PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tooling/web-preview.py complete-cdn

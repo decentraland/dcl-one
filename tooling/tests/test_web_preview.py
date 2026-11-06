@@ -40,7 +40,7 @@ def build_run(pr):
 
 
 def cdn_responses():
-    identity = io.BytesIO(json.dumps({'revision': 'a' * 40, 'run': 123}).encode())
+    identity = io.BytesIO(json.dumps({'revision': 'a' * 40, 'run': 123, 'attempt': 1}).encode())
     html = io.BytesIO(b'<html><script src="./assets/main-Abc123.js"></script></html>')
     html.status = 200
     html.headers = {'Content-Type': 'text/html'}
@@ -50,7 +50,193 @@ def cdn_responses():
     return [identity, html, asset, fidelity]
 
 
+def cdn_event():
+    return {
+        'deployment': {
+            'environment': 'cdn',
+            'task': 'upload-to-cdn',
+            'payload': {
+                'packageName': preview.PACKAGE,
+                'packageVersion': '0.1.0-123.commit-abcdef0',
+            },
+        },
+        'deployment_status': {'state': 'success'},
+    }
+
+
 class WebPreviewTests(unittest.TestCase):
+    def test_cdn_completion_cli_uses_the_event_without_a_source_run_environment(self):
+        event = cdn_event()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'event.json'
+            path.write_text(json.dumps(event))
+            with (
+                patch.object(preview.sys, 'argv', ['web-preview.py', 'complete-cdn']),
+                patch.dict(
+                    os.environ,
+                    {'GITHUB_REPOSITORY': 'example/one', 'GITHUB_EVENT_PATH': str(path)},
+                    clear=True,
+                ),
+                patch.object(preview, 'complete_cdn') as complete,
+            ):
+                preview.main()
+                complete.assert_called_once_with('example/one', event)
+
+    def test_all_cdn_requests_send_the_preview_user_agent(self):
+        with patch.object(preview, 'urlopen', side_effect=cdn_responses()) as fetch:
+            preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, timeout=0)
+        self.assertEqual(fetch.call_count, 4)
+        for call in fetch.call_args_list:
+            self.assertIsInstance(call.args[0], preview.Request)
+            self.assertEqual(call.args[0].get_header('User-agent'), preview.CDN_USER_AGENT)
+
+    def test_cdn_success_signal_verifies_and_reports_without_waiting_for_the_upload(self):
+        event = cdn_event()
+        # The upload may finish much later than the former five-minute publishing window.
+        event['deployment_status']['created_at'] = '2026-11-06T12:30:00Z'
+        pr = review_pr()
+        run = {**build_run(pr), 'run_attempt': 1, 'created_at': '2026-11-06T12:00:00Z'}
+        receipt = io.BytesIO(json.dumps({'revision': 'a' * 40, 'run': 123, 'attempt': 1}).encode())
+        with (
+            patch.object(preview, 'urlopen', side_effect=[receipt, *cdn_responses()]),
+            patch.object(preview, 'api', side_effect=[run, pr]),
+            patch.object(preview, 'report') as report,
+            patch.object(preview.time, 'sleep') as sleep,
+        ):
+            preview.complete_cdn('example/one', event)
+            report.assert_called_once_with(
+                'example/one',
+                123,
+                preview.cdn_url(event['deployment']['payload']['packageVersion'])
+                + '/dcl-ui-review/index.html',
+                'success',
+                expected_attempt=1,
+            )
+            sleep.assert_not_called()
+
+    def test_other_or_incomplete_cdn_deployments_do_not_probe_or_report(self):
+        changes = [
+            ('deployment_status', {'state': 'pending'}),
+            ('deployment_status', {'state': 'failure'}),
+            ('deployment_status', {}),
+            ('deployment', {**cdn_event()['deployment'], 'environment': 'zone'}),
+            ('deployment', {**cdn_event()['deployment'], 'task': 'deploy'}),
+            ('deployment', {**cdn_event()['deployment'], 'payload': {'packageName': 'other'}}),
+            ('deployment', {**cdn_event()['deployment'], 'payload': 'invalid'}),
+        ]
+        for field, value in changes:
+            with self.subTest(field=field, value=value), patch.object(preview, 'urlopen') as fetch:
+                preview.complete_cdn('example/one', {**cdn_event(), field: value})
+                fetch.assert_not_called()
+
+    def test_cdn_signal_cannot_link_a_closed_or_superseded_source_attempt(self):
+        receipt = {'revision': 'a' * 40, 'run': 123, 'attempt': 1}
+        pr = review_pr()
+        for run, current in (
+            ({**build_run(pr), 'run_attempt': 2}, pr),
+            ({**build_run(pr), 'run_attempt': 1}, {**pr, 'state': 'closed'}),
+            ({**build_run(pr), 'run_attempt': 1}, {**pr, 'head': {**pr['head'], 'sha': 'b' * 40}}),
+        ):
+            responses = [run] if run['run_attempt'] != 1 else [run, current]
+            with (
+                self.subTest(run=run, current=current),
+                patch.object(
+                    preview, 'urlopen', return_value=io.BytesIO(json.dumps(receipt).encode())
+                ) as fetch,
+                patch.object(preview, 'api', side_effect=responses),
+                patch.object(preview, 'report') as report,
+            ):
+                preview.complete_cdn('example/one', cdn_event())
+                report.assert_not_called()
+                self.assertEqual(fetch.call_count, 1)
+
+    def test_cdn_verification_retry_reuses_the_event_version_without_publishing(self):
+        event = cdn_event()
+        pr = review_pr()
+        run = {**build_run(pr), 'run_attempt': 1}
+        source = {'revision': 'a' * 40, 'run': 123, 'attempt': 1}
+        failed = [
+            io.BytesIO(json.dumps(source).encode()),
+            *cdn_responses()[:2],
+            preview.HTTPError('https://cdn.example', 404, 'propagating', {}, None),
+        ]
+        with (
+            patch.object(preview, 'urlopen', side_effect=failed),
+            patch.object(preview, 'api', side_effect=[run, pr]),
+            patch.object(preview, 'report') as report,
+        ):
+            with self.assertRaises(TimeoutError):
+                preview.complete_cdn('example/one', event)
+            report.assert_not_called()
+        with (
+            patch.object(
+                preview,
+                'urlopen',
+                side_effect=[io.BytesIO(json.dumps(source).encode()), *cdn_responses()],
+            ) as fetch,
+            patch.object(preview, 'api', side_effect=[run, pr]),
+            patch.object(preview, 'report') as report,
+        ):
+            preview.complete_cdn('example/one', event)
+            self.assertEqual(
+                fetch.call_args_list[0].args[0].full_url,
+                preview.cdn_url(event['deployment']['payload']['packageVersion'])
+                + '/preview-source.json',
+            )
+            report.assert_called_once()
+
+    def test_bad_or_mismatched_cdn_receipts_never_link(self):
+        pr = review_pr()
+        source = {'revision': 'a' * 40, 'run': 123, 'attempt': 1}
+        for receipt in (
+            [],
+            {},
+            {**source, 'run': True},
+            {**source, 'attempt': 0},
+            {**source, 'attempt': None},
+            {**source, 'revision': None},
+        ):
+            with (
+                self.subTest(receipt=receipt),
+                patch.object(
+                    preview, 'urlopen', return_value=io.BytesIO(json.dumps(receipt).encode())
+                ),
+                patch.object(preview, 'api') as api,
+            ):
+                with self.assertRaisesRegex(ValueError, 'Invalid CDN source'):
+                    preview.complete_cdn('example/one', cdn_event())
+                api.assert_not_called()
+        with (
+            patch.object(
+                preview,
+                'urlopen',
+                return_value=io.BytesIO(json.dumps({**source, 'revision': 'b' * 40}).encode()),
+            ),
+            patch.object(preview, 'api', side_effect=[{**build_run(pr), 'run_attempt': 1}, pr]),
+            patch.object(preview, 'report') as report,
+        ):
+            with self.assertRaisesRegex(ValueError, 'does not match'):
+                preview.complete_cdn('example/one', cdn_event())
+            report.assert_not_called()
+
+    def test_ordering_does_not_compare_attempt_numbers_from_different_runs(self):
+        pr = review_pr()
+        candidate = {**build_run(pr), 'run_attempt': 1}
+        with (
+            patch.dict(os.environ, {'SOURCE_RUN_ATTEMPT': '2'}),
+            patch.object(
+                preview,
+                'api',
+                side_effect=[
+                    [{'id': 123}, {'id': 124}],
+                    {'jobs': [{'name': 'changes', 'conclusion': 'success'}]},
+                    candidate,
+                    pr,
+                ],
+            ),
+        ):
+            self.assertFalse(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
+
     def test_products_are_selected_independently(self):
         self.assertEqual(preview.products(['apps/sites/src/index.ts']), ['sites'])
         self.assertEqual(preview.products(['library/ui/components/Button.tsx']), ['reviewer'])
@@ -126,7 +312,7 @@ class WebPreviewTests(unittest.TestCase):
             self.assertNotIn('scripts', metadata)
             self.assertEqual(
                 json.loads((target / 'preview-source.json').read_text()),
-                {'revision': 'a' * 40, 'run': 123},
+                {'revision': 'a' * 40, 'run': 123, 'attempt': 1},
             )
             self.assertTrue((target / 'assets/main.js').is_file())
 
@@ -201,14 +387,16 @@ class WebPreviewTests(unittest.TestCase):
                 '0.1.0-123.commit-abcdef0/dcl-ui-review/index.html',
             )
             self.assertTrue(
-                fetch.call_args_list[2].args[0].endswith('/dcl-ui-review/assets/main-Abc123.js')
+                fetch.call_args_list[2]
+                .args[0]
+                .full_url.endswith('/dcl-ui-review/assets/main-Abc123.js')
             )
             self.assertTrue(
-                fetch.call_args_list[3].args[0].endswith('/dcl-ui-review/fidelity.json')
+                fetch.call_args_list[3].args[0].full_url.endswith('/dcl-ui-review/fidelity.json')
             )
 
     def test_cdn_rejects_non_html_entries_and_invalid_versions(self):
-        identity = io.BytesIO(json.dumps({'revision': 'a' * 40, 'run': 123}).encode())
+        identity = io.BytesIO(json.dumps({'revision': 'a' * 40, 'run': 123, 'attempt': 1}).encode())
         html = io.BytesIO(b'not html')
         html.status = 200
         html.headers = {'Content-Type': 'application/json'}
@@ -1113,13 +1301,13 @@ class WebPreviewTests(unittest.TestCase):
             patch.dict(os.environ, {'SOURCE_RUN_ATTEMPT': '1'}),
             patch.object(preview, 'api', return_value=run) as request,
         ):
-            self.assertEqual(preview.resolve('example/one', 123), (run, None))
+            self.assertEqual(preview.resolve('example/one', 123, expected_attempt=1), (run, None))
             request.assert_called_once()
         with (
             patch.dict(os.environ, {'SOURCE_RUN_ATTEMPT': '2'}),
             patch.object(preview, 'api', side_effect=[run, pr]),
         ):
-            self.assertEqual(preview.resolve('example/one', 123), (run, pr))
+            self.assertEqual(preview.resolve('example/one', 123, expected_attempt=2), (run, pr))
 
     def test_build_summary_distinguishes_artifacts_and_live_publication(self):
         for enabled, message in (
