@@ -403,26 +403,32 @@ pub async fn set_cursor(
     Ok(())
 }
 
-/// Rewinds durably before a repair scan: `last_block` never moves forward
-/// here and the publish marker clears at once (the authorize lane closes
-/// until the repaired history is folded); a rewind to the start block
-/// records the full replay [`mark_folded`] requires, and may switch managers.
+/// Rewinds durably before a repair scan, and clears the publish marker at
+/// once (the authorize lane closes until the repaired history is folded).
+/// On the same manager `last_block` never moves forward, so no gap is
+/// skipped. A rewind to the start block records the full replay
+/// [`mark_folded`] requires and may switch managers: the new manager's log
+/// then starts exactly at `from`, wherever the old one's cursor stood. A
+/// partial rewind never touches another manager's cursor. Returns whether
+/// the cursor row was written.
 pub async fn begin_replay(
     pool: &PgPool,
     settings: &Settings,
     contract: &str,
     from: u64,
-) -> Result<(), sqlx::Error> {
+) -> Result<bool, sqlx::Error> {
     let full = from <= settings.start_block;
-    sqlx::query(
-        "INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, full_replay_started) \
+    let written = sqlx::query(
+        "INSERT INTO credits.usage_index_cursor AS c (chain_id, contract, last_block, full_replay_started) \
          VALUES ($1, $2, $3, $4) \
          ON CONFLICT (chain_id) DO UPDATE SET \
-             last_block = LEAST(credits.usage_index_cursor.last_block, EXCLUDED.last_block), \
+             last_block = CASE WHEN c.contract = EXCLUDED.contract \
+                 THEN LEAST(c.last_block, EXCLUDED.last_block) ELSE EXCLUDED.last_block END, \
              folded_block = NULL, folded_block_time = NULL, folded_at = NULL, \
-             full_replay_started = credits.usage_index_cursor.full_replay_started OR EXCLUDED.full_replay_started, \
-             contract = CASE WHEN EXCLUDED.full_replay_started THEN EXCLUDED.contract ELSE credits.usage_index_cursor.contract END, \
-             updated_at = timezone('UTC', now())",
+             full_replay_started = c.full_replay_started OR EXCLUDED.full_replay_started, \
+             contract = EXCLUDED.contract, \
+             updated_at = timezone('UTC', now()) \
+         WHERE c.contract = EXCLUDED.contract OR EXCLUDED.full_replay_started",
     )
     .bind(settings.chain_id)
     .bind(contract)
@@ -430,7 +436,7 @@ pub async fn begin_replay(
     .bind(full)
     .execute(pool)
     .await?;
-    Ok(())
+    Ok(written.rows_affected() == 1)
 }
 
 /// Publishes a completed fold on the row whose `last_block` is the block
@@ -704,13 +710,29 @@ impl UsageIndex {
             }
             self.chain_checked.store(true, Ordering::Relaxed);
         }
-        let mut row = ensure_cursor(&self.pool, settings, contract).await?;
-        if let Some(from) = settings.replay_from_block
-            && !self.replay_requested.swap(true, Ordering::SeqCst)
-        {
+        // The replay counts as done only once its rewind is durable: a failed
+        // write leaves it requested, and the next pass tries again.
+        let replay = settings
+            .replay_from_block
+            .filter(|_| !self.replay_requested.load(Ordering::SeqCst));
+        // A full replay rebinds the cursor to this manager, so it runs before the
+        // check that refuses a cursor indexed from another one; a partial replay
+        // never rewinds another manager's cursor.
+        let full = replay.filter(|&from| from <= settings.start_block);
+        if let Some(from) = full {
             begin_replay(&self.pool, settings, contract, from)
                 .await
                 .context("beginning the replay")?;
+            self.replay_requested.store(true, Ordering::SeqCst);
+        }
+        let mut row = ensure_cursor(&self.pool, settings, contract).await?;
+        if let Some(from) = replay {
+            if full.is_none() {
+                begin_replay(&self.pool, settings, contract, from)
+                    .await
+                    .context("beginning the replay")?;
+                self.replay_requested.store(true, Ordering::SeqCst);
+            }
             row = cursor(&self.pool, settings.chain_id)
                 .await?
                 .context("cursor row after the replay rewind")?;
