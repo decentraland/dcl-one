@@ -555,6 +555,22 @@ CREATE TABLE social.livekit_removal_intents (
 CREATE INDEX livekit_removal_intents_due_idx ON social.livekit_removal_intents (next_attempt_at, created_at, root_key, target_key);
 CREATE INDEX livekit_removal_intents_room_idx ON social.livekit_removal_intents (room_name, room_sid) WHERE room_name IS NOT NULL;
 
+-- Comms-owned shared-secret throttle of the world comms mints, shared by every
+-- replica. Each secret check first reserves an attempt for (world key, caller
+-- IP source or wallet, lowercase) with one PK upsert; the row is deleted on a
+-- right secret or by the comms-secret-attempts-sweep job once its 60 s window
+-- has passed. Rows are tiny and short-lived: bounded by recent secret callers.
+CREATE TABLE social.world_secret_attempts (
+    world_name text NOT NULL,
+    subject text NOT NULL,
+    attempts integer NOT NULL,
+    window_start timestamp without time zone NOT NULL,
+    CONSTRAINT world_secret_attempts_pkey PRIMARY KEY (world_name, subject),
+    CONSTRAINT world_secret_attempts_positive CHECK (attempts > 0)
+);
+-- The expiry sweep.
+CREATE INDEX world_secret_attempts_window_idx ON social.world_secret_attempts (window_start);
+
 CREATE TABLE social.user_warnings (
     id uuid NOT NULL DEFAULT gen_random_uuid(),
     warned_address text NOT NULL,
@@ -855,6 +871,21 @@ CREATE INDEX referral_progress_granted_idx ON social.referral_progress (referrer
 -- drain_pending_rewards scans due retryable grants in retry-time and wallet order.
 CREATE INDEX referral_progress_reward_due_idx ON social.referral_progress (reward_retry_at NULLS FIRST, invited_user)
     WHERE reward_tier IS NOT NULL AND (reward_requested_at IS NULL OR reward_response IS NOT NULL);
+
+-- Authenticated Explorer login retries share one receipt per invited wallet and
+-- login ID. The FK shares referral attribution's restore/deletion lifecycle.
+-- At most 120 new IDs per rolling 24 hours of server receipt time are admitted
+-- under its referral row lock;
+-- the existing referral worker removes a bounded expiry batch each minute.
+CREATE TABLE social.referral_login_receipts (
+    invited_user text NOT NULL REFERENCES social.referral_progress(invited_user) ON DELETE CASCADE,
+    login_id uuid NOT NULL,
+    received_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', clock_timestamp()),
+    expires_at timestamp without time zone NOT NULL,
+    PRIMARY KEY (invited_user, login_id)
+);
+CREATE INDEX referral_login_receipts_expiry_idx
+    ON social.referral_login_receipts (expires_at, invited_user, login_id);
 
 -- Reward art returned by the rewards API after a tier's guarded transition;
 -- source IDs and all historical snapshots survive imports and later updates.

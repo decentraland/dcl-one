@@ -12,6 +12,7 @@ use serde_json::Value;
 use super::SharedState;
 use super::queries::{self, WorldScene};
 use crate::content::errors::{AppError, AppResult};
+use crate::core::http::js_parse_int;
 use crate::shared::cache::TtlMap;
 
 const MAX_INDEX_LIMIT: i64 = 10_000;
@@ -45,9 +46,9 @@ fn etag_for(body: &[u8]) -> HeaderValue {
 #[derive(Debug, Deserialize)]
 pub struct IndexQuery {
     #[serde(default)]
-    pub limit: Option<i64>,
+    pub limit: Option<String>,
     #[serde(default)]
-    pub offset: Option<i64>,
+    pub offset: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -88,7 +89,11 @@ pub async fn get_index(
     Query(q): Query<IndexQuery>,
     headers: HeaderMap,
 ) -> AppResult<Response> {
-    let (limit, offset) = bound_index_params(q.limit, q.offset);
+    // Unparsable values fall back to the defaults, like the old `parseInt`.
+    let (limit, offset) = bound_index_params(
+        q.limit.as_deref().and_then(js_parse_int),
+        q.offset.as_deref().and_then(js_parse_int),
+    );
     let page = match index_memo().get_fresh(&(limit, offset)) {
         Some(hit) => hit,
         None => {

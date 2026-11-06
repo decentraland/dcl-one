@@ -88,3 +88,13 @@ the catalog independently of service runtime activation.
 CI does not regenerate the source fixtures or establish service equivalence.
 Runtime conformance, deployed clients, provider routing and stateful cutover
 require their own evidence. A recorded source difference is not approval.
+
+## Compatibility boundary
+
+The native stack preserves client HTTP/RPC, authorization and user-visible
+notification/referral behavior. Internal SNS envelopes, SQS acknowledgement
+policy and AWS SDK scheduling are source evidence, not required architecture.
+The [native social events decision](../../../../../../docs/adr/2026-11-04-native-social-events.md)
+uses local transactions, the email outbox and existing workers while retaining
+NATS for cross-process updates. Keep frozen source captures intact; cite native
+effect tests when an internal transport assertion no longer applies.

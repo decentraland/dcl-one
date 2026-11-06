@@ -504,7 +504,15 @@ pub async fn create_event(
         body.schedules = None;
         body.url = None;
     }
-    let id = moderation::create_as(&state.pool, &body, &signer, &signer, &state.settings).await?;
+    let id = moderation::create_as(
+        &state.pool,
+        &body,
+        &signer,
+        &signer,
+        &state.settings,
+        Some(&state.places),
+    )
+    .await?;
     answer(&state, &id, Some(&signer)).await
 }
 
@@ -777,6 +785,7 @@ pub async fn patch_event(
         &mut raw,
         Some(&before),
         edit.url.as_ref().is_none_or(Option::is_none),
+        Some(&state.places),
     )
     .await?;
     // Another reviewer's rejection is a moderation hold: self-approval cannot remove it.
@@ -2054,6 +2063,7 @@ mod tests {
             "0x0123456789012345678901234567890123456789",
             "test",
             &Settings::for_tests(),
+            None,
         )
         .await
         .unwrap();
@@ -2673,6 +2683,7 @@ mod tests {
             &owner_address,
             "test",
             &Settings::for_tests(),
+            None,
         )
         .await
         .unwrap();
@@ -2809,6 +2820,7 @@ mod tests {
             &owner,
             "test",
             &Settings::for_tests(),
+            None,
         )
         .await
         .unwrap();
@@ -3020,6 +3032,7 @@ mod tests {
             &owner_address,
             "test",
             &Settings::for_tests(),
+            None,
         )
         .await
         .unwrap();
@@ -3087,6 +3100,7 @@ mod tests {
             &owner,
             "test",
             &Settings::for_tests(),
+            None,
         )
         .await
         .unwrap();
@@ -3176,6 +3190,7 @@ mod tests {
                 "0xowner",
                 "test",
                 &Settings::for_tests(),
+                None,
             )
             .await
             .unwrap();
@@ -3233,6 +3248,7 @@ mod tests {
                 &address,
                 "test",
                 &Settings::for_tests(),
+                None,
             )
             .await
             .unwrap();
@@ -3306,6 +3322,7 @@ mod tests {
             &owner,
             "test",
             &Settings::for_tests(),
+            None,
         )
         .await
         .unwrap();
@@ -3490,6 +3507,7 @@ mod tests {
             &address,
             &address,
             &Settings::for_tests(),
+            None,
         )
         .await
         .unwrap();

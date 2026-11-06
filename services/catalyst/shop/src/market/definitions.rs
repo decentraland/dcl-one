@@ -50,6 +50,22 @@ pub fn rarity_rank(rarity: &str) -> i64 {
         .unwrap_or(-1)
 }
 
+/// lamb2's `contentServerUrl`: `CONTENT_URL` lowercased, `http://` added
+/// when it has no scheme, trailing `/` stripped
+/// (decentraland/lamb2:src/adapters/content-server-url.ts:8-17).
+fn content_base(content_public_url: &str) -> String {
+    let mut base = content_public_url.to_lowercase();
+    if !base.starts_with("http") {
+        base = format!("http://{base}");
+    }
+    while base.ends_with('/') {
+        base.pop();
+    }
+    base
+}
+
+/// `<base>/contents/<hash>` of the entity file named `file_name`, `None`
+/// when the entity lists no such file.
 pub fn content_url(entity: &Value, file_name: &str, content_public_url: &str) -> Option<String> {
     let hash = entity
         .get("content")
@@ -64,93 +80,144 @@ pub fn content_url(entity: &Value, file_name: &str, content_public_url: &str) ->
                 }
             })
         })?;
-    let base = if content_public_url.ends_with('/') {
-        content_public_url.to_string()
-    } else {
-        format!("{content_public_url}/")
-    };
-    Some(format!("{base}contents/{hash}"))
+    Some(format!(
+        "{}/contents/{hash}",
+        content_base(content_public_url)
+    ))
 }
 
-pub fn map_representations(reps: &mut Value, entity: &Value, content_public_url: &str) {
-    if let Some(arr) = reps.as_array_mut() {
-        for rep in arr.iter_mut() {
-            let new_contents: Vec<Value> = rep
-                .get("contents")
-                .and_then(|c| c.as_array())
-                .map(|files| {
-                    files
-                        .iter()
-                        .filter_map(|f| f.as_str())
-                        .map(|file_name| {
-                            let url = content_url(entity, file_name, content_public_url)
-                                .unwrap_or_default();
-                            json!({ "key": file_name, "url": url })
-                        })
-                        .collect()
+/// Each representation's `contents` file names as `{key, url}`, the `url`
+/// left out for a file the entity does not list. `None` when the
+/// representations or a `contents` list are not arrays, where lamb2's
+/// `.map` throws and the item gets no definition
+/// (decentraland/lamb2:src/adapters/definitions.ts:27-40;
+/// decentraland/lamb2:src/adapters/definitions-fetcher.ts:49-60).
+pub fn map_representations(
+    reps: &Value,
+    entity: &Value,
+    content_public_url: &str,
+) -> Option<Value> {
+    let mapped = reps
+        .as_array()?
+        .iter()
+        .map(|rep| {
+            let contents: Vec<Value> = rep
+                .get("contents")?
+                .as_array()?
+                .iter()
+                .map(|file| {
+                    let mut entry = Map::new();
+                    entry.insert("key".into(), file.clone());
+                    if let Some(url) = file
+                        .as_str()
+                        .and_then(|f| content_url(entity, f, content_public_url))
+                    {
+                        entry.insert("url".into(), Value::String(url));
+                    }
+                    Value::Object(entry)
                 })
-                .unwrap_or_default();
-            if let Some(obj) = rep.as_object_mut() {
-                obj.insert("contents".into(), Value::Array(new_contents));
-            }
-        }
-    }
+                .collect();
+            let mut rep = rep.as_object()?.clone();
+            rep.insert("contents".into(), Value::Array(contents));
+            Some(Value::Object(rep))
+        })
+        .collect::<Option<Vec<Value>>>()?;
+    Some(Value::Array(mapped))
 }
 
+/// `image` becomes its content URL when the entity lists the file and is
+/// kept as it is otherwise; `thumbnail` becomes its content URL or is left
+/// out (lamb2's `undefined`).
 pub fn rewrite_image_thumbnail(
     def: &mut Map<String, Value>,
     entity: &Value,
     content_public_url: &str,
 ) {
-    for key in ["image", "thumbnail"] {
-        if let Some(file) = def.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
-            && let Some(url) = content_url(entity, &file, content_public_url)
-        {
-            def.insert(key.into(), Value::String(url));
+    let url_of = |def: &Map<String, Value>, key: &str| {
+        def.get(key)
+            .and_then(Value::as_str)
+            .and_then(|file| content_url(entity, file, content_public_url))
+    };
+    if let Some(url) = url_of(def, "image") {
+        def.insert("image".into(), Value::String(url));
+    }
+    match url_of(def, "thumbnail") {
+        Some(url) => {
+            def.insert("thumbnail".into(), Value::String(url));
+        }
+        None => {
+            def.remove("thumbnail");
         }
     }
 }
 
-pub fn extract_wearable_definition(entity: &Value, content_public_url: &str) -> Option<Value> {
-    let mut def = entity.get("metadata")?.as_object()?.clone();
-    if let Some(data) = def.get_mut("data").and_then(|d| d.as_object_mut())
-        && let Some(reps) = data.get_mut("representations")
-    {
-        map_representations(reps, entity, content_public_url);
+/// JavaScript truthiness of a JSON value.
+fn truthy(v: Option<&Value>) -> bool {
+    match v {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => false,
+        Some(Value::String(s)) => !s.is_empty(),
+        Some(Value::Number(n)) => n.as_f64().is_some_and(|f| f != 0.0),
+        Some(_) => true,
     }
+}
+
+/// The entity's metadata object when it has a truthy `id`; lamb2 skips an
+/// entity without one (decentraland/lamb2:src/adapters/definitions-fetcher.ts:44-47).
+fn definition_metadata(entity: &Value) -> Option<Map<String, Value>> {
+    let metadata = entity.get("metadata")?.as_object()?;
+    truthy(metadata.get("id")).then(|| metadata.clone())
+}
+
+/// `extractWearableDefinitionFromEntity`
+/// (decentraland/lamb2:src/adapters/definitions.ts:4-25); `None` where it
+/// throws (no `data.representations` array).
+pub fn extract_wearable_definition(entity: &Value, content_public_url: &str) -> Option<Value> {
+    let mut def = definition_metadata(entity)?;
+    let data = def.get_mut("data")?.as_object_mut()?;
+    let reps = map_representations(data.get("representations")?, entity, content_public_url)?;
+    data.insert("representations".into(), reps);
     rewrite_image_thumbnail(&mut def, entity, content_public_url);
     Some(Value::Object(def))
 }
 
+/// `extractEmoteDefinitionFromEntity`
+/// (decentraland/lamb2:src/adapters/definitions.ts:61-102): an ADR-74 emote
+/// keeps its `emoteDataADR74`; a legacy one folds `data` and `emoteDataV0`
+/// into `{category: "dance", tags?, loop?, representations}`, `tags` left
+/// out when `data` has none and `loop` read from `emoteDataV0` when it is
+/// there (`false` otherwise). `None` where lamb2 throws.
 pub fn extract_emote_definition(entity: &Value, content_public_url: &str) -> Option<Value> {
-    let mut meta = entity.get("metadata")?.as_object()?.clone();
+    let mut meta = definition_metadata(entity)?;
 
-    let emote_data_adr74: Value = if meta.contains_key("emoteDataADR74") {
-        let mut adr = meta.remove("emoteDataADR74").unwrap();
-        if let Some(reps) = adr.get_mut("representations") {
-            map_representations(reps, entity, content_public_url);
-        }
-        adr
+    let emote_data_adr74: Value = if let Some(adr) = meta.remove("emoteDataADR74") {
+        let reps = map_representations(adr.get("representations")?, entity, content_public_url)?;
+        let mut adr = adr.as_object()?.clone();
+        adr.insert("representations".into(), reps);
+        Value::Object(adr)
     } else {
-        let data = meta.remove("data").unwrap_or_else(|| json!({}));
-        let emote_data_v0 = meta.remove("emoteDataV0");
-        let loop_val = emote_data_v0
-            .as_ref()
-            .and_then(|v| v.get("loop"))
-            .cloned()
-            .unwrap_or(Value::Bool(false));
-        let tags = data.get("tags").cloned().unwrap_or_else(|| json!([]));
-        let mut reps = data
-            .get("representations")
-            .cloned()
-            .unwrap_or_else(|| json!([]));
-        map_representations(&mut reps, entity, content_public_url);
-        json!({
-            "category": "dance",
-            "tags": tags,
-            "loop": loop_val,
-            "representations": reps,
-        })
+        let data = meta.remove("data")?;
+        let reps = map_representations(data.get("representations")?, entity, content_public_url)?;
+        let mut adr = Map::new();
+        adr.insert("category".into(), json!("dance"));
+        if let Some(tags) = data.get("tags") {
+            adr.insert("tags".into(), tags.clone());
+        }
+        // `emoteDataV0.loop`: a `null` throws in lamb2, another non-object
+        // reads `undefined` and leaves `loop` out.
+        match meta.remove("emoteDataV0") {
+            Some(Value::Null) => return None,
+            Some(Value::Object(v0)) => {
+                if let Some(l) = v0.get("loop") {
+                    adr.insert("loop".into(), l.clone());
+                }
+            }
+            Some(_) => {}
+            None => {
+                adr.insert("loop".into(), Value::Bool(false));
+            }
+        }
+        adr.insert("representations".into(), reps);
+        Value::Object(adr)
     };
 
     rewrite_image_thumbnail(&mut meta, entity, content_public_url);
@@ -210,11 +277,26 @@ mod tests {
         );
         assert_eq!(
             contents[1],
-            json!({ "key": "missing.glb", "url": "" }),
-            "an unlisted file keeps its key with an empty url"
+            json!({ "key": "missing.glb" }),
+            "an unlisted file keeps its key and has no url"
         );
         assert_eq!(def["name"], "Hat");
         assert!(extract_wearable_definition(&json!({ "id": "x" }), "u").is_none());
+    }
+
+    #[test]
+    fn emote_definition_reads_a_non_object_v0_as_lamb2() {
+        let mut e = entity();
+        e["metadata"]["emoteDataV0"] = json!("legacy");
+        let def = extract_emote_definition(&e, "http://localhost/content/").unwrap();
+        assert!(def["emoteDataADR74"].get("loop").is_none(), "{def}");
+        assert_eq!(def["emoteDataADR74"]["category"], "dance");
+        e["metadata"]["emoteDataV0"] = Value::Null;
+        assert_eq!(
+            extract_emote_definition(&e, "http://localhost/content/"),
+            None,
+            "lamb2 throws on a null emoteDataV0"
+        );
     }
 
     #[test]
@@ -242,6 +324,49 @@ mod tests {
             def["emoteDataADR74"]["representations"][0]["contents"][0]["key"],
             "male/hat.glb"
         );
+    }
+
+    #[test]
+    fn definitions_follow_lamb2_on_the_edges() {
+        // The base URL is lowercased, without its trailing slashes.
+        let def = extract_wearable_definition(&entity(), "HTTPS://Peer.Example/Content//").unwrap();
+        assert_eq!(
+            def["image"],
+            "https://peer.example/content/contents/bafyimage"
+        );
+
+        // A thumbnail the entity does not list is left out; an image is kept.
+        let mut e = entity();
+        e["metadata"]["thumbnail"] = json!("gone.png");
+        e["metadata"]["image"] = json!("gone.png");
+        let def = extract_wearable_definition(&e, "http://localhost/content").unwrap();
+        assert!(def.get("thumbnail").is_none());
+        assert_eq!(def["image"], "gone.png");
+
+        // No representations or no id: no definition.
+        let mut e = entity();
+        e["metadata"]["data"]
+            .as_object_mut()
+            .unwrap()
+            .remove("representations");
+        assert!(extract_wearable_definition(&e, "u").is_none());
+        let mut e = entity();
+        e["metadata"]["id"] = json!("");
+        assert!(extract_wearable_definition(&e, "u").is_none());
+        assert!(extract_emote_definition(&e, "u").is_none());
+
+        // A legacy emote: `tags` only when `data` has them, `loop` from
+        // `emoteDataV0` when present (left out when it has none), else false.
+        let def = extract_emote_definition(&entity(), "u").unwrap();
+        assert!(def["emoteDataADR74"].get("tags").is_none());
+        assert_eq!(def["emoteDataADR74"]["loop"], false);
+        let mut e = entity();
+        e["metadata"]["data"]["tags"] = json!(["a"]);
+        e["metadata"]["emoteDataV0"] = json!({});
+        let def = extract_emote_definition(&e, "u").unwrap();
+        assert_eq!(def["emoteDataADR74"]["tags"], json!(["a"]));
+        assert!(def["emoteDataADR74"].get("loop").is_none());
+        assert!(def.get("emoteDataV0").is_none());
     }
 
     #[test]

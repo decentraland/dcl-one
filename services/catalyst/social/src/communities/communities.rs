@@ -928,9 +928,6 @@ pub async fn update_community(
                 metadata: json!({"communityId":uuid.as_uuid(), "oldName":old_name,
                     "newName":new_name, "thumbnailUrl":stored_thumbnail_or_na(&state,has_thumbnail,uuid)}),
             };
-            state
-                .publish_community_event(&event, &Audience::Members)
-                .await;
             notify(&state.pool, event, Audience::Members).await;
         });
     }
@@ -1181,18 +1178,8 @@ pub async fn delete_community(
         community_id: uuid,
         metadata,
     };
-    let violation_publish = violation
-        .as_ref()
-        .map(|event| state.publish_community_event(event, &Audience::One(&owner)));
-    let deleted_publish = state.publish_community_event(&deleted, &Audience::MembersButOwner);
     let updates = state.clone();
     tokio::spawn(async move {
-        if let Some(publish) = violation_publish {
-            publish.await;
-        }
-        deleted_publish.await;
-        // Source publishes connectivity deletion after both best-effort SNS
-        // broadcasts inside the same background helper.
         updates.community_deleted_update(uuid).await;
     });
     if let Some(event) = violation {
