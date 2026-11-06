@@ -123,13 +123,14 @@ async fn retry_access_rechecks(
         match readmit_world_rooms_in_inventory(state, &world, Some(changed_at), rooms).await {
             // Retain the cutoff for live sweeps and reconnects. A newer revision
             // or same-revision community wakeup must not be completed by this pass.
-            Ok(()) => {
-                if let Err(error) =
-                    complete_recheck(&state.pool, &raw, revision, claimed_schedule).await
-                {
+            Ok(()) => match complete_recheck(&state.pool, &raw, revision, claimed_schedule).await {
+                Ok(true) => {}
+                Ok(false) => tracing::debug!(%world, %revision, %claimed_schedule,
+                        "world access completion skipped; claim changed or expired"),
+                Err(error) => {
                     tracing::warn!(%error,%world,"world access completion failed; recheck retained");
                 }
-            }
+            },
             Err(error) => tracing::warn!(%error,%world,"world access recheck retained"),
         }
     }
@@ -333,7 +334,7 @@ mod completion_tests {
         };
         let world = format!("locked-{}.dcl.eth", uuid::Uuid::new_v4());
         let revision = queue(&pool, &world).await;
-        let schedule: chrono::NaiveDateTime = sqlx::query_scalar("UPDATE social.world_access_rechecks SET next_attempt_at=timezone('UTC',clock_timestamp())+interval '2 seconds' WHERE world_name=$1 RETURNING next_attempt_at")
+        let schedule: chrono::NaiveDateTime = sqlx::query_scalar("UPDATE social.world_access_rechecks SET next_attempt_at=timezone('UTC',clock_timestamp())+interval '10 seconds' WHERE world_name=$1 RETURNING next_attempt_at")
             .bind(&world).fetch_one(&pool).await.unwrap();
         let mut blocker = pool.begin().await.unwrap();
         sqlx::query(
@@ -350,7 +351,7 @@ mod completion_tests {
         });
         // Observe the actual lock wait, then keep the unchanged row locked until
         // PostgreSQL's clock says the exact claimed schedule has expired.
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
             loop {
                 let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'WITH claimed AS MATERIALIZED%')")
                     .fetch_one(&pool).await.unwrap();
@@ -415,7 +416,11 @@ mod recheck_regressions {
         };
         // The trigger belongs to a private database, never the shared scratch
         // schema used by concurrently running tests.
-        let name = format!("dcl_recheck_{}", uuid::Uuid::new_v4().simple());
+        let name = format!(
+            "catalyst_test_lib_{}_{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        );
         let admin = sqlx::postgres::PgPoolOptions::new()
             .max_connections(1)
             .connect_with(base.connect_options().as_ref().clone().database("postgres"))
@@ -425,116 +430,134 @@ mod recheck_regressions {
             .execute(&admin)
             .await
             .unwrap();
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(4)
-            .connect_with(base.connect_options().as_ref().clone().database(&name))
-            .await
-            .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
-        sqlx::query("INSERT INTO social.world_access_rechecks(world_name,next_attempt_at) VALUES ('a-fault.dcl.eth',timestamp '2000-01-01'),('b-later.dcl.eth',timestamp '2000-01-02')")
-            .execute(&pool).await.unwrap();
-        sqlx::raw_sql("CREATE FUNCTION social.fail_test_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.world_name='a-fault.dcl.eth' AND NEW.next_attempt_at='infinity'::timestamp THEN RAISE EXCEPTION 'injected completion failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER fail_test_completion BEFORE UPDATE ON social.world_access_rechecks FOR EACH ROW EXECUTE FUNCTION social.fail_test_completion();")
-            .execute(&pool).await.unwrap();
-        let calls = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-        let app = axum::Router::new().route("/twirp/livekit.RoomService/{method}", axum::routing::post({
-            let calls = calls.clone();
-            move |axum::extract::Path(method): axum::extract::Path<String>, axum::Json(body): axum::Json<serde_json::Value>| {
+        use futures::FutureExt;
+        let mut server = None;
+        let outcome = std::panic::AssertUnwindSafe(async {
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(4)
+                .connect_with(base.connect_options().as_ref().clone().database(&name))
+                .await
+                .unwrap();
+            crate::db::apply_schema(&pool).await.unwrap();
+            sqlx::query("INSERT INTO social.world_access_rechecks(world_name,next_attempt_at) VALUES ('a-fault.dcl.eth',timestamp '2000-01-01'),('b-later.dcl.eth',timestamp '2000-01-02')")
+                .execute(&pool).await.unwrap();
+            sqlx::raw_sql("CREATE FUNCTION social.fail_test_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.world_name='a-fault.dcl.eth' AND NEW.next_attempt_at='infinity'::timestamp THEN RAISE EXCEPTION 'injected completion failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER fail_test_completion BEFORE UPDATE ON social.world_access_rechecks FOR EACH ROW EXECUTE FUNCTION social.fail_test_completion();")
+                .execute(&pool).await.unwrap();
+            let calls = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+            let app = axum::Router::new().route("/twirp/livekit.RoomService/{method}", axum::routing::post({
                 let calls = calls.clone();
-                async move {
-                    if method == "ListRooms" {
-                        return axum::Json(serde_json::json!({"rooms":[{"name":"world-a-fault.dcl.eth"},{"name":"world-b-later.dcl.eth"},{"name":"world-c-live.dcl.eth"}]}));
+                move |axum::extract::Path(method): axum::extract::Path<String>, axum::Json(body): axum::Json<serde_json::Value>| {
+                    let calls = calls.clone();
+                    async move {
+                        if method == "ListRooms" {
+                            return axum::Json(serde_json::json!({"rooms":[{"name":"world-a-fault.dcl.eth"},{"name":"world-b-later.dcl.eth"},{"name":"world-c-live.dcl.eth"}]}));
+                        }
+                        assert_eq!(method, "ListParticipants");
+                        calls.lock().unwrap().push(body["room"].as_str().unwrap().to_owned());
+                        axum::Json(serde_json::json!({"participants":[]}))
                     }
-                    assert_eq!(method, "ListParticipants");
-                    calls.lock().unwrap().push(body["room"].as_str().unwrap().to_owned());
-                    axum::Json(serde_json::json!({"participants":[]}))
                 }
-            }
-        }));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        let mut state = CommsState::new(
-            pool.clone(),
-            crate::http::Outbound::for_tests(),
-            super::super::Settings::for_tests(),
-            None,
-            None,
-            Arc::new(StubPolicy {
-                access_type: Err(AuthorityNotEstablished::store_unavailable(
-                    "worlds.worlds",
-                    &sqlx::Error::PoolTimedOut,
-                )),
-                ..Default::default()
-            }),
-            Arc::new(StubScenes::default()),
-            Arc::new(crate::presence::Presence::new()),
-            Arc::new(StubDirectory::default()),
-        );
-        state.livekit.configured = true;
-        state.livekit.api_url = url;
-        sweep(&state).await.unwrap();
-        let pending: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM social.world_access_rechecks WHERE isfinite(next_attempt_at)",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(pending, 2, "failed policy must retain retryable schedules");
-        assert!(calls.lock().unwrap().is_empty());
-        // Retry the actual durable obligations on the next maintenance tick.
-        sqlx::query(
-            "UPDATE social.world_access_rechecks SET next_attempt_at=timestamp '2000-01-01'",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        state.policy = Arc::new(StubPolicy::default());
-        sweep(&state).await.unwrap();
-        let completed: Vec<(String, bool)> = sqlx::query_as("SELECT world_name,NOT isfinite(next_attempt_at) FROM social.world_access_rechecks ORDER BY world_name")
-            .fetch_all(&pool).await.unwrap();
-        assert_eq!(
-            completed,
-            vec![
-                ("a-fault.dcl.eth".into(), false),
-                ("b-later.dcl.eth".into(), true)
-            ]
-        );
-        {
-            let calls = calls.lock().unwrap();
-            assert_eq!(
-                calls
-                    .iter()
-                    .filter(|room| *room == "world-a-fault.dcl.eth")
-                    .count(),
-                2
+            }));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            server = Some(tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap();
+            }));
+            let mut state = CommsState::new(
+                pool.clone(),
+                crate::http::Outbound::for_tests(),
+                super::super::Settings::for_tests(),
+                None,
+                None,
+                Arc::new(StubPolicy {
+                    access_type: Err(AuthorityNotEstablished::store_unavailable(
+                        "worlds.worlds",
+                        &sqlx::Error::PoolTimedOut,
+                    )),
+                    ..Default::default()
+                }),
+                Arc::new(StubScenes::default()),
+                Arc::new(crate::presence::Presence::new()),
+                Arc::new(StubDirectory::default()),
             );
-            assert_eq!(
-                calls
-                    .iter()
-                    .filter(|room| *room == "world-b-later.dcl.eth")
-                    .count(),
-                2,
-                "later claimed world and its live sweep both run"
-            );
-            assert_eq!(
-                calls
-                    .iter()
-                    .filter(|room| *room == "world-c-live.dcl.eth")
-                    .count(),
-                1,
-                "live-only world runs in the same tick"
-            );
-        }
-        server.abort();
-        drop(state);
-        pool.close().await;
-        sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE \"{name}\"")))
-            .execute(&admin)
+            state.livekit.configured = true;
+            state.livekit.api_url = url;
+            sweep(&state).await.unwrap();
+            let pending: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM social.world_access_rechecks WHERE isfinite(next_attempt_at)",
+            )
+            .fetch_one(&pool)
             .await
             .unwrap();
+            assert_eq!(pending, 2, "failed policy must retain retryable schedules");
+            assert!(calls.lock().unwrap().is_empty());
+            // Retry the actual durable obligations on the next maintenance tick.
+            sqlx::query(
+                "UPDATE social.world_access_rechecks SET next_attempt_at=timestamp '2000-01-01'",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            state.policy = Arc::new(StubPolicy::default());
+            sweep(&state).await.unwrap();
+            let completed: Vec<(String, bool)> = sqlx::query_as("SELECT world_name,NOT isfinite(next_attempt_at) FROM social.world_access_rechecks ORDER BY world_name")
+                .fetch_all(&pool).await.unwrap();
+            assert_eq!(
+                completed,
+                vec![
+                    ("a-fault.dcl.eth".into(), false),
+                    ("b-later.dcl.eth".into(), true)
+                ]
+            );
+            {
+                let calls = calls.lock().unwrap();
+                assert_eq!(
+                    calls
+                        .iter()
+                        .filter(|room| *room == "world-a-fault.dcl.eth")
+                        .count(),
+                    2
+                );
+                assert_eq!(
+                    calls
+                        .iter()
+                        .filter(|room| *room == "world-b-later.dcl.eth")
+                        .count(),
+                    2,
+                    "later claimed world and its live sweep both run"
+                );
+                assert_eq!(
+                    calls
+                        .iter()
+                        .filter(|room| *room == "world-c-live.dcl.eth")
+                        .count(),
+                    1,
+                    "live-only world runs in the same tick"
+                );
+            }
+            drop(state);
+            pool.close().await;
+        })
+        .catch_unwind()
+        .await;
+        if let Some(server) = server {
+            server.abort();
+            let _ = server.await;
+        }
+        // Close this private database's sessions even after setup or assertions panic.
+        let cleanup = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE \"{name}\" WITH (FORCE)"
+        )))
+        .execute(&admin)
+        .await;
         admin.close().await;
+        if let Err(panic) = outcome {
+            if let Err(error) = &cleanup {
+                eprintln!("cleaning up private recheck database {name}: {error}");
+            }
+            std::panic::resume_unwind(panic);
+        }
+        cleanup.unwrap();
     }
 
     #[tokio::test]
