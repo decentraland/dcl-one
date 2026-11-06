@@ -370,7 +370,9 @@ fn process_gltf(raw_bytes: &[u8], expect_repair: bool) -> Result<Vec<u8>, GltfPr
         .extensions_required
         .iter()
         .any(|e| e == "KHR_texture_basisu");
+    let image_count = root.images.len();
     let mut basisu_textures = Vec::new();
+    let mut basisu_kept = false;
     for (index, texture) in root.textures.iter_mut().enumerate() {
         let Some(extensions) = texture.extensions.as_mut() else {
             continue;
@@ -378,13 +380,28 @@ fn process_gltf(raw_bytes: &[u8], expect_repair: bool) -> Result<Vec<u8>, GltfPr
         let Some(basisu) = extensions.others.remove("KHR_texture_basisu") else {
             continue;
         };
-        let Some(source) = basisu.get("source").and_then(|source| source.as_u64()) else {
-            return Err(GltfProcessError::ParseFailed);
+        // the index comes from the scene's file: it must name an existing image, untruncated
+        let source = basisu
+            .get("source")
+            .and_then(|source| source.as_u64())
+            .and_then(|source| u32::try_from(source).ok())
+            .filter(|&source| (source as usize) < image_count);
+        let Some(source) = source else {
+            // with the extension required there is no fallback to load instead
+            if basisu_required {
+                return Err(GltfProcessError::ParseFailed);
+            }
+            warn!("texture {index} has no usable basisu source, keeping its fallback");
+            extensions.others.insert("KHR_texture_basisu".to_owned(), basisu);
+            basisu_kept = true;
+            continue;
         };
         basisu_textures.push((index, texture.source, basisu));
-        texture.source = gltf_json::Index::new(source as u32);
+        texture.source = gltf_json::Index::new(source);
     }
-    root.extensions_used.retain(|e| e != "KHR_texture_basisu");
+    if !basisu_kept {
+        root.extensions_used.retain(|e| e != "KHR_texture_basisu");
+    }
     root.extensions_required
         .retain(|e| e != "KHR_texture_basisu");
 
@@ -507,7 +524,7 @@ fn process_gltf(raw_bytes: &[u8], expect_repair: bool) -> Result<Vec<u8>, GltfPr
         }
         restored = true;
     }
-    if restored {
+    if restored && !basisu_kept {
         root.extensions_used.push("KHR_texture_basisu".to_owned());
     }
 
@@ -834,6 +851,57 @@ mod tests {
         // required: nothing to fall back to
         let required = json(r#""KHR_texture_basisu""#);
         assert!(process_gltf(required.as_bytes(), true).is_err());
+    }
+
+    fn basisu_gltf_with_source(source: u64, required: &str) -> String {
+        format!(
+            r#"{{"asset":{{"version":"2.0"}},
+                "extensionsUsed":["KHR_texture_basisu"],
+                "extensionsRequired":[{required}],
+                "images":[{{"mimeType":"image/png","uri":"data:image/png;base64,{}"}},
+                          {{"mimeType":"image/ktx2","uri":"data:image/ktx2;base64,{}"}}],
+                "textures":[{{"source":0,"extensions":{{"KHR_texture_basisu":{{"source":{source}}}}}}}]}}"#,
+            general_purpose::STANDARD.encode(png_bytes(2, 2)),
+            general_purpose::STANDARD.encode(UASTC_8),
+        )
+    }
+
+    fn assert_basisu_source_is_rejected(source: u64) {
+        // required: nothing to fall back to, so no repaired glb
+        let required = basisu_gltf_with_source(source, r#""KHR_texture_basisu""#);
+        assert!(matches!(
+            process_gltf(required.as_bytes(), true),
+            Err(GltfProcessError::ParseFailed)
+        ));
+
+        // optional: the texture keeps its fallback source and the extension
+        let optional = basisu_gltf_with_source(source, "");
+        let output = process_gltf(optional.as_bytes(), false).unwrap();
+        let (root, _) = parse_glb(&output);
+        assert_eq!(root.textures[0].source.value(), 0);
+        let extensions = root.textures[0].extensions.as_ref().unwrap();
+        assert_eq!(
+            extensions.others["KHR_texture_basisu"]["source"].as_u64(),
+            Some(source)
+        );
+        assert_eq!(root.extensions_used, ["KHR_texture_basisu"]);
+
+        // and a failed load has nothing left to repair
+        assert!(matches!(
+            process_gltf(optional.as_bytes(), true),
+            Err(GltfProcessError::NothingToRepair)
+        ));
+    }
+
+    #[test]
+    fn basisu_source_past_the_last_image_is_rejected() {
+        assert_basisu_source_is_rejected(99);
+    }
+
+    #[test]
+    fn basisu_source_above_u32_max_is_not_truncated() {
+        // `as u32` would wrap this to 1, the ktx2 image
+        assert_basisu_source_is_rejected((1u64 << 32) + 1);
     }
 
     #[test]
