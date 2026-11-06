@@ -473,6 +473,35 @@ impl DeployRateLimiter {
     }
 }
 
+/// One deploy at a time per entity id in this process. A copy of an
+/// in-flight deploy (a client's retry after a timeout) waits for it and
+/// answers the timestamp it stored, instead of meeting the pointers the first
+/// one holds in the rate limiter. An entry lives while a deploy holds or
+/// awaits it.
+#[derive(Default)]
+struct EntityLocks(Mutex<HashMap<String, std::sync::Weak<EntityLock>>>);
+
+/// The stored timestamp once a holder deployed the entity.
+type EntityLock = tokio::sync::Mutex<Option<i64>>;
+
+impl EntityLocks {
+    async fn lock(&self, entity_id: &str) -> tokio::sync::OwnedMutexGuard<Option<i64>> {
+        let lock = {
+            let mut locks = self.0.lock();
+            locks.retain(|_, lock| lock.strong_count() > 0);
+            match locks.get(entity_id).and_then(std::sync::Weak::upgrade) {
+                Some(lock) => lock,
+                None => {
+                    let lock = Arc::new(EntityLock::new(None));
+                    locks.insert(entity_id.to_string(), Arc::downgrade(&lock));
+                    lock
+                }
+            }
+        };
+        lock.lock_owned().await
+    }
+}
+
 pub struct WriteDeployer {
     pool: PgPool,
     storage: Arc<Storage>,
@@ -495,6 +524,7 @@ pub struct WriteDeployer {
     /// The pointers a deploy of this process holds, by entity type, from its
     /// checks to its write: a second deploy of any of them is refused.
     pointers_in_flight: Mutex<HashMap<String, HashSet<String>>>,
+    deploying: EntityLocks,
     /// The deploy function per provenance variant, once its existence was checked.
     deploy_fns: [tokio::sync::OnceCell<String>; 2],
     /// Upstream forwarding (`CONTENT_FORWARD_UPSTREAM_URL`): a local deploy
@@ -525,6 +555,7 @@ impl WriteDeployer {
             rate_limiter: DeployRateLimiter::with_reference_defaults(),
             request_ttl_backwards_ms: AtomicI64::new(REQUEST_TTL_BACKWARDS_MS),
             pointers_in_flight: Mutex::new(HashMap::new()),
+            deploying: EntityLocks::default(),
             deploy_fns: [tokio::sync::OnceCell::new(), tokio::sync::OnceCell::new()],
             forwarder: None,
         }
@@ -749,7 +780,10 @@ impl WriteDeployer {
         let decisions = crate::land_authz::can_deploy_batch(land, &coords, signer)
             .await
             .map_err(|e| {
-                DeployFailure::Unavailable(vec![format!("Error checking parcel access: {e}")])
+                warn!(entity_id = %entity.id, error = %e, "LAND rights could not be checked");
+                DeployFailure::Unavailable(vec![
+                    super::validator::checker::PARCEL_ACCESS_UNDECIDED.to_string(),
+                ])
             })?;
         let errors: Vec<String> = coords
             .iter()
@@ -937,6 +971,27 @@ impl WriteDeployer {
     /// `ttl_anchor_ms` instead of now: a partial upload's publication
     /// measures them from the upload's first batch.
     pub(crate) async fn deploy_entity_anchored(
+        &self,
+        files: Vec<Bytes>,
+        entity_id: &str,
+        auth_chain: Value,
+        context: &str,
+        ttl_anchor_ms: Option<i64>,
+    ) -> Result<i64, DeployFailure> {
+        let mut deployed = self.deploying.lock(entity_id).await;
+        if let Some(creation_ts) = *deployed {
+            return Ok(creation_ts);
+        }
+        let result = self
+            .deploy_entity_unlocked(files, entity_id, auth_chain, context, ttl_anchor_ms)
+            .await;
+        if let Ok(creation_ts) = result {
+            *deployed = Some(creation_ts);
+        }
+        result
+    }
+
+    async fn deploy_entity_unlocked(
         &self,
         files: Vec<Bytes>,
         entity_id: &str,

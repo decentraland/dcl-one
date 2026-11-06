@@ -761,8 +761,10 @@ async fn prepare(
         }
     };
 
-    let mut entity: Entity = serde_json::from_slice(&entity_bytes)
-        .map_err(|e| Refusal::invalid(format!("There was a problem parsing the entity: {e}")))?;
+    let mut entity: Entity = serde_json::from_slice(&entity_bytes).map_err(|e| {
+        tracing::info!(entity_id, error = %e, "partial upload refused: unparsable entity file");
+        Refusal::invalid("There was a problem parsing the entity")
+    })?;
     entity.id = entity_id.to_string();
     for pointer in &mut entity.pointers {
         *pointer = pointer.to_lowercase();
@@ -917,10 +919,7 @@ async fn read_back_entity_file(
         .storage()
         .retrieve(entity_id)
         .await
-        .map_err(|e| Refusal::Unavailable {
-            errors: vec![format!("failed to read the stored entity file: {e}")],
-            retry_after: INTERNAL_ERROR_RETRY_AFTER_SECS,
-        })?
+        .map_err(|e| store_unreadable(entity_id, &e))?
         .ok_or_else(|| Refusal::must_include(entity_id))?;
     if stored.len() > MAX_ENTITY_FILE_SIZE_BYTES {
         return Err(Refusal::invalid(format!(
@@ -1008,10 +1007,7 @@ async fn commit(
             let info = storage
                 .file_info(hash)
                 .await
-                .map_err(|e| Refusal::Unavailable {
-                    errors: vec![format!("failed to read the content store: {e}")],
-                    retry_after: INTERNAL_ERROR_RETRY_AFTER_SECS,
-                })?;
+                .map_err(|e| store_unreadable(entity_id, &e))?;
             if let Some(info) = info {
                 sizes.push((hash.clone(), info.size as i64));
             }
@@ -1159,14 +1155,10 @@ async fn commit(
     }
 
     // One full check at completion, then publication.
-    let present =
-        storage
-            .exist_multiple(&content_hashes)
-            .await
-            .map_err(|e| Refusal::Unavailable {
-                errors: vec![format!("failed to read the content store: {e}")],
-                retry_after: INTERNAL_ERROR_RETRY_AFTER_SECS,
-            })?;
+    let present = storage
+        .exist_multiple(&content_hashes)
+        .await
+        .map_err(|e| store_unreadable(entity_id, &e))?;
     let now_missing: Vec<String> = content_hashes
         .iter()
         .filter(|h| !present.get(*h).copied().unwrap_or(false))
@@ -1206,6 +1198,16 @@ async fn stored_files(pool: &PgPool, entity_id: &str) -> sqlx::Result<HashMap<St
     .fetch_all(pool)
     .await?;
     Ok(rows.into_iter().collect())
+}
+
+/// A content store this node could not read: upstream's fixed sentence,
+/// the cause logged.
+fn store_unreadable(entity_id: &str, e: &dyn std::fmt::Display) -> Refusal {
+    tracing::error!(entity_id, error = %e, "failed to read the content store for a partial upload");
+    Refusal::Unavailable {
+        errors: vec![super::write_deployer::DEPLOY_ERROR_MESSAGE.to_string()],
+        retry_after: INTERNAL_ERROR_RETRY_AFTER_SECS,
+    }
 }
 
 /// A store failure is logged; the client sees upstream's fixed sentence.

@@ -6,12 +6,15 @@ The exact `/places/place?position=...` and `/places/world?name=...` endpoints, i
 
 The exact `/events/assets/event-default.webp` path serves Catalyst's bundled event image. Event image links use the node's `PUBLIC_URL` plus the `/events` mount; `EVENTS_BASE_URL` remains the website URL used by sitemaps.
 
-Referral quotas use the backend TCP peer by default. Configure
-`HTTP_TRUSTED_PROXY_CIDRS` on the API process with the direct backend proxy
-networks, and ensure those proxies overwrite a single valid `X-Real-IP`. An
+Referral quotas and the `POST /entities` burst limit and daily quota use the
+backend TCP peer by default. Configure `HTTP_TRUSTED_PROXY_CIDRS` on the API
+process with the direct backend proxy networks (the gateway's container
+network), and ensure those proxies overwrite a single valid `X-Real-IP`. An
 empty setting trusts no forwarded header and therefore buckets traffic behind
-a gateway under that gateway's peer address. Missing or malformed X-Real-IP
-from a trusted peer fails closed. This API-side setting is separate from
+a gateway under that gateway's peer address: every deployer then shares one
+deploy limit. The API logs one warning when an untrusted private or loopback
+peer forwards `X-Real-IP`. Missing or malformed X-Real-IP from a trusted peer
+fails closed. This API-side setting is separate from
 `GATEWAY_TRUSTED_PROXY_CIDRS`, which controls the gateway's upstream CDN trust.
 Verify the deployed trust chain and client bucket separation before cutover.
 
@@ -42,7 +45,7 @@ docker run --rm --network dcl-one --read-only --cap-drop ALL --security-opt no-n
 - Never trust arbitrary client networks as proxies; a trusted proxy must set `X-Forwarded-For` and `X-Forwarded-Proto`.
 - The gateway overwrites client IP, forwarding, `X-Catalyst-Admin-Gate` and `x-original-path` headers and removes `True-Client-IP`.
 - `/internal/pulse` and `/metrics` are not public; internal callers use the APIs' private address.
-- Limits: bodies 1 MiB (deployments 200, builder 21, reports 11); 30 r/s per client (content 100, deployments 2); `%3F` in paths returns 400.
+- Limits: bodies 1 MiB (content deployments 248, worlds deployments 360, world settings 12, builder 21, reports 11); 30 r/s per client (content 100, deployments 5 with a burst of 200 for content and 4 for worlds); 10 deployment uploads in flight per client, then 429; `%3F` in paths returns 400.
 
 A service subdomain `<sub>.<domain>` reaches the APIs under `/<sub>`, except
 upstream host names served under another prefix: `abcdn` and `abgen-cdn` →

@@ -77,8 +77,10 @@ pub const MAX_DEPLOY_FILES: usize = 3000;
 pub const MAX_DEPLOY_FILE_BYTES: usize = 100 * 1024 * 1024;
 
 /// The bytes of every file and field value a form may carry (upstream's
-/// `MAX_UPLOAD_TOTAL_SIZE`, 2 GiB there): the proxy's `client_max_body_size
-/// 200m` on the same route, and the old `MAX_DEPLOYMENT_SIZE_BYTES` default.
+/// `MAX_UPLOAD_TOTAL_SIZE`, 2 GiB there): the old `MAX_DEPLOYMENT_SIZE_BYTES`
+/// default. The gateway's body cap on the route (`CONTENT_DEPLOY_CAP` in
+/// `infra/gateway/gateway.py`) sits just above [`max_deployment_body_bytes`];
+/// a gateway test reads these constants.
 pub const MAX_DEPLOYMENT_BYTES: usize = 200 * 1024 * 1024;
 
 /// The most framing a part adds (upstream `MULTIPART_PART_FRAMING_BYTES`):
@@ -452,7 +454,48 @@ fn deploy_client(
     if is_trusted_proxy(peer, trusted_proxies) {
         single_real_ip(headers).unwrap_or(peer).to_string()
     } else {
+        if looks_like_an_untrusted_proxy(headers, peer) {
+            warn_untrusted_proxy_once(peer);
+        }
         peer.to_string()
+    }
+}
+
+/// An untrusted private or loopback peer that forwards `X-Real-IP`: most
+/// likely the gateway or another backend proxy missing from
+/// `HTTP_TRUSTED_PROXY_CIDRS`, so every deployer behind it shares its limits.
+/// A direct client on a public address, or a local one sending no header, is
+/// not one.
+fn looks_like_an_untrusted_proxy(headers: &HeaderMap, peer: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    let internal = match peer.to_canonical() {
+        IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            // RFC 6598 shared space (100.64.0.0/10) is also used inside clusters.
+            v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || (a == 100 && b & 0xc0 == 64)
+        }
+        IpAddr::V6(v6) => {
+            let first = v6.segments()[0];
+            v6.is_loopback() || first & 0xfe00 == 0xfc00 || first & 0xffc0 == 0xfe80
+        }
+    };
+    internal && headers.contains_key("x-real-ip")
+}
+
+/// Once per process: a node without the setting cannot tell its proxy from a
+/// client, so it says so instead of refusing to start.
+fn warn_untrusted_proxy_once(peer: std::net::IpAddr) {
+    static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        tracing::warn!(
+            %peer,
+            "POST /entities: a private or loopback peer forwards X-Real-IP but is not in \
+             HTTP_TRUSTED_PROXY_CIDRS, so its clients share one deploy limit and daily quota; \
+             list the backend proxy networks there"
+        );
     }
 }
 
@@ -864,6 +907,35 @@ mod tests {
             f.insert(format!("authChain[{i}][signature]"), format!("0xs{i}"));
         }
         f
+    }
+
+    #[test]
+    fn a_private_peer_forwarding_x_real_ip_looks_like_an_untrusted_proxy() {
+        let mut forwarded = HeaderMap::new();
+        forwarded.insert("x-real-ip", header::HeaderValue::from_static("203.0.113.9"));
+        for peer in [
+            "10.1.2.3",
+            "172.18.0.4",
+            "192.168.1.2",
+            "127.0.0.1",
+            "100.64.0.1",
+            "169.254.1.1",
+            "::1",
+            "fd00::4",
+            "fe80::1",
+            "::ffff:172.18.0.4",
+        ] {
+            let peer = peer.parse().unwrap();
+            assert!(looks_like_an_untrusted_proxy(&forwarded, peer), "{peer}");
+            assert!(
+                !looks_like_an_untrusted_proxy(&HeaderMap::new(), peer),
+                "no header: {peer}"
+            );
+        }
+        for peer in ["198.51.100.7", "100.128.0.1", "2001:db8::1"] {
+            let peer = peer.parse().unwrap();
+            assert!(!looks_like_an_untrusted_proxy(&forwarded, peer), "{peer}");
+        }
     }
 
     #[test]

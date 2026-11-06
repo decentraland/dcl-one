@@ -66,7 +66,7 @@ class ConfigurationTest(unittest.TestCase):
         table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],
                  "deploy": ["/entities", "/content/entities"]}
         text = gateway.render(table, cfg, "/mime.types")
-        deploy = re.search(r'location ~ "([^"]+)" \{\n[^}]*client_max_body_size 200m;', text)[1]
+        deploy = re.search(r'location ~ "([^"]+)" \{\n[^}]*client_max_body_size 248m;', text)[1]
         for path in ["/entities", "/content/entities"]:
             with self.subTest(path=path):
                 self.assertTrue(re.search(deploy, path))
@@ -95,6 +95,43 @@ class ConfigurationTest(unittest.TestCase):
 
         self.assertEqual(gateway.WORLDS_DEPLOY_CAP, mib("deploy.rs", "MAX_UPLOAD_WIRE_SIZE_BYTES"))
         self.assertEqual(gateway.WORLDS_SETTINGS_CAP, mib("settings.rs", "MAX_SETTINGS_UPLOAD_WIRE_BYTES"))
+
+    def test_the_content_deploy_cap_reaches_the_apps_route_limit(self):
+        root = Path(__file__).parents[3] / "services/catalyst"
+        source = (root / "content/src/create_entity.rs").read_text()
+        consts = dict(re.findall(r"const (\w+): usize = ([^;]+);", source))
+
+        def value(name):
+            expr = consts[name]
+            for ref in re.findall(r"[A-Z_]{2,}", expr):
+                expr = expr.replace(ref, f"({value(ref)})")
+            self.assertRegex(expr, r"^[\d\s()*+]+$")
+            return eval(expr)
+
+        formula = re.search(r"fn max_deployment_body_bytes\(max_fields: usize\) -> usize \{\s*([^}]+?)\s*\}",
+                            source)[1]
+        self.assertEqual(formula, "MAX_DEPLOYMENT_BYTES + (MAX_DEPLOY_FILES + max_fields + 1) * "
+                                  "MULTIPART_PART_FRAMING_BYTES")
+        config = (root / "config/src/content.rs").read_text()
+        fields = eval(re.search(r'env = "MAX_UPLOAD_FIELD_COUNT", default_value_t = ([\d\s*+]+)\)', config)[1])
+        route_limit = (value("MAX_DEPLOYMENT_BYTES")
+                       + (value("MAX_DEPLOY_FILES") + fields + 1) * value("MULTIPART_PART_FRAMING_BYTES"))
+        cap = int(gateway.CONTENT_DEPLOY_CAP.removesuffix("m")) * 1024 * 1024
+        self.assertGreaterEqual(cap, route_limit)
+        self.assertLess(cap - route_limit, 1024 * 1024, "rounded up to the next MiB")
+
+    def test_deploy_routes_cap_concurrent_uploads_per_address(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],
+                 "deploy": ["/entities", "/content/entities"]}
+        text = gateway.render(table, cfg, "/mime.types")
+        self.assertIn("limit_conn_zone $binary_remote_addr zone=deploy_uploads:10m;", text)
+        self.assertIn("limit_conn_status 429;", text)
+        bodies = [m[1] for m in re.finditer(r'location ~ "[^"]+" \{\n(.*?)\n\}', text, re.S)
+                  if "zone=deploy " in m[1]]
+        self.assertEqual(len(bodies), 2)
+        for body in bodies:
+            self.assertIn(f"limit_conn deploy_uploads {gateway.DEPLOY_CONNECTIONS_PER_ADDRESS};", body)
 
     def worlds_locations(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test"})
