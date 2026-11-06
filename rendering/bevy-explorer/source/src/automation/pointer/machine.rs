@@ -4,7 +4,6 @@
 use common::inputs::InputIdentifier;
 use scene_runner::update_scene::pointer_results::CURSOR_RAY_MAX_DISTANCE;
 
-pub(super) const NO_COLLIDER_HIT: &str = "no collider hit";
 const BEYOND_RAY: &str = "beyond 100 m";
 pub(super) const ENTITY_NOT_LIVE: &str = "entity not live";
 pub(super) const HUD_HOLDS_INPUT: &str = "input held by the HUD";
@@ -49,8 +48,12 @@ pub struct Observed {
     pub down_logged: bool,
     /// a `PetUp` for the entity is in the log since the job started
     pub up_logged: bool,
+    /// the release the job queued has been played, and this frame's pointer pipeline ran after it
+    pub release_played: bool,
     /// the scene still maps the entity to the aimed bevy entity
     pub entity_live: bool,
+    /// from the camera to the aimed point, when the entity has one
+    pub anchor_distance: Option<f32>,
 }
 
 impl Default for Observed {
@@ -60,7 +63,9 @@ impl Default for Observed {
             scene_tick: None,
             down_logged: false,
             up_logged: false,
+            release_played: false,
             entity_live: true,
+            anchor_distance: None,
         }
     }
 }
@@ -98,8 +103,12 @@ impl Stage {
 /// The steps of a hover or click, decided from one [`Observed`] frame at a time. Nothing is
 /// evaluated before `started + 2` (the aim needs a frame to reach the pointer target); past
 /// `started + timeout` the job times out naming the stage it waited in; a hover's deadline is at
-/// least `started + frames + 3`, so the default timeout never cuts a long hover short. A failure does not
-/// release a press itself: [`ClickMachine::holds_press`] tells the caller to.
+/// least `started + frames + 3`, so the default timeout never cuts a long hover short. While no
+/// target is resolved the job waits (a collider may still be loading), unless the aimed point is
+/// past the cursor ray's reach; a resolved target that is not the entity fails at once. A release
+/// is done once the scene logged the `PetUp` or the release has been played (a target with no
+/// `PetUp` entry logs none). A failure does not release a press itself:
+/// [`ClickMachine::holds_press`] tells the caller to.
 pub struct ClickMachine {
     kind: ClickKind,
     entity: u32,
@@ -155,7 +164,13 @@ impl ClickMachine {
                 vec![Effect::Release]
             }
             Stage::Target => match observed.target {
-                None => self.finish(Err(NO_COLLIDER_HIT.to_owned())),
+                None if observed
+                    .anchor_distance
+                    .is_some_and(|distance| distance > CURSOR_RAY_MAX_DISTANCE) =>
+                {
+                    self.finish(Err(BEYOND_RAY.to_owned()))
+                }
+                None => Vec::new(),
                 Some(target) if !target.matches(self.entity) => {
                     self.finish(Err(format!("blocked by entity {}", target.container)))
                 }
@@ -189,7 +204,7 @@ impl ClickMachine {
                     Vec::new()
                 }
             }
-            Stage::Release if observed.up_logged => self.finish(Ok(())),
+            Stage::Release if observed.up_logged || observed.release_played => self.finish(Ok(())),
             Stage::Release | Stage::Done => Vec::new(),
         }
     }
@@ -240,16 +255,6 @@ pub fn binding_error(button: &str, binding: &InputIdentifier) -> Option<String> 
     }
 }
 
-/// `no collider hit` becomes `beyond 100 m` when the anchor point is past the cursor ray's reach.
-pub(super) fn refine_diagnosis(diagnosis: String, anchor_distance: Option<f32>) -> String {
-    if diagnosis == NO_COLLIDER_HIT
-        && anchor_distance.is_some_and(|distance| distance > CURSOR_RAY_MAX_DISTANCE)
-    {
-        BEYOND_RAY.to_owned()
-    } else {
-        diagnosis
-    }
-}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -440,7 +445,7 @@ mod tests {
     }
 
     #[test]
-    fn an_ancestor_of_the_hit_matches_and_a_miss_is_no_collider_hit() {
+    fn an_ancestor_of_the_hit_matches_and_a_miss_waits() {
         let child = Some(TargetSeen {
             entity: 9,
             container: 9,
@@ -458,9 +463,58 @@ mod tests {
             vec![Effect::Finish(Ok(()))]
         );
         let mut m = ClickMachine::new(ClickKind::Click, 7, 600, 0);
+        assert!(m.step(2, Observed::default()).is_empty());
         assert_eq!(
-            m.step(2, Observed::default()),
-            vec![Effect::Finish(Err(NO_COLLIDER_HIT.into()))]
+            m.step(600, Observed::default()),
+            vec![Effect::Finish(Err("timed out waiting for target".into()))]
+        );
+        assert!(!m.holds_press());
+    }
+
+    #[test]
+    fn target_waits_for_a_loading_collider() {
+        let mut m = ClickMachine::new(ClickKind::Click, 7, 600, 0);
+        for frame in 2..6 {
+            let fx = m.step(
+                frame,
+                Observed {
+                    anchor_distance: Some(8.0),
+                    ..Default::default()
+                },
+            );
+            assert!(fx.is_empty(), "frame {frame}: {fx:?}");
+        }
+        assert_eq!(
+            m.step(
+                6,
+                Observed {
+                    target: seen(7),
+                    anchor_distance: Some(8.0),
+                    ..Default::default()
+                }
+            ),
+            vec![Effect::Press]
+        );
+    }
+
+    #[test]
+    fn click_finishes_on_a_down_only_target() {
+        let mut m = ClickMachine::new(ClickKind::Click, 7, 600, 0);
+        let frame = |tick, down_logged, release_played| Observed {
+            target: seen(7),
+            scene_tick: Some(tick),
+            down_logged,
+            release_played,
+            ..Default::default()
+        };
+        assert_eq!(m.step(2, frame(10, false, false)), vec![Effect::Press]);
+        assert!(m.step(3, frame(10, true, false)).is_empty());
+        assert_eq!(m.step(4, frame(11, true, false)), vec![Effect::Release]);
+        // no PetUp entry, so no PetUp is ever logged: the played release is enough
+        assert!(m.step(5, frame(11, true, false)).is_empty());
+        assert_eq!(
+            m.step(6, frame(11, true, true)),
+            vec![Effect::Finish(Ok(()))]
         );
         assert!(!m.holds_press());
     }
@@ -557,21 +611,30 @@ mod tests {
 
     #[test]
     fn a_miss_past_the_rays_reach_reads_beyond_100_m() {
+        let miss = |distance| Observed {
+            anchor_distance: distance,
+            ..Default::default()
+        };
+        let mut far = ClickMachine::new(ClickKind::Hover(30), 7, 600, 0);
         assert_eq!(
-            refine_diagnosis(NO_COLLIDER_HIT.into(), Some(150.0)),
-            "beyond 100 m"
+            far.step(2, miss(Some(150.0))),
+            vec![Effect::Finish(Err("beyond 100 m".into()))]
         );
+        let mut near = ClickMachine::new(ClickKind::Hover(30), 7, 600, 0);
+        assert!(near.step(2, miss(Some(50.0))).is_empty());
+        assert!(near.step(3, miss(None)).is_empty());
+        // a resolved target that is not the entity is blocked, however far the aimed point
+        let mut blocked = ClickMachine::new(ClickKind::Click, 7, 600, 0);
         assert_eq!(
-            refine_diagnosis(NO_COLLIDER_HIT.into(), Some(50.0)),
-            NO_COLLIDER_HIT
-        );
-        assert_eq!(
-            refine_diagnosis(NO_COLLIDER_HIT.into(), None),
-            NO_COLLIDER_HIT
-        );
-        assert_eq!(
-            refine_diagnosis("blocked by entity 9".into(), Some(150.0)),
-            "blocked by entity 9"
+            blocked.step(
+                2,
+                Observed {
+                    target: seen(9),
+                    anchor_distance: Some(150.0),
+                    ..Default::default()
+                }
+            ),
+            vec![Effect::Finish(Err("blocked by entity 9".into()))]
         );
         assert_eq!(
             binding_error("primary", &InputIdentifier::Key(KeyCode::KeyE)),

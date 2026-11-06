@@ -25,15 +25,17 @@ Every scene's raycast requests share one time budget per frame (`update_scene/ra
 - **Budget.** `raycast_budget_ms` in `AppConfig`, 2 by default, an integer from 0 to 10. It is the
   "Raycast budget" setting (Performance category) and the `/raycast_budget [ms]` command: without
   an argument it answers `raycast budget: <n> ms`; a value over 10 fails with `raycast budget must
-  be between 0 and 10 ms`.
-- **Order.** Requests due this frame run in this order: the player's scene first, then lower scene
-  priority (the nearer scene), then requests that never ran, then the longest-waiting, then entity
-  id so the order is stable.
+  be between 0 and 10 ms`; a larger value written into the config file by hand counts as 10.
+- **Order.** Requests due this frame run in this order: requests deferred for 60 frames or more
+  first (the longest-deferred first), so a scene that fills the budget every frame cannot starve the
+  others; then the player's scene, then lower scene priority (the nearer scene), then requests that
+  never ran, then the longest-waiting, then entity id so the order is stable.
 - **Deferral.** Casting stops once the time spent reaches the budget. A cast that starts under
   budget finishes, so the last one may cross the line. The requests left wait for a later frame;
   none is dropped.
 - **At least one per frame.** A budget of 0 runs one raycast per frame.
-- **`/raycast_stats`.** JSON for the last frame's pass: `budgetMs`, `ran`, `deferred` and
+- **`/raycast_stats`.** JSON for the last frame that had at least one raycast to cast (frames
+  between scene ticks usually have none and leave it as it was): `budgetMs`, `ran`, `deferred` and
   `spentMs`.
 - **Debug panel.** The "Raycasts" section shows the same four values and has a number input for
   the budget (0 to 10) that sends `/raycast_budget`.
@@ -83,8 +85,8 @@ input (`window.__dclTrustedInput`), so they need no DevTools client.
 ### The reply
 
 ```json
-{"hit": {"entity": 512, "container": 512, "scene": "Pointer targets", "playerDistance": 4.0, "cameraDistance": 6.2},
- "entries": [{"button": "Pointer", "event": "Down", "hoverText": "Near", "enabled": true, "tooFar": false}],
+{"hit": {"entity": 512, "container": 512, "scene": "pointer-targets", "playerDistance": 4.0, "cameraDistance": 6.2},
+ "entries": [{"button": "IaPointer", "event": "PetDown", "hoverText": "Near", "enabled": true, "tooFar": false}],
  "events": [{"event": "PetDown", "button": "IaPointer", "tick": 31}],
  "diagnosis": null}
 ```
@@ -107,17 +109,17 @@ A diagnosis is a resolved reply with `diagnosis` set, not a failure: read it fro
 | `diagnosis` | Meaning |
 | --- | --- |
 | `blocked by entity <id>` | The ray hit another entity's collider first; `<id>` is that container |
-| `no collider hit` | The ray hit nothing |
 | `beyond 100 m` | No collider hit, and the aimed point is past the 100 m cursor ray |
 | `entity not live` | The scene has no live entity for the id, or it was replaced while the job ran |
 | `input held by the HUD` | The HUD holds the bound input, so the press would not reach the scene |
-| `timed out waiting for <stage>` | The job passed its deadline; `<stage>` is `target` (the aim never reached the entity), `hover` (a hover did not finish), `tick` (the scene never logged the press) or `release` (it never logged the release) |
+| `timed out waiting for <stage>` | The job passed its deadline; `<stage>` is `target` (the ray hit nothing within 100 m before the deadline: no collider, or one still loading), `hover` (a hover did not finish), `tick` (the scene never logged the press) or `release` (the release was never played) |
 
 ### Refusals
 
 A refusal fails the command (the web call rejects, the loopback answers `ok: false`):
 
-- a pointer command is still running: wait for its reply or send `/hover_entity --clear`;
+- a pointer command is still running, or its release has not been played yet: wait for its reply
+  or send `/hover_entity --clear`;
 - a press is held by an earlier `--event down`: send `/click_entity <id> --event up` or
   `/hover_entity --clear`; an `up` with nothing held fails with `no press is held`;
 - `--frames` over 1800, an unknown `--event` or `--button`, a button with no binding, or a
@@ -129,3 +131,7 @@ A refusal fails the command (the web call rejects, the loopback answers `ok: fal
 `--event down` presses and keeps the aim open on the entity (no expiry) once the scene has logged
 the press. The press stays held until `--event up` on the same entity or `/hover_entity --clear`;
 other pointer commands are refused meanwhile. A hover or a click ends its aim when it replies.
+When a press is still held at the end (`--clear`, or a click that failed after pressing), the
+release is played on the aimed entity first: the reply, and the end of the aim, wait until it has
+been played and the pointer pipeline has run after it, and other pointer commands are refused
+until then.

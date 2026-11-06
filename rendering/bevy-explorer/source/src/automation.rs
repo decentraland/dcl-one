@@ -115,20 +115,40 @@ pub(crate) mod input {
     use common::rpc::RpcResultSender;
     use console::PendingConsoleResponses;
 
-    /// Input queued by `/press_key`, `/click_at` and the standalone's `/hud_fill`, one step a
-    /// frame so each lands as a frame of its own, the way a person's key or click would.
+    /// Input queued by `/press_key`, `/click_at`, `/click_entity` and the standalone's
+    /// `/hud_fill`, one step a frame so each lands as a frame of its own, the way a person's key or
+    /// click would. Steps are numbered from 1 in the order they are queued; [`Self::played`] counts
+    /// the steps played so far, so a caller can tell when its step has landed.
     #[derive(Resource, Default)]
-    pub struct InputScript(VecDeque<Step>);
+    pub struct InputScript {
+        steps: VecDeque<Step>,
+        queued: u64,
+        played: u64,
+    }
 
     impl InputScript {
-        /// Queue a step after those already queued.
-        pub(crate) fn push(&mut self, step: Step) {
-            self.0.push_back(step);
+        /// Queue a step after those already queued, and return its number: the step has been
+        /// played once [`Self::played`] reaches it.
+        pub(crate) fn push(&mut self, step: Step) -> u64 {
+            self.steps.push_back(step);
+            self.queued += 1;
+            self.queued
+        }
+
+        /// How many steps have been played (each in the `PreUpdate` of its frame).
+        pub(crate) fn played(&self) -> u64 {
+            self.played
+        }
+
+        fn pop(&mut self) -> Option<Step> {
+            let step = self.steps.pop_front()?;
+            self.played += 1;
+            Some(step)
         }
 
         #[cfg(test)]
         pub fn steps(&self) -> usize {
-            self.0.len()
+            self.steps.len()
         }
     }
 
@@ -152,7 +172,7 @@ pub(crate) mod input {
                 ),
             };
             for state in [ButtonState::Pressed, ButtonState::Released] {
-                script.0.push_back(Step::Key {
+                script.push(Step::Key {
                     key_code,
                     logical_key: logical_key.clone(),
                     text: Some(text.clone()),
@@ -160,7 +180,7 @@ pub(crate) mod input {
                 });
             }
         }
-        script.0.push_back(Step::Done(reply, message));
+        script.push(Step::Done(reply, message));
     }
 
     pub enum Step {
@@ -182,7 +202,7 @@ pub(crate) mod input {
         mut keys: EventWriter<KeyboardInput>,
         mut buttons: EventWriter<MouseButtonInput>,
     ) {
-        let Some(step) = script.0.pop_front() else {
+        let Some(step) = script.pop() else {
             return;
         };
         let Ok((window_entity, mut window)) = windows.single_mut() else {
@@ -258,7 +278,7 @@ pub(crate) mod input {
             }
         };
         for state in states {
-            script.0.push_back(Step::Key {
+            script.push(Step::Key {
                 key_code,
                 logical_key: logical_key.clone(),
                 text: text.clone(),
@@ -266,9 +286,7 @@ pub(crate) mod input {
             });
         }
         let (reply, rx) = RpcResultSender::channel();
-        script
-            .0
-            .push_back(Step::Done(reply, format!("pressed {}", command.code)));
+        script.push(Step::Done(reply, format!("pressed {}", command.code)));
         pending.push_receiver(rx, |result| result, input.take_responder());
     }
 
@@ -306,13 +324,15 @@ pub(crate) mod input {
             }
         };
         let position = Vec2::new(command.x, command.y);
-        script.0.extend([
+        for step in [
             Step::Cursor(position),
             Step::Button(button, ButtonState::Pressed),
             Step::Button(button, ButtonState::Released),
-        ]);
+        ] {
+            script.push(step);
+        }
         let (reply, rx) = RpcResultSender::channel();
-        script.0.push_back(Step::Done(
+        script.push(Step::Done(
             reply,
             format!("clicked at ({}, {})", command.x, command.y),
         ));

@@ -198,14 +198,14 @@ The HUD and input:
   at the entity, and a click presses the key or mouse button bound to the action. The reply is
   JSON: `hit` (`entity`, `container`, `scene`, `playerDistance`, `cameraDistance`, or `null`), the
   hover `entries`, the pointer `events` the scene got (`event`, `button`, `tick`) and a `diagnosis`
-  (`null`, `blocked by entity <id>`, `no collider hit`, `beyond 100 m`, `entity not live`, `input
-  held by the HUD`, `timed out waiting for target|hover|tick|release`). `--event down` keeps the press
+  (`null`, `blocked by entity <id>`, `beyond 100 m`, `entity not live`, `input held by the HUD`,
+  `timed out waiting for target|hover|tick|release`). `--event down` keeps the press
   held until `--event up` or `/hover_entity --clear`; other pointer commands are refused meanwhile
   (`src/automation/pointer.rs`). `--frames` is at most 1800, and a hover's deadline is never
   shorter than its frames plus 3, whatever `--timeout-frames` says.
   A blocked or beyond outcome is a resolved reply with `diagnosis` set, not a failure.
   [Interaction](interaction.md) has every option and reply field.
-- `/raycast_stats` (JSON: `budgetMs`, `ran`, `deferred`, `spentMs` for the last frame's scene raycasts)
+- `/raycast_stats` (JSON: `budgetMs`, `ran`, `deferred`, `spentMs` for the last frame that had scene raycasts to cast)
   and `/raycast_budget [ms]` (show or set the per-frame budget, 0 to 10, 2 by default).
 
 The accepted design makes these commands the client's agent surface in every build,

@@ -70,8 +70,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   calls jitter mandatory for those codes.
 - **Scene raycasts share one time budget across every scene.** Ours is 2 ms per frame by default
   (`raycast_budget_ms`, 0 to 10), spent on every scene ordered nearest-first, the player's scene
-  first. A raycast that does not fit is deferred to a later frame, never dropped, and at least one
-  runs every frame. unity-explorer's 3 ms budget runs the current scene only. See
+  first, except that a raycast deferred for 60 frames runs ahead of that order. A raycast that
+  does not fit is deferred to a later frame, never dropped, and at least one runs every frame.
+  unity-explorer's 3 ms budget runs the current scene only. See
   [Interaction](interaction.md#scene-raycasts).
 
 ## Deliberate choices that look like mistakes

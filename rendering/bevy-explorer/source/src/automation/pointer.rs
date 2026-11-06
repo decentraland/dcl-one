@@ -64,13 +64,18 @@ pub use machine::{
     binding_error, check_hover_frames, refuse_while_held, ClickKind, ClickMachine, Effect,
     Observed, TargetSeen,
 };
-use machine::{refine_diagnosis, ENTITY_NOT_LIVE, HUD_HOLDS_INPUT};
+use machine::{ENTITY_NOT_LIVE, HUD_HOLDS_INPUT};
 
 pub(crate) fn register(app: &mut App) {
     app.init_resource::<PointerJob>()
         .add_console_command::<HoverEntityCommand, _>(hover_entity_cmd)
         .add_console_command::<ClickEntityCommand, _>(click_entity_cmd)
-        .add_systems(Update, drive_pointer_job.after(SceneSets::Input));
+        .add_systems(
+            Update,
+            (settle_release, drive_pointer_job)
+                .chain()
+                .after(SceneSets::Input),
+        );
 }
 
 /// The input script step pressing or releasing `binding`; `None` for a gamepad binding.
@@ -139,11 +144,44 @@ fn reply_json(
 
 // --- the job ---
 
-/// The running job, and the press a finished `--event down` left held.
+/// The running job, the press a finished `--event down` left held, and a release still to land
+/// before the aim ends.
 #[derive(Resource, Default)]
 pub struct PointerJob {
     pub job: Option<Job>,
     held: Option<Held>,
+    releasing: Option<Releasing>,
+}
+
+impl PointerJob {
+    /// The refusal while a job runs or its release has not landed yet.
+    fn busy(&self) -> Option<String> {
+        let entity = self
+            .job
+            .as_ref()
+            .map(Job::requested)
+            .or(self.releasing.as_ref().map(|releasing| releasing.entity))?;
+        Some(format!(
+            "a pointer command is still running on entity {entity}; wait for its reply or send /hover_entity --clear"
+        ))
+    }
+}
+
+type PendingAnswer = (
+    RpcResultSender<Result<String, String>>,
+    Result<String, String>,
+);
+
+/// A queued release: the aim stays on its entity until the release has been played and the
+/// pointer pipeline has run after it, then the aim ends and the replies go out.
+struct Releasing {
+    /// the proto id the refusal names
+    entity: u32,
+    /// the aimed entity whose aim ends; `None` ends any aim
+    target: Option<Entity>,
+    /// the input script step number of the release
+    step: u64,
+    replies: Vec<PendingAnswer>,
 }
 
 /// A press left held by `--event down`, with the aim kept open on its entity.
@@ -171,6 +209,8 @@ pub struct Job {
     seen_events: HashSet<(i32, i32, u32)>,
     /// the hit entity of the latest target, whose events count with the asked entity's
     hit_entity: Option<u32>,
+    /// the input script step number of the release the machine asked for
+    release_step: Option<u64>,
 }
 
 impl Job {
@@ -183,29 +223,112 @@ impl Job {
     }
 }
 
-/// Ends the aim: at once, or, with a press to release, two frames on, so the release lands while
-/// the aim still points at the entity (the aim's expiry clears the log then).
+/// Ends the aim on `target` (any aim for `None`) and sends `answer`: at once, or, with a press to
+/// release, once the release has been played and the pointer pipeline has run after it
+/// ([`settle_release`]), so the release lands on the aimed entity and no new command takes the aim
+/// before it does.
+#[allow(clippy::too_many_arguments)]
 fn wind_down(
+    jobs: &mut PointerJob,
     synthetic: &mut SyntheticPointer,
     log: &mut PointerEventLog,
     script: &mut InputScript,
     release: Option<InputIdentifier>,
-    frame: u32,
+    entity: u32,
+    target: Option<Entity>,
+    answer: PendingAnswer,
 ) {
-    let step = release.and_then(|binding| binding_step(&binding, ButtonState::Released));
-    match (step, synthetic.0.as_mut()) {
-        (Some(step), Some(aim)) => {
-            script.push(step);
-            aim.hold = Hold::Frames(2);
-            aim.started_frame = frame;
-        }
-        (step, _) => {
+    let step = release
+        .and_then(|binding| binding_step(&binding, ButtonState::Released))
+        .map(|step| script.push(step));
+    match (step, jobs.releasing.as_mut()) {
+        (step, Some(releasing)) => {
+            // a release is already pending: this answer waits for it too
             if let Some(step) = step {
-                script.push(step);
+                releasing.step = releasing.step.max(step);
             }
-            synthetic.0 = None;
-            log.0.clear();
+            releasing.replies.push(answer);
         }
+        (Some(step), None) => {
+            jobs.releasing = Some(Releasing {
+                entity,
+                target,
+                step,
+                replies: vec![answer],
+            });
+        }
+        (None, None) => {
+            end_aim(synthetic, log, target);
+            answer.0.send(answer.1);
+        }
+    }
+}
+
+/// Ends the aim if it is on `target` (any aim for `None`), and clears the log with it.
+fn end_aim(synthetic: &mut SyntheticPointer, log: &mut PointerEventLog, target: Option<Entity>) {
+    let ours = synthetic
+        .0
+        .as_ref()
+        .is_some_and(|aim| target.is_none_or(|target| aim.target == target));
+    if ours {
+        synthetic.0 = None;
+        log.0.clear();
+    }
+}
+
+/// Ends the job, the held press and the aim, answering `reply` once any release has landed.
+fn clear_pointer(
+    jobs: &mut PointerJob,
+    synthetic: &mut SyntheticPointer,
+    log: &mut PointerEventLog,
+    script: &mut InputScript,
+    reply: RpcResultSender<Result<String, String>>,
+) {
+    let (release, entity) = if let Some(job) = jobs.job.take() {
+        let release = job.release_binding();
+        let entity = job.requested();
+        job.reply
+            .send(Err("cleared by /hover_entity --clear".to_owned()));
+        (release, entity)
+    } else {
+        let held = jobs.held.take();
+        let entity = held
+            .as_ref()
+            .and_then(|held| held.entity.as_proto_u32())
+            .unwrap_or_default();
+        (held.map(|held| held.binding), entity)
+    };
+    jobs.held = None;
+    wind_down(
+        jobs,
+        synthetic,
+        log,
+        script,
+        release,
+        entity,
+        None,
+        (reply, Ok("cleared".to_owned())),
+    );
+}
+
+/// Once the queued release has been played (in this frame's `PreUpdate`, so this `Update`'s
+/// pointer pipeline has already run after it), ends the aim and sends the replies that waited.
+fn settle_release(
+    mut jobs: ResMut<PointerJob>,
+    script: Res<InputScript>,
+    mut synthetic: ResMut<SyntheticPointer>,
+    mut log: ResMut<PointerEventLog>,
+) {
+    let landed = jobs
+        .releasing
+        .as_ref()
+        .is_some_and(|releasing| script.played() >= releasing.step);
+    let Some(releasing) = jobs.releasing.take_if(|_| landed) else {
+        return;
+    };
+    end_aim(&mut synthetic, &mut log, releasing.target);
+    for (reply, answer) in releasing.replies {
+        reply.send(answer);
     }
 }
 
@@ -326,11 +449,8 @@ impl PointerControl<'_, '_> {
             Err(e) => return Answer::Failed(e),
         };
         let requested = id.as_proto_u32().unwrap_or_default();
-        if let Some(job) = &self.jobs.job {
-            return Answer::Failed(format!(
-                "a pointer command is still running on entity {}; wait for its reply or send /hover_entity --clear",
-                job.requested()
-            ));
+        if let Some(refusal) = self.jobs.busy() {
+            return Answer::Failed(refusal);
         }
         let held_on = self
             .jobs
@@ -415,29 +535,22 @@ impl PointerControl<'_, '_> {
             events: Vec::new(),
             seen_events: HashSet::new(),
             hit_entity: None,
+            release_step: None,
         });
         Answer::Pending(rx)
     }
 
-    /// Ends a running job, the held press and the aim.
+    /// Ends a running job, the held press and the aim; answers once any release has landed.
     fn clear(&mut self) -> Answer {
-        let release = if let Some(job) = self.jobs.job.take() {
-            let release = job.release_binding();
-            job.reply
-                .send(Err("cleared by /hover_entity --clear".to_owned()));
-            release
-        } else {
-            self.jobs.held.take().map(|held| held.binding)
-        };
-        self.jobs.held = None;
-        wind_down(
+        let (reply, rx) = RpcResultSender::channel();
+        clear_pointer(
+            &mut self.jobs,
             &mut self.synthetic,
             &mut self.log,
             &mut self.script,
-            release,
-            self.frame.0,
+            reply,
         );
-        Answer::Json("cleared".to_owned())
+        Answer::Pending(rx)
     }
 }
 
@@ -609,6 +722,11 @@ fn drive_pointer_job(
         .as_ref()
         .filter(|_| aimed)
         .map(|info| (info, target_seen(info, job.scene, &ids, &parents)));
+    if aimed && seen.is_none() {
+        // the target is gone: what an earlier frame saw no longer stands
+        job.hit = None;
+        job.entries.clear();
+    }
     if let Some((info, seen)) = &seen {
         let scene_title = hit_ids(info.container, &ids)
             .and_then(|(_, _, root)| scenes.get(root).ok())
@@ -650,12 +768,24 @@ fn drive_pointer_job(
         job.events.iter().any(|e| e.event == name)
     };
     let ctx = scenes.get(job.scene).ok();
+    let target = seen.map(|(_, seen)| seen);
+    // only a missing target needs it, to tell a loading collider from one past the ray's reach
+    let anchor_distance = if target.is_none() {
+        camera.single().ok().and_then(|camera| {
+            anchor_point(job.target, job.anchor, &transforms, &meshes, &children)
+                .map(|point| point.distance(camera.translation()))
+        })
+    } else {
+        None
+    };
     let observed = Observed {
-        target: seen.map(|(_, seen)| seen),
+        target,
         scene_tick: ctx.map(|ctx| ctx.tick_number),
         down_logged: logged(PointerEventType::PetDown),
         up_logged: logged(PointerEventType::PetUp),
+        release_played: job.release_step.is_some_and(|step| script.played() >= step),
         entity_live: ctx.and_then(|ctx| ctx.bevy_entity(job.entity)) == Some(job.target),
+        anchor_distance,
     };
 
     let mut finished = None;
@@ -671,7 +801,10 @@ fn drive_pointer_job(
                     .binding
                     .and_then(|binding| binding_step(&binding, state))
                 {
-                    script.push(step);
+                    let step = script.push(step);
+                    if effect == Effect::Release {
+                        job.release_step = Some(step);
+                    }
                 }
             }
             Effect::Finish(result) => finished = Some(result),
@@ -684,13 +817,13 @@ fn drive_pointer_job(
     let Some(job) = jobs.job.take() else {
         return;
     };
-    let diagnosis = result.err().map(|diagnosis| {
-        let anchor_distance = camera.single().ok().and_then(|camera| {
-            anchor_point(job.target, job.anchor, &transforms, &meshes, &children)
-                .map(|point| point.distance(camera.translation()))
-        });
-        refine_diagnosis(diagnosis, anchor_distance)
-    });
+    let diagnosis = result.err();
+    let reply = Ok(reply_json(
+        job.hit.as_ref(),
+        &job.entries,
+        &job.events,
+        diagnosis.clone(),
+    ));
     match job.binding {
         // a down that landed keeps its press and its open aim
         Some(binding)
@@ -704,32 +837,119 @@ fn drive_pointer_job(
                 target: job.target,
                 binding,
             });
+            job.reply.send(reply);
         }
+        // anything else ends its aim, releasing a press it still holds first
         _ => {
-            let aim_is_ours = synthetic
-                .0
-                .as_ref()
-                .is_some_and(|aim| aim.target == job.target);
-            if aim_is_ours {
-                wind_down(
-                    &mut synthetic,
-                    &mut log,
-                    &mut script,
-                    job.release_binding(),
-                    frame,
-                );
-            } else if let Some(step) = job
-                .release_binding()
-                .and_then(|binding| binding_step(&binding, ButtonState::Released))
-            {
-                script.push(step);
-            }
+            let release = job.release_binding();
+            let entity = job.requested();
+            wind_down(
+                &mut jobs,
+                &mut synthetic,
+                &mut log,
+                &mut script,
+                release,
+                entity,
+                Some(job.target),
+                (job.reply, reply),
+            );
         }
     }
-    job.reply.send(Ok(reply_json(
-        job.hit.as_ref(),
-        &job.entries,
-        &job.events,
-        diagnosis,
-    )));
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::{
+        ecs::system::SystemState,
+        input::{keyboard::KeyboardInput, mouse::MouseButtonInput},
+    };
+
+    use super::super::input::play_input_script;
+    use super::*;
+
+    type Control<'w> = (
+        ResMut<'w, PointerJob>,
+        ResMut<'w, SyntheticPointer>,
+        ResMut<'w, PointerEventLog>,
+        ResMut<'w, InputScript>,
+    );
+
+    /// The input script, the aim, the log, the job and the driver; no window and no scene.
+    fn app() -> App {
+        let mut app = App::new();
+        app.add_event::<KeyboardInput>()
+            .add_event::<MouseButtonInput>()
+            .init_resource::<InputScript>()
+            .init_resource::<SyntheticPointer>()
+            .init_resource::<PointerEventLog>()
+            .init_resource::<PointerJob>()
+            .init_resource::<PointerTarget>()
+            .insert_resource(FrameCount(0))
+            .add_systems(PreUpdate, play_input_script)
+            .add_systems(Update, (settle_release, drive_pointer_job).chain());
+        app
+    }
+
+    #[test]
+    fn clear_answers_and_frees_the_aim_only_once_the_release_has_played() {
+        let mut app = app();
+        let scene = app.world_mut().spawn_empty().id();
+        let target = app.world_mut().spawn_empty().id();
+        let entity = SceneEntityId::new(7, 0);
+        app.world_mut().resource_mut::<SyntheticPointer>().0 = Some(SyntheticAim {
+            scene,
+            entity,
+            target,
+            anchor: Anchor::Origin,
+            hold: Hold::Open,
+            started_frame: 0,
+        });
+        app.world_mut().resource_mut::<PointerJob>().held = Some(Held {
+            scene,
+            entity,
+            target,
+            binding: InputIdentifier::Mouse(MouseButton::Left),
+        });
+        // a step queued ahead (another command's), so the release plays a frame later
+        app.world_mut()
+            .resource_mut::<InputScript>()
+            .push(Step::Cursor(Vec2::ZERO));
+
+        let (reply, mut rx) = RpcResultSender::channel();
+        let mut state = SystemState::<Control>::new(app.world_mut());
+        let (mut jobs, mut synthetic, mut log, mut script) = state.get_mut(app.world_mut());
+        clear_pointer(&mut jobs, &mut synthetic, &mut log, &mut script, reply);
+        let refusal = Some(
+            "a pointer command is still running on entity 7; wait for its reply or send /hover_entity --clear"
+                .to_owned(),
+        );
+
+        // before anything played, and after the step ahead of the release: refused, aim kept
+        for frame in 0..2 {
+            assert_eq!(app.world().resource::<PointerJob>().busy(), refusal);
+            assert!(
+                app.world().resource::<SyntheticPointer>().0.is_some(),
+                "frame {frame}"
+            );
+            assert!(rx.try_recv().is_err(), "frame {frame}");
+            app.update();
+        }
+
+        // the release played in the last update, and the pipeline ran after it
+        assert_eq!(app.world().resource::<InputScript>().played(), 2);
+        assert_eq!(app.world().resource::<PointerJob>().busy(), None);
+        assert!(app.world().resource::<SyntheticPointer>().0.is_none());
+        assert_eq!(rx.try_recv().ok(), Some(Ok("cleared".to_owned())));
+    }
+
+    #[test]
+    fn clear_with_nothing_held_answers_at_once() {
+        let mut app = app();
+        let (reply, mut rx) = RpcResultSender::channel();
+        let mut state = SystemState::<Control>::new(app.world_mut());
+        let (mut jobs, mut synthetic, mut log, mut script) = state.get_mut(app.world_mut());
+        clear_pointer(&mut jobs, &mut synthetic, &mut log, &mut script, reply);
+        assert_eq!(app.world().resource::<PointerJob>().busy(), None);
+        assert_eq!(rx.try_recv().ok(), Some(Ok("cleared".to_owned())));
+    }
 }
