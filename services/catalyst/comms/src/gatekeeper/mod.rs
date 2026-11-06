@@ -440,6 +440,7 @@ pub struct CommsState {
     pub relay_authority: Option<Arc<admission::relay_authority::RelayAuthority>>,
     /// The world comms mints' throttle and capacity (`admission::world_mint`).
     pub world_mint: admission::world_mint::MintState,
+    pub(crate) world_access_cursor: std::sync::Mutex<Option<String>>,
     /// The island feed's settings (`admission::cluster`); the subscriber starts with
     /// [`Self::start_island_feed`].
     pub cluster: admission::cluster::ClusterConfig,
@@ -493,6 +494,7 @@ impl CommsState {
             webhooks: webhook::WebhookCoordinator::default(),
             relay_authority: None,
             world_mint: admission::world_mint::MintState::default(),
+            world_access_cursor: std::sync::Mutex::new(None),
             cluster: admission::cluster::ClusterConfig::default(),
             bus: Arc::new(bus::DisabledBus),
             assignments: None,
