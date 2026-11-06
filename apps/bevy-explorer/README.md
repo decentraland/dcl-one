@@ -158,9 +158,10 @@ Same-repo PRs publish under the `pr-<n>` dist-tag. The CI status *Build* section
 package version for the run after checking its npm commit against the web checkout SHA. It uses the
 PR tag to look up the version if the run lacks a usable package artifact or was dispatched manually.
 A PR publish failure does not fail the build, and closing the PR removes the tag (the trusted
-publisher needs "npm dist-tag"). The automatic rollout takes only the `next` version, so
-`publish-tag` builds need "Manual CDN rollout". Before
-archiving `decentraland/bevy-explorer`, verify one `next` of each package and re-adapt
+publisher needs "npm dist-tag"). A `pr-<n>` version is for testing only, never for a rollout;
+while `BENCHMARK_ENABLED_RUNNERS` is `none`, a PR that compiles the engine also skips wasm-opt. The
+automatic rollout takes only the `next` version, so `publish-tag` builds need "Manual CDN rollout".
+Before archiving `decentraland/bevy-explorer`, verify one `next` of each package and re-adapt
 `apps/ui3/src/play`.
 
 ## Container runtime

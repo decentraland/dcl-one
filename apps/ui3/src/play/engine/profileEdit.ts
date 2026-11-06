@@ -24,5 +24,6 @@ export function applyProfileEdit(profile: Profile, edit: ProfileEdit, ownedNames
     }
     next.info = Object.keys(info).length > 0 ? info : undefined
   }
+  if (edit.nameColor !== undefined) next.nameColor = edit.nameColor
   return next
 }

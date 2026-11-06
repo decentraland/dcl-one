@@ -1,5 +1,5 @@
 {
-  "description": "GET /content/entities/{type} must reject 'outfit' with 400 (mirrors the /audit endpoint).",
+  "description": "GET /content/entities/{type} rejects the singular 'outfit' with 400: the upstream type name is 'outfits'.",
   "request": {
     "method": "GET",
     "path": "/content/entities/outfit",

@@ -79,6 +79,13 @@ describe("the cart line, drawn as upstream's", () => {
     await walletSettled();
   });
 
+  it("signed out, the summary shows no confirmation group: there is nothing to confirm before sign-in", async () => {
+    renderCart({ session: "signedOut", lines: MIXED });
+    await walletSettled();
+    expect(screen.queryAllByTestId("checkout-group")).toEqual([]);
+    expect(screen.getByText("You'll be asked to sign in first.")).toBeTruthy();
+  });
+
   it("the thumbnail is the rarity's tile with its category flap, and the band opens with a back link", async () => {
     renderCart({ session: "web3", lines: [{ ...MIXED![0]!, category: "wearable", wearableCategory: "hat", rarity: "epic" }] });
     const mint = screen.getByRole("article", { name: "Rainbow Hat" });

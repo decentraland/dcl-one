@@ -20,7 +20,7 @@ use chrono::Utc;
 use serde_json::{Value, json};
 use sqlx::Row;
 
-use crate::content::queries::active_entity_docs_by_pointers;
+use crate::content::queries::{active_entity_docs_by_pointers, retain_non_denylisted};
 use crate::shared::cache::TtlMap;
 use crate::shared::query_params::{
     JsPagination, MAX_PAGE_SIZE as SHARED_MAX_PAGE_SIZE, parse_pagination_js, parse_query_string,
@@ -300,7 +300,8 @@ async fn fetch_owned_items(
         active_entity_docs_by_pointers(&state.pool, &pointers),
         item_types(state, &order)
     );
-    let docs = docs.map_err(|e| format!("entities: {e}"))?;
+    let mut docs = docs.map_err(|e| format!("entities: {e}"))?;
+    retain_non_denylisted(&mut docs, &state.denylist);
     let mut entity_by_pointer: HashMap<String, Value> = HashMap::new();
     for entity in docs.iter().filter_map(|d| d.to_value()) {
         if let Some(ptrs) = entity.get("pointers").and_then(|p| p.as_array()) {
