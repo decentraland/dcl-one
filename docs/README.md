@@ -16,6 +16,7 @@
 - [Shared Pulse and Explorer ENet](adr/2026-10-28-shared-pulse-enet.md)
 - [Explorer tests through the console](adr/2026-10-29-explorer-tests-through-the-console.md)
 - [Vendored Basis Universal transcoder](adr/2026-11-04-vendored-basisu.md)
+- [Opt-in UASTC texture upload](adr/2026-11-06-opt-in-uastc-texture-upload.md)
 - [Shared UI library](adr/2026-10-30-shared-ui-library.md)
 - [Explorer vendored Bevy](adr/2026-11-05-explorer-vendored-bevy.md)
 - [Dormant schema release definitions (proposed)](adr/2026-11-04-dormant-schema-release-definitions.md)
