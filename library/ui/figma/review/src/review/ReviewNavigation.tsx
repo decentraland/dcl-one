@@ -4,6 +4,7 @@ import data from './catalog.json'
 import { reviewStore } from './review.store'
 import { sections } from './Foundations'
 import { matchesPlatform, platforms, type Platform } from './navigation'
+import { reviewPageUrl } from './review-url'
 import styles from './ReviewGallery.module.css'
 
 function ReviewNavigation({
@@ -22,13 +23,14 @@ function ReviewNavigation({
       `${component.page} ${component.name}`.toLowerCase().includes(search)
   )
   const link = (params: Record<string, string>) =>
-    '/dcl-ui-review/?' +
-    new URLSearchParams({
-      platform: state.platform,
-      component: selected,
-      variant: new URLSearchParams(location.search).get('variant') ?? '0',
-      ...params
-    })
+    reviewPageUrl(
+      new URLSearchParams({
+        platform: state.platform,
+        component: selected,
+        variant: new URLSearchParams(location.search).get('variant') ?? '0',
+        ...params
+      }).toString()
+    )
   return (
     <aside className={styles.sidebar}>
       <h1>DCL One UI</h1>
@@ -68,7 +70,7 @@ function ReviewNavigation({
                   String(first.variants.findIndex((variant) => matchesPlatform(variant, platform)))
                 )
               }
-              location.href = '/dcl-ui-review/?' + params
+              location.href = reviewPageUrl(params.toString())
             }}
           >
             {platforms.map((platform) => (

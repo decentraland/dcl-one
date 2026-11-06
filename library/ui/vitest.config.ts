@@ -42,6 +42,8 @@ export default defineConfig({
             'test/**/*.test.{ts,tsx}',
             'figma/review/test/**/*.dom.test.tsx'
           ],
+          // Build contracts run only in the consumer project, avoiding duplicate concurrent builds.
+          exclude: ['test/**/*.build.test.ts'],
           setupFiles: ['test/setup.ts'],
           css: { modules: { classNameStrategy: 'non-scoped' } }
         }
