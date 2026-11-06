@@ -4,7 +4,9 @@
 
 use std::{cmp::Ordering, time::Duration};
 
-use bevy::prelude::Resource;
+use bevy::prelude::*;
+use bevy_console::ConsoleCommand;
+use common::structs::AppConfig;
 use web_time::Instant;
 
 /// What the last frame's raycast pass did: casts run, casts left for a later frame, and the time
@@ -14,6 +16,30 @@ pub struct RaycastStats {
     pub ran: u32,
     pub deferred: u32,
     pub spent: Duration,
+}
+
+/// Report, as JSON, what the last frame's raycast pass did: `budgetMs`, `ran`, `deferred` and
+/// `spentMs`
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/raycast_stats")]
+pub(super) struct RaycastStatsCommand;
+
+pub(super) fn raycast_stats(
+    mut input: ConsoleCommand<RaycastStatsCommand>,
+    stats: Res<RaycastStats>,
+    config: Res<AppConfig>,
+) {
+    if let Some(Ok(_)) = input.take() {
+        input.reply_ok(
+            serde_json::json!({
+                "budgetMs": config.raycast_budget_ms,
+                "ran": stats.ran,
+                "deferred": stats.deferred,
+                "spentMs": stats.spent.as_secs_f32() * 1000.0,
+            })
+            .to_string(),
+        );
+    }
 }
 
 /// The fields a pending raycast request is ordered by.

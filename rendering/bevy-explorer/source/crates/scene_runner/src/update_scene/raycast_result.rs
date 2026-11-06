@@ -17,7 +17,10 @@ use web_time::Instant;
 
 use crate::{
     initialize_scene::SuperUserScene,
-    update_scene::raycast_budget::{candidate_order, run_within_budget, Candidate, RaycastStats},
+    update_scene::raycast_budget::{
+        candidate_order, raycast_stats, run_within_budget, Candidate, RaycastStats,
+        RaycastStatsCommand,
+    },
     update_world::{
         gltf_container::GLTF_LOADING,
         mesh_collider::{GlobalGroundCollider, RaycastResult, SceneColliderData},
@@ -25,7 +28,7 @@ use crate::{
     },
     ContainingScene, RendererSceneContext, SceneEntity, SceneSets,
 };
-use console::DoAddConsoleCommand;
+use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use dcl_component::{
     proto_components::{
         common::Vector3,
@@ -48,6 +51,28 @@ impl Plugin for RaycastResultPlugin {
         app.init_resource::<RaycastStats>();
         app.init_resource::<SuperUserRaycastScene>();
         app.add_preview_console_command::<DebugRaycastCommand, _>(debug_raycast);
+        app.add_console_command::<RaycastStatsCommand, _>(raycast_stats);
+        app.add_debug_section(DebugSection {
+            title: "Raycasts",
+            query: "/raycast_stats",
+            fields: &[
+                ("Budget (ms)", "budgetMs"),
+                ("Ran last frame", "ran"),
+                ("Deferred last frame", "deferred"),
+                ("Spent last frame (ms)", "spentMs"),
+            ],
+            inputs: &[DebugInput {
+                label: "Budget (ms)",
+                field: "budgetMs",
+                command: "/raycast_budget {value}",
+                kind: DebugInputKind::Number {
+                    min: 0.0,
+                    max: 10.0,
+                    step: 1.0,
+                },
+            }],
+            actions: &[],
+        });
     }
 }
 
