@@ -1,0 +1,25 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://asset-bundle-registry.decentraland.org",
+  "request": {
+    "method": "OPTIONS",
+    "path": "/profiles/metadata",
+    "headers": {
+      "Origin": "https://example.org",
+      "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers": "content-type"
+    },
+    "body": ""
+  },
+  "response": {
+    "status": 204,
+    "headers": {
+      "access-control-allow-headers": "content-type",
+      "access-control-allow-methods": "GET,HEAD,OPTIONS,DELETE,POST,PUT",
+      "access-control-allow-origin": "*",
+      "access-control-max-age": "86400",
+      "vary": "Access-Control-Request-Headers"
+    },
+    "body": ""
+  }
+}

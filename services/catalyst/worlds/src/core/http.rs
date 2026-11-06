@@ -13,21 +13,11 @@ pub fn query_param<'a>(q: &'a QueryPairs, key: &str) -> Option<&'a str> {
     q.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
 }
 
-/// JS `parseInt(s, 10)`: leading whitespace, an optional sign, then the
-/// leading digits (saturating); `None` where JS gives `NaN`.
+/// JS `parseInt(s, 10)`, the shared parser: leading JavaScript whitespace,
+/// an optional sign, then the leading digits (saturating); `None` where JS
+/// gives `NaN`.
 pub fn js_parse_int(s: &str) -> Option<i64> {
-    let t = s.trim_start();
-    let (negative, rest) = match t.as_bytes().first() {
-        Some(b'-') => (true, &t[1..]),
-        Some(b'+') => (false, &t[1..]),
-        _ => (false, t),
-    };
-    let digits = &rest[..rest.bytes().take_while(u8::is_ascii_digit).count()];
-    if digits.is_empty() {
-        return None;
-    }
-    let n = digits.parse::<i64>().unwrap_or(i64::MAX);
-    Some(if negative { -n } else { n })
+    crate::shared::query_params::js_parse_int(s, false)
 }
 
 pub const MAX_PAGE_LIMIT: i64 = 100;

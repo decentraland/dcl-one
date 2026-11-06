@@ -52,6 +52,11 @@ pub const MAX_CONCURRENT_FILLS: usize = 16;
 /// The hang guard of one fill, a scene's content files included.
 const FILL_DEADLINE: Duration = Duration::from_secs(300);
 const NEGATIVE_MAX_ENTRIES: usize = 100_000;
+/// Keys longer than this enter the negative cache as their SHA-256, so its
+/// memory stays bounded by entry count: upstream caps neither the length of
+/// a pointer nor of an id, and a 10 MiB `/entities/active` body can name
+/// 1000 unknown 10 KB pointers.
+const NEGATIVE_KEY_MAX_BYTES: usize = 128;
 /// Files every fill together fetches at once.
 pub const MAX_CONCURRENT_DOWNLOADS: usize = 16;
 const FLUSH_CONCURRENCY: usize = 2;
@@ -95,6 +100,17 @@ impl FillsInner {
     }
 }
 
+/// The negative cache's key for `key` ([`NEGATIVE_KEY_MAX_BYTES`]).
+fn negative_key(key: &str) -> String {
+    if key.len() <= NEGATIVE_KEY_MAX_BYTES {
+        return key.to_string();
+    }
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(key.as_bytes());
+    let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    format!("sha256:{hex}")
+}
+
 /// Single-flight, bounded, negatively cached fills keyed by string.
 #[derive(Clone)]
 pub struct Fills {
@@ -124,7 +140,7 @@ impl Drop for FillDone {
             }
             let mut inflight = self.inner.inflight.lock();
             for key in &self.keys {
-                negative.insert(key.clone(), now);
+                negative.insert(negative_key(key), now);
                 inflight.remove(key);
             }
         }
@@ -211,7 +227,7 @@ impl Fills {
                     waits.push(running.clone());
                     joined = true;
                 } else if !negative
-                    .get(&key)
+                    .get(&negative_key(&key))
                     .is_some_and(|at| now.duration_since(*at) < inner.negative_ttl)
                 {
                     own.push(key);

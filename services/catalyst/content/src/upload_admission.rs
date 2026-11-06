@@ -19,7 +19,6 @@
 //! own clients; such an upstream raises `POST_ENTITIES_DAILY_QUOTA_MAX` or
 //! sets it to 0.
 
-use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -79,47 +78,14 @@ impl Drop for Reservation<'_> {
     }
 }
 
+use crate::fixed_windows::{FixedWindows, Window};
 use crate::shared::client_ip::source_key;
-
-struct Window {
-    started: Instant,
-    count: u32,
-}
-
-/// Live windows by source key, and their keys oldest first (one entry each).
-#[derive(Default)]
-struct Windows {
-    by_source: HashMap<String, Window>,
-    by_age: VecDeque<String>,
-}
-
-impl Windows {
-    /// Drops the windows that ended by `now`, oldest first.
-    fn prune(&mut self, now: Instant) {
-        while let Some(key) = self.by_age.front() {
-            match self.by_source.get(key) {
-                Some(w) if now.saturating_duration_since(w.started) < DAILY_WINDOW => break,
-                _ => {
-                    let key = self.by_age.pop_front().expect("front exists");
-                    self.by_source.remove(&key);
-                }
-            }
-        }
-    }
-
-    fn evict_oldest(&mut self) {
-        if let Some(key) = self.by_age.pop_front() {
-            self.by_source.remove(&key);
-        }
-    }
-}
 
 /// A fixed 24-hour window of deploys per client source; `max` 0 is off.
 /// Per process: every upstream and restart counts on its own.
 pub struct DailyQuota {
     max: u32,
-    max_sources: usize,
-    windows: Mutex<Windows>,
+    windows: Mutex<FixedWindows>,
     warned_no_source: AtomicBool,
 }
 
@@ -134,7 +100,7 @@ impl QuotaCharge<'_> {
     /// Uncounts the deploy, if its window is still the live one.
     pub fn refund(self) {
         let mut windows = self.quota.windows.lock();
-        if let Some(w) = windows.by_source.get_mut(&self.key)
+        if let Some(w) = windows.get_mut(&self.key)
             && w.started == self.started
         {
             w.count = w.count.saturating_sub(1);
@@ -150,8 +116,7 @@ impl DailyQuota {
     fn with_max_sources(max: u32, max_sources: usize) -> Self {
         Self {
             max,
-            max_sources: max_sources.max(1),
-            windows: Mutex::new(Windows::default()),
+            windows: Mutex::new(FixedWindows::new(DAILY_WINDOW, max_sources)),
             warned_no_source: AtomicBool::new(false),
         }
     }
@@ -182,27 +147,12 @@ impl DailyQuota {
         let key = source_key(client_ip);
         let mut windows = self.windows.lock();
         windows.prune(now);
-        let started = match windows.by_source.get_mut(&key) {
-            Some(w) if w.count >= self.max => return Err(retry_after(w, now)),
-            Some(w) => {
-                w.count += 1;
-                w.started
-            }
-            None => {
-                if windows.by_source.len() >= self.max_sources {
-                    windows.evict_oldest();
-                }
-                windows.by_source.insert(
-                    key.clone(),
-                    Window {
-                        started: now,
-                        count: 1,
-                    },
-                );
-                windows.by_age.push_back(key.clone());
-                now
-            }
-        };
+        let w = windows.window(&key, now);
+        if w.count >= self.max {
+            return Err(retry_after(w, now));
+        }
+        w.count += 1;
+        let started = w.started;
         Ok(Some(QuotaCharge {
             quota: self,
             key,
@@ -221,7 +171,6 @@ impl DailyQuota {
         let mut windows = self.windows.lock();
         windows.prune(now);
         windows
-            .by_source
             .get(&source_key(client_ip))
             .filter(|w| w.count >= self.max)
             .map(|w| retry_after(w, now))
@@ -234,7 +183,6 @@ impl DailyQuota {
     pub(crate) fn counted_for(&self, client_ip: &str) -> u32 {
         self.windows
             .lock()
-            .by_source
             .get(&source_key(client_ip))
             .map_or(0, |w| w.count)
     }
@@ -362,8 +310,7 @@ mod tests {
             counted(&quota, "203.0.113.1", later),
             "the oldest was evicted"
         );
-        assert_eq!(quota.windows.lock().by_source.len(), 3);
-        assert_eq!(quota.windows.lock().by_age.len(), 3);
+        assert_eq!(quota.windows.lock().len(), 3);
     }
 
     #[test]
@@ -388,6 +335,6 @@ mod tests {
         for _ in 0..3 {
             assert!(quota.try_consume("").unwrap().is_none());
         }
-        assert!(quota.windows.lock().by_source.is_empty());
+        assert_eq!(quota.windows.lock().len(), 0);
     }
 }

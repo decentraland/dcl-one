@@ -219,6 +219,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     .await
     .context("connecting to DATABASE_URL")?;
     db::bootstrap(&pool).await?;
+    worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
 
     let storage_root = Path::new(&config.node.storage_root_folder);
     let storage = Arc::new(
@@ -1382,6 +1383,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         content::create_entity::MAX_DEPLOYMENT_BYTES
             .max(worlds::core::deploy::MAX_UPLOAD_WIRE_SIZE_BYTES) as u64,
     );
+    // Upstream's router under /content/: static segments matched whatever
+    // their case, and its `Allow` list on a 405. Other paths pass untouched.
+    let app = content::routing::upstream_routing(app);
     // The old executable trimmed trailing slashes outside its router
     // (`/api/events/` is what the explorer requests), so the layer wraps the
     // finished app rather than any one router.
@@ -1825,7 +1829,8 @@ async fn worlds_states(
                 settings,
                 eip1654.clone(),
             )
-            .context("building the scene host")?,
+            .context("building the scene host")?
+            .with_secret_max_attempts(config.worlds.shared_secret_max_attempts_per_minute),
         );
         host.spawn_jobs(jobs);
         Some(host)
