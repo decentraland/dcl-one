@@ -3,9 +3,10 @@
 //! The driver knows nothing about protobuf, identity, the decoder, or the parcel grid. Its whole
 //! contract is: connect to `host:port`, then move bytes between two channels — outbound
 //! [`PulseFrame`]s (with a reliability tag the driver maps to ENet channel flags / WebTransport
-//! stream-vs-datagram) and inbound raw `ServerMessage` bytes — and report [`PulseStatus`]. Because
-//! the seam is bytes, everything above it (handshake, decode, state, glue) is shared and written
-//! once, regardless of whether the driver is the native ENet thread or the wasm WebTransport task.
+//! stream-vs-datagram, and a [`FrameKind`] it reads only to collapse queued inputs) and inbound raw
+//! `ServerMessage` bytes — and report [`PulseStatus`]. Because the seam is bytes, everything above
+//! it (handshake, decode, state, glue) is shared and written once, regardless of whether the driver
+//! is the native ENet thread or the wasm WebTransport task.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -25,11 +26,45 @@ pub enum PulseReliability {
     UnreliableUnsequenced,
 }
 
+/// What a frame carries, for the decisions made below the protocol layer: collapsing (inputs)
+/// and pacing (teleports, emotes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameKind {
+    /// A `PlayerStateInput`. A newer one supersedes the input queued right before it; an input
+    /// with another frame between them is kept.
+    Input,
+    /// A `TeleportRequest`.
+    Teleport,
+    /// An `EmoteStart` or `EmoteStop`.
+    Emote,
+    /// Everything else: handshakes, resync, profile announcements, scene-listener updates.
+    Control,
+}
+
 /// One outbound unit of work: an already-encoded `ClientMessage` plus how to deliver it.
 #[derive(Debug)]
 pub struct PulseFrame {
     pub bytes: Vec<u8>,
     pub reliability: PulseReliability,
+    pub kind: FrameKind,
+}
+
+/// In each run of consecutive `Input` frames only the newest survives, since each carries the
+/// player's whole state; every other frame keeps its place.
+pub fn collapse_inputs(frames: Vec<PulseFrame>) -> Vec<PulseFrame> {
+    let mut collapsed: Vec<PulseFrame> = Vec::with_capacity(frames.len());
+    for frame in frames {
+        // An input replaces the input right before it, so each run shrinks to its newest.
+        if frame.kind == FrameKind::Input
+            && collapsed
+                .last()
+                .is_some_and(|last| last.kind == FrameKind::Input)
+        {
+            collapsed.pop();
+        }
+        collapsed.push(frame);
+    }
+    collapsed
 }
 
 /// Connection lifecycle, surfaced from the driver to the protocol layer.
@@ -39,15 +74,16 @@ pub enum PulseStatus {
     Connected,
     /// Connected-then-dropped, carrying the server's reason (see [`PulseDisconnect`]).
     Disconnected(PulseDisconnect),
-    /// Never established (DNS/socket/connect timeout) — always transient, safe to retry.
+    /// A failure the driver reports itself, before or after the connection came up: DNS, a connect
+    /// timeout, an inbound backlog over a cap, and the like. Always retryable.
     Failed(String),
 }
 
 /// Server disconnect reason. This is an out-of-band ABI shared with the server
 /// (`Pulse.Transport.DisconnectReason`), *not* a wire message: it arrives as the ENet disconnect
 /// event's `data` code. The driver maps that `u32` here so the protocol layer can decide whether a
-/// reconnect could plausibly help — several reasons are terminal by the server's design (bad auth,
-/// ban, eviction, flagged misbehaviour) and must not trigger a reconnect loop.
+/// reconnect could plausibly help — several reasons are terminal by the server's design (ban,
+/// eviction, flagged misbehaviour) and must not trigger a reconnect loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PulseDisconnect {
     /// No reason supplied (e.g. a plain network timeout where the remote set no code).
@@ -84,6 +120,12 @@ pub enum PulseDisconnect {
     InvalidHandshakeField,
     /// Sustained corrupt/oversized packets (buggy client, fuzzer, or amplification probe).
     PacketCorrupted,
+    /// Per-source-IP concurrent-connection cap exceeded. Unlike [`Self::PreAuthIpLimit`],
+    /// authenticated connections count against it; it frees as the IP's other connections close.
+    IpConnectionLimitExceeded,
+    /// Per-source-IP concurrent scene-listener cap exceeded. It frees only when another listener
+    /// from the same IP disconnects, which may take minutes or never.
+    SceneListenerIpLimitExceeded,
     /// `SceneListenerUpdate` carried an invalid AoI (no rects, inverted/out-of-range rect, or over
     /// the server's parcel budget). The AoI in force when it arrived is untouched.
     InvalidSceneListenerField,
@@ -117,24 +159,11 @@ impl PulseDisconnect {
             14 => Self::HandshakeReplayRejected,
             15 => Self::InvalidHandshakeField,
             16 => Self::PacketCorrupted,
+            17 => Self::IpConnectionLimitExceeded,
+            18 => Self::SceneListenerIpLimitExceeded,
             19 => Self::InvalidSceneListenerField,
             other => Self::Unknown(other),
         }
-    }
-
-    /// Whether reconnecting could plausibly succeed. Only transient, server-side, or
-    /// too-slow-this-time reasons are retryable; auth/ban/eviction/misbehaviour reasons (and any
-    /// unrecognised code) are terminal — reconnecting against them just loops.
-    pub fn should_retry(self) -> bool {
-        matches!(
-            self,
-            Self::None
-                | Self::Graceful
-                | Self::AuthTimeout
-                | Self::ServerFull
-                | Self::PreAuthIpLimit
-                | Self::PreAuthBudget
-        )
     }
 }
 
@@ -154,9 +183,27 @@ pub struct PulseTransportConfig {
 /// Protocol-layer end of the boundary (held by the Bevy plugin). `Send + Sync`, so it lives in a
 /// resource.
 pub struct PulseLink {
-    pub outbound: mpsc::Sender<PulseFrame>,
+    outbound: mpsc::Sender<PulseFrame>,
+    pub(super) traffic: crate::traffic::PayloadTraffic,
     pub inbound: mpsc::Receiver<Vec<u8>>,
     pub status: mpsc::Receiver<PulseStatus>,
+}
+
+impl PulseLink {
+    pub(crate) fn send(&mut self, frame: PulseFrame) -> bool {
+        let size = frame.bytes.len();
+        if self.outbound.try_send(frame).is_err() {
+            return false;
+        }
+        self.traffic.record_sent(size);
+        true
+    }
+
+    pub(crate) fn receive(&mut self) -> Option<Vec<u8>> {
+        let bytes = self.inbound.try_recv().ok()?;
+        self.traffic.record_received(bytes.len());
+        Some(bytes)
+    }
 }
 
 /// Driver end of the boundary (moved into the native thread / wasm task).
@@ -175,6 +222,7 @@ pub fn pulse_channels(capacity: usize) -> (PulseLink, PulseDriverChannels) {
     (
         PulseLink {
             outbound: outbound_tx,
+            traffic: Default::default(),
             inbound: inbound_rx,
             status: status_rx,
         },
@@ -233,3 +281,6 @@ pub fn spawn_pulse_driver(
         PulseDriverHandle { stop }
     }
 }
+
+#[cfg(test)]
+mod tests;

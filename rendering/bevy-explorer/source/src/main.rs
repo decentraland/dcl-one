@@ -284,10 +284,25 @@ fn decentraland_app_arguments() -> Result<DecentralandArguments, UserError> {
         args.launch.base_domain = args.launch.base_domain.take().or(place.base_domain);
     }
 
+    if let Some(gateway) = &args.gateway {
+        common::base_domain::set_gateway(gateway).map_err(|e| {
+            error!("{e}");
+            UserError(USAGE_ERROR)
+        })?;
+    }
+
     webgpu_build::launch::latch(&args.launch).map_err(|e| {
         error!("{e}");
         UserError(USAGE_ERROR)
     })?;
+
+    if let Some(port) = args.network_devtools {
+        let address = platform::devtools::start(port).map_err(|e| {
+            error!("Could not start Network inspector: {e}");
+            UserError(USAGE_ERROR)
+        })?;
+        info!("Explorer Network inspector http://{address}/json/list");
+    }
 
     // An explicit --system-scene (a scene source, or "none" for the engine's builtin ui) opts out of the
     // react HUD entirely — the given ui scene drives instead (see lib.rs).
@@ -473,6 +488,93 @@ mod tests {
         assert_eq!(args.log_file.as_deref(), Some(Path::new("out/build_0.log")));
     }
 
+    #[test]
+    fn gateway_requires_a_native_flag() {
+        let link = DecentralandArguments::try_parse_from([
+            "explorer",
+            "decentraland://?position=1,2&gateway=https://other.test",
+        ])
+        .unwrap();
+        assert!(link.gateway.is_none());
+        let args = DecentralandArguments::try_parse_from([
+            "explorer",
+            "--gateway",
+            "https://gateway.example.test",
+            "--places",
+            "https://custom.test/base",
+        ])
+        .unwrap();
+        assert_eq!(
+            args.gateway.as_deref(),
+            Some("https://gateway.example.test")
+        );
+        assert_eq!(
+            args.launch.services.places.as_deref(),
+            Some("https://custom.test/base")
+        );
+    }
+
+    #[test]
+    fn signing_follows_the_resolved_gateway_route_including_explicit_overrides() {
+        use common::base_domain::{self, Service};
+        let gateway = "https://gateway.example.test";
+        base_domain::set_gateway(gateway).unwrap();
+        base_domain::set_services([
+            (Service::Places, gateway),
+            (
+                Service::SocialApi,
+                "https://private:secret@custom.example/override",
+            ),
+            (
+                Service::PreviewGatekeeper,
+                "https://gateway.example.test/comms-gatekeeper-local/custom",
+            ),
+        ])
+        .unwrap();
+        let bases: std::collections::HashMap<_, _> =
+            base_domain::hud_services().into_iter().collect();
+        assert_eq!(bases["socialApi"], "https://custom.example/override");
+        assert_eq!(bases["events"], format!("{gateway}/events"));
+        assert_eq!(
+            bases["cameraReel"],
+            format!("{gateway}/camera-reel-service")
+        );
+        assert_eq!(bases["reels"], "https://decentraland.org/reels");
+        let notices = format!(
+            "{}/notifications/read?private=value",
+            bases["notifications"]
+        );
+        assert_eq!(
+            base_domain::gateway_signed_path(&notices)
+                .unwrap()
+                .as_deref(),
+            Some("/notifications/read")
+        );
+        assert!(!serde_json::to_string(&bases).unwrap().contains("secret"));
+        let adapter = base_domain::url(Service::CommsGatekeeper, "/get-scene-adapter");
+        assert_eq!(
+            base_domain::gateway_signed_path(&adapter)
+                .unwrap()
+                .as_deref(),
+            Some("/get-scene-adapter")
+        );
+        let preview = base_domain::url(Service::PreviewGatekeeper, "/adapter");
+        assert_eq!(
+            base_domain::gateway_signed_path(&preview)
+                .unwrap()
+                .as_deref(),
+            Some("/custom/adapter")
+        );
+        assert_eq!(
+            base_domain::gateway_signed_path(&bases["socialApi"]).unwrap(),
+            None
+        );
+        assert_eq!(
+            base_domain::url(Service::Places, "/tiles"),
+            format!("{gateway}/tiles")
+        );
+    }
+
     fn log_file_in_a_missing_folder() -> std::path::PathBuf {
         std::env::temp_dir()
             .join(format!("no_such_folder_{}", std::process::id()))
@@ -527,6 +629,24 @@ mod tests {
         let path = log_file_in_a_missing_folder().with_file_name("run.csv");
         assert!(check_csv_folder(Some(&path), false).is_ok());
         assert!(check_csv_folder(None, true).is_ok());
+    }
+
+    #[test]
+    fn network_inspection_requires_an_explicit_native_flag() {
+        let link = DecentralandArguments::try_parse_from([
+            "explorer",
+            "decentraland://?position=1,2&networkDevtools=9223&network-devtools=9223",
+        ])
+        .unwrap();
+        assert!(link.network_devtools.is_none());
+        let args =
+            DecentralandArguments::try_parse_from(["explorer", "--network-devtools", "9223"])
+                .unwrap();
+        assert_eq!(args.network_devtools, Some(9223));
+        assert!(DecentralandArguments::try_parse_from(
+            ["explorer", "--network-devtools", "65536",]
+        )
+        .is_err());
     }
 
     #[test]

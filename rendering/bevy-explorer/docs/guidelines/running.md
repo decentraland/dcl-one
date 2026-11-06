@@ -25,6 +25,53 @@ then `cargo build`. This loop is verified on macOS, the only platform where the 
 to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` (see
 `source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs.
 
+### Gateway routing
+
+For a deployment serving the APIs on one origin, run `just native-debug --gateway https://example.org`.
+The native client and HUD use that origin's service prefixes, including `/comms-gatekeeper` and
+`/camera-reel-service`. The peer's `/content` and `/lambdas` are at the root. To use the gateway
+virtual host, pass `--gateway https://gateway.example.org`. A hostname beginning with
+`gateway.` selects this layout. Every other hostname selects the apex layout.
+The client uses the virtual host's service aliases
+(for example `/peer/content`). For a service base under a gateway alias, the signature covers
+the path after the alias. For example, `/social-api/v1/communities` signs `/v1/communities`.
+A bare `/social-api` signs `/social-api`, while `/social-api/` signs `/`. A service base at the
+gateway root and a direct-origin URL both keep the full public path. If the gateway URL includes
+a mount prefix, configure the front proxy to strip that prefix before forwarding.
+
+`--base-domain example.org` selects which deployment's backend-supplied `profile-images` URLs are
+eligible for routing. Only HTTPS image URLs on that exact host qualify.
+
+The HUD bridge reads the engine's service URLs through `getServiceUrls()`. Explicit service
+flags take precedence over gateway defaults. For example, `--events https://events.example.org`
+selects that backend for both the Events panel and community events. `--camera-reel` selects
+the photo API. `--reels` selects the public share page where a photo link opens. On the
+integrated web client, Sites supplies its origin's service URLs at boot.
+
+On desktop, native HTTP Fetch from the bundled bridge or an operator-selected
+`--system-scene` can reach loopback and LAN services outside preview, including through
+an explicit HTTP service override. The HTTP client blocks link-local and metadata addresses.
+Ordinary and authoritative hosted scenes use their own address policies. For native scene
+WebSockets, access to private resolved addresses is preview-only.
+
+Use HTTPS for remote deployments. Plain HTTP sends signed headers and any request
+credentials in cleartext.
+
+The gateway flag leaves Pulse, social RPC, Ethereum RPC and storage on their explicit
+overrides or base-domain defaults. The default base domain is `decentraland.org`.
+Pulse also accepts the `PULSE_SERVER` environment variable. Configure a private deployment with
+`--pulse-server <host[:port]>`, `--social-rpc wss://example.org/social-rpc`,
+`--ethereum-rpc wss://example.org/rpc` and `--storage https://storage.example.org`
+as appropriate for that deployment. Storage delegates authorize an origin, so select
+the intended storage origin explicitly. The authentication page and public Reels links
+also keep their configured destinations, set with `--auth-page https://example.org/auth`
+and `--reels https://example.org/reels` when needed.
+
+With Python 3 and Node.js 24 installed, run
+`cargo test --locked -p common gateway_routes_match_deployment -- --ignored` from the
+Explorer workspace to compare its resolved routes with the HUD resolver and the rendered nginx maps.
+This also checks signature paths and the intentionally separate RPC and storage defaults.
+
 To package, follow the [desktop workflow](../../../../.github/workflows/bevy-explorer-desktop.yml):
 pinned Rust, protoc, CEF and platform libraries, including `CEF_PATH`. With those installed:
 
@@ -40,6 +87,36 @@ cargo build --release --locked
 The workflow also stages the CEF helper, runtime libraries, assets and sidecar. Follow its
 platform packaging steps, then launch the packaged executable with `--realm <about-url>
 --position x,y`. A Cargo build alone does not bundle the HUD or package those runtime files.
+
+### Native Network inspector
+
+Explorer engineers and deployment integrators can inspect selected native Rust HTTP
+transfers in Chrome DevTools. These requests run outside the embedded browser and do not
+appear in its Network panel. Start the desktop client with
+`just native-debug --network-devtools 9223`, open `http://127.0.0.1:9223/json/list`, and open
+its `devtoolsFrontendUrl` in Chrome. Attach before reproducing a transfer: the target retains
+no history for future subscribers. The headless executable does not start this target.
+
+The target reports methods, request paths, final response status, elapsed transfer time
+and consumed body bytes. Full normalized paths retain content hashes and identifiers;
+URLs are capped at 4,096 characters. Userinfo, query strings, fragments, headers and bodies
+are excluded. Any values embedded in the path remain visible. The target is read-only,
+binds only to loopback and accepts Chrome DevTools origins or local clients without an Origin
+header. It supports at most eight concurrent clients and disconnects a slow subscriber
+instead of delaying requests.
+
+Observed transports are content-budget downloads (including asset and catalog blobs),
+active-entity POSTs, font metadata, realm `/about` and `/scenes`, registry profiles,
+signed comms login and gatekeeper adapters. Each admitted retry has its own trace; the
+existing scheduler permit remains held through the response body. A status-only response
+reports zero consumed body bytes. Redirects show the initial request and final response,
+without intermediate hops.
+
+Coverage is limited to these transports. Direct reqwest callers such as wallet sign-in,
+world access and profile uploads do not appear. Native scene and HUD Fetch run in a separate
+process and need IPC event forwarding to join this target. Cache hits, admission wait time,
+deduplicated readers, initiators, incremental body events and DNS/TLS timing are also outside
+the transfer traces. The web client continues to use the browser's Network panel.
 
 ## Web
 
@@ -74,6 +151,29 @@ commands registered with `add_preview_console_command`. On web the same surface 
 from the browser console through `window.engine`, which lives in the app frame (`app.html`),
 not the shell page: pick the app frame in the DevTools context selector first.
 
+## Runtime debug panel
+
+In a development engine build, click the bug button in the lower-right corner of the in-world HUD to toggle the panel.
+In any build, open **Sidebar settings (•••) → Debug panel** or enter `/debug` in chat.
+Use `/debug help` to list the sections available in this client and `/debug <section>`
+to open one directly. Search matches both section titles and controls. Expand the
+sections you want to watch. Collapsing a section stops its queries. Download totals and
+connection rates include traffic from before you opened the panel. Current Scene charts
+show up to 256 completed ticks from the player's current parcel scene. Entering a different
+scene starts its own history.
+Pulse and LiveKit rooms show one connection button. It changes from **Disconnect**
+to **Connect** when paused, and is disabled when there is no controllable connection.
+
+World and Scene Loading show where the player is and which load stage is active.
+Performance and Memory and limits expose the engine's measurements and budgets.
+The room, voice, rendering, media and avatar sections appear with the plugins that
+supply them. When several readings need the same scene, peer or sample, the panel
+shows the cause once. Expand the reading count to see which fields it affects.
+Numeric groups show a separate cell for each value. Development-only mutations
+require preview mode. To add a section, follow the [plugin recipe](recipes.md#a-plugin-section-in-the-runtime-debug-panel).
+
+![Entity Requests in the Windows development build, with separate minimum, mean and maximum values for scene and avatar batches](runtime-debug-panel.png)
+
 ## Test commands
 
 > **Implementation and acceptance:** the web driver, HUD automation helper and native
@@ -96,7 +196,8 @@ State, in every build:
   slots), as rendered (built or not, wearables by category, hidden categories) and the emote
   each plays, as a JSON array; the player's by default. The HUD's preview avatars are tagged
   `preview`. Rendered URNs are normalised (lowercase, default wearables included); selected ones
-  are as written.
+  are as written. The HUD uses `/avatar_state --panel` for a single local-player report.
+  It shows the completed model while a replacement loads and explains missing readings.
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.

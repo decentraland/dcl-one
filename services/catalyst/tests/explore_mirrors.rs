@@ -1211,7 +1211,8 @@ async fn upsert_real_page_is_idempotent_and_serves() {
         "upsert is idempotent"
     );
 
-    let component = EventsComponent::new(pool.clone(), None);
+    let component =
+        EventsComponent::new(pool.clone(), None, "https://events.decentraland.org".into());
     let sample_id = events[0]["id"].as_str().unwrap();
     let rec = component
         .get(sample_id)
@@ -1662,6 +1663,7 @@ async fn an_unlisted_row_is_settled_by_the_upstream_detail_in_the_same_pass() {
             ..Default::default()
         },
         "0x00000000000000000000000000000000000000a1",
+        &catalyst::explore::Settings::for_tests(),
     )
     .await
     .expect_err("a mirrored event's own fields refuse moderation");
@@ -1995,7 +1997,8 @@ async fn the_viewers_attendance_rides_in_the_list_and_get_statements() {
     .execute(&pool)
     .await
     .unwrap();
-    let component = EventsComponent::new(pool.clone(), None);
+    let component =
+        EventsComponent::new(pool.clone(), None, "https://events.decentraland.org".into());
 
     let filters = EventListFilters {
         limit: 200,
@@ -2078,6 +2081,75 @@ async fn the_viewers_attendance_rides_in_the_list_and_get_statements() {
         events[0]["latest_attendees"].as_array().unwrap().len() + 1
     );
 
+    let original_total = component.get(id).await.unwrap().unwrap().total_attendees;
+    catalyst::explore::events::attendees::rsvp_cancel(&pool, id, upstream_user)
+        .await
+        .unwrap();
+    let cancelled = component
+        .get_for_viewer(id, Some(upstream_user))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        !cancelled.attending,
+        "local cancellation overrides the upstream preview"
+    );
+    assert_eq!(cancelled.total_attendees, (original_total - 1).max(0));
+    assert!(
+        !cancelled
+            .latest_attendees
+            .iter()
+            .any(|address| address.eq_ignore_ascii_case(upstream_user))
+    );
+    let cancelled_filter = EventListFilters {
+        user: Some(upstream_user.to_uppercase()),
+        only_attendee: true,
+        ..filters.clone()
+    };
+    let (cancelled_page, _) = component.query(&cancelled_filter, false).await.unwrap();
+    assert!(!cancelled_page.iter().any(|event| event.id == id));
+    assert!(
+        !component
+            .attending(upstream_user)
+            .await
+            .unwrap()
+            .iter()
+            .any(|event| event.id == id)
+    );
+    events_mirror::upsert_event(&pool, &events[0])
+        .await
+        .unwrap();
+    assert!(
+        !component
+            .get_for_viewer(id, Some(upstream_user))
+            .await
+            .unwrap()
+            .unwrap()
+            .attending,
+        "a mirror refresh cannot erase explicit cancellation"
+    );
+    let cancelled_list = catalyst::explore::events::attendees::list_for_event(&pool, id)
+        .await
+        .unwrap();
+    assert!(
+        !cancelled_list
+            .iter()
+            .any(|record| record.user.eq_ignore_ascii_case(upstream_user))
+    );
+    catalyst::explore::events::attendees::rsvp_going(&pool, id, upstream_user, None)
+        .await
+        .unwrap();
+    let rejoined = component
+        .get_for_viewer(id, Some(upstream_user))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(rejoined.attending);
+    assert_eq!(
+        rejoined.total_attendees, original_total,
+        "rejoining does not double-count a mirrored attendee"
+    );
+
     let mut finished = events[0].clone();
     occurrence(&mut finished, now - chrono::Duration::days(1));
     events_mirror::upsert_event(&pool, &finished).await.unwrap();
@@ -2106,12 +2178,25 @@ async fn the_viewers_attendance_rides_in_the_list_and_get_statements() {
         .await
         .unwrap();
     assert!(
-        component
-            .viewer_is_moderator(&OTHER.to_uppercase())
+        catalyst::explore::events::profiles::is_moderator(&pool, &OTHER.to_uppercase())
             .await
             .unwrap()
     );
-    assert!(!component.viewer_is_moderator(USER).await.unwrap());
+    assert!(
+        !catalyst::explore::events::profiles::is_moderator(&pool, USER)
+            .await
+            .unwrap()
+    );
+    sqlx::query("DELETE FROM explore.moderators WHERE address = $1")
+        .bind(OTHER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        !catalyst::explore::events::profiles::is_moderator(&pool, OTHER)
+            .await
+            .unwrap()
+    );
     db.teardown().await;
 }
 
@@ -2244,5 +2329,74 @@ async fn live_worlds_pass_against_places_decentraland_org() {
         .unwrap();
     assert_eq!(worlds["last_pass_complete"], Value::Bool(true));
     assert!(worlds["lag_secs"].as_i64().is_some());
+    db.teardown().await;
+}
+
+#[tokio::test]
+async fn a_local_rsvp_outside_the_upstream_preview_keeps_the_signed_delta_estimate() {
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    // The source count includes USER, but its bounded preview does not. The
+    // mirror supplies no membership fact with which to deduplicate that wallet.
+    let mut event = fixture_events().remove(0);
+    event["total_attendees"] = json!(100);
+    event["latest_attendees"] = json!([OTHER, null]);
+    let id = event["id"].as_str().unwrap();
+    events_mirror::upsert_event(&db.pool, &event).await.unwrap();
+    let component = EventsComponent::new(
+        db.pool.clone(),
+        None,
+        "https://events.decentraland.org".into(),
+    );
+    assert_eq!(
+        component.get(id).await.unwrap().unwrap().total_attendees,
+        100
+    );
+
+    catalyst::explore::events::attendees::rsvp_going(&db.pool, id, USER, None)
+        .await
+        .unwrap();
+    let going = component
+        .get_for_viewer(id, Some(USER))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(going.attending);
+    assert_eq!(
+        going.total_attendees, 101,
+        "the signed delta is an estimate when source membership is unknown"
+    );
+    assert!(
+        going
+            .latest_attendees
+            .iter()
+            .any(|address| address.eq_ignore_ascii_case(USER))
+    );
+    events_mirror::upsert_event(&db.pool, &event).await.unwrap();
+    assert_eq!(
+        component.get(id).await.unwrap().unwrap().total_attendees,
+        101
+    );
+
+    catalyst::explore::events::attendees::rsvp_cancel(&db.pool, id, USER)
+        .await
+        .unwrap();
+    let cancelled = component
+        .get_for_viewer(id, Some(USER))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!cancelled.attending);
+    assert_eq!(
+        cancelled.total_attendees, 100,
+        "an unknown upstream membership cannot be subtracted"
+    );
+    assert!(
+        !cancelled
+            .latest_attendees
+            .iter()
+            .any(|address| address.eq_ignore_ascii_case(USER))
+    );
     db.teardown().await;
 }

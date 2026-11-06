@@ -3,6 +3,17 @@ use std::collections::VecDeque;
 use bevy::{math::FloatOrd, prelude::*, render::primitives::Aabb};
 use common::{sets::PostUpdateSets, structs::AttachPoints};
 
+use crate::{attach::AvatarAttachment, ghost::AvatarGhost};
+use bevy_console::ConsoleCommand;
+use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
+use dcl_component::proto_components::sdk::components::AvatarAnchorPointType;
+use scene_runner::{
+    initialize_scene::SuperUserScene, update_world::scene_ui::UiCanvas, SceneEntity,
+};
+
+/// where the nametag sits while a player's ghost stands in for their avatar
+const GHOST_NAMETAG_HEIGHT: f32 = 2.0;
+
 pub struct DynamicNametagPlugin;
 
 impl Plugin for DynamicNametagPlugin {
@@ -15,6 +26,78 @@ impl Plugin for DynamicNametagPlugin {
         );
 
         app.add_observer(add_nametag_height_history);
+        app.insert_resource(NametagsVisible(true))
+            .add_console_command::<Nametags, _>(nametags_command)
+            .add_debug_section(DebugSection {
+                title: "Nametags",
+                query: "/nametags",
+                fields: &[],
+                actions: &[],
+                inputs: &[DebugInput {
+                    label: "Show nametags",
+                    field: "visible",
+                    command: "/nametags {value}",
+                    kind: DebugInputKind::Toggle,
+                }],
+            })
+            .add_systems(
+                Update,
+                sync_nametag_visibility
+                    .run_if(|visible: Res<NametagsVisible>| !visible.0 || visible.is_changed()),
+            );
+    }
+}
+
+#[derive(Resource)]
+struct NametagsVisible(bool);
+
+/// Read or set visibility of the HUD's world-space nametags.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/nametags")]
+struct Nametags {
+    visible: Option<bool>,
+}
+
+fn nametags_command(mut cmd: ConsoleCommand<Nametags>, mut visible: ResMut<NametagsVisible>) {
+    let Some(Ok(request)) = cmd.take() else {
+        return;
+    };
+    if let Some(value) = request.visible {
+        visible.0 = value;
+    }
+    cmd.reply_ok(serde_json::json!({"visible": visible.0}).to_string());
+}
+
+#[derive(Component)]
+struct HiddenNametag(Visibility);
+
+/// The HUD's label is a UiCanvas plane immediately beneath its name-tag anchor.
+/// Hide only that plane. SDK attachments share the anchor on the avatar skeleton.
+fn sync_nametag_visibility(
+    mut commands: Commands,
+    visible: Res<NametagsVisible>,
+    hud: Query<(), With<SuperUserScene>>,
+    attachments: Query<(&AvatarAttachment, &SceneEntity)>,
+    mut canvases: Query<
+        (Entity, &ChildOf, &mut Visibility, Option<&HiddenNametag>),
+        With<UiCanvas>,
+    >,
+) {
+    for (entity, parent, mut visibility, hidden) in &mut canvases {
+        let hide = !visible.0
+            && attachments.get(parent.parent()).is_ok_and(|(a, scene)| {
+                a.0.anchor_point_id() == AvatarAnchorPointType::AaptNameTag
+                    && hud.contains(scene.root)
+            });
+        if hide {
+            if hidden.is_none() {
+                commands.entity(entity).insert(HiddenNametag(*visibility));
+            }
+            visibility.set_if_neq(Visibility::Hidden);
+        } else if let Some(hidden) = hidden {
+            *visibility = hidden.0;
+            commands.entity(entity).remove::<HiddenNametag>();
+        }
     }
 }
 
@@ -63,10 +146,17 @@ impl NametagHeightHistory {
     fn max(&self) -> f32 {
         self.heights.get(self.max).copied().unwrap_or(0.)
     }
+
+    fn clear(&mut self) {
+        self.heights.clear();
+        self.timestamps.clear();
+        self.max = 0;
+    }
 }
 
 fn dynamic_nametag_position(
-    attach_points_query: Query<&AttachPoints>,
+    attach_points_query: Query<(Entity, &AttachPoints)>,
+    ghosts: Query<&AvatarGhost>,
     mut nametags: Query<(&mut Transform, &mut NametagHeightHistory)>,
     global_transforms: Query<&GlobalTransform>,
     aabbs: Query<&Aabb>,
@@ -75,7 +165,7 @@ fn dynamic_nametag_position(
     let new_timestamp = time.elapsed_secs_wrapped();
     let threshold = new_timestamp - 0.25;
 
-    for attach_points in attach_points_query {
+    for (player, attach_points) in attach_points_query {
         let Ok((mut nametag_transform, mut nametag_height_history)) =
             nametags.get_mut(attach_points.nametag)
         else {
@@ -94,20 +184,27 @@ fn dynamic_nametag_position(
         let head_position = head_position_gt.compute_transform();
         let head_aabb = aabbs.get(attach_points.head).ok();
 
-        let Some(highest_y) = [
-            FloatOrd(nametag_offset(
-                head_position_gt,
-                &position.translation,
-                head_aabb,
-            )),
-            // TODO extend with the heights of headgear
-        ]
-        .into_iter()
-        .max() else {
-            unreachable!("List is never empty.");
-        };
+        // the head attach point only reaches the head once the avatar is built; the ghost stands
+        // in for it at a fixed height until then
+        if ghosts.get(player).is_ok_and(AvatarGhost::showing) {
+            nametag_height_history.clear();
+            nametag_height_history.insert(GHOST_NAMETAG_HEIGHT, new_timestamp);
+        } else {
+            let Some(highest_y) = [
+                FloatOrd(nametag_offset(
+                    head_position_gt,
+                    &position.translation,
+                    head_aabb,
+                )),
+                // TODO extend with the heights of headgear
+            ]
+            .into_iter()
+            .max() else {
+                unreachable!("List is never empty.");
+            };
 
-        nametag_height_history.insert(highest_y.0, new_timestamp);
+            nametag_height_history.insert(highest_y.0, new_timestamp);
+        }
 
         let position_rotation = {
             let (axis, angle) = position.rotation.to_axis_angle();

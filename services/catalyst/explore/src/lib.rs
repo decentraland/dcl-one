@@ -114,7 +114,7 @@ impl MirrorSource {
 /// EVENTS_MIRROR_UPSTREAM/EVENTS_UPSTREAM_URL/EVENTS_MIRROR_INTERVAL_SECS,
 /// CATALYRST_EVENTS_ADMIN_TOKEN, CONTENT_PUBLIC_URL and HTTP_BASE_URL (the
 /// asset rewrite domain, derived from PUBLIC_URL here).
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Settings {
     /// The node's content base URL; thumbnails from it pass the image filter.
     pub content_public_url: String,
@@ -123,6 +123,10 @@ pub struct Settings {
     pub asset_rewrite_domain: Option<String>,
     /// Bearer for the events moderation routes; unset refuses them.
     pub events_admin_token: Option<String>,
+    /// Optional moderation webhook, dispatched only with operator writes enabled.
+    pub events_slack_webhook: Option<String>,
+    /// Separate explicit opt-in for aggregate upcoming-event Slack summaries.
+    pub events_upcoming_summaries_enabled: bool,
     pub places_upstream: Option<MirrorSource>,
     pub places_interval: Duration,
     pub worlds_upstream: Option<MirrorSource>,
@@ -148,9 +152,25 @@ pub struct Settings {
     pub places_admin_addresses: Vec<String>,
     /// `EVENTS_BASE_URL`: the events site the sitemaps point at.
     pub events_base_url: String,
+    /// Backend asset mount derived from the node public URL, never the events website.
+    pub events_asset_base_url: String,
     /// This node's realm name, the `serverName` a place's `realms_detail`
     /// carries.
     pub realm_name: String,
+}
+
+impl std::fmt::Debug for Settings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Settings")
+            .field("content_public_url", &self.content_public_url)
+            .field("user_writes_enabled", &self.user_writes_enabled)
+            .field("operator_writes_enabled", &self.operator_writes_enabled)
+            .field(
+                "events_slack_webhook",
+                &self.events_slack_webhook.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 impl Settings {
@@ -169,11 +189,17 @@ impl Settings {
             .filter(|h| h != "decentraland.org" && !h.ends_with(".decentraland.org"))
     }
 
+    pub fn events_asset_base_for(public_url: &str) -> String {
+        format!("{}/events", public_url.trim_end_matches('/'))
+    }
+
     pub fn for_tests() -> Self {
         Self {
             content_public_url: "http://localhost/content/".to_string(),
             asset_rewrite_domain: None,
             events_admin_token: None,
+            events_slack_webhook: None,
+            events_upcoming_summaries_enabled: false,
             places_upstream: None,
             places_interval: Duration::from_secs(3600),
             worlds_upstream: None,
@@ -188,6 +214,7 @@ impl Settings {
             data_team_token: None,
             places_admin_addresses: Vec::new(),
             events_base_url: "https://events.decentraland.org".to_string(),
+            events_asset_base_url: Self::events_asset_base_for("http://localhost"),
             realm_name: "main".to_string(),
         }
     }
@@ -230,7 +257,11 @@ impl ExploreState {
         Self {
             places: PlacesComponent::new(pool.clone(), &settings.content_public_url)
                 .with_worlds_mirror(settings.worlds_upstream.is_some()),
-            events: EventsComponent::new(pool.clone(), settings.asset_rewrite_domain.clone()),
+            events: EventsComponent::new(
+                pool.clone(),
+                settings.asset_rewrite_domain.clone(),
+                settings.events_asset_base_url.clone(),
+            ),
             schedules: SchedulesComponent::new(pool.clone()),
             live: Arc::new(places::live::Live::new(pool.clone())),
             pass_markers: copies::Markers::new(copies::MARKER_TTL),
@@ -312,6 +343,30 @@ impl ExploreState {
     /// away (jittered), then every interval, doubling the wait after a failed
     /// pass up to an hour.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs, client: crate::http::Outbound) {
+        if self.settings.operator_writes_enabled {
+            events::hooks::spawn(
+                self.pool.clone(),
+                client.clone(),
+                self.settings.events_slack_webhook.clone(),
+                self.settings.events_base_url.clone(),
+                jobs,
+            );
+            // Cleanup keeps running after opt-out. A blank webhook never starts
+            // delivery or scanning; existing moderation-only installs stay quiet.
+            events::upcoming::spawn(
+                self.pool.clone(),
+                client.clone(),
+                self.settings
+                    .events_slack_webhook
+                    .clone()
+                    .filter(|endpoint| {
+                        self.settings.events_upcoming_summaries_enabled
+                            && !endpoint.trim().is_empty()
+                    }),
+                self.settings.events_base_url.clone(),
+                jobs,
+            );
+        }
         let cfg = |interval: Duration| {
             PeriodicCfg::every(interval)
                 .with_jitter(Duration::from_secs(30))
@@ -704,6 +759,10 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/api/poster", post(events::posters::upload_poster))
         .route(
+            events::posters::DEFAULT_EVENT_IMAGE,
+            get(events::posters::default_image),
+        )
+        .route(
             "/api/poster-vertical",
             post(events::posters::upload_poster_vertical),
         )
@@ -747,6 +806,33 @@ pub fn router(state: SharedState) -> Router {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn settings_debug_redacts_the_optional_webhook_and_other_credentials() {
+        let mut settings = super::Settings::for_tests();
+        settings.events_slack_webhook = Some("https://example.org/secret-webhook".into());
+        settings.events_admin_token = Some("secret-admin".into());
+        let debug = format!("{settings:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("secret-webhook"));
+        assert!(!debug.contains("secret-admin"));
+    }
+
+    #[test]
+    fn event_assets_use_the_node_mount_independently_of_the_website() {
+        assert_eq!(
+            super::Settings::events_asset_base_for("http://localhost:8080/"),
+            "http://localhost:8080/events"
+        );
+        assert_eq!(
+            super::Settings::events_asset_base_for("https://node.example.org/prefix/"),
+            "https://node.example.org/prefix/events"
+        );
+        assert_ne!(
+            super::Settings::for_tests().events_asset_base_url,
+            super::Settings::for_tests().events_base_url
+        );
+    }
+
     use super::*;
 
     #[test]

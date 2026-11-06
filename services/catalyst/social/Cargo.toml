@@ -6,6 +6,7 @@ description = "Social: friends, communities, notifications, badges, profiles and
 publish = false
 
 [dependencies]
+ipnet.workspace = true
 dcl-http = { workspace = true, features = ["db"] }
 dcl-auth.workspace = true
 catalyst-fed = { path = "../fed" }
@@ -33,6 +34,7 @@ uuid.workspace = true
 tokio-util.workspace = true
 dashmap.workspace = true
 parking_lot.workspace = true
+metrics.workspace = true
 hex.workspace = true
 libc.workspace = true
 urlencoding.workspace = true
@@ -54,6 +56,11 @@ ts-rs = { workspace = true, optional = true }
 [features]
 ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-storage/ts", "catalyst-chain-index/ts", "catalyst-content/ts", "catalyst-explore/ts", "catalyst-comms/ts"]
 test-support = ["catalyst-fed/test-support", "catalyst-shared/test-support", "catalyst-storage/test-support", "catalyst-chain-index/test-support", "catalyst-content/test-support", "catalyst-explore/test-support", "catalyst-comms/test-support"]
+
+[build-dependencies]
+prost-build.workspace = true
+prost-types.workspace = true
+protox.workspace = true
 
 [dev-dependencies]
 catalyst-shared = { path = "../shared", features = ["test-support"] }

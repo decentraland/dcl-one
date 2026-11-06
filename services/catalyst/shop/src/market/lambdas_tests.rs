@@ -88,6 +88,16 @@ async fn serve(app: Router) -> String {
     format!("http://{addr}/")
 }
 
+/// A subgraph that answers every document with a GraphQL error.
+async fn serve_failing_graph() -> String {
+    use axum::routing::post;
+    serve(Router::new().route(
+        "/",
+        post(|| async { axum::Json(json!({ "errors": [{ "message": "indexer down" }] })) }),
+    ))
+    .await
+}
+
 /// One GraphQL fake per role, answering by the document it receives.
 async fn serve_graph(answer: fn(&str) -> Value) -> String {
     use axum::routing::post;
@@ -102,12 +112,18 @@ async fn serve_graph(answer: fn(&str) -> Value) -> String {
 }
 
 fn matic_collections(query: &str) -> Value {
-    if query.contains("category: \"wearable\"") {
+    if query.contains("urn_in") {
+        // The ownership document of the profiles: the owner holds the hat, token 10.
+        json!({ "o0": [{ "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10" }] })
+    } else if query.contains("category: \"wearable\"") {
         json!({ "nfts": [
-            { "id": "a1", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10", "transferredAt": "200",
+            { "id": "a1", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10", "itemType": "wearable_v2", "transferredAt": "200",
               "item": { "rarity": "epic", "price": "5" }, "metadata": { "wearable": { "name": "Hat", "category": "hat" } } },
-            { "id": "a2", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "11", "transferredAt": "300",
-              "item": { "rarity": "epic", "price": "5" }, "metadata": { "wearable": { "name": "Hat", "category": "hat" } } }
+            { "id": "a2", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "11", "itemType": "wearable_v2", "transferredAt": "300",
+              "item": { "rarity": "epic", "price": "5" }, "metadata": { "wearable": { "name": "Hat", "category": "hat" } } },
+            // An item no deployed entity describes.
+            { "id": "a3", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:9"), "tokenId": "12", "itemType": "wearable_v2", "transferredAt": "100",
+              "item": { "rarity": "common", "price": "1" }, "metadata": { "wearable": { "name": "Orphan", "category": "hat" } } }
         ] })
     } else {
         json!({ "nfts": [] })
@@ -167,7 +183,8 @@ fn marketplace_reader(query: &str, vars: &Value) -> Value {
         }
         json!({ "nfts": [
             { "id": "parcel-1", "name": "Plot", "contractAddress": LAND_REGISTRY_MAINNET, "tokenId": "1", "category": "parcel", "searchParcelX": "1", "searchParcelY": "2",
-              "transferredAt": "5", "parcel": { "data": { "description": "desc" } }, "estate": null, "activeOrder": { "price": "1000" } },
+              "transferredAt": "5", "parcel": { "data": { "description": "desc" } }, "estate": null, "activeOrder": { "price": "1000" },
+              "image": "https://maps.example/v1/parcels/1/2/map.png" },
             { "id": "estate-5", "name": null, "contractAddress": ESTATE_REGISTRY_MAINNET, "tokenId": "5", "category": "estate", "searchParcelX": null, "searchParcelY": null,
               "transferredAt": "8", "parcel": null, "estate": { "data": null }, "activeOrder": null }
         ] })
@@ -236,6 +253,17 @@ fn answer_call(to: &str, data: &str) -> String {
     let data = data.trim_start_matches("0x");
     let owner: Address = OWNER.parse().unwrap();
     match &data[..8] {
+        "6352211e" => {
+            let token = IERC721::ownerOfCall::abi_decode(&hex::decode(data).unwrap())
+                .unwrap()
+                .tokenId;
+            let holder = if token == U256::from(2) {
+                owner
+            } else {
+                Address::ZERO
+            };
+            format!("0x{}", hex::encode(holder.abi_encode()))
+        }
         "70a08231" => format!("0x{:064x}", 1),
         "01ffc9a7" => format!("0x{:064x}", 0),
         "949d225d" => format!("0x{:064x}", 1),
@@ -416,12 +444,21 @@ async fn seed(pool: &PgPool) {
     tp["mappings"] =
         json!({ "matic": { TP_CONTRACT: [{ "type": "range", "from": "1", "to": "3" }] } });
     deploy(pool, "bafytphat", "wearable", TP_URN, tp, &files).await;
+    let linked = |token: u32| format!("{TP_URN}:matic:{TP_CONTRACT}:{token}");
+    let outfit = |slot: u32, wearables: Vec<String>| json!({ "slot": slot, "outfit": { "wearables": wearables } });
     deploy(
         pool,
         "bafyoutfits",
         "outfits",
         &format!("{OWNER}:outfits"),
-        json!({ "outfits": [{ "slot": 0 }, { "slot": 6 }] }),
+        json!({ "outfits": [
+            outfit(0, vec!["urn:decentraland:off-chain:base-avatars:Eyes_00".into(), hat_urn.clone()]),
+            outfit(1, vec![format!("{hat_urn}:10")]),
+            outfit(2, vec![format!("{hat_urn}:99")]),
+            outfit(3, vec![linked(2), format!("urn:decentraland:matic:collections-v2:{COFFEE}:7")]),
+            outfit(4, vec![linked(3)]),
+            outfit(6, vec![]),
+        ] }),
         &[],
     )
     .await;
@@ -724,14 +761,74 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         body["emotes"][0]["emoteDataADR74"]["category"], "dance",
         "{body}"
     );
+    assert_eq!(
+        body["pagination"],
+        json!({ "limit": 500 }),
+        "no lastId asked, none echoed"
+    );
+    let (_, body) = get(
+        &state,
+        "/lambdas/collections/emotes?textSearch=dance&lastId=URN:DECENTRALAND:A",
+    )
+    .await;
+    assert_eq!(
+        body["pagination"],
+        json!({ "limit": 500, "lastId": "urn:decentraland:a" }),
+        "the request's lastId, lowercased"
+    );
+    // `textSearch` matches the mirrored subgraph `searchText`, case-sensitively,
+    // and the lowercased name only where the mirror has not filled it.
+    sqlx::query(
+        "UPDATE shop.items SET search_text = 'coffee dance moves' WHERE item_type = 'emote_v1'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    for (text, found) in [("moves", 1), ("dance", 1), ("Dance", 1), ("emote", 0)] {
+        let (_, body) = get(
+            &state,
+            &format!("/lambdas/collections/emotes?textSearch={text}&limit=7"),
+        )
+        .await;
+        assert_eq!(
+            body["emotes"].as_array().map(Vec::len),
+            Some(found),
+            "{text}: {body}"
+        );
+    }
+    sqlx::query("UPDATE shop.items SET search_text = 'renamed' WHERE item_type = 'emote_v1'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (_, body) = get(
+        &state,
+        "/lambdas/collections/emotes?textSearch=dance&limit=8",
+    )
+    .await;
+    assert_eq!(
+        body["emotes"].as_array().map(Vec::len),
+        Some(0),
+        "the name alone no longer matches: {body}"
+    );
 
     let (status, body) = get(&state, &format!("/lambdas/outfits/{OWNER}")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["metadata"]["namesForExtraSlots"], json!(["alice"]));
+    let hat = format!("urn:decentraland:matic:collections-v2:{COFFEE}:1");
     assert_eq!(
-        body["metadata"]["outfits"].as_array().unwrap().len(),
-        2,
-        "a name owner keeps the extra slots"
+        body["metadata"]["outfits"],
+        json!([
+            // The newest copy's token when none is named; lowercased.
+            { "slot": 0, "outfit": { "wearables": ["urn:decentraland:off-chain:base-avatars:eyes_00", format!("{hat}:11")] } },
+            { "slot": 1, "outfit": { "wearables": [format!("{hat}:10")] } },
+            // Slot 2 names a token the owner does not hold. Slot 3 keeps the
+            // upstream quirk: the walk stops at the item not owned and the
+            // owned third-party item decides. Slot 4's NFT is not held.
+            { "slot": 3, "outfit": { "wearables": [format!("{TP_URN}:matic:{TP_CONTRACT}:2")] } },
+            // A name owner keeps the extra slots.
+            { "slot": 6, "outfit": { "wearables": [] } },
+        ]),
+        "{body}"
     );
     let (status, _) = get(
         &state,
@@ -782,13 +879,159 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
     .await;
     assert_eq!(body["totalAmount"], 1);
     assert_eq!(body["elements"][0]["entity"]["thumbnail"], "bafythumb");
+    assert_eq!(body["elements"][0]["entity"]["metadata"]["isSmart"], false);
+    assert!(
+        body["elements"][0].get("amount").is_none(),
+        "amount only with includeAmount: {body}"
+    );
+    // The item-type filters keep the on-chain leg's matching types and drop
+    // the base and third-party legs.
+    for (filter, total) in [
+        ("isSmartWearable=true", 0),
+        ("network=MATIC", 1),
+        ("network=ETHEREUM", 0),
+        ("network=polygon", 4),
+    ] {
+        let (_, body) = get(&state, &format!("/explorer/{OWNER}/wearables?{filter}")).await;
+        assert_eq!(body["totalAmount"], total, "{filter}: {body}");
+    }
+    let tp_collection = "urn:decentraland:matic:collections-thirdparty:tp";
+    for (filter, total) in [
+        (format!("thirdPartyCollectionId={tp_collection}"), 1),
+        (
+            format!(
+                "thirdPartyCollectionId={tp_collection}&thirdPartyCollectionId={tp_collection}"
+            ),
+            1,
+        ),
+        // Two distinct values naming one provider list it once (lamb2 lists
+        // it twice, explorer-handler.ts:119-143), so the value list cannot
+        // multiply the answer.
+        (
+            format!(
+                "thirdPartyCollectionId={tp_collection}:c1&thirdPartyCollectionId={tp_collection}"
+            ),
+            1,
+        ),
+        (
+            (0..500)
+                .map(|i| format!("thirdPartyCollectionId={tp_collection}:x{i}"))
+                .collect::<Vec<_>>()
+                .join("&"),
+            1,
+        ),
+        ("thirdPartyCollectionId=not-a-urn".to_string(), 0),
+    ] {
+        let (_, body) = get(
+            &state,
+            &format!("/explorer/{OWNER}/wearables?collectionType=third-party&{filter}"),
+        )
+        .await;
+        assert_eq!(body["totalAmount"], total, "{filter}: {body}");
+    }
+    let not_found = json!({ "error": "The requested items cannot be fetched right now", "message": "Third Party not found: other" });
+    let (status, body) = get(
+        &state,
+        &format!("/explorer/{OWNER}/wearables?thirdPartyCollectionId=urn:decentraland:matic:collections-thirdparty:other"),
+    )
+    .await;
+    assert_eq!((status, &body), (StatusCode::BAD_GATEWAY, &not_found));
+    // No count limit; values that name no provider are dropped.
+    let many = "thirdPartyCollectionId=urn:a&".repeat(101);
+    let (status, body) = get(
+        &state,
+        &format!("/explorer/{OWNER}/wearables?collectionType=third-party&{many}"),
+    )
+    .await;
+    assert_eq!(
+        (status, &body["totalAmount"]),
+        (StatusCode::OK, &json!(0)),
+        "{body}"
+    );
     let (_, body) = get(&state, &format!("/explorer/{OWNER}/emotes")).await;
     assert_eq!(
         body["totalAmount"], 0,
         "the owner holds no emote copy: {body}"
     );
+    // Any `:address`: one that is not an Ethereum address owns nothing, the
+    // base wearables still answer.
     let (status, body) = get(&state, "/explorer/not-an-address/wearables").await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let types: Vec<&str> = body["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["type"].as_str())
+        .collect();
+    assert!(types.iter().all(|t| *t == "base-wearable"), "{body}");
+    let (_, body) = get(
+        &state,
+        "/explorer/not-an-address/wearables?collectionType=on-chain",
+    )
+    .await;
+    assert_eq!(body["totalAmount"], 0, "{body}");
+
+    // `/users/{address}/wearables`: lamb2's filters, order and include keys.
+    let hat = format!("urn:decentraland:matic:collections-v2:{COFFEE}:1");
+    let orphan = format!("urn:decentraland:matic:collections-v2:{COFFEE}:9");
+    let urns_of = |body: &Value| -> Vec<String> {
+        body["elements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["urn"].as_str().unwrap().to_string())
+            .collect()
+    };
+    for (query, entity_key, definition_key) in [
+        ("includeEntities", true, false),
+        ("includeDefinitions", false, true),
+    ] {
+        let (status, body) =
+            get(&state, &format!("/lambdas/users/{OWNER}/wearables?{query}")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            urns_of(&body),
+            [hat.clone(), orphan.clone()],
+            "{query}: {body}"
+        );
+        let [with, without] = [&body["elements"][0], &body["elements"][1]];
+        assert_eq!(with.get("entity").is_some(), entity_key, "{query}: {body}");
+        assert_eq!(
+            with.get("definition").is_some(),
+            definition_key,
+            "{query}: {body}"
+        );
+        assert!(
+            without.get("entity").is_none() && without.get("definition").is_none(),
+            "{query}: a missing entity or definition leaves the key out, never null: {body}"
+        );
+    }
+    let (status, body) = get(
+        &state,
+        &format!("/lambdas/users/{OWNER}/wearables?category=HAT&rarity=Epic"),
+    )
+    .await;
+    assert_eq!(
+        (status, urns_of(&body)),
+        (StatusCode::OK, vec![hat.clone()]),
+        "{body}"
+    );
+    let (status, body) = get(
+        &state,
+        &format!("/lambdas/users/{OWNER}/wearables?direction=sideways"),
+    )
+    .await;
+    assert_eq!(
+        (status, urns_of(&body)),
+        (StatusCode::OK, vec![hat.clone(), orphan.clone()]),
+        "no orderBy: no validation, no sort: {body}"
+    );
+    let (_, body) = get(
+        &state,
+        &format!("/lambdas/users/{OWNER}/wearables?orderBy=rarity&direction=asc"),
+    )
+    .await;
+    assert_eq!(urns_of(&body), [orphan.clone(), hat.clone()], "{body}");
 
     let (status, body) = get(
         &state,
@@ -801,14 +1044,202 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
     assert!(body["elements"][0]["definition"].is_object(), "{body}");
     let (_, body) = get(&state, &format!("/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:tp")).await;
     assert_eq!(body["totalAmount"], 1, "{body}");
-    let (_, body) = get(&state, &format!("/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:other")).await;
-    assert_eq!(body["totalAmount"], 0, "{body}");
+    for uri in [
+        format!("/lambdas/users/{OWNER}/third-party-wearables?pageSize=5000"),
+        format!(
+            "/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:tp?pageSize=5000"
+        ),
+    ] {
+        let (status, body) = get(&state, &uri).await;
+        assert_eq!(status, StatusCode::OK, "no pageSize cap: {uri}: {body}");
+        assert_eq!(
+            (body["pageSize"].as_i64(), body["totalAmount"].as_i64()),
+            (Some(5000), Some(1)),
+            "{body}"
+        );
+    }
+    let (status, body) = get(&state, &format!("/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:other")).await;
+    assert_eq!((status, body), (StatusCode::BAD_GATEWAY, not_found));
     let (_, body) = get(&state, &format!("/lambdas/collections/wearables-by-owner/{OWNER}?collectionId=urn:decentraland:matic:collections-thirdparty:tp")).await;
     assert_eq!(body, json!([{ "urn": TP_URN, "amount": 1 }]));
     let (_, body) = get(&state, "/lambdas/third-party-integrations").await;
     assert_eq!(
         body,
         json!({ "data": [{ "name": "TP", "description": "A provider", "urn": "urn:decentraland:matic:collections-thirdparty:tp" }] })
+    );
+
+    // Profiles keep the v1 third-party items unchecked and the linked items
+    // whose NFT the mapping includes and the owner holds, after the others.
+    let hat = format!("urn:decentraland:matic:collections-v2:{COFFEE}:1");
+    let linked = |token: u32| format!("{TP_URN}:matic:{TP_CONTRACT}:{token}");
+    deploy(
+        &db.pool,
+        "bafyprofile",
+        "profile",
+        OWNER,
+        json!({ "avatars": [{ "name": "alice", "avatar": { "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseFemale", "wearables": [
+            linked(2),
+            "urn:decentraland:off-chain:base-avatars:eyes_00",
+            linked(3),
+            TP_URN,
+            hat,
+            linked(9),
+        ], "emotes": [] } }] }),
+        &[],
+    )
+    .await;
+    let (status, body) = get(&state, &format!("/lambdas/profiles/{OWNER}")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["avatars"][0]["avatar"]["wearables"],
+        json!([
+            "urn:decentraland:off-chain:base-avatars:eyes_00",
+            format!("{hat}:10"),
+            TP_URN,
+            linked(2)
+        ]),
+        "the held token is appended (ENSURE_ERC_721); token 3 is mapped but not held, token 9 is not mapped: {body}"
+    );
+
+    // The chain endpoint down: the explorer and the profiles leave the
+    // third-party items they could not check out, the dedicated route and
+    // the outfits answer the old lambdas' FetcherError.
+    let down = {
+        use axum::routing::post;
+        serve(Router::new().route("/", post(|| async { StatusCode::BAD_GATEWAY }))).await
+    };
+    let mut down_settings = state.settings.clone();
+    down_settings.eth_rpc_url = Some(down.clone());
+    down_settings.polygon_rpc_url = Some(down.clone());
+    down_settings.market.trade_rpc_urls = RpcEndpoints::from_env(Some(&format!("137={down}")));
+    let down_state = Arc::new(MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        down_settings,
+    ));
+    down_state
+        .test_allow_loopback
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let (status, body) = get(&down_state, &format!("/explorer/{OWNER}/wearables")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["totalAmount"], 3, "{body}");
+    assert!(
+        body["elements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["type"] != "third-party"),
+        "{body}"
+    );
+    let fetcher_error = json!({ "error": "The requested items cannot be fetched right now", "message": format!("Cannot fetch elements for {OWNER}") });
+    let uri = format!("/lambdas/users/{OWNER}/third-party-wearables");
+    let (status, body) = get(&down_state, &uri).await;
+    assert_eq!(
+        (status, body),
+        (StatusCode::BAD_GATEWAY, fetcher_error.clone()),
+        "{uri}"
+    );
+    // lamb2's outfits let the third-party checker's error through to its
+    // bare 500.
+    let uri = format!("/lambdas/outfits/{OWNER}");
+    let (status, body) = get(&down_state, &uri).await;
+    assert_eq!(
+        (status, body),
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "error": "Internal Server Error" })
+        ),
+        "{uri}"
+    );
+    // An active escrow grant joins the explorer's on-chain copies only where
+    // `EXPLORER_ESCROW_GRANTS_ENABLED` is on (off under the mirror posture,
+    // as lamb2 lists chain-owned tokens only).
+    sqlx::query("INSERT INTO shop.usage_grants (grantee_address, urn, token_id, category, unlock_at) VALUES ($1, $2, '99', 'wearable', timezone('UTC', now()) + interval '2 days')")
+        .bind(OWNER)
+        .bind(format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    for (grants, amount) in [(false, 2), (true, 3)] {
+        let mut settings = state.settings.clone();
+        settings.explorer_escrow_grants = grants;
+        let s = Arc::new(MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings,
+        ));
+        s.test_allow_loopback
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let (status, body) = get(
+            &s,
+            &format!("/explorer/{OWNER}/wearables?collectionType=on-chain"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["elements"][0]["amount"], amount,
+            "grants={grants}: {body}"
+        );
+    }
+    sqlx::query("DELETE FROM shop.usage_grants WHERE token_id = '99'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
+    // The registry and the collections subgraphs down: lamb2's 502
+    // FetcherError, never an empty list or a 503.
+    let mut dark_settings = state.settings.clone();
+    dark_settings.third_party_registry_subgraph_url = Some(down.clone());
+    dark_settings.eth_collections_subgraph_url = Some(down.clone());
+    dark_settings.matic_collections_subgraph_url = Some(down.clone());
+    let dark_state = Arc::new(MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        dark_settings,
+    ));
+    dark_state
+        .test_allow_loopback
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    for uri in [
+        format!("/lambdas/users/{OWNER}/third-party-wearables"),
+        format!(
+            "/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:tp"
+        ),
+        format!(
+            "/lambdas/collections/wearables-by-owner/{OWNER}?collectionId=urn:decentraland:matic:collections-thirdparty:tp"
+        ),
+        format!("/explorer/{OWNER}/wearables?collectionType=third-party"),
+        format!("/lambdas/users/{OWNER}/wearables"),
+        format!("/lambdas/users/{OWNER}/emotes"),
+        format!("/lambdas/collections/wearables-by-owner/{OWNER}"),
+        format!("/lambdas/collections/emotes-by-owner/{OWNER}"),
+    ] {
+        let (status, body) = get(&dark_state, &uri).await;
+        assert_eq!(
+            (status, body),
+            (StatusCode::BAD_GATEWAY, fetcher_error.clone()),
+            "{uri}"
+        );
+    }
+    let (status, body) = get(&dark_state, "/lambdas/third-party-integrations").await;
+    assert_eq!(
+        (status, body),
+        (
+            StatusCode::BAD_GATEWAY,
+            json!({ "error": "The requested items cannot be fetched right now", "message": "Cannot fetch third party providers" })
+        )
+    );
+
+    let (status, body) = get(&down_state, &format!("/lambdas/profiles/{OWNER}")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["avatars"][0]["avatar"]["wearables"],
+        json!([
+            "urn:decentraland:off-chain:base-avatars:eyes_00",
+            format!("{hat}:10"),
+            TP_URN
+        ]),
+        "the v1 item needs no check: {body}"
     );
 
     let (status, body) = get(&state, &format!("/lambdas/users/{OWNER}/lands")).await;
@@ -828,6 +1259,39 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         &json!({ "contractAddress": LAND_REGISTRY_MAINNET, "tokenId": "1", "category": "parcel", "name": "Plot", "x": "1", "y": "2",
                  "description": "desc", "price": "1000", "image": "https://api.decentraland.org/v1/parcels/1/2/map.png" })
     );
+    // The marketplace subgraph keeps an expired order, and one a previous
+    // owner placed (status `transferred`), as the `activeOrder`; lamb2
+    // answers its price (captures/lambdas-land/LL-13-*.json). A sold or
+    // cancelled order is no active order.
+    sqlx::query(
+        "INSERT INTO shop.nft_order (network, contract_address, token_id, order_id, marketplace_address, status, seller, price, expires_at, created_at, updated_at, updated_block, updated_log) \
+         VALUES ('ethereum', $1, 5, '0x02', '0x8e5660b4ab70168b5a6feea0e0315cb49c8cd539', 'open', '0xcccc000000000000000000000000000000000003', 2287, 1694476800000, 1, 1, 4, 0)",
+    )
+    .bind(ESTATE_REGISTRY_MAINNET)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (_, body) = get(&state, &format!("/lambdas/users/{OWNER}/lands")).await;
+    assert_eq!(
+        (
+            body["elements"][0]["tokenId"].as_str(),
+            body["elements"][0]["price"].as_str()
+        ),
+        (Some("5"), Some("2287")),
+        "an expired order by a previous owner keeps its price: {body}"
+    );
+    for status in ["sold", "cancelled"] {
+        sqlx::query("UPDATE shop.nft_order SET status = $1 WHERE token_id = 5")
+            .bind(status)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let (_, body) = get(&state, &format!("/lambdas/users/{OWNER}/lands")).await;
+        assert!(
+            body["elements"][0].get("price").is_none(),
+            "a {status} order has no price: {body}"
+        );
+    }
     let (_, body) = get(
         &state,
         &format!("/lambdas/users/{OWNER}/lands?pageNum=3&pageSize=1"),
@@ -863,9 +1327,10 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
 /// Before the indexes and the items mirror exist, the routes the old lambdas
 /// answered from the subgraphs answer from them here: the catalogue's on-chain
 /// leg from the collections subgraphs, the name holder and the owner's lands
-/// from the marketplace subgraph, the parcel operators and the update
-/// operator's parcels from the land-manager subgraph; without
-/// `LAND_SUBGRAPH_URL` the two land routes keep the index envelope.
+/// from the marketplace subgraph, the parcel operators, the permission flags
+/// and the update operator's parcels from the land-manager subgraph; without
+/// `LAND_SUBGRAPH_URL` the two land routes keep the index envelope and the
+/// flags route answers lamb2's 500.
 #[tokio::test]
 async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
     let Some(db) = ScratchDb::create().await else {
@@ -965,7 +1430,23 @@ async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
     assert_eq!(
         body["elements"][0],
         json!({ "contractAddress": LAND_REGISTRY_MAINNET, "tokenId": "1", "category": "parcel", "name": "Plot", "x": "1", "y": "2",
-                "description": "desc", "price": "1000", "image": "https://api.decentraland.org/v1/parcels/1/2/map.png" })
+                "description": "desc", "price": "1000", "image": "https://maps.example/v1/parcels/1/2/map.png" }),
+        "the subgraph's own image, as lamb2 answers it"
+    );
+    // `/lands` has no pageSize maximum (lamb2's `Number.MAX_VALUE`).
+    let (status, body) = get(
+        &state,
+        &format!("/lambdas/users/{OWNER}/lands?pageSize=5000"),
+    )
+    .await;
+    assert_eq!(
+        (
+            status,
+            body["pageSize"].as_i64(),
+            body["elements"].as_array().map(Vec::len)
+        ),
+        (StatusCode::OK, Some(5000), Some(2)),
+        "{body}"
     );
     let (_, body) = get(
         &state,
@@ -1007,13 +1488,62 @@ async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
         json!([{ "id": "2", "x": "3", "y": "4", "owner": OWNER, "updateOperator": UPDATE_OP }])
     );
     let (_, body) = get_via(
-        land,
+        land.clone(),
+        &format!("/lambdas/users/{UPDATE_OP}/lands-permissions?pageSize=5000"),
+    )
+    .await;
+    assert_eq!(
+        (
+            body["pageSize"].as_i64(),
+            body["elements"].as_array().map(Vec::len)
+        ),
+        (Some(5000), Some(2)),
+        "no pageSize maximum: {body}"
+    );
+    let (_, body) = get_via(
+        land.clone(),
         "/lambdas/users/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef/lands-permissions",
     )
     .await;
     assert_eq!(
         body,
         json!({ "elements": [], "totalAmount": 0, "pageNum": 1, "pageSize": 100 })
+    );
+    // The flags route reads the same operators and answers booleans, as
+    // lamb2's getParcelPermissions compares them.
+    for (who, expected) in [
+        (
+            OWNER,
+            json!({ "owner": true, "operator": false, "updateOperator": false, "updateManager": false, "approvedForAll": false }),
+        ),
+        (
+            MANAGER,
+            json!({ "owner": false, "operator": false, "updateOperator": false, "updateManager": true, "approvedForAll": false }),
+        ),
+        (
+            UPDATE_OP,
+            json!({ "owner": false, "operator": false, "updateOperator": false, "updateManager": false, "approvedForAll": false }),
+        ),
+    ] {
+        let (status, body) = get_via(
+            land.clone(),
+            &format!("/lambdas/users/{who}/parcels/0/0/permissions"),
+        )
+        .await;
+        assert_eq!((status, body), (StatusCode::OK, expected), "{who}");
+    }
+    let (status, body) = get_via(
+        land.clone(),
+        &format!("/lambdas/users/{OWNER}/parcels/160/100/permissions"),
+    )
+    .await;
+    assert_eq!(
+        (status, body["message"].as_str()),
+        (
+            StatusCode::NOT_FOUND,
+            Some("Parcel or estate rights not found for x: 160, y: 100")
+        ),
+        "an exception-block parcel reaches the subgraph"
     );
 
     let without_land = Arc::new(MarketplaceState::new(
@@ -1044,6 +1574,178 @@ async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
             "{uri}: {body}"
         );
     }
+    let (status, body) = get_via(
+        land.clone(),
+        &format!("/lambdas/users/{OWNER}/parcels/0/0/permissions"),
+    )
+    .await;
+    assert_eq!(
+        (status, body),
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "error": "Internal Server Error" })
+        ),
+        "neither source: lamb2's bare 500"
+    );
 
     db.drop().await;
+}
+
+/// A configured subgraph that fails: the element routes answer lamb2's 502
+/// `FetcherError` naming the key as requested, `/operators` and
+/// `/permissions` lamb2's bare 500 (`errorHandler.ts`). No database: the
+/// index cursors read as not ready, so every route takes its subgraph leg.
+#[tokio::test]
+async fn a_failing_subgraph_answers_lamb2s_status() {
+    let pool = PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
+    pool.close().await;
+    let failing = serve_failing_graph().await;
+    let state = Arc::new(MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings {
+            marketplace_subgraph_url: Some(failing.clone()),
+            land_subgraph_url: Some(failing),
+            ..Settings::for_tests()
+        },
+    ));
+    state
+        .test_allow_loopback
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let mixed = "0xAaaa000000000000000000000000000000000001";
+    let fetcher = |key: &str| {
+        json!({
+            "error": "The requested items cannot be fetched right now",
+            "message": format!("Cannot fetch elements for {key}"),
+        })
+    };
+    for (uri, key) in [
+        (format!("/lambdas/users/{mixed}/names"), mixed),
+        (format!("/lambdas/users/{mixed}/lands"), mixed),
+        ("/lambdas/names/%20Alice.dcl.eth/owner".to_string(), "alice"),
+    ] {
+        let (status, body) = get(&state, &uri).await;
+        assert_eq!(
+            (status, body),
+            (StatusCode::BAD_GATEWAY, fetcher(key)),
+            "{uri}"
+        );
+    }
+    // A names pageSize over 1000 is lamb2's 400, before any source is read.
+    let (status, body) = get(
+        &state,
+        &format!("/lambdas/users/{OWNER}/names?pageSize=1001"),
+    )
+    .await;
+    assert_eq!(
+        (status, body),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({ "error": "Bad request", "message": "max allowed pageSize is 1000" })
+        )
+    );
+
+    let land = crate::land_authz::router(Arc::new(crate::land_authz::LandAuthzState::new(
+        pool,
+        crate::http::Outbound::for_tests(),
+        crate::land_authz::Settings::for_tests(),
+        Some(state.index.clone()),
+    )));
+    let (status, body) = get_via(
+        land.clone(),
+        &format!("/lambdas/users/{mixed}/lands-permissions"),
+    )
+    .await;
+    assert_eq!((status, body), (StatusCode::BAD_GATEWAY, fetcher(mixed)));
+    for uri in [
+        "/lambdas/parcels/0/0/operators".to_string(),
+        format!("/lambdas/users/{OWNER}/parcels/0/0/permissions"),
+    ] {
+        let (status, body) = get_via(land.clone(), &uri).await;
+        assert_eq!(
+            (status, body),
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({ "error": "Internal Server Error" })
+            ),
+            "{uri}"
+        );
+    }
+}
+
+/// LL-24: on a subgraph outage `/users/{a}/names` answers the last good list
+/// for lamb2's 120 s and `/users/{a}/lands` for as long as the outage lasts,
+/// while `graph::owned_names`, the read worlds' NAME owner and comms
+/// admission take, keeps failing: an ownership decision is never stale.
+#[tokio::test]
+async fn names_and_lands_serve_stale_on_outage_and_ownership_does_not() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    use axum::routing::post;
+
+    let pool = PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
+    pool.close().await;
+    let down = Arc::new(AtomicBool::new(false));
+    let graph = serve(Router::new().route(
+        "/",
+        post({
+            let down = down.clone();
+            move |axum::Json(body): axum::Json<Value>| async move {
+                if down.load(Ordering::Relaxed) {
+                    return axum::Json(json!({ "errors": [{ "message": "indexer down" }] }));
+                }
+                let query = body["query"].as_str().unwrap_or("");
+                let vars = body.get("variables").cloned().unwrap_or(Value::Null);
+                axum::Json(json!({ "data": marketplace_reader(query, &vars) }))
+            }
+        }),
+    ))
+    .await;
+    let state = Arc::new(MarketplaceState::new(
+        pool,
+        crate::http::Outbound::for_tests(),
+        Settings {
+            marketplace_subgraph_url: Some(graph),
+            ..Settings::for_tests()
+        },
+    ));
+    state
+        .test_allow_loopback
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let names_uri = format!("/lambdas/users/{OWNER}/names");
+    let lands_uri = format!("/lambdas/users/{OWNER}/lands");
+    let (status, names) = get(&state, &names_uri).await;
+    assert_eq!(status, StatusCode::OK, "{names}");
+    assert_eq!(names["totalAmount"], 1, "{names}");
+    let (status, lands) = get(&state, &lands_uri).await;
+    assert_eq!(status, StatusCode::OK, "{lands}");
+    assert_eq!(lands["totalAmount"], 2, "{lands}");
+
+    // The subgraph goes down and the 30 s entries expire.
+    down.store(true, Ordering::Relaxed);
+    state
+        .index
+        .graph
+        .backdate_owner_for_tests(OWNER, Duration::from_secs(31));
+    assert_eq!(get(&state, &names_uri).await, (StatusCode::OK, names));
+    assert_eq!(
+        get(&state, &lands_uri).await,
+        (StatusCode::OK, lands.clone())
+    );
+    assert!(
+        crate::chain_index::graph::owned_names(&state.index, OWNER)
+            .await
+            .is_err(),
+        "the ownership read fails on the outage, never stale"
+    );
+
+    // Past lamb2's 120 s the names answer the 502; the lands still answer.
+    state
+        .index
+        .graph
+        .backdate_owner_for_tests(OWNER, Duration::from_secs(3600));
+    let (status, body) = get(&state, &names_uri).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert_eq!(get(&state, &lands_uri).await, (StatusCode::OK, lands));
 }

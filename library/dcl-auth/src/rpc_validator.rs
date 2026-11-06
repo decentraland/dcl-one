@@ -78,14 +78,45 @@ impl RpcEip1654Validator {
         }
     }
 
-    async fn eth_call(&self, to: &str, data: &[u8]) -> Result<String, EthCallError> {
-        let failed = |m: String| EthCallError::Failed(AuthError::Eip1654ValidationFailed(m));
+    async fn eth_call(&self, to: &str, data: &[u8], block: &str) -> Result<String, EthCallError> {
         let call_data = format!("0x{}", hex::encode(data));
-        let body = jsonrpc::request(
-            1,
-            "eth_call",
-            serde_json::json!([{ "to": to, "data": call_data }, "latest"]),
-        );
+        match self
+            .rpc(
+                "eth_call",
+                serde_json::json!([{ "to": to, "data": call_data }, block]),
+            )
+            .await?
+        {
+            Value::String(s) => Ok(s),
+            Value::Null => Err(failed("RPC returned null result with no error".into())),
+            other => Err(failed(format!("Unexpected RPC result type: {other}"))),
+        }
+    }
+
+    async fn is_valid_signature(
+        &self,
+        contract_address: &str,
+        hash: &[u8],
+        signature: &[u8],
+        block: &str,
+    ) -> Result<bool, AuthError> {
+        if hash.len() != 32 {
+            return Err(AuthError::Eip1654ValidationFailed(format!(
+                "hash must be 32 bytes, got {}",
+                hash.len()
+            )));
+        }
+
+        let calldata = encode_is_valid_signature(hash, signature);
+        match self.eth_call(contract_address, &calldata, block).await {
+            Ok(result_hex) => Ok(is_magic_return(&result_hex)),
+            Err(EthCallError::Reverted) => Ok(false),
+            Err(EthCallError::Failed(e)) => Err(e),
+        }
+    }
+
+    async fn rpc(&self, method: &str, params: Value) -> Result<Value, EthCallError> {
+        let body = jsonrpc::request(1, method, params);
         let resp = self
             .client
             .post(&self.rpc_url)
@@ -98,7 +129,7 @@ impl RpcEip1654Validator {
         let bytes = read_body_capped(resp, jsonrpc::DEFAULT_BODY_CAP)
             .await
             .map_err(|e| failed(format!("Failed to read RPC response: {e}")))?;
-        let result = jsonrpc::parse_envelope(status, &bytes)
+        jsonrpc::parse_envelope(status, &bytes)
             .and_then(jsonrpc::result_of)
             .map_err(|e| match e {
                 jsonrpc::RpcError::Status(status) => failed(format!("RPC returned HTTP {status}")),
@@ -112,13 +143,12 @@ impl RpcEip1654Validator {
                     failed(format!("RPC error {code}: {message}"))
                 }
                 other => failed(other.to_string()),
-            })?;
-        match result {
-            Value::String(s) => Ok(s),
-            Value::Null => Err(failed("RPC returned null result with no error".into())),
-            other => Err(failed(format!("Unexpected RPC result type: {other}"))),
-        }
+            })
     }
+}
+
+fn failed(m: String) -> EthCallError {
+    EthCallError::Failed(AuthError::Eip1654ValidationFailed(m))
 }
 
 #[async_trait]
@@ -129,19 +159,21 @@ impl Eip1654Validator for RpcEip1654Validator {
         hash: &[u8],
         signature: &[u8],
     ) -> Result<bool, AuthError> {
-        if hash.len() != 32 {
-            return Err(AuthError::Eip1654ValidationFailed(format!(
-                "hash must be 32 bytes, got {}",
-                hash.len()
-            )));
-        }
+        self.is_valid_signature(contract_address, hash, signature, "latest")
+            .await
+    }
 
-        let calldata = encode_is_valid_signature(hash, signature);
-        match self.eth_call(contract_address, &calldata).await {
-            Ok(result_hex) => Ok(is_magic_return(&result_hex)),
-            Err(EthCallError::Reverted) => Ok(false),
-            Err(EthCallError::Failed(e)) => Err(e),
-        }
+    /// An RPC that cannot answer for `block` (not an archive node) fails the call:
+    /// undecidable, never a refusal.
+    async fn validate_signature_at_block(
+        &self,
+        contract_address: &str,
+        hash: &[u8],
+        signature: &[u8],
+        block: u64,
+    ) -> Result<bool, AuthError> {
+        self.is_valid_signature(contract_address, hash, signature, &format!("0x{block:x}"))
+            .await
     }
 }
 
@@ -302,6 +334,74 @@ mod tests {
     async fn a_failing_rpc_never_accepts() {
         let v = RpcEip1654Validator::new(fake_wallet(None).await, Client::new());
         let err = super::super::eip1654::verify_eip1654(&v, "0xabc", b"m", &[0u8; 65])
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AuthError::Eip1654ValidationFailed(_)),
+            "{err}"
+        );
+    }
+
+    /// A chain whose head is block 999 and whose wallet accepted `accepted` only up to block
+    /// `valid_until`. `archive: false` answers state reads for past blocks the way a pruned
+    /// node does.
+    async fn fake_chain(accepted: [u8; 32], valid_until: u64, archive: bool) -> String {
+        use axum::{Json, Router, routing::post};
+        const LATEST: u64 = 999;
+        let app = Router::new().route(
+            "/",
+            post(move |Json(body): Json<Value>| async move {
+                assert_eq!(body["method"], "eth_call");
+                let tag = body["params"][1].as_str().unwrap();
+                let n = if tag == "latest" {
+                    LATEST
+                } else {
+                    u64::from_str_radix(tag.trim_start_matches("0x"), 16).unwrap()
+                };
+                let data = body["params"][0]["data"].as_str().unwrap_or_default();
+                let mut answer = if !archive && n != LATEST {
+                    serde_json::json!({ "error": { "code": -32000, "message": "missing trie node" } })
+                } else if n <= valid_until && data.contains(&hex::encode(accepted)) {
+                    serde_json::json!({ "result": format!("0x1626ba7e{}", "0".repeat(56)) })
+                } else {
+                    serde_json::json!({ "error": { "code": 3, "message": "execution reverted" } })
+                };
+                answer["jsonrpc"] = "2.0".into();
+                answer["id"] = 1.into();
+                Json(answer)
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        url
+    }
+
+    #[tokio::test]
+    async fn a_historical_signature_is_asked_at_its_block() {
+        let hash = [0x42u8; 32];
+        let v = RpcEip1654Validator::new(fake_chain(hash, 500, true).await, Client::new());
+        let sig = [0u8; 65];
+
+        assert!(!v.validate_signature("0xabc", &hash, &sig).await.unwrap());
+        assert!(
+            v.validate_signature_at_block("0xabc", &hash, &sig, 500)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !v.validate_signature_at_block("0xabc", &hash, &sig, 501)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_node_without_the_historical_state_is_undecidable_not_a_refusal() {
+        let hash = [0x42u8; 32];
+        let v = RpcEip1654Validator::new(fake_chain(hash, 999, false).await, Client::new());
+        let err = v
+            .validate_signature_at_block("0xabc", &hash, &[0u8; 65], 500)
             .await
             .unwrap_err();
         assert!(

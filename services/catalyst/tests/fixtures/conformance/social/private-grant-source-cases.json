@@ -1,0 +1,210 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
+  },
+  "scope": "Actual upstream voice-db PostgreSQL queries, media HTTP response adapter, private voice domain, RPC/HTTP controllers and HTTP schema/error middleware; owned temporary database. HTTP authentication is bypassed with an explicit verified actor. Credential responses are controlled, not a live-media claim.",
+  "caller": "0x1111111111111111111111111111111111111111",
+  "target": "0x2222222222222222222222222222222222222222",
+  "call": "b5555555-5555-4555-8555-555555555555",
+  "cases": [
+    {
+      "id": "rpc.complete",
+      "protocol": "rpc",
+      "scenario": "complete",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "b5555555-5555-4555-8555-555555555555",
+            "credentials": {
+              "connectionUrl": "wss://livekit.test/voice-chat-private-b5555555-5555-4555-8555-555555555555?for=0x2222222222222222222222222222222222222222"
+            }
+          }
+        }
+      },
+      "expected_hex": "0aa3010a2462353535353535352d353535352d343535352d383535352d353535353535353535353535127b0a797773733a2f2f6c6976656b69742e746573742f766f6963652d636861742d707269766174652d62353535353535352d353535352d343535352d383535352d3535353535353535353535353f666f723d307832323232323232323232323232323232323232323232323232323232323232323232323232323232",
+      "remaining_rows": 0,
+      "updates": [
+        {
+          "callId": "b5555555-5555-4555-8555-555555555555",
+          "callerAddress": "0x1111111111111111111111111111111111111111",
+          "calleeAddress": "0x2222222222222222222222222222222222222222",
+          "status": "accepted",
+          "credentials": {
+            "connectionUrl": "wss://livekit.test/voice-chat-private-b5555555-5555-4555-8555-555555555555?for=0x1111111111111111111111111111111111111111"
+          }
+        }
+      ],
+      "analytics": [
+        {
+          "event": "ACCEPT_CALL",
+          "data": {
+            "call_id": "b5555555-5555-4555-8555-555555555555"
+          }
+        }
+      ]
+    },
+    {
+      "id": "rpc.missing-caller",
+      "protocol": "rpc",
+      "scenario": "missing-caller",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "Cannot read properties of undefined (reading 'connectionUrl')"
+          }
+        }
+      },
+      "expected_hex": "123f0a3d43616e6e6f7420726561642070726f70657274696573206f6620756e646566696e6564202872656164696e672027636f6e6e656374696f6e55726c2729",
+      "remaining_rows": 0,
+      "updates": [],
+      "analytics": []
+    },
+    {
+      "id": "rpc.missing-callee",
+      "protocol": "rpc",
+      "scenario": "missing-callee",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "Cannot read properties of undefined (reading 'connectionUrl')"
+          }
+        }
+      },
+      "expected_hex": "123f0a3d43616e6e6f7420726561642070726f70657274696573206f6620756e646566696e6564202872656164696e672027636f6e6e656374696f6e55726c2729",
+      "remaining_rows": 0,
+      "updates": [
+        {
+          "callId": "b5555555-5555-4555-8555-555555555555",
+          "callerAddress": "0x1111111111111111111111111111111111111111",
+          "calleeAddress": "0x2222222222222222222222222222222222222222",
+          "status": "accepted",
+          "credentials": {
+            "connectionUrl": "wss://livekit.test/voice-chat-private-b5555555-5555-4555-8555-555555555555?for=0x1111111111111111111111111111111111111111"
+          }
+        }
+      ],
+      "analytics": [
+        {
+          "event": "ACCEPT_CALL",
+          "data": {
+            "call_id": "b5555555-5555-4555-8555-555555555555"
+          }
+        }
+      ]
+    },
+    {
+      "id": "rpc.missing-both",
+      "protocol": "rpc",
+      "scenario": "missing-both",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "Cannot read properties of undefined (reading 'connectionUrl')"
+          }
+        }
+      },
+      "expected_hex": "123f0a3d43616e6e6f7420726561642070726f70657274696573206f6620756e646566696e6564202872656164696e672027636f6e6e656374696f6e55726c2729",
+      "remaining_rows": 0,
+      "updates": [],
+      "analytics": []
+    },
+    {
+      "id": "http.complete",
+      "protocol": "http",
+      "scenario": "complete",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "callId": "b5555555-5555-4555-8555-555555555555",
+            "connectionUrl": "wss://livekit.test/voice-chat-private-b5555555-5555-4555-8555-555555555555?for=0x2222222222222222222222222222222222222222"
+          }
+        }
+      },
+      "remaining_rows": 0,
+      "updates": [
+        {
+          "callId": "b5555555-5555-4555-8555-555555555555",
+          "callerAddress": "0x1111111111111111111111111111111111111111",
+          "calleeAddress": "0x2222222222222222222222222222222222222222",
+          "status": "accepted",
+          "credentials": {
+            "connectionUrl": "wss://livekit.test/voice-chat-private-b5555555-5555-4555-8555-555555555555?for=0x1111111111111111111111111111111111111111"
+          }
+        }
+      ],
+      "analytics": [
+        {
+          "event": "ACCEPT_CALL",
+          "data": {
+            "call_id": "b5555555-5555-4555-8555-555555555555"
+          }
+        }
+      ]
+    },
+    {
+      "id": "http.missing-caller",
+      "protocol": "http",
+      "scenario": "missing-caller",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "Internal Server Error"
+        }
+      },
+      "remaining_rows": 0,
+      "updates": [],
+      "analytics": []
+    },
+    {
+      "id": "http.missing-callee",
+      "protocol": "http",
+      "scenario": "missing-callee",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "Internal Server Error"
+        }
+      },
+      "remaining_rows": 0,
+      "updates": [
+        {
+          "callId": "b5555555-5555-4555-8555-555555555555",
+          "callerAddress": "0x1111111111111111111111111111111111111111",
+          "calleeAddress": "0x2222222222222222222222222222222222222222",
+          "status": "accepted",
+          "credentials": {
+            "connectionUrl": "wss://livekit.test/voice-chat-private-b5555555-5555-4555-8555-555555555555?for=0x1111111111111111111111111111111111111111"
+          }
+        }
+      ],
+      "analytics": [
+        {
+          "event": "ACCEPT_CALL",
+          "data": {
+            "call_id": "b5555555-5555-4555-8555-555555555555"
+          }
+        }
+      ]
+    },
+    {
+      "id": "http.missing-both",
+      "protocol": "http",
+      "scenario": "missing-both",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "Internal Server Error"
+        }
+      },
+      "remaining_rows": 0,
+      "updates": [],
+      "analytics": []
+    }
+  ]
+}

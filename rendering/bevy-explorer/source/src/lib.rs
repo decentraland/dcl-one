@@ -4,6 +4,7 @@
 pub mod automation;
 mod autopilot;
 mod commands;
+mod debug_panel;
 mod deep_link;
 mod ext;
 mod gpu_memory;
@@ -201,6 +202,17 @@ pub struct DecentralandArguments {
     pub launch: LaunchOptions,
     #[command(flatten)]
     pub client: ClientOptions,
+    /// Route first-party HTTP APIs through this gateway; other services keep their configured destinations.
+    ///
+    /// A hostname beginning with `gateway.` selects service aliases and gateway signing paths;
+    /// any other hostname uses direct Catalyst paths. Explicit service flags take precedence.
+    /// Pulse, social/Ethereum WebSockets, storage delegations and auth/reels pages are not remapped:
+    /// use --pulse-server HOST[:PORT], --social-rpc WS(S)://..., --ethereum-rpc WS(S)://...,
+    /// --storage HTTPS://..., --auth-page or --reels as needed. Otherwise they use --base-domain
+    /// (decentraland.org by default); Pulse also honors PULSE_SERVER before the domain fallback.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[arg(long, value_name = "url", help_heading = system_api_types::launch_options::help_heading::SERVICES)]
+    pub gateway: Option<String>,
     /// Skip the sign-in screen with an auto guest-login (default HUD only; `?guest=1` on web)
     #[arg(long)]
     pub guest: bool,
@@ -278,6 +290,10 @@ pub struct DecentralandArguments {
     /// harness's spelling `-logFile` is accepted too
     #[arg(long, value_name = "path", help_heading = DEBUG)]
     pub log_file: Option<std::path::PathBuf>,
+    /// Expose observed native engine HTTP transfers to Chrome DevTools on a loopback port
+    #[cfg(not(target_arch = "wasm32"))]
+    #[arg(long, value_name = "port", help_heading = DEBUG)]
+    pub network_devtools: Option<u16>,
     // `--automation-token` and `--automation-port`: the loopback console server
     #[cfg(not(target_arch = "wasm32"))]
     #[command(flatten)]
@@ -706,6 +722,7 @@ impl DecentralandApp {
         app.add_console_command::<SceneThreadsCommand, _>(scene_threads);
         app.add_console_command::<FpsCommand, _>(set_fps);
         app.add_console_command::<SessionGraphicsCommand, _>(session_graphics);
+        debug_panel::register(&mut app);
 
         app
     }

@@ -6,7 +6,8 @@ understand the change in one sitting.
 ## Scope
 
 - One problem per PR, fixed at the sentence that names it. If the fix wants new state or
-  plumbing the problem didn't mention, that is a second PR and a conversation first.
+  plumbing the problem didn't mention, that is a second PR and a conversation first. Give
+  independently useful diagnostics their own PR and verification.
 - Anything that changes an interface between areas, adds a scene-facing capability, or will
   take more than a couple of days gets a short written plan before a branch exists. The
   approach, not prose.
@@ -24,7 +25,17 @@ understand the change in one sitting.
   quirk. Not what the code does, and no archaeological commentary: not what the old design was,
   not why the new one doesn't need X, not an argument addressed to the reviewer. Strip those
   before pushing. Rationale goes in the PR description.
+- When simplifying a feature, remove leftover edits that no longer change behaviour. Keep
+  comments that explain constraints still in force and rename tests that now prove a different
+  contract.
+- No provenance in comments: not a Unity file, type, constant or PR, not "as in unity-explorer",
+  and not who decided. Such citations go stale as Unity moves, and justify the code by where it
+  came from rather than why it is right. A comment gives the code's own reason, or nothing if the
+  code is clear. Unity sources go in the PR description; who decided goes there or in
+  [decisions](decisions.md).
 - Existing comments survive a refactor unless they became wrong.
+- Limit each `Drop` implementation to one blocking operation. Release a lock before taking
+  another or doing file I/O. Put multi-step cleanup in an explicit completion path.
 - Reuse what exists: protocol and SDK types, the existing scheduling, picking and loading
   paths. Hand-rolled parallels are the main source of drift.
 - You should not need to add a schedule set or ordering step. If you think you do, raise it
@@ -37,18 +48,36 @@ understand the change in one sitting.
 
 - Test behaviour at a boundary, not the shape of the implementation. A test that has to change
   when the code is refactored without a behaviour change is a cost, not an asset.
+- For route and service contracts, exercise the actual producers and consumers, such as the
+  engine resolver, the HUD resolver and generated proxy configuration. Assert which endpoints
+  they share and which intentionally use separate destinations.
+- Pair a network access denial with a permitted case through the same transport. Check what
+  the server actually received so a client-side error cannot hide an unwanted request.
+- For each required regression, identify the CI job and command that execute it. Verify that
+  selectors include the test, including any explicit opt-in, and that the job has the tools
+  and files the test needs. Check path filters against changes to the test's inputs, including
+  routing sources outside the engine workspace.
 - Parse structured output; never string-compare it. Serialisation order is not stable across
   feature unification.
+- For anything animated or staged, test what lands mid-way, not only the happy path. Enumerate
+  the events that can arrive while the transition runs: the thing it replaces is rebuilt,
+  despawned, hidden, or toggled by its setting, or it loads late or fails. Decide the behaviour
+  for each and give each a test.
 
 ## The PR description is the record
 
 - Squash-merge discards commit bodies. The description carries the why, the alternatives
   rejected, and how it was verified, naming the platforms covered: native, web, headless.
+  For network capabilities, describe the caller, transport, platform and mode that grant
+  access. For instrumentation, identify the request paths that emit events and which
+  callers bypass them, then verify the documented event lifecycle.
 - A diagram for anything with dataflow, ordering or lifetime changes. A draw.io SVG or a
   mermaid block both render on GitHub. A reviewer reads a diagram in a minute and a 400-line
   diff in an hour.
 - Screenshots before and after for rendering changes. There is no visual regression suite for
   the 3D side.
+- A port from Unity names the Unity files it follows, the constants carried over, and every
+  divergence with its reason. See [porting from Unity](porting-from-unity.md).
 - Follow the repository PR template, including its test instructions and checks run; omit a chronological work narrative.
 
 ## Before pushing
@@ -82,3 +111,37 @@ understand the change in one sitting.
 
 - First response within one working day. If it hasn't come, ping the reviewer on Slack rather
   than wait.
+
+### Reviewing content request changes
+
+From the repository root, run `python tooling/bevy-http-checks.py` with the native build
+prerequisites. It runs the IPFS and platform libraries' tests in parallel and compiles
+`scene_inspector`, `imposters` and `scene_runner`. Those consumers exercise the editor
+import, imposter and font-loading interfaces. A missing or unexecuted required regression
+fails the check. For a targeted run, `--filter TEXT` selects matching tests and
+`--tests-only` skips consumer compilation. [Build prerequisites](running.md)
+
+| Check | Regression |
+|---|---|
+| One network attempt consumes one ticket and holds the permit through the body read | `a_content_fetch_uses_exactly_one_ticket_on_its_own_gate`, `engine_request_keeps_its_slot_until_the_body_finishes` |
+| Other downloads can run during backoff and the retry queues again under the current priorities | `retry_uses_live_priorities_after_another_download_completes_in_backoff`, `immediate_timeout_retry_yields_to_an_older_unowned_request` |
+| Equal-priority arrivals preserve their order even when the executor polls them in reverse | `shared_downloads_keep_arrival_order_when_workers_poll_in_reverse` |
+| Dropping a reader preserves other claims and dropping the last one cancels queue waits and retry timers | `dropping_shared_readers_withdraws_only_the_last_claim_of_each_owner`, `last_shared_reader_cancels_a_queued_attempt_and_a_retry_timer` |
+| Concurrent writers publish complete cache files, preserve occupied staging files, and remove their own staging file after a failed publish | `concurrent_writes_to_one_cache_key_publish_complete_files`, `cache_writer_skips_a_stale_staging_file`, `failed_cache_publish_removes_its_staging_file` |
+| Readiness polls obey server delays and their deadline | `readiness_poll_respects_retry_after_and_remaining_deadline` |
+| Keys are published while a slot is in use, since its release can choose between newcomers | `keys_are_read_while_a_slot_is_in_use` |
+| A departed hash ranks last while any request of it is alive, including a retry after its queue drained | `a_departed_hash_ranks_last_for_a_retry_after_its_queue_drained` |
+| The gate keeps granting after a poisoned lock, and a release skips a queue entry without its ticket instead of panicking in a destructor | `a_poisoned_gate_keeps_granting_and_releasing`, `a_queue_entry_without_its_ticket_is_skipped_inside_a_release` |
+
+Give each test its own gate and counters so it can run alongside other tests. Trace destructor
+paths for nested locks or file I/O under a lock. When changing diagnostics, check the units
+and width of each counter against partial transfers and overlapping requests.
+
+Before adding a shared budget, identify the workload that needs it and measure the impact
+on unrelated callers. Give changes with independent consumers or failure modes their own
+PR and test evidence.
+
+For browser forwarding changes, run
+`npx vitest run src/test/serviceWorkerCache.test.ts src/test/previewRealm.test.ts` from
+`rendering/bevy-explorer/source/react-web`. Check abort propagation, streamed requests,
+referrer policy and disposal of unread response bodies.

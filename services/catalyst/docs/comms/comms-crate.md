@@ -112,6 +112,170 @@ Types, subjects and caps: `comms::protocol::bus`. Record reviewed channel contra
 
 A publish returns after bounded local SDK acceptance: `Submitted` proves neither broker authorization nor delivery. Require per-process NATS credentials and subject permissions matching the producer/consumer table. Verify deployment enforcement through the private release review.
 
+Social login/referral work and notification persistence stay inside `serve`:
+authenticated login ingress commits local SQL and the existing worker handles
+reward providers. They use no SQS/SNS transport and add no NATS subject. See the
+[native social events ADR](../../../../docs/adr/2026-11-04-native-social-events.md).
+
+## Social subscription fanout
+
+Each `serve` attaches Social to its existing `CommsState::bus` link and subscribes
+without a queue group to `comms.social.events.v1`. There is no second connection,
+process or pool. Comms owns the subject constant; Social owns the codec, because
+its protobuf types belong above Comms in the module layers.
+
+The version-1 envelope contains a process UUID and a tagged event: a normalized
+recipient plus friendship, block or private-call protobuf; community voice plus
+scope and optional excluded creator; community membership status; community
+deletion; or an immutable payload reference. The decoder checks version, kind,
+UUIDs, normalized wallet identities, status enums and the permitted protobuf arm.
+Private REQUESTED includes only the caller, ACCEPTED alone may carry credentials,
+and neither private parties nor closure notices can be added by another arm.
+Private acceptance reads the caller's credential before publishing ACCEPTED, then
+reads the callee's credential for the reply. An incomplete credential map returns
+the source missing-property error in RPC and a generic HTTP 500. The accepted
+intent remains consumed; if only the callee's grant is missing, ACCEPTED has
+already been published with the caller's own grant.
+The NATS subject and payload together are limited to 64 KiB. The
+outbound application queue contains at most 256 messages; mutation publishers
+await admission for up to five seconds. The community inbound queue contains at
+most 1,000 messages and runs at most four deliveries, capped by the shared SQL
+pool size. Address-targeted events need no SQL and enter subscription queues
+directly in the broker callback. Queue admission timeout, community ingress
+saturation or failed publish drops that event and increments
+`social_event_delivery_dropped`. These operational bounds are separate from
+client subscription queues; delivery beyond them is unmeasured.
+
+Each client subscription has its own typed queue of 1,000 pending events. Unrelated
+event types do not consume that queue. RPC discards its oldest pending update at
+the bound; JSON closes its socket with code 1008 on the next update. Dropping a
+subscription clears its queue and unregisters it. The raw 256-slot broadcast
+observer API is used by domain observers and tests, not by socket subscriptions.
+
+Social connectivity RPC permits a single large encoded profile when the guarded
+writer lane is empty. Its actual bytes remain charged until the physical write
+finishes; additional frames wait for the configured socket backpressure budget.
+A stalled write keeps the existing five-second deadline and retires the socket.
+The producer waits for each acknowledgement and rechecks topology and privacy
+before writing. Other domains retain their default 16 KiB guarded-frame limit.
+
+Ordinary Social RPC frames use an opt-in pending-message queue in the same
+writer. Its source adaptive capacity is 128 messages with the defaults. The seven
+`WS_TRANSPORT_*` queue, size-estimate and retry settings use numeric-prefix
+parsing. Fractional queue thresholds and finite large capacities are preserved;
+the queue allocates as messages arrive. Overflow or retry exhaustion closes with
+1011 `RPC transport closed`. A pending head keeps its scheduled exponential
+backoff across new sends; a writer drain advances the retry. Accepted frames are
+removed once and retain their byte charge through physical flush. Admission
+checks bytes already pending with a strict `>` threshold, so one frame can cross
+the configured budget. Ordinary unary responses have no guarded-frame size cap.
+After authentication, binary and text frames both feed their bytes into dRPC,
+matching the source handler's ignored `isBinary` callback argument. Responses
+remain binary. The source handler/transport/server fixture and a real socket test
+cover the same binary and text CreatePort exchange. The Social reader observes
+the shared last-activity expiry independently of a stalled physical write,
+including a single accepted response with no pending retry head. This passive
+observer leaves Ping emission to the writer and remains disabled at idle timeout
+zero. A real stopped-reader test covers this separate expiry path.
+
+Tokio writer admission and flush supply these acceptance and drain signals;
+they do not measure uWS's kernel buffer. Source callback traces cover the queue
+policy, and socket tests cover large response preservation and stopped-reader
+closure. Native buffer timing and throughput equivalence remain unmeasured.
+Startup refuses zero `WS_MAX_BACKPRESSURE` and nonfinite computed ordinary queue
+capacities to retain bounded admission; the pinned
+[native send guard](https://github.com/uNetworking/uWebSockets/blob/7fd2be6fe2afe5af55e4c25b696801beeca1da52/src/WebSocket.h#L120)
+disables its limit with zero, and the source transport can compute an infinite
+queue capacity. `WS_MAX_BACKPRESSURE`
+still uses an unsigned integer parser, so the source's numeric-prefix,
+fractional, negative and wrapping native conversion forms remain configuration
+differences to check before cutover. Other users of the shared transport keep
+their existing ordinary writer unless they select this queue.
+
+Both Social socket protocols read `WS_AUTH_TIMEOUT_IN_MS` and
+`WS_AUTH_SIGNATURE_EXPIRATION_IN_MS` separately using the source environment
+provider's numeric-prefix parser. The authentication timer follows Node's
+millisecond timer conversion: values outside 1..=2,147,483,647 schedule one
+millisecond, and valid fractions are truncated. Signature age checks retain the
+configured numeric value and the original signed timestamp text; timestamp
+conversion accepts the source's finite JavaScript Number forms. Idle timeout
+uses the pinned native binding's unsigned-short conversion, accepting zero or
+8..=960 seconds after conversion. The source-executed numeric fixtures exercise
+these conversions and native option admission; they do not measure native idle
+timer scheduling or kernel buffering.
+
+Social signatures bind the source protocol paths: `/` for RPC, and `/v1/stream`
+for both JSON handshakes. Connecting through `/social-rpc` or
+`/social-rpc/v1/stream` keeps those signed paths; `x-original-path` does not
+expand them. Actual source verifier captures and real socket replays cover
+81 combinations. The Bevy Social client normalizes only its signed URI to `/`
+while keeping its configured connection URL. Clients signing a mounted alias
+must sign the source path; deployed web artifacts need the corresponding client
+build at cutover. Other shared handshake callers keep their chosen alias policy.
+
+When the shared bus is enabled, Social registers its event subscription before
+checking the existing NATS subscription readiness fence. Until the first ready
+transition, valid RPC and JSON WebSocket upgrade requests receive an empty HTTP
+503 before authentication, socket admission, or a 101 response. Other HTTP routes,
+ordinary fallback requests, and local mode remain available. The retained Social
+subscription and readiness poll run in the existing fanout job. Admission stays
+open through later outages; publication and delivery retain transient, at-most-once
+behavior, with no replay guarantee.
+
+The pinned source starts its standalone RPC listener only after Redis connects
+and all nine subscription registrations finish. Executed component/lifecycle
+captures cover delayed connections, delayed subscriptions, subscription failure,
+and an outage after startup. The monolith's pre-upgrade 503 is an operational
+difference from that closed listener; it does not wait within an HTTP request or
+hold authentication age and socket slots while startup is pending. The controlled
+startup tests exercise both protocols and delivery after the fence; the separate
+real-broker tests cover live cross-replica delivery.
+
+Oversized community voice metadata is stored as one immutable binary protobuf
+snapshot in `social.event_payloads`, with a UUID and a 24-hour expiry, before a
+small reference is published. A subscriber reads that exact snapshot through its
+existing SQL pool, validates it, and delivers it locally. Stored snapshots cannot
+contain references or private-call credentials. Separate START snapshots remain
+separate across END, privacy edits and a later START; metadata is never truncated.
+A payload row is a transport cache, not an outbox, replay log or delivery receipt.
+
+A mutation is delivered locally before its bus hint is queued. The origin drops
+its own loopback; address-targeted deliveries preserve the order observed from
+that publisher. Community handlers can complete out of order, as the source's
+async handlers can. Concurrent publishers have no total order. Community workers
+allow five seconds per delivery. Community fanout reads subscriber membership in
+pages of 256 and re-reads current privacy for START. Member removal and deletion
+status reach the removed member without requiring it to remain a member. Pulse
+connectivity is already derived locally by every replica and never crosses this
+subject, preventing duplicate global announcements.
+
+Authentication is the configured internal NATS link; the event envelope does not
+supply client authority. Routing checks still run in Social, and the existing
+connectivity delivery guards re-check privacy and shared membership before handing
+an item to a socket. Public client sockets cannot publish this internal subject.
+
+Delivery remains transient and at most once, as Redis pub/sub in
+`decentraland/social-service-ea` at `b6b2cefefdf727b2ed47ddb887e77d226a41eea6`.
+A disconnect may lose hints; the existing broker reconnects and restores its
+subscriptions. There is no per-event retry, forced client closure, sequence ledger,
+or promise to replay missed updates. A new friend-connectivity subscription starts
+with online friends only; community connectivity starts with live events.
+
+Community START facts are Social-owned rows in
+`social.community_voice_notifications`: the exact case-sensitive raw key, canonical
+community UUID, scope, generation and expiry. Raw UUID spellings retain independent
+audiences and TTLs; only membership and media use the canonical UUID. The polling
+job runs every `COMMUNITY_VOICE_CHAT_POLLING_JOB_INTERVAL` milliseconds (45,000 by
+default), reads raw PK pages of 64 and asks the existing Comms liveness query. Active
+entries refresh their 24-hour expiry without changing scope or generation; inactive
+fresh entries are claimed by raw key plus generation and announce END once. Expired
+entries are cleared without an event. Explicit END claims only its supplied raw key
+before media teardown and restores it on failure only if that key remains absent.
+Other aliases await the poll; a canonical media closure does not clear their facts.
+Generation checks fence notification metadata without making external media END
+atomic with START. The same job removes at most 64 expired spill rows per pass.
+
+
 ## Room recovery
 
 The canonical contract is `library/protocol/proto/decentraland/pulse/pulse_clusters.proto`.

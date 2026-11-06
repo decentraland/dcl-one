@@ -1,0 +1,50 @@
+{
+  "sources": [
+    {
+      "repository": "https://github.com/decentraland/catalyst-contracts",
+      "revision": "e42f0039487d3650699499164ffe7d86729efda7",
+      "package": "@dcl/catalyst-contracts",
+      "version": "4.4.2",
+      "tarball": "https://registry.npmjs.org/@dcl/catalyst-contracts/-/catalyst-contracts-4.4.2.tgz",
+      "integrity": "sha512-gJZo3IB8U+jhBJWR0DgoLS+zaUDIb/u79e7Rp+MEM78uH3bvC19S3Dd8lxWEbPXNKlCB0saUptfK/Buw0c1y2Q==",
+      "files": {
+        "checker.abi.json": {
+          "from": "dist/abis.js checkerAbi, function entries",
+          "sha256": "112d01d4286b1dff8b4d2d914b9f5120f1a1ccfbbb1361fa4488b5d76b86c07b"
+        },
+        "checker.bytecode": {
+          "from": "dist/checkerByteCode.js code",
+          "sha256": "e28e7ad97c930f3de7a802575694e489dc0b0f1efa9e65c7b5492cca8b5ebaea"
+        },
+        "contracts.json": {
+          "from": "dist/index.js l1Contracts.{mainnet,sepolia}.{chainId,registrar,land,state,checker} and l2Contracts.{polygon,amoy}.{checker,thirdParty,factories,commitees}",
+          "sha256": "e3098b759b87d71179c5a6f4c0fdef7d96c6c96c818ce0564c220c69c7d1aa33"
+        }
+      }
+    },
+    {
+      "repository": "https://github.com/decentraland/core-libs",
+      "directory": "libs/urn-resolver",
+      "package": "@dcl/urn-resolver",
+      "version": "3.6.1",
+      "tarball": "https://registry.npmjs.org/@dcl/urn-resolver/-/urn-resolver-3.6.1.tgz",
+      "integrity": "sha512-shdI9EeCkN1NGYaYQO61cQhdz2qRY3EbaqYzGBQ53pZp8uNapBZNh0W97gVoZpW0n9U09aXZU8ZSd2f8xC8u0g==",
+      "files": {
+        "collections-v1.json": {
+          "from": "dist/collections-v1.js, the id and name of each entry",
+          "sha256": "164993f25e3346e9bed33e04900d685acc3bb45491f84b0154f0eb94e3bc9bb3"
+        }
+      }
+    }
+  ],
+  "license": {
+    "spdx": "Apache-2.0",
+    "path": "LICENSE",
+    "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+  },
+  "normalization": "Values extracted from the published npm tarballs with JSON.stringify(value, null, 2) plus a trailing newline; the bytecode is the hex string as published plus a trailing newline.",
+  "update_instructions": [
+    "Install the pinned packages, re-extract the listed values as described in each files entry and update the sha256 values here.",
+    "Run cargo test -p catalyst-content validator::onchain, whose tests check the Rust call encodings against checker.abi.json."
+  ]
+}

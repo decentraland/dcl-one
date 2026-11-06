@@ -15,14 +15,31 @@
 //! `Retry-After` when this node could not decide (a source unset or down,
 //! the store unreadable); the gates of [`super::writes`] before any of it
 //! (503 disabled, 403 read-only) and the old 503 while the node is
-//! bootstrapping. The per-client request budget is the proxy's
-//! (`limit_req zone=catdeploy` on `= /content/entities`,
-//! `deploy/nix/nginx.nix`); the per-pointer TTLs are the deployer's.
+//! bootstrapping. Before the body is read, a body that does not fit the
+//! in-memory upload budget answers 503 and a client address past its daily
+//! quota 429, both with `Retry-After` ([`super::upload_admission`], per
+//! process). The quota counts every admitted request, a form refused for
+//! its field limits (400) included, and gives back only the ones the
+//! deployer could not decide for its own state (its 503). A contract-wallet
+//! signature this node cannot check (503) and an unsynced copy refusing the
+//! entity's type (503) still count: the client chose them.
+//! The per-second request rate is the gateway's (`limit_req zone=deploy`,
+//! `infra/gateway/gateway.py`); the per-pointer TTLs are the deployer's.
+//!
+//! A form with `partial=true` is a batch of a partial upload
+//! ([`super::partial_deployments`]): 202 `{missing}` until the upload is
+//! complete, then 200. `?partial=true` declares it before the body, so the
+//! quota is not counted on admission but once the form is read (the upload
+//! once, when created, and a batch refused with a 400 before joining it);
+//! the query flag on a form without the field is a 400. Once the fields
+//! before the first file are read, a batch from a source that spent its
+//! quota and not resuming its signer's own upload, or from an account over
+//! its byte rate, is turned away (429) before any file is buffered.
 
 use std::collections::BTreeMap;
 
 use axum::Json;
-use axum::extract::{Multipart, State};
+use axum::extract::{Multipart, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use bytes::{Bytes, BytesMut};
@@ -30,6 +47,7 @@ use serde_json::{Value, json};
 
 use super::SharedState;
 use super::errors::{AppError, AppResult};
+use super::partial_deployments;
 use super::write_deployer::DeployFailure;
 use super::writes;
 use crate::auth::MAX_AUTH_CHAIN_LINKS;
@@ -146,11 +164,27 @@ fn is_file_part(file_name: Option<&str>, content_type: Option<&str>) -> bool {
         || content_type.is_some_and(|t| !t.trim_start().to_ascii_lowercase().starts_with("text/"))
 }
 
-/// Reads the whole form: text fields by name, file parts in order, each
-/// under [`MAX_DEPLOY_FILE_BYTES`], at most [`MAX_DEPLOY_FILES`] of them.
-async fn read_form(multipart: &mut Multipart) -> AppResult<(BTreeMap<String, String>, Vec<Bytes>)> {
+/// A form as read, or turned away before its files were buffered.
+enum Form {
+    Read(BTreeMap<String, String>, Vec<(String, Bytes)>),
+    Refused(Response),
+}
+
+/// Reads the whole form: text fields by name, at most `max_fields` of up to
+/// `max_field_bytes` each, and file parts in order with their field names,
+/// each under [`MAX_DEPLOY_FILE_BYTES`], at most [`MAX_DEPLOY_FILES`] of them.
+/// `before_files` sees the fields read before the first file part (the
+/// clients send theirs first) and may refuse the form there.
+async fn read_form(
+    multipart: &mut Multipart,
+    max_fields: usize,
+    max_field_bytes: usize,
+    before_files: impl AsyncFnOnce(&BTreeMap<String, String>) -> Option<Response>,
+) -> AppResult<Form> {
     let mut fields: BTreeMap<String, String> = BTreeMap::new();
-    let mut files: Vec<Bytes> = Vec::new();
+    let mut files: Vec<(String, Bytes)> = Vec::new();
+    let mut field_count = 0usize;
+    let mut before_files = Some(before_files);
 
     while let Some(mut field) = multipart
         .next_field()
@@ -160,6 +194,11 @@ async fn read_form(multipart: &mut Multipart) -> AppResult<(BTreeMap<String, Str
         let name = field.name().unwrap_or("").to_string();
 
         if is_file_part(field.file_name(), field.content_type()) {
+            if let Some(gate) = before_files.take()
+                && let Some(refused) = gate(&fields).await
+            {
+                return Ok(Form::Refused(refused));
+            }
             if files.len() >= MAX_DEPLOY_FILES {
                 return Err(invalid(format!(
                     "deployment exceeds maximum of {MAX_DEPLOY_FILES} files"
@@ -178,16 +217,34 @@ async fn read_form(multipart: &mut Multipart) -> AppResult<(BTreeMap<String, Str
                 }
                 buf.extend_from_slice(&chunk);
             }
-            files.push(buf.freeze());
+            files.push((name, buf.freeze()));
         } else {
-            let value = field
-                .text()
+            // Repeated names count too.
+            if field_count >= max_fields {
+                return Err(invalid(format!(
+                    "Too many form fields in the request. The maximum allowed is {max_fields}."
+                )));
+            }
+            field_count += 1;
+            let mut buf = Vec::new();
+            while let Some(chunk) = field
+                .chunk()
                 .await
+                .map_err(|e| invalid(format!("Failed to read field value: {e}")))?
+            {
+                if buf.len().saturating_add(chunk.len()) > max_field_bytes {
+                    return Err(invalid(format!(
+                        "Field '{name}' is too large. The maximum allowed size per field is {max_field_bytes} bytes."
+                    )));
+                }
+                buf.extend_from_slice(&chunk);
+            }
+            let value = String::from_utf8(buf)
                 .map_err(|e| invalid(format!("Failed to read field value: {e}")))?;
             fields.insert(name, value);
         }
     }
-    Ok((fields, files))
+    Ok(Form::Read(fields, files))
 }
 
 /// The `type` of the uploaded entity file (the JSON upload hashing to
@@ -203,25 +260,52 @@ fn entity_type_of(files: &[Bytes], entity_id: &str) -> Option<String> {
 }
 
 pub fn deployment_failure_response(failure: DeployFailure) -> Response {
-    let unavailable = matches!(failure, DeployFailure::Unavailable(_));
+    let unavailable = !matches!(failure, DeployFailure::Rejected(_));
     let (status, errors) = match failure {
         DeployFailure::Rejected(errors) => (StatusCode::BAD_REQUEST, errors),
-        DeployFailure::Unavailable(errors) => (StatusCode::SERVICE_UNAVAILABLE, errors),
+        DeployFailure::Unavailable(errors) | DeployFailure::Unverifiable(errors) => {
+            (StatusCode::SERVICE_UNAVAILABLE, errors)
+        }
     };
-    let mut response = (status, Json(json!({ "errors": errors }))).into_response();
+    let response = (status, Json(json!({ "errors": errors }))).into_response();
     if unavailable {
-        response.headers_mut().insert(
-            header::RETRY_AFTER,
+        return with_retry_after(
+            response,
             header::HeaderValue::from_static(writes::UNAVAILABLE_RETRY_AFTER_SECS),
         );
     }
     response
 }
 
+/// `response` with a `Retry-After` of `value`.
+fn with_retry_after(mut response: Response, value: header::HeaderValue) -> Response {
+    response.headers_mut().insert(header::RETRY_AFTER, value);
+    response
+}
+
+/// 429 with `Retry-After` for a client past its daily quota.
+fn quota_exceeded_response(retry_after_secs: u64) -> Response {
+    with_retry_after(
+        super::errors::json_error(StatusCode::TOO_MANY_REQUESTS, "Too many requests"),
+        header::HeaderValue::from(retry_after_secs),
+    )
+}
+
+/// The bytes a body can occupy: its declared length, else the body cap.
+fn declared_body_bytes(headers: &HeaderMap) -> u64 {
+    headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(u64::MAX)
+        .min(MAX_DEPLOYMENT_BYTES as u64)
+}
+
 pub async fn create_entity(
     State(state): State<SharedState>,
+    RawQuery(query): RawQuery,
     headers: HeaderMap,
-    mut multipart: Multipart,
+    multipart: Multipart,
 ) -> AppResult<Response> {
     let request_started = std::time::Instant::now();
     if let Some(refused) = writes::refuse(&state) {
@@ -239,15 +323,147 @@ pub async fn create_entity(
         return bootstrapping();
     }
 
-    let (fields, files) = read_form(&mut multipart).await?;
+    let Some(_reservation) = state
+        .upload_budget
+        .try_reserve(declared_body_bytes(&headers))
+    else {
+        return Ok(with_retry_after(
+            super::errors::json_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                super::upload_admission::BUDGET_EXHAUSTED_MESSAGE,
+            ),
+            header::HeaderValue::from_static(writes::UNAVAILABLE_RETRY_AFTER_SECS),
+        ));
+    };
+    let client_ip = crate::shared::client_ip::client_ip(&headers);
+    // A declared partial batch is counted once its form is read
+    // ([`partial_deployments`]): a source that spent its quota may still
+    // resume its own uploads.
+    let declared_partial = partial_deployments::is_declared(query.as_deref());
+    let charge = if declared_partial {
+        None
+    } else {
+        match state.deploy_quota.try_consume(&client_ip) {
+            Ok(charge) => charge,
+            Err(retry_after) => return Ok(quota_exceeded_response(retry_after)),
+        }
+    };
+
+    let request = Request {
+        headers: &headers,
+        client_ip: &client_ip,
+        declared_partial,
+        // Undeclared, the source was admitted under its quota above.
+        quota_exhausted: if declared_partial {
+            state.deploy_quota.exhausted(&client_ip)
+        } else {
+            None
+        },
+        started: request_started,
+    };
+    Ok(
+        match deploy_form(&state, deployer, &request, multipart).await {
+            Ok(Answer::Decided(response)) => response,
+            Ok(Answer::Undecided(response)) | Ok(Answer::Partial(response)) => {
+                if let Some(charge) = charge {
+                    charge.refund();
+                }
+                response
+            }
+            Err(e) => e.into_response(),
+        },
+    )
+}
+
+/// What `deploy_form` needs of the request besides its body.
+struct Request<'a> {
+    headers: &'a HeaderMap,
+    client_ip: &'a str,
+    declared_partial: bool,
+    /// The daily quota's Retry-After when the source had spent it on arrival.
+    quota_exhausted: Option<u64>,
+    started: std::time::Instant,
+}
+
+/// An admitted deploy's answer: [`Answer::Undecided`] is the deployer's
+/// 503 for this node's own state, which the client's quota gets back;
+/// [`Answer::Partial`] a partial batch, which counted itself.
+enum Answer {
+    Decided(Response),
+    Undecided(Response),
+    Partial(Response),
+}
+
+/// Reads an admitted form and deploys it.
+async fn deploy_form(
+    state: &SharedState,
+    deployer: std::sync::Arc<super::write_deployer::WriteDeployer>,
+    request: &Request<'_>,
+    mut multipart: Multipart,
+) -> AppResult<Answer> {
+    let headers = request.headers;
+    let request_started = request.started;
+    let settings = &state.settings;
+    let is_partial = |fields: &BTreeMap<String, String>| {
+        fields.get("partial").map(String::as_str) == Some("true")
+    };
+    let form = read_form(
+        &mut multipart,
+        settings.max_upload_field_count,
+        settings.max_upload_field_bytes,
+        async |fields: &BTreeMap<String, String>| {
+            if !request.declared_partial && !is_partial(fields) {
+                return None;
+            }
+            let entity_id = fields.get("entityId")?;
+            let chain = auth_chain_of(fields, entity_id).ok()?;
+            let signer = chain.get(0)?.get("payload")?.as_str()?;
+            partial_deployments::admit_before_files(
+                &deployer,
+                &settings.partial_uploads,
+                entity_id,
+                signer,
+                request.quota_exhausted,
+            )
+            .await
+        },
+    )
+    .await?;
+    let (fields, files) = match form {
+        Form::Read(fields, files) => (fields, files),
+        Form::Refused(response) => return Ok(Answer::Partial(response)),
+    };
+    if is_partial(&fields) {
+        let answer = partial_batch(state, &deployer, request, fields, files).await;
+        return Ok(Answer::Partial(
+            answer.unwrap_or_else(IntoResponse::into_response),
+        ));
+    }
     let entity_id = fields
         .get("entityId")
         .ok_or_else(|| invalid("Missing entityId field"))?
         .clone();
-    if !state.sync.takes_deploys()
-        && !entity_type_of(&files, &entity_id).is_some_and(|t| state.sync.takes_deploys_of(&t))
-    {
-        return bootstrapping();
+    // Otherwise the query flag would carry a regular deploy past the quota.
+    if request.declared_partial {
+        return Err(invalid(
+            "The 'partial=true' query parameter requires the 'partial=true' form field",
+        ));
+    }
+    let files: Vec<Bytes> = files.into_iter().map(|(_, bytes)| bytes).collect();
+    if !state.sync.takes_deploys() {
+        let Some(entity_type) = entity_type_of(&files, &entity_id) else {
+            return Ok(Answer::Decided(deployment_failure_response(
+                DeployFailure::Rejected(vec![
+                    "The entity file was not part of the uploaded files or has no type."
+                        .to_string(),
+                ]),
+            )));
+        };
+        if !state.sync.takes_deploys_of(&entity_type) {
+            return Err(AppError::ServiceUnavailable(
+                writes::BOOTSTRAPPING_MESSAGE.to_string(),
+            ));
+        }
     }
     let auth_chain = auth_chain_of(&fields, &entity_id)?;
 
@@ -279,17 +495,87 @@ pub async fn create_entity(
                 deploy_us = deploy_started.elapsed().as_micros() as u64,
                 elapsed_us = request_started.elapsed().as_micros() as u64
             );
-            Ok((
-                StatusCode::OK,
-                Json(json!({ "creationTimestamp": creation_timestamp })),
-            )
-                .into_response())
+            Ok(Answer::Decided(
+                (
+                    StatusCode::OK,
+                    Json(json!({ "creationTimestamp": creation_timestamp })),
+                )
+                    .into_response(),
+            ))
         }
         Err(failure) => {
             tracing::warn!(entity_id = %entity_id, errors = ?failure.errors(), "POST /entities - Deployment failed");
-            Ok(deployment_failure_response(failure))
+            let undecided = matches!(failure, DeployFailure::Unavailable(_));
+            let response = deployment_failure_response(failure);
+            Ok(if undecided {
+                Answer::Undecided(response)
+            } else {
+                Answer::Decided(response)
+            })
         }
     }
+}
+
+/// A batch of a partial upload. As upstream's `withDeploymentQuota`, the
+/// daily quota counts the upload once, when its first batch creates it, and
+/// a batch refused with a 400 before joining its upload (a missing
+/// `entityId` or a bad chain included); its 429s, 503s and replays are not
+/// counted. A spent source may only resume the signer's own upload.
+async fn partial_batch(
+    state: &SharedState,
+    deployer: &super::write_deployer::WriteDeployer,
+    request: &Request<'_>,
+    fields: BTreeMap<String, String>,
+    files: Vec<(String, Bytes)>,
+) -> AppResult<Response> {
+    if !state.sync.takes_deploys_of("scene") {
+        return Err(AppError::ServiceUnavailable(
+            writes::BOOTSTRAPPING_MESSAGE.to_string(),
+        ));
+    }
+    // Counted for good: the charge is never refunded.
+    let count = || {
+        let _ = state.deploy_quota.try_consume(request.client_ip);
+    };
+    let Some(entity_id) = fields.get("entityId").cloned() else {
+        count();
+        return Err(invalid("Missing entityId field"));
+    };
+    let auth_chain = match auth_chain_of(&fields, &entity_id) {
+        Ok(chain) => chain,
+        Err(e) => {
+            count();
+            return Err(e);
+        }
+    };
+    tracing::info!(
+        entity_id = %entity_id,
+        file_count = files.len(),
+        "POST /entities - Partial deployment batch"
+    );
+    let batch = partial_deployments::Batch {
+        entity_id,
+        auth_chain,
+        files,
+        requested_at_ms: chrono::Utc::now().timestamp_millis()
+            - request.started.elapsed().as_millis() as i64,
+    };
+    let mut admission = partial_deployments::Admission::default();
+    let response = partial_deployments::handle(
+        deployer,
+        &state.settings.partial_uploads,
+        batch,
+        request.quota_exhausted,
+        &mut admission,
+    )
+    .await;
+    if admission.created || (response.status() == StatusCode::BAD_REQUEST && !admission.admitted) {
+        count();
+    }
+    if response.status() == StatusCode::OK {
+        state.deployments_cache.clear();
+    }
+    Ok(response)
 }
 
 #[cfg(test)]

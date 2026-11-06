@@ -17,10 +17,12 @@ import { registerProfile } from './domains/profile'
 import { registerFriends } from './domains/friends'
 import { registerChat } from './domains/chat'
 import { registerDm } from './domains/dm'
+import { registerUiSound } from './domains/uiSound'
 import { registerEmotes } from './domains/emotes'
 import { registerWearables, sendEquipped } from './domains/wearables'
 import { registerCatalog } from './domains/catalog'
 import { registerOutfits } from './domains/outfits'
+import { registerRandomizer } from './domains/randomizer'
 import { registerAvatarDraft } from './domains/avatarDraft'
 import { registerWelcome } from './domains/welcome'
 import { registerNotifications } from './domains/notifications'
@@ -50,11 +52,13 @@ export function main(): void {
     registerFriends(ctx)
     registerChat(ctx)
     registerDm(ctx)
+    registerUiSound(ctx)
     registerVoice(ctx)
     registerEmotes(ctx)
     registerWearables(ctx)
     registerCatalog(ctx)
     registerOutfits(ctx)
+    registerRandomizer(ctx)
     registerAvatarDraft(ctx, async () => {
       await sendEquipped(ctx)
     })

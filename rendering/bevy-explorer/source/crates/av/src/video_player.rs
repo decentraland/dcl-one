@@ -241,7 +241,7 @@ fn player_config_added<T: AVPlayer>(
     trigger: Trigger<OnInsert, T::Config>,
     mut av_players: Query<(
         &T::Config,
-        Option<&mut AVSinks<T>>,
+        Option<&AVSinks<T>>,
         Has<ShouldBePlaying<T>>,
         Has<Stream>,
         Option<&mut ReceiverVolume>,
@@ -255,7 +255,7 @@ fn player_config_added<T: AVPlayer>(
                 disqualified::ShortName::of::<T>()
             )
         });
-    let Some(mut sinks) = maybe_sinks else {
+    let Some(sinks) = maybe_sinks else {
         if !has_stream {
             debug_panic!(
                 "Non-stream {} did not have sinks.",
@@ -269,18 +269,7 @@ fn player_config_added<T: AVPlayer>(
         return;
     };
 
-    let AVSinks {
-        #[cfg(feature = "ffmpeg")]
-            audio: _,
-        video: _,
-        command_sender,
-        rate,
-        state: _,
-        sent_event: _,
-        sent_volume: _,
-        sent_state: _,
-        _phantom,
-    } = sinks.as_mut();
+    let command_sender = &sinks.command_sender;
 
     if config.playing() && has_should_be_playing {
         command_sender.send(AVCommand::Play).report();
@@ -290,7 +279,6 @@ fn player_config_added<T: AVPlayer>(
     command_sender
         .send(AVCommand::Repeat(config.r#loop()))
         .report();
-    *rate = Some(config.playback_rate() as f64);
 }
 
 /// Where a player's volume is decided: its config, the user's scene-audio setting, and silence
@@ -554,6 +542,30 @@ fn publish_stream_state(
 mod snapshot_tests {
     use super::*;
     use dcl_component::{proto_components::sdk::components::VideoState, SceneEntityId};
+
+    #[test]
+    fn playback_config_preserves_the_frame_rate_from_video_metadata() {
+        let mut app = App::new();
+        app.add_observer(player_config_added::<VideoPlayer>);
+        let mut sinks = noop_sinks::<VideoPlayer>(String::new(), Some(Handle::default()));
+        sinks.rate = Some(24.0);
+        let player = app.world_mut().spawn(sinks).id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(crate::VideoPlayerConfig {
+                playing: false,
+                volume: 0.5,
+                playback_rate: 2.0,
+                r#loop: true,
+            });
+        assert_eq!(
+            app.world()
+                .get::<AVSinks<VideoPlayer>>(player)
+                .unwrap()
+                .rate,
+            Some(24.0)
+        );
+    }
 
     #[test]
     fn holds_video_updates_until_snapshot_readback_finishes() {

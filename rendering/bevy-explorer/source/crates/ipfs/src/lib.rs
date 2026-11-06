@@ -1,7 +1,14 @@
+mod batch_sizes;
 pub mod content_hash;
+mod debug_panel;
+mod download;
+use download::{InFlightDownloads, RequestMetrics};
+mod priority_gate;
+pub use priority_gate::{PriorityGate, Ticket};
 #[cfg(feature = "ipfs_debug")]
 mod ipfs_debug;
 pub mod ipfs_path;
+mod request_metrics;
 #[cfg(any(target_arch = "wasm32", test))]
 pub mod web_cache;
 
@@ -11,7 +18,7 @@ use std::{
     marker::PhantomData,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU16, AtomicU32, Ordering},
+        atomic::{AtomicU16, AtomicU32, AtomicU64, Ordering},
         Arc, Weak,
     },
 };
@@ -83,6 +90,7 @@ use world_access::WorldCommsSecret;
 use common::util::JoinRelativeExt;
 
 use self::ipfs_path::{content_file_path, CacheKey, IpfsKey, IpfsPath, IpfsType};
+use common::partition::LoadPriority;
 
 const IPFS_IN_FLIGHT_DIAGNOSTIC_PATH: DiagnosticPath = DiagnosticPath::const_new("IPFS_IN_FLIGHT");
 static IPFS_IN_FLIGHT: AtomicU32 = AtomicU32::new(0);
@@ -498,6 +506,37 @@ pub struct ServerScene {
     entity_id: String,
 }
 
+/// `GET {world}/manifest`: the world's occupied parcels and the parcel it spawns players on, the
+/// document unity-explorer lands on (the asset-bundle-registry serves the same one). Only the
+/// spawn is read; the worlds content server sends its coordinates as strings, the registry as
+/// numbers.
+#[derive(Debug, Deserialize)]
+struct WorldManifest {
+    spawn_coordinate: Option<ManifestCoordinate>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ManifestCoordinate {
+    x: ManifestNumber,
+    y: ManifestNumber,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum ManifestNumber {
+    Number(i32),
+    Text(String),
+}
+
+impl ManifestNumber {
+    fn value(&self) -> Option<i32> {
+        match self {
+            Self::Number(value) => Some(*value),
+            Self::Text(text) => text.trim().parse().ok(),
+        }
+    }
+}
+
 pub struct IpfsIoPlugin {
     pub preview: bool,
     pub assets_root: Option<String>,
@@ -552,6 +591,9 @@ impl Plugin for IpfsIoPlugin {
             inner: ipfs_io.clone(),
         };
 
+        for (path, _) in ipfs_io.request_metrics.counters() {
+            app.register_diagnostic(Diagnostic::new(path));
+        }
         app.insert_resource(IpfsResource { inner: ipfs_io });
         app.insert_resource(RealmInitialLocation::Base);
 
@@ -580,13 +622,13 @@ impl Plugin for IpfsIoPlugin {
         );
 
         app.add_console_command::<ChangeRealmCommand, _>(change_realm_command);
+        debug_panel::register(app, self.preview);
 
         app.register_diagnostic(Diagnostic::new(IPFS_IN_FLIGHT_DIAGNOSTIC_PATH));
         app.register_diagnostic(Diagnostic::new(IPFS_SUCCESS_DIAGNOSTIC_PATH));
         app.register_diagnostic(Diagnostic::new(IPFS_FAILED_DIAGNOSTIC_PATH));
         app.register_diagnostic(Diagnostic::new(IPFS_CACHED_DIAGNOSTIC_PATH));
         app.register_diagnostic(Diagnostic::new(IPFS_NON_IPFS_DIAGNOSTIC_PATH));
-
         app.add_systems(PostUpdate, ipfs_diagnostics);
         app.add_systems(Update, apply_max_downloads);
 
@@ -732,6 +774,7 @@ pub fn change_realm(
                     about,
                     connected,
                     secret,
+                    spawn_parcel,
                 }) = &*realm_change.borrow_and_update()
                 {
                     let mut config = about.configurations.clone().unwrap_or_default();
@@ -754,6 +797,7 @@ pub fn change_realm(
                             .as_ref()
                             .map(|c| c.public_url.clone())
                             .unwrap_or_default(),
+                        spawn_parcel: *spawn_parcel,
                     };
                     // with the realm, before the comms login it starts
                     world_secret.0 = secret.clone();
@@ -917,16 +961,57 @@ pub struct RealmConfig {
     pub connected: bool,
     /// The password the realm (a world) was entered with, for its signed comms login
     pub secret: Option<String>,
+    /// The parcel the realm (a world) spawns players on, from its manifest
+    pub spawn_parcel: Option<IVec2>,
+}
+
+fn server_retry_delay(
+    status: StatusCode,
+    headers: &reqwest::header::HeaderMap,
+) -> Option<Duration> {
+    if !matches!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE
+    ) {
+        return None;
+    }
+    let value = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
+    let now = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
+        .ok()?;
+    platform::http::parse_retry_after(value, std::time::UNIX_EPOCH + now)
+}
+
+fn readiness_retry_delay(
+    status: StatusCode,
+    headers: &reqwest::header::HeaderMap,
+    remaining: Duration,
+    retries: &mut u8,
+) -> Option<Duration> {
+    let delay = if let Some(delay) = server_retry_delay(status, headers) {
+        if *retries >= 3 || delay > platform::http::MAX_RETRY_AFTER || delay >= remaining {
+            return None;
+        }
+        *retries += 1;
+        delay
+    } else {
+        Duration::from_millis(150)
+    };
+    (delay < remaining).then_some(delay)
 }
 
 pub struct IpfsIo {
+    /// Effective preview-only delay before a real outbound request, without holding a slot.
+    preview_delay_ms: AtomicU32,
     is_preview: bool, // determines whether we always retry failed assets immediately
     default_io: Box<dyn ErasedAssetReader>,
     default_fs_path: Option<PathBuf>,
+    next_cache_part: AtomicU64,
     realm_config_receiver: tokio::sync::watch::Receiver<Option<RealmConfig>>,
     realm_config_sender: tokio::sync::watch::Sender<Option<RealmConfig>>,
     pub context: AsyncRwLock<IpfsContext>,
-    request_slots: tokio::sync::Semaphore,
+    request_slots: Arc<PriorityGate>,
+    request_metrics: RequestMetrics,
     reqno: AtomicU16,
     static_files: HashMap<&'static str, &'static str>,
     // Directories `file://` urls may read from. file realms are only minted by
@@ -959,18 +1044,21 @@ impl IpfsIo {
             is_preview,
             default_io,
             default_fs_path,
+            next_cache_part: AtomicU64::new(0),
             realm_config_receiver: receiver,
             realm_config_sender: sender,
             context: AsyncRwLock::new(IpfsContext {
                 num_slots,
                 ..Default::default()
             }),
-            request_slots: tokio::sync::Semaphore::new(num_slots),
+            request_slots: PriorityGate::new(num_slots),
+            request_metrics: RequestMetrics::default(),
+            preview_delay_ms: AtomicU32::new(0),
             reqno: default(),
             static_files: static_paths,
             #[cfg(not(target_arch = "wasm32"))]
             allowed_file_roots: Default::default(),
-            client: reqwest::Client::builder()
+            client: platform::http_client_builder()
                 .connect_timeout(Duration::from_secs(5))
                 .use_native_tls()
                 .user_agent("DCLExplorer/0.1")
@@ -980,6 +1068,14 @@ impl IpfsIo {
             #[cfg(feature = "ipfs_debug")]
             debug_overlay_sender,
         }
+    }
+
+    fn preview_request_delay(&self) -> Option<Duration> {
+        if !self.is_preview {
+            return None;
+        }
+        let ms = self.preview_delay_ms.load(Ordering::Relaxed);
+        (ms > 0).then(|| Duration::from_millis(ms.into()))
     }
 
     /// Allow `file://` reads under `root` (canonical). See `allowed_file_roots`.
@@ -1033,6 +1129,44 @@ impl IpfsIo {
         }
     }
 
+    /// An entity that owns downloads under `hash` (a scene root, an avatar wearing a wearable)
+    /// has appeared: its requests rank by `key`, the best of its holders' for a shared hash,
+    /// until `release_download_priority`. A request whose hash nobody registered ranks with the
+    /// requests that have no hash, after every registered one; a hash released while requests
+    /// of its wait ranks last.
+    pub fn register_download_priority(&self, hash: &str, key: LoadPriority) {
+        self.request_slots.register(hash, key);
+    }
+
+    /// The owner of downloads under `hash` has gone.
+    pub fn release_download_priority(&self, hash: &str) {
+        self.request_slots.unregister(hash);
+    }
+
+    /// This frame's keys for the registered hashes, written in place: the first write of a hash
+    /// replaces its key, later writes in the same call take the best.
+    pub fn update_download_priorities<'a>(
+        &self,
+        keys: impl IntoIterator<Item = (&'a str, LoadPriority)>,
+    ) {
+        self.request_slots.publish(keys);
+    }
+
+    pub fn scene_priority(&self, scene: &str) -> Option<LoadPriority> {
+        self.request_slots.scene_priority(scene)
+    }
+
+    /// Whether a grant before the next frame may read the download priorities: a download
+    /// waits for a request slot, or holds one whose release can go to a newcomer.
+    pub fn reads_download_priorities(&self) -> bool {
+        self.request_slots.reads_keys()
+    }
+
+    /// The request slots themselves, for callers that queue their own tickets (tests).
+    pub fn request_slots(&self) -> &Arc<PriorityGate> {
+        &self.request_slots
+    }
+
     pub fn set_concurrent_remote_count(&self, count: usize) {
         let mut context = self.context.blocking_write();
         if count == context.num_slots {
@@ -1076,6 +1210,7 @@ impl IpfsIo {
                         about: Default::default(),
                         connected: false,
                         secret: None,
+                        spawn_parcel: None,
                     }))
                     .expect("channel closed");
             }
@@ -1094,6 +1229,7 @@ impl IpfsIo {
                 about,
                 connected: true,
                 secret: None,
+                spawn_parcel: None,
             }))
             .expect("channel closed");
     }
@@ -1120,21 +1256,16 @@ impl IpfsIo {
         let mut about;
         let mut final_url;
         loop {
-            let about_raw = self
-                .client
-                .get(format!("{new_realm}/about"))
-                .send()
-                .await
-                .map_err(|e| anyhow!(e))?;
+            let about_raw =
+                platform::TracedJsonResponse::send(self.client.get(format!("{new_realm}/about")))
+                    .await
+                    .map_err(|e| anyhow!(e))?;
             if about_raw.status() != StatusCode::OK {
-                return Err(anyhow!("status: {}", about_raw.status()));
+                return Err(anyhow!("status: {}", about_raw.discard()));
             }
             final_url = about_raw.url().to_string();
 
-            about = about_raw
-                .json::<ServerAbout>()
-                .await
-                .map_err(|e| anyhow!(e))?;
+            about = about_raw.json::<ServerAbout>().await?;
             if about.configurations.as_ref().is_some_and(|config| {
                 config
                     .scenes_urn
@@ -1165,6 +1296,13 @@ impl IpfsIo {
         if let Err(e) = self.update_scene_urns(&mut about, &new_realm).await {
             error!("failed to update scene urns: {e}");
         }
+        let spawn_parcel = match self.world_spawn_parcel(&about, &new_realm).await {
+            Ok(spawn_parcel) => spawn_parcel,
+            Err(e) => {
+                warn!("failed to fetch the world manifest: {e}");
+                None
+            }
+        };
 
         let mut write = self.context.write().await;
         if let (Some(cs), Some(content)) = (&content_server_override, about.content.as_mut()) {
@@ -1184,6 +1322,7 @@ impl IpfsIo {
                 about,
                 connected: true,
                 secret,
+                spawn_parcel,
             }))
             .expect("channel closed");
         Ok(())
@@ -1253,27 +1392,6 @@ impl IpfsIo {
             .unwrap_or(false)
     }
 
-    /// Write bytes into the on-disk content cache under `hash` (atomic via .part rename), so a later
-    /// content-file resolution to `hash` is served from cache without a network fetch. No-op if
-    /// there is no cache dir (e.g. wasm).
-    pub async fn cache_bytes(&self, hash: &str, data: &[u8]) -> Result<(), anyhow::Error> {
-        let Some(cache_path) = self.cache_path() else {
-            return Ok(());
-        };
-        // `hash` is supplied by the caller, so it must not steer the write out of the cache dir
-        let (Some(part), Some(final_path)) = (
-            cache_path.join_relative(format!("{hash}.part")),
-            cache_path.join_relative(hash),
-        ) else {
-            anyhow::bail!("refusing to cache under `{hash}`");
-        };
-        let mut f = async_fs::File::create(&part).await?;
-        f.write_all(data).await?;
-        f.sync_all().await?;
-        async_fs::rename(&part, &final_path).await?;
-        Ok(())
-    }
-
     pub fn cache_path(&self) -> Option<&Path> {
         self.default_fs_path.as_deref()
     }
@@ -1315,8 +1433,12 @@ impl IpfsIo {
         match request {
             ActiveEntitiesRequest::Pointers(pointers) => {
                 let client = self.client.clone();
+                let delay = self.preview_request_delay();
                 IoTaskPool::get().spawn_compat(async move {
                     let active_url = active_url.ok_or(anyhow!("not connected"))?;
+                    if let Some(delay) = delay {
+                        async_std::task::sleep(delay).await;
+                    }
                     let body = serde_json::to_string(&ActiveEntitiesPointersRequest { pointers })?;
                     // Headers-phase timeout + body inactivity timeout (the total is
                     // left unbounded, so a large-but-progressing response — e.g. bulk
@@ -1325,8 +1447,7 @@ impl IpfsIo {
                         client
                             .post(active_url)
                             .header("content-type", "application/json")
-                            .body(body)
-                            .send(),
+                            .body(body),
                         Duration::from_secs(30),
                         Duration::from_secs(10),
                     )
@@ -1336,7 +1457,7 @@ impl IpfsIo {
                             anyhow!("timed out awaiting active-entities headers")
                         }
                         platform::FetchError::Send(e) => anyhow!(e),
-                        platform::FetchError::Status(s) => anyhow!("status: {s}"),
+                        platform::FetchError::Status(s, _) => anyhow!("status: {s}"),
                         platform::FetchError::Stalled => {
                             anyhow!("active-entities response stalled")
                         }
@@ -1392,17 +1513,6 @@ impl IpfsIo {
         self.client.clone()
     }
 
-    pub async fn async_request(
-        &self,
-        request: reqwest::Request,
-        client: reqwest::Client,
-    ) -> Result<reqwest::Response, anyhow::Error> {
-        // get semaphore to limit concurrent requests
-        let _permit = self.request_slots.acquire().await.map_err(|e| anyhow!(e))?;
-
-        client.execute(request).await.map_err(|e| anyhow!(e))
-    }
-
     pub async fn ipfs_hash(&self, ipfs_path: &IpfsPath) -> Option<String> {
         ipfs_path.hash(&*self.context.read().await)
     }
@@ -1456,23 +1566,42 @@ impl IpfsIo {
                 all = false;
                 continue;
             };
+            let mut retries = 0;
             loop {
-                if let Ok(resp) = self
-                    .client
-                    .get(&url)
-                    .timeout(Duration::from_secs(10))
-                    .send()
-                    .await
-                {
-                    if resp.status().is_success() {
-                        break;
-                    }
-                }
-                if Instant::now() >= deadline {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
                     all = false;
                     break;
                 }
-                async_std::task::sleep(Duration::from_millis(150)).await;
+                let Ok(response) = async_std::future::timeout(
+                    remaining,
+                    self.client
+                        .get(&url)
+                        .timeout(Duration::from_secs(10))
+                        .send(),
+                )
+                .await
+                else {
+                    all = false;
+                    break;
+                };
+                let delay = match response {
+                    Ok(resp) if resp.status().is_success() => break,
+                    Ok(resp) => readiness_retry_delay(
+                        resp.status(),
+                        resp.headers(),
+                        deadline.saturating_duration_since(Instant::now()),
+                        &mut retries,
+                    ),
+                    Err(_) => Some(Duration::from_millis(150)),
+                };
+                let Some(delay) =
+                    delay.filter(|d| *d < deadline.saturating_duration_since(Instant::now()))
+                else {
+                    all = false;
+                    break;
+                };
+                async_std::task::sleep(delay).await;
             }
         }
         all
@@ -1630,21 +1759,17 @@ impl IpfsIo {
         about: &mut ServerAbout,
         new_realm: &str,
     ) -> Result<(), anyhow::Error> {
-        let scenes_raw = self
-            .client
-            .get(format!("{new_realm}/scenes"))
-            .send()
-            .await
-            .map_err(|e| anyhow!(e))?;
+        let scenes_raw =
+            platform::TracedJsonResponse::send(self.client.get(format!("{new_realm}/scenes")))
+                .await
+                .map_err(|e| anyhow!(e))?;
         if scenes_raw.status() == StatusCode::NOT_FOUND {
+            scenes_raw.discard();
             return Ok(());
         } else if scenes_raw.status() != StatusCode::OK {
-            return Err(anyhow!("status: {}", scenes_raw.status()));
+            return Err(anyhow!("status: {}", scenes_raw.discard()));
         }
-        let scenes = scenes_raw
-            .json::<ServerScenes>()
-            .await
-            .map_err(|e| anyhow!(e))?;
+        let scenes = scenes_raw.json::<ServerScenes>().await?;
 
         if scenes.total > 0 {
             if let Some(scenes_urn) = about.configurations.as_mut().and_then(|config| {
@@ -1675,6 +1800,44 @@ impl IpfsIo {
             }
         }
         Ok(())
+    }
+
+    /// The parcel a world spawns players on, from `GET {realm}/manifest`. A world's `about` lists
+    /// its scenes but not where to land; the manifest's `spawn_coordinate` is the world setting
+    /// unity-explorer lands on (the base of the first scene unless the owner set one). A realm
+    /// without scene urns (a city) has no manifest to ask for.
+    async fn world_spawn_parcel(
+        &self,
+        about: &ServerAbout,
+        new_realm: &str,
+    ) -> Result<Option<IVec2>, anyhow::Error> {
+        let has_scene_urns = about.configurations.as_ref().is_some_and(|config| {
+            config
+                .scenes_urn
+                .as_ref()
+                .is_some_and(|urns| !urns.is_empty())
+        });
+        if !has_scene_urns {
+            return Ok(None);
+        }
+        let manifest_raw = self
+            .client
+            .get(format!("{new_realm}/manifest"))
+            .send()
+            .await
+            .map_err(|e| anyhow!(e))?;
+        if manifest_raw.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        } else if manifest_raw.status() != StatusCode::OK {
+            return Err(anyhow!("status: {}", manifest_raw.status()));
+        }
+        let manifest = manifest_raw
+            .json::<WorldManifest>()
+            .await
+            .map_err(|e| anyhow!(e))?;
+        Ok(manifest
+            .spawn_coordinate
+            .and_then(|spawn| Some(IVec2::new(spawn.x.value()?, spawn.y.value()?))))
     }
 }
 
@@ -1874,11 +2037,14 @@ impl IpfsIo {
                 }
             }
 
+            // the scene the file belongs to decides its place in the request slot queue
+            let scene = ipfs_path.scene_hash().map(str::to_owned);
+
             // nothing to share an uncacheable download under
             let Some(key) = cache_key else {
                 let data = self
                     .clone()
-                    .download(token, path.to_owned(), remote, None)
+                    .download(token, path.to_owned(), remote, None, scene)
                     .await?;
                 return Ok(Box::new(AsyncCursor::new(data)));
             };
@@ -1886,8 +2052,12 @@ impl IpfsIo {
             // under another asset path, say) takes the first's bytes instead of queueing a
             // download of its own behind everything requested since. By url, not by hash: the
             // bytes are shared before the hash check, and a scene names its own server
-            let (download, joined) = self.share_download(key, token, path.to_owned(), remote);
-            let mut result = download.result.clone();
+            let (download, task) = self.share_download(key, token, path.to_owned(), remote, scene);
+            let joined = task.is_none();
+            if let Some(task) = task {
+                IoTaskPool::get().spawn_compat(task).detach();
+            }
+            let mut result = download.result();
             let data = result
                 .wait_for(Option::is_some)
                 .await
@@ -1909,241 +2079,6 @@ impl IpfsIo {
         })
         .await
     }
-
-    /// The download of `remote`: the one in flight, or a new one. A download is shared by every
-    /// reader of its url (`joined` says this isn't the first) and lives as long as any of them.
-    fn share_download(
-        self: &Arc<Self>,
-        key: CacheKey,
-        token: u16,
-        path: PathBuf,
-        remote: String,
-    ) -> (Arc<SharedDownload>, bool) {
-        let mut in_flight = self.in_flight.lock().unwrap();
-        if let Some(download) = in_flight
-            .get(&remote)
-            .and_then(|(_, download)| download.upgrade())
-        {
-            debug!("[{token:?}]: remote url: `{remote}` joining in-flight download");
-            return (download, true);
-        }
-        let name = remote.clone();
-        let (sender, result) = watch::channel(None);
-        let ipfs = self.clone();
-        let entry = remote.clone();
-        let task = IoTaskPool::get().spawn_compat(async move {
-            let result = ipfs.clone().download(token, path, remote, Some(key)).await;
-            // over, so a later reader starts afresh (from the cache, now it is written). Only
-            // this download's own entry goes: cancelled, it was replaced by a newer one
-            if let Ok(mut in_flight) = ipfs.in_flight.lock() {
-                if in_flight.get(&entry).is_some_and(|(t, _)| *t == token) {
-                    in_flight.remove(&entry);
-                }
-            }
-            sender.send_replace(Some(result));
-        });
-        let download = Arc::new(SharedDownload {
-            _task: task,
-            result,
-        });
-        // a cancelled download leaves its entry behind: nothing else sweeps them
-        in_flight.retain(|_, (_, download)| download.strong_count() > 0);
-        in_flight.insert(name, (token, Arc::downgrade(&download)));
-        (download, false)
-    }
-
-    /// Fetch `remote` through a request slot and cache the bytes under `cache_key`.
-    async fn download(
-        self: Arc<Self>,
-        token: u16,
-        path: PathBuf,
-        remote: String,
-        cache_key: Option<CacheKey>,
-    ) -> Result<SharedBytes, AssetReaderError> {
-        let start = web_time::Instant::now();
-        let ipfs_io_read_state = IpfsIoReadState {
-            #[cfg(feature = "ipfs_debug")]
-            sender: &self.debug_overlay_sender,
-            path: Cow::Owned(path),
-            #[cfg(feature = "ipfs_debug")]
-            start,
-        };
-        // in wasm we add a custom header to allow the service worker to cache ipfs requests across content servers
-        #[cfg(target_arch = "wasm32")]
-        let sw_caches = cache_key.is_some();
-
-        debug!("[{token:?}]: remote url: `{remote}` awaiting semaphore");
-        // get semaphore to limit concurrent requests
-        let _deferred_in_flight = DeferredDropper::new(&IPFS_IN_FLIGHT);
-        let _permit =
-            ipfs_io_read_state.send_failure(self.request_slots.acquire().await.map_err(|e| {
-                AssetReaderError::Io(Arc::new(std::io::Error::new(ErrorKind::Interrupted, e)))
-            }))?;
-        debug!("[{token:?}]: remote url: `{remote}` proceeding");
-
-        let mut attempt = 0;
-        let mut no_cache = false;
-        // whether the service worker answered from its cache
-        #[cfg(target_arch = "wasm32")]
-        let sw_cached;
-        let data = loop {
-            attempt += 1;
-
-            let request = self.client.get(&remote);
-
-            #[cfg(target_arch = "wasm32")]
-            let request = if sw_caches {
-                request.header("X-IPFS", "true")
-            } else {
-                request
-            };
-
-            let request = ipfs_io_read_state.send_failure(request.build().map_err(|e| {
-                AssetReaderError::Io(Arc::new(std::io::Error::other(format!("[{token:?}]: {e}"))))
-            }))?;
-
-            // Headers-phase timeout + body inactivity timeout; the total transfer
-            // time is unbounded, so a slow-but-progressing download is never
-            // killed — only a stall (no chunk for 10s) or a dead connection trips.
-            let fetched = platform::fetch(
-                self.client.execute(request),
-                Duration::from_secs(30),
-                Duration::from_secs(10),
-            )
-            .await;
-
-            debug!("[{token:?}]: attempt {attempt}: request: {remote}");
-
-            let fetched = match fetched {
-                Ok(fetched) => fetched,
-                Err(platform::FetchError::Headers) if attempt <= 3 => {
-                    warn!("[{token:?}] timeout awaiting headers for `{remote}`, retrying");
-                    continue;
-                }
-                Err(platform::FetchError::Stalled) if attempt <= 3 => {
-                    warn!("[{token:?}] stalled retrieving `{remote}`, retrying");
-                    continue;
-                }
-                Err(platform::FetchError::Send(e)) if e.is_timeout() && attempt <= 3 => {
-                    warn!("[{token:?}] timeout requesting `{remote}`, retrying");
-                    continue;
-                }
-                Err(e) => {
-                    let detail = match e {
-                        platform::FetchError::Headers => "timed out awaiting headers".to_owned(),
-                        platform::FetchError::Stalled => "stalled (no data for 10s)".to_owned(),
-                        platform::FetchError::Send(e) => format!("server responded `{e}`"),
-                        platform::FetchError::Status(s) => {
-                            format!("server responded with status {s}")
-                        }
-                        platform::FetchError::Body(e) => format!("body stream error: {e}"),
-                    };
-                    self.context
-                        .write()
-                        .await
-                        .failed_remotes
-                        .insert(remote.clone(), Instant::now());
-                    return ipfs_io_read_state.send_failure(Err(AssetReaderError::Io(Arc::new(
-                        std::io::Error::other(format!(
-                            "[{token:?}] failed to retrieve `{remote}`: {detail}"
-                        )),
-                    ))));
-                }
-            };
-
-            if let Some(cache_control) = fetched.headers.get("cache-control") {
-                if cache_control
-                    .to_str()
-                    .unwrap_or_default()
-                    .contains("no-store")
-                {
-                    no_cache = true;
-                }
-            }
-
-            #[cfg(target_arch = "wasm32")]
-            {
-                sw_cached = fetched.headers.contains_key(web_cache::CACHED_HEADER);
-            }
-
-            break SharedBytes(Arc::new(fetched.body));
-        };
-
-        // A cache keyed on the hash alone answers for every server, so it only takes bytes
-        // that are what the hash names: any server (and on web any scene, through the service
-        // worker) can otherwise file its own bytes under another's hash.
-        let cacheable = |key: &CacheKey| match key {
-            CacheKey::Url(_) => true,
-            CacheKey::Content(hash) => {
-                let matches = content_hash::matches_content_hash(hash, &data);
-                if !matches {
-                    // not expected from a decentraland deployment: either the server sent
-                    // other bytes, or the hash was made in a way `content_hash` doesn't know
-                    warn!(
-                        "`{remote}` ({} bytes) does not hash to `{hash}`: not caching it under that hash",
-                        data.len()
-                    );
-                }
-                matches
-            }
-        };
-
-        // the worker only answers from its cache; fill it: content under its hash, for every
-        // server, once checked; a url under its own key
-        #[cfg(target_arch = "wasm32")]
-        if sw_caches && !sw_cached {
-            let kept = match &cache_key {
-                Some(key @ CacheKey::Content(_)) => {
-                    web_cache::share(&remote, key.name(), &data, || cacheable(key)).await
-                }
-                Some(CacheKey::Url(_)) if !no_cache => web_cache::keep(&remote, &data).await,
-                _ => Ok(()),
-            };
-            if let Err(e) = kept {
-                warn!("failed to cache `{remote}`: {e:?}");
-            }
-        }
-
-        // `hash` reaches us from the entity json, so it must not steer the cache path
-        let cache_paths = self
-            .cache_path()
-            .zip(cache_key.as_ref())
-            .and_then(|(root, key)| {
-                Some((
-                    root.join_relative(format!("{}.part", key.name()))?,
-                    root.join_relative(key.name())?,
-                ))
-            });
-
-        if let (Some(key), Some((cache_path, final_path))) = (&cache_key, cache_paths) {
-            if !no_cache && cacheable(key) {
-                let cache_path_str = cache_path.to_string_lossy().into_owned();
-                // ignore errors trying to cache
-                match async_fs::File::create(&cache_path).await {
-                    Err(e) => {
-                        warn!("failed to create cache `{cache_path_str}`: {e}");
-                    }
-                    Ok(mut f) => {
-                        if let Err(e) = f.write_all(&data).await {
-                            warn!("failed to write cache `{cache_path_str}`: {e}");
-                        } else if let Err(e) = f.sync_all().await {
-                            warn!("failed to sync cache `{cache_path_str}`: {e}");
-                        } else {
-                            if let Err(e) = async_fs::rename(cache_path, &final_path).await {
-                                warn!("failed to rename cache item `{cache_path_str}`: {e}");
-                            } else {
-                                debug!("cached ok `{}`", final_path.to_string_lossy());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        debug!("[{token:?}]: completed remote url: `{remote}`");
-        ipfs_io_read_state.send_success(data.len());
-        Ok(data)
-    }
 }
 
 /// A download's bytes, shared with the readers that asked for the same key while it was in flight.
@@ -2163,16 +2098,6 @@ impl std::ops::Deref for SharedBytes {
         &self.0
     }
 }
-
-/// A download, shared by every reader of its url and cancelled with the last of them.
-struct SharedDownload {
-    _task: Task<()>,
-    result: watch::Receiver<Option<Result<SharedBytes, AssetReaderError>>>,
-}
-
-/// Downloads under way by url, each with its request token (`SharedDownload` holds its
-/// task, so a download whose readers are all gone upgrades to nothing).
-type InFlightDownloads = std::sync::Mutex<HashMap<String, (u16, Weak<SharedDownload>)>>;
 
 pub struct AsyncCursor<T>(async_std::io::Cursor<T>);
 
@@ -2244,7 +2169,7 @@ impl AssetReader for PassThroughReader {
     }
 }
 
-fn ipfs_diagnostics(mut diagnostics: ResMut<DiagnosticsStore>) {
+fn ipfs_diagnostics(mut diagnostics: ResMut<DiagnosticsStore>, ipfs: Res<IpfsResource>) {
     let time = web_time::Instant::now();
 
     let diagnostics_insert =
@@ -2274,6 +2199,14 @@ fn ipfs_diagnostics(mut diagnostics: ResMut<DiagnosticsStore>) {
         &IPFS_NON_IPFS_DIAGNOSTIC_PATH,
         &IPFS_NON_IPFS,
     );
+    for (path, counter) in ipfs.inner.request_metrics.counters() {
+        if let Some(diagnostic) = diagnostics.get_mut(&path) {
+            diagnostic.add_measurement(DiagnosticMeasurement {
+                time,
+                value: counter.load(Ordering::Relaxed) as f64,
+            });
+        }
+    }
 }
 
 struct IpfsIoReadState<'a> {
@@ -2377,6 +2310,248 @@ mod tests {
     use super::{
         b64_split_at_key, ContentMap, EndpointConfig, IpfsContext, IpfsModifier, ServerAbout,
     };
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn read_request_headers(stream: &std::net::TcpStream) {
+        use std::io::{BufRead, BufReader};
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        assert!(BufReader::new(stream)
+            .lines()
+            .any(|line| line.unwrap().is_empty()));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn content_retry_stops_after_four_attempts() {
+        use std::io::Write;
+        use std::sync::Arc;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for _ in 0..4 {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                let (mut stream, _) = loop {
+                    match listener.accept() {
+                        Ok(pair) => break pair,
+                        Err(e)
+                            if e.kind() == std::io::ErrorKind::WouldBlock
+                                && std::time::Instant::now() < deadline =>
+                        {
+                            std::thread::sleep(std::time::Duration::from_millis(5))
+                        }
+                        Err(e) => panic!("server accept: {e}"),
+                    }
+                };
+                stream.set_nonblocking(false).unwrap();
+                read_request_headers(&stream);
+                stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nRetry-After: 0\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+            }
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+            while std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok(_) => panic!("unexpected fifth attempt"),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(5))
+                    }
+                    Err(e) => panic!("server accept: {e}"),
+                }
+            }
+        });
+        let ipfs = Arc::new(super::IpfsIo::new(
+            false,
+            Box::new(super::FileAssetReader::new("assets")),
+            None,
+            Default::default(),
+            1,
+            #[cfg(feature = "ipfs_debug")]
+            tokio::sync::mpsc::unbounded_channel().0,
+        ));
+        assert!(ipfs
+            .download(
+                1,
+                "first".into(),
+                format!("http://{address}/first"),
+                None,
+                None
+            )
+            .await
+            .is_err());
+        server.join().unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn engine_request_keeps_its_slot_until_the_body_finishes() {
+        use std::io::Write;
+        use std::sync::{mpsc, Arc};
+        use std::time::Duration;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (started, ready) = mpsc::channel();
+        let (resume, resumed) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            read_request_headers(&stream);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            started.send(()).unwrap();
+            resumed.recv_timeout(Duration::from_secs(5)).unwrap();
+            stream.write_all(b"x").unwrap();
+        });
+        let ipfs = Arc::new(super::IpfsIo::new(
+            false,
+            Box::new(super::FileAssetReader::new("assets")),
+            None,
+            Default::default(),
+            1,
+            #[cfg(feature = "ipfs_debug")]
+            tokio::sync::mpsc::unbounded_channel().0,
+        ));
+        let client = ipfs.client();
+        let request = client.get(format!("http://{address}/")).build().unwrap();
+        let io = ipfs.clone();
+        let task = tokio::spawn(async move {
+            io.fetch_request(
+                request,
+                client,
+                Duration::from_secs(5),
+                Duration::from_secs(5),
+                None,
+            )
+            .await
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            match ready.try_recv() {
+                Ok(()) => break,
+                Err(mpsc::TryRecvError::Disconnected) => panic!("server exited before headers"),
+                Err(mpsc::TryRecvError::Empty) if std::time::Instant::now() < deadline => {
+                    async_std::task::sleep(Duration::from_millis(5)).await
+                }
+                Err(mpsc::TryRecvError::Empty) => panic!("server did not send headers"),
+            }
+        }
+        assert!(ipfs.request_slots.try_acquire().is_none());
+        resume.send(()).unwrap();
+        let result = task.await.unwrap();
+        assert!(matches!(result, Ok(response) if response.body == b"x"));
+        assert!(ipfs.request_slots.try_acquire().is_some());
+        server.join().unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn unsigned_content_fetch_retries_503_and_reports_terminal_404() {
+        use std::io::Write;
+        use std::sync::Arc;
+        use std::time::Duration;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for response in [
+                "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 0\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx",
+                "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            ] {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                let (mut stream, _) = loop {
+                    match listener.accept() {
+                        Ok(pair) => break pair,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock && std::time::Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
+                        Err(e) => panic!("server accept: {e}"),
+                    }
+                };
+                stream.set_nonblocking(false).unwrap();
+                read_request_headers(&stream);
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        let ipfs = Arc::new(super::IpfsIo::new(
+            false,
+            Box::new(super::FileAssetReader::new("assets")),
+            None,
+            Default::default(),
+            1,
+            #[cfg(feature = "ipfs_debug")]
+            tokio::sync::mpsc::unbounded_channel().0,
+        ));
+        let client = ipfs.client();
+        let make_request = || client.get(format!("http://{address}/")).build().unwrap();
+        let first = ipfs
+            .fetch_request(
+                make_request(),
+                client.clone(),
+                Duration::from_secs(5),
+                Duration::from_secs(5),
+                None,
+            )
+            .await;
+        assert!(matches!(first, Ok(response) if response.body == b"x"));
+        let missing = ipfs
+            .fetch_request(
+                make_request(),
+                client,
+                Duration::from_secs(5),
+                Duration::from_secs(5),
+                None,
+            )
+            .await;
+        assert!(
+            matches!(missing, Err(platform::FetchError::Status(status, _)) if status.as_u16() == 404)
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn readiness_poll_respects_retry_after_and_remaining_deadline() {
+        use reqwest::{
+            header::{HeaderMap, RETRY_AFTER},
+            StatusCode,
+        };
+        use std::time::Duration;
+
+        let mut headers = HeaderMap::new();
+        let mut retries = 0;
+        let mut poll = |status, headers: &HeaderMap, seconds| {
+            super::readiness_retry_delay(
+                status,
+                headers,
+                Duration::from_secs(seconds),
+                &mut retries,
+            )
+        };
+        let cadence = Some(Duration::from_millis(150));
+        for status in [
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::SERVICE_UNAVAILABLE,
+        ] {
+            headers.clear();
+            assert_eq!(poll(status, &headers, 3), cadence);
+            headers.insert(RETRY_AFTER, "invalid".parse().unwrap());
+            assert_eq!(poll(status, &headers, 3), cadence);
+            headers.insert(RETRY_AFTER, "61".parse().unwrap());
+            assert_eq!(poll(status, &headers, 90), None);
+            headers.insert(RETRY_AFTER, "18446744073709551616".parse().unwrap());
+            assert_eq!(poll(status, &headers, 90), None);
+        }
+
+        let status = StatusCode::SERVICE_UNAVAILABLE;
+        headers.insert(RETRY_AFTER, "2".parse().unwrap());
+        assert_eq!(poll(status, &headers, 2), None);
+        for _ in 0..3 {
+            assert_eq!(poll(status, &headers, 3), Some(Duration::from_secs(2)));
+        }
+        assert_eq!(poll(status, &headers, 3), None);
+        headers.clear();
+        assert_eq!(poll(status, &headers, 3), cadence);
+        assert_eq!(poll(StatusCode::NOT_FOUND, &headers, 3), cadence);
+        assert_eq!(poll(status, &headers, 0), None);
+    }
 
     #[test]
     fn contents_base_url_is_the_urn_prefix_else_the_realms_contents_endpoint() {

@@ -105,6 +105,57 @@ fn hex_bytes(data: &[u8]) -> String {
     format!("0x{}", hex::encode(data))
 }
 
+/// Why a chain's endpoint is not used: it answers for another chain, or it
+/// cannot say which chain it serves. Either way nothing is read, prepared or
+/// confirmed through it.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum EndpointRefusal {
+    #[error("the JSON-RPC endpoint for chain {expected} serves chain {served}")]
+    WrongChain { expected: u64, served: u64 },
+    #[error("the JSON-RPC endpoint for chain {expected} did not say which chain it serves: {why}")]
+    Unknown { expected: u64, why: String },
+}
+
+/// The chain each endpoint was seen to serve. Only a match is remembered, so
+/// a refused or unreachable endpoint is asked again on the next use.
+fn verified_endpoints() -> &'static std::sync::Mutex<std::collections::HashMap<String, u64>> {
+    static VERIFIED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, u64>>> =
+        std::sync::OnceLock::new();
+    VERIFIED.get_or_init(Default::default)
+}
+
+/// A reader over `url` once `eth_chainId` there is `expected`: the book's
+/// chain is what an address in it means, so an endpoint of another chain
+/// would quote, prepare or confirm against the wrong contracts.
+pub async fn verified_reader(
+    http: Outbound,
+    url: &str,
+    expected: u64,
+) -> Result<Reader, EndpointRefusal> {
+    let reader = Reader::new(http, url);
+    let known = verified_endpoints()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(url).copied());
+    if known == Some(expected) {
+        return Ok(reader);
+    }
+    let served = reader
+        .chain_id()
+        .await
+        .map_err(|e| EndpointRefusal::Unknown {
+            expected,
+            why: e.to_string(),
+        })?;
+    if served != expected {
+        return Err(EndpointRefusal::WrongChain { expected, served });
+    }
+    if let Ok(mut m) = verified_endpoints().lock() {
+        m.insert(url.to_string(), served);
+    }
+    Ok(reader)
+}
+
 impl Reader {
     pub fn new(http: Outbound, url: &str) -> Self {
         Self {
@@ -295,6 +346,25 @@ impl Reader {
                 })
                 .collect(),
         }))
+    }
+
+    /// The calldata `tx_hash` was sent with, `None` when the node does not
+    /// know the transaction.
+    pub async fn transaction_input(&self, tx_hash: &str) -> Result<Option<Vec<u8>>, ReadError> {
+        let value = self
+            .rpc
+            .call("eth_getTransactionByHash", json!([tx_hash]))
+            .await?;
+        if value.is_null() {
+            return Ok(None);
+        }
+        let input = value
+            .get("input")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ReadError::Decode("transaction input".into()))?;
+        hex::decode(input.trim_start_matches("0x"))
+            .map(Some)
+            .map_err(|e| ReadError::Decode(format!("transaction input: {e}")))
     }
 
     /// A raw JSON-RPC call (the tests drive anvil with it).

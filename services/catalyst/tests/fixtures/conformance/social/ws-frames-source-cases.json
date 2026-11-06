@@ -1,0 +1,63 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
+  },
+  "runtime": {
+    "node": "v26.12.0",
+    "rpc": "1.1.2"
+  },
+  "scope": "Actual registerWsHandler, UWebSocketTransport and installed dRPC server; pre-authenticated user data and controlled native socket. Exercises the ignored isBinary callback argument. Authentication, native frame decoding and media are outside this fixture.",
+  "ready": [
+    {
+      "hex": "0d00000058",
+      "binary": true
+    }
+  ],
+  "cases": [
+    {
+      "binary": true,
+      "input_hex": "0d01000028220b62696e6172792d706f7274",
+      "text": "\r\u0001\u0000\u0000(\"\u000bbinary-port",
+      "forwarded": [
+        "0d01000028220b62696e6172792d706f7274"
+      ],
+      "responses": [
+        {
+          "hex": "0d010000301501000000",
+          "binary": true
+        }
+      ]
+    },
+    {
+      "binary": false,
+      "input_hex": "0d020000282209746578742d706f7274",
+      "text": "\r\u0002\u0000\u0000(\"\ttext-port",
+      "forwarded": [
+        "0d020000282209746578742d706f7274"
+      ],
+      "responses": [
+        {
+          "hex": "0d020000301502000000",
+          "binary": true
+        }
+      ]
+    },
+    {
+      "id": "disconnected-skips",
+      "forwarded": [],
+      "responses": []
+    },
+    {
+      "id": "forward-callback-failure",
+      "responses": [
+        {
+          "text": "{\"error\":\"Error processing message\"}"
+        }
+      ],
+      "tracing": [
+        "synthetic callback failure"
+      ]
+    }
+  ]
+}

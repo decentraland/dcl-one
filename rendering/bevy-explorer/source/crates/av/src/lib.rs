@@ -17,6 +17,7 @@ pub mod audio_source;
 pub mod audio_source_native;
 #[cfg(feature = "html")]
 pub mod audio_source_wasm;
+mod debug_panel;
 
 // video
 #[cfg(any(feature = "ffmpeg", feature = "html"))]
@@ -85,6 +86,7 @@ pub struct AVSinks<T: AVPlayer> {
     pub audio: Option<AudioSink>,
     pub video: Option<VideoSink>,
     pub command_sender: tokio::sync::mpsc::UnboundedSender<AVCommand>,
+    /// Frame rate reported with video metadata. HTML provides dimensions but reports zero here.
     pub rate: Option<f64>,
     pub state: watch::Receiver<VideoState>,
     pub sent_event: f64,

@@ -90,6 +90,11 @@ pub(crate) fn market_settings(
             trades_sync_pages_per_run: config.market_upstreams.trades_sync_pages_per_run,
             trades_serve_partial: config.market_upstreams.trades_serve_partial,
             profile_cdn_base_url: config.market_upstreams.profile_cdn_base_url.clone(),
+            nft_worker_base_url: config.market_upstreams.nft_worker_base_url.clone(),
+            explorer_escrow_grants_enabled: config.market_upstreams.explorer_escrow_grants_enabled,
+            lambdas_catalog_extensions_enabled: config
+                .market_upstreams
+                .lambdas_catalog_extensions_enabled,
         },
     )?
     .with_market(
@@ -104,7 +109,7 @@ pub(crate) fn market_settings(
             self_hosts,
         )
         .context("MARKETPLACE_* / TRADE_RPC_URLS configuration")?
-        .with_indexes(shop::market::chain_walk::IndexSettings {
+        .with_indexes(checked_indexes(shop::market::chain_walk::IndexSettings {
             nft_enabled: config.marketplace.marketplace_nft_index_enabled,
             mana_transfers_enabled: config.marketplace.marketplace_mana_transfers_index_enabled,
             trade_events_enabled: config.marketplace.marketplace_trade_events_index_enabled,
@@ -127,8 +132,17 @@ pub(crate) fn market_settings(
             coupon_refresh_interval: Duration::from_secs(
                 config.marketplace.marketplace_coupon_refresh_interval_secs,
             ),
-        }),
+            chain_id_ethereum: config.marketplace.marketplace_index_chain_id_ethereum,
+            chain_id_matic: config.marketplace.marketplace_index_chain_id_matic,
+        })?),
     ))
+}
+
+fn checked_indexes(
+    indexes: shop::market::chain_walk::IndexSettings,
+) -> anyhow::Result<shop::market::chain_walk::IndexSettings> {
+    indexes.check_chains().map_err(anyhow::Error::msg)?;
+    Ok(indexes)
 }
 
 pub(crate) fn land_settings(config: &Config) -> anyhow::Result<land_authz::Settings> {
@@ -167,6 +181,7 @@ pub(crate) fn credits_settings(config: &Config) -> anyhow::Result<shop::credits:
             }
             config.shop.mana_price_max_staleness_secs
         },
+        credits_usd_pegged_feed_max_age_secs: config.shop.credits_usd_pegged_feed_max_age_secs,
         checkout_fulfillment_mode: config.shop.checkout_fulfillment_mode.clone(),
         require_purchase_intent: config.shop.credits_require_purchase_intent,
         checkout_worker_interval_secs: config.shop.checkout_worker_interval_secs,

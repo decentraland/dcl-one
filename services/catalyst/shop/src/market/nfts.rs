@@ -80,7 +80,9 @@ impl NftSortBy {
             "newest" => Some(Self::Newest),
             "recently_listed" => Some(Self::RecentlyListed),
             "recently_sold" => Some(Self::RecentlySold),
-            "cheapest_parcel" => Some(Self::CheapestParcel),
+            // marketplace-server's `cheapest` (NFTSortBy.CHEAPEST, the ENS and LAND browses) and
+            // the older `cheapest_parcel`: both order by the open listing's price.
+            "cheapest" | "cheapest_parcel" => Some(Self::CheapestParcel),
             _ => None,
         }
     }
@@ -261,6 +263,22 @@ fn parse_optional_bool(p: &Params, key: &str) -> Option<bool> {
     }
 }
 
+/// `minPrice`/`maxPrice`: MANA in wei (marketplace-server's unit), a whole number. Anything else
+/// is a 400 here rather than a failed `::numeric` cast in the read.
+fn wei_param(p: &Params, key: &str) -> Result<Option<String>, ApiError> {
+    match p.get_string(key, None) {
+        Some(raw) if !raw.trim().is_empty() => {
+            let digits = raw.trim();
+            if digits.len() <= 78 && digits.bytes().all(|b| b.is_ascii_digit()) {
+                Ok(Some(digits.to_string()))
+            } else {
+                Err(ApiError::bad_request(format!("Invalid {key} value: {raw}")))
+            }
+        }
+        _ => Ok(None),
+    }
+}
+
 pub fn parse_filters(pairs: &[(String, String)]) -> Result<NftFilters, ApiError> {
     let p = Params::new(pairs);
     let category = p
@@ -281,6 +299,7 @@ pub fn parse_filters(pairs: &[(String, String)]) -> Result<NftFilters, ApiError>
                 "newest",
                 "recently_listed",
                 "recently_sold",
+                "cheapest",
                 "cheapest_parcel",
             ],
             None,
@@ -324,12 +343,8 @@ pub fn parse_filters(pairs: &[(String, String)]) -> Result<NftFilters, ApiError>
         max_distance_to_plaza: p.get_number("maxDistanceToPlaza", None),
         min_estate_size: p.get_number("minEstateSize", None),
         max_estate_size: p.get_number("maxEstateSize", None),
-        min_price: p
-            .get_string("minPrice", None)
-            .filter(|s| !s.trim().is_empty()),
-        max_price: p
-            .get_string("maxPrice", None)
-            .filter(|s| !s.trim().is_empty()),
+        min_price: wei_param(&p, "minPrice")?,
+        max_price: wei_param(&p, "maxPrice")?,
         emote_has_geometry: p.get_boolean("emoteHasGeometry"),
         emote_has_sound: p.get_boolean("emoteHasSound"),
         emote_outcome_type: p.get_string("emoteOutcomeType", None),
@@ -909,6 +924,47 @@ mod tests {
         list.iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    /// The NAME browse's price range and sort: wei bounds kept as given, `cheapest` read as the
+    /// listing-price order, and a bound that is not a whole number of wei refused with a 400.
+    #[test]
+    fn the_price_range_is_whole_wei_and_cheapest_sorts_by_price() {
+        let f = parse_filters(&pairs(&[
+            ("category", "ens"),
+            ("minPrice", " 1000000000000000000 "),
+            ("maxPrice", "25000000000000000000"),
+            ("sortBy", "cheapest"),
+        ]))
+        .unwrap();
+        assert_eq!(f.min_price.as_deref(), Some("1000000000000000000"));
+        assert_eq!(f.max_price.as_deref(), Some("25000000000000000000"));
+        assert_eq!(f.sort_by, Some(NftSortBy::CheapestParcel));
+        let w = graph_where(&f, 5_000);
+        assert_eq!(
+            (&w["searchOrderPrice_gte"], &w["searchOrderPrice_lte"]),
+            (
+                &json!("1000000000000000000"),
+                &json!("25000000000000000000")
+            )
+        );
+        assert_eq!(graph_sort(f.sort_by), ("searchOrderPrice", "asc"));
+        let blank = parse_filters(&pairs(&[("minPrice", ""), ("maxPrice", " ")])).unwrap();
+        assert_eq!((blank.min_price, blank.max_price), (None, None));
+        for bad in ["abc", "1e18", "1.5", "-1", "0x10", &"9".repeat(79)] {
+            let Err(err) = parse_filters(&pairs(&[("minPrice", bad)])) else {
+                panic!("minPrice={bad} was accepted")
+            };
+            assert_eq!(
+                err.into_response().status(),
+                axum::http::StatusCode::BAD_REQUEST,
+                "minPrice={bad}"
+            );
+            assert!(
+                parse_filters(&pairs(&[("maxPrice", bad)])).is_err(),
+                "maxPrice={bad}"
+            );
+        }
     }
 
     #[test]

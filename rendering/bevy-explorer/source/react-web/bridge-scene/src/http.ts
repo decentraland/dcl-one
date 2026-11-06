@@ -1,34 +1,38 @@
-// Shared data helpers: the catalyst base + two fetch primitives the domains build on.
+// Shared data helpers: the service bases + two fetch primitives the domains build on.
 //
 // IMPORTANT: a system scene's `getRealm()` reports the scene's OWN realm (the local preview
 // it was served from), NOT the world realm the engine is connected to — so it can't be used
-// to locate the catalyst. We resolve the env from the ENGINE via `BevyApi.getRealmProvider()`
-// and target the matching public catalyst (peer.decentraland.org / .zone).
+// to locate the catalyst. Every service base comes from the ENGINE via
+// `BevyApi.getServiceUrls()`: its override, else its composition from the base domain.
 import { BevyApi } from './bevy-api'
 
-const PEER_ORG = 'https://peer.decentraland.org'
-const PEER_ZONE = 'https://peer.decentraland.zone'
+/** The services the bridge calls, by their web param (crates/system_api_types/src/services.rs). */
+export type ServiceName =
+  | 'catalyst'
+  | 'socialApi'
+  | 'cameraReel'
+  | 'events'
+  | 'badges'
+  | 'notifications'
+  | 'assetsCdn'
+  | 'marketplaceApi'
 
-let cachedZone: boolean | null = null
-async function resolveZone(): Promise<boolean> {
-  if (cachedZone !== null) return cachedZone
-  try {
-    const provider = await BevyApi.getRealmProvider()
-    cachedZone = typeof provider === 'string' && provider.includes('.zone')
-  } catch {
-    cachedZone = false
-  }
-  return cachedZone
+let services: Promise<Record<string, string>> | null = null
+
+/** The engine's base url for a service (no trailing slash). */
+export async function serviceBase(name: ServiceName): Promise<string> {
+  services ??= BevyApi.getServiceUrls().catch((e: unknown) => {
+    services = null
+    throw e
+  })
+  const base = (await services)[name]
+  if (base == null) throw new Error(`the engine reports no '${name}' service`)
+  return base
 }
 
-/** Public catalyst base for the engine's realm (lambdas/content live under here). */
+/** Catalyst base for the engine's realm (lambdas/content live under here). */
 export async function catalystBase(): Promise<string> {
-  return (await resolveZone()) ? PEER_ZONE : PEER_ORG
-}
-
-/** Whether the engine is on a .zone (test) realm — picks .org vs .zone service hosts. */
-export async function isZone(): Promise<boolean> {
-  return await resolveZone()
+  return serviceBase('catalyst')
 }
 
 const META = JSON.stringify({})

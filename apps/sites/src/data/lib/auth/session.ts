@@ -3,6 +3,7 @@ import { check } from "@ui/validate";
 import { AuthIdentitySchema } from "../persisted-schemas";
 
 import { isIdentityExpired } from "./expiry";
+import { clearAllShared, clearShared, freshestShared, SINGLE_SIGN_ON_PREFIX, storeShared } from "./single-sign-on";
 import type { AuthIdentity } from "./types";
 import { clearWalletCookie, serializeWalletCookie, walletInCookies } from "./wallet-cookie";
 
@@ -15,9 +16,17 @@ function syncWalletCookie(identity: AuthIdentity | null): void {
 
 export const SESSION_STORAGE_KEY = "dcl:auth:identity:v1";
 
+/**
+ * The session this document starts with: the host's, else this site's own record, else the freshest session
+ * decentraland.org's dapps share on this origin (`single-sign-on-<address>`), for a reader who signed in there.
+ */
 function readStorage(): AuthIdentity | null {
   if (typeof window === "undefined") return null;
   if (hostIdentity !== undefined) return hostIdentity;
+  return readOwn() ?? freshestShared();
+}
+
+function readOwn(): AuthIdentity | null {
   let parsed: unknown;
   try {
     const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
@@ -44,7 +53,11 @@ function readStorage(): AuthIdentity | null {
   return identity;
 }
 
-function writeStorage(identity: AuthIdentity | null): void {
+/**
+ * Keeps a session in this site's record and the shared one. Switching accounts ends the previous account's shared
+ * session; signing out ends every shared session on this origin, so no other account comes back on the next load.
+ */
+function writeStorage(identity: AuthIdentity | null, previous: AuthIdentity | null): void {
   if (typeof window === "undefined") return;
   try {
     if (identity) {
@@ -54,6 +67,9 @@ function writeStorage(identity: AuthIdentity | null): void {
     }
   } catch {
   }
+  if (!identity) clearAllShared();
+  else if (previous && previous.signer !== identity.signer) clearShared(previous.signer);
+  if (identity) storeShared(identity);
   syncWalletCookie(identity);
 }
 
@@ -79,9 +95,11 @@ export function getIdentity(): AuthIdentity | null {
 
 export function setIdentity(identity: AuthIdentity | null): void {
   if (hostIdentity !== undefined) throw new Error("Use the explorer to change accounts.");
+  ensureHydrated();
+  const previous = current;
   current = identity;
   hydrated = true;
-  writeStorage(identity);
+  writeStorage(identity, previous);
   emit();
 }
 
@@ -130,19 +148,35 @@ export function claimWalletCookieOnUse(win: Window): () => void {
     if (win.document.visibilityState === "visible") claim();
   };
   win.addEventListener("focus", claim);
-  win.addEventListener("pointerdown", claim, true);
+  win.addEventListener("pointerdown", claim, { capture: true });
   win.addEventListener("pageshow", claim);
   win.document.addEventListener("visibilitychange", onVisibility);
   return () => {
     win.removeEventListener("focus", claim);
-    win.removeEventListener("pointerdown", claim, true);
+    win.removeEventListener("pointerdown", claim, { capture: true });
     win.removeEventListener("pageshow", claim);
     win.document.removeEventListener("visibilitychange", onVisibility);
   };
 }
 
 function onStorage(e: StorageEvent) {
-  if (hostIdentity === undefined && (e.key === null || e.key === SESSION_STORAGE_KEY)) {
+  const shared = e.key?.startsWith(SINGLE_SIGN_ON_PREFIX) ?? false;
+  // Another dapp on this origin signed this account out (it removed the account's shared session): this site's
+  // record of the same account goes too, or the next read would sign the reader straight back in. Other accounts'
+  // shared sessions stay.
+  if (
+    hostIdentity === undefined &&
+    shared &&
+    e.newValue === null &&
+    current &&
+    e.key === `${SINGLE_SIGN_ON_PREFIX}${current.signer.toLowerCase()}`
+  ) {
+    try {
+      window.localStorage.removeItem(SESSION_STORAGE_KEY);
+    } catch {
+    }
+  }
+  if (hostIdentity === undefined && (e.key === null || e.key === SESSION_STORAGE_KEY || shared)) {
     current = readStorage();
     syncWalletCookie(current);
     emit();

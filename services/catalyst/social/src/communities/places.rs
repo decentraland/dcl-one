@@ -4,18 +4,19 @@
 //! owner/moderator add and remove, optionally checked against the mirrored
 //! catalogue's owner.
 
+use crate::rpc::http::Kind;
 use axum::Json;
-use axum::body::Bytes;
 use axum::extract::{OriginalUri, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::explore::places::destinations::Destination;
 use crate::{CommunityId, CommunityPermission};
 
 use super::dto::CommunityPlace;
-use super::http::{CommError, Paginated, err_json, get_pagination_params};
+use super::http::{CommError, Paginated, get_pagination_params, handler_error as err_json};
 use super::posts::require_membership_of_a_private_community;
 use super::write_support::{ClientCommunityWriteAuthority, map_db, parse_community_id};
 use super::{SharedState, State as CommunitiesState, queries, signed_path};
@@ -45,7 +46,10 @@ pub async fn get_places(
             &signed_path(&original, format!("/v1/communities/{id_str}/places")),
         )
         .await;
-    if !queries::community_exists(&state.pool, id, signer.is_none()).await? {
+    if !queries::community_exists(&state.pool, id, signer.is_none())
+        .await
+        .map_err(super::http::database_error)?
+    {
         return Err(CommError::not_found(format!(
             "Community not found: {id_str}"
         )));
@@ -55,7 +59,9 @@ pub async fn get_places(
     })
     .await?;
     let pagination = get_pagination_params(&pairs);
-    let (places, total) = queries::list_places(&state.pool, id, &pagination).await?;
+    let (places, total) = queries::list_places(&state.pool, id, &pagination)
+        .await
+        .map_err(super::http::database_error)?;
     let places = with_destinations(&state, id, places).await;
     Ok(Json(
         json!({ "data": Paginated::new(places, total, &pagination) }),
@@ -91,28 +97,10 @@ async fn with_destinations(
         .iter()
         .map(|p| serde_json::to_value(p).unwrap_or(Value::Null))
         .collect();
-    let (uuids, names): (Vec<&str>, Vec<&str>) = (
-        places
-            .iter()
-            .map(|p| p.id.as_str())
-            .filter(|id| is_uuid_shaped(id))
-            .collect(),
-        places
-            .iter()
-            .map(|p| p.id.as_str())
-            .filter(|id| id.ends_with(".eth"))
-            .collect(),
-    );
-    if uuids.is_empty() && names.is_empty() {
+    if places.is_empty() {
         return rows;
     }
-    let ids = uuids.into_iter().chain(names).map(str::to_string).collect();
-    let destinations = match crate::explore::places::destinations::destinations_by_ids(
-        &state.explore,
-        ids,
-    )
-    .await
-    {
+    let destinations = match destinations_of(state, places.iter().map(|p| p.id.as_str())).await {
         Ok(d) => d,
         Err(e) => {
             tracing::warn!(error = %e, %community, "community places: destinations lookup failed; answering the bare rows");
@@ -135,6 +123,39 @@ async fn with_destinations(
     rows
 }
 
+/// The destinations of a community's place ids as upstream asks the places
+/// API for them (`places.ts`): the UUID-shaped ids and the `*.eth` names as
+/// one array (`POST /api/destinations`), here explore's
+/// [`destinations_by_ids`](crate::explore::places::destinations::destinations_by_ids)
+/// in process. No such id, no lookup.
+pub(crate) async fn destinations_of<'a>(
+    state: &CommunitiesState,
+    ids: impl Iterator<Item = &'a str>,
+) -> Result<Vec<Destination>, crate::shared::errors::ApiError> {
+    let (uuids, names): (Vec<&str>, Vec<&str>) = ids
+        .filter(|id| is_uuid_shaped(id) || id.ends_with(".eth"))
+        .partition(|id| is_uuid_shaped(id));
+    if uuids.is_empty() && names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids = uuids.into_iter().chain(names).map(str::to_string).collect();
+    crate::explore::places::destinations::destinations_by_ids(&state.explore, ids).await
+}
+
+/// Upstream `separatePositionsAndWorlds` (`utils/places.ts`): a world
+/// destination gives its name, any other its parcels.
+pub(crate) fn positions_and_worlds(destinations: &[Destination]) -> (Vec<String>, Vec<String>) {
+    let mut positions = Vec::new();
+    let mut worlds = Vec::new();
+    for d in destinations {
+        match d.world_name.as_deref().filter(|_| d.world) {
+            Some(name) if !name.is_empty() => worlds.push(name.to_string()),
+            _ => positions.extend(d.positions.iter().cloned()),
+        }
+    }
+    (positions, worlds)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct PlacesBody {
     #[serde(rename = "placeIds", default)]
@@ -143,14 +164,15 @@ pub struct PlacesBody {
 
 pub async fn add_places(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path(id): Path<String>,
-    body: Bytes,
+    body: super::http::DeferredBody,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
-    let signer = match state
+    let signer = match caller
         .require_signer(
+            &state,
             &headers,
             "post",
             &signed_path(&original, format!("/v1/communities/{id}/places")),
@@ -160,6 +182,27 @@ pub async fn add_places(
         Ok(s) => s,
         Err(e) => return e.into_response(),
     };
+    let body = match body.schema().await {
+        Ok(body) => body,
+        Err(error) => return error.into_response(),
+    };
+    if let Err(error) = crate::rpc::http::body(
+        &body,
+        &[(
+            "placeIds",
+            Kind::Strings {
+                min: 1,
+                max: 100,
+                element_max: 256,
+                uuid: false,
+            },
+        )],
+        &["placeIds"],
+        0,
+    ) {
+        return error.into_response();
+    }
+    let uuid = try_resp!(parse_community_id(&id));
     try_resp!(
         ClientCommunityWriteAuthority::resolve_requiring_capability(
             &state,
@@ -200,13 +243,14 @@ pub async fn add_places(
 
 pub async fn remove_place(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path((id, place_id)): Path<(String, String)>,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
-    let signer = match state
+    let signer = match caller
         .require_signer(
+            &state,
             &headers,
             "delete",
             &signed_path(&original, format!("/v1/communities/{id}/places/{place_id}")),
@@ -216,6 +260,7 @@ pub async fn remove_place(
         Ok(s) => s,
         Err(e) => return e.into_response(),
     };
+    let uuid = try_resp!(parse_community_id(&id));
     try_resp!(
         ClientCommunityWriteAuthority::resolve_requiring_capability(
             &state,
@@ -226,6 +271,16 @@ pub async fn remove_place(
         )
         .await
     );
+    let attached: bool = try_resp!(map_db(
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM social.community_places WHERE community_id = $1 AND place_id = $2)")
+            .bind(uuid).bind(&place_id).fetch_one(&state.pool).await
+    ));
+    if !attached {
+        return CommError::not_found(format!(
+            "Community place not found: Place {place_id} not found in community {uuid}"
+        ))
+        .into_response();
+    }
     if let Err(e) = state
         .validate_places_ownership(std::slice::from_ref(&place_id), &signer)
         .await

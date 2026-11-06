@@ -79,6 +79,7 @@ pub mod digest;
 pub mod dto;
 pub mod errors;
 pub mod escrow;
+pub mod feed;
 pub mod handlers;
 pub mod history;
 pub mod money;
@@ -148,6 +149,8 @@ pub struct RawSettings {
     pub marketplace_markup_bps: i64,
     /// `MANA_PRICE_MAX_STALENESS_SECS` (300).
     pub mana_price_max_staleness_secs: i64,
+    /// `CREDITS_USD_PEGGED_FEED_MAX_AGE_SECS` (3600).
+    pub credits_usd_pegged_feed_max_age_secs: u64,
     /// `CHECKOUT_FULFILLMENT_MODE` (primary; the legacy secondary | auto run as primary).
     pub checkout_fulfillment_mode: String,
     /// `CREDITS_REQUIRE_PURCHASE_INTENT` (true).
@@ -194,7 +197,7 @@ pub struct RawSettings {
     pub usage_stop_block: Option<u64>,
     /// `CREDITS_TTL_SECONDS` (300): how long a signed credit stays spendable (upstream `USD_CREDIT_TTL_SECONDS`).
     pub credit_ttl_seconds: u64,
-    /// `CREDITS_CAP_HEADROOM_PCT` (150): the signed value over the quoted MANA need, 100..=150 (upstream `USD_CREDIT_CAP_HEADROOM_PCT`).
+    /// `CREDITS_CAP_HEADROOM_PCT` (100): the signed value over the quoted MANA need, 100..=150 (upstream `USD_CREDIT_CAP_HEADROOM_PCT`).
     pub credit_cap_headroom_pct: u32,
     /// `CREDITS_ORACLE_BUFFER_BPS` (200): the oracle buffer inside the sizing, at most 1000 (upstream `USD_CREDIT_BUFFER_BPS`).
     pub credit_buffer_bps: u32,
@@ -215,6 +218,7 @@ impl Default for RawSettings {
             credits_currency: DEFAULT_CREDITS_CURRENCY.to_string(),
             marketplace_markup_bps: DEFAULT_MARKETPLACE_MARKUP_BPS,
             mana_price_max_staleness_secs: DEFAULT_MANA_PRICE_MAX_STALENESS_SECS,
+            credits_usd_pegged_feed_max_age_secs: 3_600,
             checkout_fulfillment_mode: DEFAULT_CHECKOUT_FULFILLMENT_MODE.to_string(),
             require_purchase_intent: DEFAULT_REQUIRE_PURCHASE_INTENT,
             checkout_worker_interval_secs: DEFAULT_CHECKOUT_WORKER_INTERVAL_SECS,
@@ -257,6 +261,7 @@ pub struct Settings {
     pub credits_currency: String,
     pub marketplace_markup_bps: i64,
     pub mana_price_max_staleness_secs: i64,
+    pub credits_usd_pegged_feed_max_age_secs: u64,
     pub checkout_fulfillment_mode: String,
     pub require_purchase_intent: bool,
     pub checkout_worker_interval: Duration,
@@ -378,6 +383,16 @@ impl Settings {
                 "CREDITS_ONCHAIN_AUTHORIZE_ENABLED is true but CREDITS_SIGNER_KEY or CREDITS_MANAGER_CONTRACT is unset: POST /credits/authorize stays unavailable (503)"
             );
         }
+        // The mock card grants credits for nothing. On a chain where credits are worth something, the
+        // on-chain authorization, or any later spending path, would turn those into real MANA paid by the
+        // treasury, so the mock routes run only where the credits chain is a testnet (Amoy).
+        if raw.mock_card && raw.usage_chain_id != usage::CHAIN_AMOY {
+            anyhow::bail!(
+                "CREDITS_MOCK_CARD grants credits without a charge and runs only on Amoy ({}); COLLECTIONS_CHAIN_ID is {}",
+                usage::CHAIN_AMOY,
+                raw.usage_chain_id
+            );
+        }
         if stripe_secret_key.is_none() {
             tracing::warn!(
                 "STRIPE_SECRET_KEY unset: card-purchase routes are disabled (POST /packs/{{sku}}/intent answers 501, /credits/checkout 503)"
@@ -389,6 +404,14 @@ impl Settings {
             anyhow::bail!(
                 "CREDITS_CAP_HEADROOM_PCT must be between 100 and {} (docs/shop/CONTRACTS.md, \"No spendable remainder\")",
                 crate::types::CreditSizing::MAX_HEADROOM_PCT
+            );
+        }
+        if raw.credits_usd_pegged_feed_max_age_secs == 0
+            || raw.credits_usd_pegged_feed_max_age_secs > i64::MAX as u64
+        {
+            anyhow::bail!(
+                "CREDITS_USD_PEGGED_FEED_MAX_AGE_SECS must be between 1 and {}: 0 refuses every USD-pegged credit, and a larger value cannot be compared with a timestamp",
+                i64::MAX
             );
         }
         if raw.credit_buffer_bps > crate::types::CreditSizing::MAX_BUFFER_BPS {
@@ -421,6 +444,7 @@ impl Settings {
             },
             marketplace_markup_bps: raw.marketplace_markup_bps,
             mana_price_max_staleness_secs: raw.mana_price_max_staleness_secs,
+            credits_usd_pegged_feed_max_age_secs: raw.credits_usd_pegged_feed_max_age_secs,
             checkout_fulfillment_mode: parse_fulfillment_mode(&raw.checkout_fulfillment_mode)?,
             require_purchase_intent: raw.require_purchase_intent,
             checkout_worker_interval: Duration::from_secs(raw.checkout_worker_interval_secs.max(1)),
@@ -458,6 +482,7 @@ impl Settings {
             writes_enabled: true,
             require_purchase_intent: false,
             mana_price_max_staleness_secs: 3600,
+            credits_usd_pegged_feed_max_age_secs: 3_600,
             ..RawSettings::default()
         })
         .expect("the defaults parse")
@@ -488,6 +513,8 @@ pub struct State {
     pub gate: Arc<dyn settlement::IssuanceGate>,
     /// The `revokeCredits` sender, with `CREDITS_REVOKER_KEY_FILE` over the index's endpoint.
     pub revoker: Option<Arc<settlement::Revoker>>,
+    /// The MANA/USD feed a USD-pegged group's marketplace settles at (`feed.rs`).
+    pub feed: Arc<dyn feed::MarketplaceFeed>,
 }
 
 pub type SharedState = Arc<State>;
@@ -560,6 +587,13 @@ impl State {
             )),
             None => Arc::new(settlement::ClosedGate),
         };
+        let feed: Arc<dyn feed::MarketplaceFeed> = match &chain {
+            Some(chain) => Arc::new(feed::ChainFeed::new(
+                chain.clone(),
+                settings.credits_usd_pegged_feed_max_age_secs,
+            )),
+            None => Arc::new(feed::NoFeed),
+        };
         let revoker = match (&chain, settings.credits_revoker_key.as_deref()) {
             (Some(chain), Some(key)) => match settlement::Revoker::new(
                 credits.clone(),
@@ -587,12 +621,19 @@ impl State {
             settings,
             gate,
             revoker,
+            feed,
         }
     }
 
     /// The tests' gate in place of the chain read.
     pub fn with_gate(mut self, gate: Arc<dyn settlement::IssuanceGate>) -> Self {
         self.gate = gate;
+        self
+    }
+
+    /// The tests' MANA/USD feed in place of the chain read.
+    pub fn with_feed(mut self, feed: Arc<dyn feed::MarketplaceFeed>) -> Self {
+        self.feed = feed;
         self
     }
 
@@ -1003,6 +1044,43 @@ mod schema_tests {
             })
             .is_ok(),
             "no secret, no endpoint check"
+        );
+    }
+
+    #[test]
+    fn the_mock_card_runs_only_on_amoy() {
+        for chain in [usage::CHAIN_POLYGON, 1, 0] {
+            let err = Settings::parse(RawSettings {
+                mock_card: true,
+                usage_chain_id: chain,
+                ..RawSettings::default()
+            })
+            .err()
+            .expect("free credits are refused where credits are worth something")
+            .to_string();
+            assert!(err.contains("CREDITS_MOCK_CARD"), "{err}");
+        }
+        // Also with the treasury signing on chain: the pair that would pay real MANA for free credits.
+        assert!(
+            Settings::parse(RawSettings {
+                mock_card: true,
+                credits_onchain_authorize_enabled: true,
+                credits_signer_key: Some(format!("0x{}", "11".repeat(32))),
+                credits_manager_contract: Some(format!("0x{}", "22".repeat(20))),
+                ..RawSettings::default()
+            })
+            .is_err()
+        );
+        let amoy = Settings::parse(RawSettings {
+            mock_card: true,
+            usage_chain_id: usage::CHAIN_AMOY,
+            ..RawSettings::default()
+        })
+        .expect("the testnet keeps its mock card");
+        assert!(amoy.mock_card);
+        assert!(
+            Settings::parse(RawSettings::default()).is_ok(),
+            "off by default, so mainnet parses"
         );
     }
 

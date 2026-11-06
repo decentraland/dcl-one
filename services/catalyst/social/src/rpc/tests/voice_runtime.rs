@@ -19,6 +19,8 @@ struct Faulty {
     inner: FakeVoiceRooms,
     lose_reservations: AtomicBool,
     fail_grants: AtomicBool,
+    omit_caller: AtomicBool,
+    omit_callee: AtomicBool,
 }
 
 impl Faulty {
@@ -29,6 +31,9 @@ impl Faulty {
 
 #[async_trait::async_trait]
 impl VoiceRooms for Faulty {
+    fn presence_config(&self) -> crate::comms::gatekeeper::voice::db::VoiceDbConfig {
+        self.inner.presence_config()
+    }
     async fn create_pending_private_call(
         &self,
         caller: &str,
@@ -36,10 +41,7 @@ impl VoiceRooms for Faulty {
         expiration_ms: i64,
     ) -> Result<StartOutcome, VoiceUnavailable> {
         if self.lose_reservations.load(Ordering::SeqCst) {
-            return Ok(StartOutcome {
-                started: None,
-                expired: Vec::new(),
-            });
+            return Ok(StartOutcome { started: None });
         }
         self.inner
             .create_pending_private_call(caller, callee, expiration_ms)
@@ -72,9 +74,17 @@ impl VoiceRooms for Faulty {
         if self.fail_grants.load(Ordering::SeqCst) {
             return Err(Self::failed());
         }
-        self.inner
+        let mut credentials = self
+            .inner
             .private_voice_credentials(call_id, callee, caller)
-            .await
+            .await?;
+        if self.omit_caller.load(Ordering::SeqCst) {
+            credentials.remove(caller);
+        }
+        if self.omit_callee.load(Ordering::SeqCst) {
+            credentials.remove(callee);
+        }
+        Ok(credentials)
     }
 
     async fn end_private_voice_chat(
@@ -91,13 +101,21 @@ impl VoiceRooms for Faulty {
         address: &str,
         role: &str,
         action: CommunityVoiceAction,
+        profile: Option<serde_json::Value>,
     ) -> Result<String, VoiceUnavailable> {
         if self.fail_grants.load(Ordering::SeqCst) {
             return Err(Self::failed());
         }
         self.inner
-            .community_voice_credentials(community_id, address, role, action)
+            .community_voice_credentials(community_id, address, role, action, profile)
             .await
+    }
+
+    async fn community_voice_chat_active(
+        &self,
+        community_id: Uuid,
+    ) -> Result<bool, VoiceUnavailable> {
+        self.inner.community_voice_chat_active(community_id).await
     }
 
     async fn end_community_voice_chat(
@@ -165,6 +183,8 @@ impl Rig {
             inner: FakeVoiceRooms::new(pool.clone()),
             lose_reservations: AtomicBool::new(false),
             fail_grants: AtomicBool::new(false),
+            omit_caller: AtomicBool::new(false),
+            omit_callee: AtomicBool::new(false),
         });
         let ctx = test_ctx(Db::new(pool.clone()), runtime.clone());
         Some(Self { pool, ctx, runtime })
@@ -269,10 +289,9 @@ async fn a_failed_private_grant_is_an_internal_error_without_accepted() {
 }
 
 /// A community grant the runtime cannot mint answers an internal error on
-/// start and on join, and no member hears STARTED. Recorded difference on the
-/// join: with no live room upstream answers not found before any grant
-/// (RPC.md, community voice, "start-, end-, join-, raise a hand, self-unmute";
-/// `src/logic/community-voice/validation.ts:41-42`).
+/// start and on join (upstream "Failed to start community voice chat",
+/// "Failed to join community voice chat"), and no member hears STARTED. The
+/// join is tried on a live room: without one it is not found before any grant.
 #[tokio::test]
 async fn a_failed_community_grant_is_an_internal_error() {
     let Some(rig) = Rig::new().await else {
@@ -302,12 +321,14 @@ async fn a_failed_community_grant_is_an_internal_error() {
         .response;
     assert!(
         matches!(
-            start,
-            Some(start_community_voice_chat_response::Response::InternalServerError(_))
+            &start,
+            Some(start_community_voice_chat_response::Response::InternalServerError(e))
+                if e.message.as_deref() == Some("Failed to start community voice chat")
         ),
         "{start:?}"
     );
     assert_eq!(drained(&mut to_member), 0);
+    rig.runtime.inner.live.lock().insert(community);
     let join = SocialServiceImpl
         .join_community_voice_chat(
             JoinCommunityVoiceChatPayload {
@@ -320,10 +341,579 @@ async fn a_failed_community_grant_is_an_internal_error() {
         .response;
     assert!(
         matches!(
-            join,
-            Some(join_community_voice_chat_response::Response::InternalServerError(_))
+            &join,
+            Some(join_community_voice_chat_response::Response::InternalServerError(e))
+                if e.message.as_deref() == Some("Failed to join community voice chat")
         ),
         "{join:?}"
     );
     drop_community(&rig.pool, community).await;
+}
+
+/// The actual upstream media adapter accepts incomplete maps. The domain deletes
+/// the pending intent first, reads the caller grant before publishing ACCEPTED,
+/// then reads the callee grant. HTTP hides the unexpected error; RPC preserves it.
+#[tokio::test]
+async fn incomplete_private_credentials_match_source_errors_and_committed_events() {
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let _turn = VOICE_TABLE.lock().await;
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/private-grant-source-cases.json"
+    )))
+    .unwrap();
+    assert_eq!(
+        fixture["baseline"]["revision"],
+        "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
+    );
+    let source_caller = fixture["caller"].as_str().unwrap();
+    let source_callee = fixture["target"].as_str().unwrap();
+    let id: Uuid = fixture["call"].as_str().unwrap().parse().unwrap();
+    let key = PrivateKeySigner::random();
+    let http_callee = format!("{:#x}", key.address());
+    let http_caller = addr("incomplete-grant-caller");
+    let cases = fixture["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 8);
+    for source in cases {
+        let is_http = source["protocol"] == "http";
+        let (caller, callee) = if is_http {
+            (&*http_caller, &*http_callee)
+        } else {
+            (source_caller, source_callee)
+        };
+        let case: serde_json::Value = serde_json::from_str(
+            &source
+                .to_string()
+                .replace(source_caller, caller)
+                .replace(source_callee, callee),
+        )
+        .unwrap();
+        let label = case["id"].as_str().unwrap();
+        let scenario = case["scenario"].as_str().unwrap();
+        rig.forget_calls(&[caller, callee]).await;
+        sqlx::query("INSERT INTO social.private_voice_chats(id,caller_address,callee_address) VALUES($1,$2,$3)")
+            .bind(id).bind(caller).bind(callee).execute(&rig.pool).await.unwrap();
+        rig.runtime.omit_caller.store(
+            matches!(scenario, "missing-caller" | "missing-both"),
+            Ordering::SeqCst,
+        );
+        rig.runtime.omit_callee.store(
+            matches!(scenario, "missing-callee" | "missing-both"),
+            Ordering::SeqCst,
+        );
+        let mut to_caller = rig.ctx.pubsub().subscribe(caller);
+        let mut to_callee = rig.ctx.pubsub().subscribe(callee);
+        if !is_http {
+            let response = SocialServiceImpl
+                .accept_private_voice_chat(
+                    AcceptPrivateVoiceChatPayload {
+                        call_id: id.to_string(),
+                    },
+                    procedure_ctx(&rig.ctx, callee, 78),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                hex::encode(response.encode_to_vec()),
+                case["expected_hex"].as_str().unwrap(),
+                "{label}"
+            );
+        } else {
+            let app = crate::rpc::http::router(Arc::new(State::with_context(
+                Settings::default(),
+                rig.ctx.clone(),
+                None,
+            )));
+            let path = format!("/v1/private-voice-chats/{id}");
+            let timestamp = chrono::Utc::now().timestamp_millis();
+            let payload = crate::shared::signed_fetch::build_payload_v6(
+                "patch",
+                &path,
+                &timestamp.to_string(),
+                "{}",
+            );
+            let (_, auth) = frame_signed(
+                &key,
+                &PrivateKeySigner::random(),
+                FAR_EXPIRATION,
+                timestamp,
+                &payload,
+                "{}",
+            )
+            .await;
+            let mut request = Request::builder().method("PATCH").uri(&path);
+            for (name, value) in
+                serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&auth).unwrap()
+            {
+                request = request.header(name, value.as_str().unwrap());
+            }
+            let response = app
+                .oneshot(
+                    request
+                        .header("content-type", "application/json")
+                        .body(Body::from(r#"{"intention":"accepted"}"#))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status().as_u16();
+            let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                serde_json::json!({"status":status,"body":body}),
+                case["response"],
+                "{label}"
+            );
+        }
+        let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM social.private_voice_chats c WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=c.id)")
+            .bind(id).fetch_one(&rig.pool).await.unwrap();
+        assert_eq!(
+            pending,
+            case["remaining_rows"].as_i64().unwrap(),
+            "{label}: committed pending deletion"
+        );
+        let received: Vec<_> = std::iter::from_fn(|| to_caller.try_recv().ok()).collect();
+        let expected = case["updates"].as_array().unwrap();
+        assert_eq!(received.len(), expected.len(), "{label}: caller events");
+        assert_eq!(
+            drained(&mut to_callee),
+            0,
+            "{label}: callee receives no ACCEPTED"
+        );
+        for (event, expected) in received.iter().zip(expected) {
+            let SocialEvent::PrivateVoice(update) = &**event else {
+                panic!("{label}: wrong event")
+            };
+            assert_eq!(
+                update.status,
+                PrivateVoiceChatStatus::VoiceChatAccepted as i32,
+                "{label}"
+            );
+            assert_eq!(
+                update.call_id,
+                expected["callId"].as_str().unwrap(),
+                "{label}"
+            );
+            assert_eq!(
+                update.credentials.as_ref().unwrap().connection_url,
+                expected["credentials"]["connectionUrl"].as_str().unwrap(),
+                "{label}"
+            );
+        }
+        rig.forget_calls(&[caller, callee]).await;
+    }
+}
+
+/// Actual mutations post the source SDK payload to a local HTTP provider.
+/// Provider 503 responses remain detached from the mutation's result.
+#[tokio::test]
+async fn voice_analytics_payloads_and_failure_isolation_match_executed_source() {
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let _turn = VOICE_TABLE.lock().await;
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/voice-analytics-source-cases.json"
+    )))
+    .unwrap();
+    // Keep mutable database identities isolated from other source replays.
+    let caller_key = PrivateKeySigner::random();
+    let callee_key = PrivateKeySigner::random();
+    let fresh_caller = format!("{:#x}", caller_key.address());
+    let fresh_callee = format!("{:#x}", callee_key.address());
+    let source_caller = fixture["caller"].as_str().unwrap();
+    let source_callee = fixture["target"].as_str().unwrap();
+    let fixture: serde_json::Value = serde_json::from_str(
+        &fixture
+            .to_string()
+            .replace(
+                &format!("0x{}", source_caller[2..].to_uppercase()),
+                &format!("0x{}", fresh_caller[2..].to_uppercase()),
+            )
+            .replace(
+                &format!("0x{}", source_callee[2..].to_uppercase()),
+                &format!("0x{}", fresh_callee[2..].to_uppercase()),
+            )
+            .replace(&source_callee.to_uppercase(), &fresh_callee.to_uppercase())
+            .replace(source_caller, &fresh_caller)
+            .replace(source_callee, &fresh_callee),
+    )
+    .unwrap();
+    let caller = fixture["caller"].as_str().unwrap();
+    let callee = fixture["target"].as_str().unwrap();
+    let id: Uuid = fixture["call"].as_str().unwrap().parse().unwrap();
+    let (sent, mut received) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
+    let app = axum::Router::new().fallback(
+        move |headers: axum::http::HeaderMap, body: axum::body::Bytes| {
+            let sent = sent.clone();
+            async move {
+                assert_eq!(headers["x-token"], "fixture-token");
+                assert_eq!(headers["content-type"], "application/json");
+                sent.send(serde_json::from_slice(&body).unwrap()).unwrap();
+                (axum::http::StatusCode::SERVICE_UNAVAILABLE, "unused")
+            }
+        },
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/events", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let dir = std::env::temp_dir().join(format!("voice-analytics-{}", Uuid::new_v4()));
+    let http = crate::http::Outbound::for_tests();
+    let state = Arc::new(crate::communities::State::new(
+        rig.pool.clone(),
+        Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap()),
+        crate::communities::Settings::for_tests(),
+        None,
+        &http,
+        crate::communities::State::explore_for_tests(&rig.pool),
+    ));
+    state.set_analytics(
+        crate::analytics::Analytics::new(
+            &http,
+            crate::analytics::Settings {
+                context: Some("social-fixture".into()),
+                api_url: Some(url),
+                api_token: Some("fixture-token".into()),
+                environment: Some("fixture".into()),
+                request_timeout_ms: Some(1000.0),
+            },
+        )
+        .unwrap()
+        .unwrap(),
+    );
+    rig.ctx.set_communities(state);
+    let cases = fixture["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 35);
+    let mut paired = 0;
+    for case in cases {
+        paired += 1;
+        let scenario = case["scenario"].as_str().unwrap();
+        let label = case["id"].as_str().unwrap();
+        rig.forget_calls(&[caller, callee]).await;
+        rig.runtime
+            .omit_caller
+            .store(scenario == "accept-missing-caller", Ordering::SeqCst);
+        rig.runtime
+            .omit_callee
+            .store(scenario == "accept-missing-callee", Ordering::SeqCst);
+        rig.runtime
+            .fail_grants
+            .store(scenario.ends_with("media-failure"), Ordering::SeqCst);
+        rig.runtime
+            .inner
+            .fail_actions
+            .store(scenario.ends_with("media-failure"), Ordering::SeqCst);
+        let mut generated = None;
+        let mut community_id = None;
+        let result: Result<(), String> = if case["kind"] == "private" {
+            let pending = scenario == "start-expired-pending"
+                || scenario.starts_with("accept")
+                || scenario.starts_with("reject")
+                || scenario.starts_with("end-pending")
+                || scenario == "expire"
+                || scenario.starts_with("disconnect");
+            let media = scenario.starts_with("end-media") || scenario == "disconnect-accepted";
+            if pending || media {
+                sqlx::query("INSERT INTO social.private_voice_chats(id,caller_address,callee_address,created_at) VALUES($1,$2,$3,CURRENT_TIMESTAMP-($4::bigint*interval '1 second'))")
+                    .bind(id).bind(caller).bind(callee).bind(if scenario == "expire" || scenario == "start-expired-pending" { 120_i64 } else { 0_i64 }).execute(&rig.pool).await.unwrap();
+            }
+            if media {
+                rig.runtime
+                    .inner
+                    .private_voice_credentials(id, callee, caller)
+                    .await
+                    .unwrap();
+            }
+            use crate::rpc::service::ops;
+            let mut updates = rig.ctx.pubsub().subscribe(
+                if scenario.starts_with("start-") || scenario.starts_with("end-") {
+                    callee
+                } else {
+                    caller
+                },
+            );
+            let outcome = match scenario {
+                "start-rpc-mixedcase" | "self-start-rpc-mixedcase" => {
+                    let raw = format!(
+                        "0x{}",
+                        if scenario.starts_with("self-") {
+                            &caller[2..]
+                        } else {
+                            &callee[2..]
+                        }
+                        .to_uppercase()
+                    );
+                    let answer = SocialServiceImpl
+                        .start_private_voice_chat(
+                            StartPrivateVoiceChatPayload {
+                                callee: Some(User { address: raw }),
+                            },
+                            procedure_ctx(&rig.ctx, caller, 991),
+                        )
+                        .await
+                        .unwrap();
+                    let actual = match answer.response.unwrap() {
+                        start_private_voice_chat_response::Response::Ok(ok) => {
+                            let started: Uuid = ok.call_id.parse().unwrap();
+                            generated = Some(started);
+                            let row = rig
+                                .ctx
+                                .db()
+                                .get_private_voice_chat(started)
+                                .await
+                                .unwrap()
+                                .unwrap();
+                            assert_eq!(
+                                (&row.caller_address, &row.callee_address),
+                                (&caller.to_string(), &callee.to_string())
+                            );
+                            let update = updates
+                                .try_recv()
+                                .unwrap_or_else(|error| panic!("{label}: update {error}"));
+                            assert!(
+                                matches!(update.as_ref(), SocialEvent::PrivateVoice(value) if value.call_id == ok.call_id)
+                            );
+                            serde_json::json!({"response":{"$case":"ok","ok":{"callId":fixture["call"]}}})
+                        }
+                        start_private_voice_chat_response::Response::ForbiddenError(error) => {
+                            serde_json::json!({"response":{"$case":"forbiddenError","forbiddenError":{"message":error.message}}})
+                        }
+                        other => panic!("{label}: {other:?}"),
+                    };
+                    assert_eq!(
+                        actual, case["response"],
+                        "{label}: actual RPC wrapper response"
+                    );
+                    if generated.is_some() {
+                        Ok(())
+                    } else {
+                        Err(crate::rpc::service::Refusal::Forbidden(
+                            actual["response"]["forbiddenError"]["message"]
+                                .as_str()
+                                .unwrap()
+                                .into(),
+                        ))
+                    }
+                }
+                value if value.ends_with("http-uppercase-id") => {
+                    use axum::{body::Body, http::Request};
+                    use tower::ServiceExt;
+                    let is_patch = value.starts_with("accept") || value.starts_with("reject");
+                    let method = if is_patch { "PATCH" } else { "DELETE" };
+                    let path = format!("/v1/private-voice-chats/{}", id.to_string().to_uppercase());
+                    let timestamp = chrono::Utc::now().timestamp_millis();
+                    let payload = crate::shared::signed_fetch::build_payload_v6(
+                        &method.to_lowercase(),
+                        &path,
+                        &timestamp.to_string(),
+                        "{}",
+                    );
+                    let (_, signed) = frame_signed(
+                        if is_patch { &callee_key } else { &caller_key },
+                        &PrivateKeySigner::random(),
+                        FAR_EXPIRATION,
+                        timestamp,
+                        &payload,
+                        "{}",
+                    )
+                    .await;
+                    let mut request = Request::builder().method(method).uri(&path);
+                    for (name, value) in
+                        serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&signed)
+                            .unwrap()
+                    {
+                        request = request.header(name, value.as_str().unwrap());
+                    }
+                    let body = if is_patch {
+                        request = request.header("content-type", "application/json");
+                        Body::from(serde_json::json!({"intention":if value.starts_with("reject") { "rejected" } else { "accepted" }}).to_string())
+                    } else {
+                        Body::empty()
+                    };
+                    let app = crate::rpc::http::router(Arc::new(State::with_context(
+                        Settings::default(),
+                        rig.ctx.clone(),
+                        None,
+                    )));
+                    let response = app.oneshot(request.body(body).unwrap()).await.unwrap();
+                    let status = response.status().as_u16();
+                    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+                        .await
+                        .unwrap();
+                    let mut body: serde_json::Value =
+                        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+                    if value.starts_with("accept") {
+                        assert_eq!(
+                            body["data"]["connectionUrl"],
+                            format!("wss://livekit.test/voice-chat-private-{id}?for={callee}")
+                        );
+                        body["data"]["connectionUrl"] = serde_json::json!("callee-grant");
+                    }
+                    assert_eq!(
+                        serde_json::json!({"status":status,"body":body}),
+                        case["response"],
+                        "{label}: actual signed HTTP entry"
+                    );
+                    let update = updates
+                        .try_recv()
+                        .unwrap_or_else(|error| panic!("{label}: update {error}"));
+                    assert!(
+                        matches!(update.as_ref(), SocialEvent::PrivateVoice(value) if value.call_id == id.to_string().to_uppercase()),
+                        "{label}: raw update callId"
+                    );
+                    Ok(())
+                }
+                "start" | "self-start" | "start-expired-pending" => ops::start_private_voice_chat(
+                    &rig.ctx,
+                    caller,
+                    if scenario == "self-start" {
+                        caller
+                    } else {
+                        callee
+                    },
+                )
+                .await
+                .map(|value| {
+                    generated = Some(value);
+                }),
+                "accept" | "accept-missing-caller" | "accept-missing-callee" => {
+                    ops::accept_private_voice_chat(&rig.ctx, callee, id)
+                        .await
+                        .map(|_| ())
+                }
+                "reject" => ops::reject_private_voice_chat(&rig.ctx, callee, id).await,
+                value if value.starts_with("end") => {
+                    ops::end_private_voice_chat(
+                        &rig.ctx,
+                        if value.ends_with("callee") {
+                            callee
+                        } else {
+                            caller
+                        },
+                        id,
+                    )
+                    .await
+                }
+                "expire" => {
+                    assert_eq!(rig.ctx.expire_private_voice_chats(60_000, 8).await, 1);
+                    Ok(())
+                }
+                value if value.starts_with("disconnect") => {
+                    rig.ctx
+                        .end_private_voice_chat_on_disconnect(if value.ends_with("callee") {
+                            callee
+                        } else {
+                            caller
+                        })
+                        .await;
+                    Ok(())
+                }
+                other => panic!("unhandled {other}"),
+            };
+            outcome.map_err(|error| error.message().to_string())
+        } else {
+            let cid = seed_community(&rig.pool, true, caller, "owner").await;
+            community_id = Some(cid);
+            sqlx::query("INSERT INTO social.community_members(community_id,member_address,role) VALUES($1,$2,'member')").bind(cid).bind(callee).execute(&rig.pool).await.unwrap();
+            if !scenario.starts_with("start") {
+                rig.runtime.inner.live.lock().insert(cid);
+            }
+            if scenario == "join-racing-ban" {
+                *rig.runtime.inner.ban_during_grant.lock() = Some(caller.into());
+            }
+            let cid = if scenario.ends_with("uppercase-id") {
+                cid.to_string().to_uppercase()
+            } else {
+                cid.to_string()
+            };
+            let target = if scenario == "mute-uppercase-target" {
+                callee.to_uppercase()
+            } else {
+                callee.to_string()
+            };
+            use crate::rpc::service::ops;
+            match scenario {
+                value if value.starts_with("start") => {
+                    ops::start_community_voice_chat(&rig.ctx, caller, &cid, false)
+                        .await
+                        .map(|_| ())
+                }
+                value if value.starts_with("join") => {
+                    ops::join_community_voice_chat(&rig.ctx, caller, &cid, false)
+                        .await
+                        .map(|_| ())
+                }
+                value if value.starts_with("end") => {
+                    ops::end_community_voice_chat(&rig.ctx, caller, &cid).await
+                }
+                value if value.starts_with("mute") || value == "unmute" => {
+                    ops::mute_speaker(&rig.ctx, caller, &cid, &target, scenario != "unmute").await
+                }
+                other => panic!("unhandled {other}"),
+            }
+            .map_err(|error| error.message().to_string())
+        };
+        if scenario == "start-expired-pending" {
+            assert_eq!(
+                result.as_ref().unwrap_err(),
+                case["error"].as_str().unwrap()
+            );
+            assert!(
+                call_exists(rig.ctx.db(), id).await,
+                "the busy attempt preserves pending state"
+            );
+        }
+        assert_eq!(
+            result.is_err(),
+            !case["error"].is_null(),
+            "{label}: mutation result; {result:?}"
+        );
+        for expected in case["payloads"].as_array().unwrap() {
+            let mut payload = tokio::time::timeout(Duration::from_secs(2), received.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            if let Some(generated) = generated {
+                assert_eq!(payload["body"]["call_id"], generated.to_string());
+                payload["body"]["call_id"] = fixture["call"].clone();
+            }
+            if let Some(cid) = community_id {
+                let raw = if scenario.ends_with("uppercase-id") {
+                    cid.to_string().to_uppercase()
+                } else {
+                    cid.to_string()
+                };
+                assert_eq!(payload["body"]["call_id"], raw);
+                payload["body"]["call_id"] = if scenario.ends_with("uppercase-id") {
+                    serde_json::Value::String(fixture["community"].as_str().unwrap().to_uppercase())
+                } else {
+                    fixture["community"].clone()
+                };
+            }
+            assert_eq!(&payload, expected, "{label}: SDK payload");
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), received.recv())
+                .await
+                .is_err(),
+            "{label}: failure branches and POST failures add no events/retries"
+        );
+        if let Some(cid) = community_id {
+            drop_community(&rig.pool, cid).await;
+        }
+        rig.forget_calls(&[caller, callee]).await;
+    }
+    assert_eq!(
+        paired, 35,
+        "all captured mutation and analytics scenarios are replayed"
+    );
+    server.abort();
+    let _ = std::fs::remove_dir_all(dir);
 }

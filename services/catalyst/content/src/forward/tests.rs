@@ -1091,7 +1091,7 @@ async fn an_unpublished_scene_is_superseded_and_never_sent() {
     // The LAND holder takes the scene down while its send waits to retry:
     // the tombstone leaves `deleter_deployment` alone, and the scene stays
     // down upstream too.
-    crate::land_publish::tombstone_and_repoint(&lab.pool, &lab.pointer("13,13"))
+    crate::land_publish::unpublish_local_scene(&lab.pool, &lab.pointer("13,13"), &signed.entity_id)
         .await
         .unwrap();
     lab.make_due(&signed.entity_id).await;

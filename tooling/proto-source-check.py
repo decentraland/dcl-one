@@ -7,13 +7,6 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = 'library/protocol'  # proto/ is the contract; public/ re-exports it for the npm package
-# Copies that predate the one source; each is removed by the change that points its
-# consumer at library/protocol. Never add to this list.
-ALLOWED = (
-    'library/dcl-scene-authoring/proto/',
-    'apps/dcl-scene-cli/proto/',
-    'services/catalyst/social/src/rpc/proto/',
-)
 SKIP_DIRS = {'.git', 'node_modules', 'target', 'dist', '.cache', 'out-ts', 'out-js', 'state'}
 PACKAGE = re.compile(r'^\s*package\s+(decentraland(?:\.[\w]+)*)\s*;', re.M)
 
@@ -24,7 +17,7 @@ def offenders(root):
         rel = path.relative_to(root).as_posix()
         if SKIP_DIRS & set(path.relative_to(root).parts[:-1]):
             continue
-        if rel.startswith(SOURCE + '/') or rel.startswith(ALLOWED):
+        if rel.startswith(SOURCE + '/'):
             continue
         if PACKAGE.search(path.read_text(encoding='utf-8-sig', errors='replace')):
             found.append(rel)

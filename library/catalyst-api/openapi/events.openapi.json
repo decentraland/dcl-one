@@ -99,6 +99,21 @@
             }
           },
           {
+            "name": "recurrent",
+            "in": "query",
+            "required": false,
+            "description": "Filter recurring or one-off events before pagination. Invalid values return 400.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false",
+                "1",
+                "0"
+              ]
+            }
+          },
+          {
             "name": "world_names",
             "in": "query",
             "required": false,
@@ -185,6 +200,16 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "with_recurrent_dates",
+            "in": "query",
+            "description": "Controls recurrence-date expansion in list results. Boolean string: true or 1 enables extended expansion; false or 0 uses the default expansion. Defaults to false. By default, each event includes at most 100 valid active or future recurrence dates, sorted by start time; the usual event page limit defaults to 500 and is capped at 500. When enabled, each event includes at most 1000 valid active or future recurrence dates, sorted by start time; the event page limit defaults to 25, and explicit limits above 25 are rejected with HTTP 400. Invalid dates and occurrences that have already finished are excluded in both modes.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "false"
             }
           },
           {
@@ -303,7 +328,8 @@
               }
             }
           }
-        }
+        },
+        "description": " Calendar assignments require bearer administration or the current edit_any_event grant; assignments sent by other signed creators are ignored. Custom join URLs require bearer administration or edit_any_event permission; URLs supplied by other signed creators are ignored and replaced with a generated venue link."
       }
     },
     "/api/events/attending": {
@@ -490,6 +516,31 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "with_recurrent_dates",
+            "in": "query",
+            "description": "Controls recurrence-date expansion in list results. Boolean string: true or 1 enables extended expansion; false or 0 uses the default expansion. Defaults to false. By default, each event includes at most 100 valid active or future recurrence dates, sorted by start time; the usual event page limit defaults to 500 and is capped at 500. When enabled, each event includes at most 1000 valid active or future recurrence dates, sorted by start time; the event page limit defaults to 25, and explicit limits above 25 are rejected with HTTP 400. Invalid dates and occurrences that have already finished are excluded in both modes.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "false"
+            }
+          },
+          {
+            "name": "recurrent",
+            "in": "query",
+            "required": false,
+            "description": "Filter recurring or one-off events before pagination. Invalid values return 400.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false",
+                "1",
+                "0"
+              ]
             }
           }
         ],
@@ -760,6 +811,10 @@
               }
             }
           }
+        },
+        "description": "Signed-wallet callers use the strict UpdateEventBody request schema shown here. Authorized bearer operators may instead submit AdminEventPatch, including action/actor/reason and legacy extra fields. The bearer extension does not broaden signed-wallet validation. Custom join URL changes require edit_any_event for signed-wallet callers. Without that grant, url is silently ignored rather than rejected, so an otherwise valid PATCH returns HTTP 200 without applying the requested URL change. Authorized bearer operators can update the URL through AdminEventPatch.",
+        "x-bearer-request-schema": {
+          "$ref": "#/components/schemas/AdminEventPatch"
         }
       }
     },
@@ -2004,6 +2059,21 @@
             }
           },
           {
+            "name": "recurrent",
+            "in": "query",
+            "required": false,
+            "description": "Filter recurring or one-off events before pagination. Invalid values return 400.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false",
+                "1",
+                "0"
+              ]
+            }
+          },
+          {
             "name": "world_names",
             "in": "query",
             "required": false,
@@ -2090,6 +2160,16 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "with_recurrent_dates",
+            "in": "query",
+            "description": "Controls recurrence-date expansion in list results. Boolean string: true or 1 enables extended expansion; false or 0 uses the default expansion. Defaults to false. By default, each event includes at most 100 valid active or future recurrence dates, sorted by start time; the usual event page limit defaults to 500 and is capped at 500. When enabled, each event includes at most 1000 valid active or future recurrence dates, sorted by start time; the event page limit defaults to 25, and explicit limits above 25 are rejected with HTTP 400. Invalid dates and occurrences that have already finished are excluded in both modes.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "false"
             }
           },
           {
@@ -3342,13 +3422,15 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Local uploaded image from POST /api/poster; the upload kind must match this field. Configured same-origin URLs normalize to local paths. An unchanged stored image may be resent without becoming an explicit replacement."
           },
           "image_vertical": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Local uploaded image from POST /api/poster-vertical; the upload kind must match this field. Configured same-origin URLs normalize to local paths. An unchanged stored image may be resent without becoming an explicit replacement."
           },
           "name": {
             "type": "string"
@@ -3420,7 +3502,8 @@
             ],
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Calendar IDs. Accepted for bearer admins or wallets with edit_any_event permission; silently omitted for other signed creators."
           },
           "server": {
             "type": [
@@ -3435,7 +3518,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Custom join URL. Accepted for bearer administrators or wallets with edit_any_event permission; ignored for other signed creators, which receive a generated venue link. Omit or set null to use the generated venue link."
           },
           "world": {
             "type": [
@@ -3711,7 +3795,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Public event image. Generated default posters are absolute URLs under the configured events base URL, including any mount prefix."
           },
           "image_vertical": {
             "type": [
@@ -3902,6 +3987,14 @@
           "y": {
             "type": "integer",
             "format": "int32"
+          },
+          "contact": {
+            "type": "string",
+            "description": "Private organizer field, present only for the authenticated event owner."
+          },
+          "details": {
+            "type": "string",
+            "description": "Private organizer field, present only for the authenticated event owner."
           }
         }
       },
@@ -4158,13 +4251,256 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Local uploaded image from POST /api/poster; the upload kind must match this field. Configured same-origin URLs normalize to local paths. An unchanged stored image may be resent without becoming an explicit replacement."
           },
           "image_vertical": {
             "type": [
               "string",
               "null"
+            ],
+            "description": "Local uploaded image from POST /api/poster-vertical; the upload kind must match this field. Configured same-origin URLs normalize to local paths. An unchanged stored image may be resent without becoming an explicit replacement."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
             ]
+          },
+          "recurrent": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "recurrent_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "recurrent_frequency": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recurrent_interval": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "recurrent_month_mask": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "recurrent_monthday": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "recurrent_setpos": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "recurrent_until": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recurrent_weekday_mask": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "rejected": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "rejection_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "schedules": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "server": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "start_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "trending": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Custom join URL. Signed-wallet callers require edit_any_event permission to set or clear this field; otherwise it is silently ignored and an otherwise valid PATCH returns HTTP 200 without applying the requested URL change. Authorized bearer operators can update it through AdminEventPatch. For permitted callers, null removes the custom override and uses the generated venue link."
+          },
+          "world": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "x": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "y": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Strict signed-wallet event edit body. Unknown fields, including bearer-only action, actor and reason, are rejected. Authorized bearer operators use the separate AdminEventPatch schema."
+      },
+      "V1EventRecord": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/EventRecord"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "destination": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "destination_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "AdminEventPatch": {
+        "type": "object",
+        "properties": {
+          "all_day": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "approved": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "categories": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "community_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "contact": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "details": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "featured_item": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "highlighted": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Local uploaded image from POST /api/poster; the upload kind must match this field. Configured same-origin URLs normalize to local paths. An unchanged stored image may be resent without becoming an explicit replacement."
+          },
+          "image_vertical": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Local uploaded image from POST /api/poster-vertical; the upload kind must match this field. Configured same-origin URLs normalize to local paths. An unchanged stored image may be resent without becoming an explicit replacement."
           },
           "name": {
             "type": [
@@ -4296,33 +4632,42 @@
               "null"
             ],
             "format": "int32"
+          },
+          "action": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "approve",
+              "reject",
+              "archive",
+              "feature",
+              "unfeature",
+              null
+            ],
+            "description": "Bearer admin only. Applied before explicit approved/rejected/highlighted/trending fields; signed-wallet edits reject this field."
+          },
+          "actor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 42,
+            "description": "Bearer admin only. Audit actor; defaults to admin. Signed-wallet edits reject this field."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500,
+            "description": "Bearer admin only. Moderation rejection reason; rejection_reason is also accepted. Signed-wallet edits use rejection_reason. A reason without a new rejection preserves the existing rejection actor and requires a local rejection for mirrored events. On a non-rejected event, a standalone reason returns 400; a reason accompanying other fields is ignored. Explicit rejected=true with reason=null replaces the rejection actor."
           }
         },
-        "additionalProperties": false
-      },
-      "V1EventRecord": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/EventRecord"
-          },
-          {
-            "type": "object",
-            "properties": {
-              "destination": {
-                "type": [
-                  "object",
-                  "null"
-                ]
-              },
-              "destination_id": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            }
-          }
-        ]
+        "additionalProperties": true,
+        "description": "Bearer-only event edit and moderation body. Unknown fields are ignored for legacy compatibility. Moderation-only requests apply overlays on mirrored events; native content edits of mirrored events return 409. Explicit reason takes precedence over rejection_reason, including null. Non-null reasons update rejected local events or existing local rejections of mirrored events, including when combined with feature fields. Editing an upstream-owned rejection reason returns 409 unless the request explicitly rejects locally; approved=false alone is not a local rejection. To clear a reason, an explicit rejected=true with reason=null re-rejects and records the current actor."
       }
     }
   }

@@ -1,0 +1,72 @@
+name: Social voice release proof
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'schemas/**'
+      - 'services/catalyst/db/**'
+      - 'services/catalyst/tests/fixtures/schema/**'
+      - 'services/catalyst/Cargo.*'
+      - 'services/catalyst/rust-toolchain.toml'
+      - 'library/vendor/**'
+      - '.cargo/**'
+      - 'flake.*'
+      - 'infra/dev/shell-hook.sh'
+      - 'infra/packages/**'
+      - 'tooling/social-voice-release-test.sh'
+      - 'tooling/tests/test_social_voice_release_ci.py'
+      - '.github/workflows/social-voice-release.yml'
+  pull_request:
+    paths:
+      - 'schemas/**'
+      - 'services/catalyst/db/**'
+      - 'services/catalyst/tests/fixtures/schema/**'
+      - 'services/catalyst/Cargo.*'
+      - 'services/catalyst/rust-toolchain.toml'
+      - 'library/vendor/**'
+      - '.cargo/**'
+      - 'flake.*'
+      - 'infra/dev/shell-hook.sh'
+      - 'infra/packages/**'
+      - 'tooling/social-voice-release-test.sh'
+      - 'tooling/tests/test_social_voice_release_ci.py'
+      - '.github/workflows/social-voice-release.yml'
+permissions:
+  contents: read
+jobs:
+  social-voice-release:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 100
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      RUST_TEST_THREADS: '2'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - name: Test disposable release-proof database setup and cleanup
+        run: nix develop --no-update-lock-file --command python3 -m unittest discover -s tooling/tests -p test_social_voice_release_ci.py -v
+      - name: Restore Rust build cache
+        id: rust-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            services/catalyst/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: social-voice-release-nodebug-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}
+          restore-keys: |
+            social-voice-release-nodebug-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-
+            foundation-dev-nodebug-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}
+      - name: Run the release suite against owned PostgreSQL 18.6
+        run: nix develop --no-update-lock-file --command bash tooling/social-voice-release-test.sh
+      - name: Save Rust build cache from main
+        if: github.ref == 'refs/heads/main' && steps.rust-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            services/catalyst/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}

@@ -15,7 +15,7 @@ SELECTION = "--workspace --exclude dcl-scene-cli --exclude dcl-scene-authoring -
 BROAD = "cd services/catalyst && cargo test --locked " + SELECTION
 VENDOR = "cargo test --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --lib"
 VENDOR_CHECK = "cargo check --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --all-features --all-targets"
-BEVY = "cargo test --all --release --locked -- --test-threads=1"
+BEVY = "cargo test --all --profile ci-test --locked -- --test-threads=1"
 
 
 def require(condition, message):
@@ -90,17 +90,20 @@ def run(command, cwd=ROOT):
     return result.stdout
 
 
-def compiled_targets(arguments, cwd):
-    output = run(["cargo", "test", "--locked", *arguments, "--no-run", "--message-format=json"], cwd)
-    return artifact_targets(output)
+def compiled_targets(arguments, cwd, *, selected=None, kind=None):
+    output = run(["cargo", "test", "--locked", *arguments, "--no-run", "--message-format=json-render-diagnostics"], cwd)
+    return artifact_targets(output, selected, kind=kind)
 
 
-def artifact_targets(output, selected=None):
+def artifact_targets(output, selected=None, *, kind=None):
     targets = {}
     for line in output.splitlines():
         message = json.loads(line)
         if message.get("reason") == "compiler-artifact" and message.get("executable") and message.get("profile", {}).get("test"):
-            name = message["target"]["name"]
+            target = message["target"]
+            if kind is not None and kind not in target["kind"]:
+                continue
+            name = target["name"]
             if selected is not None and name not in selected:
                 continue
             require(name not in targets, f"duplicate executable target: {name}")
@@ -159,10 +162,8 @@ def main():
     if os.name != "nt":
         for target, names in manifest["unix"].items():
             required[target] += names
-    selection = SELECTION.split()
-    for target in required:
-        selection += ["--test", target]
-    targets = compiled_targets(selection, ROOT / "services/catalyst")
+    # Match the runtime selection so Cargo reuses the same feature graph and binaries.
+    targets = compiled_targets(SELECTION.split(), ROOT / "services/catalyst", selected=required, kind="test")
     verify_targets(required, targets)
     vendor_targets = compiled_targets(["--manifest-path", "library/vendor/rusty_enet/Cargo.toml", "--lib"], ROOT)
     require("rusty_enet" in vendor_targets, "missing vendor lib target")
