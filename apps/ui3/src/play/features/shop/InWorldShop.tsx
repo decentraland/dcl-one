@@ -1,8 +1,10 @@
 // In-world Shop: the main menu's Shop page. The avatar on the left is the engine's preview (the
 // Backpack's), wearing what the buyer selects or tries on, never saved to the look; the grid on the right
 // reads the web Shop's catalogue through TanStack (catalogueQuery), a page at a time, and prices each
-// row by the web Shop's own card rule. Selecting an item opens its panel beside the grid. Buying is the
-// next flow; resales and anything not sold in credits open on the web Shop.
+// row by the web Shop's own card rule. Selecting an item opens its panel beside the grid. BUY and BUY ITEM
+// buy a primary sale with Credits through the web shell, which holds the wallet and shows the purchase
+// dialog (purchaseQuery); resales, anything not sold in Credits, and buying outside the shell open on the
+// web Shop.
 
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -27,8 +29,9 @@ import { CATALOGUE_SORTS, categoriesFor, defaultFilters, pageCount, useShopCatal
 import { useShopFlag } from './flagsQuery'
 import { homeQueries, useNewest, useShopOutfits, useTrending, type OutfitSummary } from './homeQuery'
 import { tryOnUrn, webShopUrl } from './itemLinks'
+import { useCreditsBalance, useShopCapabilities, useShopPurchase } from './purchaseQuery'
 import { SelectedItemPanel, ShopCard } from './ShopItems'
-import { EmoteControls, ShopFilters, ShopHome, ShopItemSkeleton } from './ui'
+import { CreditsPill, EmoteControls, ShopFilters, ShopHome, ShopItemSkeleton, type PressedWith } from './ui'
 import styles from './InWorldShop.module.css'
 
 type Section = 'all' | 'wearables' | 'emotes'
@@ -139,6 +142,12 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   useEffect(() => (menu === 'filters' ? registerCancelLayer(() => setMenu(null)) : undefined), [menu])
   const items = grid.data?.items ?? []
   const total = grid.data?.total ?? 0
+  const capabilities = useShopCapabilities()
+  const credits = useCreditsBalance(shop.open ? (capabilities?.buyer ?? null) : null)
+  const purchase = useShopPurchase(() => onNavigate('backpack'))
+  // The panel shows the selected item as the listings now read it (its stock after a purchase), and its
+  // own copy only while no listing holds it.
+  const shown = selected == null ? null : ([...items, ...(trending.data ?? []), ...(newest.data ?? [])].find((i) => i.id === selected.id) ?? selected)
 
   // Only a preview this page made is undone: the Backpack shares the preview avatar.
   const previewing = useRef(false)
@@ -245,6 +254,12 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     previewing.current = true
     preview([...(body != null ? [body] : []), ...wornUrns(items, defaultWorn(items, shape), shape)])
   }
+  // In the web shell the purchase dialog opens over the page; anywhere else the web Shop sells it.
+  const buy = (item: CatalogItem, creatorName: string, input: PressedWith): void => {
+    // A purchase that couldn't open here (the shell refused it or didn't answer) is offered on the web.
+    if (purchase.available) void purchase.buy(item, creatorName, input).then((opened) => (opened ? undefined : openOnWeb(item)))
+    else void openOnWeb(item)
+  }
   const select = (item: CatalogItem): void => {
     // Whatever is picked now, an outfit still loading is no longer wanted.
     previewTicket.current++
@@ -340,6 +355,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
             <div className={styles.searchWrap}>
               <SearchField variant="light" value={draft} onChange={setDraft} placeholder="Search" />
             </div>
+            {credits != null && <CreditsPill credits={credits} />}
             <button type="button" className={styles.cart} aria-label="Cart" disabled title="The cart is coming soon">
               <MaskIcon src={cartIcon} size={24} />
             </button>
@@ -382,6 +398,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                         onSelect={() => select(item)}
                         onTryOn={() => toggleTryOn(item)}
                         onOpenOnWeb={() => void openOnWeb(item)}
+                        onBuy={(name, input) => buy(item, name, input)}
                         emoteTryOn={emoteTryOn}
                       />
                     )}
@@ -389,7 +406,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                 </div>
                 <ScrollThumb target={homeScroller} length={THUMB_LENGTH} className={styles.thumb} />
                 </div>
-                {selected != null && <SelectedItemPanel key={selected.id} item={selected} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(selected)} />}
+                {shown != null && <SelectedItemPanel key={shown.id} item={shown} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(shown)} onBuy={(name, input) => buy(shown, name, input)} />}
               </div>
             ) : (
             <>
@@ -458,6 +475,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                           onSelect={() => select(item)}
                           onTryOn={() => toggleTryOn(item)}
                           onOpenOnWeb={() => void openOnWeb(item)}
+                          onBuy={(name, input) => buy(item, name, input)}
                           emoteTryOn={emoteTryOn}
                         />
                       ))}
@@ -468,7 +486,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
               </div>
               <ScrollThumb target={scroller} length={THUMB_LENGTH} className={styles.thumb} />
               </div>
-              {selected != null && <SelectedItemPanel key={selected.id} item={selected} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(selected)} />}
+              {shown != null && <SelectedItemPanel key={shown.id} item={shown} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(shown)} onBuy={(name, input) => buy(shown, name, input)} />}
             </div>
             </>
             )}
