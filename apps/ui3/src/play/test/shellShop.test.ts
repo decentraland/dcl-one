@@ -5,12 +5,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Eip1193Provider } from '../../data/auth/wallet'
 import type { CartGroup } from '../../shop/cart/partition'
-import { createFakeWallet, type FakeWallet } from '../../shop/checkout/fakes'
+import { createFakeWallet, creatorTrade, type FakeWallet } from '../../shop/checkout/fakes'
 import type { CheckoutDeps, GroupResult } from '../../shop/checkout/purchase/executor'
 import type { CatalogItem } from '../../shop/discovery/lib/catalogItem'
 import type { UsdCents } from '../../shop/model/money'
 import type { GroupProgress } from '../../shop/model/purchase'
-import { BOOK, ITEM, storeMint } from '../../shop/payment/fixtures'
+import { BOOK, creatorOrder, ITEM, storeMint } from '../../shop/payment/fixtures'
 import type { StoredLogin } from '../features/auth/sso'
 import { SHOP_EVENT, SHOP_PROTOCOL, type ShopOperation, type ShopOperationEvent } from '../lib/shopProtocol'
 import { claimLock, createShellShop, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices, type ShellShopWallet } from '../shell/shop/purchase'
@@ -121,6 +121,11 @@ function setup(
     claim?: ShellShopServices['claim']
     /** The server's record of the operation's credits; still open by default. */
     creditRecord?: ShellShopServices['creditRecord']
+    /** Listings by item id (for several items); `listing` for every id by default. */
+    items?: Record<string, CatalogItem>
+    /** The server's offers; the store's mint of item 7 for every line by default. */
+    offers?: ShellShopServices['offers']
+    resolvers?: ShellShopServices['resolvers']
   } = {}
 ) {
   const shown: Shown[] = []
@@ -154,10 +159,10 @@ function setup(
         }
       } as never
     },
-    fetchItem: async () => (opts.listing === undefined ? LISTING : opts.listing),
-    offers: () => async (queries, session) => Object.fromEntries(queries.map((q) => [q.key, storeMint(session)])),
+    fetchItem: async (_contract, itemId) => opts.items?.[itemId] ?? (opts.listing === undefined ? LISTING : opts.listing),
+    offers: opts.offers ?? (() => async (queries, session) => Object.fromEntries(queries.map((q) => [q.key, storeMint(session)]))),
     balance: async () => ({ balanceCents: cents, credits: Math.floor(cents / 10) }),
-    resolvers: () => ({ trade: async () => null, store: async () => ({ priceWei: '2300000000000000000', available: 10 }) }),
+    resolvers: opts.resolvers ?? (() => ({ trade: async () => null, store: async () => ({ priceWei: '2300000000000000000', available: 10 }) })),
     reader: () =>
       ({
         receipt: vi.fn(async (_chain: number, hash: string) => {
@@ -200,9 +205,17 @@ function setup(
     await vi.waitFor(() => expect(last()?.view.step).toBe(step))
     return last()
   }
-  const buy = (itemId = String(ITEM)) => shop.request('shop.buy', { v: SHOP_PROTOCOL, item: { contract: CONTRACT, itemId }, method: 'credits', creatorName: 'Aurora' }) as Promise<ShopOperation>
+  const buy = (itemId = String(ITEM)) => shop.request('shop.buy', { v: SHOP_PROTOCOL, items: [{ contract: CONTRACT, itemId, quantity: 1 }], method: 'credits' }) as Promise<ShopOperation>
+  /** CHECKOUT: the cart's lines, as `itemId` or `itemId×quantity`. */
+  const checkout = (...lines: string[]) =>
+    shop.request('shop.buy', {
+      v: SHOP_PROTOCOL,
+      items: lines.map((l) => ({ contract: CONTRACT, itemId: l.split('x')[0], quantity: Number(l.split('x')[1] ?? 1) })),
+      method: 'credits',
+      cart: true
+    }) as Promise<ShopOperation>
   const states = (): string[] => events.map((e) => e.state)
-  return { shop, deps, shown, events, run, watch, guard, provider, wallet, last, until, buy, states, signers, creditRecord, cancels, sleeps }
+  return { shop, deps, shown, events, run, watch, guard, provider, wallet, last, until, buy, checkout, states, signers, creditRecord, cancels, sleeps }
 }
 
 /**
@@ -243,12 +256,12 @@ describe('the shell purchase', () => {
   it('answers shop.buy at once with the operation, then shows the item, its price and the balance', async () => {
     const t = setup()
     const op = await t.buy()
-    expect(op).toMatchObject({ state: 'reviewing', item: { contract: CONTRACT, itemId: '7' } })
+    expect(op).toMatchObject({ state: 'reviewing', items: [{ contract: CONTRACT, itemId: '7', quantity: 1 }] })
     expect(t.shown[0].view.step).toBe('loading')
     // No hint from the app: the dialog's first focus rings as usual.
     expect(t.deps.ui.show.mock.calls[0][2]).toEqual({ pointer: false })
     const { view } = await t.until('confirm')
-    expect(view).toMatchObject({ step: 'confirm', balance: 700, item: { name: 'Golden Armour', creator: 'Aurora', rarity: 'epic', category: 'upper_body' } })
+    expect(view).toMatchObject({ step: 'confirm', balance: 700, items: [{ name: 'Golden Armour', creator: 'Aurora', rarity: 'epic', category: 'upper_body' }] })
     expect(t.run).not.toHaveBeenCalled()
   })
 
@@ -262,7 +275,7 @@ describe('the shell purchase', () => {
     expect(deps.ctx).toMatchObject({ buyer: BUYER, walletKind: 'managed' })
     const [provider, intent] = t.guard.mock.calls[0]
     expect(provider).toBe(t.provider)
-    expect(intent).toMatchObject({ buyer: BUYER, chainId: 137, manager: TRUSTED, item: { contract: CONTRACT, itemId: '7' }, sale: { venue: BOOK.store.contract.toLowerCase(), call: 'storeBuy' } })
+    expect(intent).toMatchObject({ buyer: BUYER, chainId: 137, manager: TRUSTED, units: [{ contract: CONTRACT, itemId: '7' }], sale: { venue: BOOK.store.contract.toLowerCase(), call: 'storeBuy' } })
     expect(intent.current()).toBe(true)
     // The wallet's account was read before anything was reserved.
     expect(t.provider.requests[0].method).toBe('eth_accounts')
@@ -521,7 +534,7 @@ describe('the shell purchase', () => {
   /** A record as an earlier page left it, with no checkout: only its own fields. */
   function recorded(storage: Storage, record: Record<string, unknown>): string {
     const id = '0f0e0d0c-0000-4000-8000-00000000abcd'
-    storage.setItem(`dcl-inworld-shop:record:v1:${BUYER}:${id}`, JSON.stringify({ id, buyer: BUYER, item: { contract: CONTRACT, itemId: '7' }, createdAt: 1, updatedAt: 1, ...record }))
+    storage.setItem(`dcl-inworld-shop:record:v1:${BUYER}:${id}`, JSON.stringify({ id, buyer: BUYER, items: [{ contract: CONTRACT, itemId: '7', quantity: 1 }], createdAt: 1, updatedAt: 1, ...record }))
     return id
   }
 
@@ -537,6 +550,19 @@ describe('the shell purchase', () => {
     expect(t.events.some((e) => e.operation === id && (e.state === 'failed' || e.state === 'cancelled'))).toBe(false)
     // And the same item stays protected from a second purchase.
     expect((await t.buy()).operation).toBe(id)
+  })
+
+  it('follows a record left in the one-item shape (an earlier page’s), as one unit of its item', async () => {
+    const storage = memoryStorage()
+    const id = '0f0e0d0c-0000-4000-8000-00000000abce'
+    storage.setItem(
+      `dcl-inworld-shop:record:v1:${BUYER}:${id}`,
+      JSON.stringify({ id, buyer: BUYER, item: { contract: CONTRACT, itemId: '7' }, display: { name: 'Golden Armour', creator: 'Aurora', rarity: 'epic', credits: 5 }, state: 'pending', txHash: TX, chainId: 137, createdAt: 1, updatedAt: 1 })
+    )
+    const t = setup({ storage, receipts: { [TX]: 'success' } })
+    await t.shop.request('shop.capabilities', undefined)
+    await vi.waitFor(() => expect(t.events.find((e) => e.operation === id)?.state).toBe('succeeded'))
+    expect(t.events.find((e) => e.operation === id)).toMatchObject({ items: [{ contract: CONTRACT, itemId: '7', quantity: 1 }] })
   })
 
   it('skips a stored record that isn’t the shape this page writes, or another buyer’s', async () => {
@@ -645,7 +671,7 @@ describe('the shell purchase', () => {
     await t.until('pending')
     settledNow = true
     const { view } = await t.until('success')
-    expect(view).toMatchObject({ item: { name: 'Golden Armour' } })
+    expect(view).toMatchObject({ items: [{ name: 'Golden Armour' }] })
   })
 
   it('shows the result in the pending dialog when it is still up: a late revert', async () => {
@@ -845,12 +871,12 @@ describe('the shell purchase', () => {
   it('names the creator from their profile, not the app, and by address without one', async () => {
     const named = setup({ creatorName: async () => 'Marlene' })
     await named.buy()
-    expect((await named.until('confirm')).view).toMatchObject({ item: { creator: 'Marlene' } })
+    expect((await named.until('confirm')).view).toMatchObject({ items: [{ creator: 'Marlene' }] })
     const unnamed = setup({ creatorName: async () => null })
     await unnamed.buy()
     const { view } = await unnamed.until('confirm')
     const creator = String(BOOK.creator)
-    expect(view).toMatchObject({ item: { creator: `${creator.slice(0, 6)}…${creator.slice(-4)}` } })
+    expect(view).toMatchObject({ items: [{ creator: `${creator.slice(0, 6)}…${creator.slice(-4)}` }] })
   })
 
   it('answers shop.status with the signed-in buyer’s operations only', async () => {
@@ -999,8 +1025,8 @@ describe('the shell purchase', () => {
 
   it('refuses a request that names more than an item', async () => {
     const t = setup()
-    await expect(t.shop.request('shop.buy', { v: 1, item: { contract: CONTRACT, itemId: '7' }, method: 'credits', buyer: BUYER })).rejects.toThrow(/unexpected/)
-    await expect(t.shop.request('shop.buy', { v: 1, item: { contract: CONTRACT, itemId: '7' }, method: 'mana' })).rejects.toThrow(/method/)
+    await expect(t.shop.request('shop.buy', { v: 1, items: [{ contract: CONTRACT, itemId: '7', quantity: 1 }], method: 'credits', buyer: BUYER })).rejects.toThrow(/unexpected/)
+    await expect(t.shop.request('shop.buy', { v: 1, items: [{ contract: CONTRACT, itemId: '7', quantity: 1 }], method: 'mana' })).rejects.toThrow(/method/)
   })
 
   it('tells the HUD what the session can pay with', async () => {
@@ -1071,7 +1097,7 @@ describe('the purchase ledger over one storage, from two tabs', () => {
   const record = (id: string, state: OperationRecord['state'], at: number): OperationRecord => ({
     id,
     buyer: BUYER,
-    item: { contract: CONTRACT, itemId: '7' },
+    items: [{ contract: CONTRACT, itemId: '7', quantity: 1 }],
     state,
     createdAt: at,
     updatedAt: at
@@ -1102,5 +1128,276 @@ describe('the purchase ledger over one storage, from two tabs', () => {
     expect(kept.slice(0, 3)).toEqual([id(1), id(2), id(3)])
     expect(kept).not.toContain(id(4))
     expect(kept).toContain(id(25))
+  })
+})
+
+describe('a purchase of several items (the cart)', () => {
+  const listing = (itemId: string, name: string, extra: Partial<CatalogItem> = {}): CatalogItem => ({ ...LISTING, id: `listing-${itemId}`, itemId, name, ...extra }) as CatalogItem
+  const ITEMS = { '7': listing('7', 'Golden Armour'), '8': listing('8', 'Silver Boots'), '9': listing('9', 'Bronze Hat') }
+  /** The store's mint of each line's own item. */
+  const mints: ShellShopServices['offers'] = () => async (queries, session) =>
+    Object.fromEntries(queries.map((q) => [q.key, storeMint(session, 'wearable', BigInt(q.asset.token.kind === 'item' ? q.asset.token.itemId : 0))]))
+  /** Item 7 as its creator's listing on the marketplace; the rest minted by the store. */
+  const mixed: ShellShopServices['offers'] = () => async (queries, session) =>
+    Object.fromEntries(
+      queries.map((q) => {
+        const itemId = q.asset.token.kind === 'item' ? q.asset.token.itemId : '0'
+        return [q.key, itemId === String(ITEM) ? creatorOrder(session) : storeMint(session, 'wearable', BigInt(itemId))]
+      })
+    )
+  const trades: ShellShopServices['resolvers'] = () => ({ trade: async () => creatorTrade(), store: async () => ({ priceWei: '2300000000000000000', available: 10 }) })
+
+  it('confirms every unit, one row each, and buys them in one transaction when they settle together', async () => {
+    const t = setup({ items: ITEMS, offers: mints })
+    const op = await t.checkout('7', '8x2')
+    expect(op).toMatchObject({ cart: true, items: [{ itemId: '7', quantity: 1 }, { itemId: '8', quantity: 2 }] })
+    expect(t.shown[0].view).toEqual({ step: 'loading', count: 3 })
+    const { view, handlers } = await t.until('confirm')
+    expect(view.step === 'confirm' && view.items.map((i) => i.name)).toEqual(['Golden Armour', 'Silver Boots', 'Silver Boots'])
+    handlers.onConfirm?.()
+    const done = await t.until('success')
+    expect(done.view.step === 'success' && done.view.items).toHaveLength(3)
+    // One group, one transaction: the guard bound to every unit of it.
+    expect(t.run).toHaveBeenCalledTimes(1)
+    const units = t.guard.mock.calls[0][1].units
+    expect(units).toEqual([
+      { contract: CONTRACT, itemId: '7' },
+      { contract: CONTRACT, itemId: '8' },
+      { contract: CONTRACT, itemId: '8' }
+    ])
+    expect(t.events.at(-1)).toMatchObject({ operation: op.operation, state: 'succeeded', cart: true, items: [{ itemId: '7' }, { itemId: '8', quantity: 2 }] })
+  })
+
+  it('counts the units in the dialog’s title and asks for what is missing across them all', async () => {
+    // Enough for one of them, not for the three.
+    const t = setup({ items: ITEMS, offers: mints, balanceCents: 10 })
+    await t.checkout('7', '8', '9')
+    const { view } = await t.until('insufficient')
+    expect(view).toMatchObject({ step: 'insufficient', balance: 1 })
+    expect(view.step === 'insufficient' && view.need).toBe(view.step === 'insufficient' ? view.items.reduce((n, i) => n + i.credits, 0) - 1 : 0)
+    expect(view.step === 'insufficient' && view.items).toHaveLength(3)
+  })
+
+  it('runs items that settle apart as operations of their own, one after the other, under the one confirmation', async () => {
+    const order: string[] = []
+    const t = setup({
+      items: ITEMS,
+      offers: mixed,
+      resolvers: trades,
+      run: async (_deps, group) => {
+        order.push(group.key.call.kind)
+        return { status: 'confirmed', txHash: TX }
+      }
+    })
+    const first = await t.checkout('7', '8')
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    const done = await t.until('success')
+    expect(done.view.step === 'success' && done.view.items.map((i) => i.name)).toEqual(['Golden Armour', 'Silver Boots'])
+    expect(order).toEqual(['accept', 'storeBuy'])
+    // Each transaction's guard is bound to its own units and its own venue.
+    expect(t.guard.mock.calls.map(([, intent]) => [intent.sale.call, intent.units.map((u) => u.itemId)])).toEqual([
+      ['accept', ['7']],
+      ['storeBuy', ['8']]
+    ])
+    const settled = t.events.filter((e) => e.state === 'succeeded')
+    expect(settled.map((e) => [e.operation === first.operation, e.items.map((i) => i.itemId)])).toEqual([
+      [true, ['7']],
+      [false, ['8']]
+    ])
+    expect(settled.every((e) => e.cart)).toBe(true)
+  })
+
+  it('stops at a group that fails after another went out: what went stands, and the rest stays in the cart', async () => {
+    const t = setup({
+      items: ITEMS,
+      offers: mixed,
+      resolvers: trades,
+      run: async (_deps, group) =>
+        group.key.call.kind === 'accept' ? { status: 'confirmed', txHash: TX } : { status: 'failed', failure: { kind: 'rejected', message: 'You declined the signature.' }, released: [] }
+    })
+    await t.checkout('7', '8', '9')
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    const { view, handlers } = await t.until('failed')
+    expect(view).toMatchObject({ step: 'failed', retry: false })
+    expect(view.step === 'failed' && view.message).toMatch(/^Part of this purchase went through.*You declined the signature\..*still in your cart/)
+    expect(handlers.onRetry).toBeUndefined()
+    handlers.onClose()
+    expect(t.events.filter((e) => e.state === 'succeeded').map((e) => e.items.map((i) => i.itemId))).toEqual([['7']])
+    expect(t.events.filter((e) => e.state === 'failed').map((e) => e.items.map((i) => i.itemId))).toEqual([['8', '9']])
+  })
+
+  it('offers TRY AGAIN for the whole cart when its first group handed nothing off', async () => {
+    let calls = 0
+    const t = setup({
+      items: ITEMS,
+      offers: mixed,
+      resolvers: trades,
+      run: async () => (++calls === 1 ? { status: 'failed', failure: { kind: 'rejected', message: 'You declined the signature.' }, released: [] } : { status: 'confirmed', txHash: TX })
+    })
+    await t.checkout('7', '8')
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    const failed = await t.until('failed')
+    expect(failed.view).toMatchObject({ message: 'You declined the signature.', retry: true })
+    failed.handlers.onRetry?.()
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    const done = await t.until('success')
+    expect(done.view.step === 'success' && done.view.items).toHaveLength(2)
+  })
+
+  /** Groups whose run hands off and answers pending; each one's watch answers what `watched` says for its call. */
+  function confirming(pendingCalls: string[], watched: Record<string, GroupResult>) {
+    return setup({
+      items: ITEMS,
+      offers: mixed,
+      resolvers: trades,
+      run: async (deps, group) => {
+        if (!pendingCalls.includes(group.key.call.kind)) return { status: 'confirmed', txHash: TX }
+        handedOff(deps, group)
+        return { status: 'pending', txHash: TX }
+      },
+      watch: async (_deps, progress) => watched[progress.key.call.kind] ?? { status: 'pending', txHash: TX }
+    })
+  }
+
+  it('says the purchase is in progress while a group confirms, and successful with everything once it does', async () => {
+    const watched: Record<string, GroupResult> = {}
+    const t = confirming(['accept'], watched)
+    await t.checkout('7', '8')
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    await t.until('pending')
+    expect(t.run).toHaveBeenCalledTimes(2)
+    await vi.waitFor(() => expect(t.watch).toHaveBeenCalled())
+    expect(t.events.filter((e) => e.state === 'succeeded').map((e) => e.items.map((i) => i.itemId))).toEqual([['8']])
+    // The first group confirms after the last one did: the checkout is done, with everything it bought.
+    watched.accept = { status: 'confirmed', txHash: TX }
+    const done = await t.until('success')
+    expect(done.view.step === 'success' && done.view.items.map((i) => i.name)).toEqual(['Golden Armour', 'Silver Boots'])
+  })
+
+  it('stays in progress while any group is, and says what went and what didn’t once they all end', async () => {
+    const watched: Record<string, GroupResult> = {}
+    const t = confirming(['accept', 'storeBuy'], watched)
+    await t.checkout('7', '8')
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    await t.until('pending')
+    await vi.waitFor(() => expect(t.watch.mock.calls.length).toBeGreaterThanOrEqual(2))
+    // The last group confirms first: never "successful" while the other is still out.
+    watched.storeBuy = { status: 'confirmed', txHash: TX }
+    await vi.waitFor(() => expect(t.events.some((e) => e.state === 'succeeded')).toBe(true))
+    expect(t.last().view.step).toBe('pending')
+    watched.accept = { status: 'failed', failure: { kind: 'reverted', message: 'reverted' }, released: [] }
+    const { view } = await t.until('failed')
+    expect(view.step === 'failed' && view.message).toMatch(/^Part of this purchase went through.*failed on-chain.*still in your cart/)
+  })
+
+  it('says nothing was bought when no group of it was', async () => {
+    const watched: Record<string, GroupResult> = {}
+    const t = setup({
+      items: ITEMS,
+      offers: mixed,
+      resolvers: trades,
+      run: async (deps, group) => {
+        if (group.key.call.kind !== 'accept') return { status: 'failed', failure: { kind: 'rejected', message: 'You declined the signature.' }, released: [] }
+        handedOff(deps, group)
+        return { status: 'pending', txHash: TX }
+      },
+      watch: async (_deps, progress) => watched[progress.key.call.kind] ?? { status: 'pending', txHash: TX }
+    })
+    await t.checkout('7', '8')
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    // The second group was declined while the first is still out: in progress until it ends.
+    await t.until('pending')
+    await vi.waitFor(() => expect(t.watch).toHaveBeenCalled())
+    watched.accept = { status: 'failed', failure: { kind: 'reverted', message: 'reverted' }, released: [] }
+    const { view } = await t.until('failed')
+    expect(view.step === 'failed' && view.message).toBe('None of its transactions went through: nothing was bought. Everything is still in your cart.')
+  })
+
+  it('stops when a later group can’t be kept to this tab', async () => {
+    let claims = 0
+    const t = setup({ items: ITEMS, offers: mixed, resolvers: trades, claim: async () => (++claims === 2 ? null : () => {}) })
+    await t.checkout('7', '8')
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    const { view } = await t.until('failed')
+    expect(view.step === 'failed' && view.message).toMatch(/^Part of this purchase went through.*couldn't keep the rest of the purchase to this tab/)
+    expect(t.run).toHaveBeenCalledTimes(1)
+    expect(t.events.filter((e) => e.state === 'cancelled').map((e) => e.items.map((i) => i.itemId))).toEqual([['8']])
+  })
+
+  it('asks for the Credits missing for the whole cart when its first group finds the balance short', async () => {
+    const t = setup({
+      items: ITEMS,
+      offers: mixed,
+      resolvers: trades,
+      run: async () => ({ status: 'failed', failure: { kind: 'refused', message: 'Your Credits balance does not cover this group.' }, released: [], topUp: { requiredCents: 900, balanceCents: 10 } })
+    })
+    await t.checkout('7', '8')
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    const { view } = await t.until('insufficient')
+    expect(view).toMatchObject({ step: 'insufficient', balance: 1 })
+    expect(view.step === 'insufficient' && view.items.map((i) => i.name)).toEqual(['Golden Armour', 'Silver Boots'])
+    expect(t.run).toHaveBeenCalledTimes(1)
+  })
+
+  it('reviews every group before any runs: one that can’t be bought refuses the checkout with nothing spent', async () => {
+    const t = setup({
+      items: ITEMS,
+      offers: mixed,
+      // The store's mint of Silver Boots is gone; the creator's listing of Golden Armour is fine.
+      resolvers: () => ({ trade: async () => creatorTrade(), store: async () => null })
+    })
+    await t.checkout('7', '8')
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    const { view } = await t.until('failed')
+    expect(view).toMatchObject({ message: "Silver Boots can't be bought right now.", retry: false })
+    expect(t.run).not.toHaveBeenCalled()
+    expect(t.events.some((e) => e.state === 'processing')).toBe(false)
+  })
+
+  it('acts on BUY ITEMS once, however often it is pressed while the first press runs', async () => {
+    for (const [lines, groups] of [[['7', '8'], 2], [['8'], 1]] as const) {
+      const t = setup({ items: ITEMS, offers: mixed, resolvers: trades })
+      await t.checkout(...lines)
+      const { handlers } = await t.until('confirm')
+      handlers.onConfirm?.()
+      handlers.onConfirm?.()
+      handlers.onConfirm?.()
+      await t.until('success')
+      expect(t.run).toHaveBeenCalledTimes(groups)
+    }
+  })
+
+  it('names the buyer on every operation it reports', async () => {
+    const t = setup({ items: ITEMS, offers: mixed, resolvers: trades })
+    await t.checkout('7', '8')
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    await t.until('success')
+    expect(new Set(t.events.map((e) => e.buyer))).toEqual(new Set([BUYER]))
+  })
+
+  it('names the item that can’t be bought, and buys none of them', async () => {
+    const t = setup({ items: { ...ITEMS, '8': listing('8', 'Silver Boots', { available: 1 }) }, offers: mints })
+    await t.checkout('7', '8x2')
+    const { view } = await t.until('failed')
+    expect(view).toMatchObject({ message: 'Only 1 left of Silver Boots.' })
+    expect(t.run).not.toHaveBeenCalled()
+  })
+
+  it('shows the purchase under way when the cart holds an item still being bought', async () => {
+    const t = setup({
+      items: ITEMS,
+      offers: mints,
+      run: async (deps, group) => {
+        handedOff(deps, group)
+        return { status: 'pending', txHash: TX }
+      }
+    })
+    const first = await t.buy('8')
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    await t.until('pending')
+    t.last().handlers.onClose()
+    const again = await t.checkout('7', '8')
+    expect(again.operation).toBe(first.operation)
+    expect(t.last().view.step).toBe('pending')
   })
 })

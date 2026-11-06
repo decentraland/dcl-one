@@ -599,6 +599,7 @@ export function Showcase(): React.JSX.Element {
 
       <Section title="ScrollThumb (fixed length, as the Shop draws it)">
         <ShowcaseScroller />
+        <ShowcaseRowScroller />
       </Section>
 
       <Section title="Chat components">
@@ -630,6 +631,21 @@ function ShowcaseScroller(): React.JSX.Element {
         ))}
       </div>
       <ScrollThumb target={ref} length={80} className={undefined} />
+    </div>
+  )
+}
+
+// A short row that scrolls sideways, its thumb along the bottom.
+function ShowcaseRowScroller(): React.JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  return (
+    <div style={{ position: 'relative', width: 440, height: 140 }}>
+      <div ref={ref} style={{ display: 'flex', gap: 16, overflowX: 'auto', scrollbarWidth: 'none' }}>
+        {Array.from({ length: 6 }, (_, i) => (
+          <div key={i} style={{ flex: 'none', width: 110, height: 110, borderRadius: 16, background: 'var(--white-10)' }} />
+        ))}
+      </div>
+      <ScrollThumb target={ref} length={80} axis="x" className={undefined} />
     </div>
   )
 }
