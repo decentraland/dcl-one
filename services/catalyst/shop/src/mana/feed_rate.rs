@@ -23,29 +23,39 @@
 //! from it without blocking, two ways:
 //!
 //! - [`current`], for showing a price (catalog, item, import, credits
-//!   pricing): the last good read while it is at most [`SERVE_FOR`] old and
-//!   its round within the local age bound. A round nearing the marketplace's
-//!   tolerance does not take browsing down.
-//! - [`current_for_purchase`], for the purchase quote: also refused once the
-//!   round is within [`SETTLE_MARGIN_SECS`] of the marketplace's tolerance,
-//!   measured on the chain's clock (the read block's timestamp plus the time
-//!   since the read), so a node whose clock runs behind the chain does not
-//!   offer a round the contract has already stopped accepting.
+//!   pricing, and the credits quote of a line not priced in USD): the last
+//!   good read while its round is within the local age bound
+//!   (`CREDITS_USD_PEGGED_FEED_MAX_AGE_SECS`, an hour by default). An RPC
+//!   outage, or a round past the marketplace's tolerance that `ChainFeed`
+//!   refuses to read, keeps the last good price shown: browsing never goes
+//!   down with the endpoint. Only a node that has not read the feed yet (the
+//!   seconds after boot) or whose last good round is past that bound answers
+//!   unavailable.
+//! - [`current_for_purchase`], for the MANA quote of a line priced in USD:
+//!   also refused once the read is [`SERVE_FOR`] old or the round is within
+//!   [`SETTLE_MARGIN_SECS`] of the marketplace's tolerance, measured on the
+//!   chain's clock (the read block's timestamp plus everything since the read
+//!   started, monotonic), so a node whose clock runs behind the chain, or a
+//!   slow read, does not offer a round the contract has already stopped
+//!   accepting.
 //!
 //! Neither ever answers the spot or an older rate. A node with no endpoint
-//! for the settlement chain, or no marketplace on it, wires no feed and
-//! prices at the spot as before (both answer `None`).
+//! for the settlement chain, or no marketplace on it ([`settlement_venue`]),
+//! wires no feed and prices at the spot as before (both answer `None`).
 //!
 //! The refresher reads again [`REFRESH_EVERY`] while the round is far from
 //! the tolerance, just before the round leaves it, and every
-//! [`REFRESH_MIN`] once it has, until the feed publishes a newer round. Each
-//! read runs in its own task: one that panics is logged as a failed read and
-//! the refresher goes on.
+//! [`REFRESH_MIN`] once it has, until the feed publishes a newer round. While
+//! reads fail it backs off, doubling up to [`REFRESH_BACKOFF_MAX`], so an
+//! outage does not hammer the endpoint. Each read runs in its own task: one
+//! that panics is a failed read and the refresher goes on. [`health`] reports
+//! the slot (the economy `/health`).
 //!
 //! The rate can still move between a quote and the block that settles it:
 //! the approval a USD-pegged quote asks for carries upstream's +2%
 //! ([`USD_PEGGED_ALLOWANCE_BUFFER_PCT`]).
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
@@ -63,8 +73,12 @@ pub const REFRESH_EVERY: Duration = Duration::from_secs(15);
 /// How often it reads once the round is near or past the tolerance.
 pub const REFRESH_MIN: Duration = Duration::from_secs(2);
 
-/// How long one good read is shown: four refreshes, so a failed refresh
-/// never makes the Shop's prices flicker to unavailable.
+/// The longest it waits between reads while they fail.
+pub const REFRESH_BACKOFF_MAX: Duration = Duration::from_secs(30);
+
+/// How long one good read may quote a purchase: four refreshes, so one
+/// failed refresh never takes purchases down. Showing a price is bounded by
+/// the round's age alone.
 pub const SERVE_FOR: Duration = Duration::from_secs(60);
 
 /// How long before the marketplace's tolerance ends, on the chain's clock, a
@@ -140,9 +154,10 @@ impl Good {
             .saturating_sub(self.chain_round_age(now))
     }
 
-    /// This one snapshot, checked: refused once the read is [`SERVE_FOR`] old,
-    /// its round past the local age bound, or (for a purchase) within
-    /// [`SETTLE_MARGIN_SECS`] of the marketplace's tolerance.
+    /// This one snapshot, checked: refused once its round is past the local
+    /// age bound, and for a purchase also once the read is [`SERVE_FOR`] old
+    /// or the round within [`SETTLE_MARGIN_SECS`] of the marketplace's
+    /// tolerance.
     fn checked(
         &self,
         now: Instant,
@@ -157,9 +172,8 @@ impl Good {
             .timestamp()
             .saturating_add(elapsed)
             .saturating_sub(self.reading.updated_at_s);
-        if elapsed > served_for
-            || local_round_age > max_age
-            || (purchase && self.settle_left(now) < 0)
+        if local_round_age > max_age
+            || (purchase && (elapsed > served_for || self.settle_left(now) < 0))
         {
             return Err(Unavailable);
         }
@@ -176,6 +190,8 @@ impl Good {
 pub struct RateSlot {
     good: RwLock<Option<Good>>,
     max_age_secs: u64,
+    /// Reads that failed since the last good one.
+    failures: AtomicU32,
 }
 
 impl RateSlot {
@@ -183,12 +199,13 @@ impl RateSlot {
         Self {
             good: RwLock::new(None),
             max_age_secs,
+            failures: AtomicU32::new(0),
         }
     }
 
     /// Records one refresh that started at `started` (`started_wall` on the
-    /// wall clock). A failure keeps the last good read: [`Self::at`] stops
-    /// showing it once it is [`SERVE_FOR`] old.
+    /// wall clock). A failure keeps the last good read, shown while its round
+    /// is within the local age bound.
     pub fn record(
         &self,
         read: Result<FeedReading, String>,
@@ -201,10 +218,18 @@ impl RateSlot {
                     reading,
                     started,
                     started_wall,
-                })
+                });
+                let failed = self.failures.swap(0, Ordering::Relaxed);
+                if failed > 0 {
+                    tracing::info!(failed, "the marketplace's MANA/USD feed answers again");
+                }
             }
             Err(reason) => {
-                tracing::warn!(%reason, "the marketplace's MANA/USD feed could not be read")
+                let failed = self.failures.fetch_add(1, Ordering::Relaxed) + 1;
+                // The first failure, then one in eight while it lasts.
+                if failed == 1 || failed % 8 == 0 {
+                    tracing::warn!(%reason, failed, "the marketplace's MANA/USD feed could not be read");
+                }
             }
         }
     }
@@ -229,8 +254,14 @@ impl RateSlot {
             .checked(now, self.max_age_secs, true)
     }
 
-    /// When the refresher should read next, at `now`.
+    /// When the refresher should read next, at `now`: backing off while
+    /// reads fail, else at the round's own pace.
     pub fn next_read_in(&self, now: Instant) -> Duration {
+        let failed = self.failures.load(Ordering::Relaxed);
+        if failed > 0 {
+            let doubled = REFRESH_MIN.saturating_mul(1u32 << (failed - 1).min(8));
+            return doubled.min(REFRESH_BACKOFF_MAX);
+        }
         let Some(good) = self.good() else {
             return REFRESH_MIN;
         };
@@ -239,7 +270,33 @@ impl RateSlot {
     }
 }
 
+impl RateSlot {
+    /// The slot as an operator reads it.
+    pub fn health(&self, now: Instant) -> serde_json::Value {
+        let good = self.good();
+        serde_json::json!({
+            "lastGoodReadAt": good.map(|g| g.started_wall.to_rfc3339()),
+            "roundUpdatedAt": good
+                .and_then(|g| DateTime::<Utc>::from_timestamp(g.reading.updated_at_s, 0))
+                .map(|t| t.to_rfc3339()),
+            "chainRoundAgeSecs": good.map(|g| g.chain_round_age(now)),
+            "toleranceSecs": good.map(|g| g.reading.tolerance_secs),
+            "failedReadsSinceGood": self.failures.load(Ordering::Relaxed),
+            "shown": self.at(now).is_ok(),
+            "purchasable": self.for_purchase_at(now).is_ok(),
+        })
+    }
+}
+
 static SLOT: OnceLock<Arc<RateSlot>> = OnceLock::new();
+
+/// The endpoint and the newest marketplace of the settlement chain, the feed
+/// [`install`] reads; `None` when the book has no endpoint or no marketplace
+/// for that chain (the Shop then prices at the spot).
+pub fn settlement_venue(book: &super::venues::Book, chain_id: u64) -> Option<(String, Address)> {
+    let chain = book.chain(crate::types::ChainId(chain_id))?;
+    Some((chain.rpc_url.clone()?, chain.latest_marketplace()?.address))
+}
 
 /// Wires the slot of the settlement chain's newest marketplace for this
 /// process and starts its refresher; a second call is ignored.
@@ -310,6 +367,11 @@ pub fn current_for_purchase() -> Option<Result<ShopRate, Unavailable>> {
     slot().map(|slot| slot.for_purchase_at(Instant::now()))
 }
 
+/// The process's slot for `/health`: `None` where no feed is wired.
+pub fn health() -> Option<serde_json::Value> {
+    slot().map(|slot| slot.health(Instant::now()))
+}
+
 /// Whether this process prices at the marketplace's feed.
 pub fn installed() -> bool {
     slot().is_some()
@@ -372,7 +434,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_good_read_is_shown_for_a_minute_through_failed_refreshes() {
+    fn an_rpc_outage_keeps_the_catalog_priced_and_stops_purchases() {
         let slot = RateSlot::new(3_600);
         slot.record(
             Ok(read_at("0.26960836", T0 - 10, 3_600, T0)),
@@ -387,23 +449,79 @@ pub(crate) mod tests {
             "the time of the read, not of serving it"
         );
         assert_eq!(shown.updated_at, wall(T0 - 10), "the time the feed set it");
-        slot.record(Err("rpc down".into()), at(T0 + 15), wall(T0 + 15));
-        slot.record(Err("rpc down".into()), at(T0 + 30), wall(T0 + 30));
-        assert!(
-            slot.at(at(T0 + 60)).is_ok(),
-            "failed refreshes keep the last good read"
+        // Two minutes of failed reads.
+        for s in (15..=120).step_by(15) {
+            slot.record(Err("rpc down".into()), at(T0 + s), wall(T0 + s));
+        }
+        assert!(slot.at(at(T0 + 120)).is_ok(), "the catalog is still priced");
+        assert!(slot.for_purchase_at(at(T0 + 60)).is_ok());
+        assert_eq!(
+            slot.for_purchase_at(at(T0 + 61)),
+            Err(Unavailable),
+            "a purchase needs a read of the last minute"
         );
         assert_eq!(
-            slot.at(at(T0 + 61)),
+            slot.at(at(T0 + 3_591)),
             Err(Unavailable),
-            "past a minute it is not shown"
+            "past the local bound nothing is shown"
         );
         slot.record(
-            Ok(read_at("0.3", T0 + 70, 3_600, T0 + 75)),
-            at(T0 + 75),
-            wall(T0 + 75),
+            Ok(read_at("0.3", T0 + 3_600, 3_600, T0 + 3_601)),
+            at(T0 + 3_601),
+            wall(T0 + 3_601),
         );
-        assert_eq!(slot.at(at(T0 + 76)).unwrap().usd_per_mana(), "0.3");
+        assert_eq!(slot.at(at(T0 + 3_602)).unwrap().usd_per_mana(), "0.3");
+    }
+
+    #[test]
+    fn failed_reads_back_off_and_a_good_one_resets_the_pace() {
+        let slot = RateSlot::new(3_600);
+        let mut waits = Vec::new();
+        for s in 0..7 {
+            slot.record(Err("rpc down".into()), at(T0 + s), wall(T0 + s));
+            waits.push(slot.next_read_in(at(T0 + s)).as_secs());
+        }
+        assert_eq!(waits, [2, 4, 8, 16, 30, 30, 30]);
+        slot.record(
+            Ok(read_at("0.26960836", T0 + 10, 54, T0 + 10)),
+            at(T0 + 10),
+            wall(T0 + 10),
+        );
+        assert_eq!(slot.next_read_in(at(T0 + 10)), REFRESH_EVERY);
+        let health = slot.health(at(T0 + 10));
+        assert_eq!(health["failedReadsSinceGood"], 0);
+        assert_eq!(health["chainRoundAgeSecs"], 0);
+        assert_eq!(health["shown"], true);
+        assert_eq!(health["purchasable"], true);
+    }
+
+    #[test]
+    fn the_feed_is_the_settlement_chains_newest_marketplace_with_its_endpoint() {
+        use crate::mana::venues::Book;
+        let wired = Book::production(|chain_id| {
+            (chain_id == 137).then(|| "https://rpc.example/polygon".to_string())
+        });
+        let (url, marketplace) = settlement_venue(&wired, 137).unwrap();
+        assert_eq!(url, "https://rpc.example/polygon");
+        assert_eq!(
+            marketplace,
+            wired
+                .chain(crate::types::ChainId(137))
+                .unwrap()
+                .latest_marketplace()
+                .unwrap()
+                .address
+        );
+        assert_eq!(
+            settlement_venue(&Book::production(|_| None), 137),
+            None,
+            "no endpoint: the spot"
+        );
+        assert_eq!(
+            settlement_venue(&wired, 999),
+            None,
+            "a chain the Shop does not settle on"
+        );
     }
 
     #[test]
@@ -613,11 +731,11 @@ pub(crate) mod tests {
     async fn every_shop_reader_prices_at_the_slot_and_never_falls_back() {
         let now = Utc::now().timestamp();
         wired(Some(reading("0.26960836", now - 5)));
-        let rate = crate::mana::quote::mana_usd_rate(&lazy_pool())
+        let rates = crate::mana::quote::mana_usd_rates(&lazy_pool())
             .await
-            .unwrap()
             .unwrap();
-        assert_eq!(rate.decimal_text(), "0.26960836");
+        assert_eq!(rates.purchase.unwrap().decimal_text(), "0.26960836");
+        assert_eq!(rates.display, rates.purchase);
         let (rate, taken_at) = crate::import::current_rate(&lazy_pool())
             .await
             .unwrap()
@@ -649,23 +767,22 @@ pub(crate) mod tests {
             "0.26960836"
         );
 
-        // Past the purchase cut: the quote refuses, the catalog and the rest still price.
+        // Past the purchase cut: only a line priced in USD loses its rate.
         wired(Some(reading("0.26960836", now - 25)));
-        assert_eq!(
-            crate::mana::quote::mana_usd_rate(&lazy_pool())
-                .await
-                .unwrap(),
-            None
-        );
+        let rates = crate::mana::quote::mana_usd_rates(&lazy_pool())
+            .await
+            .unwrap();
+        assert_eq!(rates.purchase, None);
+        assert_eq!(rates.display.unwrap().decimal_text(), "0.26960836");
         assert!(crate::market::items::mana_usd_rate(&market).await.is_ok());
         assert!(local.mana_usd().await.is_ok());
 
         wired(None);
         assert_eq!(
-            crate::mana::quote::mana_usd_rate(&lazy_pool())
+            crate::mana::quote::mana_usd_rates(&lazy_pool())
                 .await
                 .unwrap(),
-            None
+            crate::mana::quote::QuoteRates::default()
         );
         assert_eq!(
             crate::import::current_rate(&lazy_pool()).await.unwrap(),
