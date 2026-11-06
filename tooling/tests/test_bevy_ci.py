@@ -24,6 +24,16 @@ def producers(outcome='success'):
 
 
 class WorkflowTest(unittest.TestCase):
+    def test_main_runs_are_not_cancelled_by_the_next_push(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
+        lines = workflow.split('\nconcurrency:\n', 1)[1].splitlines(True)
+        # The workflow-level block only: it ends at the next top-level key.
+        block = ''.join(lines[:next(i for i, line in enumerate(lines) if line[:1] not in (' ', '#'))])
+        self.assertIn("  group: bevy-explorer-ci-${{ github.event.pull_request.number && format('pr-{0}', "
+                      "github.event.pull_request.number) || github.ref }}\n", block)
+        self.assertIn("  cancel-in-progress: ${{ github.event_name == 'pull_request' || "
+                      "github.ref != 'refs/heads/main' }}\n", block)
+
     def test_gateway_route_step_requires_the_ignored_fixture_to_pass(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
         _, _, after = workflow.partition('      - name: Test Explorer routes against the gateway\n')
@@ -404,11 +414,21 @@ class SelectionTest(unittest.TestCase):
 
     def test_unknown_inputs_and_shared_protoc_changes_run_all_platforms_and_scenes(self):
         for path in ('apps/bevy-explorer/future-build-input', 'apps/bevy-explorer/install-protoc.py',
-                     'tooling/bevy-ci.py'):
+                     'tooling/bevy-ci.py', 'tooling/bevy-mtimes.py'):
             before = self.git('rev-parse', 'HEAD')
             self.write(path, 'changed')
             result = ci.select(before, self.commit())
             self.assertTrue(all(result[lane] for lane in (*ci.LANES, 'native-matrix', 'scenes')))
+
+    def test_vendored_bevy_selects_every_lane_and_the_native_matrix(self):
+        # The Explorer builds Bevy from rendering/bevy-explorer/bevy, platform code included.
+        self.write('rendering/bevy-explorer/bevy/crates/bevy_scene/src/scene_spawner.rs', 'changed')
+        result = ci.select(self.base, self.commit())
+        self.assertTrue(all(result[lane] for lane in (*ci.LANES, 'native-matrix', 'scenes')))
+
+    def test_vendored_bevy_rebuilds_the_images(self):
+        self.write('rendering/bevy-explorer/bevy/crates/bevy_scene/src/scene_spawner.rs', 'changed')
+        self.assertTrue(ci.consumer_changed(self.base, self.commit(), 'images'))
 
     def test_newer_web_pass_cannot_hide_an_unvalidated_native_change_on_main(self):
         self.write('rendering/bevy-explorer/source/src/lib.rs', 'native change')
