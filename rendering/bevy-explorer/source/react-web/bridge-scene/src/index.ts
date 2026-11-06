@@ -17,6 +17,7 @@ import { registerProfile } from './domains/profile'
 import { registerFriends } from './domains/friends'
 import { registerChat } from './domains/chat'
 import { registerDm } from './domains/dm'
+import { registerUiSound } from './domains/uiSound'
 import { registerEmotes } from './domains/emotes'
 import { registerWearables, sendEquipped } from './domains/wearables'
 import { registerCatalog } from './domains/catalog'
@@ -51,6 +52,7 @@ export function main(): void {
     registerFriends(ctx)
     registerChat(ctx)
     registerDm(ctx)
+    registerUiSound(ctx)
     registerVoice(ctx)
     registerEmotes(ctx)
     registerWearables(ctx)

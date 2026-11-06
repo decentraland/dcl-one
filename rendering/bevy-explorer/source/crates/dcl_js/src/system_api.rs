@@ -15,12 +15,12 @@ use std::{cell::RefCell, collections::HashMap, marker::PhantomData, rc::Rc, sync
 use strum::IntoEnumIterator;
 use system_bridge::{
     settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
-    BlockingStatusData, ChatMessage, ChatReactionData, DmHistoryEntryData, DmUserStateData,
-    FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
-    PermissionRequestEvent, ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi,
-    SetAvatarData, SetPermanentPermission, SetSinglePermission, SystemApi, VoiceMessage,
-    WelcomeState, WorldAccessEvent,
+    BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
+    DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
+    FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo,
+    PermanentPermissionItem, PermissionRequestEvent, ProfileChangedEvent, ProximityEvent,
+    SatelliteView, SceneLoadingUi, SetAvatarData, SetPermanentPermission, SetSinglePermission,
+    SystemApi, VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 use tokio::sync::Notify;
 
@@ -1358,6 +1358,34 @@ pub fn op_delete_dm_history(state: Rc<RefCell<impl State>>, address: String) {
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
         .send(SystemApi::DeleteDmHistory(address))
+        .unwrap();
+}
+
+pub async fn op_get_community_connectivity_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetCommunityConnectivityStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_community_connectivity_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<CommunityMemberConnectivityData>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_set_community_channels(state: Rc<RefCell<impl State>>, ids: Vec<String>) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::SetCommunityChannels(ids))
         .unwrap();
 }
 

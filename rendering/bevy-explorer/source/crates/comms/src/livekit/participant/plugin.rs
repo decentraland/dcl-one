@@ -40,13 +40,17 @@ use crate::{
 };
 
 const INBOUND_RATE_WINDOW_SECS: f64 = 1.0;
-const MAX_MESSAGES_PER_WINDOW: usize = 300;
+pub(crate) const MAX_MESSAGES_PER_WINDOW: usize = 300;
 const GRACE_PERIOD: f32 = 3.;
 
+/// Windows beyond which idle ones are dropped on the next check: keys that no participant
+/// entity owns (community authors, keyed `community:<wallet>`) are not evicted any other way.
+const MAX_RATE_WINDOWS: usize = 1024;
+
 // Per-peer sliding-window rate limit; entries are evicted when the participant entity is removed
-// or an unannounced sender is retired, which bounds the map by the senders the rooms know about.
-// Keyed per room as well as identity so the same identity string in two rooms (island + scene)
-// can't share a window.
+// or an unannounced sender is retired, which bounds the map by the senders the rooms know about,
+// and idle windows are swept once the map outgrows `MAX_RATE_WINDOWS`. Keyed per room as well as
+// identity so the same identity string in two rooms (island + scene) can't share a window.
 #[derive(Resource, Default)]
 pub(crate) struct InboundRateLimiter {
     windows: HashMap<(Entity, String), VecDeque<f64>>,
@@ -56,6 +60,10 @@ impl InboundRateLimiter {
     pub(crate) fn allow(&mut self, room: Entity, identity: &str, now: f64) -> bool {
         let cutoff = now - INBOUND_RATE_WINDOW_SECS;
 
+        if self.windows.len() >= MAX_RATE_WINDOWS {
+            self.windows
+                .retain(|_, times| times.back().is_some_and(|&t| t >= cutoff));
+        }
         let times = self.windows.entry((room, identity.to_owned())).or_default();
         while times.front().is_some_and(|&t| t < cutoff) {
             times.pop_front();
@@ -607,6 +615,21 @@ fn verify_active_speaker_grace_period(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idle_rate_windows_are_swept_once_the_map_is_full() {
+        let mut limiter = InboundRateLimiter::default();
+        let room = Entity::from_raw(1);
+        for i in 0..MAX_RATE_WINDOWS {
+            assert!(limiter.allow(room, &format!("community:0x{i:040x}"), 0.0));
+        }
+        assert_eq!(limiter.windows.len(), MAX_RATE_WINDOWS);
+        // a message well after the window: every idle entry goes, the live one stays
+        assert!(limiter.allow(room, "community:0xlive", 10.0));
+        assert_eq!(limiter.windows.len(), 1);
+        assert!(limiter.allow(room, "community:0xlive", 10.5));
+        assert_eq!(limiter.windows.len(), 1);
+    }
 
     #[test]
     fn a_room_falling_silent_preserves_other_rooms_speakers() {
