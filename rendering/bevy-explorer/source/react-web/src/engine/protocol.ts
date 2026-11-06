@@ -193,6 +193,8 @@ export type PageToScene =
   | PreviewFocusRequest
   | PreviewStageRequest
   | PreviewEmoteRequest
+  | PreviewRotateRequest
+  | PreviewZoomRequest
   | GetOutfitsRequest
   | SaveOutfitRequest
   | DeleteOutfitRequest
@@ -1492,6 +1494,23 @@ export interface PreviewEmoteRequest {
   kind: 'previewEmote'
   urn: string | null
 }
+
+/** Turn the preview avatar about its vertical axis by `degrees` (the page's drag over it: the engine's
+ *  drag-lock doesn't reach the preview in every host, so the page drives the turn itself). */
+export interface PreviewRotateRequest {
+  kind: 'previewRotate'
+  degrees: number
+}
+
+/** Zoom the preview avatar's camera: `zoom` × the framing in use (1 is the framing as it is, up to
+ *  PREVIEW_MAX_ZOOM), on the centre that framing has. The page's wheel over the avatar. */
+export interface PreviewZoomRequest {
+  kind: 'previewZoom'
+  zoom: number
+}
+
+/** The furthest the preview avatar's camera zooms in: the head framing is 2.5× the whole body. */
+export const PREVIEW_MAX_ZOOM = 2.5
 
 /** RGB color, components 0..1 (matches PBAvatarBase / the deployed avatar entity). */
 export interface RGBColor {

@@ -164,6 +164,10 @@ export interface BackpackState {
   preview: (urns: string[] | null) => void
   /** Frame part of the preview avatar (follows the selected category). */
   focus: (focus: PreviewFocus) => void
+  /** Turn the preview avatar by `degrees` about its vertical axis (a drag over it). */
+  rotate: (degrees: number) => void
+  /** Zoom the preview avatar's camera: `zoom` × the framing in use, 1 to PREVIEW_MAX_ZOOM (the wheel over it). */
+  zoom: (zoom: number) => void
   /** Categories shown even though an equipped item hides them. */
   forceRender: string[]
   /** Replace the force-render list (shown at once, deployed with the look on close). */
@@ -2821,6 +2825,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const focusPreview = useCallback((focus: PreviewFocus) => {
     driverRef.current?.send({ kind: 'previewFocus', focus })
   }, [])
+  const rotatePreview = useCallback((degrees: number) => {
+    driverRef.current?.send({ kind: 'previewRotate', degrees })
+  }, [])
+  const zoomPreview = useCallback((zoom: number) => {
+    driverRef.current?.send({ kind: 'previewZoom', zoom })
+  }, [])
   const setForceRender = useCallback((categories: string[]) => {
     setForceRenderState(categories)
     driverRef.current?.send({ kind: 'setForceRender', categories })
@@ -3736,7 +3746,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     emotes: { list: emotes, open: emotesOpen, toggle: toggleEmotes, play: playEmote, equip: equipEmote },
     backpack: {
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
-      equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, forceRender, setForceRender,
+      equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, rotate: rotatePreview, zoom: zoomPreview, forceRender, setForceRender,
       outfits: outfits.outfits, outfitSlots: ownedNames.length > 0 ? 10 : 5,
       saveOutfit, deleteOutfit, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit

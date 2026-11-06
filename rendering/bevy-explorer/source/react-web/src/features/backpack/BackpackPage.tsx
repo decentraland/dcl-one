@@ -44,6 +44,7 @@ import { isEditableTarget } from '../../lib/bindingLabels'
 import { catalystThumbUrl } from '../../lib/identity'
 import { CatalystImg } from '../../components/CatalystImg'
 import { CategoryIcon } from './categoryIcons'
+import { AvatarDragSurface } from '../engine/AvatarDragSurface'
 import { EngineViewport } from '../engine/EngineViewport'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { BackpackModal } from './BackpackModal'
@@ -603,6 +604,10 @@ export function BackpackPage({
             {/* The engine draws the avatar preview here, seen through the backdrop's hole. */}
             <div className={styles.preview}>
               <EngineViewport region="avatarPreview" report={setEngineViewport} />
+            </div>
+            {/* Drag to turn the avatar, the wheel to zoom (HINTS). */}
+            <div className={styles.avatarDrag}>
+              <AvatarDragSurface onRotate={backpack.rotate} onZoom={backpack.zoom} />
             </div>
             <HintsButton className={styles.hints} hints={HINTS} />
             <RandomizeBar

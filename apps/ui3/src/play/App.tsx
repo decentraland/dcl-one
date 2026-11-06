@@ -481,6 +481,8 @@ function Hud(): React.JSX.Element {
                   focus={session.backpack.focus}
                   stage={session.backpack.stage}
                   emote={session.backpack.emote}
+                  rotate={session.backpack.rotate}
+                  zoom={session.backpack.zoom}
                   noEngine={MODE === 'mock'}
                 />
               </Suspense>

@@ -86,7 +86,9 @@ function renderShop(): void {
     preview: vi.fn(),
     focus: vi.fn(),
     stage: vi.fn(),
-    emote: vi.fn()
+    emote: vi.fn(),
+    rotate: vi.fn(),
+    zoom: vi.fn()
   }
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
