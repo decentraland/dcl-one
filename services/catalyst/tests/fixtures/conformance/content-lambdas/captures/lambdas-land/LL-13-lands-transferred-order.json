@@ -1,0 +1,42 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/lambdas/users/0x0000000000000000000000000000000000000025/lands?pageSize=100",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "elements": [
+        {
+          "contractAddress": "0x000000000000000000000000000000000000001f",
+          "tokenId": "44917272433563877177165448180993403912055",
+          "category": "parcel",
+          "x": "131",
+          "y": "-137",
+          "price": "5000000000000000000000",
+          "image": "https://api.decentraland.org/v1/parcels/131/-137/map.png"
+        },
+        {
+          "contractAddress": "0x000000000000000000000000000000000000001f",
+          "tokenId": "115792089237316195423570985008687907802227629627499794519951392893147897921655",
+          "category": "parcel",
+          "x": "-150",
+          "y": "119",
+          "price": "2287000000000000000000",
+          "image": "https://api.decentraland.org/v1/parcels/-150/119/map.png"
+        }
+      ],
+      "totalAmount": 2,
+      "pageNum": 1,
+      "pageSize": 100
+    }
+  },
+  "note": "The parcel at -150,119 has an activeOrder with status transferred, placed by a previous owner, expired 2023-09-12 (marketplace subgraph, same session)."
+}

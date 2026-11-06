@@ -1,0 +1,22 @@
+{
+  "name": "shop-trade-journey",
+  "private": true,
+  "type": "module",
+  "description": "Drives the Shop's trade loop (list, buy, bid, accept, cancel) end to end on Decentraland's testnet with real wallets.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "journey": "node journey.mts",
+    "test": "node --test lib/*.test.mts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "playwright-core": "1.63.0",
+    "viem": "2.57.7"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2"
+  }
+}

@@ -11,7 +11,7 @@ import { Rail } from './Rail'
 import { HeaderButton } from './HeaderButton'
 import { OptionMenu } from './OptionMenu'
 import { HintsButton, KeyCap } from './HintsButton'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { ControlButton } from './ControlButton'
 import { Tooltip } from './Tooltip'
 import { Toggle } from './Toggle'
@@ -27,6 +27,7 @@ import { DclLogo } from './DclLogo'
 import { Avatar } from './Avatar'
 import { WearableCard, type Rarity } from './WearableCard'
 import { EquippedItemCard } from './EquippedItemCard'
+import { ScrollThumb } from './ScrollThumb'
 import { showConfirm, showDialog, PopupHost } from './popups'
 import { Icon, type IconName } from './icons'
 import { ChatBubble, DaySeparator, MemberRow } from '../features/chat/Chat'
@@ -314,6 +315,17 @@ export function Showcase(): React.JSX.Element {
               { id: 'blocked', label: 'Blocked', disabled: true }
             ]}
           />
+          <Tabs
+            variant="shop"
+            aria-label="Shop example"
+            value={pillTab}
+            onChange={setPillTab}
+            items={[
+              { id: 'wearables', label: 'Wearables', icon: <Bag size={18} /> },
+              { id: 'emotes', label: 'Emotes' },
+              { id: 'outfits', label: 'Outfits' }
+            ]}
+          />
         </div>
       </Section>
 
@@ -436,6 +448,10 @@ export function Showcase(): React.JSX.Element {
           <Chip label="All" onClick={() => undefined} />
           <Chip label="Hair" selected onClick={() => undefined} onClear={() => undefined} />
         </div>
+        <div style={{ ...row, gap: 6, marginTop: 12 }}>
+          <Chip variant="dark" label="All" selected onClick={() => undefined} />
+          <Chip variant="dark" label="Head" onClick={() => undefined} />
+        </div>
       </Section>
 
       <Section title="OptionMenu">
@@ -484,6 +500,7 @@ export function Showcase(): React.JSX.Element {
       </Section>
       <Section title="Pager">
         <Pager page={2} count={9} onChange={() => undefined} />
+        <Pager variant="shop" page={0} count={9} onChange={() => undefined} />
       </Section>
 
       <Section title="ColorPicker (avatar colors)">
@@ -545,6 +562,10 @@ export function Showcase(): React.JSX.Element {
         </div>
       </Section>
 
+      <Section title="ScrollThumb (fixed length, as the Shop draws it)">
+        <ShowcaseScroller />
+      </Section>
+
       <Section title="Chat components">
         <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           <div style={{ width: 300, display: 'flex', flexDirection: 'column', gap: 8, padding: 12, background: 'rgba(19,19,19,0.6)', borderRadius: 14 }}>
@@ -559,6 +580,21 @@ export function Showcase(): React.JSX.Element {
           </div>
         </div>
       </Section>
+    </div>
+  )
+}
+
+// A short scroller with a fixed-length thumb beside it.
+function ShowcaseScroller(): React.JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  return (
+    <div style={{ position: 'relative', width: 440, height: 320 }}>
+      <div ref={ref} style={{ height: '100%', overflowY: 'auto', scrollbarWidth: 'none', display: 'grid', gridTemplateColumns: 'repeat(2, 197px)', gap: 20 }}>
+        {Array.from({ length: 6 }, (_, i) => (
+          <div key={i} style={{ height: 200, borderRadius: 16, background: 'var(--white-10)' }} />
+        ))}
+      </div>
+      <ScrollThumb target={ref} length={80} className={undefined} />
     </div>
   )
 }

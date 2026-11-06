@@ -250,6 +250,7 @@ pub async fn social_api_methods(
             .collect();
         let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         let order: &[&str] = match parts.as_slice() {
+            ["v1", "client-login"] => &["POST"],
             ["v1", "referral-progress"] => &["POST", "PATCH", "HEAD", "GET"],
             ["v1", "communities", _, "members", _] => &["DELETE", "PATCH"],
             _ => &["HEAD", "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],

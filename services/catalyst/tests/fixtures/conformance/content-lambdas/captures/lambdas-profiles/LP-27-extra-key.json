@@ -1,0 +1,44 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "POST",
+    "path": "/lambdas/crypto/validate-signature",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "authChain": [
+        {
+          "type": "SIGNER",
+          "payload": "0x0000000000000000000000000000000000000001",
+          "signature": ""
+        }
+      ],
+      "timestamp": "1",
+      "foo": 1
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "228"
+    },
+    "body": {
+      "ok": false,
+      "message": "Invalid JSON body",
+      "data": [
+        {
+          "instancePath": "",
+          "schemaPath": "#/additionalProperties",
+          "keyword": "additionalProperties",
+          "params": {
+            "additionalProperty": "foo"
+          },
+          "message": "must NOT have additional properties"
+        }
+      ]
+    }
+  }
+}

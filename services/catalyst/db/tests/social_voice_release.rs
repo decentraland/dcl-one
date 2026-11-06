@@ -141,16 +141,25 @@ impl Database {
             "869841157fcb18ddb32fd030f6920127c41142656f91046ae426be0dd1ab3925",
         );
         let db = Self::empty().await?;
-        sqlx::raw_sql(sqlx::AssertSqlSafe(source.schema().to_owned()))
-            .execute(&db.pool)
-            .await
-            .unwrap();
-        if matches!(source, Source::Prepared) {
-            for rows in [UPGRADE_ROWS, ORIGIN_ROWS] {
-                sqlx::raw_sql(sqlx::AssertSqlSafe(rows.to_owned()))
-                    .execute(&db.pool)
-                    .await
-                    .unwrap();
+        // One capture import at a time per process, like `apply_schema`: each
+        // runs as one implicit transaction holding about 3,000 object locks
+        // until commit, so overlapping imports exhaust a default cluster's
+        // shared lock table ("out of shared memory"). The releases under test
+        // take about 70 and still run in parallel.
+        {
+            static IMPORTING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+            let _one_at_a_time = IMPORTING.lock().await;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(source.schema().to_owned()))
+                .execute(&db.pool)
+                .await
+                .unwrap();
+            if matches!(source, Source::Prepared) {
+                for rows in [UPGRADE_ROWS, ORIGIN_ROWS] {
+                    sqlx::raw_sql(sqlx::AssertSqlSafe(rows.to_owned()))
+                        .execute(&db.pool)
+                        .await
+                        .unwrap();
+                }
             }
         }
         let receipts: Vec<Receipt> = sqlx::query_as(LEDGER).fetch_all(&db.pool).await.unwrap();

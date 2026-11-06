@@ -11,11 +11,14 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 4] = [
+const PREPARED_PENDING_STEPS: [&str; 7] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
     "0024_social_referral_reward_receipt",
+    "0025_social_referral_login_received_at",
+    "0027_land_authz_cleared_legs",
+    "0028_shop_items_search_text",
 ];
 type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
 
@@ -100,9 +103,16 @@ struct Old {
 async fn stamped_with_the_closure_base() -> Option<Old> {
     with_schema(CLOSURE_BASE).await
 }
+/// One capture import at a time per process, like `apply_schema`: each runs
+/// as one implicit transaction holding up to about 3,000 object locks until
+/// commit, so overlapping imports exhaust a default cluster's shared lock
+/// table ("out of shared memory").
+static IMPORTING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn prepared_v2(rows: Option<&str>) -> Option<Old> {
     let old = with_schema(PREPARED_V2).await?;
     if let Some(rows) = rows {
+        let _one_at_a_time = IMPORTING.lock().await;
         sqlx::raw_sql(sqlx::AssertSqlSafe(rows.to_owned()))
             .execute(&old.pool)
             .await
@@ -133,10 +143,13 @@ async fn with_schema(schema: &str) -> Option<Old> {
         )
         .await
         .unwrap();
-    sqlx::raw_sql(sqlx::AssertSqlSafe(schema.to_owned()))
-        .execute(&pool)
-        .await
-        .expect("the closure base's schema.sql applies");
+    {
+        let _one_at_a_time = IMPORTING.lock().await;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(schema.to_owned()))
+            .execute(&pool)
+            .await
+            .expect("the closure base's schema.sql applies");
+    }
     Some(Old { pool, admin, name })
 }
 

@@ -76,7 +76,9 @@ $$;
 
 -- Per-token rights, derived: `operator` from the latest Approval,
 -- `update_operator` from the latest UpdateOperator, `owner` from the latest
--- Transfer (which also clears both operators); the zero address is NULL.
+-- Transfer (which also clears both operators to NULL); an Approval or
+-- UpdateOperator naming the zero address stores it, as the land-manager
+-- subgraph does (a cleared leg).
 -- x/y are NULL for estate tokens.
 CREATE TABLE land_authz.token_right (
     token_address varchar(42) NOT NULL,

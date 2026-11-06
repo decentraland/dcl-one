@@ -78,6 +78,17 @@ from a deployment's content hash. Each world scene has a stable identity
 (`explore.world_scene_place`) following Places' overlap rule: overlapping
 exactly one active scene retains it, including a moved base; overlapping none
 or several creates a new identity. Retired identities keep their storage rows.
+
+Partial (multi-request) world publishes stage in `worlds.pending_scenes` and
+`worlds.pending_scene_files`, with no world row until the completing batch's
+publish transaction consumes the upload and writes its
+`worlds.completed_scene_uploads` receipt. Upload counts and staged bytes are
+admitted under advisory locks (deployer, world, node budget); the per-world
+count and byte sums read `pending_scenes (world_name, created_at)`. The blob
+collector keeps every file a pending row names, and a leased job reclaims
+expired uploads under the exclusive store lock, unlinking only files a
+batch of that upload wrote (`pending_scene_files.written`).
+
 Genesis storage management requires LAND rights at the requested parcel, using
 the published LAND manager index or its configured document source. Without a
 document source, only ownership at that parcel grants authority; scene-admin
@@ -280,17 +291,14 @@ dropped without a handler read, under its shared upload budget; per-social
 unread-stream limiting and close timing remain outside these consumed-body
 checks. Other domains keep their existing body and drain policy.
 
-Community SNS egress reuses the legacy publisher already held by the referral
-component and the existing SQL pool. The raw event precedes the inbox consumer's
-opt-out filter. Its audience lookup reads membership in pages of 100 ordered by
-role and join time; recipient messages contain at most 100 wallets, and the SNS
-adapter sends at most ten messages per request. These are paginated live reads,
-without a transaction snapshot across pages. HTTP producers start the broadcast
-in the background; voice START awaits it. Publisher and audience failures are
-logged and do not undo the mutation. There is no durable egress queue or replay
-guarantee. A community deletion sends the content-violation event when applicable,
-then the member deletion batches, then its realtime deletion update. The inbox
-writer remains a separate consumer and applies subscription preferences.
+Community and friendship producers write native notification rows through the
+existing SQL pool. Notification insertion also creates the email delivery row;
+the existing delivery worker owns email attempts. Community recipients follow
+membership and subscription opt-outs. These producers do not publish an AWS
+event or depend on an external notifications worker. Failure behavior at each
+producer remains explicit: best-effort community/friendship notifications do
+not undo their preceding mutation; referral grant and accepted notification
+are one transaction.
 
 Native ended-event metrics live in Social. `social.event_ended_occurrences`
 records one immutable fact per `(event_id, occurrence_start)`; its RSVP count
@@ -523,9 +531,12 @@ non-null `reward_tier` as permission to POST and ignores the new claim and lock.
 It could issue a reward already claimed or quarantined by the new code. Before
 running `catalyst schema migrate` for 0024:
 
-1. Pause referral/login ingress and stop every SQS consumer, retry worker and
-   administrative writer. Drain or stop in-flight reward work; retain queue
-   messages for delivery after the cutover.
+1. Pause referral/login ingress and stop every login consumer, retry worker and
+   administrative writer. Drain or stop in-flight reward work. Pending native
+   login observations retain their client event IDs and may retry within their
+   acceptance window. Legacy SQS messages cannot be replayed into the signed
+   native endpoint: they lack the user signature, and no queue importer exists.
+   Any undrained legacy messages will not advance referral progress after cutover.
 2. Stop every pre-0024 binary sharing this database and disable its automatic
    restart or rollback. A fleet lease or `FLEET_JOBS_ENABLED=false` alone is not
    this gate: older login consumers do not honor the new reward lock.
@@ -829,6 +840,65 @@ returns only the numeric status. The pinned source's complete response bodies
 are compared for accepted, sent/received requests, absent friendship and empty
 history, with V2 and anonymous controls; no performance change was measured.
 
+## Native referral login workload
+
+`POST /social-api/v1/client-login` derives the invited wallet from ADR-44 signed
+fetch. Its signed metadata contains `loginId` and `occurredAt`; the timestamp
+limits admission to the preceding 24 hours with five minutes of future tolerance,
+matching the signed-fetch clock window.
+The client preserves these values across retries and signs each request afresh.
+The occurrence timestamp bounds replay acceptance, while login-day accounting
+continues to use the database's UTC processing date.
+
+Most logins have no referral attribution and require only the indexed invited
+wallet lookup. For an attributed wallet, `social.referral_login_receipts` stores
+one receipt keyed by `(invited_user, login_id)` in the same transaction as the
+login-day update or grant and its accepted notification/email delivery row.
+Duplicate receipts do not evaluate the threshold again. The FK to referral
+progress shares its deletion/restore lifecycle and cascades on deletion.
+
+Under the invited-user row lock, admission caps distinct new IDs at 120 per
+wallet in a rolling 24-hour window of server `received_at` values. A duplicate
+does not consume another slot. Finished or rejected referrals return success
+without adding receipts; banned referrers are a no-op on this native ingress,
+without exposing their identity or stored IP. Those acknowledged login
+observations are not retained or replayed if the ban is later lifted; a new
+login observation is required. The referrer-wide advisory lock
+is acquired only when the login can grant a tier, after receipt checks and
+login-day processing. Lock or statement timeouts return a retryable 503.
+
+Expiry is the later of server reception and signed occurrence, plus 24 hours.
+Backdating cannot shorten quota retention. Future-dated events can retain a
+receipt for up to 24 hours and five minutes, so retained receipts are not the
+same count as the rolling admission limit. The primary key's invited-user
+prefix serves this bounded per-wallet count; no separate receipt-time index
+is needed. The existing minute worker locks and deletes at most 1,000 expired
+receipts with `FOR UPDATE SKIP LOCKED`, using
+`referral_login_receipts_expiry_idx(expires_at, invited_user, login_id)`.
+Cleanup failure is logged and does not skip the reward pass. Delayed cleanup
+does not extend accepted event age or the admission window. These are
+implementation bounds, not measured production rates or throughput.
+
+The bootstrap defines this new relation and index. Run `catalyst schema
+migrate` before rolling out the new server. On an existing database, the
+production migrator creates missing objects from that same definition. Step
+`0025_social_referral_login_received_at` also upgrades databases that already
+have the earlier receipt table without `received_at`, preserving its rows,
+keys and original expiry timestamps. Each backfilled timestamp uses the UTC
+server clock after the DDL lock is acquired; future inserts use the same
+server-clock default. Existing `received_at` values remain unchanged. The step
+is recorded once and a second migrate does not change the timestamps. The
+volatile default can rewrite the table under the DDL lock; no production-sized
+migration duration has been measured.
+
+Both receipt cleanup paths require `expires_at` to have passed and
+`received_at` to be at least 24 hours old. This preserves the backfilled quota
+window even when a legacy expiry is already in the past. The effective
+retention for such upgraded rows is at least 24 hours from each row’s
+backfilled timestamp. The
+workload remains the existing per-wallet receipts; no new table or index is
+added, and no receipt or referral progress is reset.
+
 Referral attribution serializes quota decisions with a transaction-scoped
 referrer/IP advisory key; count and insertion share that transaction. The IP is
 the actual TCP peer unless an explicitly trusted backend proxy supplies one
@@ -840,8 +910,10 @@ per matching row and has a measured CPU cost (see METRICS.md). No index on the
 stored IP text serves this inet comparison, so the schema defines none. Finalizing
 a referral serializes its referrer and counts the milestone before committing
 the grant. A grant that reaches a reward tier records it in the nullable
-`referral_progress.reward_tier` in the same transaction. External Slack, SNS and
-reward requests occur after commit. One nullable receipt per milestone stores a
+`referral_progress.reward_tier` in the same transaction. Optional milestone Slack alerts occur after commit. At most eight such tasks
+per adapter are admitted before spawning; saturation drops and logs the alert.
+Admitted effects retain the ten-second deadline. Reward requests run in the existing
+leased worker after login recording commits; they do not delay login acknowledgement. One nullable receipt per milestone stores a
 pre-POST `reward_requested_at`, confirmed provider `reward_response` and
 `reward_retry_at`. The expected workload is at most one receipt per milestone,
 with a 64-row due batch every minute; this bound is not a throughput measurement.
@@ -860,21 +932,14 @@ markers. A confirmed receipt with unusable image metadata remains confirmed and
 needs metadata repair for image delivery; it must not authorize another POST. This avoids automatic duplicate issuance but cannot guarantee
 exactly-once external delivery.
 
-`reward_paid` retains `{tier, reward, notified}` while downstream effects remain.
-A stored response permits later logins and the worker to retry only outstanding
-notification and image delivery. A known successful notification is not resent
-when image persistence fails; notifications remain at least once across a crash
-after publishing but before its receipt is stored. Completion clears `reward_tier`
-and `reward_paid`. Image persistence and notification start independently, and
-the guard remains held until both finish after an early error. Images are stored
-once per referrer and tier. SNS publishing admits at most eight ten-entry requests per
-invocation; it awaits every admitted delivery and retains input result order.
-
-Community SNS recipient pages order role, join time and member address. This
-makes tied pages deterministic; live membership changes across pages do not have
-a shared snapshot. The generic helper excludes every supplied address. The
-pinned source's multiple-exclusion predicate differs; current post and voice
-producers each supply a single excluded address.
+`reward_paid` retains the historical `{tier, reward, notified}` receipt while
+outstanding effects remain. A confirmed response permits the worker to retry
+local completion without issuing another reward. Image persistence, the native
+notification and email delivery row, and clearing `reward_tier`/`reward_paid`
+share one transaction. A SQL failure rolls back those effects together. An
+imported receipt already marked notified does not send another notification.
+Images remain unique per referrer and tier. External reward issuance still
+cannot be made exactly once without a provider idempotency contract.
 
 Community membership mutations use one PostgreSQL session advisory guard per
 community on the shared pool. BAN, direct join, request acceptance, bulk public

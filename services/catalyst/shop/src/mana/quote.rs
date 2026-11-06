@@ -168,7 +168,10 @@ async fn mana_execution(
             }
             _ => Err("a mint names its beneficiary: sign in for the unit calldata".to_string()),
         },
-        Listing::Trade { trade, venue, .. } => calls::accept(chain, *venue, trade, caller, Some(amount.get())).map_err(|e| e.to_string()),
+        Listing::Trade { trade, venue, coupon: Some(coupon), .. } => {
+            calls::accept_with_coupon(chain, *venue, trade, coupon, caller, Some(amount.get())).map_err(|e| e.to_string())
+        }
+        Listing::Trade { trade, venue, coupon: None, .. } => calls::accept(chain, *venue, trade, caller, Some(amount.get())).map_err(|e| e.to_string()),
         Listing::LegacyOrder { order, .. } => match resolved.asset.token {
             crate::types::TokenRef::Token { token_id } => calls::execute_order(chain, resolved.asset.contract.address(), token_id, order.price, fingerprint).map_err(|e| e.to_string()),
             _ => Err("a legacy order sells a token".to_string()),
@@ -327,7 +330,19 @@ pub async fn quote_line(
             Ok(r) => r,
             Err(e) => return OfferAnswer::Error(line_error(index, e)),
         };
-    let reader = state.reader(resolved.chain.chain_id);
+    let reader = match state.reader(resolved.chain.chain_id).await {
+        Ok(reader) => reader,
+        Err(refusal) => {
+            tracing::warn!(error = %refusal, "refusing to quote through a mismatched chain endpoint");
+            return OfferAnswer::Error(LineError {
+                index,
+                error: "Service Unavailable",
+                message: refusal.to_string(),
+                refusal: None,
+                source: None,
+            });
+        }
+    };
     let (checks, fingerprint, name_reads) = verify::checks(&resolved, reader.as_ref()).await;
     let resolved = match name_reads {
         Some((price, owner)) => facts::with_name_reads(resolved, price, owner),
@@ -393,6 +408,16 @@ pub async fn quote_line(
         settlement,
         available: resolved.available,
         quoted_at: now_ms,
+        coupon: match &resolved.listing {
+            Listing::Trade {
+                coupon: Some(c), ..
+            } => Some(super::wire::OfferCoupon {
+                id: c.id.clone(),
+                coupon_address: format!("{:#x}", c.coupon_address),
+                discount_ppm: c.discount_ppm,
+            }),
+            _ => None,
+        },
         mana,
     }))
 }
@@ -501,5 +526,133 @@ mod tests {
                 controller: Address::ZERO
             }) >= 200_000
         );
+    }
+
+    /// A creator's primary listing with a live coupon is quoted, keyed and
+    /// encoded with that coupon end to end: the resolved offer carries it, the
+    /// MANA quote is the contract's discounted amount, the settlement key is
+    /// `AcceptWithCoupon`, and the API's calldata is `acceptWithCoupon` with
+    /// that coupon. Without the coupon in `resolve_trade`, every part fails.
+    #[tokio::test]
+    async fn a_primary_listing_with_a_live_coupon_settles_through_accept_with_coupon() {
+        use alloy_sol_types::{SolCall, SolValue};
+        // Its own database: other tests delete and reset the mirrors'
+        // completeness rows on the shared one while this runs.
+        let Some(db) = crate::test_db::OwnDatabase::create("coupon_quote").await else {
+            return;
+        };
+        let pool = db.pool.clone();
+        let fresh = || -> Address {
+            format!(
+                "0x{}{}",
+                &uuid::Uuid::new_v4().simple().to_string()[..32],
+                "00000000"
+            )
+            .parse()
+            .unwrap()
+        };
+        let creator = fresh();
+        let buyer = fresh();
+        let collection = fresh();
+        let book = super::super::venues::Book::production(|_| None);
+        let chain = book.chain(crate::types::ChainId::POLYGON).unwrap().clone();
+        let venue = chain.latest_marketplace().unwrap().address;
+        let price = U256::from(10u64).pow(U256::from(18u64));
+        let trade = crate::market::listings::test_support::parse(&format!(
+            r#"{{"signer":"{creator:#x}","signature":"0x{sig}","type":"public_item_order","network":"MATIC","chainId":137,
+              "checks":{{"uses":10,"expiration":4102444800000,"effective":0,"salt":"0x{salt}","contractSignatureIndex":0,"signerSignatureIndex":0,"allowedRoot":"0x","externalChecks":[]}},
+              "sent":[{{"assetType":4,"contractAddress":"{collection:#x}","itemId":"0","extra":"0x"}}],
+              "received":[{{"assetType":2,"contractAddress":"{mana:#x}","amount":"{price}","extra":"0x","beneficiary":"{creator:#x}"}}]}}"#,
+            sig = "11".repeat(65),
+            salt = uuid::Uuid::new_v4().simple(),
+            mana = chain.mana,
+        ));
+        // The collection and its item as the mirrors hold them, after a
+        // complete pass, so the facts derive a primary mint.
+        sqlx::query("INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) VALUES ('items','matic','fixture',now()), ('collections','matic','fixture',now()) ON CONFLICT (mirror,network) DO UPDATE SET last_complete_pass_at = now()")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO shop.collections (network,contract_address,chain_id,name,creator,owner,urn,is_completed,is_approved,is_editable,created_at,updated_at,reviewed_at,mirrored_at) VALUES ('matic',$1,137,'Coupon fixture',$2,$2,'urn:coupon-quote',true,true,false,0,0,0,now())")
+            .bind(format!("{collection:#x}")).bind(format!("{creator:#x}")).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO shop.items (network,contract_address,item_id,chain_id,item_type,urn,creator,rarity,total_supply,max_supply,available,price,name,category,search_is_store_minter,search_is_collection_approved,created_at,updated_at,reviewed_at,mirrored_at) VALUES ('matic',$1,0,137,'wearable_v2','urn:coupon-quote:0',$2,'common',0,10,10,$3::numeric,'Hat','hat',true,true,0,0,0,now())")
+            .bind(format!("{collection:#x}")).bind(format!("{creator:#x}")).bind(price.to_string()).execute(&pool).await.unwrap();
+        let trade_id =
+            crate::market::listings::insert_trade(&pool, &trade, "MATIC", &format!("{venue:#x}"))
+                .await
+                .unwrap();
+        let coupon_id: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "INSERT INTO shop.coupons (network, chain_id, signer, signature, hashed_signature, state_key, coupon_manager, coupon_address, checks, \
+                discount_type, discount_ppm, root, collections, effective_since, expires_at) \
+             VALUES ('MATIC', 137, $1, $2, $2, $2, '0x655fdfa91d69ea49f4ce1a8f7f7e2622c8630813', '0xc914507fe297b2dddd1232ac3a8903f1c125e794', \
+                '{{\"uses\": 10, \"expiration\": 4102444800000, \"effective\": 0, \"salt\": \"0x02\", \"contractSignatureIndex\": 0, \"signerSignatureIndex\": 0, \"allowedRoot\": \"0x\", \"externalChecks\": []}}'::jsonb, \
+                1, 250000, '0x{root}', ARRAY[$3], timezone('UTC', now()) - interval '1 day', timezone('UTC', now()) + interval '1 day') RETURNING id::text",
+            root = "00".repeat(32)
+        )))
+        .bind(format!("{creator:#x}"))
+        .bind(format!("0x{}{}", "22".repeat(64), &uuid::Uuid::new_v4().simple().to_string()[..2]))
+        .bind(format!("{collection:#x}"))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let session = Session::Web3 {
+            wallet: EvmAddress::new(buyer),
+        };
+        let asset = crate::types::AssetId::item(
+            crate::types::ChainId::POLYGON,
+            EvmAddress::new(collection),
+            U256::ZERO,
+        );
+        let resolved = facts::resolve_trade(&pool, chain.clone(), session, asset, &trade_id)
+            .await
+            .unwrap();
+        match &resolved.listing {
+            Listing::Trade {
+                coupon: Some(c), ..
+            } => assert_eq!(
+                (c.id.as_str(), c.discount_ppm),
+                (coupon_id.as_str(), 250_000)
+            ),
+            other => panic!("the listing carries no coupon: {other:?}"),
+        }
+        let line = Authoritative::derive(resolved.facts.clone()).unwrap();
+        // $1 less 25% is $0.75, then converted at $0.50 a MANA: 1.5 MANA.
+        let rate = crate::types::ManaUsdRate::parse_usd_per_mana("0.5").unwrap();
+        let discounted = ManaWei::new(U256::from(1_500_000_000_000_000_000u128));
+        assert_eq!(
+            quote(&line, PaymentMethod::Mana, Some(&rate)).unwrap(),
+            Quote::Mana { amount: discounted }
+        );
+        assert_eq!(
+            settlement_key(&line, PaymentMethod::Mana, Some(&rate)).map(|k| k.call),
+            Some(crate::types::SettlementCall::AcceptWithCoupon)
+        );
+        let execution =
+            mana_execution(&resolved, discounted, Some(buyer), None, Vec::new(), None).await;
+        let data = execution.call.expect("the API's calldata").data;
+        let bytes = alloy_primitives::hex::decode(data.trim_start_matches("0x")).unwrap();
+        let call = crate::evm::abi::offchain::acceptWithCouponCall::abi_decode(&bytes)
+            .expect("acceptWithCoupon calldata");
+        let on_chain = &call._coupons[0];
+        assert_eq!(
+            format!("{:#x}", on_chain.couponAddress),
+            "0xc914507fe297b2dddd1232ac3a8903f1c125e794"
+        );
+        let (kind, discount, root) =
+            <(U256, U256, alloy_primitives::B256)>::abi_decode(&on_chain.data).unwrap();
+        assert_eq!(
+            (kind, discount, root),
+            (
+                U256::from(1u8),
+                U256::from(250_000u32),
+                alloy_primitives::B256::ZERO
+            )
+        );
+        assert_eq!(call._trades[0].signer, creator);
+        assert_eq!(
+            execution.allowance.map(|a| a.amount),
+            Some(discounted),
+            "the buyer approves the discounted amount"
+        );
+        db.drop().await;
     }
 }
