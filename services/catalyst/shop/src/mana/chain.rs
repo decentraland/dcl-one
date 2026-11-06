@@ -348,6 +348,25 @@ impl Reader {
         }))
     }
 
+    /// The calldata `tx_hash` was sent with, `None` when the node does not
+    /// know the transaction.
+    pub async fn transaction_input(&self, tx_hash: &str) -> Result<Option<Vec<u8>>, ReadError> {
+        let value = self
+            .rpc
+            .call("eth_getTransactionByHash", json!([tx_hash]))
+            .await?;
+        if value.is_null() {
+            return Ok(None);
+        }
+        let input = value
+            .get("input")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ReadError::Decode("transaction input".into()))?;
+        hex::decode(input.trim_start_matches("0x"))
+            .map(Some)
+            .map_err(|e| ReadError::Decode(format!("transaction input: {e}")))
+    }
+
     /// A raw JSON-RPC call (the tests drive anvil with it).
     pub async fn raw(&self, method: &str, params: Value) -> Result<Value, ReadError> {
         Ok(self.rpc.call(method, params).await?)

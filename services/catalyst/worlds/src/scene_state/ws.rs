@@ -3,8 +3,6 @@
 //! the `Init` frame (the entity range and the state snapshot) and the CRDT
 //! relay until either side closes or the client is removed.
 
-use crate::comms::interfaces::AccessPolicy;
-
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -190,44 +188,39 @@ async fn handle_socket(
         &caller_ip
     };
     let now = chrono::Utc::now().naive_utc();
-    let throttle = if let SceneKey::World(world) = &scene.identity.key {
-        match state.policy.world_admission(world, now).await {
-            Ok(crate::comms::access::WorldAdmission::Open(
-                crate::policy::AccessType::SharedSecret,
-            )) => Some(
-                crate::comms::gatekeeper::admission::world_mint::SecretThrottle {
-                    pool: &state.pool,
-                    max_attempts: state.secret_max_attempts,
-                    world: world.key(),
-                    subject: caller,
-                },
-            ),
-            _ => None,
-        }
-    } else {
-        None
-    };
-    let reservation = if let Some(throttle) = &throttle {
-        match throttle.reserve(now).await {
-            Ok(Some(reservation)) => Some(reservation),
+    // Resolve authority without a secret first. Store failures close below, and a
+    // world that changes to shared-secret access cannot skip its attempt budget.
+    let mut admission = admit(state, &scene, &authed.signer, None, None, now).await;
+    if matches!(admission, Err(AdmissionRefused::InvalidSecret))
+        || (matches!(admission, Err(AdmissionRefused::Undetermined(_)))
+            && authed.presented_secret().is_some())
+    {
+        let SceneKey::World(world) = &scene.identity.key else {
+            let _ = sink.close().await;
+            return;
+        };
+        let throttle = crate::comms::gatekeeper::admission::world_mint::SecretThrottle {
+            pool: &state.pool,
+            max_attempts: state.secret_max_attempts,
+            world: world.key(),
+            subject: caller,
+        };
+        let reservation = match throttle.reserve(now).await {
+            Ok(Some(reservation)) => reservation,
             _ => {
                 let _ = sink.close().await;
                 return;
             }
-        }
-    } else {
-        None
-    };
-    let admission = admit(
-        state,
-        &scene,
-        &authed.signer,
-        authed.presented_secret(),
-        None,
-        now,
-    )
-    .await;
-    if let (Some(throttle), Some(reservation)) = (&throttle, reservation) {
+        };
+        admission = admit(
+            state,
+            &scene,
+            &authed.signer,
+            authed.presented_secret(),
+            None,
+            now,
+        )
+        .await;
         throttle
             .settle(
                 matches!(admission, Err(AdmissionRefused::InvalidSecret)),

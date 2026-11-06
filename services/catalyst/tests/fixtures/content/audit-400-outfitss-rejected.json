@@ -1,0 +1,22 @@
+{
+  "description": "GET /content/audit/outfitss/{id} is 400: 'outfits' takes no second plural 's'.",
+  "request": {
+    "method": "GET",
+    "path": "/content/audit/outfitss/0x0000000000000000000000000000000000000000",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Unrecognized type: outfitss"
+    }
+  },
+  "captured_from": "derived from decentraland/catalyst@a416565 test/integration/controller/entity-type-parsing.spec.ts",
+  "captured_at": "2026-11-04T00:00:00Z",
+  "volatile_paths": []
+}

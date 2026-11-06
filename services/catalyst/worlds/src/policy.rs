@@ -1153,7 +1153,7 @@ impl Policy {
             }
         }
         if let Some(scene) = scene {
-            if let Some(retired) = crate::rooms::replaced_world_scene(&self.pool, world, scene, now)
+            if let Some(retired) = crate::rooms::replaced_world_scene(&self.pool, world, scene)
                 .await
                 .map_err(|e| AuthorityNotEstablished::UndeterminedStoreUnavailable {
                     store: "worlds.retired_world_scenes",

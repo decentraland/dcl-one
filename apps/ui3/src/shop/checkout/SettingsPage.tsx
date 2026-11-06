@@ -17,7 +17,7 @@ import { CHAIN, chainLabel, type ChainId } from "../model/chain";
 import { MarketSignIn } from "../seller/pages/SellerSignIn";
 import { useShopWallet } from "../wallet/context";
 import { ethereumChainId, settlementChainId } from "./chain/config";
-import { chainContracts } from "./chain/contracts";
+import { chainContracts, replacedCreditsManager } from "./chain/contracts";
 import {
   AuthorizationKind,
   getAuthorizationStatus,
@@ -68,6 +68,9 @@ function buyingGrants(eth: ChainId, pol: ChainId): Grant[] {
   for (const m of p?.offChainMarketplaces ?? []) out.push(mana(pol, m.address, m.label, "buying"));
   if (p?.collectionStore) out.push(mana(pol, p.collectionStore.address, p.collectionStore.label, "buying"));
   if (p?.creditsManager) out.push(mana(pol, p.creditsManager.address, p.creditsManager.label, "buying"));
+  // The registry manager a build replaced: listed so an approval made to it can still be revoked.
+  const replaced = replacedCreditsManager(pol);
+  if (replaced) out.push(mana(pol, replaced.address, replaced.label, "buying"));
   return out;
 }
 

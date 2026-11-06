@@ -68,6 +68,12 @@ the data and its operations.
    During a rolling deploy an older binary still writing can leave rows the
    repair's rules would change after the marker is set; the next sync leader
    bootstrap repairs them, or restart a sync leader once the rollout is done.
+   The repair marks each snapshot window whose rows it superseded with
+   `content.snapshots.outdated` (step `0026_content_snapshots_outdated`, a
+   constant default without a rewrite; the table holds a few dozen rows, one
+   per generation window). The generator's tick scans for the flag and
+   regenerates those windows; the row keeps its real `generation_time`, which
+   `/snapshots` publishes as upstream does.
 
 ## Worlds, persistent storage and scene hosting
 
@@ -525,6 +531,24 @@ columns, imports confirmed `reward_paid` receipts without losing notification
 completion, and quarantines older uncertain pending rewards. The backfill touches
 only paid or pending rewards.
 
+The object pass also builds `deployments_active_entity_timestamp_idx` on
+`content.deployments` (the snapshot generator's inactive-entities count) in the
+migrate transaction, not concurrently, so writes to that table wait for the
+build: 7.8 s on 4M narrow synthetic rows (METRICS.md, "Snapshot inactive-entities
+count"), unmeasured on production. Writers are stopped for a release anyway. To
+build it outside that window, run beforehand, with the same definition as
+`schemas/00_content.sql`:
+
+```sql
+CREATE INDEX CONCURRENTLY deployments_active_entity_timestamp_idx
+    ON content.deployments USING btree (entity_timestamp) INCLUDE (entity_id)
+    WHERE deleter_deployment IS NULL;
+```
+
+The object pass creates only objects the database lacks, so it then skips the
+index. A failed concurrent build leaves an invalid index of that name: drop it
+before retrying.
+
 **Migration 0024 does not support a rolling deployment from a pre-0024 binary,
 even when both binaries require schema version 3.** A pre-0024 binary treats any
 non-null `reward_tier` as permission to POST and ignores the new claim and lock.
@@ -979,10 +1003,12 @@ Access edits commit a unique revision and database-clock cutoff to
 retry intent before their advisory wakeups. Maintenance shares one room inventory
 between 16 due edits and a rotating batch of 16 live worlds. Cutoffs stay after
 success so an old token cannot regain access by reconnecting. World tokens carry
-additive signed authorization metadata bound to world, wallet, room and mint
+additive signed authorization attributes bound to world, wallet, room and mint
 start time. The short `FOR SHARE` stamp orders against existing access writers.
-Legacy tokens, key rotation, or clients replacing metadata may require a fresh
-mint after an access edit. Existing main ownership, ENS and scoped grant policy
+The `dcl.worldAuthorization` participant attribute survives normal client metadata
+replacement. Previously issued signed metadata proofs remain readable when the
+attribute is absent; an invalid present attribute fails closed. Legacy unsigned
+tokens and key rotation may require a fresh mint after an access edit. Existing main ownership, ENS and scoped grant policy
 still decides admission.
 
 The caller secret budget keeps the existing `attempts/window_start` table and
@@ -993,7 +1019,9 @@ of 1,000 rows and continues while a batch is full, for at most 10 s per schedule
 pass. This does not add a cross-caller world ceiling.
 
 For rollout, stop all old API and scene-host replicas before running `catalyst schema migrate` and then applying
-`schemas/releases/world-scene-ban-keys.sql` with the administrative database role, then start the updated binaries. Old binaries cannot enforce the
+`schemas/releases/world-scene-ban-keys.sql` with the administrative database role, then start the updated binaries. `catalyst serve` refuses startup while active or retained
+world scenes still have mapped entity-id bans awaiting this conversion; fresh databases and
+unmapped or Genesis bans do not require it. Old binaries cannot enforce the
 new stable ban keys. A binary-only rollback is not supported after rekeying;
 restore the matching pre-migration database backup. Do not reset a database.
 

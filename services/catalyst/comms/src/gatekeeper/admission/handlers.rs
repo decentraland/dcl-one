@@ -125,7 +125,8 @@ pub async fn get_scene_adapter(
             super::world_mint::authorization_started(&state.pool, world)
                 .await
                 .map_err(|error| {
-                    ApiError::http(503, format!("World authorization unavailable: {error}"))
+                    tracing::error!(%error, "world authorization unavailable");
+                    ApiError::http(503, "World authorization unavailable")
                 })?,
         )
     } else {
@@ -171,23 +172,26 @@ pub async fn get_scene_adapter(
     }
     let mut grants = join_grants(&resolved.room);
     grants.can_update_own_metadata = true;
-    let mut metadata = serde_json::json!({ "isGuest": sf.is_guest });
-    if let (Some(world), Some(started)) = (resolved.realm.world(), started) {
-        metadata[super::world_mint::AUTHORIZATION_FIELD] = super::world_mint::authorization_proof(
-            &state.livekit.api_secret,
-            world,
-            identity.as_str(),
-            &resolved.room,
-            started,
-        );
-    }
     let mut token = AccessToken::new(
         &state.livekit.api_key,
         &state.livekit.api_secret,
         identity.as_str(),
         grants,
     )
-    .with_metadata(metadata.to_string());
+    .with_metadata(serde_json::json!({ "isGuest": sf.is_guest }).to_string());
+    if let (Some(world), Some(started)) = (resolved.realm.world(), started) {
+        let proof = super::world_mint::authorization_proof(
+            &state.livekit.api_secret,
+            world,
+            identity.as_str(),
+            &resolved.room,
+            started,
+        );
+        token = token.with_attribute(
+            super::world_mint::AUTHORIZATION_ATTRIBUTE,
+            serde_json::json!({super::world_mint::AUTHORIZATION_FIELD: proof}).to_string(),
+        );
+    }
     token.name = sf
         .metadata
         .get("displayName")

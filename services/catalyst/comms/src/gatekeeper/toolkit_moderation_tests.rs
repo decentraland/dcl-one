@@ -489,6 +489,8 @@ struct Media {
     metadata: BTreeMap<String, Value>,
     connected: BTreeMap<String, BTreeSet<String>>,
     requests: Vec<(String, Value)>,
+    fail_inventory: bool,
+    reban_on_remove: Option<(sqlx::PgPool, String, Address)>,
 }
 
 async fn media_fixture() -> (
@@ -502,10 +504,23 @@ async fn media_fixture() -> (
     let fixture = axum::Router::new().route("/twirp/livekit.RoomService/{method}", axum::routing::post(move |Path(method):Path<String>, Json(body):Json<Value>| {
         let capture = capture.clone();
         async move {
+            let reban = if method == "UpdateRoomMetadata" {
+                let fields: Value = serde_json::from_str(body["metadata"].as_str().unwrap()).unwrap();
+                if fields["bannedAddresses"] == json!([]) {
+                    capture.lock().unwrap().reban_on_remove.take()
+                } else { None }
+            } else { None };
+            if let Some((pool, key, wallet)) = reban {
+                sqlx::query("INSERT INTO social.scene_bans(place_id,banned_address,banned_by) VALUES($1,$2,$2)")
+                    .bind(key).bind(wallet).execute(&pool).await.unwrap();
+            }
             let mut data = capture.lock().unwrap();
             data.requests.push((method.clone(),body.clone()));
             match method.as_str() {
                 "ListRooms" => {
+                    if body.get("names").is_none() && data.fail_inventory {
+                        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                    }
                     let rooms: Vec<String> = if let Some(room) = body["names"][0].as_str() { vec![room.to_owned()] } else { data.connected.keys().chain(data.metadata.keys()).cloned().collect::<BTreeSet<_>>().into_iter().collect() };
                     Json(json!({"rooms": rooms.into_iter().map(|room| json!({"name":room,"sid":"RM_toolkit","metadata":data.metadata.get(&room).cloned().unwrap_or(json!({"presenters":["canary"]})).to_string()})).collect::<Vec<_>>() })).into_response()
                 }
@@ -1153,4 +1168,86 @@ async fn notification_failure_rolls_back_scene_ban_before_kick_or_room_metadata(
     let counts: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM social.scene_bans WHERE banned_address=$1),(SELECT count(*) FROM social.livekit_removal_intents WHERE wallet=$1),(SELECT count(*) FROM social.notifications WHERE address=$1)").bind(&target).fetch_one(&pool).await.unwrap();
     assert_eq!(counts, (0, 0, 0));
     server.abort();
+}
+
+#[tokio::test]
+async fn unban_commits_during_inventory_outage_and_preserves_a_reban_during_metadata_write() {
+    let Some(pool) = scratch().await else {
+        return;
+    };
+    for reban in [false, true] {
+        let (url, media, server) = media_fixture().await;
+        let target = Address::parse(&address_of(&random_key())).unwrap();
+        let key = "mixed.dcl.eth:1,1";
+        let rooms = ["world-mixed.dcl.eth", "w1:d:mixed.dcl.ethSceneB"];
+        sqlx::query(
+            "INSERT INTO social.scene_bans(place_id,banned_address,banned_by) VALUES($1,$2,$2)",
+        )
+        .bind(key)
+        .bind(&target)
+        .execute(&pool)
+        .await
+        .unwrap();
+        {
+            let mut data = media.lock().unwrap();
+            data.fail_inventory = !reban;
+            if reban {
+                data.reban_on_remove = Some((pool.clone(), key.into(), target.clone()));
+            }
+            for room in rooms {
+                data.metadata.insert(
+                    room.into(),
+                    json!({"bannedAddresses":[target.as_str()],"presenters":["canary"]}),
+                );
+            }
+        }
+        let mut state = comms_state(pool.clone(), Settings::for_tests());
+        state.scenes = Arc::new(ToolkitScenes);
+        state.policy = Arc::new(ActorPolicy {
+            pool: Some(pool.clone()),
+            unavailable: false,
+            protected: BTreeSet::new(),
+        });
+        state.livekit.configured = true;
+        state.livekit.api_url = url;
+        let state = Arc::new(state);
+        let app = super::super::router(state.clone());
+        let (status, value) = call(
+            &app,
+            "DELETE",
+            "/scene-bans",
+            &metadata("MiXeD.dcl.eth", "SceneB", "1,1"),
+            json!({"banned_address":target.as_str()}),
+            KEY,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{value}");
+        assert_eq!(
+            state
+                .moderation
+                .is_scene_banned(key, &target)
+                .await
+                .unwrap(),
+            reban
+        );
+        {
+            let data = media.lock().unwrap();
+            assert!(
+                data.reban_on_remove.is_none(),
+                "fixture re-banned during the stale metadata write"
+            );
+            for room in rooms {
+                assert_eq!(
+                    data.metadata[room]["bannedAddresses"],
+                    if reban {
+                        json!([target.as_str()])
+                    } else {
+                        json!([])
+                    }
+                );
+                assert_eq!(data.metadata[room]["presenters"], json!(["canary"]));
+            }
+        }
+        server.abort();
+    }
 }

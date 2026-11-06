@@ -16,6 +16,7 @@ import {
   translateText
 } from '../features/chat/translation'
 import { PREF, getPref } from '../lib/prefs'
+import { pingModeFor, resetPingPrefs, setPingDefault, setPingMode } from '../features/chat/ping'
 import { fakeProfileState, fakeSession } from './harness'
 
 /** Answers each translate request with `answer(q)`, recording the requests. */
@@ -40,6 +41,7 @@ const es = (map: Record<string, string>) => (q: string[]) => ({
 beforeEach(() => {
   localStorage.clear()
   resetTranslations()
+  resetPingPrefs()
 })
 afterEach(() => vi.restoreAllMocks())
 
@@ -294,9 +296,28 @@ describe('translation settings', () => {
     expect(getPref(PREF.chatAutoTranslateDefault)).toBe('true')
   })
 
-  it('resetting the Chat tab resets translation too, conversations switched by hand included', async () => {
+  it('the Chat tab holds the notification ping default, which the conversations not set by hand follow', async () => {
+    setPingMode('community:c1', 'all')
+    render(
+      <SettingsPanel
+        settings={{ ...fakeSession().settings, open: true, list: [] }}
+        bindings={fakeSession().bindings}
+        profile={fakeProfileState()}
+        onNavigate={vi.fn()}
+      />
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Notification Ping' }))
+    await userEvent.click(screen.getByRole('option', { name: 'Mentions Only' }))
+    expect(getPref(PREF.chatPingDefault)).toBe('mentions')
+    expect(pingModeFor('Nearby')).toBe('mentions')
+    expect(pingModeFor('community:c1')).toBe('all')
+  })
+
+  it('resetting the Chat tab resets translation and the ping too, conversations switched by hand included', async () => {
     setAutoTranslateDefault(true)
     setAutoTranslate('0xbob', false)
+    setPingDefault('none')
+    setPingMode('community:c1', 'mentions')
     render(
       <SettingsPanel
         settings={{ ...fakeSession().settings, open: true, list: [] }}
@@ -308,5 +329,8 @@ describe('translation settings', () => {
     await userEvent.click(screen.getByRole('button', { name: /Reset all defaults/ }))
     expect(screen.getByRole('switch', { name: 'Auto-Translate New Conversations' })).not.toBeChecked()
     expect(JSON.parse(getPref(PREF.chatAutoTranslateChannels) ?? '{}')).toEqual({})
+    expect(pingModeFor('Nearby')).toBe('all')
+    expect(pingModeFor('community:c1')).toBe('all')
+    expect(JSON.parse(getPref(PREF.chatPingChannels) ?? '{}')).toEqual({})
   })
 })

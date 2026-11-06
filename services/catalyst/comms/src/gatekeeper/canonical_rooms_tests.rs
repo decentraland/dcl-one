@@ -1352,11 +1352,16 @@ impl crate::interfaces::AccessPolicy for PerWalletPolicy {
         &self,
         _world: &WorldName,
         actor: &Address,
-        _secret: Option<&str>,
+        secret: Option<&str>,
         _scene: Option<&SceneId>,
         _device_id: Option<&str>,
         _now: chrono::NaiveDateTime,
     ) -> Result<crate::access::Access, crate::AuthorityNotEstablished> {
+        if secret == Some("valid-fixture-secret") {
+            return Ok(crate::access::Access::Allowed(
+                crate::access::AccessGrant::SharedSecret,
+            ));
+        }
         if matches!(
             self.inner.admission,
             Some(crate::access::WorldAdmission::Open(
@@ -1669,36 +1674,49 @@ async fn an_undetermined_access_decision_is_retried_until_it_evicts() {
 async fn readmission_requires_signed_freshness_and_retains_failed_rosters() {
     use crate::access::{AccessType, WorldAdmission};
     use axum::response::IntoResponse;
-    let wallet = |n: u8| Address::parse(&format!("0x{n:040x}")).unwrap();
-    let (stale, rejoined) = (wallet(3), wallet(5));
-    let mut state = canonical_state();
-    let fresh_metadata = serde_json::json!({
-        "worldAuthorization": super::super::admission::world_mint::authorization_proof(
-            &state.livekit.api_secret,
-            &WorldName::parse("mixed.dcl.eth").unwrap(),
-            rejoined.as_str(),
-            "w1:d:mixed.dcl.ethSceneA",
-            chrono::DateTime::from_timestamp(201, 0).unwrap().naive_utc(),
-        )
-    })
-    .to_string();
-    let requests = Arc::new(std::sync::Mutex::new(
-        Vec::<(String, serde_json::Value)>::new(),
-    ));
-    let capture = requests.clone();
-    // Both reconnected after the edit; only freshly signed authorization survives.
-    let roster = serde_json::json!({"participants": [
-        {"identity": stale.as_str(), "sid": "PA_a", "metadata": "{}", "joinedAt": "201"},
-        {"identity": rejoined.as_str(), "sid": "PA_b", "metadata": fresh_metadata, "joinedAt": "201"},
-    ]});
-    let fixture = axum::Router::new().route(
-        "/twirp/livekit.RoomService/{method}",
-        axum::routing::post(
-            move |Path(method): Path<String>, Json(body): Json<serde_json::Value>| {
-                let (capture, roster) = (capture.clone(), roster.clone());
-                async move {
-                    capture.lock().unwrap().push((method.clone(), body.clone()));
-                    match method.as_str() {
+    for mode in ["attribute", "legacy", "invalid-attribute"] {
+        let wallet = |n: u8| Address::parse(&format!("0x{n:040x}")).unwrap();
+        let (stale, rejoined) = (wallet(3), wallet(5));
+        let mut state = canonical_state();
+        let fresh_metadata = serde_json::json!({
+            "worldAuthorization": super::super::admission::world_mint::authorization_proof(
+                &state.livekit.api_secret,
+                &WorldName::parse("mixed.dcl.eth").unwrap(),
+                rejoined.as_str(),
+                "w1:d:mixed.dcl.ethSceneA",
+                chrono::DateTime::from_timestamp(201, 0).unwrap().naive_utc(),
+            )
+        })
+        .to_string();
+        let requests = Arc::new(std::sync::Mutex::new(
+            Vec::<(String, serde_json::Value)>::new(),
+        ));
+        let capture = requests.clone();
+        // Both reconnected after the edit; only freshly signed authorization survives.
+        let mut roster = serde_json::json!({"participants": [
+            {"identity": stale.as_str(), "sid": "PA_a", "metadata": "{}", "joinedAt": "201"},
+            {"identity": rejoined.as_str(), "sid": "PA_b", "metadata": "{\"displayName\":\"Unity replacement\"}", "attributes": {"dcl.worldAuthorization": fresh_metadata}, "joinedAt": "201"},
+        ]});
+        if mode != "attribute" {
+            roster["participants"][1]["metadata"] = serde_json::json!(fresh_metadata);
+            if mode == "legacy" {
+                roster["participants"][1]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("attributes");
+            } else {
+                roster["participants"][1]["attributes"]["dcl.worldAuthorization"] =
+                    serde_json::json!("invalid");
+            }
+        }
+        let fixture = axum::Router::new().route(
+            "/twirp/livekit.RoomService/{method}",
+            axum::routing::post(
+                move |Path(method): Path<String>, Json(body): Json<serde_json::Value>| {
+                    let (capture, roster) = (capture.clone(), roster.clone());
+                    async move {
+                        capture.lock().unwrap().push((method.clone(), body.clone()));
+                        match method.as_str() {
                         "ListRooms" => Json(serde_json::json!({"rooms": [
                             {"name": "w1:d:mixed.dcl.ethSceneA", "sid": "RM_a", "metadata": "{}"},
                             {"name": "w1:d:mixed.dcl.ethSceneB", "sid": "RM_b", "metadata": "{}"}
@@ -1710,38 +1728,133 @@ async fn readmission_requires_signed_freshness_and_retains_failed_rosters() {
                         "ListParticipants" => Json(roster).into_response(),
                         _ => Json(serde_json::json!({})).into_response(),
                     }
-                }
+                    }
+                },
+            ),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        state.livekit.configured = true;
+        state.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+        state.policy = Arc::new(PerWalletPolicy {
+            inner: StubPolicy {
+                admission: Some(WorldAdmission::Open(AccessType::SharedSecret)),
+                protected: Ok(Default::default()),
+                ..Default::default()
             },
-        ),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    state.livekit.configured = true;
-    state.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+            denied: rejoined.clone(),
+            undetermined: stale.clone(),
+            undetermined_failures: 0.into(),
+        });
+        let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+
+        let complete =
+            scene::readmit_world_rooms(&state, &WorldName::parse("mixed.dcl.eth").unwrap(), 200)
+                .await
+                .unwrap();
+
+        assert!(!complete, "a failed roster leaves the pass incomplete");
+        let removed: Vec<String> = requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, _)| method == "RemoveParticipant")
+            .map(|(_, body)| body["identity"].as_str().unwrap().to_string())
+            .collect();
+        let expected = if mode == "invalid-attribute" {
+            vec![stale.as_str().to_string(), rejoined.as_str().to_string()]
+        } else {
+            vec![stale.as_str().to_string()]
+        };
+        assert_eq!(removed, expected, "{mode}");
+        server.abort();
+    }
+}
+
+#[tokio::test]
+async fn independent_access_bypasses_exhausted_ip_budget_but_secret_retry_does_not() {
+    use crate::access::{AccessType, WorldAdmission};
+    let Some(mut state) = canonical_stored_state(&["mixed.dcl.eth"]).await else {
+        return;
+    };
+    let wallet = |n: u8| Address::parse(&format!("0x{n:040x}")).unwrap();
+    let (owner, ordinary, uncertain) = (wallet(1), wallet(2), wallet(3));
+    state.world_mint.max_secret_attempts = 1;
     state.policy = Arc::new(PerWalletPolicy {
         inner: StubPolicy {
             admission: Some(WorldAdmission::Open(AccessType::SharedSecret)),
-            protected: Ok(Default::default()),
             ..Default::default()
         },
-        denied: rejoined.clone(),
-        undetermined: stale.clone(),
-        undetermined_failures: 0.into(),
+        denied: ordinary.clone(),
+        undetermined: uncertain.clone(),
+        undetermined_failures: usize::MAX.into(),
     });
-    let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
-
-    let complete =
-        scene::readmit_world_rooms(&state, &WorldName::parse("mixed.dcl.eth").unwrap(), 200)
+    let throttle = super::super::admission::world_mint::SecretThrottle {
+        pool: &state.pool,
+        world: "mixed.dcl.eth",
+        subject: "192.0.2.1",
+        max_attempts: 1,
+    };
+    assert!(
+        throttle
+            .reserve(chrono::Utc::now().naive_utc())
             .await
-            .unwrap();
-
-    assert!(!complete, "a failed roster leaves the pass incomplete");
-    let removed: Vec<String> = requests
-        .lock()
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        scene::has_world_access_permission(
+            &state,
+            &owner,
+            "mixed.dcl.eth",
+            Some("SceneA"),
+            None,
+            None,
+            "192.0.2.1"
+        )
+        .await
         .unwrap()
-        .iter()
-        .filter(|(method, _)| method == "RemoveParticipant")
-        .map(|(_, body)| body["identity"].as_str().unwrap().to_string())
-        .collect();
-    assert_eq!(removed, vec![stale.as_str().to_string()]);
-    server.abort();
+    );
+    for actor in [&ordinary, &uncertain] {
+        assert!(
+            scene::has_world_access_permission(
+                &state,
+                actor,
+                "mixed.dcl.eth",
+                Some("SceneA"),
+                Some("valid-fixture-secret"),
+                None,
+                "192.0.2.1"
+            )
+            .await
+            .is_err()
+        );
+    }
+    // An independent authority failure does not invalidate a secret: the full policy
+    // may authorize it, but only after reserving a different caller's budget.
+    assert!(
+        scene::has_world_access_permission(
+            &state,
+            &uncertain,
+            "mixed.dcl.eth",
+            Some("SceneA"),
+            Some("valid-fixture-secret"),
+            None,
+            "192.0.2.2"
+        )
+        .await
+        .unwrap()
+    );
+    assert!(
+        scene::has_world_access_permission(
+            &state,
+            &uncertain,
+            "mixed.dcl.eth",
+            Some("SceneA"),
+            Some("wrong"),
+            None,
+            "192.0.2.2"
+        )
+        .await
+        .is_err()
+    );
 }

@@ -20,7 +20,9 @@ WITH mapping AS (
                  UNION ALL
                  SELECT ws.entity #>> '{metadata,scene,base}', true
                ) inputs,
-                    regexp_match(pointer, '^\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*$') m
+                    -- Rust str::trim uses Unicode White_Space, independent of the database locale.
+                    -- PostgreSQL \s excludes characters such as NBSP on some locales.
+                    regexp_match(pointer, U&'^[\0009-\000D\0020\0085\00A0\1680\2000-\200A\2028\2029\202F\205F\3000]*(-?[0-9]+)[\0009-\000D\0020\0085\00A0\1680\2000-\200A\2028\2029\202F\205F\3000]*,[\0009-\000D\0020\0085\00A0\1680\2000-\200A\2028\2029\202F\205F\3000]*(-?[0-9]+)[\0009-\000D\0020\0085\00A0\1680\2000-\200A\2028\2029\202F\205F\3000]*$') m
            ), bounded AS (
              SELECT declared,
                     CASE WHEN length(x) <= 11 THEN x::bigint END AS x,

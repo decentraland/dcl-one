@@ -719,6 +719,7 @@ impl RevocationSink for SceneHostState {
         let kicked = match revocation {
             Revocation::Address { world, address } => self.kick_from_world(world, address),
             Revocation::AccessSetting { world } => self.readmit_world(world, true).await,
+            Revocation::AccessRecheck { world } => self.readmit_world(world, false).await,
             Revocation::Platform { address } => self.kick_address(address),
         };
         tracing::info!(?revocation, kicked, "scene host applied the revocation");

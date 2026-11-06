@@ -1,0 +1,26 @@
+{
+  "description": "GET /content/available-content?cid= is 400: a single empty value is absent, as upstream qsGetArray reads it.",
+  "request": {
+    "method": "GET",
+    "path": "/content/available-content",
+    "query": {
+      "cid": [
+        ""
+      ]
+    },
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Please set at least one cid."
+    }
+  },
+  "captured_from": "derived from decentraland/catalyst@a416565 src/logic/query-params/component.ts:21-31, get-available-content-handler.ts",
+  "captured_at": "2026-11-04T00:00:00Z",
+  "volatile_paths": []
+}

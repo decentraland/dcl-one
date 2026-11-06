@@ -1,5 +1,8 @@
 // ColorPicker — a COLOR button showing the current
 // color that opens a light popup with preset toggles and hue / saturation / brightness bars.
+// `hueOnly` keeps just the hue bar at full saturation and brightness (the name colour picker, as
+// unity-explorer's NameColorPickerController disables the other two); `swatch` shrinks the trigger
+// to the colour preview alone, for a control that sits inline beside other text.
 
 import { useEffect, useRef, useState } from 'react'
 import { registerCancelLayer } from '../lib/cancelLayers'
@@ -13,12 +16,18 @@ export function ColorPicker({
   label,
   value,
   presets,
-  onChange
+  onChange,
+  hueOnly = false,
+  swatch = false
 }: {
   label: string
   value: string
   presets: readonly string[]
   onChange: (hex: string) => void
+  /** Only the hue bar; a hue picked there is fully saturated and bright. */
+  hueOnly?: boolean
+  /** The trigger is the colour preview alone, without the COLOR text and chevron. */
+  swatch?: boolean
 }): React.JSX.Element {
   const [open, setOpen] = useState(false)
   // The bars hold their own values, so hue survives zero saturation or brightness.
@@ -55,6 +64,10 @@ export function ColorPicker({
   }
   const setChannel = (k: keyof Hsv, v: number): void => {
     const next = { ...hsv, [k]: k === 'h' ? Math.min(359.999, Math.max(0, v * 360)) : Math.min(1, Math.max(0, v)) }
+    if (hueOnly) {
+      next.s = 1
+      next.v = 1
+    }
     setHsv(next)
     setPreset(null)
     onChange(hsvToHex(next))
@@ -63,11 +76,17 @@ export function ColorPicker({
 
   return (
     <div className={styles.root} ref={ref}>
-      <button type="button" className={styles.trigger} aria-label={label} aria-expanded={open} onClick={toggle}>
-        <span className={styles.triggerText}>COLOR</span>
-        <span className={styles.preview} style={{ background: value }} />
-        <span className={`${styles.chevron} ${open ? styles.chevronUp : ''}`.trim()} aria-hidden="true" />
-      </button>
+      {swatch ? (
+        <button type="button" className={styles.swatch} aria-label={label} aria-expanded={open} onClick={toggle}>
+          <span className={styles.swatchFill} style={{ background: value }} />
+        </button>
+      ) : (
+        <button type="button" className={styles.trigger} aria-label={label} aria-expanded={open} onClick={toggle}>
+          <span className={styles.triggerText}>COLOR</span>
+          <span className={styles.preview} style={{ background: value }} />
+          <span className={`${styles.chevron} ${open ? styles.chevronUp : ''}`.trim()} aria-hidden="true" />
+        </button>
+      )}
       {open && (
         <div className={styles.popup} role="dialog" aria-label={label}>
           <div className={styles.section}>
@@ -89,15 +108,19 @@ export function ColorPicker({
             </div>
           </div>
           <Bar label="COLOR" name="Hue" value={hsv.h / 360} track={styles.hueTrack} onChange={(v) => setChannel('h', v)} />
-          <Bar
-            label="SATURATION"
-            name="Saturation"
-            value={hsv.s}
-            track={styles.satTrack}
-            trackStyle={{ '--hue': hueHex } as React.CSSProperties}
-            onChange={(v) => setChannel('s', v)}
-          />
-          <Bar label="BRIGHTNESS" name="Brightness" value={hsv.v} track={styles.valTrack} onChange={(v) => setChannel('v', v)} />
+          {!hueOnly && (
+            <>
+              <Bar
+                label="SATURATION"
+                name="Saturation"
+                value={hsv.s}
+                track={styles.satTrack}
+                trackStyle={{ '--hue': hueHex } as React.CSSProperties}
+                onChange={(v) => setChannel('s', v)}
+              />
+              <Bar label="BRIGHTNESS" name="Brightness" value={hsv.v} track={styles.valTrack} onChange={(v) => setChannel('v', v)} />
+            </>
+          )}
         </div>
       )}
     </div>

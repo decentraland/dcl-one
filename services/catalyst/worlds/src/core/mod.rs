@@ -205,6 +205,9 @@ pub enum Revocation {
     /// owner's is decided again, and a shared-secret admission is void until
     /// the client presents the new secret.
     AccessSetting { world: WorldName },
+    /// Re-evaluate current policy without invalidating shared-secret admissions.
+    /// This advisory carries no persisted access-change cutoff.
+    AccessRecheck { world: WorldName },
     /// The operator blocked the wallet everywhere (`POST /admin/blocked/{w}`).
     Platform { address: Address },
 }
@@ -236,6 +239,7 @@ impl RevocationSink for CommsRoomRevocations {
                 RoomRevocation::WorldAddress { world, address }
             }
             Revocation::AccessSetting { world } => RoomRevocation::WorldAccess { world },
+            Revocation::AccessRecheck { world } => RoomRevocation::WorldAccessRecheck { world },
             Revocation::Platform { address } => RoomRevocation::Everywhere { address },
         });
     }
@@ -409,7 +413,10 @@ impl CoreState {
         ).bind(community).fetch_all(&self.pool).await {
             Ok(names) => names,
             Err(error) => {
-                tracing::warn!(%error, %community, "community closure recheck could not be persisted");
+                tracing::warn!(%error, %community, "community closure recheck could not be persisted; attempting advisory policy recheck");
+                for world in self.worlds_listing_community(community).await {
+                    self.revoked(Revocation::AccessRecheck { world }).await;
+                }
                 return;
             }
         };

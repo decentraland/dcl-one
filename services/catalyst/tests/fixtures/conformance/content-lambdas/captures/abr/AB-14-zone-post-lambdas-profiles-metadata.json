@@ -1,0 +1,25 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://peer.decentraland.zone",
+  "request": {
+    "method": "POST",
+    "path": "/lambdas/profiles/metadata",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "ids": [
+        "0x0000000000000000000000000000000000000b00"
+      ]
+    }
+  },
+  "response": {
+    "status": 405,
+    "headers": {
+      "content-length": "0",
+      "allow": "HEAD, GET"
+    },
+    "body": ""
+  },
+  "note": "Answered by the application (it carries the application trace header)."
+}

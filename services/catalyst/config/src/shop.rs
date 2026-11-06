@@ -354,6 +354,16 @@ pub struct ShopConfig {
     #[arg(long, env = "MANA_PRICE_MAX_STALENESS_SECS", default_value_t = DEFAULT_MANA_PRICE_MAX_STALENESS_SECS)]
     pub mana_price_max_staleness_secs: i64,
 
+    /// The oldest round of a marketplace's MANA/USD feed a credit for a
+    /// USD-pegged trade is sized at; the marketplace's own tolerance applies
+    /// too, and the stricter wins. Past it the authorization is refused (503).
+    #[arg(
+        long,
+        env = "CREDITS_USD_PEGGED_FEED_MAX_AGE_SECS",
+        default_value_t = 3600
+    )]
+    pub credits_usd_pegged_feed_max_age_secs: u64,
+
     /// primary (the legacy secondary | auto run as primary: credits pay for
     /// CollectionStore mints only, SHOP.md).
     #[arg(long, env = "CHECKOUT_FULFILLMENT_MODE", default_value = "primary")]
@@ -395,7 +405,7 @@ pub struct ShopConfig {
     pub credits_ttl_seconds: u64,
 
     /// The signed value over the group's quoted MANA need, in percent, 100..=150 (upstream USD_CREDIT_CAP_HEADROOM_PCT).
-    #[arg(long, env = "CREDITS_CAP_HEADROOM_PCT", default_value_t = 150)]
+    #[arg(long, env = "CREDITS_CAP_HEADROOM_PCT", default_value_t = 100)]
     pub credits_cap_headroom_pct: u32,
 
     /// The oracle buffer inside the credit sizing, in basis points, at most 1000 (upstream USD_CREDIT_BUFFER_BPS).
@@ -691,5 +701,26 @@ mod tests {
             ),
             (30, 50)
         );
+    }
+
+    #[test]
+    fn the_credit_cap_adds_no_headroom_by_default_and_keeps_an_explicit_one() {
+        let c = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
+        assert_eq!(
+            (
+                c.shop.credits_cap_headroom_pct,
+                c.shop.credits_oracle_buffer_bps
+            ),
+            (100, 200)
+        );
+        let c = parse(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--credits-cap-headroom-pct",
+            "150",
+        ])
+        .unwrap();
+        assert_eq!(c.shop.credits_cap_headroom_pct, 150);
     }
 }

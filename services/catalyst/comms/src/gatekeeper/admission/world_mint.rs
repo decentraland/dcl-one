@@ -28,7 +28,7 @@ use serde::Serialize;
 use serde_json::json;
 use sqlx::PgPool;
 
-use crate::access::{Access, AccessType, Ban, WorldAdmission};
+use crate::access::{Access, Ban, WorldAdmission};
 use crate::gatekeeper::SharedState;
 use crate::gatekeeper::livekit::{AccessToken, build_adapter_url, join_grants};
 use crate::rooms::{ResolveError, RoomRequest, WORLD_ROOM_PREFIX};
@@ -174,6 +174,7 @@ pub(crate) async fn authorization_started(
 }
 
 pub(crate) const AUTHORIZATION_FIELD: &str = "worldAuthorization";
+pub(crate) const AUTHORIZATION_ATTRIBUTE: &str = "dcl.worldAuthorization";
 
 fn authorization_mac(
     secret: &str,
@@ -194,8 +195,8 @@ fn authorization_mac(
     mac
 }
 
-/// An independent signature is necessary: LiveKit participant metadata can be
-/// changed by clients and is also copied into refreshed connection tokens.
+/// An independent signature is necessary: LiveKit participant attributes can be
+/// changed by clients and are also copied into refreshed connection tokens.
 pub(crate) fn authorization_proof(
     secret: &str,
     world: &WorldName,
@@ -382,7 +383,6 @@ async fn mint(
         .world_admission(&world, now)
         .await
         .map_err(undetermined)?;
-    let is_shared_secret = admission == WorldAdmission::Open(AccessType::SharedSecret);
     let ip = crate::shared::client_ip::client_ip(headers);
     let subject = if ip.is_empty() {
         identity.as_str().to_string()
@@ -463,30 +463,36 @@ async fn mint(
         .await
         .map_err(undetermined)?;
 
-    // Reserved before the secret is checked, so concurrent wrong secrets cannot all reach bcrypt.
-    let reservation = if is_shared_secret {
-        Some(
-            attempts
-                .reserve(now)
-                .await
-                .map_err(undetermined)?
-                .ok_or_else(too_many_attempts)?,
-        )
-    } else {
-        None
-    };
-    let access = state
+    // Establish bans and independent owner/grantee access without doing bcrypt. Only
+    // callers who actually need a secret consume the shared source-IP budget.
+    let mut access = state
         .policy
         .can_access(
             &world,
             &identity,
-            secret.as_deref(),
+            None,
             resolved.scene_id.as_ref(),
             None,
             now,
         )
         .await;
-    if let Some(reservation) = reservation {
+    if matches!(access, Ok(Access::InvalidSecret)) || (access.is_err() && secret.is_some()) {
+        let reservation = attempts
+            .reserve(now)
+            .await
+            .map_err(undetermined)?
+            .ok_or_else(too_many_attempts)?;
+        access = state
+            .policy
+            .can_access(
+                &world,
+                &identity,
+                secret.as_deref(),
+                resolved.scene_id.as_ref(),
+                None,
+                now,
+            )
+            .await;
         attempts
             .settle(matches!(access, Ok(Access::InvalidSecret)), reservation)
             .await;
@@ -538,7 +544,10 @@ async fn mint(
         identity.as_str(),
         join_grants(resolved.room),
     )
-    .with_metadata(json!({AUTHORIZATION_FIELD: proof}).to_string())
+    .with_attribute(
+        AUTHORIZATION_ATTRIBUTE,
+        json!({AUTHORIZATION_FIELD: proof}).to_string(),
+    )
     .to_jwt()
     .map_err(|e| ApiError::internal(format!("token mint failed: {e}")))?;
     Ok(Json(CommsAdapterResponse {
@@ -549,6 +558,7 @@ async fn mint(
 #[cfg(test)]
 mod policy_boundary_tests {
     use super::*;
+    use crate::access::AccessType;
     use crate::interfaces::{AccessPolicy, test_support::StubPolicy};
     use crate::shared::identity::AuthorityNotEstablished;
 

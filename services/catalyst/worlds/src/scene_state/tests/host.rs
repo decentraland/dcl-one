@@ -538,6 +538,80 @@ async fn an_authority_outage_keeps_secret_and_owner_grants_through_the_sweep() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stored_owner_can_join_with_a_valid_secret_during_an_authority_outage() {
+    let Some(h) = host_with_names_down().await else {
+        return;
+    };
+    let visitor_key = format!("0x{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let previous = Address::parse(&Wallet::from_hex(&visitor_key).unwrap().address()).unwrap();
+    let world = world_name();
+    let hash = bcrypt::hash("open sesame", 4).unwrap();
+    sqlx::query("INSERT INTO worlds.worlds (name, owner, access_type, access_secret_hash) VALUES ($1, $2, 'shared-secret', $3)")
+        .bind(world.key())
+        .bind(&previous)
+        .bind(&hash)
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    seed_scene(
+        &h.state,
+        &world,
+        "bafyOwnerOutage",
+        "",
+        None,
+        "0,0",
+        &["0,0"],
+        false,
+    )
+    .await;
+    let addr = serve(h.state.clone()).await;
+    // The stored owner cannot establish independent ownership during the outage.
+    // A wrong secret remains denied; a valid one retries the full policy under budget.
+    assert!(
+        join(addr, &world, &visitor_key, r#"{"secret":"wrong"}"#)
+            .await
+            .is_none()
+    );
+    // Authority errors may refund a reservation. Fill the caller's budget
+    // explicitly, then prove this fallback cannot bypass it with a valid secret.
+    let throttle = crate::comms::gatekeeper::admission::world_mint::SecretThrottle {
+        pool: &h.state.pool,
+        max_attempts: h.state.secret_max_attempts,
+        world: world.key(),
+        subject: previous.as_str(),
+    };
+    let now = chrono::Utc::now().naive_utc();
+    for _ in 0..h.state.secret_max_attempts {
+        let _ = throttle.reserve(now).await.unwrap();
+    }
+    assert!(throttle.reserve(now).await.unwrap().is_none());
+    assert!(
+        join(addr, &world, &visitor_key, r#"{"secret":"open sesame"}"#)
+            .await
+            .is_none(),
+        "a valid secret cannot bypass the exhausted caller budget during an authority outage"
+    );
+    assert!(
+        h.state
+            .scenes
+            .get(world.key())
+            .unwrap()
+            .clients()
+            .is_empty()
+    );
+    sqlx::query("UPDATE social.world_secret_attempts SET window_start=timezone('UTC',now())-interval '61 seconds' WHERE world_name=$1 AND subject=$2")
+        .bind(world.key())
+        .bind(previous.as_str())
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    let (_visitor_ws, _) = join(addr, &world, &visitor_key, r#"{"secret":"open sesame"}"#)
+        .await
+        .expect("the secret admits without asking the authority");
+    assert_eq!(h.state.scenes.get(world.key()).unwrap().clients().len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_socket_admits_by_policy_and_the_sweep_enforces_revocation_and_redeploy() {
     let Some(h) = host(false).await else { return };
     // Its own key: the block below is database-wide, and the other host

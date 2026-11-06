@@ -238,7 +238,8 @@ fn sfu(error: RoomServiceError) -> anyhow::Error {
     anyhow!("LiveKit request failed: {error:?}")
 }
 
-/// The `<world>:<base>` key of a world scene intent queued before step 0029,
+/// The `<world>:<base>` key of a world scene intent queued before the
+/// `schemas/releases/world-scene-ban-keys.sql` release,
 /// which names the scene's entity id (bans moved, queued intents did not).
 async fn legacy_world_ban_key(
     state: &CommsState,
