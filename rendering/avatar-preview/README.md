@@ -93,7 +93,7 @@ their files map to their urls, `data:` and `blob:` included, and an id that is n
 A transparent background (`disableBackground`) presents the canvas with premultiplied alpha,
 so the host page shows through around the avatar, with the avatar's shadow on it.
 
-The look follows the Explorer's lobby preview (its noon sun, about 7000 lux, and the ambient its
+The look follows the Explorer's lobby preview (its noon sun, about 7000 lux, raised to 8000, and the ambient its
 camera layer overrides to) and the Unity renderer's framing and light placement, measured with
 `web/compare.html`: the key light keeps its place relative to the camera as it orbits, and bloom
 takes only what is brighter than white (emissive parts). Open differences from the Unity

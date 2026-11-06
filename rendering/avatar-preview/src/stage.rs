@@ -32,15 +32,15 @@ pub struct StageLight {
 impl Default for StageLight {
     fn default() -> Self {
         Self {
-            illuminance: 7000.0,
+            illuminance: 8000.0,
             ambient: 2000.0,
             // from the camera's right, fairly high: the shadow falls behind to the left, as in
             // wearable-preview's Unity renderer (compared with web/compare.html)
             yaw: 0.6,
             pitch: 0.65,
-            shadow: 0.55,
+            shadow: 0.4,
             shadow_reach: 4.0,
-            exposure: 0.0,
+            exposure: -0.4,
         }
     }
 }
