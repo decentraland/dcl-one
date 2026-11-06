@@ -7,8 +7,8 @@
 //!   the reads consult follows at once. A durable operator write, so behind
 //!   `OPS_WRITES_ENABLED` (the 503 envelope) like the failed-deployments
 //!   purge. `POST /admin/api/content/denylist/list`: the table's ids, open.
-//! - `POST /admin/api/content/challenge/refresh`: a fresh `/challenge`
-//!   text (the node mints one per call, as the old live node did).
+//! - `POST /admin/api/content/challenge/refresh`: replaces this process's
+//!   `/challenge` text (otherwise one UUID per process, as upstream).
 //! - `POST /admin/api/content/read-only` `{enabled}`: the old `READ_ONLY`
 //!   toggle; while on, `POST /entities` and `DELETE /scenes/{coord}` answer
 //!   the old 403 (`CONTENT_WRITES_ENABLED` is the static gate in front).
@@ -173,7 +173,7 @@ pub async fn challenge_refresh(
     session: AdminSession,
     State(state): State<SharedState>,
 ) -> Response {
-    let text = crate::content::challenge_text();
+    let text = state.content.refresh_challenge();
     audit::record_after(
         &state.pool,
         &audit::Entry::new(session.address(), DOMAIN, "challenge.refresh"),
@@ -375,14 +375,13 @@ mod tests {
         assert_eq!(body["body"], json!({"acceptingUsers": false}));
         assert!(!admin.content.is_accepting_users());
 
+        let before = admin.content.challenge();
         let (status, body) = post(&app, CHALLENGE_REFRESH, Some(&admin_cookie), json!({})).await;
         assert_eq!(status, StatusCode::OK);
-        assert!(
-            body["body"]["challenge"]
-                .as_str()
-                .unwrap()
-                .starts_with("dcl-crypto-")
-        );
+        let refreshed = body["body"]["challenge"].as_str().unwrap();
+        assert!(uuid::Uuid::parse_str(refreshed).is_ok(), "{refreshed}");
+        assert_ne!(refreshed, before);
+        assert_eq!(admin.content.challenge(), refreshed);
 
         for path in [DENYLIST_ADD, DENYLIST_REMOVE] {
             let req = Request::builder()

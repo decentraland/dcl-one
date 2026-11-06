@@ -12,6 +12,7 @@ import {
   discountedCents,
   discountedMana,
   formatMana,
+  formatManaPrice,
   formatUsd,
   manaForRemainder,
   manaFromUsdCents,
@@ -156,5 +157,14 @@ describe("bounds and formatting", () => {
     expect(formatMana(manaFromWhole(4000), { group: true })).toBe("4,000");
     expect(formatMana(manaWei(6_799_999_999_999_999_999n))).toBe("6.799999999999999999");
     expect(formatUsd(c(12_345))).toBe("$123.45");
+  });
+
+  it("a MANA price shows two decimals at most, rounded up", () => {
+    expect(formatManaPrice(manaWei(19_415_859_983_912_573_156n))).toBe("19.42");
+    expect(formatManaPrice(manaWei(2_300n * 10n ** 15n))).toBe("2.3");
+    expect(formatManaPrice(manaFromWhole(1500))).toBe("1,500");
+    expect(formatManaPrice(manaWei(6_799_999_999_999_999_999n))).toBe("6.8");
+    expect(formatManaPrice(manaWei(1n)), "a dust amount is never shown as zero").toBe("0.01");
+    expect(formatManaPrice(manaWei(0n))).toBe("0");
   });
 });

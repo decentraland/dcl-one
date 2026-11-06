@@ -1,0 +1,18 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://asset-bundle-registry.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/profiles/metadata",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 405,
+    "headers": {
+      "content-length": "0",
+      "allow": "POST"
+    },
+    "body": ""
+  }
+}

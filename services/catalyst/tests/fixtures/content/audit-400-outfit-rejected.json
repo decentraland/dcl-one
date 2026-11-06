@@ -1,5 +1,5 @@
 {
-  "description": "Audit endpoint must reject 'outfit'/'outfits' as an entity type with 400; outfits live under /lambdas/outfits and are deliberately not deployable via /content.",
+  "description": "Audit endpoint rejects the singular 'outfit' with 400: the upstream type name is 'outfits'.",
   "request": {
     "method": "GET",
     "path": "/content/audit/outfit/0x0000000000000000000000000000000000000000",

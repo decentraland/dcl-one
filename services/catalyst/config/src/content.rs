@@ -139,6 +139,15 @@ pub struct ContentConfig {
     #[arg(long, env = "READ_THROUGH_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub read_through_enabled: bool,
 
+    /// Remote moderation denylists, separated by commas or whitespace: each
+    /// answers a JSON array of `{"entity_id": ...}` (the asset-bundle-registry's
+    /// `GET /denylist`), fetched at boot and every 120 s through the outbound
+    /// guard. The ids are hidden from the reads as the operator's
+    /// `content.denylist` is, but kept in memory only; a failed fetch keeps
+    /// that URL's last good list. Empty: none.
+    #[arg(long, env = "DENYLIST_URLS", default_value = "")]
+    pub denylist_urls: String,
+
     /// Non-file fields a `POST /entities` form may carry: `entityId` and the
     /// `type`/`payload`/`signature` of up to ten auth-chain links, and one spare.
     #[arg(long, env = "MAX_UPLOAD_FIELD_COUNT", default_value_t = 2 + 3 * 10)]
@@ -165,6 +174,42 @@ pub struct ContentConfig {
     /// and a restart resets it.
     #[arg(long, env = "POST_ENTITIES_DAILY_QUOTA_MAX", default_value_t = 300)]
     pub post_entities_daily_quota_max: u32,
+
+    /// `GET`/`HEAD /contents/{hash}` requests one client (IPv6 by
+    /// `CONTENT_GET_RATE_LIMIT_IPV6_PREFIX_LENGTH`) may make per
+    /// `CONTENT_GET_RATE_LIMIT_WINDOW_SECONDS`, the burst bucket. Upstream's
+    /// names and defaults; every limit must be at least 1.
+    #[arg(long, env = "CONTENT_GET_RATE_LIMIT_MAX", default_value_t = 1000, value_parser = clap::value_parser!(u32).range(1..))]
+    pub content_get_rate_limit_max: u32,
+
+    #[arg(long, env = "CONTENT_GET_RATE_LIMIT_WINDOW_SECONDS", default_value_t = 60, value_parser = clap::value_parser!(u32).range(1..))]
+    pub content_get_rate_limit_window_seconds: u32,
+
+    /// The hourly quota on `/contents/{hash}`, a bucket of its own after the burst.
+    #[arg(long, env = "CONTENT_GET_HOURLY_QUOTA_MAX", default_value_t = 3000, value_parser = clap::value_parser!(u32).range(1..))]
+    pub content_get_hourly_quota_max: u32,
+
+    /// The daily quota on `/contents/{hash}`, after the hourly one.
+    #[arg(long, env = "CONTENT_GET_DAILY_QUOTA_MAX", default_value_t = 20000, value_parser = clap::value_parser!(u32).range(1..))]
+    pub content_get_daily_quota_max: u32,
+
+    /// IPv6 clients of the `/contents` limit are counted per network of this
+    /// prefix length (1-128); IPv4 per address.
+    #[arg(long, env = "CONTENT_GET_RATE_LIMIT_IPV6_PREFIX_LENGTH", default_value_t = 64, value_parser = clap::value_parser!(u8).range(1..=128))]
+    pub content_get_rate_limit_ipv6_prefix_length: u8,
+
+    /// Comma list of the addresses or networks (CIDR) of peers that sync from
+    /// this node: never limited on `/contents`. Invalid entries are dropped
+    /// with a warning.
+    #[arg(long, env = "TRUSTED_SYNC_PEER_IPS", default_value = "")]
+    pub trusted_sync_peer_ips: String,
+
+    /// The header whose rightmost entry is the client address of the
+    /// `/contents` limit, read only from a peer in `HTTP_TRUSTED_PROXY_CIDRS`.
+    /// Unset, such a peer's one `X-Real-IP`; any other peer is its socket
+    /// address.
+    #[arg(long, env = "TRUSTED_CLIENT_IP_HEADER")]
+    pub trusted_client_ip_header: Option<String>,
 
     // Worlds' partial uploads also read these (not the cleanup interval or pointer cap) as their own budget.
     /// Milliseconds a partial (multi-request) upload lives from its first
@@ -228,6 +273,34 @@ impl ContentConfig {
             );
         }
         Ok(Some(raw.to_string()))
+    }
+
+    /// `DENYLIST_URLS`: the URLs, split on commas and whitespace (upstream
+    /// splits on whitespace), deduplicated in order. Each must be an http(s)
+    /// URL, checked at startup (`posture::check`); the outbound guard decides
+    /// at fetch time whether its host may be dialled. The error never echoes
+    /// the value: a URL may carry a token.
+    pub fn denylist_urls(&self) -> anyhow::Result<Vec<String>> {
+        let mut urls: Vec<String> = Vec::new();
+        for token in self
+            .denylist_urls
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .filter(|t| !t.is_empty())
+        {
+            let url = url::Url::parse(token).map_err(|_| {
+                anyhow::anyhow!(
+                    "DENYLIST_URLS holds a value that is not a URL (not echoed: it may carry a token)"
+                )
+            })?;
+            anyhow::ensure!(
+                matches!(url.scheme(), "http" | "https"),
+                "DENYLIST_URLS: only http(s) URLs are allowed"
+            );
+            if !urls.iter().any(|u| u == token) {
+                urls.push(token.to_string());
+            }
+        }
+        Ok(urls)
     }
 }
 
@@ -348,6 +421,34 @@ mod tests {
     }
 
     #[test]
+    fn denylist_urls_split_on_commas_and_whitespace() {
+        let urls = |raw: &str| {
+            parse(&[
+                "x",
+                "--database-url",
+                "postgres:///catalyst",
+                "--denylist-urls",
+                raw,
+            ])
+            .unwrap()
+            .content
+            .denylist_urls()
+        };
+        assert!(urls("").unwrap().is_empty());
+        assert_eq!(
+            urls("https://a.example/denylist, https://b.example/x\nhttps://a.example/denylist")
+                .unwrap(),
+            vec![
+                "https://a.example/denylist".to_string(),
+                "https://b.example/x".to_string()
+            ]
+        );
+        assert!(urls("ftp://a.example/list").is_err());
+        let err = urls("not-a-url?token=SECRET").unwrap_err().to_string();
+        assert!(!err.contains("SECRET"), "{err}");
+    }
+
+    #[test]
     fn sync_defaults_are_the_old_binary_values() {
         let cli = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
         let c = cli;
@@ -375,6 +476,19 @@ mod tests {
                 c.content.post_entities_daily_quota_max
             ),
             (32, 32 * 1024, 2 * 1024 * 1024 * 1024, 300)
+        );
+        assert_eq!(
+            (
+                c.content.content_get_rate_limit_max,
+                c.content.content_get_rate_limit_window_seconds,
+                c.content.content_get_hourly_quota_max,
+                c.content.content_get_daily_quota_max,
+                c.content.content_get_rate_limit_ipv6_prefix_length,
+                c.content.trusted_sync_peer_ips.as_str(),
+                c.content.trusted_client_ip_header.as_deref()
+            ),
+            (1000, 60, 3000, 20000, 64, "", None),
+            "upstream's GET /contents limit defaults"
         );
         assert!(c.content.retry_failed_enabled);
         assert_eq!(c.content.max_failed_deployment_retries, 10);
@@ -420,5 +534,36 @@ mod tests {
                 && c.validator.additional_decentraland_address.is_none(),
             "local deploys run every access check"
         );
+    }
+
+    /// As upstream, a zero limit or a prefix outside 1-128 fails at startup
+    /// rather than rejecting every download.
+    #[test]
+    fn content_get_limits_refuse_zero_and_bad_prefixes() {
+        for (flag, value) in [
+            ("--content-get-rate-limit-max", "0"),
+            ("--content-get-rate-limit-window-seconds", "0"),
+            ("--content-get-hourly-quota-max", "0"),
+            ("--content-get-daily-quota-max", "0"),
+            ("--content-get-rate-limit-ipv6-prefix-length", "0"),
+            ("--content-get-rate-limit-ipv6-prefix-length", "129"),
+        ] {
+            assert!(
+                parse(&["x", "--database-url", "postgres:///catalyst", flag, value]).is_err(),
+                "{flag}={value}"
+            );
+        }
+        let c = parse(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--content-get-rate-limit-ipv6-prefix-length",
+            "128",
+            "--trusted-sync-peer-ips",
+            "203.0.113.5, 2001:db8::1",
+        ])
+        .unwrap();
+        assert_eq!(c.content.content_get_rate_limit_ipv6_prefix_length, 128);
+        assert_eq!(c.content.trusted_sync_peer_ips, "203.0.113.5, 2001:db8::1");
     }
 }

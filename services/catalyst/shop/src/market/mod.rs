@@ -495,6 +495,10 @@ pub struct MarketplaceState {
     pub(crate) eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     /// `READ_THROUGH_ENABLED`: a profile this node does not hold is asked of the sync sources.
     pub(crate) read_through: Option<Arc<crate::content::read_through::ReadThrough>>,
+    /// The store's moderation projection (`content::Denylist`): every read of
+    /// active entities here leaves the listed ones out, as lamb2 reading the
+    /// content server's filtered `/entities/active` does.
+    pub(crate) denylist: Arc<crate::content::Denylist>,
     /// `/profile-images`, attached once the social states exist: the faces a
     /// response points at are warmed there.
     pub(crate) profile_images: std::sync::OnceLock<crate::social::profile_images::SharedState>,
@@ -531,6 +535,7 @@ impl MarketplaceState {
             explorer_cache: lambdas_explorer::explorer_cache(),
             eip1654: None,
             read_through: None,
+            denylist: Arc::default(),
             profile_images: std::sync::OnceLock::new(),
             settings,
         }
@@ -542,6 +547,13 @@ impl MarketplaceState {
         eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     ) -> Self {
         self.eip1654 = eip1654;
+        self
+    }
+
+    /// Attaches the store's denylist (`Storage::denylist`), which the active
+    /// entity reads honour; without it nothing is hidden.
+    pub fn with_denylist(mut self, denylist: Arc<crate::content::Denylist>) -> Self {
+        self.denylist = denylist;
         self
     }
 

@@ -15,7 +15,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use serde_json::{Value, json};
 
-use crate::content::queries::active_entity_docs_by_pointers;
+use crate::content::queries::{active_entity_docs_by_pointers, retain_non_denylisted};
 use crate::shared::cache::TtlMap;
 
 use super::SharedState;
@@ -70,7 +70,8 @@ pub async fn get_preview_wearables(
         .preview_memo
         .get_or_fetch(key, || async {
             let pointers: Vec<String> = selected.iter().map(|u| u.to_lowercase()).collect();
-            let docs = active_entity_docs_by_pointers(&state.pool, &pointers).await?;
+            let mut docs = active_entity_docs_by_pointers(&state.pool, &pointers).await?;
+            retain_non_denylisted(&mut docs, state.storage.denylist());
             Ok::<_, sqlx::Error>(Arc::new(
                 docs.iter().filter_map(|d| d.to_value()).collect::<Vec<_>>(),
             ))

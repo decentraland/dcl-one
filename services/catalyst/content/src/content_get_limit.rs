@@ -1,0 +1,628 @@
+//! The `GET`/`HEAD /contents/{hash}` rate limit, upstream's
+//! (`decentraland/catalyst` `src/controllers/content-get-rate-limit.ts`,
+//! `sync-peer-exemption.ts`, `client-source.ts`): three fixed-window buckets
+//! per client, a burst of `CONTENT_GET_RATE_LIMIT_MAX` per
+//! `CONTENT_GET_RATE_LIMIT_WINDOW_SECONDS`, then `CONTENT_GET_HOURLY_QUOTA_MAX`
+//! per hour, then `CONTENT_GET_DAILY_QUOTA_MAX` per day. The burst runs first,
+//! so a request it rejects does not drain the quotas. A client is its IPv4
+//! address or its IPv6 network of `CONTENT_GET_RATE_LIMIT_IPV6_PREFIX_LENGTH`
+//! bits (a host routed a /64 cannot rotate addresses for a fresh budget).
+//! Peers listed in `TRUSTED_SYNC_PEER_IPS` (addresses or networks) skip all
+//! three, so a peer bootstrapping from this node is never throttled; the
+//! gateway exempts the same peers from its own `/contents` limit
+//! (`GATEWAY_TRUSTED_SYNC_PEER_IPS`).
+//!
+//! The client is the socket peer. Only a peer inside
+//! `HTTP_TRUSTED_PROXY_CIDRS` (the gateway) may name another one, through its
+//! overwritten `X-Real-IP` or `TRUSTED_CLIENT_IP_HEADER`: the routes are
+//! reachable directly too, and a header from any other peer would let a
+//! client pick its bucket, skip the limit as a sync peer or spend someone
+//! else's quota. Upstream reads its headers from any peer, behind a proxy it
+//! assumes.
+//!
+//! Over a budget the answer is upstream's 429 `{"error":"Too many requests"}`
+//! with `Retry-After` (seconds until the rejecting window ends) and the
+//! `RateLimit-Limit`/`-Remaining`/`-Reset` triplet of that bucket. A request
+//! that passes carries no `RateLimit-*` header, as the production peer answers
+//! (`captures/content-reads/CR-16-path-case-contents.json`). The 429's triplet
+//! comes from `@dcl/rate-limiter-component`, which the pinned tree does not
+//! vendor, so its values are this module's reading of it, not a capture.
+//!
+//! The counters are per process, as upstream's in-memory store is: N `serve`
+//! replicas behind the gateway admit N times each budget, and a restart
+//! resets them. Each bucket tracks at most [`MAX_SOURCES`] clients; a new
+//! client past that evicts the oldest window.
+
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::time::{Duration, Instant};
+
+use axum::extract::{ConnectInfo, Request, State};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
+use axum::middleware::Next;
+use axum::response::Response;
+use parking_lot::Mutex;
+
+use ipnet::IpNet;
+
+use super::SharedState;
+use super::errors::json_error;
+use super::fixed_windows::FixedWindows;
+use crate::shared::client_ip::{is_trusted_proxy, single_real_ip};
+
+/// Clients each bucket tracks at once.
+const MAX_SOURCES: usize = 100_000;
+
+/// The limit's settings, upstream's environment variables.
+#[derive(Clone, Debug)]
+pub struct Config {
+    pub burst_max: u32,
+    pub burst_window: Duration,
+    pub hourly_max: u32,
+    pub daily_max: u32,
+    pub ipv6_prefix_length: u8,
+    /// `TRUSTED_SYNC_PEER_IPS`, the raw comma list.
+    pub trusted_sync_peer_ips: String,
+    /// `TRUSTED_CLIENT_IP_HEADER`, read from trusted proxies only.
+    pub trusted_client_ip_header: Option<String>,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`: the peers whose forwarding headers count.
+    pub trusted_proxy_cidrs: Vec<IpNet>,
+}
+
+impl Default for Config {
+    /// Upstream's defaults (`src/Environment.ts:106-125`), the clap defaults
+    /// too (`the_defaults_are_the_config_crates`).
+    fn default() -> Self {
+        Self {
+            burst_max: 1000,
+            burst_window: Duration::from_secs(60),
+            hourly_max: 3000,
+            daily_max: 20000,
+            ipv6_prefix_length: 64,
+            trusted_sync_peer_ips: String::new(),
+            trusted_client_ip_header: None,
+            trusted_proxy_cidrs: Vec::new(),
+        }
+    }
+}
+
+/// One fixed-window budget per client key.
+struct Bucket {
+    max: u32,
+    state: Mutex<FixedWindows>,
+}
+
+/// What a bucket answered: its limit, what is left and the seconds until its
+/// window ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Verdict {
+    allowed: bool,
+    limit: u32,
+    remaining: u32,
+    reset_secs: u64,
+}
+
+impl Bucket {
+    fn new(max: u32, window: Duration) -> Self {
+        Self {
+            max,
+            state: Mutex::new(FixedWindows::new(window, MAX_SOURCES)),
+        }
+    }
+
+    fn consume(&self, key: &str, now: Instant) -> Verdict {
+        let mut state = self.state.lock();
+        state.prune(now);
+        let length = state.length();
+        let w = state.window(key, now);
+        let allowed = w.count < self.max;
+        if allowed {
+            w.count += 1;
+        }
+        Verdict {
+            allowed,
+            limit: self.max,
+            remaining: self.max - w.count,
+            reset_secs: w.reset_secs(length, now),
+        }
+    }
+}
+
+pub struct ContentGetLimit {
+    buckets: [Bucket; 3],
+    ipv6_prefix_length: u8,
+    trusted_sync_peers: Vec<IpNet>,
+    trusted_proxies: Vec<IpNet>,
+    client_ip_header: Option<HeaderName>,
+}
+
+impl ContentGetLimit {
+    pub fn new(config: &Config) -> Self {
+        let client_ip_header = config
+            .trusted_client_ip_header
+            .as_deref()
+            .map(str::trim)
+            .filter(|h| !h.is_empty())
+            .and_then(|h| match HeaderName::try_from(h) {
+                Ok(name) => Some(name),
+                Err(_) => {
+                    tracing::warn!(
+                        header = h,
+                        "TRUSTED_CLIENT_IP_HEADER is not a header name; ignored"
+                    );
+                    None
+                }
+            });
+        Self {
+            buckets: [
+                Bucket::new(config.burst_max, config.burst_window),
+                Bucket::new(config.hourly_max, Duration::from_secs(3600)),
+                Bucket::new(config.daily_max, Duration::from_secs(86400)),
+            ],
+            ipv6_prefix_length: config.ipv6_prefix_length.clamp(1, 128),
+            trusted_sync_peers: parse_trusted_sync_peers(&config.trusted_sync_peer_ips),
+            trusted_proxies: config.trusted_proxy_cidrs.clone(),
+            client_ip_header,
+        }
+    }
+
+    /// The client a request is counted as, canonical (an IPv4-mapped IPv6
+    /// address is its IPv4 address): the socket peer, or, when that peer is a
+    /// trusted proxy, the rightmost entry of `TRUSTED_CLIENT_IP_HEADER` if set,
+    /// else its one `X-Real-IP`, else the proxy itself. `None` without a socket.
+    fn client(&self, headers: &HeaderMap, socket: Option<IpAddr>) -> Option<IpAddr> {
+        let socket = socket?.to_canonical();
+        if !is_trusted_proxy(socket, &self.trusted_proxies) {
+            return Some(socket);
+        }
+        let forwarded = match &self.client_ip_header {
+            Some(name) => headers
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.rsplit(',').next())
+                .and_then(parse_ip),
+            None => single_real_ip(headers),
+        };
+        Some(forwarded.unwrap_or(socket))
+    }
+
+    /// Runs the three buckets in order for `client`: the first rejection, or
+    /// the burst bucket's verdict when all pass. `None` for an exempt peer.
+    fn check(&self, client: IpAddr, now: Instant) -> Option<Verdict> {
+        if self.trusted_sync_peers.iter().any(|n| n.contains(&client)) {
+            return None;
+        }
+        let key = client_key(client, self.ipv6_prefix_length);
+        let mut first = None;
+        for bucket in &self.buckets {
+            let verdict = bucket.consume(&key, now);
+            if !verdict.allowed {
+                return Some(verdict);
+            }
+            first.get_or_insert(verdict);
+        }
+        first
+    }
+}
+
+fn parse_ip(raw: &str) -> Option<IpAddr> {
+    let raw = raw.trim();
+    let raw = raw.split('%').next().unwrap_or(raw);
+    raw.parse::<IpAddr>().ok().map(|ip| ip.to_canonical())
+}
+
+/// The networks of `TRUSTED_SYNC_PEER_IPS`: an address (canonical, as its
+/// own /32 or /128) or a CIDR, as the gateway's list takes them; an entry
+/// that is neither is dropped with a warning (a typo must not stop the node).
+fn parse_trusted_sync_peers(raw: &str) -> Vec<IpNet> {
+    let mut peers = Vec::new();
+    for entry in raw.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+        let parsed = match entry.parse::<IpNet>() {
+            Ok(net) => Some(match net.addr().to_canonical() {
+                IpAddr::V4(v4) if net.addr().is_ipv6() => {
+                    IpNet::new(IpAddr::V4(v4), net.prefix_len().saturating_sub(96)).ok()
+                }
+                _ => Some(net.trunc()),
+            })
+            .flatten(),
+            Err(_) => parse_ip(entry).map(IpNet::from),
+        };
+        match parsed {
+            Some(net) if !peers.contains(&net) => peers.push(net),
+            Some(_) => {}
+            None => tracing::warn!(
+                entry,
+                "Ignoring invalid entry in TRUSTED_SYNC_PEER_IPS: not an IP address or network"
+            ),
+        }
+    }
+    peers
+}
+
+/// IPv4 by address, IPv6 by its network of `prefix` bits.
+fn client_key(ip: IpAddr, prefix: u8) -> String {
+    match ip {
+        IpAddr::V4(v4) => v4.to_string(),
+        IpAddr::V6(v6) => {
+            let mask = u128::MAX.checked_shl(128 - u32::from(prefix)).unwrap_or(0);
+            format!("{}/{prefix}", Ipv6Addr::from(u128::from(v6) & mask))
+        }
+    }
+}
+
+fn rate_limit_headers(headers: &mut HeaderMap, verdict: &Verdict) {
+    for (name, value) in [
+        ("ratelimit-limit", verdict.limit.to_string()),
+        ("ratelimit-remaining", verdict.remaining.to_string()),
+        ("ratelimit-reset", verdict.reset_secs.to_string()),
+    ] {
+        if let Ok(value) = HeaderValue::from_str(&value) {
+            headers.insert(name, value);
+        }
+    }
+}
+
+/// The layer on `GET`/`HEAD /contents/{hash}`.
+pub async fn limit(State(state): State<SharedState>, request: Request, next: Next) -> Response {
+    let socket = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(addr)| addr.ip());
+    let limiter = &state.content_get_limit;
+    let Some(client) = limiter.client(request.headers(), socket) else {
+        return next.run(request).await;
+    };
+    match limiter.check(client, Instant::now()) {
+        None => next.run(request).await,
+        Some(verdict) if verdict.allowed => next.run(request).await,
+        Some(verdict) => {
+            let mut response = json_error(StatusCode::TOO_MANY_REQUESTS, "Too many requests");
+            let headers = response.headers_mut();
+            rate_limit_headers(headers, &verdict);
+            if let Ok(value) = HeaderValue::from_str(&verdict.reset_secs.to_string()) {
+                headers.insert("retry-after", value);
+            }
+            response
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn limiter(burst: u32, hourly: u32, daily: u32, peers: &str) -> ContentGetLimit {
+        ContentGetLimit::new(&Config {
+            burst_max: burst,
+            hourly_max: hourly,
+            daily_max: daily,
+            trusted_sync_peer_ips: peers.into(),
+            ..Config::default()
+        })
+    }
+
+    fn statuses(l: &ContentGetLimit, ips: &[&str], now: Instant) -> Vec<bool> {
+        ips.iter()
+            .map(|ip| {
+                l.check(parse_ip(ip).unwrap(), now)
+                    .is_none_or(|v| v.allowed)
+            })
+            .collect()
+    }
+
+    /// `Config::default()` repeats the config crate's clap defaults; this
+    /// keeps the two in step.
+    #[test]
+    fn the_defaults_are_the_config_crates() {
+        let config = crate::config::Config::parse_for_tests(&[
+            "catalyst",
+            "--database-url",
+            "postgres:///catalyst",
+        ])
+        .unwrap();
+        let parsed = crate::Settings::from_config(&config).content_get_limit;
+        let default = Config::default();
+        assert_eq!(
+            (
+                parsed.burst_max,
+                parsed.burst_window,
+                parsed.hourly_max,
+                parsed.daily_max,
+                parsed.ipv6_prefix_length,
+                parsed.trusted_sync_peer_ips,
+                parsed.trusted_client_ip_header,
+                parsed.trusted_proxy_cidrs
+            ),
+            (
+                default.burst_max,
+                default.burst_window,
+                default.hourly_max,
+                default.daily_max,
+                default.ipv6_prefix_length,
+                default.trusted_sync_peer_ips,
+                default.trusted_client_ip_header,
+                default.trusted_proxy_cidrs
+            )
+        );
+    }
+
+    /// Upstream `content-get-rate-limit.spec.ts:427-466`.
+    #[test]
+    fn ipv6_clients_are_keyed_by_network() {
+        let key = |ip: &str, p| client_key(parse_ip(ip).unwrap(), p);
+        assert_eq!(
+            key("2a03:b0c0:3:f0:0:3:410:3000", 64),
+            key("2a03:b0c0:3:f0:0:2:6d50:c000", 64)
+        );
+        assert_eq!(
+            key("2a03:b0c0:3:f0:0:3:410:3000", 64),
+            "2a03:b0c0:3:f0::/64"
+        );
+        assert_eq!(key("2001:db8::1:0:0:1f", 124), "2001:db8::1:0:0:10/124");
+        assert_eq!(key("fe80::1%eth0", 64), "fe80::/64");
+        assert_eq!(key("64:ff9b::1.2.3.4", 128), "64:ff9b::102:304/128");
+        assert_eq!(key("::ffff:203.0.113.7", 64), "203.0.113.7");
+        assert_eq!(key("203.0.113.7", 64), "203.0.113.7");
+    }
+
+    #[test]
+    fn the_hourly_quota_rejects_under_the_burst() {
+        let l = limiter(100, 3, 100, "");
+        let now = Instant::now();
+        let ip = "198.51.100.9";
+        assert_eq!(
+            statuses(&l, &[ip, ip, ip, ip], now),
+            [true, true, true, false]
+        );
+    }
+
+    #[test]
+    fn the_daily_quota_rejects_under_the_hourly_one() {
+        let l = limiter(100, 100, 2, "");
+        let now = Instant::now();
+        let ip = "198.51.100.9";
+        assert_eq!(statuses(&l, &[ip, ip, ip], now), [true, true, false]);
+    }
+
+    #[test]
+    fn a_burst_rejection_does_not_drain_the_quotas() {
+        let l = limiter(1, 2, 100, "");
+        let now = Instant::now();
+        let ip = "198.51.100.9";
+        assert_eq!(statuses(&l, &[ip, ip, ip], now), [true, false, false]);
+        // The burst window ended; one hourly unit is still left.
+        let later = now + Duration::from_secs(61);
+        assert_eq!(statuses(&l, &[ip, ip], later), [true, false]);
+        let v = l
+            .check(parse_ip(ip).unwrap(), later + Duration::from_secs(61))
+            .unwrap();
+        assert!(!v.allowed, "the hourly quota is spent: {v:?}");
+        assert_eq!(v.limit, 2);
+        assert!(v.reset_secs > 3000 && v.reset_secs <= 3600, "{v:?}");
+    }
+
+    #[test]
+    fn ipv6_rotation_inside_one_network_shares_a_budget() {
+        let l = limiter(100, 3, 100, "");
+        let now = Instant::now();
+        let ips = [
+            "2a03:b0c0:3:f0::1",
+            "2a03:b0c0:3:f0::2",
+            "2a03:b0c0:3:f0:0:3:410:3000",
+            "2a03:b0c0:3:f0:ffff::9",
+        ];
+        assert_eq!(statuses(&l, &ips, now), [true, true, true, false]);
+        let ips = ["2a03:b0c0:3:f1::1", "198.51.100.10"];
+        assert_eq!(
+            statuses(&l, &ips, now),
+            [true, true],
+            "other clients keep theirs"
+        );
+    }
+
+    #[test]
+    fn listed_sync_peers_are_never_limited_and_bad_entries_are_dropped() {
+        let l = limiter(
+            1,
+            1,
+            1,
+            "203.0.113.50, not-an-ip, ::ffff:203.0.113.51, 198.51.100.0/30, 2001:db8:5::/48, 10.0.0.1/33",
+        );
+        let now = Instant::now();
+        let peer = "203.0.113.50";
+        assert_eq!(statuses(&l, &[peer; 5], now), [true; 5]);
+        assert_eq!(
+            statuses(&l, &["203.0.113.51"; 3], now),
+            [true; 3],
+            "canonical form"
+        );
+        assert_eq!(
+            statuses(&l, &["198.51.100.3"; 3], now),
+            [true; 3],
+            "a network, as the gateway's list takes it"
+        );
+        assert_eq!(statuses(&l, &["2001:db8:5:1::9"; 3], now), [true; 3]);
+        assert_eq!(statuses(&l, &["198.51.100.9"; 2], now), [true, false]);
+        assert_eq!(l.trusted_sync_peers.len(), 4);
+    }
+
+    /// Only a peer in `HTTP_TRUSTED_PROXY_CIDRS` may name the client; a direct
+    /// socket's headers are its own and never count.
+    #[test]
+    fn forwarding_headers_count_only_from_a_trusted_proxy() {
+        let gateway = Some("192.0.2.1".parse().unwrap());
+        let direct = Some("198.51.100.66".parse().unwrap());
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "198.51.100.2".parse().unwrap());
+        headers.insert("x-forwarded-for", "6.6.6.6, 198.51.100.4".parse().unwrap());
+        headers.insert("cf-connecting-ip", "6.6.6.6, 198.51.100.3".parse().unwrap());
+        let proxies = vec!["192.0.2.0/24".parse().unwrap()];
+        let behind = ContentGetLimit::new(&Config {
+            trusted_proxy_cidrs: proxies.clone(),
+            ..Config::default()
+        });
+        assert_eq!(behind.client(&headers, gateway), parse_ip("198.51.100.2"));
+        assert_eq!(behind.client(&headers, direct), direct, "spoofed headers");
+        assert_eq!(
+            behind.client(&HeaderMap::new(), gateway),
+            gateway,
+            "a proxy that names no client is counted itself"
+        );
+        assert_eq!(behind.client(&headers, None), None);
+        let untrusted = limiter(1, 1, 1, "");
+        assert_eq!(untrusted.client(&headers, gateway), gateway);
+
+        let custom = ContentGetLimit::new(&Config {
+            trusted_client_ip_header: Some("CF-Connecting-IP".into()),
+            trusted_proxy_cidrs: proxies,
+            ..Config::default()
+        });
+        assert_eq!(custom.client(&headers, gateway), parse_ip("198.51.100.3"));
+        assert_eq!(custom.client(&headers, direct), direct);
+    }
+
+    /// A direct client that names a sync peer, or rotates the address it
+    /// names, is still counted as itself.
+    #[test]
+    fn a_direct_client_cannot_borrow_a_sync_peer_or_a_fresh_budget() {
+        let l = ContentGetLimit::new(&Config {
+            burst_max: 1,
+            trusted_sync_peer_ips: "203.0.113.50".into(),
+            trusted_proxy_cidrs: vec!["192.0.2.0/24".parse().unwrap()],
+            ..Config::default()
+        });
+        let direct = parse_ip("198.51.100.66");
+        let now = Instant::now();
+        let verdicts: Vec<bool> = ["203.0.113.50", "198.51.100.1", "198.51.100.2"]
+            .iter()
+            .map(|spoofed| {
+                let mut headers = HeaderMap::new();
+                headers.insert("x-real-ip", spoofed.parse().unwrap());
+                let client = l.client(&headers, direct).unwrap();
+                l.check(client, now).is_none_or(|v| v.allowed)
+            })
+            .collect();
+        assert_eq!(verdicts, [true, false, false]);
+    }
+
+    /// Past [`MAX_SOURCES`] clients a new one evicts the oldest window, which
+    /// then starts over; the others keep theirs.
+    #[test]
+    fn a_new_client_past_the_cap_evicts_the_oldest_window() {
+        let bucket = Bucket::new(1, Duration::from_secs(60));
+        let now = Instant::now();
+        assert!(bucket.consume("oldest", now).allowed);
+        assert!(!bucket.consume("oldest", now).allowed);
+        for i in 1..MAX_SOURCES {
+            assert!(bucket.consume(&format!("k{i}"), now).allowed);
+        }
+        assert_eq!(bucket.state.lock().len(), MAX_SOURCES);
+        assert!(bucket.consume("newest", now).allowed);
+        assert_eq!(bucket.state.lock().len(), MAX_SOURCES);
+        assert!(bucket.state.lock().get("oldest").is_none());
+        assert!(!bucket.consume("k1", now).allowed, "k1 keeps its window");
+        assert!(
+            bucket.consume("oldest", now).allowed,
+            "the evicted client starts over"
+        );
+    }
+
+    /// Through the router: the burst 429 body and headers, the exempt peer,
+    /// and no triplet on a request that passes; both mounts share a budget;
+    /// a direct socket's spoofed header changes nothing.
+    #[tokio::test]
+    async fn the_router_answers_upstreams_429() {
+        use crate::tests::support::{TEST_CID, TestNode};
+        use axum::body::Body;
+        use tower::ServiceExt;
+
+        let mut settings = crate::Settings::for_tests();
+        settings.content_get_limit = Config {
+            burst_max: 2,
+            trusted_sync_peer_ips: "203.0.113.50".into(),
+            trusted_proxy_cidrs: vec!["127.0.0.1/32".parse().unwrap()],
+            ..Config::default()
+        };
+        let node = TestNode::without_db_settings("content-limit", settings).await;
+        node.store(TEST_CID, bytes::Bytes::from_static(b"x")).await;
+        // Through the gateway: a trusted proxy socket that names the client.
+        let send = |method: &str, path: String, ip: &str| {
+            let request = axum::http::Request::builder()
+                .method(method)
+                .uri(path)
+                .header("x-real-ip", ip)
+                .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 40000))))
+                .body(Body::empty())
+                .unwrap();
+            node.router().oneshot(request)
+        };
+        let client = "198.51.100.9";
+        let first = send("GET", format!("/content/contents/{TEST_CID}"), client)
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        assert!(first.headers().get("ratelimit-limit").is_none());
+        assert!(first.headers().get("ratelimit-remaining").is_none());
+        let second = send("HEAD", format!("/contents/{TEST_CID}"), client)
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::OK);
+        let third = send("GET", format!("/contents/{TEST_CID}"), client)
+            .await
+            .unwrap();
+        assert_eq!(third.status(), StatusCode::TOO_MANY_REQUESTS);
+        let retry_after: u64 = third.headers()["retry-after"]
+            .to_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!((1..=60).contains(&retry_after));
+        assert_eq!(third.headers()["ratelimit-remaining"], "0");
+        let body = axum::body::to_bytes(third.into_body(), 1024).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({"error": "Too many requests"})
+        );
+        for _ in 0..4 {
+            let peer = send("GET", format!("/contents/{TEST_CID}"), "203.0.113.50")
+                .await
+                .unwrap();
+            assert_eq!(peer.status(), StatusCode::OK);
+            assert!(peer.headers().get("ratelimit-limit").is_none());
+        }
+        // A direct socket naming the sync peer is counted as itself.
+        let direct = |ip: &str| {
+            let request = axum::http::Request::builder()
+                .uri(format!("/contents/{TEST_CID}"))
+                .header("x-real-ip", ip)
+                .extension(ConnectInfo(SocketAddr::from(([198, 51, 100, 66], 40000))))
+                .body(Body::empty())
+                .unwrap();
+            node.router().oneshot(request)
+        };
+        let statuses = [
+            direct("203.0.113.50").await.unwrap().status(),
+            direct("203.0.113.50").await.unwrap().status(),
+            direct("198.51.100.1").await.unwrap().status(),
+        ];
+        assert_eq!(
+            statuses,
+            [
+                StatusCode::OK,
+                StatusCode::OK,
+                StatusCode::TOO_MANY_REQUESTS
+            ]
+        );
+        let other = send(
+            "GET",
+            format!("/contents/{TEST_CID}/active-entities"),
+            client,
+        )
+        .await
+        .unwrap();
+        assert_ne!(
+            other.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "only /contents/{{hash}} is limited"
+        );
+    }
+}

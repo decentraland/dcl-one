@@ -68,6 +68,12 @@ the data and its operations.
    During a rolling deploy an older binary still writing can leave rows the
    repair's rules would change after the marker is set; the next sync leader
    bootstrap repairs them, or restart a sync leader once the rollout is done.
+   The repair marks each snapshot window whose rows it superseded with
+   `content.snapshots.outdated` (step `0026_content_snapshots_outdated`, a
+   constant default without a rewrite; the table holds a few dozen rows, one
+   per generation window). The generator's tick scans for the flag and
+   regenerates those windows; the row keeps its real `generation_time`, which
+   `/snapshots` publishes as upstream does.
 
 ## Worlds, persistent storage and scene hosting
 
@@ -524,6 +530,24 @@ Its other columns take constant defaults or are nullable, and step
 columns, imports confirmed `reward_paid` receipts without losing notification
 completion, and quarantines older uncertain pending rewards. The backfill touches
 only paid or pending rewards.
+
+The object pass also builds `deployments_active_entity_timestamp_idx` on
+`content.deployments` (the snapshot generator's inactive-entities count) in the
+migrate transaction, not concurrently, so writes to that table wait for the
+build: 7.8 s on 4M narrow synthetic rows (METRICS.md, "Snapshot inactive-entities
+count"), unmeasured on production. Writers are stopped for a release anyway. To
+build it outside that window, run beforehand, with the same definition as
+`schemas/00_content.sql`:
+
+```sql
+CREATE INDEX CONCURRENTLY deployments_active_entity_timestamp_idx
+    ON content.deployments USING btree (entity_timestamp) INCLUDE (entity_id)
+    WHERE deleter_deployment IS NULL;
+```
+
+The object pass creates only objects the database lacks, so it then skips the
+index. A failed concurrent build leaves an invalid index of that name: drop it
+before retrying.
 
 **Migration 0024 does not support a rolling deployment from a pre-0024 binary,
 even when both binaries require schema version 3.** A pre-0024 binary treats any

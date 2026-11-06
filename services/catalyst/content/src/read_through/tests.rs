@@ -426,6 +426,20 @@ async fn a_profile_past_the_sync_age_limit_is_reachable_through_the_profile_look
     assert_eq!(docs.len(), 1);
     assert_eq!(docs[0].id, profile.id);
     assert_eq!(node.deployments(&profile.id).await, 1);
+
+    // A listed entity is left out of the answer, and its pointer counts as
+    // answered: hidden, never asked of the sources again.
+    let calls = fake.active_calls();
+    node.storage
+        .denylist()
+        .set_remote("https://registry.example/denylist", [profile.id.clone()]);
+    let docs = node
+        .read_through
+        .active_docs(false, std::slice::from_ref(&address))
+        .await
+        .unwrap();
+    assert!(docs.is_empty(), "{docs:?}");
+    assert_eq!(fake.active_calls(), calls);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1044,4 +1058,14 @@ async fn read_through_is_off_by_default_and_needs_a_source() {
         "a worlds source naming this node is refused"
     );
     let _ = std::fs::remove_dir_all(tmp);
+}
+
+#[test]
+fn a_long_key_enters_the_negative_cache_as_its_digest() {
+    assert_eq!(negative_key("bafkreiabc"), "bafkreiabc");
+    let long = "a".repeat(10_000);
+    let key = negative_key(&long);
+    assert!(key.starts_with("sha256:") && key.len() == 71, "{key}");
+    assert_eq!(key, negative_key(&long));
+    assert_ne!(key, negative_key(&"b".repeat(10_000)));
 }

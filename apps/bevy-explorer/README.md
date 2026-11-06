@@ -154,9 +154,12 @@ manual headless run on main, a chosen `publish-tag` from a branch. npm trusted p
 of the six names must list `decentraland/dcl-one` and its workflow on npmjs.com. The CDN upload needs
 `GITLAB_CDN_DEPLOYER_TOKEN` and `GITLAB_CDN_DEPLOYER_URL`. Retry with "re-run failed jobs".
 
-Same-repo PRs publish under the `pr-<n>` dist-tag, which the CI status *Build* section links; a PR publish failure does not
-fail the build, and closing the PR removes the tag (the trusted publisher needs "npm dist-tag"). The
-automatic rollout takes only the `next` version, so `publish-tag` builds need "Manual CDN rollout". Before
+Same-repo PRs publish under the `pr-<n>` dist-tag. The CI status *Build* section links the exact
+package version for the run after checking its npm commit against the web checkout SHA. It uses the
+PR tag to look up the version if the run lacks a usable package artifact or was dispatched manually.
+A PR publish failure does not fail the build, and closing the PR removes the tag (the trusted
+publisher needs "npm dist-tag"). The automatic rollout takes only the `next` version, so
+`publish-tag` builds need "Manual CDN rollout". Before
 archiving `decentraland/bevy-explorer`, verify one `next` of each package and re-adapt
 `apps/ui3/src/play`.
 
