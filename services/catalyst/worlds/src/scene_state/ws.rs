@@ -3,8 +3,6 @@
 //! the `Init` frame (the entity range and the state snapshot) and the CRDT
 //! relay until either side closes or the client is removed.
 
-use crate::comms::interfaces::AccessPolicy;
-
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};

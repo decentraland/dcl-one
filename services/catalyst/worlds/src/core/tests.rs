@@ -3263,18 +3263,24 @@ async fn a_community_closure_rechecks_livekit_when_its_queue_insert_fails() {
         leave_community(&f.pool, community, who).await;
     }
     // Fail only this world's queue writes; policy and community rows remain readable.
+    assert!(
+        world
+            .key()
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+    );
     let constraint = format!("closure_failure_{}", Uuid::new_v4().simple());
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "ALTER TABLE social.world_access_rechecks ADD CONSTRAINT {constraint} CHECK (world_name <> '{}') NOT VALID",
         world.key()
-    ))
+    )))
     .execute(&f.pool)
     .await
     .unwrap();
     f.state.community_closed(community).await;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "ALTER TABLE social.world_access_rechecks DROP CONSTRAINT {constraint}"
-    ))
+    )))
     .execute(&f.pool)
     .await
     .unwrap();
