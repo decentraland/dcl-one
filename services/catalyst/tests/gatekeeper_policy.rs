@@ -601,7 +601,11 @@ mod tests {
     #[tokio::test]
     async fn scene_admin_routes_write_the_relations_under_the_scene_signer_gate() {
         let Some(pool) = scratch().await else { return };
-        let state = state_with(pool.clone(), Settings::for_tests());
+        let mut state = state_with(pool.clone(), Settings::for_tests());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        Arc::get_mut(&mut state).unwrap().livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+        let media = axum::Router::new().fallback(|| async { Json(serde_json::json!({"rooms":[]})) });
+        let media_server = tokio::spawn(async move { axum::serve(listener,media).await.unwrap() });
         let place_id = format!("ToolkitScene{}", tag());
         let world = format!("toolkit-{}.eth", tag());
         seed_world_scene(&pool, &world, &place_id, &["10,20"]).await;
@@ -721,7 +725,7 @@ mod tests {
         assert!(
             state
                 .moderation
-                .is_scene_banned(&place_id, &banned)
+                .is_scene_banned(&format!("{world}:10,20"), &banned)
                 .await
                 .unwrap()
         );
@@ -780,7 +784,7 @@ mod tests {
         assert!(
             !state
                 .moderation
-                .is_scene_banned(&place_id, &banned)
+                .is_scene_banned(&format!("{world}:10,20"), &banned)
                 .await
                 .unwrap()
         );
@@ -879,6 +883,7 @@ mod stream_access {
             status,
             serde_json::from_slice(&bytes).unwrap_or(Value::Null),
         )
+        media_server.abort();
     }
 
     /// The lifecycle over a Genesis place the signer administers: add mints
