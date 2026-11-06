@@ -212,6 +212,26 @@ async function fetchProfile(peer, profile) {
   return avatar;
 }
 
+// which of `urns` are emotes: hosts pass an emote item by urn (the shop does), and only the
+// catalyst knows what a urn names. Base avatars are wearables; anything the catalyst does not
+// answer for stays a wearable, as before.
+async function emoteUrns(peer, urns) {
+  const ask = urns.filter((u) => !/^urn:decentraland:off-chain:base-avatars:/i.test(u));
+  if (!ask.length) return new Set();
+  try {
+    const response = await fetch(`${peer}/content/entities/active`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pointers: ask }),
+    });
+    if (!response.ok) return new Set();
+    const emotes = new Set();
+    for (const entity of await response.json()) {
+      if (entity.type !== 'emote') continue;
+      for (const pointer of entity.pointers || []) emotes.add(pointer.toLowerCase());
+    }
+    return new Set(ask.filter((u) => emotes.has(u.toLowerCase())));
+  } catch { return new Set(); }
+}
+
 // a marketplace item (contract + item id) or NFT (contract + token id): its urn and category
 async function fetchItem(o) {
   const server = o.marketplaceServerUrl || (o.env === 'dev' ? MARKETPLACE.dev : MARKETPLACE.prod);
@@ -298,7 +318,11 @@ async function resolveOutfit(o) {
     outfit.hair = o.hair || (avatar.hair?.color ? hex(avatar.hair.color) : null);
     outfit.eyes = o.eyes || (avatar.eyes?.color ? hex(avatar.eyes.color) : null);
   }
-  outfit.wearables.push(...(o.urns || []));
+  const urns = o.urns || [];
+  const emotes = await emoteUrns(peer, urns);
+  for (const urn of urns) {
+    if (emotes.has(urn)) itemEmote = itemEmote || urn; else outfit.wearables.push(urn);
+  }
   for (const item of await inlineDefinitions(o)) {
     if (item.isEmote) itemEmote = itemEmote || item.urn; else outfit.wearables.push(item.urn);
   }
