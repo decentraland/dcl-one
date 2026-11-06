@@ -18,7 +18,64 @@ use wgpu_types::{
     TextureViewDimension,
 };
 
-use super::{CompressedImageFormats, DataFormat, Image, TextureError, TranscodeFormat};
+use super::{
+    CompressedImageFormats, DataFormat, Image, ImageFormat, TextureError, TranscodeFormat,
+};
+use bevy_asset::AssetPath;
+use std::sync::{Arc, OnceLock};
+
+/// The first 12 bytes of every KTX2 file.
+pub const KTX2_MAGIC: &[u8; 12] = b"\xABKTX 20\xBB\r\n\x1A\n";
+
+/// What a [`Ktx2Transcoder`] turned a KTX2 into: bytes and the format to decode them as.
+pub type Ktx2Transcoded = Result<(Vec<u8>, ImageFormat), TextureError>;
+
+/// A host's transcoder for KTX2 images, given the KTX2 bytes and, when the image is an asset
+/// loaded by path through [`ImageLoader`](crate::ImageLoader), that path (`None` for
+/// [`Image::from_buffer`] callers: images embedded in a glTF, bevy's own LUTs).
+///
+/// - `None`: not the host's; bevy's own KTX2 decode takes the bytes as it would without a hook.
+/// - `Some(Ok((bytes, format)))`: decode `bytes` as `format` (not KTX2) instead, with the same
+///   `is_srgb`, sampler and asset usage the KTX2 was loaded with.
+/// - `Some(Err(_))`: the image fails to load.
+///
+/// Set once per process with [`set_ktx2_transcoder`]: [`Image::from_buffer`] has no plugin or
+/// loader to carry it.
+pub type Ktx2Transcoder =
+    Arc<dyn Fn(&[u8], Option<&AssetPath<'_>>) -> Option<Ktx2Transcoded> + Send + Sync>;
+
+static KTX2_TRANSCODER: OnceLock<Ktx2Transcoder> = OnceLock::new();
+
+/// Sets the process's [`Ktx2Transcoder`]. Every KTX2 decoded after this goes through it, by path
+/// or embedded. Returns `false`, keeping the first, when one is already set.
+pub fn set_ktx2_transcoder(transcoder: Ktx2Transcoder) -> bool {
+    KTX2_TRANSCODER.set(transcoder).is_ok()
+}
+
+/// Whether `buffer` is taken as KTX2 by its [`KTX2_MAGIC`]: always for an image with no path
+/// (embedded in a glTF, bevy's own LUTs), and for an asset only when its path ends in `.ktx2`.
+/// KTX2 bytes at any other path are not KTX2 to the loader and fail as their declared or guessed
+/// format would: a host that caches its transcode by the `.ktx2` extension would otherwise
+/// transcode them again on every load.
+#[cfg(feature = "ktx2")]
+pub(crate) fn ktx2_magic_applies(buffer: &[u8], asset_path: Option<&AssetPath<'_>>) -> bool {
+    buffer.starts_with(KTX2_MAGIC)
+        && asset_path.is_none_or(|path| {
+            path.path()
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("ktx2"))
+        })
+}
+
+/// The host transcoder's answer for a KTX2, or `None` when no transcoder is set.
+pub(crate) fn host_ktx2_transcode(
+    buffer: &[u8],
+    asset_path: Option<&AssetPath<'_>>,
+) -> Option<Ktx2Transcoded> {
+    KTX2_TRANSCODER
+        .get()
+        .and_then(|transcode| transcode(buffer, asset_path))
+}
 
 #[cfg(feature = "ktx2")]
 pub fn ktx2_buffer_to_image(
@@ -1524,5 +1581,35 @@ mod tests {
         let supported_compressed_formats = CompressedImageFormats::empty();
         let result = ktx2_buffer_to_image(&buffer, supported_compressed_formats, true);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn ktx2_magic_applies_without_a_path_or_at_a_ktx2_path() {
+        use super::{ktx2_magic_applies, KTX2_MAGIC};
+        use bevy_asset::AssetPath;
+
+        let ktx2 = [&KTX2_MAGIC[..], &[0; 4]].concat();
+        // embedded in a glTF, or bevy's own LUTs
+        assert!(ktx2_magic_applies(&ktx2, None));
+        assert!(ktx2_magic_applies(
+            &ktx2,
+            Some(&AssetPath::from("models/albedo.ktx2"))
+        ));
+        assert!(ktx2_magic_applies(
+            &ktx2,
+            Some(&AssetPath::from("models/ALBEDO.KTX2"))
+        ));
+        // KTX2 bytes anywhere else are not taken as KTX2
+        assert!(!ktx2_magic_applies(&ktx2, Some(&AssetPath::from("nft/bafyhash"))));
+        assert!(!ktx2_magic_applies(
+            &ktx2,
+            Some(&AssetPath::from("models/albedo.png"))
+        ));
+        // and other bytes never are, the cached dds at a `.ktx2` path included
+        assert!(!ktx2_magic_applies(b"\x89PNG\r\n\x1a\n", None));
+        assert!(!ktx2_magic_applies(
+            b"DDS \x7c\x00\x00\x00",
+            Some(&AssetPath::from("models/albedo.ktx2"))
+        ));
     }
 }

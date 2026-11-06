@@ -105,9 +105,9 @@ pub(crate) async fn process_events(
     }
 }
 
-/// The dds `Ktx2Loader` stashed for `req.base_path`, removed from the stash.
+/// The dds `ktx2::transcode_ktx2_image` stashed for `req.base_path`, removed from the stash.
 fn take_ktx2_result(req: &AssetForProcessing) -> Option<Vec<u8>> {
-    crate::ktx2_loader::KTX2_RESULTS
+    crate::ktx2::KTX2_RESULTS
         .lock()
         .ok()?
         .remove(&req.base_path.to_string())

@@ -105,6 +105,23 @@ across workers:
 
 - `GltfLoader::uri_resolver` (`GltfPlugin::with_uri_resolver`): the host resolves every URI a
   glTF references. This is how content paths are contained; see the security page.
+- `KHR_texture_basisu` is supported: `gltf`'s `allow_empty_texture` feature lets a file that
+  requires it (and textures with no `source`) through. A texture with no `source` samples its
+  extension image; one with a PNG/JPEG fallback keeps the fallback. Its KTX2, by path or
+  embedded, decodes through `bevy_image`'s KTX2 route below.
+- KTX2 transcoder hook (`bevy_image::set_ktx2_transcoder`, `Ktx2Transcoder`): one process-wide
+  host function, set once, that every KTX2 decode asks first. It gets the bytes and, for an
+  asset loaded by path through `ImageLoader`, the asset path (`None` from
+  `Image::from_buffer`: glTF-embedded images, bevy's LUTs). It returns `None` (bevy's own KTX2
+  decode), bytes plus the format to decode them as instead (with the caller's `is_srgb`,
+  sampler and asset usage), or an error. A global because `Image::from_buffer` has no plugin
+  or loader to carry it. `image_processing` sets it to transcode UASTC to BC7, and uses the
+  path to cache the result. Alongside it: KTX2 bytes are taken by their magic whatever
+  type was declared (also under the `Guess` format setting, which the `image` crate can't
+  guess for KTX2), but only with no path (embedded) or at a `.ktx2` path: the cache write keys
+  on that extension, so an extension-less KTX2 fails to load rather than being transcoded on
+  every visit. A DDS where a KTX2 was declared decodes as DDS (a cached transcode at a
+  `.ktx2` path).
 - Accessors with no `bufferView` are accepted (zero-filled per spec; Blender morph targets).
 - Texture decode is skipped when `load_materials` is empty, with a 1x1 placeholder under the
   normal label: headless servers keep geometry without pixels.
