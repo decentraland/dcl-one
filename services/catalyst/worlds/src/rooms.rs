@@ -62,6 +62,36 @@ fn deployment(
     })
 }
 
+/// Refuse serving an upgraded catalogue while mapped entity-id bans still need
+/// the explicit release conversion. Use the resolver's parser so malformed or
+/// unmapped legacy/Genesis rows do not block startup, and Unicode bases have the
+/// same meaning as admission. Stream the startup audit instead of loading the
+/// catalogue into memory; this does not modify any stored ban.
+pub async fn ensure_world_scene_ban_release(pool: &PgPool) -> anyhow::Result<()> {
+    use futures::TryStreamExt;
+
+    let mut rows = sqlx::query_as::<_, (String, String, Vec<String>, Option<String>)>(
+        "SELECT ws.world_name, ws.entity_id, ws.parcels, ws.entity #>> '{metadata,scene,base}' \
+         FROM (SELECT world_name, entity_id, parcels, entity FROM worlds.world_scenes \
+               UNION ALL SELECT world_name, entity_id, parcels, entity FROM worlds.retired_world_scenes) ws \
+         WHERE EXISTS (SELECT 1 FROM social.scene_bans b WHERE b.place_id=ws.entity_id)",
+    )
+    .fetch(pool);
+    while let Some((world, entity, parcels, declared_base)) = rows.try_next().await? {
+        let scene = SceneId::from_stored(entity.clone());
+        if let Ok((_, base)) = footprint(&parcels, declared_base.as_deref(), &scene)
+            && entity != format!("{world}:{}", base.canonical())
+        {
+            anyhow::bail!(
+                "world scene bans require release conversion before serving: stop old replicas, \
+                 back up the database, and run schemas/releases/world-scene-ban-keys.sql \
+                 with the administrative database role; then restart"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// The shared Places UUID explicitly bound to this active (world, entity)
 /// deployment. Discovery and storage consume this same identity.
 macro_rules! identity_column {
@@ -116,7 +146,6 @@ pub async fn replaced_world_scene(
     pool: &PgPool,
     world: &WorldName,
     scene: &SceneId,
-    _now: chrono::NaiveDateTime,
 ) -> Result<Option<crate::comms::rooms::ReplacedScene>, ResolveError> {
     let row: Option<(Vec<String>, Option<String>)> = sqlx::query_as(
         "SELECT parcels, entity #>> '{metadata,scene,base}' FROM worlds.retired_world_scenes \
@@ -496,7 +525,7 @@ impl crate::comms::interfaces::SceneIdentity for SceneResolver {
         world: &WorldName,
         scene: &SceneId,
     ) -> Result<Option<crate::comms::rooms::ReplacedScene>, ResolveError> {
-        replaced_world_scene(&self.pool, world, scene, chrono::Utc::now().naive_utc()).await
+        replaced_world_scene(&self.pool, world, scene).await
     }
 
     async fn world_active_scene(

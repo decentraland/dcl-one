@@ -992,6 +992,8 @@ answers refund only their exact charged window. Expiry cleanup removes at most
 1,000 rows per scheduled pass. This does not add a cross-caller world ceiling.
 
 For rollout, stop all old API and scene-host replicas before running `catalyst schema migrate` and then applying
-`schemas/releases/world-scene-ban-keys.sql` with the administrative database role, then start the updated binaries. Old binaries cannot enforce the
+`schemas/releases/world-scene-ban-keys.sql` with the administrative database role, then start the updated binaries. `catalyst serve` refuses startup while active or retained
+world scenes still have mapped entity-id bans awaiting this conversion; fresh databases and
+unmapped or Genesis bans do not require it. Old binaries cannot enforce the
 new stable ban keys. A binary-only rollback is not supported after rekeying;
 restore the matching pre-migration database backup. Do not reset a database.

@@ -430,7 +430,9 @@ async fn refresh(state: &CommsState) -> Result<(), ApiError> {
 }
 
 pub async fn run_once(state: &CommsState) -> anyhow::Result<()> {
-    crate::gatekeeper::revocation::sweep(state).await?;
+    if let Err(error) = crate::gatekeeper::revocation::sweep(state).await {
+        tracing::warn!(%error, "world access revocation sweep retained for retry");
+    }
     let feed = RemovedPlaces::new(state.pool.clone());
     for event in feed.pending().await? {
         if let Err(error) = cleanup(state, &feed, &event).await {
@@ -693,6 +695,48 @@ mod tests {
         let event = sqlx::query_as("SELECT event_id, place_id, owner_address, world, world_name, base_position, positions, removed_at, cleaned_at FROM explore.place_removal_pending WHERE place_id = $1").bind(&id).fetch_one(&pool).await.unwrap();
         (state, directory, event)
     }
+    #[tokio::test]
+    async fn failed_revocation_sweep_does_not_block_cleanup_or_metadata_inventory() {
+        use axum::{Json, Router, extract::State, response::IntoResponse, routing::post};
+        use std::sync::atomic::AtomicUsize;
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let (mut state, _, event) = setup(pool.clone()).await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        async fn list_rooms(State(calls): State<Arc<AtomicUsize>>) -> axum::response::Response {
+            if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
+            Json(json!({"rooms":[]})).into_response()
+        }
+        let app = Router::new()
+            .route("/twirp/livekit.RoomService/ListRooms", post(list_rooms))
+            .with_state(calls.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        state.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+        state.livekit.configured = true;
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        run_once(&state).await.unwrap();
+        server.abort();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "metadata inventory ran after the failed access sweep"
+        );
+        let cleaned: bool = sqlx::query_scalar(
+            "SELECT cleaned_at IS NOT NULL FROM explore.place_removal_pending WHERE event_id=$1",
+        )
+        .bind(event.event_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            cleaned,
+            "removed-place cleanup committed despite the access-sweep outage"
+        );
+    }
+
     #[test]
     fn metadata_sweep_is_bounded_and_resumes_past_failed_rooms() {
         let rooms: Vec<String> = (0..205).map(|n| format!("scene:main:{n:03}")).collect();
