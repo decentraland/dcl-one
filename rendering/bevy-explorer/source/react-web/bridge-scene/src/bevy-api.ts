@@ -24,6 +24,7 @@ import type {
   LiveSceneInfo,
   PermanentPermissionItem,
   PermissionRequestEvent,
+  PhotoModeState,
   ProfileChangedEvent,
   ProximityEvent,
   SatelliteView,
@@ -89,6 +90,7 @@ export type SystemHoverEvent = HoverEvent
 // projects it to screen each frame so React can anchor a tooltip on it.
 export type Vec3 = Vector3
 export type SystemProximityEvent = ProximityEvent
+export type { PhotoModeState }
 
 // Global engine input actions. `action` is the SystemAction variant name (e.g. 'Cancel' = Escape,
 // 'Map', 'Chat'); `pressed` is press vs release. Emitted authoritatively by the engine even while it
@@ -165,6 +167,9 @@ export type BevyApiInterface = {
   getAnalyticsEventStream: () => Promise<AsyncIterable<AnalyticsEvent>>
   getHoverStream: () => Promise<AsyncIterable<SystemHoverEvent>>
   getProximityStream: () => Promise<AsyncIterable<SystemProximityEvent>>
+  /** Photo mode (the camera reel's in-world camera): its state whenever it changes. Optional:
+   *  absent on runtimes whose SystemApi predates it. */
+  getPhotoModeStream?: () => Promise<AsyncIterable<PhotoModeState>>
   /** Every profile the engine takes a new version of — a nearby player's, or the local player's own. */
   getProfileChangedStream: () => Promise<AsyncIterable<ProfileChangedEvent>>
   /** Run an engine console command (no leading slash) and await its reply; rejects with the failure

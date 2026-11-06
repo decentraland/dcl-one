@@ -235,6 +235,8 @@ export type PageToScene =
   | EngineViewportRequest
   | InteractableAreaMessage
   | GetGalleryRequest
+  | SetPhotoModeRequest
+  | TakePhotoRequest
   | GetGalleryPhotoRequest
   | DeleteGalleryPhotoRequest
 
@@ -1716,6 +1718,44 @@ export interface ProximityMessage {
   tips: ProximityTip[]
 }
 
+// ---- photo mode (camera reel capture) --------------------------------------
+
+/** Photo mode as the engine reports it (the `PhotoModeState` stream): whether the in-world camera
+ *  is open, what the last photo is doing, the player's storage, and a one-shot `event` stamped
+ *  with `eventSeq` (a capture carries its preview JPEG, a failed upload its message). */
+export interface PhotoModeSnapshot {
+  active: boolean
+  hudHidden: boolean
+  cursorLocked: boolean
+  phase: 'idle' | 'capturing' | 'encoding' | 'uploading' | string
+  storageCurrent: number
+  storageMax: number
+  storageLoaded: boolean
+  event: 'none' | 'captured' | 'uploaded' | 'uploadFailed' | string
+  eventSeq: number
+  previewJpegBase64: string
+  message: string
+}
+
+export interface PhotoModeMessage {
+  kind: 'photoMode'
+  state: PhotoModeSnapshot
+}
+
+/** Open or close photo mode (the engine's `/photo_mode`); `source` names what asked, for analytics. */
+export interface SetPhotoModeRequest {
+  kind: 'setPhotoMode'
+  enable: boolean
+  source: PhotoModeSource
+}
+
+export type PhotoModeSource = 'button' | 'shortcut'
+
+/** Take a photo in photo mode (the engine's `/take_photo`). */
+export interface TakePhotoRequest {
+  kind: 'takePhoto'
+}
+
 /** A nearby avatar was clicked in the world → open their profile card. Only the address travels;
  *  React resolves the display name (nearby roster) and anchors the card at the live DOM cursor. */
 export interface AvatarClickMessage {
@@ -1731,6 +1771,7 @@ export type SceneToPage =
   | CursorLockMessage
   | SystemActionMessage
   | ProximityMessage
+  | PhotoModeMessage
   | AvatarClickMessage
   | PlayerReadyEvent
   | AnalyticsEventMessage

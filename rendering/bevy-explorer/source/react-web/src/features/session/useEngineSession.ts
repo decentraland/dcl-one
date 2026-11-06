@@ -9,7 +9,7 @@ import type { LaunchHostOptions } from '../../engine/engineRpc'
 import { recordVisit } from '../lobby/lobbyApi'
 import type { SatelliteView } from '../../engine/generated'
 import type { AvatarLook } from '../../engine/avatarEquip'
-import type { PreviewFocus } from '../../engine/protocol'
+import type { PhotoModeSnapshot, PhotoModeSource, PreviewFocus } from '../../engine/protocol'
 import { clickButton, screenViewed, sessionId, track } from '../../lib/analytics'
 import { randomDefaultLook } from '../../lib/guestName'
 import { fetchStoredProfile, useStoredProfile, type StoredProfile } from '../login/useStoredProfile'
@@ -22,7 +22,7 @@ import { DEFAULT_REALM } from '../../lib/baseDomain'
 import { checkRealm, realmCheckMessage } from '../../lib/realmCheck'
 import { entryRealm } from '../../lib/entryParams'
 import { color3ToHex, hexToColor3 } from '../../lib/color'
-import { closeTopPopup, hasOpenPopup, subscribePopups } from '../../design'
+import { closeTopPopup, hasOpenPopup, showToast, subscribePopups } from '../../design'
 import { requestDebugPanel } from '../debug/useDebugPanel'
 import { emitFriendEvent } from '../friends/friendEvents'
 import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
@@ -289,6 +289,20 @@ export interface SkyboxState {
   progressing: boolean
   setHours: (hours: number) => void
   setProgressing: (on: boolean) => void
+}
+
+/** Photo mode: the camera reel's in-world camera, owned by the engine (see the photoMode stream). */
+export interface PhotoModeState {
+  /** The engine's last report; `null` before the stream connects. */
+  snapshot: PhotoModeSnapshot | null
+  active: boolean
+  /** The last photo taken, for the capture effect: the snapshot's `captured` pulse lasts one
+   *  engine frame and the next report can overtake it before React renders. */
+  capture: { seq: number; preview: string } | null
+  /** Open or close photo mode (`/photo_mode`); `source` is for analytics only. */
+  set: (enable: boolean, source: PhotoModeSource) => void
+  /** Take a photo (`/take_photo`). */
+  take: () => void
 }
 
 export interface GalleryState {
@@ -787,6 +801,7 @@ export interface EngineSession {
   events: EventsState
   shop: ShopState
   gallery: GalleryState
+  photoMode: PhotoModeState
   /** The Create page (features/editorHost/CreatePage); `show` opens or closes it without toggling. */
   create: { open: boolean; toggle: () => void; show: (open: boolean) => void }
   /** Scene permission prompts (e.g. ChangeRealm) awaiting an Allow/Deny. */
@@ -1097,6 +1112,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [galleryLoaded, setGalleryLoaded] = useState(false)
   const [galleryMetas, setGalleryMetas] = useState<Record<string, GalleryPhotoMeta | null>>({})
   const [galleryOpen, setGalleryOpen] = useState(false)
+  const [photoMode, setPhotoMode] = useState<PhotoModeSnapshot | null>(null)
+  const [photoCapture, setPhotoCapture] = useState<{ seq: number; preview: string } | null>(null)
+  const photoModeActiveRef = useRef(false)
+  const photoModeSeqRef = useRef(0)
   const [createOpen, setCreateOpen] = useState(false)
   const [permissionQueue, setPermissionQueue] = useState<PermissionRequestMessage[]>([])
   const [visitAnswers, setVisitAnswers] = useState<VisitAnswer[]>([])
@@ -1244,6 +1263,22 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'proximity': {
           const next = msg.tips
           setProximity((prev) => (proximityKey(prev) === proximityKey(next) ? prev : next))
+          break
+        }
+        case 'photoMode': {
+          const state = msg.state
+          // photo mode owns the screen: every page and panel closes as it opens
+          if (state.active && !photoModeActiveRef.current) panelSetters.forEach((set) => set(false))
+          photoModeActiveRef.current = state.active
+          if (state.event === 'uploadFailed' && state.eventSeq !== photoModeSeqRef.current) {
+            showToast('There was an error uploading your screenshot.', { tone: 'error' })
+          }
+          if (state.event === 'captured' && state.eventSeq !== photoModeSeqRef.current) {
+            setPhotoCapture({ seq: state.eventSeq, preview: state.previewJpegBase64 })
+          }
+          if (!state.active) setPhotoCapture(null)
+          if (state.event !== 'none') photoModeSeqRef.current = state.eventSeq
+          setPhotoMode(state)
           break
         }
         case 'avatarClick': {
@@ -2293,6 +2328,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     }
   }, [skyboxOpen, skyboxProgressing, readClock])
   const toggleGallery = useCallback(() => exclusive(setGalleryOpen, () => ensure('getGallery')), [exclusive, ensure])
+  const setPhotoModeEnabled = useCallback((enable: boolean, source: PhotoModeSource) => {
+    driverRef.current?.send({ kind: 'setPhotoMode', enable, source })
+  }, [])
+  const takePhoto = useCallback(() => {
+    driverRef.current?.send({ kind: 'takePhoto' })
+  }, [])
   const loadGalleryPhoto = useCallback((id: string) => {
     driverRef.current?.send({ kind: 'getGalleryPhoto', id })
   }, [])
@@ -3478,7 +3519,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     },
     []
   )
-  const uiFocus = anyPanelOpen || popupOpen || locked
+  // photo mode reserves all input like a page; the engine reads the camera's keys above that
+  const photoModeActive = photoMode?.active ?? false
+  const uiFocus = anyPanelOpen || popupOpen || locked || photoModeActive
+  // a popup opening on top of photo mode ends it
+  useEffect(() => {
+    if (popupOpen && photoModeActive) setPhotoModeEnabled(false, 'button')
+  }, [popupOpen, photoModeActive, setPhotoModeEnabled])
   // `covered` also spans the loading overlay: it outlives the engine's own out-of-world state
   // (player spawn, render-settle, reveal debounce), so the engine can't see that tail itself.
   const covered = menuPageOpen || phase === 'welcome' || phase === 'lobby' || phase === 'entering'
@@ -3548,6 +3595,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     // the startup lobby mounts only what it opens itself; the world's hotkeys wait for the world
     if (phase === 'lobby') return
     if (hasOpenPopup()) return
+    // in photo mode only its own key and the gallery key act, and both close it
+    if (photoModeActiveRef.current) {
+      if (action === 'PhotoMode' || action === 'Gallery') setPhotoModeEnabled(false, 'shortcut')
+      if (action === 'Gallery') toggleGallery()
+      return
+    }
     // Quick emotes: while the wheel is open, QuickEmoteN plays that slot's emote (which also
     // closes the wheel). With the wheel closed a number does nothing — this covers both
     // "hold B, tap a number" and "tap B, then a number", since either way B opened the wheel.
@@ -3564,6 +3617,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       case 'Communities': toggleCommunities(); break
       case 'Backpack': toggleBackpack(); break
       case 'Gallery': toggleGallery(); break
+      case 'PhotoMode': setPhotoModeEnabled(true, 'shortcut'); break
       case 'Settings': toggleSettings(); break
       case 'Friends': toggleFriends(); break
       case 'ChatPanel': toggleChat(); break
@@ -3713,6 +3767,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     events: { open: eventsOpen, toggle: toggleEvents },
     shop: { open: shopOpen, toggle: toggleShop },
     create: { open: createOpen, toggle: toggleCreate, show: showCreate },
+    photoMode: {
+      snapshot: photoMode,
+      active: photoMode?.active ?? false,
+      capture: photoCapture,
+      set: setPhotoModeEnabled,
+      take: takePhoto
+    },
     gallery: {
       list: galleryPhotos,
       current: galleryStorage.current,

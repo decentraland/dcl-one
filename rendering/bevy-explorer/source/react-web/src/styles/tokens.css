@@ -123,6 +123,10 @@
   --dur-fast: 140ms;
   --dur-mid: 300ms;
   --dur-fade: 600ms;
+  --dur-capture: 500ms; /* photo mode: the flash and the fly-to-gallery of a taken photo */
+  --dur-capture-pause: 100ms; /* photo mode: between the flash and the fly */
+  --dur-photo-hud: 200ms; /* photo mode: its HUD fades in and out */
+  --ease-in-out: cubic-bezier(0.45, 0, 0.55, 1);
 
   /* ---- menu pages (1920×1080 reference canvas) ----
      Alphas here are sRGB equivalents of overlays designed for linear-space blending, which reads
@@ -141,6 +145,8 @@
   --white: #ffffff;
   --fill-faint: rgba(255, 255, 255, 0.06); /* hover wash on dark buttons */
   --scrim-40: rgba(0, 0, 0, 0.22);
+  --scrim-photo: rgba(0, 0, 0, 0.58); /* photo mode: 85% black outside the photo frame */
+  --splash: #ffffff; /* photo mode: the shutter flash */
   --scrim-20: rgba(0, 0, 0, 0.1);
   --divider-pink: rgba(247, 85, 255, 0.25);
   --tab-idle: rgba(120, 90, 160, 0.14); /* a faint lift on the header */
@@ -208,6 +214,7 @@
   --type-11: 11px;
   --type-12: 12px;
   --type-13: 13px;
+  --type-10: 10px;
   --type-14: 14px;
   --type-15: 15px;
   --type-16: 16px;

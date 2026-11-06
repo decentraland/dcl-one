@@ -99,6 +99,29 @@ export function CameraIcon({ size = 16, className }: GlyphProps): React.JSX.Elem
 
 // Walking-person glyph — the "too far, get closer" hover state in bevy-ui-scene used a walking-
 // figure sprite (avatar/hover-actions' unreachable icon); this is that concept re-drawn as a vector.
+/** A mouse with its left button marked: click and drag. */
+export function MouseIcon({ size = 20, className }: GlyphProps): React.JSX.Element {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
+      <rect x="5" y="3" width="14" height="19" rx="7" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M5 11h14" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M12 3v8" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M6.2 10.2V9a5.8 5.8 0 0 1 5.8-5.8v7H6.2z" fill="currentColor" />
+    </svg>
+  )
+}
+
+/** A mouse wheel with arrows: scroll. */
+export function ScrollIcon({ size = 20, className }: GlyphProps): React.JSX.Element {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
+      <rect x="5" y="3" width="14" height="19" rx="7" stroke="currentColor" strokeWidth="1.8" />
+      <rect x="10.5" y="6" width="3" height="5" rx="1.5" fill="currentColor" />
+      <path d="M12 13.5v5M10 16l2 2 2-2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 export function WalkIcon({ size = 16, className }: GlyphProps): React.JSX.Element {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true" className={className}>
