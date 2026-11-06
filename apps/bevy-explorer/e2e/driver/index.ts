@@ -2,7 +2,7 @@ export { type Console, ConsoleError, FakeConsole, normalizeLine, commandOf, reda
 export { Explorer, Hud } from './explorer.ts'
 export type { WorldState, Control, NotFound, HudRead, HudInput, HudEntry, HudState, UserData, AvatarReport, ChatHistory, ChatMessage, CommunityState, VoiceState, ScreenPosition, Position, CommandRecord, HudLoginReply } from './explorer.ts'
 export { type Selector, type SelectorObject, selectorArg } from './selectors.ts'
-export { until, settled, sleep, TimeoutError } from './wait.ts'
+export { until, sleep, TimeoutError } from './wait.ts'
 export { buildAuthIdentity, encodeIdentity, addressOf, newPrivateKey, personalSign, recoverPersonalSigner, type AuthIdentity } from './identity.ts'
 export { readTarget, accountKey, describeTarget, type Target } from './target.ts'
 export { WebConsole, findChrome } from './web.ts'

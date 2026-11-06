@@ -1,26 +1,46 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { TimeoutError, settled } from '../driver/wait.ts'
+import { TimeoutError, until } from '../driver/wait.ts'
 
-describe('settled', () => {
-  test('returns once two reads agree', async () => {
+describe('until', () => {
+  test('returns the first read that is done, without waiting out an interval first', async () => {
     let reads = 0
-    const value = await settled(async () => Math.min(3, ++reads), { timeoutMs: 1000, intervalMs: 5, what: 'the value' })
+    const value = await until(async () => ++reads, (read) => read >= 3, { timeoutMs: 1000, intervalMs: 5, what: 'the third read' })
     assert.equal(value, 3)
+    assert.equal(await until(() => 'now', () => true, { timeoutMs: 1000, intervalMs: 60_000, what: 'a ready value' }), 'now')
   })
 
-  test('returns the last read when the reads never agree', async () => {
+  test('retries a read that throws, and is done once one answers', async () => {
     let reads = 0
-    const value = await settled(async () => ++reads, { timeoutMs: 40, intervalMs: 5, what: 'the value' })
-    assert.ok(value > 1)
+    const value = await until(
+      async () => {
+        if (++reads < 3) throw new Error('not yet')
+        return 'answered'
+      },
+      () => true,
+      { timeoutMs: 1000, intervalMs: 5, what: 'an answer' }
+    )
+    assert.equal(value, 'answered')
   })
 
-  test('strict, throws a TimeoutError naming what never held still', async () => {
-    let reads = 0
-    await assert.rejects(settled(async () => ++reads, { timeoutMs: 40, intervalMs: 5, what: 'the button to hold still', strict: true }), (error: unknown) => {
+  test('is a TimeoutError naming what it waited for once the ceiling passes', async () => {
+    await assert.rejects(until(async () => 'busy', (read) => read === 'ready', { timeoutMs: 30, intervalMs: 5, what: 'the grid to be ready' }), (error: unknown) => {
       assert.ok(error instanceof TimeoutError)
-      assert.match(error.message, /waiting for the button to hold still/)
+      assert.match(error.message, /waiting for the grid to be ready/)
       return true
     })
+  })
+
+  test("rethrows the read's last error when the ceiling passes on one", async () => {
+    await assert.rejects(
+      until(
+        async () => {
+          throw new Error('no HUD page')
+        },
+        () => true,
+        { timeoutMs: 30, intervalMs: 5, what: 'the HUD' }
+      ),
+      /no HUD page/
+    )
   })
 })
