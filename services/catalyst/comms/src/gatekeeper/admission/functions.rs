@@ -78,6 +78,21 @@ pub fn social_functions_sql(replace: bool) -> String {
     ALL.map(|function| function.sql(replace)).join("\n")
 }
 
+/// Bound the caller's wait, including pool acquisition. Dropping the future
+/// does not assert that a dispatched server statement was cancelled.
+pub(crate) async fn bounded<T>(
+    operation: impl std::future::Future<Output = Result<T, sqlx::Error>>,
+) -> Result<T, sqlx::Error> {
+    tokio::time::timeout(std::time::Duration::from_secs(1), operation)
+        .await
+        .map_err(|_| {
+            sqlx::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "world admission database operation timed out",
+            ))
+        })?
+}
+
 pub(crate) struct Installed {
     pub stamp: String,
     pub refund: String,

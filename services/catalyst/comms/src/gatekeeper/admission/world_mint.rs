@@ -97,7 +97,7 @@ impl SecretThrottle<'_> {
         if invalid_secret {
             return;
         }
-        let result = async {
+        let result = super::functions::bounded(async {
             let functions = super::functions::installed(self.pool).await?;
             sqlx::query(sqlx::AssertSqlSafe(format!(
                 "SELECT social.{}($1,$2,$3)",
@@ -108,7 +108,7 @@ impl SecretThrottle<'_> {
             .bind(reservation.window)
             .execute(self.pool)
             .await
-        }
+        })
         .await;
         if let Err(error) = result {
             tracing::warn!(%error, world=self.world, "world secret reservation refund failed; charge expires with its window");
@@ -143,15 +143,18 @@ pub(crate) async fn authorization_started(
     pool: &PgPool,
     world: &WorldName,
 ) -> Result<NaiveDateTime, sqlx::Error> {
-    let functions = super::functions::installed(pool).await?;
-    let started: Option<NaiveDateTime> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "SELECT social.{}($1)",
-        functions.stamp
-    )))
-    .bind(world.key())
-    .fetch_one(pool)
-    .await?;
-    started.ok_or(sqlx::Error::RowNotFound)
+    super::functions::bounded(async {
+        let functions = super::functions::installed(pool).await?;
+        let started: Option<NaiveDateTime> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT social.{}($1)",
+            functions.stamp
+        )))
+        .bind(world.key())
+        .fetch_one(pool)
+        .await?;
+        started.ok_or(sqlx::Error::RowNotFound)
+    })
+    .await
 }
 
 pub(crate) const AUTHORIZATION_FIELD: &str = "worldAuthorization";

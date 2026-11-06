@@ -976,7 +976,12 @@ required functions are missing.
 
 The stamp retains `FOR SHARE`. It must wait for non-key access updates from older
 binaries as well as newer access writers. A function-local 500 ms lock timeout
-restores the caller's setting after success or failure. Refunds lock and modify
+restores the caller's setting after success or failure. A one-second client deadline
+bounds the stamp and refund wait, including pool acquisition. The server retains
+the pool's configured statement timeout; a client timeout does not prove that a
+dispatched server statement stopped. Stamp timeouts return unavailable, and a
+refund timeout leaves the reservation to expire unless its dispatched refund completes.
+Refunds lock and modify
 only the exact caller window charged by the reservation; the positive-attempt
 constraint and the existing table layout remain unchanged.
 
