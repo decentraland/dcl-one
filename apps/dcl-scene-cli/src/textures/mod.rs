@@ -1,21 +1,29 @@
-//! `--optimize-textures` on `start` and `deploy`: the images GLB and glTF
-//! models sample become UASTC KTX2 files (`KHR_texture_basisu`), staged under
-//! [`STAGE`] and laid over the scene's file list. The creator's files are
-//! never written to: rewritten models and new `.ktx2` files live in the
-//! staging directory, and an original image only drops out of the published
-//! list ([`Overlay::removed`]).
+//! Optimized textures: the images GLB and glTF models sample become UASTC
+//! KTX2 files (`KHR_texture_basisu`), staged under [`STAGE`] and laid over the
+//! scene's file list. The creator's files are never written to: rewritten
+//! models and new `.ktx2` files live in the staging directory, and an original
+//! image only drops out of the published list ([`Overlay::removed`]).
+//!
+//! `start` imports in the background ([`import`]), always, like a game
+//! engine's asset import: every run fills the cache, and its finished overlay
+//! replaces the previous one in one swap. Whether the overlay is applied is
+//! the project's setting ([`settings`]). `deploy` finishes whatever the cache
+//! lacks in the foreground ([`stage_for_deploy`]).
 //!
 //! The overlay is applied where the payload is decided — `deploy`'s
 //! `with_release_files`/`payload_path` and the preview's scene entity and
 //! `/content/contents` — so the preview serves exactly the bytes a deploy
-//! uploads. Nothing is registered unless the flag is given, and with nothing
-//! registered every function here hands its input back unchanged.
+//! uploads. With no enabled overlay registered every function here hands its
+//! input back unchanged.
 
 mod basisu;
 mod encode;
 mod gltf;
+pub mod import;
+pub mod settings;
 
 pub use encode::Encoder;
+pub use settings::{Overrides, ProjectSettings};
 
 use crate::ux;
 use anyhow::{Context, Result};
@@ -42,6 +50,11 @@ pub fn published_ktx2(model_rel: &str, ktx2_sha: &str) -> String {
         None => format!("{ktx2_sha}.ktx2"),
     }
 }
+/// The background import's manifest, read back by `deploy` to compare which
+/// originals each left out.
+pub const PREVIEW_MANIFEST: &str = "manifest.json";
+/// The last deploy's manifest.
+pub const DEPLOY_MANIFEST: &str = "deploy-manifest.json";
 /// Files searched for an original image's name before it is left out: the
 /// bundle and its chunks, `main.crdt`, composites, `scene.json` and other
 /// JSON the scene publishes.
@@ -72,11 +85,21 @@ impl ColorMode {
     }
 }
 
+/// How one run encodes and what it leaves out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings {
     /// `--keep-source-textures`: publish every original image, replaced or not.
     pub keep_source_textures: bool,
     pub max_size: u32,
+}
+
+impl Settings {
+    pub fn for_project(project: ProjectSettings) -> Self {
+        Settings {
+            keep_source_textures: project.keep_source_textures,
+            ..Default::default()
+        }
+    }
 }
 
 impl Default for Settings {
@@ -119,13 +142,18 @@ impl Overlay {
 /// A file as last seen: a moved stamp means the inputs changed.
 type Stamp = (String, u64, Option<SystemTime>);
 
+/// One project's last finished run.
+#[derive(Clone, Debug, Default)]
 struct Entry {
+    /// The project setting the run read: whether the overlay is applied.
+    enabled: bool,
     settings: Settings,
     overlay: Option<Arc<Overlay>>,
+    /// The inputs the overlay was built from; `None` forces the next run.
     stamps: Option<Vec<Stamp>>,
 }
 
-/// Projects this process optimizes, by canonical root.
+/// Projects this process has imported, by canonical root.
 fn registry() -> MutexGuard<'static, HashMap<PathBuf, Entry>> {
     static REGISTRY: OnceLock<Mutex<HashMap<PathBuf, Entry>>> = OnceLock::new();
     REGISTRY
@@ -134,26 +162,30 @@ fn registry() -> MutexGuard<'static, HashMap<PathBuf, Entry>> {
         .unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Opts `root` in for this process; [`refresh`] then builds its overlay.
-pub fn enable(root: &Path, settings: Settings) {
-    let mut reg = registry();
-    let entry = reg.entry(root.to_path_buf()).or_insert(Entry {
-        settings,
-        overlay: None,
-        stamps: None,
-    });
-    if entry.settings != settings {
-        entry.settings = settings;
-        entry.stamps = None;
-    }
-}
+/// One run at a time in this process, background or deploy: a deploy holds
+/// it from its own run until its payload is read, so no background swap or
+/// prune lands in between.
+static RUN_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-pub fn settings(root: &Path) -> Option<Settings> {
-    registry().get(root).map(|e| e.settings)
-}
-
+/// The overlay the preview and payload apply: the last finished run's, when
+/// the project enables it.
 fn overlay(root: &Path) -> Option<Arc<Overlay>> {
-    registry().get(root)?.overlay.clone()
+    let reg = registry();
+    let entry = reg.get(root)?;
+    entry.overlay.clone().filter(|_| entry.enabled)
+}
+
+/// Replaces `root`'s entry in one step and says whether what a client sees
+/// changed: the overlay's files, or whether it is applied.
+fn swap(root: &Path, next: Entry) -> bool {
+    let mut reg = registry();
+    let previous = reg.insert(root.to_path_buf(), next.clone());
+    let (was_enabled, was) = match &previous {
+        Some(e) => (e.enabled, e.overlay.as_deref().cloned().unwrap_or_default()),
+        None => (false, Overlay::default()),
+    };
+    let now = next.overlay.as_deref().cloned().unwrap_or_default();
+    was_enabled != next.enabled || was != now
 }
 
 /// The published list with the overlay applied; `rels` itself when `root`
@@ -179,52 +211,191 @@ fn stamp(rel: &str, path: &Path) -> Stamp {
     )
 }
 
-/// Rebuilds `root`'s overlay when its inputs moved: `Some` with what changed,
-/// `None` when the project is not optimized or nothing moved since the last
-/// run. An error leaves the previous overlay in place.
-pub fn refresh(root: &Path) -> Result<Option<Summary>> {
-    static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
-    let _turn = ONE_AT_A_TIME
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    let Some(settings) = settings(root) else {
-        return Ok(None);
-    };
-    let rels = crate::deploy::collect_publishable_files(root)?;
-    let stamps: Vec<Stamp> = rels
-        .iter()
+fn stamps_of(root: &Path, rels: &[String]) -> Vec<Stamp> {
+    rels.iter()
         .map(|rel| stamp(rel, &crate::deploy::tree_payload_path(root, rel)))
-        .collect();
-    let unchanged = registry().get(root).is_some_and(|e| {
-        e.stamps.as_ref() == Some(&stamps)
-            && e.overlay
-                .as_ref()
-                .is_some_and(|o| o.sources.values().all(|staged| staged.is_file()))
-    });
-    if unchanged {
-        return Ok(None);
-    }
-    let encoder = basisu::WasmBasisu::shared()?;
-    let outcome = optimize(root, &rels, settings, encoder, &|rel| {
-        crate::deploy::tree_payload_path(root, rel)
-    })?;
-    if let Some(entry) = registry().get_mut(root) {
-        entry.overlay = Some(Arc::new(outcome.overlay));
-        entry.stamps = Some(stamps);
-    }
-    Ok(Some(outcome.summary))
+        .collect()
 }
 
-/// [`refresh`] with a progress line and the summary printed (a one-line
-/// summary when `brief`); `quiet` prints nothing.
-pub fn refresh_and_report(root: &Path, quiet: bool, brief: bool) -> Result<()> {
-    let progress = (!quiet).then(|| ux::Slow::start("optimizing textures"));
-    let result = refresh(root);
-    drop(progress);
-    if let (Ok(Some(summary)), false) = (&result, quiet) {
-        summary.report(brief);
+/// While held, the payload `deploy` reads carries its own run's overlay (or
+/// none, with the setting off); dropping it puts back what the preview had
+/// and asks the background import, if any, to catch up.
+pub struct DeployStage {
+    root: PathBuf,
+    previous: Option<Entry>,
+    _turn: tokio::sync::MutexGuard<'static, ()>,
+}
+
+impl Drop for DeployStage {
+    fn drop(&mut self) {
+        {
+            let mut reg = registry();
+            match self.previous.take() {
+                Some(entry) => reg.insert(self.root.clone(), entry),
+                None => reg.remove(&self.root),
+            };
+        }
+        import::request(&self.root);
     }
-    result.map(|_| ())
+}
+
+/// `deploy`, after the build and before the payload is read: applies the
+/// command line's `overrides` to the project setting and, when it is on,
+/// runs over the release payload. Textures the cache has (the preview's
+/// background import put them there) cost nothing; the rest are encoded here
+/// with a progress line. A run that fails stops the deploy rather than
+/// publishing a half-optimized scene; a texture that fails alone keeps its
+/// original.
+pub async fn stage_for_deploy(root: &Path, overrides: Overrides, quiet: bool) -> Result<DeployStage> {
+    let project = settings::apply(root, overrides)?;
+    let turn = match RUN_LOCK.try_lock() {
+        Ok(turn) => turn,
+        Err(_) => {
+            if !quiet {
+                ux::note("waiting for the texture import in progress");
+            }
+            RUN_LOCK.lock().await
+        }
+    };
+    let previous = registry().get(root).cloned();
+    let stage = DeployStage {
+        root: root.to_path_buf(),
+        previous,
+        _turn: turn,
+    };
+    let settings = Settings::for_project(project);
+    if !project.optimize_textures {
+        swap(root, Entry {
+            enabled: false,
+            settings,
+            overlay: None,
+            stamps: None,
+        });
+        return Ok(stage);
+    }
+    let owned = root.to_path_buf();
+    let overlay = tokio::task::spawn_blocking(move || deploy_run(&owned, settings, quiet))
+        .await
+        .context("the texture optimizer stopped")??;
+    swap(root, Entry {
+        enabled: true,
+        settings,
+        overlay: Some(Arc::new(overlay)),
+        stamps: None,
+    });
+    Ok(stage)
+}
+
+/// One foreground run for `deploy`, on every core: the release bundle is the
+/// one searched for names, since it is the one uploaded.
+fn deploy_run(root: &Path, settings: Settings, quiet: bool) -> Result<Overlay> {
+    let rels = crate::deploy::collect_publishable_files(root)?;
+    let encoder = basisu::WasmBasisu::shared()?;
+    let line = (!quiet).then(|| ux::Slow::start("optimizing textures"));
+    let announced = std::sync::atomic::AtomicBool::new(false);
+    let progress = |p: Progress| {
+        let Some(line) = &line else { return };
+        if !announced.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            ux::note(format!(
+                "encoding {} of {} texture(s) the cache does not have yet",
+                p.total - p.done,
+                p.total
+            ));
+        }
+        line.set_detail(format!("{}/{}", p.done, p.total));
+    };
+    let outcome = optimize(
+        root,
+        &rels,
+        settings,
+        encoder,
+        &|rel| crate::deploy::tree_payload_path(root, rel),
+        &Run {
+            workers: encode::workers(),
+            progress: &progress,
+        },
+    )
+    .context("optimizing textures (pass --no-optimize-textures to publish the original files)")?;
+    drop(line);
+    write_manifest(root, DEPLOY_MANIFEST, &outcome.manifest)?;
+    if !quiet {
+        outcome.summary.report(false, DEPLOY_MANIFEST);
+    }
+    if !outcome.summary.ignored.is_empty() {
+        ux::note_absent(ignored_warning(outcome.summary.ignored.len()));
+    }
+    if let Some(preview) = read_manifest(root, PREVIEW_MANIFEST)
+        && let Some(warning) = ignore_difference_warning(&preview, &outcome.overlay.removed)
+    {
+        ux::note_absent(warning);
+    }
+    Ok(outcome.overlay)
+}
+
+/// The deploy's loud line about originals left out.
+pub fn ignored_warning(count: usize) -> String {
+    format!(
+        "{count} original image(s) left out of the upload; scene code that builds texture paths at \
+         runtime would 404 for them \u{2014} check the preview or use --keep-source-textures"
+    )
+}
+
+/// Which originals the preview's last run left out and this deploy keeps, and
+/// the reverse; `None` when they agree. The preview searches the dev bundle,
+/// a deploy the release bundle, so a name only one of them carries moves an
+/// image across.
+pub fn ignore_difference_warning(preview_manifest: &Value, deployed: &BTreeSet<String>) -> Option<String> {
+    let previewed: BTreeSet<String> = preview_manifest["ignoredOriginals"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e["path"].as_str().map(str::to_string))
+        .collect();
+    let only_preview: Vec<&String> = previewed.difference(deployed).collect();
+    let only_deploy: Vec<&String> = deployed.difference(&previewed).collect();
+    if only_preview.is_empty() && only_deploy.is_empty() {
+        return None;
+    }
+    let list = |v: &[&String]| match v.is_empty() {
+        true => "none".to_string(),
+        false => v.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "),
+    };
+    Some(format!(
+        "the deploy leaves out different originals than the preview did (the release bundle is \
+         searched, not the preview's): uploaded now but left out in the preview: {}; left out now \
+         but served in the preview: {}",
+        list(&only_preview),
+        list(&only_deploy)
+    ))
+}
+
+fn manifest_path(root: &Path, name: &str) -> PathBuf {
+    root.join(STAGE).join(name)
+}
+
+fn write_manifest(root: &Path, name: &str, manifest: &Value) -> Result<()> {
+    let mut text = serde_json::to_vec_pretty(manifest).expect("JSON values serialize");
+    text.push(b'\n');
+    write_if_changed(&manifest_path(root, name), &text).context("writing the texture manifest")
+}
+
+fn read_manifest(root: &Path, name: &str) -> Option<Value> {
+    serde_json::from_slice(&std::fs::read(manifest_path(root, name)).ok()?).ok()
+}
+
+/// How far a run is: `done` of `total` distinct textures, cached ones
+/// included. Reported only by runs that encode something.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Progress {
+    pub done: usize,
+    pub total: usize,
+    pub failed: usize,
+}
+
+/// How [`optimize`] runs: encoder threads and where progress goes.
+pub(crate) struct Run<'a> {
+    pub workers: usize,
+    pub progress: &'a (dyn Fn(Progress) + Sync),
 }
 
 /// What one run did, for the terminal.
@@ -245,10 +416,20 @@ pub struct Summary {
     pub ignored: Vec<String>,
     pub kept_originals: Vec<(String, String)>,
     pub mixed: Vec<String>,
+    /// Distinct textures this run handled, and those that failed to encode.
+    pub total: usize,
+    pub failed: usize,
+    /// Source bytes of the images replaced, and the KTX2 bytes replacing
+    /// them, each distinct texture once.
+    pub converted_bytes: u64,
+    pub ktx2_bytes: u64,
 }
 
 impl Summary {
-    pub fn report(&self, brief: bool) {
+    /// The run's lines; `manifest` names the file with the details. The
+    /// originals left out are said by the caller: softly by the preview,
+    /// loudly by a deploy ([`ignored_warning`]).
+    pub fn report(&self, brief: bool, manifest: &str) {
         use crate::deploy::human_size;
         if self.models == 0 {
             ux::note_arrow(format!(
@@ -267,12 +448,6 @@ impl Summary {
             human_size(self.bytes_before),
             human_size(self.bytes_after),
         ));
-        if !self.ignored.is_empty() {
-            ux::note(format!(
-                "{} original image(s) left out of the upload: only models used them (--keep-source-textures keeps them)",
-                self.ignored.len()
-            ));
-        }
         if brief {
             return;
         }
@@ -294,7 +469,7 @@ impl Summary {
             ));
         }
         ux::note_absent(KTX2_WARNING);
-        ux::note(format!("details: {STAGE}/manifest.json"));
+        ux::note(format!("details: {STAGE}/{manifest}"));
     }
 }
 
@@ -388,25 +563,31 @@ fn is_sha_hex(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// One texture: from the cache when this encoder already encoded these
-/// source bytes this way, else prepared and encoded, its KTX2 stored by
+fn cache_entry(stage: &Path, job: &Job, encoder: &dyn Encoder, max_size: u32) -> PathBuf {
+    let key = encode::cache_key(&job.sha, encoder.id(), job.mode, max_size);
+    stage.join("cache").join(key)
+}
+
+/// One texture from the cache, when this encoder already encoded these
+/// source bytes this way.
+fn cached(stage: &Path, job: &Job, encoder: &dyn Encoder, max_size: u32) -> Option<Encoded> {
+    let text = std::fs::read_to_string(cache_entry(stage, job, encoder, max_size)).ok()?;
+    let sha = text.trim();
+    if !is_sha_hex(sha) {
+        return None;
+    }
+    let meta = std::fs::metadata(ktx2_path(stage, sha)).ok()?;
+    (meta.len() > 0).then(|| Encoded::Ok {
+        ktx2_sha: sha.to_string(),
+        len: meta.len(),
+        cached: true,
+    })
+}
+
+/// One texture not in the cache: prepared and encoded, its KTX2 stored by
 /// content hash and the cache pointed at it.
 fn encode_one(stage: &Path, job: &Job, encoder: &dyn Encoder, max_size: u32) -> Encoded {
-    let key = encode::cache_key(&job.sha, encoder.id(), job.mode, max_size);
-    let entry = stage.join("cache").join(&key);
-    if let Ok(text) = std::fs::read_to_string(&entry) {
-        let sha = text.trim();
-        if is_sha_hex(sha)
-            && let Ok(meta) = std::fs::metadata(ktx2_path(stage, sha))
-            && meta.len() > 0
-        {
-            return Encoded::Ok {
-                ktx2_sha: sha.to_string(),
-                len: meta.len(),
-                cached: true,
-            };
-        }
-    }
+    let entry = cache_entry(stage, job, encoder, max_size);
     let png = match encode::prepare(&job.bytes, max_size) {
         Ok(png) => png,
         Err(why) => return Encoded::Failed(why),
@@ -428,36 +609,65 @@ fn encode_one(stage: &Path, job: &Job, encoder: &dyn Encoder, max_size: u32) -> 
     }
 }
 
-/// Deletes staged models no longer in the overlay.
-fn prune_models(dir: &Path, base: &Path, keep: &BTreeSet<String>) {
-    let Ok(rd) = std::fs::read_dir(dir) else {
+/// Where a rewritten model is staged: named by its bytes, so a run never
+/// rewrites a file the overlay in use names, and the swap to the next
+/// overlay is the only moment the preview's bytes change.
+fn staged_model_path(stage: &Path, model_rel: &str, bytes: &[u8]) -> PathBuf {
+    let ext = match model_rel.to_ascii_lowercase().ends_with(".gltf") {
+        true => "gltf",
+        false => "glb",
+    };
+    stage
+        .join("models")
+        .join(format!("{}.{ext}", encode::sha256_hex(bytes)))
+}
+
+/// Deletes staged models the overlay now in place does not name; called
+/// after the swap.
+fn prune_models(stage: &Path, keep: &Overlay) {
+    let keep: BTreeSet<&Path> = keep.sources.values().map(PathBuf::as_path).collect();
+    let Ok(rd) = std::fs::read_dir(stage.join("models")) else {
         return;
     };
     for entry in rd.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            prune_models(&path, base, keep);
-            let _ = std::fs::remove_dir(&path);
-        } else if let Ok(rel) = path.strip_prefix(base) {
-            let rel = rel.to_string_lossy().replace('\\', "/");
-            if !keep.contains(&rel) {
-                let _ = std::fs::remove_file(&path);
-            }
+            // the layout before models were named by content
+            let _ = std::fs::remove_dir_all(&path);
+        } else if !keep.contains(path.as_path()) {
+            let _ = std::fs::remove_file(&path);
         }
     }
 }
 
+/// Whether `text` names the image file `rel`: its file name anywhere, or its
+/// bare stem as a quoted string (`'wall'`, `"wall"`, `` `wall` ``), the shape
+/// of code that appends the extension itself. `text` is lowercase.
+fn names_image(text: &str, rel: &str) -> bool {
+    let name = rel.rsplit('/').next().unwrap_or(rel).to_lowercase();
+    if text.contains(&name) {
+        return true;
+    }
+    let stem = name.rsplit_once('.').map_or(name.as_str(), |(stem, _)| stem);
+    !stem.is_empty()
+        && ['\'', '"', '`']
+            .iter()
+            .any(|q| text.contains(&format!("{q}{stem}{q}")))
+}
+
 /// One full run over the publishable files `rels` of `root`: plan every
-/// model's images, encode what is not cached (one encoder per core), stage
-/// the rewritten models, decide which originals drop out, and write the
-/// manifest. `payload` is where a published file's bytes are read from
-/// (the release copy of a bundle, when a deploy built one).
+/// model's images, encode what is not cached (`run.workers` encoders),
+/// stage the rewritten models and decide which originals drop out. Nothing
+/// is applied here: the caller swaps the overlay in and writes the
+/// manifest. `payload` is where a published file's bytes are read from (the
+/// release copy of a bundle, when a deploy built one).
 pub(crate) fn optimize(
     root: &Path,
     rels: &[String],
     settings: Settings,
     encoder: &dyn Encoder,
     payload: &dyn Fn(&str) -> PathBuf,
+    run: &Run<'_>,
 ) -> Result<Outcome> {
     crate::scene::work_dir(root).context("creating .dcl-one")?;
     let stage = root.join(STAGE);
@@ -547,26 +757,58 @@ pub(crate) fn optimize(
         });
     }
 
-    let results = encode::run_pool(&jobs, encode::workers(), |job| {
-        encode_one(&stage, job, encoder, settings.max_size)
-    });
+    let mut results: Vec<Option<Encoded>> = jobs
+        .iter()
+        .map(|job| cached(&stage, job, encoder, settings.max_size))
+        .collect();
+    let missing: Vec<usize> = (0..jobs.len()).filter(|&i| results[i].is_none()).collect();
+    if !missing.is_empty() {
+        let done = std::sync::atomic::AtomicUsize::new(jobs.len() - missing.len());
+        let failed = std::sync::atomic::AtomicUsize::new(0);
+        let report = |done: usize| {
+            (run.progress)(Progress {
+                done,
+                total: jobs.len(),
+                failed: failed.load(std::sync::atomic::Ordering::Relaxed),
+            })
+        };
+        report(done.load(std::sync::atomic::Ordering::Relaxed));
+        let encoded = encode::run_pool(&missing, run.workers, |&i| {
+            let result = encode_one(&stage, &jobs[i], encoder, settings.max_size);
+            if matches!(result, Encoded::Failed(_)) {
+                failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            report(done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1);
+            result
+        });
+        for (i, result) in missing.into_iter().zip(encoded) {
+            results[i] = Some(result);
+        }
+    }
+    let results: Vec<Encoded> = results
+        .into_iter()
+        .map(|r| r.expect("every job is cached or encoded"))
+        .collect();
 
     let mut overlay = Overlay::default();
-    let mut summary = Summary::default();
+    let mut summary = Summary {
+        total: jobs.len(),
+        ..Summary::default()
+    };
     for result in &results {
         match result {
             Encoded::Ok { cached: true, .. } => summary.cached += 1,
             Encoded::Ok { cached: false, .. } => summary.encoded += 1,
-            Encoded::Failed(_) => {}
+            Encoded::Failed(_) => summary.failed += 1,
         }
     }
+    let mut converted_jobs: BTreeSet<usize> = BTreeSet::new();
     // per original image file: replaced somewhere, and kept anywhere
     let mut replaced_files: BTreeSet<String> = BTreeSet::new();
     let mut kept_files: BTreeSet<String> = BTreeSet::new();
     let mut textures: BTreeMap<String, Value> = BTreeMap::new();
     let mut counted_ktx2: BTreeSet<String> = BTreeSet::new();
     let mut model_entries: Vec<Value> = Vec::new();
-    let mut staged_models: BTreeSet<String> = BTreeSet::new();
     for work in models {
         let mut replacements: BTreeMap<usize, String> = BTreeMap::new();
         for image in &work.images {
@@ -606,6 +848,9 @@ pub(crate) fn optimize(
                         len,
                         cached,
                     } => {
+                        if converted_jobs.insert(*job) {
+                            summary.converted_bytes += source_len;
+                        }
                         let ktx2_rel = published_ktx2(&work.rel, ktx2_sha);
                         let uri = gltf::relative_uri(&work.rel, &ktx2_rel);
                         replacements.insert(image.index, uri);
@@ -622,6 +867,7 @@ pub(crate) fn optimize(
                         // one upload per distinct KTX2, however many folders publish it
                         if counted_ktx2.insert(ktx2_sha.clone()) {
                             summary.bytes_after += len;
+                            summary.ktx2_bytes += len;
                         }
                         let entry = textures.entry(ktx2_rel).or_insert_with(|| {
                             json!({
@@ -645,7 +891,7 @@ pub(crate) fn optimize(
         let mut model = work.model;
         let repacked = gltf::apply(&mut model, &replacements);
         let bytes = model.to_bytes();
-        let staged = stage.join("models").join(&work.rel);
+        let staged = staged_model_path(&stage, &work.rel, &bytes);
         write_if_changed(&staged, &bytes)
             .with_context(|| format!("staging {}", staged.display()))?;
         summary.models += 1;
@@ -653,16 +899,18 @@ pub(crate) fn optimize(
         summary.bytes_after += bytes.len() as u64;
         model_entries.push(json!({
             "path": work.rel,
-            "staged": format!("{STAGE}/models/{}", work.rel),
+            "staged": staged
+                .strip_prefix(root)
+                .unwrap_or(&staged)
+                .to_string_lossy()
+                .replace('\\', "/"),
             "sourceBytes": work.original_len,
             "optimizedBytes": bytes.len(),
             "texturesReplaced": replacements.len(),
             "binaryChunkRepacked": repacked,
         }));
-        staged_models.insert(work.rel.clone());
         overlay.sources.insert(work.rel, staged);
     }
-    prune_models(&stage.join("models"), &stage.join("models"), &staged_models);
 
     // an original image drops out only if every model naming it was rewritten
     // without it, and no scene code, scene data or composite names it
@@ -683,12 +931,7 @@ pub(crate) fn optimize(
             .collect();
         texts.extend(unparsed);
         for candidate in candidates {
-            let name = candidate
-                .rsplit('/')
-                .next()
-                .unwrap_or(&candidate)
-                .to_lowercase();
-            match texts.iter().find(|(_, text)| text.contains(&name)) {
+            match texts.iter().find(|(_, text)| names_image(text, &candidate)) {
                 Some((file, _)) => summary
                     .kept_originals
                     .push((candidate, format!("referenced by scene code ({file})"))),
@@ -725,6 +968,7 @@ pub(crate) fn optimize(
         .map(|path| json!({ "path": path, "reason": IGNORED_REASON }))
         .collect();
     let manifest = json!({
+        "keepSourceTextures": settings.keep_source_textures,
         "encoder": {
             "id": encoder.id(),
             "maxTextureSize": settings.max_size,
@@ -737,9 +981,6 @@ pub(crate) fn optimize(
         "mixedColorUse": summary.mixed,
         "bytes": {"before": summary.bytes_before, "after": summary.bytes_after},
     });
-    let mut text = serde_json::to_vec_pretty(&manifest).expect("JSON values serialize");
-    text.push(b'\n');
-    write_if_changed(&stage.join("manifest.json"), &text).context("writing the manifest")?;
     Ok(Outcome {
         overlay,
         summary,

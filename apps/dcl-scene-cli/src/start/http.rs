@@ -54,14 +54,33 @@ pub(super) async fn root(State(st): State<Arc<AppState>>, req: Request) -> Respo
             // has completed gets every reload sent from then on, including one
             // sent before the socket's task first runs.
             let rx = st.reload_tx.subscribe();
-            upgrade.on_upgrade(move |socket| handle_ws(socket, rx))
+            // the texture import's last status, so a client that connects
+            // mid-run or after a run it missed can still offer the reload
+            let first = super::texture_status_frames(&st);
+            upgrade.on_upgrade(move |socket| handle_ws(socket, rx, first))
         }
         Err(e) => e.into_response(),
     }
 }
 
-async fn handle_ws(socket: axum::extract::ws::WebSocket, mut rx: broadcast::Receiver<ReloadFrame>) {
+fn ws_message(frame: ReloadFrame) -> Message {
+    match frame {
+        ReloadFrame::Text(text) => Message::Text(text.into()),
+        ReloadFrame::Binary(bytes) => Message::Binary(bytes.into()),
+    }
+}
+
+async fn handle_ws(
+    socket: axum::extract::ws::WebSocket,
+    mut rx: broadcast::Receiver<ReloadFrame>,
+    first: Vec<ReloadFrame>,
+) {
     let (mut sink, mut stream) = socket.split();
+    for frame in first {
+        if sink.send(ws_message(frame)).await.is_err() {
+            return;
+        }
+    }
     let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(20));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     tracing::info!("scene-update websocket client connected");
@@ -74,11 +93,7 @@ async fn handle_ws(socket: axum::extract::ws::WebSocket, mut rx: broadcast::Rece
             },
             msg = rx.recv() => match msg {
                 Ok(frame) => {
-                    let message = match frame {
-                        ReloadFrame::Text(text) => Message::Text(text.into()),
-                        ReloadFrame::Binary(bytes) => Message::Binary(bytes.into()),
-                    };
-                    if sink.send(message).await.is_err() {
+                    if sink.send(ws_message(frame)).await.is_err() {
                         break;
                     }
                 }

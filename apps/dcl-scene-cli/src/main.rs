@@ -298,17 +298,8 @@ enum Command {
             help = "The web explorer --talk opens; DCL_SCENE_CLI_WEB_EXPLORER otherwise, and the build's site player (<DCL_SCENE_CLI_SITE>/play) when neither is set"
         )]
         player: Option<String>,
-        #[arg(
-            long,
-            help = "Convert the textures GLB and glTF models use to UASTC KTX2 (KHR_texture_basisu) and serve those: the files a deploy from this preview uploads, staged under .dcl-one/optimized-textures; your files are never changed. Clients without KTX2 support show those models untextured"
-        )]
-        optimize_textures: bool,
-        #[arg(
-            long,
-            requires = "optimize_textures",
-            help = "With --optimize-textures, still publish every original image, including those only models used"
-        )]
-        keep_source_textures: bool,
+        #[command(flatten)]
+        textures: TextureFlags,
     },
     #[command(
         about = "Run the scene's authoritative-server isolate against a running preview's room"
@@ -390,17 +381,8 @@ enum Command {
             help = "Port for the local signing page (default: loopback, ephemeral)"
         )]
         port: Option<u16>,
-        #[arg(
-            long,
-            help = "Convert the textures GLB and glTF models use to UASTC KTX2 (KHR_texture_basisu) and publish those, staged under .dcl-one/optimized-textures; your files are never changed. Clients without KTX2 support show those models untextured"
-        )]
-        optimize_textures: bool,
-        #[arg(
-            long,
-            requires = "optimize_textures",
-            help = "With --optimize-textures, still publish every original image, including those only models used"
-        )]
-        keep_source_textures: bool,
+        #[command(flatten)]
+        textures: TextureFlags,
     },
     #[command(
         about = "Remove a LAND scene published to a dcl-one-style content server (signed request)"
@@ -840,8 +822,7 @@ async fn run(command: Command) -> Result<()> {
             no_host,
             talk,
             player,
-            optimize_textures,
-            keep_source_textures,
+            textures,
         } => {
             if tunnel.as_deref().map(str::trim) == Some("help") {
                 println!("{}", dcl_scene_cli::tunnel::tunnel_help());
@@ -912,7 +893,7 @@ async fn run(command: Command) -> Result<()> {
                     player,
                     open_browser: !no_browser,
                 }),
-                textures: texture_settings(optimize_textures, keep_source_textures),
+                textures: textures.overrides(),
             })
             .await
         }
@@ -934,8 +915,7 @@ async fn run(command: Command) -> Result<()> {
             no_browser,
             ci,
             port,
-            optimize_textures,
-            keep_source_textures,
+            textures,
         } => deploy::deploy(&deploy::DeployOptions {
             dir,
             target,
@@ -954,7 +934,7 @@ async fn run(command: Command) -> Result<()> {
             quiet: false,
             host_signer: None,
             identity: None,
-            textures: texture_settings(optimize_textures, keep_source_textures),
+            textures: textures.overrides(),
         })
         .await
         .map(|_| ()),
@@ -981,16 +961,40 @@ async fn run(command: Command) -> Result<()> {
     }
 }
 
-/// `--optimize-textures` and `--keep-source-textures` as the settings
-/// `start` and `deploy` take; `None` leaves every payload as it was.
-fn texture_settings(
-    optimize: bool,
-    keep_sources: bool,
-) -> Option<dcl_scene_cli::textures::Settings> {
-    optimize.then(|| dcl_scene_cli::textures::Settings {
-        keep_source_textures: keep_sources,
-        ..Default::default()
-    })
+/// The texture setting `start` and `deploy` store in `.dcl-one/settings.json`;
+/// a flag left out keeps the stored value (off when none is stored).
+#[derive(Args)]
+struct TextureFlags {
+    #[arg(
+        long,
+        conflicts_with = "no_optimize_textures",
+        help = "Serve and publish the textures GLB and glTF models use as UASTC KTX2 (KHR_texture_basisu), staged under .dcl-one/optimized-textures; your files are never changed. Stored for this project. Clients without KTX2 support show those models untextured"
+    )]
+    optimize_textures: bool,
+    #[arg(long, help = "Serve and publish the original textures again (stored)")]
+    no_optimize_textures: bool,
+    #[arg(
+        long,
+        conflicts_with = "no_keep_source_textures",
+        help = "With optimized textures, still publish every original image, including those only models used (stored)"
+    )]
+    keep_source_textures: bool,
+    #[arg(
+        long,
+        help = "Leave out original images only models used and no scene file names (stored)"
+    )]
+    no_keep_source_textures: bool,
+}
+
+impl TextureFlags {
+    fn overrides(&self) -> dcl_scene_cli::textures::Overrides {
+        dcl_scene_cli::textures::Overrides::from_flags(
+            self.optimize_textures,
+            self.no_optimize_textures,
+            self.keep_source_textures,
+            self.no_keep_source_textures,
+        )
+    }
 }
 
 async fn run_world(command: WorldCommand) -> Result<()> {
@@ -1296,5 +1300,47 @@ mod tests {
             mcp_flags(&["--mcp-port", "8123"]).2,
             Some(joinblock::DEFAULT_EXPLORER_MCP_PORT)
         );
+    }
+
+    fn texture_overrides(args: &[&str]) -> dcl_scene_cli::textures::Overrides {
+        match parse(args) {
+            Command::Start { textures, .. } => textures.overrides(),
+            _ => panic!("not a start command"),
+        }
+    }
+
+    #[test]
+    fn texture_flags_set_or_keep_the_stored_setting() {
+        use dcl_scene_cli::textures::Overrides;
+        assert_eq!(texture_overrides(&[]), Overrides::default());
+        assert_eq!(
+            texture_overrides(&["--optimize-textures", "--no-keep-source-textures"]),
+            Overrides {
+                optimize_textures: Some(true),
+                keep_source_textures: Some(false),
+            }
+        );
+        assert_eq!(
+            texture_overrides(&["--no-optimize-textures"]).optimize_textures,
+            Some(false)
+        );
+        // --keep-source-textures alone is a stored setting too
+        assert_eq!(
+            texture_overrides(&["--keep-source-textures"]).keep_source_textures,
+            Some(true)
+        );
+        assert_eq!(
+            try_start(&["--optimize-textures", "--no-optimize-textures"])
+                .err()
+                .map(|e| e.kind()),
+            Some(ErrorKind::ArgumentConflict)
+        );
+        let deploy = Cli::try_parse_from(["dcl-scene-cli", "deploy", "--optimize-textures"]);
+        match deploy.map(|c| c.command) {
+            Ok(Command::Deploy { textures, .. }) => {
+                assert_eq!(textures.overrides().optimize_textures, Some(true))
+            }
+            _ => panic!("deploy --optimize-textures parses"),
+        }
     }
 }
