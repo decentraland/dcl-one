@@ -119,3 +119,13 @@ describe('when a category cannot be a TypeScript import binding', () => {
     }
   )
 })
+
+describe('when one icon has an invalid component identifier', () => {
+  it('should report it as skipped while retaining valid icons', () => {
+    const result = generateIcons([icon({ name: '3d view' }), icon({})], context)
+    expect(result.meta.map((entry) => entry.component)).toEqual(['GeneralLike'])
+    expect(result.skipped).toContainEqual(
+      expect.objectContaining({ name: '3d view', reason: expect.stringContaining('identifier') })
+    )
+  })
+})

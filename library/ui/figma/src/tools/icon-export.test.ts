@@ -33,13 +33,19 @@ describe('when exporting snapshot icons to files', () => {
     await exportIcons(app)
     expect(await readFile(path.join(root, 'output/safe.svg'), 'utf8')).toBe(svg)
   })
-  it.each(['../escape.svg', '..\\escape.svg', 'C:escape.svg', 'wrong.txt'])(
-    'should reject %j',
-    async (name) => {
-      file = name
-      await expect(exportIcons(app)).rejects.toThrow('Invalid icon filename')
-    }
-  )
+  it.each([
+    '../escape.svg',
+    '..\\escape.svg',
+    'C:escape.svg',
+    'wrong.txt',
+    'con.svg',
+    'LPT¹.svg',
+    'safe.svg.',
+    'safe.svg '
+  ])('should reject %j', async (name) => {
+    file = name
+    await expect(exportIcons(app)).rejects.toThrow('Invalid icon filename')
+  })
   it('should preserve the target of an existing symlink', async () => {
     await mkdir(path.join(root, 'output'))
     await writeFile(path.join(root, 'precious'), 'keep')

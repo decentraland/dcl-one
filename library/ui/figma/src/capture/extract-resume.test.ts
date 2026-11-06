@@ -105,7 +105,7 @@ async function parts(pages: ReturnType<typeof page>[], limit: number) {
     from = {
       page: result.resume.page,
       component: result.resume.component,
-      variant: result.resume.variant ?? 0
+      variant: result.resume.variant ?? from.variant
     }
   }
   throw new Error('the resume never ended')
@@ -157,7 +157,11 @@ describe('when a job is captured in parts of VARIANT_LIMIT variants', () => {
         { page: '1:1', set: '10:2', start: 0 },
         { page: '1:1', set: '10:2', start: 3 }
       ])
-      expect(resumes.at(-1)).toBeNull()
+      expect(resumes).toEqual([
+        { page: 0, component: 1, variant: 0 },
+        { page: 0, component: 1, variant: 3 },
+        null
+      ])
     })
   })
 

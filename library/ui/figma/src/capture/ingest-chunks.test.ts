@@ -1,8 +1,8 @@
-import { mkdtemp, readdir, readFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { crc32, deflateSync } from 'node:zlib'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { rawComponentPageSchema } from '../ir/raw-components.js'
 import { stripImageMetadata } from './strip-image-metadata.js'
 import { validatePage } from './ingest-chunks.js'
@@ -291,5 +291,66 @@ describe('ingestChunks', () => {
         })
       ).toThrow(/image fill must be a PNG data URI/)
     })
+  })
+})
+
+describe('when matching capture pages by portable filename and stable identity', () => {
+  let dir: string
+  let component: unknown
+  beforeEach(async () => {
+    dir = await mkdtemp(path.join(tmpdir(), 'capture-identity-'))
+    component = (await crosshair()).component
+  })
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+  it('should reject a name occupied by a different page ID without overwriting it', async () => {
+    await ingestChunks(dir, [chunkOf({ id: '1:1', name: 'Shared' }, component)])
+    const file = path.join(dir, 'components/Shared.json')
+    const before = await readFile(file, 'utf8')
+    await expect(
+      ingestChunks(dir, [chunkOf({ id: '2:1', name: 'Shared' }, component)])
+    ).rejects.toThrow(/identity/i)
+    expect(await readFile(file, 'utf8')).toBe(before)
+  })
+  it('should refuse an ambiguous ID before renaming either capture', async () => {
+    await ingestChunks(dir, [chunkOf({ id: '1:1', name: 'First' }, component)])
+    await writeFile(
+      path.join(dir, 'components/Second.json'),
+      await readFile(path.join(dir, 'components/First.json'))
+    )
+    await expect(
+      ingestChunks(dir, [chunkOf({ id: '1:1', name: 'Renamed' }, component)])
+    ).rejects.toThrow(/Ambiguous/)
+    expect((await readdir(path.join(dir, 'components'))).sort()).toEqual([
+      'First.json',
+      'Second.json'
+    ])
+  })
+  it('should preserve a legacy page sharing the canonical page ID during rename', async () => {
+    await ingestChunks(dir, [chunkOf({ id: '1:1', name: 'Legacy' }, component)])
+    const legacy = await readFile(path.join(dir, 'components/Legacy.json'), 'utf8')
+    await ingestChunks(dir, [chunkOf({ id: '1:1', name: 'Canonical' }, component)], ['Legacy'])
+    await ingestChunks(dir, [chunkOf({ id: '1:1', name: 'Renamed' }, component)], ['Legacy'])
+    expect(await readFile(path.join(dir, 'components/Legacy.json'), 'utf8')).toBe(legacy)
+    expect((await readdir(path.join(dir, 'components'))).sort()).toEqual([
+      'Legacy.json',
+      'Renamed.json'
+    ])
+  })
+  it('should allow recapturing the same NFC name on a normalizing filesystem', async () => {
+    await ingestChunks(dir, [chunkOf({ id: '1:1', name: 'Café' }, component)])
+    await expect(
+      ingestChunks(dir, [chunkOf({ id: '1:1', name: 'Café' }, component)])
+    ).resolves.toHaveLength(1)
+  })
+  it.each([
+    ['Icons', 'icons'],
+    ['Café', 'Cafe\u0301']
+  ])('should reject a portable name collision between %s and %s', async (first, second) => {
+    await ingestChunks(dir, [chunkOf({ id: '1:1', name: first }, component)])
+    await expect(
+      ingestChunks(dir, [chunkOf({ id: '2:1', name: second }, component)])
+    ).rejects.toThrow(/collision/i)
   })
 })

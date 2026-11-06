@@ -38,7 +38,7 @@ import { validatePage } from '../capture/ingest-chunks.js'
 import { stripImageMetadata, stripPngMetadata } from '../capture/strip-image-metadata.js'
 import { writeReviewManifest } from '../review-manifest.js'
 import { stripFileKey, stripFileKeyText } from '../capture/strip-file-key.js'
-import { encodePageFileName } from '../capture/page-file-name.js'
+import { assertDistinctPageFiles, encodePageFileName } from '../capture/page-file-name.js'
 
 function stable(value: unknown): string {
   if (Array.isArray(value)) return '[' + value.map(stable).join(',') + ']'
@@ -297,6 +297,9 @@ async function pullLive(
     await copyManagedTree(snapshot, stagedSnapshot)
     if (!nextInventory) throw new Error('Generation inventory required to publish a capture')
     await save(path.join(stagedSnapshot, 'generation-inventory.json'), nextInventory)
+    assertDistinctPageFiles(
+      configuredPages(app.config).map((page) => encodePageFileName(page.name))
+    )
     for (const [name, page] of captures) {
       const ids = componentNodes(page).flatMap(({ node }) => artworkIds(node))
       const strokes = new Set(

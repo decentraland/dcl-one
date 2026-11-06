@@ -1,10 +1,9 @@
 import { captureScope, preserveFrozenCases } from './capture-scope.mjs'
 import process from 'node:process'
 import { Buffer } from 'node:buffer'
-import { setTimeout, clearTimeout } from 'node:timers'
+import { setTimeout } from 'node:timers'
 import { URL } from 'node:url'
-const { fetch, WebSocket, console, AbortSignal } = globalThis
-import { spawn } from 'node:child_process'
+const { console, AbortController } = globalThis
 import { reviewSignature } from './review-signature.mjs'
 import { settleAnimations } from './capture-animations.mjs'
 import {
@@ -15,11 +14,11 @@ import {
   recoverInterruptedCommit,
   withStagedOutput
 } from './capture-retry.mjs'
-import { closeServer, removeProfile, stopBrowser } from './capture-teardown.mjs'
+import { cleanupCapture, closeServer, installCaptureSignals } from './capture-teardown.mjs'
+import { findBrowser, openSession } from './capture-browser.mjs'
 import { createServer } from 'node:http'
-import { readFile, writeFile, mkdtemp, access } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import os from 'node:os'
 
 // Capture the actual React output. Figma references must already exist; this never syncs Figma.
 const root = path.resolve(import.meta.dirname, '..')
@@ -84,143 +83,22 @@ const server = createServer(async (request, response) => {
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
 const origin = `http://127.0.0.1:${server.address().port}`
 let executable
-for (const candidate of [
-  process.env.BROWSER_PATH,
-  process.env.CHROME_PATH,
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/usr/bin/google-chrome',
-  '/usr/bin/chromium',
-  '/usr/bin/chromium-browser'
-].filter(Boolean)) {
-  try {
-    await access(candidate)
-    executable = candidate
-    break
-  } catch {
-    /* Try the next installed browser. */
-  }
-}
-if (!executable) {
-  server.close()
-  throw new Error('A Chromium browser is required. Set BROWSER_PATH to Chrome or Chromium.')
+try {
+  executable = await findBrowser([
+    process.env.BROWSER_PATH,
+    process.env.CHROME_PATH,
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser'
+  ])
+} catch (error) {
+  closeServer(server)
+  throw error
 }
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // One browser with one DevTools tab. A stalled browser is closed and replaced by a fresh session.
-async function openSession() {
-  const profile = await mkdtemp(path.join(os.tmpdir(), 'dcl-visual-'))
-  const browser = spawn(
-    executable,
-    [
-      '--headless=new',
-      '--no-sandbox',
-      '--disable-extensions',
-      '--disable-background-networking',
-      '--force-color-profile=srgb',
-      '--remote-debugging-port=0',
-      '--user-data-dir=' + profile
-    ],
-    { stdio: 'ignore' }
-  )
-  let socket
-  let startupError
-  browser.on('error', (error) => {
-    startupError = error
-  })
-  const close = async () => {
-    if (!startupError) await stopBrowser({ socket, browser })
-    await removeProfile(profile)
-  }
-  try {
-    let port
-    for (let i = 0; i < 100; i++) {
-      if (startupError) throw startupError
-      try {
-        port = (await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]
-        break
-      } catch {
-        await delay(100)
-      }
-    }
-    if (!port) throw new Error('Capture browser did not start')
-    const tab = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, {
-      method: 'PUT',
-      signal: AbortSignal.timeout(10_000)
-    }).then((response) => response.json())
-    socket = new WebSocket(tab.webSocketDebuggerUrl)
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        socket.close()
-        reject(new Error('Capture DevTools socket timed out'))
-      }, 10_000)
-      socket.addEventListener(
-        'open',
-        () => {
-          clearTimeout(timer)
-          resolve()
-        },
-        { once: true }
-      )
-      socket.addEventListener(
-        'error',
-        (error) => {
-          clearTimeout(timer)
-          reject(error)
-        },
-        { once: true }
-      )
-    })
-    let serial = 0
-    const pending = new Map()
-    const session = { runtimeErrors: [], close }
-    socket.addEventListener('message', (event) => {
-      const message = JSON.parse(event.data)
-      if (message.id) {
-        pending.get(message.id)?.(message)
-        pending.delete(message.id)
-      } else if (message.method === 'Runtime.exceptionThrown')
-        session.runtimeErrors.push(
-          message.params.exceptionDetails.exception?.description ??
-            message.params.exceptionDetails.text
-        )
-    })
-    session.send = (method, params = {}) =>
-      new Promise((resolve, reject) => {
-        const id = ++serial
-        const timeout = setTimeout(() => {
-          pending.delete(id)
-          reject(new CaptureTimeout('CDP timeout: ' + method))
-        }, 30000)
-        pending.set(id, (message) => {
-          clearTimeout(timeout)
-          if (message.error) reject(new Error(JSON.stringify(message.error)))
-          else resolve(message.result)
-        })
-        socket.send(JSON.stringify({ id, method, params }))
-      })
-    session.evaluate = async (expression) => {
-      const result = await session.send('Runtime.evaluate', {
-        expression,
-        awaitPromise: true,
-        returnByValue: true
-      })
-      if (result.exceptionDetails)
-        throw new Error(
-          result.exceptionDetails.exception?.description ?? result.exceptionDetails.text
-        )
-      return result.result?.value
-    }
-    await session.send('Page.enable')
-    await session.send('Runtime.enable')
-    await session.send('Emulation.setDefaultBackgroundColorOverride', {
-      color: { r: 0, g: 0, b: 0, a: 0 }
-    })
-    return session
-  } catch (error) {
-    await close()
-    throw error
-  }
-}
 
 async function captureVariant(session, staging, component, index, variant, key, reference) {
   const { send, evaluate } = session
@@ -286,15 +164,19 @@ const report = {
   cases: frozenCases
 }
 let session
+let failure
+const controller = new AbortController()
+const disposeSignals = installCaptureSignals(controller)
 try {
   if (previous && (previous.renderer !== report.renderer || previous.scale !== report.scale))
     throw new Error('Frozen evidence uses a different renderer or scale')
-  session = await openSession()
+  session = await openSession(executable, { signal: controller.signal })
   const budget = createRetryBudget()
   const restart = async () => {
-    await session.close()
+    const previous = session
     session = undefined
-    session = await openSession()
+    await previous.close()
+    session = await openSession(executable, { signal: controller.signal })
   }
   await withStagedOutput({ output, scratch: root }, async (staging) => {
     for (const component of scope.selected) {
@@ -321,7 +203,14 @@ try {
       different: Object.values(report.cases).filter((item) => item.status === 'different').length
     })
   )
+} catch (error) {
+  failure = error
+  if (!controller.signal.aborted) throw error
 } finally {
-  await session?.close()
-  closeServer(server)
+  try {
+    await cleanupCapture(failure, () => session?.close())
+  } finally {
+    closeServer(server)
+    disposeSignals()
+  }
 }

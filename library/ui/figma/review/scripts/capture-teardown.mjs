@@ -1,3 +1,4 @@
+import process from 'node:process'
 import { rm } from 'node:fs/promises'
 import { setTimeout, clearTimeout } from 'node:timers'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -10,6 +11,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 // browser that has already exited returns at once.
 async function stopBrowser({ socket, browser, graceMs = 5000 }) {
   socket?.close()
+  if (!browser.pid) return
   browser.kill('SIGTERM')
   await new Promise((resolve) => {
     if (browser.exitCode !== null || browser.signalCode !== null) return resolve()
@@ -50,3 +52,31 @@ async function removeProfile(profile, { remove = rm, retries = 10, delay = 200 }
 }
 
 export { closeServer, removeProfile, stopBrowser }
+
+// Preserve the capture failure if cleanup also fails, while still surfacing the cleanup diagnostic.
+async function cleanupCapture(primary, cleanup, log = globalThis.console.error) {
+  try {
+    await cleanup()
+  } catch (error) {
+    if (!primary) throw error
+    log('Capture cleanup failed:', error)
+  }
+}
+
+function installCaptureSignals(controller, target = process) {
+  const handlers = new Map(
+    ['SIGINT', 'SIGTERM'].map((name, index) => {
+      const handler = () => {
+        target.exitCode = index === 0 ? 130 : 143
+        if (!controller.signal.aborted)
+          controller.abort(new Error(`Capture interrupted by ${name}`))
+      }
+      target.once(name, handler)
+      return [name, handler]
+    })
+  )
+  return () => {
+    for (const [name, handler] of handlers) target.removeListener(name, handler)
+  }
+}
+export { cleanupCapture, installCaptureSignals }
