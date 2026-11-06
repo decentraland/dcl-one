@@ -23,6 +23,21 @@ use futures_util::{
 use serde::Serialize;
 pub use tungstenite::client::IntoClientRequest;
 use ws_stream_wasm::{WsMessage, WsMeta, WsStream};
+
+pub(crate) struct Trace;
+
+impl Trace {
+    pub(crate) fn start(_request: &reqwest::Request) -> Option<Self> {
+        None
+    }
+
+    pub(crate) fn response(&self, _response: &reqwest::Response) {}
+
+    pub(crate) fn finish(&mut self, _size: u64) {}
+
+    pub(crate) fn fail(&mut self, _reason: &str) {}
+}
+
 pub struct WebSocket {
     _meta: WsMeta,
     stream: WsStream,
