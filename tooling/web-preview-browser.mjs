@@ -144,12 +144,28 @@ try {
     return Boolean(port)
   }, 'Chromium startup')
   const tab = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, {
-    method: 'PUT'
+    method: 'PUT',
+    signal: AbortSignal.timeout(10000)
   }).then((response) => response.json())
   socket = new WebSocket(tab.webSocketDebuggerUrl)
   await new Promise((resolve, reject) => {
-    socket.addEventListener('open', resolve, { once: true })
-    socket.addEventListener('error', reject, { once: true })
+    const timer = setTimeout(() => reject(new Error('DevTools WebSocket open timeout')), 10000)
+    socket.addEventListener(
+      'open',
+      () => {
+        clearTimeout(timer)
+        resolve()
+      },
+      { once: true }
+    )
+    socket.addEventListener(
+      'error',
+      (error) => {
+        clearTimeout(timer)
+        reject(error)
+      },
+      { once: true }
+    )
   })
   socket.addEventListener('message', (event) => {
     const message = JSON.parse(event.data)

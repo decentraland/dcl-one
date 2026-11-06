@@ -141,7 +141,7 @@ def package_reviewer(source, target, revision, run_id):
     )
 
 
-def api(path, *, method='GET', body=None, paginate=False):
+def api(path, *, method='GET', body=None, paginate=False, collection=None):
     args = ['gh', 'api', '--method', method, path]
     if paginate:
         args += ['--paginate', '--slurp']
@@ -174,7 +174,13 @@ def api(path, *, method='GET', body=None, paginate=False):
                     if attempt == attempts - 1:
                         raise
                 else:
-                    return [item for page in value for item in page] if paginate else value
+                    if paginate:
+                        return [
+                            item
+                            for page in value
+                            for item in (page[collection] if collection else page)
+                        ]
+                    return value
         print(f'Transient GitHub API failure; retrying ({attempt + 1}/{attempts})', file=sys.stderr)
         time.sleep(2**attempt)
 
@@ -264,28 +270,27 @@ def same_pull_request(candidate, pr):
 def newest_run_for_pr(repository, run_id, run, pr):
     runs = api(
         f'repos/{repository}/actions/workflows/web-previews.yml/runs'
-        f'?event=pull_request&head_sha={run["head_sha"]}&per_page=100'
-    )['workflow_runs']
-    matching = []
+        f'?event=pull_request&head_sha={run["head_sha"]}&per_page=100',
+        paginate=True,
+        collection='workflow_runs',
+    )
+    if not any(int(candidate['id']) == run_id for candidate in runs):
+        return False
     for candidate in runs:
         candidate_id = int(candidate['id'])
-        if candidate_id == run_id:
-            matching.append(candidate_id)
-        elif candidate.get('pull_requests'):
-            if any(same_pull_request(item, pr) for item in candidate['pull_requests']):
-                matching.append(candidate_id)
-        else:
-            _, candidate_pr = resolve(repository, candidate_id)
-            if candidate_pr and same_pull_request(candidate_pr, pr):
-                matching.append(candidate_id)
-    if run_id not in matching:
-        return False
-    for candidate_id in matching:
-        if candidate_id <= run_id:
+        if candidate_id <= run_id or candidate.get('conclusion') == 'skipped':
+            continue
+        associations = candidate.get('pull_requests')
+        if associations and not any(same_pull_request(item, pr) for item in associations):
             continue
         jobs = api(f'repos/{repository}/actions/runs/{candidate_id}/jobs?per_page=100')['jobs']
         selection = selection_job(jobs)
-        if not selection or selection.get('conclusion') != 'skipped':
+        if selection and selection.get('conclusion') == 'skipped':
+            continue
+        if associations:
+            return False
+        _, candidate_pr = resolve(repository, candidate_id)
+        if candidate_pr and same_pull_request(candidate_pr, pr):
             return False
     return True
 
@@ -337,11 +342,15 @@ class ReviewerAssets(HTMLParser):
             self.assets.append(source)
 
 
+class CdnResourceNotReady(ValueError):
+    pass
+
+
 def verify_reviewer_resources(url, entry, html):
     parser = ReviewerAssets()
     parser.feed(html)
     if not parser.assets:
-        raise ValueError('Reviewer entry has no hashed JavaScript or CSS asset')
+        raise CdnResourceNotReady('Reviewer entry has no hashed JavaScript or CSS asset')
     asset = urljoin(entry, parser.assets[0])
     if not asset.startswith(url + '/'):
         raise ValueError('Reviewer asset escapes the versioned CDN prefix')
@@ -349,11 +358,11 @@ def verify_reviewer_resources(url, entry, html):
         content_type = response.headers.get('Content-Type', '')
         expected = 'text/css' if asset.endswith('.css') else 'javascript'
         if expected not in content_type or not response.read(1):
-            raise ValueError('CDN reviewer asset is not JavaScript or CSS')
+            raise CdnResourceNotReady('CDN reviewer asset is not JavaScript or CSS')
     with urlopen(f'{url}/dcl-ui-review/fidelity.json', timeout=15) as response:
         fidelity = json.load(response)
         if not isinstance(fidelity, (dict, list)):
-            raise ValueError('CDN reviewer fidelity data is not a JSON object or array')
+            raise CdnResourceNotReady('CDN reviewer fidelity data is not a JSON object or array')
 
 
 def verify_cdn(version, revision, run_id, timeout=300):
@@ -374,7 +383,13 @@ def verify_cdn(version, revision, run_id, timeout=300):
                     return entry
         except HTTPError as error:
             error.close()
-        except (OSError, http.client.HTTPException, json.JSONDecodeError):
+        except (
+            OSError,
+            http.client.HTTPException,
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+            CdnResourceNotReady,
+        ):
             pass
         if time.monotonic() >= deadline:
             raise TimeoutError(

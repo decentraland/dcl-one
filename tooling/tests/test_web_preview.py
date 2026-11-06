@@ -245,9 +245,7 @@ class WebPreviewTests(unittest.TestCase):
             }
         ]
         with patch.object(preview, 'resolve', return_value=(run, pr)):
-            with patch.object(
-                preview, 'api', side_effect=[jobs, comments, {'workflow_runs': [{'id': 124}]}]
-            ) as api:
+            with patch.object(preview, 'api', side_effect=[jobs, comments, [{'id': 124}]]) as api:
                 preview.report('example/one', 123, '', 'failure')
                 self.assertEqual(api.call_count, 3)
 
@@ -336,7 +334,7 @@ class WebPreviewTests(unittest.TestCase):
                 patch.object(
                     preview,
                     'api',
-                    side_effect=[jobs, comments, {'workflow_runs': [{'id': 123}]}, {}],
+                    side_effect=[jobs, comments, [{'id': 123}], {}],
                 ) as api,
             ):
                 preview.report('example/one', 123, 'https://cdn.example/review', 'success')
@@ -368,7 +366,10 @@ class WebPreviewTests(unittest.TestCase):
     def test_cdn_rejects_asset_fallback_html(self):
         responses = cdn_responses()
         responses[2].headers = {'Content-Type': 'text/html'}
-        with patch.object(preview, 'urlopen', side_effect=responses), self.assertRaises(ValueError):
+        with (
+            patch.object(preview, 'urlopen', side_effect=responses),
+            self.assertRaises(TimeoutError),
+        ):
             preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123, timeout=0)
 
     def test_cdn_retries_missing_fidelity_data(self):
@@ -411,9 +412,7 @@ class WebPreviewTests(unittest.TestCase):
         }
         with (
             patch.object(preview, 'resolve', return_value=(run, pr)),
-            patch.object(
-                preview, 'api', side_effect=[jobs, [], {'workflow_runs': [{'id': 123}]}, {}]
-            ) as api,
+            patch.object(preview, 'api', side_effect=[jobs, [], [{'id': 123}], {}]) as api,
         ):
             preview.report('example/one', 123, '', 'disabled')
             body = api.call_args.kwargs['body']['body']
@@ -439,9 +438,7 @@ class WebPreviewTests(unittest.TestCase):
             with (
                 self.subTest(conclusion=conclusion),
                 patch.object(preview, 'resolve', return_value=(run, pr)),
-                patch.object(
-                    preview, 'api', side_effect=[jobs, [], {'workflow_runs': [{'id': 123}]}, {}]
-                ) as api,
+                patch.object(preview, 'api', side_effect=[jobs, [], [{'id': 123}], {}]) as api,
             ):
                 preview.report('example/one', 123, '', 'disabled')
                 self.assertIn(expected, api.call_args.kwargs['body']['body'])
@@ -563,21 +560,19 @@ class WebPreviewTests(unittest.TestCase):
 
     def test_newest_run_is_scoped_to_the_same_pr_and_base(self):
         pr = review_pr()
-        runs = {
-            'workflow_runs': [
-                {'id': 123, 'pull_requests': [pr]},
-                {'id': 124, 'pull_requests': [review_pr(10, 'feature/base')]},
-            ]
-        }
+        runs = [
+            {'id': 123, 'pull_requests': [pr]},
+            {'id': 124, 'pull_requests': [review_pr(10, 'feature/base')]},
+        ]
         with patch.object(preview, 'api', return_value=runs):
             self.assertTrue(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
-        runs['workflow_runs'].append({'id': 125, 'pull_requests': [pr]})
+        runs.append({'id': 125, 'pull_requests': [pr]})
         with patch.object(preview, 'api', side_effect=[runs, {'jobs': []}]):
             self.assertFalse(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
 
     def test_newest_run_without_pr_metadata_is_resolved_before_matching(self):
         pr = review_pr()
-        runs = {'workflow_runs': [{'id': 123}, {'id': 124}]}
+        runs = [{'id': 123}, {'id': 124}]
         for candidate, expected in ((review_pr(10), True), (pr, False), (None, True)):
             with (
                 self.subTest(candidate=candidate),
@@ -621,9 +616,7 @@ class WebPreviewTests(unittest.TestCase):
             with (
                 self.subTest(selection=selection),
                 patch.object(preview, 'resolve', return_value=(run, pr)),
-                patch.object(
-                    preview, 'api', side_effect=[jobs, [old], {'workflow_runs': [{'id': 123}]}, {}]
-                ) as api,
+                patch.object(preview, 'api', side_effect=[jobs, [old], [{'id': 123}], {}]) as api,
             ):
                 preview.report('example/one', 123, '', 'skipped')
                 self.assertEqual(api.call_args.kwargs['method'], 'PATCH')
@@ -668,7 +661,7 @@ class WebPreviewTests(unittest.TestCase):
 
     def test_source_run_absent_from_latest_listing_cannot_replace_a_comment(self):
         pr = review_pr()
-        with patch.object(preview, 'api', return_value={'workflow_runs': []}):
+        with patch.object(preview, 'api', return_value=[]):
             self.assertFalse(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
 
     def test_reverted_web_changes_clear_the_existing_preview_comment(self):
@@ -687,9 +680,7 @@ class WebPreviewTests(unittest.TestCase):
         }
         with (
             patch.object(preview, 'resolve', return_value=(run, pr)),
-            patch.object(
-                preview, 'api', side_effect=[jobs, [old], {'workflow_runs': [{'id': 123}]}, {}]
-            ) as api,
+            patch.object(preview, 'api', side_effect=[jobs, [old], [{'id': 123}], {}]) as api,
         ):
             preview.report('example/one', 123, '', 'skipped')
             self.assertEqual(api.call_args.kwargs['method'], 'PATCH')
@@ -707,12 +698,10 @@ class WebPreviewTests(unittest.TestCase):
 
     def test_newest_run_counts_the_same_pr_after_a_base_tip_advance(self):
         pr = review_pr()
-        runs = {
-            'workflow_runs': [
-                {'id': 123},
-                {'id': 124, 'pull_requests': [review_pr(base_sha='c' * 40)]},
-            ]
-        }
+        runs = [
+            {'id': 123},
+            {'id': 124, 'pull_requests': [review_pr(base_sha='c' * 40)]},
+        ]
         with patch.object(preview, 'api', side_effect=[runs, {'jobs': []}]):
             self.assertFalse(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
 
@@ -911,7 +900,7 @@ class WebPreviewTests(unittest.TestCase):
                 side_effect=[
                     {'jobs': [{'name': 'UI reviewer', 'conclusion': 'success'}]},
                     [old],
-                    {'workflow_runs': [{'id': 123}]},
+                    [{'id': 123}],
                     {},
                 ],
             ) as request,
@@ -940,12 +929,10 @@ class WebPreviewTests(unittest.TestCase):
 
     def test_metadata_edit_does_not_supersede_an_actual_build_on_the_same_head(self):
         pr = review_pr()
-        runs = {
-            'workflow_runs': [
-                {'id': 123, 'pull_requests': [pr]},
-                {'id': 124, 'pull_requests': [pr]},
-            ]
-        }
+        runs = [
+            {'id': 123, 'pull_requests': [pr]},
+            {'id': 124, 'pull_requests': [pr]},
+        ]
         for conclusion, expected in (('skipped', True), ('success', False), (None, False)):
             with (
                 self.subTest(conclusion=conclusion),
@@ -961,6 +948,95 @@ class WebPreviewTests(unittest.TestCase):
                 self.assertEqual(
                     preview.newest_run_for_pr('example/one', 123, build_run(pr), pr), expected
                 )
+
+    def test_api_paginates_arrays_and_named_collections(self):
+        for pages, collection in (
+            ([[{'id': 1}], [{'id': 2}]], None),
+            ([{'workflow_runs': [{'id': 1}]}, {'workflow_runs': [{'id': 2}]}], 'workflow_runs'),
+        ):
+            result = subprocess.CompletedProcess(['gh'], 0, json.dumps(pages), '')
+            with (
+                self.subTest(collection=collection),
+                patch.object(preview.subprocess, 'run', return_value=result) as request,
+            ):
+                self.assertEqual(
+                    preview.api('repos/example/one', paginate=True, collection=collection),
+                    [{'id': 1}, {'id': 2}],
+                )
+                self.assertIn('--paginate', request.call_args.args[0])
+                self.assertIn('--slurp', request.call_args.args[0])
+
+    def test_many_metadata_runs_cannot_hide_the_source_run_or_trigger_resolve_calls(self):
+        pr = review_pr()
+        runs = [{'id': value, 'conclusion': 'skipped'} for value in range(250, 123, -1)]
+        runs.append({'id': 123, 'pull_requests': [pr]})
+        with (
+            patch.object(preview, 'api', return_value=runs) as request,
+            patch.object(preview, 'resolve') as resolve,
+        ):
+            self.assertTrue(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
+            request.assert_called_once()
+            self.assertTrue(request.call_args.kwargs['paginate'])
+            self.assertEqual(request.call_args.kwargs['collection'], 'workflow_runs')
+            resolve.assert_not_called()
+
+    def test_skipped_selection_is_checked_before_resolving_missing_pr_metadata(self):
+        pr = review_pr()
+        with (
+            patch.object(
+                preview,
+                'api',
+                side_effect=[
+                    [{'id': 123}, {'id': 124}],
+                    {'jobs': [{'name': 'changes', 'conclusion': 'skipped'}]},
+                ],
+            ),
+            patch.object(preview, 'resolve') as resolve,
+        ):
+            self.assertTrue(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
+            resolve.assert_not_called()
+
+    def test_cdn_retries_transient_fallback_assets_fidelity_and_invalid_utf8(self):
+        for scenario in ('mime', 'empty_asset', 'fidelity', 'utf8', 'missing_bundle'):
+            bad = cdn_responses()
+            if scenario == 'mime':
+                bad[2].headers = {'Content-Type': 'text/html'}
+                bad = bad[:3]
+            elif scenario == 'empty_asset':
+                bad[2] = io.BytesIO(b'')
+                bad[2].headers = {'Content-Type': 'application/javascript'}
+                bad = bad[:3]
+            elif scenario == 'fidelity':
+                bad[3] = io.BytesIO(b'null')
+            else:
+                bad[1] = io.BytesIO(b'\xff' if scenario == 'utf8' else b'<html>propagating</html>')
+                bad[1].status = 200
+                bad[1].headers = {'Content-Type': 'text/html'}
+                bad = bad[:2]
+            with (
+                self.subTest(scenario=scenario),
+                patch.object(preview, 'urlopen', side_effect=bad + cdn_responses()),
+                patch.object(preview.time, 'sleep') as sleep,
+            ):
+                self.assertTrue(
+                    preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123).endswith(
+                        'index.html'
+                    )
+                )
+                sleep.assert_called_once_with(5)
+
+    def test_cdn_does_not_retry_a_bundle_escaping_the_version_prefix(self):
+        responses = cdn_responses()
+        responses[1] = io.BytesIO(b'<script src="/assets/main-Abc123.js"></script>')
+        responses[1].status = 200
+        responses[1].headers = {'Content-Type': 'text/html'}
+        with (
+            patch.object(preview, 'urlopen', side_effect=responses),
+            patch.object(preview.time, 'sleep') as sleep,
+        ):
+            with self.assertRaisesRegex(ValueError, 'escapes'):
+                preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123)
+            sleep.assert_not_called()
 
     def test_build_summary_distinguishes_artifacts_and_live_publication(self):
         for enabled, message in (

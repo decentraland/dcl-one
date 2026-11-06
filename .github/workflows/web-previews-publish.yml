@@ -59,7 +59,7 @@ jobs:
   reviewer:
     name: 'Publish UI reviewer: PR ${{ needs.source.outputs.pr }}'
     needs: [source, pending]
-    if: always() && needs.source.result == 'success' && vars.WEB_PREVIEW_REVIEWER_ENABLED == 'true' && needs.source.outputs.publish == 'true' && needs.source.outputs.reviewer == 'true'
+    if: ${{ !cancelled() && needs.source.result == 'success' && vars.WEB_PREVIEW_REVIEWER_ENABLED == 'true' && needs.source.outputs.publish == 'true' && needs.source.outputs.reviewer == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
@@ -150,7 +150,7 @@ jobs:
         run: python3 tooling/web-preview.py verify-cdn "$VERSION" >> "$GITHUB_OUTPUT"
   report:
     needs: [source, reviewer]
-    if: always() && github.event.workflow_run.event == 'pull_request'
+    if: ${{ !cancelled() && github.event.workflow_run.event == 'pull_request' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     concurrency:
