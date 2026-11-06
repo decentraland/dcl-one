@@ -235,13 +235,29 @@
       "id": "explorer-client",
       "description": "Explorer source, local app builds and component workflows",
       "owners": [
-        "@robtfm"
+        "@decentraland/client"
       ],
       "paths": [
         "/rendering/bevy-explorer/",
         "/apps/bevy-explorer/",
         "/.github/workflows/bevy-explorer-*.yml",
         "/.github/actions/bevy-explorer-*/"
+      ]
+    },
+    {
+      "id": "explorer-rust",
+      "description": "Explorer Rust source, its workspace manifest and build script, and the vendored Bevy",
+      "owners": [
+        "@robtfm"
+      ],
+      "paths": [
+        "/rendering/bevy-explorer/source/crates/",
+        "/rendering/bevy-explorer/source/src/",
+        "/rendering/bevy-explorer/source/Cargo.toml",
+        "/rendering/bevy-explorer/source/Cargo.lock",
+        "/rendering/bevy-explorer/source/build.rs",
+        "/rendering/bevy-explorer/source/.cargo/config.toml",
+        "/rendering/bevy-explorer/bevy/"
       ]
     },
     {

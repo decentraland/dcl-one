@@ -1,9 +1,12 @@
 # Path rules for .github/workflows/pr-labeler.yml (actions/labeler).
-# Paths mirror the explorer-client area in ownership.json.
+# Paths mirror the explorer-rust area in ownership.json.
 explorer:
   - changed-files:
       - any-glob-to-any-file:
-          - 'rendering/bevy-explorer/**'
-          - 'apps/bevy-explorer/**'
-          - '.github/workflows/bevy-explorer-*.yml'
-          - '.github/actions/bevy-explorer-*/**'
+          - 'rendering/bevy-explorer/source/crates/**'
+          - 'rendering/bevy-explorer/source/src/**'
+          - 'rendering/bevy-explorer/source/Cargo.toml'
+          - 'rendering/bevy-explorer/source/Cargo.lock'
+          - 'rendering/bevy-explorer/source/build.rs'
+          - 'rendering/bevy-explorer/source/.cargo/config.toml'
+          - 'rendering/bevy-explorer/bevy/**'
