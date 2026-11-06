@@ -13,6 +13,7 @@ let
     fileset = lib.fileset.unions (map (p: lib.fileset.maybeMissing (root + p)) [
       /rendering/bevy-explorer/upstream.lock.json
       /rendering/bevy-explorer/source
+      /rendering/bevy-explorer/bevy
       /library/protocol/proto
       /apps/bevy-explorer/build-web.py /apps/bevy-explorer/install-linux-deps.py
       /apps/bevy-explorer/install-protoc.py
