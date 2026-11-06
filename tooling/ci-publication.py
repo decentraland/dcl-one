@@ -39,11 +39,14 @@ def current():
     if event == 'workflow_run' and run.get('run_attempt') != int(os.environ['SOURCE_ATTEMPT']):
         raise ValueError('Publication source attempt changed; wait for its new completion')
     # Use the latest triggered push, not branch HEAD: a newer docs-only commit may
-    # not trigger this workflow. Failed newer builds must not roll tags backwards.
+    # not trigger this workflow. A newer successful build must not be rolled back.
     runs = api(f'actions/workflows/{run["workflow_id"]}/runs?branch=main&event=push&per_page=100')['workflow_runs']
     if not runs:
         raise ValueError('GitHub returned no main push runs; refusing publication')
-    newer = [row for row in runs if row['run_number'] > run['run_number']]
+    # Main runs are serialized: a newer first attempt still pending or failed has published nothing,
+    # while a re-run may hide an earlier attempt that did.
+    newer = [row for row in runs if row['run_number'] > run['run_number']
+             and (row['conclusion'] == 'success' or row['run_attempt'] > 1)]
     if event == 'workflow_run':
         # A sites-only push must not discard the last headless release merely
         # because the producer DAG now also schedules image consumers.
@@ -56,7 +59,7 @@ def main():
     allowed = current()
     with Path(os.environ['GITHUB_OUTPUT']).open('a') as output:
         output.write(f'publish={str(allowed).lower()}\n')
-    print('Publishing this run.' if allowed else 'Skipping publication: a newer main push supersedes this run.')
+    print('Publishing this run.' if allowed else 'Skipping publication: a newer successful main run supersedes this run.')
 
 
 if __name__ == '__main__':

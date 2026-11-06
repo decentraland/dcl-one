@@ -33,7 +33,12 @@ export type PurchaseOffer = {
   available: number | null;
   /** When the server answered (epoch ms). */
   quotedAt: number;
+  /** The creator coupon the quotes are discounted by: settlement must use this one, or the line is stale. */
+  coupon?: OfferCoupon | null;
 };
+
+/** The identity and economics of the coupon an offer was priced with. */
+export type OfferCoupon = { id: string; couponAddress: string; discountPpm: number };
 
 export function offerQuote(offer: PurchaseOffer, method: PaymentMethod): Quote | null {
   return offer.quotes.find((q) => q.method === method) ?? null;

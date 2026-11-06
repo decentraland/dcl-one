@@ -12,6 +12,9 @@
 .arc {
   stroke: var(--spinner-arc, var(--brand));
 }
+.shop .track {
+  stroke: var(--black-40);
+}
 
 @keyframes spin {
   to {

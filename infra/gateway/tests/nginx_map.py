@@ -1,4 +1,4 @@
-"""Evaluate the rendered Nginx `map` blocks the way Nginx resolves a request's host rewrite."""
+"""Approximate rendered map blocks; real-nginx smoke tests verify routing semantics."""
 import re
 
 TOKEN = re.compile(r'"((?:[^"\\]|\\.)*)"|([^\s;"]+)|(;)')
@@ -10,7 +10,7 @@ def unquote(value):
 
 def parse(text):
     maps = {}
-    for source, name, body in re.findall(r'\bmap\s+("[^"]*"|\S+)\s+\$(\w+)\s*\{(.*?)\}', text, re.S):
+    for source, name, body in re.findall(r'\bmap\s+("[^"]*"|\S+)\s+\$(\w+)\s*\{((?:"(?:[^"\\]|\\.)*"|[^"}])*)\}', text, re.S):
         entries, current = [], []
         for quoted, bare, end in TOKEN.findall(body):
             if end:

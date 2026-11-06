@@ -214,6 +214,18 @@ export function formatMana(wei: ManaWei, opts: { group?: boolean; decimals?: num
   return fraction ? `${wholeText}.${fraction}` : wholeText;
 }
 
+const WEI_PER_CENT_MANA = WEI_PER_MANA / 100n;
+
+/**
+ * A MANA amount as the Shop shows it: grouped, at most two decimals ("19.42", "1,500"), as upstream's
+ * `formatMana` (shop@71433483:app/src/lib/mana-format.ts). Rounded up, so a shown price never reads below
+ * what the wallet is asked for; `formatMana` keeps the exact amount.
+ */
+export function formatManaPrice(wei: ManaWei): string {
+  if (wei <= 0n) return formatMana(wei, { group: true });
+  return formatMana((divCeil(wei, WEI_PER_CENT_MANA) * WEI_PER_CENT_MANA) as ManaWei, { group: true });
+}
+
 /** "$12.34" from exact cents. */
 export function formatUsd(cents: UsdCents): string {
   const sign = cents < 0 ? "-" : "";

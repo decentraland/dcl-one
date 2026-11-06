@@ -647,6 +647,15 @@ mod tests {
                 self.stub.notify_streaming_notification(n).await
             }
         }
+        async fn notify_user_notifications(
+            &self,
+            transaction: &mut sqlx::PgConnection,
+            notifications: &[crate::interfaces::UserNotification],
+        ) -> Result<(), sqlx::Error> {
+            self.stub
+                .notify_user_notifications(transaction, notifications)
+                .await
+        }
     }
     async fn setup(pool: sqlx::PgPool) -> (CommsState, Arc<Directory>, RemovedPlace) {
         let directory = Arc::new(Directory {

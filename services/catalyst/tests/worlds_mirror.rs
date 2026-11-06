@@ -754,7 +754,8 @@ async fn a_mirror_pass_keeps_an_operator_disable() {
     let ctx = node.ctx().await;
     assert_eq!(node.pass(&ctx).await.scenes.synced, 1);
 
-    sqlx::query("UPDATE worlds.worlds SET blocked_since = timezone('UTC', now()) WHERE name = $1")
+    // Operator block, so `/about` refuses it below.
+    sqlx::query("UPDATE worlds.worlds SET blocked_since = timezone('UTC', now()) - interval '3 days' WHERE name = $1")
         .bind(world)
         .execute(&node.pool)
         .await
