@@ -120,6 +120,9 @@ class WebPreviewTests(unittest.TestCase):
             preview.package_reviewer(source, target, 'a' * 40, 123)
             metadata = json.loads((target / 'package.json').read_text())
             self.assertEqual(metadata['name'], '@dcl-regenesislabs/dcl-one-ui-review')
+            self.assertEqual(
+                metadata['repository']['url'], 'git+https://github.com/decentraland/dcl-one.git'
+            )
             self.assertNotIn('scripts', metadata)
             self.assertEqual(
                 json.loads((target / 'preview-source.json').read_text()),

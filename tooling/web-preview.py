@@ -132,6 +132,10 @@ def package_reviewer(source, target, revision, run_id):
                 'version': '0.1.0',
                 'license': 'Apache-2.0',
                 'description': 'Static UI reviewer preview for dcl-one',
+                'repository': {
+                    'type': 'git',
+                    'url': 'git+https://github.com/decentraland/dcl-one.git',
+                },
             }
         )
         + '\n'
