@@ -1,0 +1,240 @@
+/* In-world Shop on MainMenuShell's 1080-tall reference canvas, laid out as the design's 1920 frame and
+   anchored to its left edge: a 68px title bar, then the stage with the engine's avatar preview at the left
+   and the catalogue to the right edge. */
+.page {
+  position: relative;
+  height: 100%;
+  pointer-events: none;
+}
+/* The design's stage (base glow, spotlight, dust, floor and the DCL floor logo), flattened from the Figma
+   ShopLayout background into one 1920×1080 image. Its top 70px sit under the top bar. The engine draws the
+   same image behind the avatar (setStage), so the avatar's window shows no seam. Past 1920px it continues
+   mirrored, which meets it without a seam. */
+.backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--lava-4) url('../../assets/shop/stage.jpg') 0 -70px / 1920px 1080px no-repeat;
+}
+.backdrop::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 1920px;
+  width: 1920px;
+  background: inherit;
+  transform: scaleX(-1);
+}
+/* With an engine drawing the avatar, its 573×942 window (the design's Avatar slot) is cut out. */
+.cutout {
+  mask:
+    linear-gradient(var(--black), var(--black)) 0 0 / 100% 100% no-repeat,
+    linear-gradient(var(--black), var(--black)) 0 68px / 573px 942px no-repeat;
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+}
+
+.head {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 21px;
+  height: 68px;
+  padding: 0 20px;
+  background: var(--black-40);
+  pointer-events: auto;
+}
+.title {
+  margin: 0;
+  font-size: var(--type-36);
+  font-weight: var(--fw-semibold);
+  line-height: 44px;
+  color: var(--text);
+}
+.tools {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-left: auto;
+}
+.menuWrap {
+  position: relative;
+}
+.toolBtn {
+  width: 150px;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 6px 6px 14px;
+  text-transform: uppercase;
+}
+.sortBtn {
+  justify-content: space-between;
+}
+.menu {
+  position: absolute;
+  left: 0;
+  top: 52px;
+  z-index: 5;
+}
+.searchWrap {
+  width: 396px;
+}
+.cart {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--surface-light);
+  color: var(--ink-on-light);
+}
+
+.stage {
+  position: absolute;
+  top: 68px;
+  left: 0;
+  right: 0;
+  height: 942px;
+}
+.preview {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 573px;
+  height: 942px;
+}
+/* Over the avatar while the Shop's first page loads, where the preview avatar will stand. */
+.avatarLoading {
+  position: absolute;
+  display: flex;
+  left: 287px;
+  top: 471px;
+  transform: translate(-50%, -50%);
+}
+
+.content {
+  position: absolute;
+  left: 605px;
+  right: 20px;
+  top: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-top: 24px;
+  pointer-events: auto;
+}
+.chips {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.results {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--type-16);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+.back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-xs);
+  background: var(--black-40);
+  color: var(--text);
+  cursor: pointer;
+}
+.back:hover {
+  background: var(--panel);
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  gap: 20px;
+  min-height: 0;
+}
+.scrollWrap {
+  position: relative;
+  display: flex;
+  flex: 1;
+  /* Without it the wrap grows to its widest content (a home rail's whole track of cards). */
+  min-width: 0;
+  min-height: 0;
+}
+/* The design's own scroll thumb (ScrollThumb) stands in for the native bar, past the cards' edge. */
+.thumb {
+  right: -13px;
+}
+.scroller {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+  /* A hovered card grows 5% and takes a 3px ring (~8px a side, ~11px top and bottom): the scroller
+     bleeds 12px up and left for it, taken back in padding so the grid starts where the design's does. */
+  margin: -8px 0 0 -12px;
+  /* Six 197px columns and their gaps fill what is left beside the thumb's gutter. */
+  padding: 12px 13px 20px 12px;
+}
+/* Six 197px columns at the design's 1920 width; as many as fit at any other. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 197px);
+  gap: 20px;
+  align-content: start;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.stale {
+  opacity: 0.5;
+}
+/* With the item panel open the grid narrows to four 203px columns (872px), the thumb 9px past them, and the
+   panel sits at the right, 8px in. */
+.withPanel .grid {
+  grid-template-columns: repeat(auto-fill, 203px);
+}
+.withPanel .scrollWrap {
+  flex: none;
+  width: 882px;
+}
+.withPanel .scroller {
+  padding-right: 10px;
+}
+.withPanel > aside {
+  margin: 0 8px 0 auto;
+}
+/* Over the home the panel starts lower, level with the carousel's top band. */
+.homeBody.withPanel > aside {
+  margin-top: 48px;
+}
+.pager {
+  justify-content: center;
+  margin-top: 20px;
+}
+.link {
+  color: var(--chat-link);
+}
+
+/* The EMOTE controls sit on the avatar (its 573px slot), 864px down. */
+.emoteControls {
+  position: absolute;
+  left: 60px;
+  top: 864px;
+  pointer-events: auto;
+}

@@ -1,0 +1,250 @@
+/* The Shop's item panel: 382 wide on the rarity's panel art (the Backpack's 9-slice), the image on
+   top, the details under it and the actions pinned to the bottom. --rm comes from data-rarity. */
+.panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  align-self: flex-start;
+  width: 382px;
+  height: 838px;
+  max-height: 100%;
+  overflow: hidden;
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--rm) 20%, transparent);
+  pointer-events: auto;
+}
+.panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-style: solid;
+  border-width: 391px 0 200px;
+  border-image: var(--panel-art) 391 0 200 fill / 391px 0 200px stretch;
+  pointer-events: none;
+}
+.panel > * {
+  position: relative;
+  z-index: 1;
+}
+
+.favourite,
+.close {
+  position: absolute;
+  top: 16px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--black-40);
+  color: var(--text);
+  cursor: pointer;
+}
+.favourite {
+  left: 15px;
+  width: 42px;
+  height: 42px;
+}
+.favourite:disabled {
+  cursor: default;
+}
+.close {
+  right: 16px;
+  width: 40px;
+  height: 40px;
+}
+.close:hover {
+  background: var(--panel);
+}
+
+.image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 302px;
+  height: 302px;
+  margin: 25px auto 0 39px;
+}
+.image img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.info {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 17px;
+  padding: 0 24px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--divider-strong) transparent;
+}
+.title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--type-24);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+.name > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.price {
+  display: inline-flex;
+  flex: none;
+  padding: 4px;
+  font-size: var(--type-24);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+.price > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.rarity {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+  background: var(--rm);
+  color: var(--text);
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+}
+.rule {
+  width: 100%;
+  height: 0;
+  margin: 0;
+  border: none;
+  border-top: 1px solid var(--divider-strong);
+}
+.creator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+  font-size: var(--type-16);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+.face {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border: 2px solid var(--ink-45);
+  border-radius: var(--r-pill);
+  background: var(--white-10);
+  object-fit: cover;
+}
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 0;
+}
+.hidesSection {
+  padding: 20px 0;
+}
+.label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  color: var(--ink-7);
+  text-transform: uppercase;
+}
+.description {
+  margin: 0;
+  font-size: var(--type-16);
+  color: var(--text);
+}
+.hides {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.hide {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 6px;
+  border-radius: var(--r-sm);
+  background: var(--scrim-20);
+  color: var(--text);
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  margin-top: auto;
+  padding: 16px 15px 21px 17px;
+}
+.cart,
+.buy,
+.resale {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 46px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--r-md);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.cart {
+  background: var(--black-40);
+}
+.buy {
+  background: var(--brand);
+}
+.buy:hover:not(:disabled) {
+  background: var(--brand-hover);
+}
+.cart:disabled,
+.buy:disabled {
+  cursor: default;
+}
+.resale {
+  border: 2px solid var(--text);
+  background: transparent;
+  gap: 8px;
+}
+.resale:hover {
+  background: var(--white-10);
+}
+.creatorName {
+  color: var(--creator-color, var(--text));
+}

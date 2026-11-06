@@ -88,6 +88,8 @@ pub struct PruneOptions {
     pub pause_between_batches: Duration,
     /// Pause between two passes (`CONTENT_HISTORY_PRUNE_INTERVAL_HOURS`).
     pub interval: Duration,
+    /// `GLOBAL_SCENES_URN`: scenes whose files are never unlinked.
+    pub global_scenes_urn: Vec<String>,
 }
 
 impl PruneOptions {
@@ -110,6 +112,12 @@ impl PruneOptions {
                     .max(1)
                     .saturating_mul(3600),
             ),
+            global_scenes_urn: config
+                .worlds_content
+                .global_scenes_urn
+                .as_deref()
+                .map(|r| r.split_whitespace().map(str::to_string).collect())
+                .unwrap_or_default(),
         }
     }
 
@@ -245,6 +253,7 @@ async fn unlink(storage: &Storage, key: &str) -> Result<u64, crate::storage::Sto
 async fn unlink_unreferenced(
     pool: &PgPool,
     storage: &Storage,
+    global_scenes_urn: &[String],
     keys: &[String],
     report: &mut PruneReport,
 ) -> anyhow::Result<()> {
@@ -252,7 +261,8 @@ async fn unlink_unreferenced(
         return Ok(());
     }
     let mut lock = gc::lock_store_exclusive(pool).await?;
-    let referenced: HashSet<String> = gc::referenced_among_on(&mut lock, keys).await?;
+    let referenced: HashSet<String> =
+        gc::referenced_among_on(&mut lock, gc::Pins::new(storage, global_scenes_urn), keys).await?;
     for key in keys {
         if referenced.contains(key) {
             report.blobs_kept += 1;
@@ -314,7 +324,14 @@ async fn run(
         report.batches += 1;
         report.deployments += pruned.deployments;
         report.content_files += pruned.content_files;
-        unlink_unreferenced(pool, storage, &pruned.keys, &mut report).await?;
+        unlink_unreferenced(
+            pool,
+            storage,
+            &opts.global_scenes_urn,
+            &pruned.keys,
+            &mut report,
+        )
+        .await?;
         counter!(DEPLOYMENTS_PRUNED).increment(pruned.deployments);
         counter!(CONTENT_FILES_PRUNED).increment(pruned.content_files);
         tracing::debug!(
@@ -449,6 +466,7 @@ mod tests {
             batch,
             pause_between_batches: Duration::ZERO,
             interval: Duration::from_secs(3600),
+            global_scenes_urn: Vec::new(),
         }
     }
 

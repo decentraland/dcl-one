@@ -3602,6 +3602,42 @@ async fn genesis_logs_permissions_follow_the_active_pointer() {
     fixture.close().await;
 }
 
+/// A parcel inside an estate whose own update-operator leg was cleared on
+/// chain (stored as the zero address, which lamb2's `/operators` answers)
+/// still names the estate's update operator in the LAND document storage
+/// management and the comms protected set read, never the zero address.
+#[tokio::test]
+async fn land_document_keeps_the_estate_update_operator_over_a_cleared_leg() {
+    let Some(fixture) = CollaboratorLandFixture::new().await else {
+        return;
+    };
+    let settings = crate::land_authz::Settings::for_tests();
+    let (estate_owner, estate_updater) = (address(), address());
+    let zero = "0x0000000000000000000000000000000000000000";
+    sqlx::query("INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, operator, update_operator, updated_block, updated_log) VALUES ($1, 7 * 340282366920938463463374607431768211456::numeric + 9, 7, 9, $2, NULL, $3, 1, 0), ($2, 900, NULL, NULL, $4, NULL, $5, 1, 1)")
+        .bind(&settings.land_registry).bind(&settings.estate_registry).bind(zero)
+        .bind(estate_owner.as_str()).bind(estate_updater.as_str())
+        .execute(&fixture.pool).await.unwrap();
+    sqlx::query("INSERT INTO land_authz.estate_land VALUES (7 * 340282366920938463463374607431768211456::numeric + 9, 900, 1, 2)")
+        .execute(&fixture.pool).await.unwrap();
+
+    let state = fixture.state();
+    let document = state
+        .policy
+        .land_document(Parcel::parse("7,9").unwrap())
+        .await
+        .unwrap()
+        .expect("the land-authz index answers");
+    let document = document.as_ref().as_ref().expect("an indexed parcel");
+    assert_eq!(document.owner, estate_owner.as_str());
+    assert_eq!(
+        document.update_operator.as_deref(),
+        Some(estate_updater.as_str())
+    );
+    assert!(document.addresses().all(|a| a != zero));
+    fixture.close().await;
+}
+
 #[tokio::test]
 async fn collaborator_lists_exactly_the_signers_active_scenes() {
     let Some(fixture) = CollaboratorLandFixture::new().await else {

@@ -1,8 +1,9 @@
-// The page's side of the editor host contract (v1.2): the object the editor package finds at
+// The page's side of the editor host contract (v1.5): the object the editor package finds at
 // window.__dclEditorHost, the element it mounts into, and the script tag that loads it.
 
 import type { AuthChainLink, AuthIdentity } from '../../auth/sso'
 import type { EditorHudMode } from '../hudMode'
+import type { EditorFeatures } from '../config'
 import { PROJECT_ID, type EditorServices, type EditorSource, type SignedServices } from '../source'
 import { CID_PATTERN } from './cid'
 import { sceneIdFromAbout, stageEditorScene } from './editorScene'
@@ -78,6 +79,8 @@ export interface DclEditorHostV1 {
   /** Queue a `Creator Action` event with the page's own (lib/analytics), which the engine posts
    *  with its common fields. Any other event name is dropped. */
   track: (event: string, properties?: Record<string, unknown>) => void
+  /** contract v1.5: what the entry url's `editor-features` lets the editor show. */
+  features: { advanced: boolean }
   /** Leave the scene as exit() does, then show the HUD's Create page. */
   openCreatePage: () => void
   /** Unmount the editor, kill its scene, restore the HUD and the clock, and travel back. */
@@ -102,6 +105,8 @@ export interface EditorHostDeps {
   busSession: string
   /** Where exit() goes when the entry url named no realm. */
   defaultRealm: string
+  /** From the entry url's `editor-features`. */
+  features: EditorFeatures
   engineConsole: (line: string) => Promise<string>
   identity: () => { address: string | null; isGuest: boolean }
   /** The stored identity of the wallet the player is in-world as; null for a guest. */
@@ -513,6 +518,7 @@ function publishHost(source: EditorSource, pageDir: string, deps: EditorHostDeps
       const loaded = await loadSigner()
       return loaded.signDeployment(identity, request.entityId, signerFor(loaded, identity))
     },
+    features: { advanced: deps.features.advanced },
     track(event, properties = {}) {
       if (event !== EDITOR_EVENT || typeof properties !== 'object' || properties === null || Array.isArray(properties)) return
       track(event, { ...properties })

@@ -1,0 +1,7 @@
+/* Two actions share the card's width. */
+.action {
+  flex: 1;
+  gap: 8px;
+  padding: 0 8px;
+  font-size: var(--type-14);
+}

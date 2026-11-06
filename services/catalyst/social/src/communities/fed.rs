@@ -1898,7 +1898,12 @@ async fn collect(state: &CommunitiesState) -> anyhow::Result<Value> {
             break;
         }
         removed += dropped.len() as i64;
-        let held = crate::storage::gc::referenced_among(&state.pool, &dropped).await?;
+        let held = crate::storage::gc::referenced_among(
+            &state.pool,
+            crate::storage::gc::Pins::new(&state.storage, &[]),
+            &dropped,
+        )
+        .await?;
         for cid in dropped.iter().filter(|c| !held.contains(*c)) {
             let registered_again: bool = sqlx::query_scalar(
                 "SELECT EXISTS (SELECT 1 FROM social.community_contents WHERE cid = $1)",

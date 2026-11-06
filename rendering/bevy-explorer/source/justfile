@@ -54,20 +54,13 @@ _bundle-native-if-stale:
 native-debug *ARGS: _bundle-native-if-stale
     cargo build --package dcl_deno_ipc
     cargo build --bin decentra-bevy-cef
-    python3 ../../../tooling/uuav/stage-dist.py host target/debug
     cargo run --bin decentra-bevy -- "$@"
 
 # build + run the native app (release) with the CEF react HUD
 native-release *ARGS: _bundle-native-if-stale
     cargo build --release --package dcl_deno_ipc
     cargo build --release --bin decentra-bevy-cef
-    python3 ../../../tooling/uuav/stage-dist.py host target/release
     cargo run --release --bin decentra-bevy -- "$@"
-
-# stage the UUAV video runtime set (library/uuav/dist, Git LFS) next to the test binaries, which
-# spawn it: run before `cargo test`
-stage-uuav-tests:
-    python3 ../../../tooling/uuav/stage-dist.py host target/debug/deps
 
 # one-time per machine: fetch the CEF framework. only macos falls back to it at runtime; on linux
 # and windows the loader must find it (LD_LIBRARY_PATH on linux, see readme.md)
