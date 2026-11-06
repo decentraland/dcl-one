@@ -42,7 +42,9 @@ use axum::extract::{Path, Request, State};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
-use crate::content::queries::{active_entity_docs_by_pointers, active_entity_docs_by_prefix};
+use crate::content::queries::{
+    active_entity_docs_by_pointers, active_entity_docs_by_prefix, retain_non_denylisted,
+};
 use crate::shared::cache::TtlMap;
 use crate::shared::query_params::{
     JsPagination, parse_pagination_js, parse_query_string, qs_get_array, qs_get_string,
@@ -1176,10 +1178,13 @@ async fn fetch_collection_entities(state: &MarketplaceState, collection_id: &str
     const PAGE: i64 = 1000;
     const PAGE_CONCURRENCY: usize = 4;
     use futures::stream::StreamExt;
-    let Ok(first) = active_entity_docs_by_prefix(&state.pool, collection_id, 0, PAGE).await else {
+    // A page is short by its own length; its denylisted entities leave it after.
+    let Ok(mut first) = active_entity_docs_by_prefix(&state.pool, collection_id, 0, PAGE).await
+    else {
         return Vec::new();
     };
     let short = (first.entities.len() as i64) < PAGE;
+    retain_non_denylisted(&mut first.entities, &state.denylist);
     let mut out: Vec<Value> = first
         .entities
         .iter()
@@ -1194,10 +1199,11 @@ async fn fetch_collection_entities(state: &MarketplaceState, collection_id: &str
         .map(|offset| active_entity_docs_by_prefix(&state.pool, collection_id, offset, PAGE));
     let mut pages = futures::stream::iter(rest).buffered(PAGE_CONCURRENCY);
     while let Some(page) = pages.next().await {
-        let Ok(page) = page else {
+        let Ok(mut page) = page else {
             break;
         };
         let short = (page.entities.len() as i64) < PAGE;
+        retain_non_denylisted(&mut page.entities, &state.denylist);
         out.extend(
             page.entities
                 .iter()
@@ -1527,9 +1533,10 @@ async fn linked_items_owned(
     let mut pointers: Vec<String> = items.iter().map(|i| i.asset_urn.to_lowercase()).collect();
     pointers.sort();
     pointers.dedup();
-    let docs = active_entity_docs_by_pointers(&state.pool, &pointers)
+    let mut docs = active_entity_docs_by_pointers(&state.pool, &pointers)
         .await
         .map_err(|e| format!("third-party item entities: {e}"))?;
+    retain_non_denylisted(&mut docs, &state.denylist);
     let mappings: HashMap<String, Value> = docs
         .iter()
         .filter_map(|d| d.to_value())

@@ -8,8 +8,11 @@ use parking_lot::RwLock;
 
 /// Entity and content ids this node refuses to serve, on every route that
 /// hands out bytes from the ONE store (`/contents/{hash}` here and under the
-/// worlds nest, the builder's `/contents/{hash}`) and in the active-entity
-/// and pointer-changes reads. Its parts are kept apart so no source can
+/// worlds nest, the builder's `/contents/{hash}`) and in every read of
+/// active entities: content's active-entity and pointer-changes reads, the
+/// read-through's answer, the shop's lambdas and explorer reads
+/// (`MarketplaceState::with_denylist`) and the worlds' preview wearables.
+/// Its parts are kept apart so no source can
 /// lift another's entry: the camera reel's withheld photo blobs
 /// ([`Self::add`]/[`Self::remove`]: the builder and camera-reel states hold
 /// the same `Arc`, and the camera reel refills it at boot from

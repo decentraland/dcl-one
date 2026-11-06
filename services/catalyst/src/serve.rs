@@ -549,7 +549,8 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             crate::index::market_settings(&config, &self_hosts)?,
         )
         .with_eip1654(eip1654.clone())
-        .with_read_through(read_through.clone()),
+        .with_read_through(read_through.clone())
+        .with_denylist(storage.denylist().clone()),
     );
     market.spawn_api_jobs(&jobs);
 
