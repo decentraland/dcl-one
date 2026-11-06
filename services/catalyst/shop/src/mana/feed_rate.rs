@@ -15,8 +15,12 @@
 //! No request waits on that read. [`install`] starts one refresher per
 //! process that reads every [`REFRESH_EVERY`] into a slot; [`current`] answers
 //! from the slot without blocking: the last good read while it is at most
-//! [`SERVE_FOR`] old and its round still within the feed's age bound, and
-//! "unavailable" otherwise (never the spot, never an older rate). A node with
+//! [`SERVE_FOR`] old, its round still within the marketplace's own
+//! `manaUsdAggregatorTolerance()` and within the local age bound, and
+//! "unavailable" otherwise (never the spot, never an older rate). The
+//! tolerance cut is by this node's clock, a conservative stand-in for the
+//! next block's: a purchase is not offered on a round the contract has
+//! already stopped accepting. A node with
 //! no endpoint for the settlement chain, or no marketplace on it, wires no
 //! feed and prices at the spot as before ([`current`] answers `None`).
 //!
@@ -58,7 +62,7 @@ pub struct ShopRate {
 impl ShopRate {
     /// USD per MANA as exact decimal text ("0.26960836").
     pub fn usd_per_mana(&self) -> String {
-        decimal_text(self.rate.rate(), self.rate.decimals())
+        self.rate.decimal_text()
     }
 }
 
@@ -108,14 +112,17 @@ impl RateSlot {
         }
     }
 
-    /// The rate to price with at `now`.
+    /// The rate to price with at `now`: refused once the read is
+    /// [`SERVE_FOR`] old, once its round is past the marketplace's tolerance
+    /// (the contract would revert), or past the local age bound.
     pub fn at(&self, now: DateTime<Utc>) -> Result<ShopRate, Unavailable> {
         let good = (*self.good.read().unwrap()).ok_or(Unavailable)?;
         let observed_for = (now - good.observed_at).num_seconds();
         let round_age = now.timestamp() - good.reading.updated_at_s;
         let served_for = i64::try_from(SERVE_FOR.as_secs()).unwrap_or(i64::MAX);
         let max_age = i64::try_from(self.max_age_secs).unwrap_or(i64::MAX);
-        if observed_for > served_for || round_age > max_age {
+        let tolerance = i64::try_from(good.reading.tolerance_secs).unwrap_or(i64::MAX);
+        if observed_for > served_for || round_age > max_age || round_age > tolerance {
             return Err(Unavailable);
         }
         Ok(ShopRate {
@@ -182,22 +189,7 @@ pub fn installed() -> bool {
     slot().is_some()
 }
 
-/// `answer / 10^decimals` as exact decimal text, trailing zeros dropped.
-pub fn decimal_text(answer: U256, decimals: u8) -> String {
-    let digits = answer.to_string();
-    let scale = usize::from(decimals);
-    if scale == 0 {
-        return digits;
-    }
-    let padded = format!("{digits:0>width$}", width = scale + 1);
-    let (whole, fraction) = padded.split_at(padded.len() - scale);
-    let fraction = fraction.trim_end_matches('0');
-    if fraction.is_empty() {
-        whole.to_string()
-    } else {
-        format!("{whole}.{fraction}")
-    }
-}
+pub use crate::types::decimal_text;
 
 /// The approval a USD-pegged trade's `mana` asks for: upstream's +2%.
 pub fn usd_pegged_allowance(mana: U256) -> U256 {
@@ -212,10 +204,14 @@ pub(crate) mod tests {
     use alloy_primitives::B256;
 
     pub(crate) fn reading(usd_per_mana: &str, updated_at_s: i64) -> FeedReading {
+        with_tolerance(usd_per_mana, updated_at_s, 27)
+    }
+
+    fn with_tolerance(usd_per_mana: &str, updated_at_s: i64, tolerance_secs: u64) -> FeedReading {
         FeedReading {
             rate: ManaUsdRate::parse_usd_per_mana(usd_per_mana).unwrap(),
             aggregator: Address::repeat_byte(0xaa),
-            tolerance_secs: 27,
+            tolerance_secs,
             updated_at_s,
             block: 1,
             block_hash: B256::ZERO,
@@ -235,7 +231,7 @@ pub(crate) mod tests {
     fn a_good_read_serves_for_a_minute_through_failed_refreshes() {
         let slot = RateSlot::new(3_600);
         let t0 = 1_800_000_000;
-        slot.record(Ok(reading("0.26960836", t0 - 10)), at(t0));
+        slot.record(Ok(with_tolerance("0.26960836", t0 - 10, 3_600)), at(t0));
         let served = slot.at(at(t0 + 59)).unwrap();
         assert_eq!(served.usd_per_mana(), "0.26960836");
         assert_eq!(
@@ -254,7 +250,7 @@ pub(crate) mod tests {
             Err(Unavailable),
             "past a minute it is not served"
         );
-        slot.record(Ok(reading("0.3", t0 + 70)), at(t0 + 75));
+        slot.record(Ok(with_tolerance("0.3", t0 + 70, 3_600)), at(t0 + 75));
         assert_eq!(
             slot.at(at(t0 + 76)).unwrap().usd_per_mana(),
             "0.3",
@@ -266,9 +262,39 @@ pub(crate) mod tests {
     fn a_round_past_the_feed_bound_is_not_served() {
         let slot = RateSlot::new(3_600);
         let t0 = 1_800_000_000;
-        slot.record(Ok(reading("0.26960836", t0 - 3_590)), at(t0));
+        slot.record(Ok(with_tolerance("0.26960836", t0 - 3_590, 7_200)), at(t0));
         assert!(slot.at(at(t0 + 10)).is_ok());
         assert_eq!(slot.at(at(t0 + 11)), Err(Unavailable));
+    }
+
+    #[test]
+    fn a_round_past_the_marketplaces_tolerance_is_not_served() {
+        // Amoy's marketplace accepts a round at most 27 s old.
+        let slot = RateSlot::new(3_600);
+        let t0 = 1_800_000_000;
+        slot.record(Ok(reading("0.26960836", t0 - 26)), at(t0));
+        assert!(
+            slot.at(at(t0 + 1)).is_ok(),
+            "26 + 1 = 27 s: exactly the tolerance"
+        );
+        assert_eq!(
+            slot.at(at(t0 + 2)),
+            Err(Unavailable),
+            "28 s: the contract would revert"
+        );
+        slot.record(Err("the marketplace would revert".into()), at(t0 + 15));
+        assert_eq!(
+            slot.at(at(t0 + 16)),
+            Err(Unavailable),
+            "a failed refresh does not revive it"
+        );
+        assert_eq!(slot.at(at(t0 + 60)), Err(Unavailable));
+        slot.record(Ok(reading("0.27", t0 + 30)), at(t0 + 31));
+        assert_eq!(
+            slot.at(at(t0 + 32)).unwrap().usd_per_mana(),
+            "0.27",
+            "a fresh round serves again"
+        );
     }
 
     #[test]
@@ -348,8 +374,11 @@ pub(crate) mod tests {
             crate::market::Settings::for_tests(),
         );
         assert_eq!(
-            crate::market::items::mana_usd_rate(&market).await.unwrap(),
-            0.26960836
+            crate::market::items::mana_usd_rate(&market)
+                .await
+                .unwrap()
+                .decimal_text(),
+            "0.26960836"
         );
 
         wired(None);
