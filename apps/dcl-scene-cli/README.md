@@ -46,7 +46,7 @@ dcl-scene-cli start [--dir D] [-p|--port N] [--skip-build] [--no-watch] [-m|--mo
                      --livekit-api-secret SECRET|--livekit-api-secret-file F] [--livekit-room NAME]
                     [--no-asset-bundles] [--no-mcp] [--mcp-port N] [--error-source-lines-context N]
                     [--no-host] [--tunnel WSS_URL] [--talk [--player URL]]
-                    [--optimize-textures [--keep-source-textures]] [-- EXPLORER_PARAMS...]
+                    [--[no-]optimize-textures] [--[no-]keep-source-textures] [-- EXPLORER_PARAMS...]
 ```
 
 Serves a local realm on 8000 and reloads the client on save. `http://127.0.0.1:8000` is the launch
@@ -116,7 +116,8 @@ with a catalyrst builder project (`.dcl-one/sync.json`).
 
 ```
 dcl-scene-cli deploy [--dir D] [-t|--target-server CATALYST-DOMAIN-OR-CONTENT-URL]
-                     [--dry-run] [--timestamp MS] [--optimize-textures [--keep-source-textures]]
+                     [--dry-run] [--timestamp MS] [--[no-]optimize-textures]
+                     [--[no-]keep-source-textures]
 dcl-scene-cli world access show|edit <name>
 dcl-scene-cli world access set    <name> --public | --password S | --user U... --community C...
 dcl-scene-cli world access add|remove <name> --user U | --community C
@@ -129,23 +130,51 @@ server, parcels to the first healthy public catalyst (`--target-server` /
 
 ### Optimized textures
 
-`--optimize-textures` (off by default) converts the images GLB and glTF models sample to UASTC KTX2
-(`-uastc -ktx2 -uastc_level 1 -uastc_rdo_l 1.0`, sRGB for base colour and emissive, `-normal_map` for
-normals, `-linear` otherwise), resized to at most 1024 px in whole 4x4 blocks. The encoder is the Basis
-Universal WASI build pinned in `basisu-release.lock`, run in-process with one instance per core; its
-output is byte-identical on every machine. Models are rewritten with `KHR_texture_basisu` and no
-fallback, and each texture is published beside its model as `<sha256>.ktx2` (no `..` in the URI; the
-same texture in several folders is uploaded once, by content hash). An image stays as
-it was when its KTX2 is not smaller or it fails to decode. Your files are never changed: rewritten
-models and KTX2 files are staged in `.dcl-one/optimized-textures/` with a `manifest.json` and a cache
-keyed by source bytes, encoder and settings. `start` serves exactly what `deploy` uploads.
+`start` imports the textures GLB and glTF models sample in the background, whatever the project's
+setting: the images become UASTC KTX2 (`-uastc -ktx2 -uastc_level 1 -uastc_rdo_l 1.0`, sRGB for base
+colour and emissive, `-normal_map` for normals, `-linear` otherwise), resized to at most 1024 px in
+whole 4x4 blocks. The encoder is the Basis Universal WASI build pinned in `basisu-release.lock`, run
+in-process with one instance per core (all cores but one in the background); its output is
+byte-identical on every machine. The import runs at startup and after every saved change, never
+blocks the preview, and queues one more run when changes arrive during a run. A run whose inputs are
+unchanged does nothing. Your files are never changed: rewritten models and KTX2 files are staged in
+`.dcl-one/optimized-textures/` with a `manifest.json` and a cache keyed by source bytes, encoder and
+settings.
 
-An original image only GLB/glTF models used, and whose file name appears in no published `.js`,
-`.json`, `main.crdt` or `.composite`, is left out of the upload; `--keep-source-textures` keeps every
-original. Standalone SDK `Material` and UI textures are not converted. Clients without KTX2 support
-(Unity's local raw-glTF preview, older Bevy explorer builds) show the models untextured; Unity
-production needs abgen's KTX2 support. See [the ADR](../../docs/adr/2026-11-06-opt-in-uastc-texture-upload.md).
-The encoder's license and notice are `LICENSE.basis_universal` and `NOTICE.basis_universal`.
+Serving and publishing them is a per-project setting in `.dcl-one/settings.json`
+(`{"optimizeTextures": true, "keepSourceTextures": false}`), off by default. `--optimize-textures`
+and `--no-optimize-textures` on `start` or `deploy` set and store it; later runs and the preview
+page's Deploy read it back. With it on, models are rewritten with `KHR_texture_basisu` and no
+fallback, and each texture is published beside its model as `<sha256>.ktx2` (no `..` in the URI; the
+same texture in several folders is uploaded once, by content hash). An image stays as it was when its
+KTX2 is not smaller or it fails to decode.
+
+The preview applies a finished import in one swap: until then it serves the previous optimized
+files, never part of a run. Rewritten models are staged under names taken from their bytes, so a run
+never rewrites a file the preview is serving. `start` sends no reload when an import finishes. Each
+import sends its status on the live-reload socket instead: `WsSceneMessage.texture_optimization`
+(`decentraland.sdk.development`) as a binary frame, and a JSON text frame
+`{"type":"TEXTURE_OPTIMIZATION","payload":{sceneId,state,done,total,failed,bytesBefore,bytesAfter,enabled}}`.
+`state` is `RUNNING` while textures are encoded (at most every 500 ms), then `READY` or `FAILED` once.
+`READY` is sent only when the optimized files or the setting changed. A client connecting later gets
+the last status first. The next reload, from a save or from the client, serves the new files.
+Offering that reload when `READY` arrives is up to the client; the explorer does not yet show it.
+
+`deploy` with the setting on finishes in the foreground whatever the cache lacks, with a progress
+line, before it reads the payload; a warm cache costs nothing. It never uploads a half-optimized
+scene: a texture that fails alone keeps its original, and a failed run stops the deploy.
+
+An original image only GLB/glTF models used is left out of the upload when no published `.js`,
+`.json`, `main.crdt` or `.composite` names it. A name is its file name anywhere, or its bare stem in
+quotes (`'wall'`, `"wall"` or `` `wall` `` keeps `wall.png`). `deploy` warns about every original it
+leaves out, since scene code that builds texture paths at runtime would get a 404 for them. It also
+lists the originals it treats differently from the preview's last import: the deploy searches the
+release bundle and the preview the dev bundle. `--keep-source-textures` (stored like the setting)
+keeps every original. Standalone SDK `Material` and UI textures are not converted. Clients without
+KTX2 support (Unity's local raw-glTF preview, older Bevy explorer builds) show the models
+untextured; Unity production needs abgen's KTX2 support. See
+[the ADR](../../docs/adr/2026-11-06-opt-in-uastc-texture-upload.md). The encoder's license and
+notice are `LICENSE.basis_universal` and `NOTICE.basis_universal`.
 
 ## Reference
 
