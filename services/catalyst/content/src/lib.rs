@@ -84,11 +84,14 @@ pub mod about_comms;
 mod active_entities;
 mod audit;
 pub mod available_content;
+pub mod content_get_limit;
 mod deployments;
 pub mod entity_thumbnail;
 mod failed_deployments;
+mod fixed_windows;
 pub mod get_content;
 mod pointer_changes;
+pub mod routing;
 mod snapshots;
 mod status;
 
@@ -162,6 +165,9 @@ pub struct Settings {
     /// `POST_ENTITIES_RATE_LIMIT_MAX` per `POST_ENTITIES_RATE_LIMIT_WINDOW_SECONDS`; 0 is off.
     pub post_entities_rate_limit_max: u32,
     pub post_entities_rate_limit_window: Duration,
+    /// The `GET`/`HEAD /contents/{hash}` rate limit (`CONTENT_GET_*`,
+    /// `TRUSTED_SYNC_PEER_IPS`, `TRUSTED_CLIENT_IP_HEADER`).
+    pub content_get_limit: content_get_limit::Config,
     /// The partial-upload limits (`PENDING_DEPLOYMENT_TTL`, ...).
     pub partial_uploads: partial_deployments::Limits,
     /// `MAX_CONCURRENT_UPLOADS_PER_SOURCE`, `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE`.
@@ -230,7 +236,10 @@ impl Settings {
         let public_url = config.node.own_url();
         let map = config.map_urls();
         Self {
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            // Upstream's `CURRENT_VERSION`, the variable the social RPC
+            // `/status` reads too.
+            version: non_empty(&config.social.social_rpc_current_version)
+                .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
             commit_hash: config.commit_hash(),
             eth_network: config.node.eth_network.clone(),
             content_public_url: non_empty(&config.node.content_url)
@@ -268,6 +277,18 @@ impl Settings {
                     .post_entities_rate_limit_window_seconds
                     .max(1),
             ),
+            content_get_limit: content_get_limit::Config {
+                burst_max: config.content.content_get_rate_limit_max,
+                burst_window: Duration::from_secs(u64::from(
+                    config.content.content_get_rate_limit_window_seconds,
+                )),
+                hourly_max: config.content.content_get_hourly_quota_max,
+                daily_max: config.content.content_get_daily_quota_max,
+                ipv6_prefix_length: config.content.content_get_rate_limit_ipv6_prefix_length,
+                trusted_sync_peer_ips: config.content.trusted_sync_peer_ips.clone(),
+                trusted_client_ip_header: config.content.trusted_client_ip_header.clone(),
+                trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
+            },
             partial_uploads: partial_deployments::Limits::from_config(config),
             max_concurrent_uploads_per_source: config.content.max_concurrent_uploads_per_source,
             max_in_flight_upload_bytes_per_source: config
@@ -315,6 +336,7 @@ impl Settings {
             post_entities_daily_quota_max: 300,
             post_entities_rate_limit_max: 200,
             post_entities_rate_limit_window: Duration::from_secs(60),
+            content_get_limit: content_get_limit::Config::default(),
             partial_uploads: partial_deployments::Limits::default(),
             max_concurrent_uploads_per_source: 4,
             max_in_flight_upload_bytes_per_source: create_entity::MAX_DEPLOYMENT_BYTES as u64,
@@ -543,6 +565,11 @@ pub struct ContentState {
     pub deploy_burst: upload_admission::DailyQuota,
     /// `POST /entities` bodies and bytes in flight per client address.
     pub source_uploads: upload_admission::SourceUploads,
+    /// The `/contents/{hash}` burst and quotas per client, this process's.
+    pub content_get_limit: content_get_limit::ContentGetLimit,
+    /// The `/challenge` text: one bare UUID per process, as upstream's
+    /// peer cluster keeps it; the console's `challenge/refresh` replaces it.
+    challenge: RwLock<String>,
 }
 
 /// See [`ContentState::attach_parcel_grid`].
@@ -578,6 +605,8 @@ impl ContentState {
             settings.max_concurrent_uploads_per_source,
             settings.max_in_flight_upload_bytes_per_source,
         );
+        let content_get_limit =
+            content_get_limit::ContentGetLimit::new(&settings.content_get_limit);
         Self {
             pool,
             settings,
@@ -598,7 +627,20 @@ impl ContentState {
             deploy_quota,
             deploy_burst,
             source_uploads,
+            challenge: RwLock::new(challenge_text()),
+            content_get_limit,
         }
+    }
+
+    pub fn challenge(&self) -> String {
+        self.challenge.read().clone()
+    }
+
+    /// Replaces the `/challenge` text and answers the new one.
+    pub fn refresh_challenge(&self) -> String {
+        let text = challenge_text();
+        *self.challenge.write() = text.clone();
+        text
     }
 
     pub fn is_read_only(&self) -> bool {
@@ -693,9 +735,11 @@ pub(crate) fn not_found_response() -> Response {
     (StatusCode::NOT_FOUND, "Not found").into_response()
 }
 
-/// `max_deploy_body` bounds a `POST /entities` body, framing included
+/// The paths here are listed again in [`routing::CONTENT_ROUTE_PATHS`] (case-insensitive)
+/// or [`routing::CASE_SENSITIVE_ROUTE_PATHS`]. `max_deploy_body` bounds a
+/// `POST /entities` body, framing included
 /// ([`create_entity::max_deployment_body_bytes`]).
-fn content_routes(max_deploy_body: usize) -> Router<SharedState> {
+fn content_routes(state: &SharedState, max_deploy_body: usize) -> Router<SharedState> {
     Router::new()
         .route("/challenge", get(status::get_challenge))
         .route("/entities/{type}", get(active_entities::get_entities))
@@ -705,11 +749,21 @@ fn content_routes(max_deploy_body: usize) -> Router<SharedState> {
         )
         .route(
             "/entities/active",
-            post(active_entities::get_active_entities).layer(DefaultBodyLimit::max(256 * 1024)),
+            post(active_entities::get_active_entities)
+                .layer(DefaultBodyLimit::max(
+                    routing::MAX_ACTIVE_ENTITIES_BODY_BYTES,
+                ))
+                .layer(axum::middleware::from_fn(routing::payload_too_large_text))
+                .get(active_entities::get_entities_active),
         )
         .route(
             "/contents/{hashId}",
-            get(get_content::get_content).head(get_content::get_content),
+            get(get_content::get_content)
+                .head(get_content::get_content)
+                .route_layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    content_get_limit::limit,
+                )),
         )
         .route(
             "/contents/{hashId}/active-entities",
@@ -783,15 +837,15 @@ pub fn build_router(state: SharedState) -> Router {
             "/lambdas/collections/contents/{pointer}/image",
             get(entity_thumbnail::get_entity_image).head(entity_thumbnail::get_entity_image),
         )
-        .merge(content_routes(max_deploy_body))
-        .nest("/content", content_routes(max_deploy_body))
+        .merge(content_routes(&state, max_deploy_body))
+        .nest("/content", content_routes(&state, max_deploy_body))
         .fallback(not_found)
         .layer(
             TraceLayer::new_for_http()
                 .on_failure(DefaultOnFailure::new().level(tracing::Level::DEBUG)),
         )
         .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
-        .layer(axum::middleware::from_fn(cors::cors_middleware))
+        .layer(axum::middleware::from_fn(routing::content_cors))
         .layer(axum::middleware::from_fn(connection::keep_alive_hint));
     if let Some(timeout) = request_timeout {
         // A deploy form has its own, longer bounds in [`create_entity`]: the
@@ -840,6 +894,32 @@ mod settings_tests {
                 .unwrap();
         let build_time = option_env!("CATALYST_COMMIT_HASH").map(str::to_string);
         assert_eq!(Settings::from_config(&config).commit_hash, build_time);
+    }
+
+    /// CS-15: `CURRENT_VERSION` sets the reported version, as upstream's.
+    #[test]
+    fn current_version_overrides_the_build_version() {
+        let config = Config::parse_for_tests(&[
+            "x",
+            "--database-url",
+            "postgres:///c",
+            "--social-rpc-current-version",
+            "8.3.2",
+        ])
+        .unwrap();
+        assert_eq!(Settings::from_config(&config).version, "8.3.2");
+        let config = Config::parse_for_tests(&[
+            "x",
+            "--database-url",
+            "postgres:///c",
+            "--social-rpc-current-version",
+            " ",
+        ])
+        .unwrap();
+        assert_eq!(
+            Settings::from_config(&config).version,
+            env!("CARGO_PKG_VERSION")
+        );
     }
 }
 

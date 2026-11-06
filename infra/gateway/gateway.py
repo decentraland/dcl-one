@@ -98,6 +98,7 @@ def settings(env, resolv_conf="/etc/resolv.conf"):
         "admins": networks(env.get("GATEWAY_ADMIN_CIDRS", "")),
         "trusted": trusted,
         "storage_trusted": storage_trusted,
+        "sync_peers": networks(env.get("GATEWAY_TRUSTED_SYNC_PEER_IPS", "")),
         "storage": storage.rstrip("/"),
     }
 
@@ -125,6 +126,7 @@ def render(table, cfg, mime):
     domain_names = " ".join(dict.fromkeys([cfg["domain"], "~^[a-z0-9-]+\\." + domain + "$", *cfg["hosts"]]))
     admin_geo = " ".join(f'{net} "admitted";' for net in cfg["admins"])
     trusted_geo = " ".join(f"{net} 1;" for net in cfg["trusted"])
+    sync_peer_geo = " ".join(f"{net} 1;" for net in cfg["sync_peers"])
     storage_geo = " ".join(f"{net} 1;" for net in cfg["storage_trusted"])
     real_ip = "\n".join(f"set_real_ip_from {net};" for net in cfg["trusted"])
     blocked = "|".join(re.escape(path.lstrip("/")) for path in table["internal"])
@@ -173,9 +175,17 @@ def render(table, cfg, mime):
     # is buffered in the gateway's temp space before the app sees it.
     deploy = "|".join(re.escape(path) for path in table["deploy"])
     uploads = f"limit_conn deploy_uploads {DEPLOY_CONNECTIONS_PER_ADDRESS};"
-    locations += location(f'~ "^({deploy})/*$"', proxy("apis",
+    # Case-insensitive, as nginx would otherwise pass /content/Entities to the
+    # /content/ location and its looser limits.
+    locations += location(f'~* "^({deploy})/*$"', proxy("apis",
         f"client_max_body_size {CONTENT_DEPLOY_CAP}; client_body_timeout 300s; "
         f"limit_req zone=deploy burst=200 nodelay; {uploads}"))
+    # Upstream caps the POST /entities/active body at 10 MiB and answers its
+    # own 413 (MAX_ACTIVE_ENTITIES_BODY_SIZE); the server-wide 1m would answer
+    # nginx's HTML 413 first. The content server's case rewrite routes any
+    # spelling, so the match ignores case too.
+    locations += location('~* "^(/content)?/entities/active/*$"', proxy("apis",
+        "client_max_body_size 10m; limit_req zone=content burst=1000 nodelay;"))
     locations += location('~ "^/worlds-content-server/entities/*$"', proxy("apis",
         f"client_max_body_size {WORLDS_DEPLOY_CAP}; client_body_timeout 300s; "
         f"limit_req zone=deploy burst=4 nodelay; {uploads}"))
@@ -296,6 +306,14 @@ http {{
         "~*^/telemetry/dash/admin(/|\\\\.|$)" 1;
     }}
     map "$operator_path:$admin_gate" $operator_denied {{ volatile; default 0; "1:" 1; }}
+    # Listed sync peers (the API's TRUSTED_SYNC_PEER_IPS) get an empty key on
+    # GET and HEAD /contents/{{hash}}, which nginx does not count: upstream exempts
+    # a peer that syncs from it on that route only.
+    geo $sync_peer {{ default 0; {sync_peer_geo} }}
+    map "$sync_peer:$request_method:$uri" $content_limit_key {{
+        default $binary_remote_addr;
+        "~^1:(GET|HEAD):(/content)?/contents/[^/]+/*$" "";
+    }}
     geo $storage_trusted {{ default 0; {storage_geo} }}
     map $storage_trusted $storage_limit_key {{ 1 ""; default $binary_remote_addr; }}
     map "$storage_trusted:$request_method" $storage_write_key {{
@@ -309,7 +327,7 @@ http {{
     limit_req_zone $storage_write_key zone=storage_write:10m rate=30r/s;
     limit_req_zone $storage_trusted_key zone=storage_trusted:10m rate=1000r/s;
     limit_req_zone $binary_remote_addr zone=read:10m rate=30r/s;
-    limit_req_zone $binary_remote_addr zone=content:10m rate=100r/s;
+    limit_req_zone $content_limit_key zone=content:10m rate=100r/s;
     limit_req_zone $storage_limit_key zone=storage:10m rate=100r/s;
     limit_req_zone $binary_remote_addr zone=deploy:10m rate=5r/s;
     limit_req_status 429;

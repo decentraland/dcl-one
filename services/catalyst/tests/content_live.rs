@@ -515,13 +515,12 @@ async fn phase_open(
     let a = node
         .console(&cookie, "/admin/api/content/challenge/refresh", json!({}))
         .await;
-    assert!(
-        a.body["body"]["challenge"]
-            .as_str()
-            .unwrap()
-            .starts_with("dcl-crypto-"),
-        "{}",
-        a.body
+    let refreshed = a.body["body"]["challenge"].as_str().unwrap();
+    assert!(uuid::Uuid::parse_str(refreshed).is_ok(), "{}", a.body);
+    assert_eq!(
+        node.get("/content/challenge").await.body["challengeText"],
+        json!(refreshed),
+        "the refresh replaces the process's challenge"
     );
     let audit = node
         .send(

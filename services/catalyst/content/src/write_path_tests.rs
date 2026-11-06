@@ -839,9 +839,11 @@ async fn a_signed_scene_deploys_serves_and_unpublishes_end_to_end() {
     let audit = json_of(&audit);
     assert_eq!(audit["localProvenance"]["status"], "active");
     assert_eq!(audit["localProvenance"]["signer"], address(&owner));
+    // The audit sends the stored double with its sub-ms fraction; the
+    // creationTimestamp is it truncated, as the history routes report it.
     assert_eq!(
-        audit["localTimestamp"],
-        json!(created),
+        audit["localTimestamp"].as_f64().map(|ms| ms.floor() as i64),
+        Some(created),
         "creationTimestamp is the stored localTimestamp"
     );
 

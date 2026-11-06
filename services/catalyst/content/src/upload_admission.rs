@@ -25,7 +25,7 @@
 //! own clients; such an upstream raises `POST_ENTITIES_DAILY_QUOTA_MAX` or
 //! sets it to 0.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -126,7 +126,11 @@ impl SourceUploads {
 
     /// Admits an upload of up to `bytes` from `client_ip`: `Err` when the
     /// source already has its share in flight, `Ok(None)` without a source.
-    pub fn try_acquire(&self, client_ip: &str, bytes: u64) -> Result<Option<SourceLease<'_>>, SourceBusy> {
+    pub fn try_acquire(
+        &self,
+        client_ip: &str,
+        bytes: u64,
+    ) -> Result<Option<SourceLease<'_>>, SourceBusy> {
         if client_ip.trim().is_empty() {
             return Ok(None);
         }
@@ -158,49 +162,15 @@ impl Drop for SourceLease<'_> {
     }
 }
 
+use crate::fixed_windows::FixedWindows;
 use crate::shared::client_ip::source_key;
 
-struct Window {
-    started: Instant,
-    count: u32,
-}
-
-/// Live windows by source key, and their keys oldest first (one entry each).
-#[derive(Default)]
-struct Windows {
-    by_source: HashMap<String, Window>,
-    by_age: VecDeque<String>,
-}
-
-impl Windows {
-    /// Drops the windows of length `length` that ended by `now`, oldest first.
-    fn prune(&mut self, now: Instant, length: Duration) {
-        while let Some(key) = self.by_age.front() {
-            match self.by_source.get(key) {
-                Some(w) if now.saturating_duration_since(w.started) < length => break,
-                _ => {
-                    let key = self.by_age.pop_front().expect("front exists");
-                    self.by_source.remove(&key);
-                }
-            }
-        }
-    }
-
-    fn evict_oldest(&mut self) {
-        if let Some(key) = self.by_age.pop_front() {
-            self.by_source.remove(&key);
-        }
-    }
-}
-
-/// A fixed window of requests per client source (24 hours for the daily
-/// quota); `max` 0 is off. Per process: every upstream and restart counts
-/// on its own.
+/// A fixed window of deploys per client source (24 hours for the daily
+/// quota, the burst window for the burst limit); `max` 0 is off.
+/// Per process: every upstream and restart counts on its own.
 pub struct DailyQuota {
     max: u32,
-    window: Duration,
-    max_sources: usize,
-    windows: Mutex<Windows>,
+    windows: Mutex<FixedWindows>,
     warned_no_source: AtomicBool,
 }
 
@@ -215,7 +185,7 @@ impl QuotaCharge<'_> {
     /// Uncounts the deploy, if its window is still the live one.
     pub fn refund(self) {
         let mut windows = self.quota.windows.lock();
-        if let Some(w) = windows.by_source.get_mut(&self.key)
+        if let Some(w) = windows.get_mut(&self.key)
             && w.started == self.started
         {
             w.count = w.count.saturating_sub(1);
@@ -236,9 +206,7 @@ impl DailyQuota {
     fn with_max_sources(max: u32, window: Duration, max_sources: usize) -> Self {
         Self {
             max,
-            window,
-            max_sources: max_sources.max(1),
-            windows: Mutex::new(Windows::default()),
+            windows: Mutex::new(FixedWindows::new(window, max_sources)),
             warned_no_source: AtomicBool::new(false),
         }
     }
@@ -268,28 +236,14 @@ impl DailyQuota {
         }
         let key = source_key(client_ip);
         let mut windows = self.windows.lock();
-        windows.prune(now, self.window);
-        let started = match windows.by_source.get_mut(&key) {
-            Some(w) if w.count >= self.max => return Err(retry_after(w, now, self.window)),
-            Some(w) => {
-                w.count += 1;
-                w.started
-            }
-            None => {
-                if windows.by_source.len() >= self.max_sources {
-                    windows.evict_oldest();
-                }
-                windows.by_source.insert(
-                    key.clone(),
-                    Window {
-                        started: now,
-                        count: 1,
-                    },
-                );
-                windows.by_age.push_back(key.clone());
-                now
-            }
-        };
+        windows.prune(now);
+        let length = windows.length();
+        let w = windows.window(&key, now);
+        if w.count >= self.max {
+            return Err(w.reset_secs(length, now));
+        }
+        w.count += 1;
+        let started = w.started;
         Ok(Some(QuotaCharge {
             quota: self,
             key,
@@ -306,12 +260,12 @@ impl DailyQuota {
         }
         let now = Instant::now();
         let mut windows = self.windows.lock();
-        windows.prune(now, self.window);
+        windows.prune(now);
+        let length = windows.length();
         windows
-            .by_source
             .get(&source_key(client_ip))
             .filter(|w| w.count >= self.max)
-            .map(|w| retry_after(w, now, self.window))
+            .map(|w| w.reset_secs(length, now))
     }
 }
 
@@ -321,18 +275,9 @@ impl DailyQuota {
     pub(crate) fn counted_for(&self, client_ip: &str) -> u32 {
         self.windows
             .lock()
-            .by_source
             .get(&source_key(client_ip))
             .map_or(0, |w| w.count)
     }
-}
-
-/// Whole seconds until a live `window` of length `length` ends, at least 1.
-fn retry_after(window: &Window, now: Instant, length: Duration) -> u64 {
-    length
-        .saturating_sub(now.saturating_duration_since(window.started))
-        .as_secs()
-        .max(1)
 }
 
 #[cfg(test)]
@@ -473,8 +418,7 @@ mod tests {
             counted(&quota, "203.0.113.1", later),
             "the oldest was evicted"
         );
-        assert_eq!(quota.windows.lock().by_source.len(), 3);
-        assert_eq!(quota.windows.lock().by_age.len(), 3);
+        assert_eq!(quota.windows.lock().len(), 3);
     }
 
     #[test]
@@ -517,6 +461,6 @@ mod tests {
         for _ in 0..3 {
             assert!(quota.try_consume("").unwrap().is_none());
         }
-        assert!(quota.windows.lock().by_source.is_empty());
+        assert_eq!(quota.windows.lock().len(), 0);
     }
 }
