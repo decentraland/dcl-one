@@ -1,6 +1,6 @@
-//! Ordering and per-frame time budget for scene raycasts. Requests in the player's scene go
-//! first, then by scene priority, then the longest-waiting; casting stops once the frame's budget
-//! is spent and the rest wait for a later frame.
+//! Ordering and per-frame time budget for scene raycasts. Requests deferred for 60 frames or more
+//! go first, then those in the player's scene, then by scene priority, then the longest-waiting;
+//! casting stops once the frame's budget is spent and the rest wait for a later frame.
 
 use std::{cmp::Ordering, time::Duration};
 
@@ -9,8 +9,9 @@ use bevy_console::ConsoleCommand;
 use common::structs::AppConfig;
 use web_time::Instant;
 
-/// What the last frame's raycast pass did: casts run, casts left for a later frame, and the time
-/// spent casting.
+/// What the raycast pass did on the last frame that had at least one eligible raycast: casts run,
+/// casts left for a later frame, and the time spent casting. A frame with nothing to cast (most
+/// frames between scene ticks) leaves it as it was.
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq)]
 pub struct RaycastStats {
     pub ran: u32,
@@ -18,8 +19,8 @@ pub struct RaycastStats {
     pub spent: Duration,
 }
 
-/// Report, as JSON, what the last frame's raycast pass did: `budgetMs`, `ran`, `deferred` and
-/// `spentMs`.
+/// Report, as JSON, what the raycast pass did on the last frame that had at least one raycast to
+/// cast: `budgetMs`, `ran`, `deferred` and `spentMs`.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/raycast_stats")]
 pub(super) struct RaycastStatsCommand;
@@ -42,9 +43,22 @@ pub(super) fn raycast_stats(
     }
 }
 
+/// The most a hand-edited `raycast_budget_ms` can make the budget, as the setting's range allows.
+pub const MAX_BUDGET_MS: u32 = 10;
+
+/// A request deferred for this many frames is starved and runs ahead of the scene order.
+pub const STARVED_AFTER_FRAMES: u32 = 60;
+
+/// The frame's budget for a configured `raycast_budget_ms`, capped at [`MAX_BUDGET_MS`].
+pub fn budget(raycast_budget_ms: u32) -> Duration {
+    Duration::from_millis(raycast_budget_ms.min(MAX_BUDGET_MS) as u64)
+}
+
 /// The fields a pending raycast request is ordered by.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Candidate {
+    /// The frame the request was first deferred on, 0 if it is not waiting.
+    pub deferred_since: u32,
     /// The request's scene contains the player.
     pub in_player_scene: bool,
     /// The scene's `RendererSceneContext::priority` (lower runs sooner).
@@ -55,10 +69,29 @@ pub struct Candidate {
     pub entity_id: u32,
 }
 
-/// Player scene first, then lower priority, then never-run, then the oldest run, then entity id.
-pub fn candidate_order(a: &Candidate, b: &Candidate) -> Ordering {
-    b.in_player_scene
-        .cmp(&a.in_player_scene)
+impl Candidate {
+    /// Deferred for [`STARVED_AFTER_FRAMES`] or more as of `frame`.
+    pub fn starved(&self, frame: u32) -> bool {
+        self.deferred_since != 0
+            && frame.saturating_sub(self.deferred_since) >= STARVED_AFTER_FRAMES
+    }
+}
+
+/// Starved requests first (the longest-deferred first), so a scene that fills the budget every
+/// frame cannot hold the others back forever; then the player's scene, then lower priority, then
+/// never-run, then the oldest run, then entity id. `frame` is the current engine frame.
+pub fn candidate_order(a: &Candidate, b: &Candidate, frame: u32) -> Ordering {
+    let (a_starved, b_starved) = (a.starved(frame), b.starved(frame));
+    b_starved
+        .cmp(&a_starved)
+        .then_with(|| {
+            if a_starved && b_starved {
+                a.deferred_since.cmp(&b.deferred_since)
+            } else {
+                Ordering::Equal
+            }
+        })
+        .then_with(|| b.in_player_scene.cmp(&a.in_player_scene))
         .then_with(|| a.priority.total_cmp(&b.priority))
         .then_with(|| (a.last_run != 0).cmp(&(b.last_run != 0)))
         .then_with(|| a.last_run.cmp(&b.last_run))
@@ -117,6 +150,7 @@ mod tests {
     #[test]
     fn order_player_scene_then_priority_then_oldest_then_entity() {
         let c = |p, pr, lr, e| Candidate {
+            deferred_since: 0,
             in_player_scene: p,
             priority: pr,
             last_run: lr,
@@ -129,11 +163,45 @@ mod tests {
             c(true, 9.0, 0, 2),
             c(false, 0.5, 1, 4),
         ];
-        v.sort_by(candidate_order);
+        v.sort_by(|a, b| candidate_order(a, b, 100));
         assert_eq!(
             v.iter().map(|c| c.entity_id).collect::<Vec<_>>(),
             vec![2, 3, 1, 4, 9]
         );
+    }
+
+    #[test]
+    fn starved_requests_run_ahead_of_the_scene_order() {
+        let c = |deferred_since, in_player_scene, e| Candidate {
+            deferred_since,
+            in_player_scene,
+            priority: 1.0,
+            last_run: 5,
+            entity_id: e,
+        };
+        // at frame 200: 1 and 2 are in the player's scene; 3 waited 60 frames, 4 waited 100,
+        // 5 only 59 (not yet starved), 6 is not waiting
+        let mut v = [
+            c(0, true, 1),
+            c(150, true, 2),
+            c(140, false, 3),
+            c(100, false, 4),
+            c(141, false, 5),
+            c(0, false, 6),
+        ];
+        v.sort_by(|a, b| candidate_order(a, b, 200));
+        assert_eq!(
+            v.iter().map(|c| c.entity_id).collect::<Vec<_>>(),
+            vec![4, 3, 1, 2, 5, 6]
+        );
+        assert!(!c(0, false, 7).starved(u32::MAX));
+    }
+
+    #[test]
+    fn a_hand_edited_budget_is_capped_at_10_ms() {
+        assert_eq!(budget(2), Duration::from_millis(2));
+        assert_eq!(budget(10), Duration::from_millis(10));
+        assert_eq!(budget(500), Duration::from_millis(10));
     }
 
     #[test]

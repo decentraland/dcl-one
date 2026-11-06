@@ -11,6 +11,9 @@ pub struct RaycastPlugin;
 pub struct Raycast {
     pub raycast: PbRaycast,
     pub last_run: u32,
+    /// The engine frame the request was first left for a later frame by the raycast budget, 0
+    /// while it is not waiting; cleared when it runs.
+    pub deferred_since: u32,
 }
 
 impl From<PbRaycast> for Raycast {
@@ -18,6 +21,7 @@ impl From<PbRaycast> for Raycast {
         Self {
             raycast: value,
             last_run: 0,
+            deferred_since: 0,
         }
     }
 }

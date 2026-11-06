@@ -6,19 +6,18 @@
 // [ ] - move into scene loop
 // [/] - consider how global raycasts interact with this setup (it works, pointer events use a global raycast already. but need to optimise by ordering scenes based on ray)
 
-use bevy::{color::palettes::basic, prelude::*};
+use bevy::{color::palettes::basic, diagnostic::FrameCount, prelude::*};
 use bevy_console::ConsoleCommand;
 use common::{
     dynamics::{PLAYER_COLLIDER_OVERLAP, PLAYER_COLLIDER_RADIUS},
     structs::{AppConfig, PrimaryUser},
 };
-use std::time::Duration;
 use web_time::Instant;
 
 use crate::{
     initialize_scene::SuperUserScene,
     update_scene::raycast_budget::{
-        candidate_order, raycast_stats, run_within_budget, Candidate, RaycastStats,
+        budget, candidate_order, raycast_stats, run_within_budget, Candidate, RaycastStats,
         RaycastStatsCommand,
     },
     update_world::{
@@ -57,9 +56,9 @@ impl Plugin for RaycastResultPlugin {
             query: "/raycast_stats",
             fields: &[
                 ("Budget (ms)", "budgetMs"),
-                ("Ran last frame", "ran"),
-                ("Deferred last frame", "deferred"),
-                ("Spent last frame (ms)", "spentMs"),
+                ("Ran (last pass)", "ran"),
+                ("Deferred (last pass)", "deferred"),
+                ("Spent (last pass, ms)", "spentMs"),
             ],
             inputs: &[DebugInput {
                 label: "Budget (ms)",
@@ -125,7 +124,10 @@ fn run_raycasts(
     config: Res<AppConfig>,
     mut stats: ResMut<RaycastStats>,
     player: Query<Entity, With<PrimaryUser>>,
+    frame: Res<FrameCount>,
 ) {
+    // 0 marks a request that is not waiting, so frame 0 counts as 1
+    let frame = frame.0.max(1);
     // redraw non-continuous gizmos for 1 sec
     gizmo_cache.retain(|(until, origin, end)| {
         gizmos.line(*origin, *end, basic::BLUE);
@@ -139,7 +141,7 @@ fn run_raycasts(
 
     // collect the requests that are due this frame, in the order they should run
     let mut candidates: Vec<(Entity, Candidate)> = Vec::new();
-    for (e, scene_ent, raycast, _) in raycast_requests.iter() {
+    for (e, scene_ent, mut raycast, _) in raycast_requests.iter_mut() {
         let Ok((_, context, ..)) = scene_context.get(scene_ent.root) else {
             continue;
         };
@@ -162,14 +164,19 @@ fn run_raycasts(
         candidates.push((
             e,
             Candidate {
+                deferred_since: raycast.deferred_since,
                 in_player_scene: player_scenes.contains(&scene_ent.root),
                 priority: context.priority,
                 last_run: raycast.last_run,
                 entity_id: e.index(),
             },
         ));
+        // waiting from this frame unless it runs below, which clears it
+        if raycast.deferred_since == 0 {
+            raycast.deferred_since = frame;
+        }
     }
-    candidates.sort_by(|(_, a), (_, b)| candidate_order(a, b));
+    candidates.sort_by(|(_, a), (_, b)| candidate_order(a, b, frame));
     let order: Vec<Entity> = candidates.into_iter().map(|(e, _)| e).collect();
 
     // returns false when the request or its scene is gone, so it counts as neither ran nor deferred
@@ -185,6 +192,7 @@ fn run_raycasts(
         };
         let continuous = raycast.raycast.continuous.unwrap_or(false);
         raycast.last_run = context.last_update_frame;
+        raycast.deferred_since = 0;
         debug!("running raycast");
 
         // execute the raycast
@@ -448,9 +456,13 @@ fn run_raycasts(
         true
     };
 
+    // the stats describe the last frame that had something to cast
+    if order.is_empty() {
+        return;
+    }
     *stats = run_within_budget(
         order,
-        Duration::from_millis(config.raycast_budget_ms as u64),
+        budget(config.raycast_budget_ms),
         &mut Instant::now,
         &mut cast_one,
     );
