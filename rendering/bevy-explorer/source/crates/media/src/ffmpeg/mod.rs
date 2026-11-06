@@ -1,0 +1,183 @@
+mod audio_context;
+mod stream_processor;
+mod util;
+mod video_context;
+
+use std::path::Path;
+
+use bevy::log::debug;
+use common::{structs::AudioDecoderError, util::ReportErr};
+use dcl_component::proto_components::sdk::components::VideoState;
+use ffmpeg_next::format::input_with_interrupt;
+use ipfs::IpfsIo;
+use kira::sound::streaming::StreamingSoundData;
+use tokio::sync::mpsc::WeakUnboundedSender;
+
+use crate::{
+    AVCommand, VideoData,
+    ffmpeg::{
+        audio_context::{AudioContext, AudioError},
+        stream_processor::{AudioOutput, process_streams},
+        util::InputWrapper,
+        video_context::{VideoContext, VideoError},
+    },
+};
+
+/// The kira sound playing a stream's audio.
+pub type AudioHandle = <StreamingSoundData<AudioDecoderError> as kira::sound::SoundData>::Handle;
+
+pub fn init_ffmpeg() {
+    ffmpeg_next::init().unwrap();
+    ffmpeg_next::log::set_level(ffmpeg_next::log::Level::Error);
+}
+
+/// Polled by ffmpeg while it opens and reads. True once every command sender is gone, so a
+/// disposed player's thread leaves a blocking network open instead of outliving its sinks.
+fn interrupted(disposed: &WeakUnboundedSender<AVCommand>) -> impl FnMut() -> bool {
+    let disposed = disposed.clone();
+    move || disposed.strong_count() == 0
+}
+
+/// Opens `path` for reading; `None` when the player was disposed before the open finished.
+/// An interrupted probe can still come back `Ok` with partial stream info, so the sender count
+/// is checked again after the open rather than trusting the result alone.
+fn open(
+    path: &str,
+    disposed: &WeakUnboundedSender<AVCommand>,
+) -> Result<Option<ffmpeg_next::format::context::Input>, ffmpeg_next::Error> {
+    match input_with_interrupt(&path, interrupted(disposed)) {
+        Ok(input) if disposed.strong_count() > 0 => Ok(Some(input)),
+        Ok(_) | Err(ffmpeg_next::Error::Exit) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+pub fn ffmpeg_worker(
+    ipfas: &IpfsIo,
+    commands: tokio::sync::mpsc::UnboundedReceiver<AVCommand>,
+    disposed: WeakUnboundedSender<AVCommand>,
+    video: Option<tokio::sync::mpsc::Sender<VideoData>>,
+    audio: tokio::sync::mpsc::Sender<StreamingSoundData<AudioDecoderError>>,
+    audio_handle: tokio::sync::oneshot::Receiver<AudioHandle>,
+    mut path: String,
+    hash: String,
+) -> Result<(), anyhow::Error> {
+    if let Some(ref video) = video {
+        video
+            .blocking_send(VideoData::State(VideoState::VsLoading))
+            .report();
+    }
+    debug!("av thread spawned for {path} ...");
+    // `None` when the player was disposed first: the blocking fetch cannot be interrupted, so
+    // it is not started for a player nobody is waiting on
+    let download = |url: &str| -> Result<Option<String>, anyhow::Error> {
+        if disposed.strong_count() == 0 {
+            return Ok(None);
+        }
+        let local_folder = ipfas.cache_path().unwrap().join("video_downloads");
+        let local_path = local_folder.join(Path::new(urlencoding::encode(url).as_ref()));
+
+        if std::fs::File::open(&local_path).is_err() {
+            let resp = reqwest::blocking::get(url)?;
+            let data = resp.bytes()?;
+            std::fs::create_dir_all(&local_folder)?;
+            std::fs::write(&local_path, data)?;
+        }
+        Ok(Some(local_path.to_string_lossy().to_string()))
+    };
+
+    // source might be a content map file or a url
+    let mut from_content_map = false;
+    if let Some(content_url) = ipfas.content_url(&path, &hash) {
+        // check if it changed as content_url will return Some(path) when not found and path is url-compliant.
+        // if it is a raw url we don't want to download initially as some servers reject http get requests on videos.
+        if content_url != path {
+            // for content paths we download
+            debug!(
+                "content map file {} -> {}, downloading ...",
+                path, content_url
+            );
+            let Some(downloaded) = download(&content_url)? else {
+                return Ok(());
+            };
+            path = downloaded;
+            from_content_map = true;
+        }
+    };
+
+    // Anything we didn't just download into our own cache is still the scene's raw string, and
+    // ffmpeg will take far more than an http url: a bare local path, or one of its own protocols
+    // (`concat:`, `subfile:`, `rtsp:`, `tcp:`, ...). Restrict it to http(s) before handing it over.
+    // A literal prefix test rather than a url parse, so ffmpeg can't read the scheme differently.
+    if !from_content_map {
+        let lower = path.to_ascii_lowercase();
+        if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+            anyhow::bail!(
+                "av source must be an entity content file or an http(s) url, got `{path}`"
+            );
+        }
+    }
+
+    let Some(mut input_context) = open(&path, &disposed)? else {
+        return Ok(());
+    };
+
+    // try and get a video context
+    let video_context: Option<VideoContext> = if let Some(video) = video {
+        match VideoContext::init(&input_context, video.clone()) {
+            Ok(vc) => Some(vc),
+            Err(VideoError::BadPixelFormat) => {
+                // try to workaround ffmpeg remote streaming issue by downloading the file
+                debug!("failed to determine pixel format - downloading ...");
+                let Some(path) = download(&path)? else {
+                    return Ok(());
+                };
+                let Some(reopened) = open(&path, &disposed)? else {
+                    return Ok(());
+                };
+                input_context = reopened;
+                Some(VideoContext::init(&input_context, video).map_err(|e| anyhow::anyhow!(e))?)
+            }
+            Err(VideoError::NoStream) => None,
+            Err(VideoError::Failed(ffmpeg_err)) => Err(ffmpeg_err)?,
+            Err(VideoError::ChannelClosed) => return Ok(()),
+        }
+    } else {
+        None
+    };
+
+    // try and get an audio context
+    let audio_context: Option<AudioContext> = match AudioContext::init(&input_context, audio) {
+        Ok(ac) => Some(ac),
+        Err(AudioError::NoStream) => None,
+        Err(AudioError::Failed(ffmpeg_err)) => Err(ffmpeg_err)?,
+    };
+
+    if video_context.is_none() && audio_context.is_none() {
+        debug!("No data for video from path {path}.");
+    }
+
+    let input_context = InputWrapper::new(input_context, path);
+    let audio_output = AudioOutput::new(audio_handle);
+
+    match (video_context, audio_context) {
+        (None, None) => Ok(()),
+        (None, Some(mut ac)) => {
+            debug!("Processing stream with audio only");
+            process_streams(input_context, &mut [&mut ac], commands, audio_output)
+        }
+        (Some(mut vc), None) => {
+            debug!("Processing stream with video only");
+            process_streams(input_context, &mut [&mut vc], commands, audio_output)
+        }
+        (Some(mut vc), Some(mut ac)) => {
+            debug!("Processing stream");
+            process_streams(
+                input_context,
+                &mut [&mut vc, &mut ac],
+                commands,
+                audio_output,
+            )
+        }
+    }
+}

@@ -20,7 +20,7 @@ use scene_runner::{
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::*;
 
-#[cfg(any(feature = "uuav", feature = "html"))]
+#[cfg(any(feature = "ffmpeg", feature = "html"))]
 use crate::AVSinks;
 use crate::{
     AVPlayer, AVPlayerPlugin, AudioStream, InScene, ShouldBePlaying, Stream, VideoPlayer,
@@ -41,7 +41,7 @@ macro_rules! test_component {
     };
 }
 
-#[cfg(any(feature = "uuav", feature = "html"))]
+#[cfg(any(feature = "ffmpeg", feature = "html"))]
 #[expect(clippy::too_many_arguments)]
 fn test_components<T: AVPlayer>(
     app: &mut App,
@@ -68,11 +68,11 @@ fn test_components<T: AVPlayer>(
     test_component!(app, entity, ActiveReceiver, active_receiver);
     test_component!(app, entity, ReceiverImage, receiver_image);
     test_component!(app, entity, VideoTextureOutput, video_texture_output);
-    #[cfg(any(feature = "uuav", feature = "html"))]
+    #[cfg(any(feature = "ffmpeg", feature = "html"))]
     test_component!(app, entity, AVSinks<T>, media);
 }
 
-#[cfg(any(feature = "uuav", feature = "html"))]
+#[cfg(any(feature = "ffmpeg", feature = "html"))]
 fn min_test_app() -> App {
     let mut app = App::new();
 
@@ -133,7 +133,7 @@ fn set_video_source(_p0: wasm_bindgen::JsValue, _p1: wasm_bindgen::JsValue) {
     debug!("set_video_source");
 }
 
-#[cfg(any(feature = "uuav", feature = "html"))]
+#[cfg(any(feature = "ffmpeg", feature = "html"))]
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_insert_audio_stream() {
@@ -194,7 +194,7 @@ fn test_insert_audio_stream() {
     );
 }
 
-#[cfg(any(feature = "uuav", feature = "html"))]
+#[cfg(any(feature = "ffmpeg", feature = "html"))]
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_insert_empty_audio_stream() {
@@ -255,7 +255,7 @@ fn test_insert_empty_audio_stream() {
     );
 }
 
-#[cfg(any(feature = "uuav", feature = "html"))]
+#[cfg(any(feature = "ffmpeg", feature = "html"))]
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_insert_livekit_audio_stream() {
@@ -316,7 +316,7 @@ fn test_insert_livekit_audio_stream() {
     );
 }
 
-#[cfg(any(feature = "uuav", feature = "html"))]
+#[cfg(any(feature = "ffmpeg", feature = "html"))]
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_insert_video_player() {
@@ -377,7 +377,7 @@ fn test_insert_video_player() {
     );
 }
 
-#[cfg(any(feature = "uuav", feature = "html"))]
+#[cfg(any(feature = "ffmpeg", feature = "html"))]
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_insert_empty_video_player() {
@@ -438,7 +438,7 @@ fn test_insert_empty_video_player() {
     );
 }
 
-#[cfg(any(feature = "uuav", feature = "html"))]
+#[cfg(any(feature = "ffmpeg", feature = "html"))]
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_insert_livekit_video_player() {
@@ -499,7 +499,7 @@ fn test_insert_livekit_video_player() {
     );
 }
 
-#[cfg(any(feature = "uuav", feature = "html"))]
+#[cfg(any(feature = "ffmpeg", feature = "html"))]
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_removing_video_player() {
@@ -580,7 +580,7 @@ fn test_removing_video_player() {
     );
 }
 
-#[cfg(any(feature = "uuav", feature = "html"))]
+#[cfg(any(feature = "ffmpeg", feature = "html"))]
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_removing_livekit_video_player() {
@@ -661,7 +661,7 @@ fn test_removing_livekit_video_player() {
     );
 }
 
-#[cfg(any(feature = "uuav", feature = "html"))]
+#[cfg(any(feature = "ffmpeg", feature = "html"))]
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_livekit_video_player_without_should_be_playing_should_not_be_receiver() {
@@ -798,7 +798,7 @@ fn test_livekit_video_player_without_should_be_playing_should_not_be_receiver() 
     );
 }
 
-#[cfg(any(feature = "uuav", feature = "html"))]
+#[cfg(any(feature = "ffmpeg", feature = "html"))]
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_source_change() {
@@ -997,7 +997,7 @@ fn test_source_change() {
     assert_eq!(video_handle, repeat_video_handle);
 }
 
-#[cfg(any(feature = "uuav", feature = "html"))]
+#[cfg(any(feature = "ffmpeg", feature = "html"))]
 #[test]
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn test_despawn_av_player() {
@@ -1044,4 +1044,40 @@ fn test_despawn_av_player() {
         .id();
 
     app.world_mut().entity_mut(video_player).despawn();
+}
+
+// This crate links comms, and with it libwebrtc. Keep this test here, not in `media`: libwebrtc
+// bundles chromium's ffmpeg, and if those symbols shadow the ffmpeg the engine links, https
+// sourcing and decoding fail in exactly this binary and nowhere ffmpeg is linked on its own.
+#[cfg(all(feature = "ffmpeg", not(target_arch = "wasm32")))]
+#[test]
+fn test_ffmpeg() {
+    let context = ffmpeg_next::format::input(
+        &"https://vz-7c61c1b5-d59.b-cdn.net/ccea595a-b910-4de6-b160-092819db021d/play_480p.mp4"
+            .to_owned(),
+    )
+    .unwrap();
+    let stream = context
+        .streams()
+        .best(ffmpeg_next::media::Type::Video)
+        .unwrap();
+    ffmpeg_next::codec::context::Context::from_parameters(stream.parameters())
+        .unwrap()
+        .decoder()
+        .video()
+        .unwrap();
+}
+
+/// The threads behind the players above outlive their app; once it is gone they must leave
+/// promptly, which is what the client's exit relies on.
+///
+/// The join covers every av thread in the process, so this assumes the tests run one at a
+/// time (`--test-threads=1`, as CI does); alongside another test's live app it can time out.
+#[cfg(all(feature = "ffmpeg", not(target_arch = "wasm32")))]
+#[test]
+fn av_threads_leave_once_their_app_is_gone() {
+    test_source_change();
+    assert!(crate::video_stream::join_av_threads(
+        std::time::Duration::from_secs(10)
+    ));
 }
