@@ -162,7 +162,7 @@ export const WEB_PARAMS: WebParam[] = [
     "name": "bevyVariants",
     "kind": "string",
     "delivery": "launch",
-    "doc": "Base url of an abgen Bevy variants service (prototype); absent = off. Scene textures and models it has GPU-ready variants of load as those variants, each checked against its content id; anything else, or any failure, loads the original"
+    "doc": "Base url of an abgen Bevy variants service (prototype); absent = off. Scene textures it has GPU-ready variants of load as those variants, each checked against its content id; anything else, or any failure, loads the original"
   },
   {
     "name": "logFps",

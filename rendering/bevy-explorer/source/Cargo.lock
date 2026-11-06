@@ -7265,6 +7265,7 @@ dependencies = [
  "multihash-codetable",
  "platform",
  "reqwest",
+ "ruzstd 0.9.1",
  "serde",
  "serde_json",
  "tokio",

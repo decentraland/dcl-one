@@ -1932,18 +1932,12 @@ impl IpfsIo {
                 return Ok(Box::new(VecReader::new(daft_buffer)));
             }
 
-            // a scene file abgen has a verified variant of reads as that variant
+            // a scene texture abgen has a verified variant of reads as that variant's DDS
             if let Some(variant) = self.read_bevy_variant(&ipfs_path, path).await {
-                let reader: Box<dyn Reader + 'a> = match variant {
-                    bevy_variants::VariantRead::Cached(bytes) => {
-                        ipfs_io_read_state.send_cached(bytes.len());
-                        Box::new(VecReader::new(bytes))
-                    }
-                    bevy_variants::VariantRead::Downloaded(bytes) => {
-                        Box::new(AsyncCursor::new(bytes))
-                    }
-                };
-                return Ok(reader);
+                if variant.cached {
+                    ipfs_io_read_state.send_cached(variant.dds.len());
+                }
+                return Ok(Box::new(VecReader::new(variant.dds)));
             }
 
             let cache_key = ipfs_path.cache_key(&*self.context.read().await);

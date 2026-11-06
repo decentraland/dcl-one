@@ -4,7 +4,15 @@ use crate::{
 };
 use bevy::asset::io::Reader;
 
-// `i % 251` for 1000 bytes, and its raw-leaf CIDv1 (see `content_hash` tests)
+/// A 2-level BC7 KTX2 variant, its CID, and the DDS it unwraps to.
+fn bc7_variant() -> (Vec<u8>, String, Vec<u8>) {
+    let (file, _, _) = super::ktx2::tests::bc7_two_levels();
+    let cid = crate::content_hash::raw_cid(&file);
+    let dds = ktx2::bc_ktx2_to_dds(&file, ktx2::BcFormat::Bc7).unwrap();
+    (file, cid, dds)
+}
+
+// `i % 251` for 1000 bytes (no KTX2), and its raw-leaf CIDv1 (see `content_hash` tests)
 const VARIANT_CID: &str = "bafkreicojquuwmy7piqjti3zx3buxh47ya64i2vumxmzr5gwqpnfgsd6nu";
 const OTHER_CID: &str = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku";
 const ORIGINAL_CID: &str = "bafkreioriginaltexture";
@@ -36,10 +44,10 @@ fn parses_a_v1_manifest() {
             "unknown": true,
             "files": {{
                 "{ORIGINAL_CID}": [
-                    {{"cid": "{VARIANT_CID}", "kind": "texture", "format": "dds-bc7",
+                    {{"cid": "{VARIANT_CID}", "kind": "texture", "format": "ktx2-bc7",
                       "width": 1024, "height": 1024, "mips": 11, "size": 1000}},
-                    {{"cid": "../../etc/passwd", "kind": "texture", "format": "dds-bc1"}},
-                    {{"cid": "QmNotRawLeaf", "kind": "texture", "format": "dds-bc1"}}
+                    {{"cid": "../../etc/passwd", "kind": "texture", "format": "ktx2-bc1"}},
+                    {{"cid": "QmNotRawLeaf", "kind": "texture", "format": "ktx2-bc1"}}
                 ],
                 "bafkreionlybadvariants": [
                     {{"cid": "bafkrei/../x", "kind": "model", "format": "glb"}}
@@ -76,39 +84,50 @@ fn rejects_other_versions_entities_and_garbage() {
 fn selects_the_first_variant_this_client_takes() {
     let variants = [
         variant(OTHER_CID, "texture", "astc-4x4"),
-        variant(VARIANT_CID, "texture", "dds-bc7"),
-        variant(OTHER_CID, "texture", "dds-bc1"),
+        // the format strings of the DDS manifests are no longer taken
+        variant(OTHER_CID, "texture", "dds-bc7"),
+        variant(VARIANT_CID, "texture", "ktx2-bc7"),
+        variant(OTHER_CID, "texture", "ktx2-bc1"),
     ];
     let none_bad = |_: &str| false;
     assert_eq!(
         select_variant(&variants, "images/a.png", true, none_bad).map(|v| v.cid.as_str()),
         Some(VARIANT_CID)
     );
-    // the extension is matched case-insensitively
+    // the extension is matched case-insensitively, and a path without one is an image too
     assert!(select_variant(&variants, "images/A.JPG", true, none_bad).is_some());
+    assert!(select_variant(&variants, "images/a.ktx2", true, none_bad).is_some());
+    assert!(select_variant(&variants, "noextension", true, none_bad).is_some());
     // no BC on the GPU: nothing
     assert!(select_variant(&variants, "images/a.png", false, none_bad).is_none());
-    // a texture never replaces a model, nor a file whose loader would not guess the format
+    // a texture never replaces a model, nor a file another loader reads
     assert!(select_variant(&variants, "models/a.glb", true, none_bad).is_none());
     assert!(select_variant(&variants, "sounds/a.mp3", true, none_bad).is_none());
-    assert!(select_variant(&variants, "noextension", true, none_bad).is_none());
     // a variant that failed this session is passed over for the next supported one
     let fallback = select_variant(&variants, "a.png", true, |cid| cid == VARIANT_CID);
-    assert_eq!(fallback.map(|v| v.format.as_str()), Some("dds-bc1"));
+    assert_eq!(fallback.map(|v| v.format.as_str()), Some("ktx2-bc1"));
+    assert!(select_variant(
+        &[variant(VARIANT_CID, "texture", "ktx2-bc5")],
+        "normal.png",
+        true,
+        none_bad
+    )
+    .is_some());
 
+    // model variants embed KTX2 under KHR_texture_basisu, which the glTF loader rejects
     let models = [variant(VARIANT_CID, "model", "glb")];
-    assert!(select_variant(&models, "models/a.glb", true, none_bad).is_some());
-    assert!(select_variant(&models, "models/a.gltf", true, none_bad).is_some());
-    assert!(select_variant(&models, "images/a.png", true, none_bad).is_none());
+    assert!(select_variant(&models, "models/a.glb", true, none_bad).is_none());
+    assert!(select_variant(&models, "models/a.gltf", true, none_bad).is_none());
     // a kind/format pair the schema does not have
     assert!(select_variant(
-        &[variant(VARIANT_CID, "texture", "glb")],
-        "a.glb",
+        &[variant(VARIANT_CID, "model", "ktx2-bc7")],
+        "a.png",
         true,
         none_bad
     )
     .is_none());
-    assert!(could_have_variant("a.KTX2") && !could_have_variant("main.crdt"));
+    assert!(could_have_variant("a.KTX2") && could_have_variant("a"));
+    assert!(!could_have_variant("main.crdt") && !could_have_variant("a.glb"));
 }
 
 #[test]
@@ -241,9 +260,9 @@ async fn serve(routes: Vec<(String, Vec<u8>)>) -> (String, Arc<Mutex<Vec<String>
     (base, log)
 }
 
-/// A scene with `tex.png` = [`ORIGINAL_CID`], whose manifest offers [`VARIANT_CID`] as BC7,
+/// A scene with `tex.png` = [`ORIGINAL_CID`], whose manifest offers `variant_cid` as BC7 KTX2,
 /// served from `base` (which is also the realm's content server).
-async fn scene_with_variant(io: &Arc<IpfsIo>, base: &str) {
+async fn scene_with_variant(io: &Arc<IpfsIo>, base: &str, variant_cid: &str) {
     let about = ServerAbout {
         content: Some(EndpointConfig {
             healthy: true,
@@ -274,7 +293,7 @@ async fn scene_with_variant(io: &Arc<IpfsIo>, base: &str) {
     let _ = io.bevy_variants.bc.set(true);
     let manifest = format!(
         r#"{{"v": 1, "entity": "{SCENE}", "files": {{"{ORIGINAL_CID}": [
-            {{"cid": "{VARIANT_CID}", "kind": "texture", "format": "dds-bc7"}}
+            {{"cid": "{variant_cid}", "kind": "texture", "format": "ktx2-bc7"}}
         ]}}}}"#
     );
     // the scene's own content server is loopback here, which `request_bevy_variants` refuses
@@ -301,30 +320,38 @@ fn requests_for(log: &Mutex<Vec<String>>, path: &str) -> usize {
 }
 
 #[tokio::test]
-async fn a_verified_variant_is_served_and_cached_under_its_own_cid() {
+async fn a_verified_variant_is_served_as_dds_and_cached_under_its_own_cid() {
     let (io, dir) = io_with_cache("served");
-    let variant_route = format!("/bevy/contents/{VARIANT_CID}");
+    let (ktx2, cid, dds) = bc7_variant();
+    let variant_route = format!("/bevy/contents/{cid}");
     let original_route = format!("/contents/{ORIGINAL_CID}");
     let (base, log) = serve(vec![
-        (variant_route.clone(), variant_bytes()),
+        (variant_route.clone(), ktx2.clone()),
         (original_route.clone(), b"original png".to_vec()),
     ])
     .await;
-    scene_with_variant(&io, &base).await;
+    scene_with_variant(&io, &base, &cid).await;
     let path = content_path("tex.png");
 
-    assert_eq!(read_all(&io, &path).await, variant_bytes());
+    assert_eq!(read_all(&io, &path).await, dds);
     assert!(io.served_bevy_variant(&path));
-    // cached under the variant cid, and nothing under the original's
-    assert_eq!(std::fs::read(dir.join(VARIANT_CID)).unwrap(), variant_bytes());
+    // the KTX2 under the variant cid, its DDS under a name derived from it, and nothing under
+    // the original's
+    assert_eq!(std::fs::read(dir.join(&cid)).unwrap(), ktx2);
+    assert_eq!(std::fs::read(dir.join(format!("{cid}.dds"))).unwrap(), dds);
     assert!(!dir.join(ORIGINAL_CID).exists());
 
-    // the second read is the cache's
-    assert_eq!(read_all(&io, &path).await, variant_bytes());
+    // a warm read is the cached DDS
+    assert_eq!(read_all(&io, &path).await, dds);
+    // without it, the cached KTX2 is unwrapped again, and the DDS cached again
+    std::fs::remove_file(dir.join(format!("{cid}.dds"))).unwrap();
+    assert_eq!(read_all(&io, &path).await, dds);
+    assert!(dir.join(format!("{cid}.dds")).exists());
+
     assert_eq!(requests_for(&log, &variant_route), 1);
     assert_eq!(requests_for(&log, &original_route), 0);
     let session = io.bevy_variants.session.lock().unwrap();
-    assert_eq!((session.downloaded, session.cached, session.fallbacks), (1, 1, 0));
+    assert_eq!((session.downloaded, session.cached, session.fallbacks), (1, 2, 0));
     drop(session);
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -332,26 +359,28 @@ async fn a_verified_variant_is_served_and_cached_under_its_own_cid() {
 #[tokio::test]
 async fn a_variant_that_fails_its_cid_check_falls_back_to_the_original() {
     let (io, dir) = io_with_cache("mismatch");
-    let variant_route = format!("/bevy/contents/{VARIANT_CID}");
+    let (_, cid, _) = bc7_variant();
+    let variant_route = format!("/bevy/contents/{cid}");
     let original_route = format!("/contents/{ORIGINAL_CID}");
     let (base, log) = serve(vec![
         (variant_route.clone(), b"tampered".to_vec()),
         (original_route.clone(), b"original png".to_vec()),
     ])
     .await;
-    scene_with_variant(&io, &base).await;
+    scene_with_variant(&io, &base, &cid).await;
     let path = content_path("tex.png");
 
     assert_eq!(read_all(&io, &path).await, b"original png");
     assert!(!io.served_bevy_variant(&path));
     // the tampered bytes are cached under no key
-    assert!(!dir.join(VARIANT_CID).exists());
+    assert!(!dir.join(&cid).exists());
+    assert!(!dir.join(format!("{cid}.dds")).exists());
     assert!(!dir.join(ORIGINAL_CID).exists());
     {
         let session = io.bevy_variants.session.lock().unwrap();
         assert_eq!(session.fallbacks, 1);
         assert!(session.recent[0].reason.contains("do not hash"));
-        assert!(session.bad.contains(VARIANT_CID));
+        assert!(session.bad.contains(&cid));
     }
 
     // the bad variant is not asked for again this session
@@ -362,11 +391,36 @@ async fn a_variant_that_fails_its_cid_check_falls_back_to_the_original() {
 }
 
 #[tokio::test]
+async fn a_verified_variant_that_is_no_bc_ktx2_falls_back_to_the_original() {
+    let (io, dir) = io_with_cache("not-ktx2");
+    let variant_route = format!("/bevy/contents/{VARIANT_CID}");
+    let original_route = format!("/contents/{ORIGINAL_CID}");
+    let (base, log) = serve(vec![
+        (variant_route.clone(), variant_bytes()),
+        (original_route, b"original png".to_vec()),
+    ])
+    .await;
+    scene_with_variant(&io, &base, VARIANT_CID).await;
+    let path = content_path("tex.png");
+
+    assert_eq!(read_all(&io, &path).await, b"original png");
+    assert!(!dir.join(format!("{VARIANT_CID}.dds")).exists());
+    {
+        let session = io.bevy_variants.session.lock().unwrap();
+        assert!(session.recent[0].reason.starts_with("invalid KTX2"));
+        assert!(session.bad.contains(VARIANT_CID));
+    }
+    assert_eq!(read_all(&io, &path).await, b"original png");
+    assert_eq!(requests_for(&log, &variant_route), 1);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
 async fn a_missing_variant_falls_back_to_the_original() {
     let (io, dir) = io_with_cache("missing");
     let original_route = format!("/contents/{ORIGINAL_CID}");
     let (base, _log) = serve(vec![(original_route, b"original png".to_vec())]).await;
-    scene_with_variant(&io, &base).await;
+    scene_with_variant(&io, &base, VARIANT_CID).await;
     let path = content_path("tex.png");
     assert_eq!(read_all(&io, &path).await, b"original png");
     let session = io.bevy_variants.session.lock().unwrap();
@@ -386,7 +440,7 @@ fn a_variant_that_fails_to_decode_is_marked_bad_once() {
             scene: SCENE.to_owned(),
             file: "tex.png".to_owned(),
             cid: VARIANT_CID.to_owned(),
-            format: "dds-bc7".to_owned(),
+            format: "ktx2-bc7".to_owned(),
         },
         false,
     );
