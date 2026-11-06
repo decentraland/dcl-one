@@ -203,6 +203,7 @@ pub(crate) fn credits_settings(config: &Config) -> anyhow::Result<shop::credits:
         credit_cap_headroom_pct: config.shop.credits_cap_headroom_pct,
         credit_buffer_bps: config.shop.credits_oracle_buffer_bps,
         credits_revoker_key: non_empty(&config.shop.credits_revoker_key),
+        shop_base_url: config.shop.shop_base_url.clone(),
     })
     .context("CREDITS_* / STRIPE_* / CHECKOUT_* configuration")
 }

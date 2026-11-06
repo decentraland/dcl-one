@@ -1,11 +1,15 @@
 import { encodeFunctionData, isAddress, parseUnits, toHex } from "viem";
 
 import type { Eip1193Provider } from "../../data/auth/wallet";
-import { getJSON } from "../../data/catalyst/client";
+import { getJSON, sendSignedJSON, type SendOpts } from "../../data/catalyst/client";
 import type { PaymentsConfig } from "@catalyst-api/economy/PaymentsConfig";
 
 const MANA_DECIMALS = 18;
 export const PAYMENTS_CONFIG_PATH = "/v1/payments/config";
+export const TIP_FORWARD_PATH = "/events-notifier/forward-blockchain";
+const TIP_FORWARD_TIMEOUT_MS = 10_000;
+const POLYGON_CHAIN_IDS = new Set([137, 80002]);
+const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
 
 const TRANSFER_ABI = [
   {
@@ -94,4 +98,21 @@ export async function sendManaTip(provider: Eip1193Provider, opts: SendManaTipOp
     throw new Error("The wallet returned no transaction hash.");
   }
   return hash;
+}
+
+// The server only verifies Polygon MANA transfers, signed by the tipping wallet.
+export function shouldForwardTip(opts: { target: TipTarget; hash: string; from: string; signer?: string | null }): boolean {
+  return POLYGON_CHAIN_IDS.has(opts.target.chainId)
+    && TX_HASH_RE.test(opts.hash)
+    && !!opts.signer
+    && opts.signer.toLowerCase() === opts.from.toLowerCase();
+}
+
+export async function forwardTip(transactionHash: string, opts: SendOpts = {}): Promise<void> {
+  await sendSignedJSON(TIP_FORWARD_PATH, {
+    timeoutMs: TIP_FORWARD_TIMEOUT_MS,
+    ...opts,
+    method: "POST",
+    body: { type: "tip-received", transactionHash },
+  });
 }

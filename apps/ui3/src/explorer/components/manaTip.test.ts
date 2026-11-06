@@ -5,6 +5,7 @@ import {
   encodeManaTransfer,
   manaToWei,
   sendManaTip,
+  shouldForwardTip,
   tipTargetFromConfig,
 } from "./manaTip";
 
@@ -97,5 +98,23 @@ describe("sendManaTip", () => {
     await expect(sendManaTip(provider, { from, to: OWNER, wei: 1n, target })).rejects.toThrow(
       /no transaction hash/,
     );
+  });
+});
+
+describe("shouldForwardTip", () => {
+  const hash = `0x${"ab".repeat(32)}`;
+  const from = "0x00000000000000000000000000000000000000AA";
+  const polygon = { chainId: 137, manaToken: MANA_POLYGON };
+
+  it("forwards a well-formed Polygon or Amoy tip signed by the tipping wallet", () => {
+    expect(shouldForwardTip({ target: polygon, hash, from, signer: from.toLowerCase() })).toBe(true);
+    expect(shouldForwardTip({ target: { chainId: 80002, manaToken: MANA_POLYGON }, hash, from, signer: from })).toBe(true);
+  });
+
+  it("skips other chains, malformed hashes, guests and a signer other than the tipping wallet", () => {
+    expect(shouldForwardTip({ target: { chainId: 1, manaToken: MANA_POLYGON }, hash, from, signer: from })).toBe(false);
+    expect(shouldForwardTip({ target: polygon, hash: "0xdeadbeef", from, signer: from })).toBe(false);
+    expect(shouldForwardTip({ target: polygon, hash, from, signer: null })).toBe(false);
+    expect(shouldForwardTip({ target: polygon, hash, from, signer: OWNER })).toBe(false);
   });
 });

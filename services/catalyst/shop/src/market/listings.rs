@@ -918,7 +918,33 @@ pub async fn create_trade(
     let matched = resolve_signature(trade, &candidates)
         .map_err(|e| TradeCreationError::InvalidSignature(e.to_string()))?;
     verify_sent_ownership(state, trade).await?;
-    insert_trade(pool, trade, network, matched.marketplace.address).await
+    let mut tx = pool.begin().await?;
+    let trade_id = insert_trade(&mut *tx, trade, network, matched.marketplace.address).await?;
+    if trade.trade_type == TRADE_TYPE_BID {
+        // Stateless callers (tests) link to the default origins.
+        let defaults;
+        let settings = match state {
+            Some(s) => &s.settings,
+            None => {
+                defaults = super::Settings::for_tests();
+                &defaults
+            }
+        };
+        let notification = super::trade_events::bid_received_notification(
+            pool,
+            &settings.land_image_base_url,
+            &settings.market.marketplace_base_url,
+            &trade_id,
+            network,
+            trade,
+        )
+        .await?;
+        if let Some(n) = notification {
+            catalyst_social::notifications::insert_notifications(&mut *tx, &[n]).await?;
+        }
+    }
+    tx.commit().await?;
+    Ok(trade_id)
 }
 
 const CREATE_TRADE_SQL: &str = "WITH t AS (
@@ -945,8 +971,8 @@ const CREATE_TRADE_SQL: &str = "WITH t AS (
 /// Head, assets and the typed sub-rows in one statement; a duplicate
 /// signature inserts nothing. The signature is stored lowercase, as the
 /// mirror stores upstream's, so one listing cannot land twice re-cased.
-pub(crate) async fn insert_trade(
-    pool: &PgPool,
+pub(crate) async fn insert_trade<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
     trade: &TradeCreation,
     network: &str,
     contract: &str,
@@ -994,7 +1020,7 @@ pub(crate) async fn insert_trade(
         .bind(effective_since.naive_utc())
         .bind(contract)
         .bind(serde_json::Value::Array(rows))
-        .fetch_optional(pool)
+        .fetch_optional(executor)
         .await?;
     let Some((trade_id,)) = inserted else {
         return Err(TradeCreationError::Duplicate);

@@ -84,13 +84,17 @@ pub mod profiles;
 pub mod rankings;
 pub mod readers;
 pub mod rentals;
+pub mod royalty_notices;
+pub mod sale_notices;
 pub mod sales;
 pub mod search;
 pub mod shop;
 pub mod signed;
 pub mod third_party;
+pub mod tips;
 pub mod trade_events;
 pub mod trades;
+pub mod transfer_notices;
 pub mod user_items;
 pub mod users;
 pub mod wire;
@@ -608,6 +612,16 @@ impl MarketplaceState {
     pub fn spawn_api_jobs(self: &Arc<Self>, jobs: &Jobs) {
         crate::coupons::spawn_job(self, jobs);
         federation::spawn_job(self, jobs);
+        tips::spawn_job(self, jobs);
+        sale_notices::spawn(self, jobs);
+        royalty_notices::spawn(
+            self.pool.clone(),
+            self.settings.market.marketplace_base_url.clone(),
+            self.settings.market.indexes.nft_enabled,
+            jobs,
+        );
+        transfer_notices::spawn(self, jobs);
+        crate::rentals::notices::spawn(self, jobs);
     }
 
     /// The JSON-RPC endpoint the chain indexes and the coupon reader use on

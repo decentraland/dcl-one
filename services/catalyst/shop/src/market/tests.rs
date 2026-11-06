@@ -60,6 +60,58 @@ pub(crate) mod support {
         )))
     }
 
+    /// A schema-applied database of its own, for tests that own singleton
+    /// rows; `None` (skip) without CATALYST_TEST_DATABASE_URL.
+    pub struct OwnDb {
+        pub pool: sqlx::PgPool,
+        admin: sqlx::PgPool,
+        name: String,
+    }
+
+    impl OwnDb {
+        pub async fn create(tag: &str) -> Option<Self> {
+            use sqlx::postgres::PgConnectOptions;
+            let base = std::env::var("CATALYST_TEST_DATABASE_URL").ok()?;
+            let opts: PgConnectOptions = base.parse().unwrap();
+            let admin = PgPoolOptions::new()
+                .max_connections(1)
+                .connect_with(opts.database("postgres"))
+                .await
+                .unwrap();
+            let name = format!(
+                "catalyst_z_{tag}_{}",
+                &uuid::Uuid::new_v4().simple().to_string()[..12]
+            );
+            sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
+                .execute(&admin)
+                .await
+                .unwrap();
+            let mut url = url::Url::parse(&base).unwrap();
+            url.set_path(&format!("/{name}"));
+            let pool = crate::db::connect_pool(
+                url.as_str(),
+                &crate::db::PoolSettings {
+                    max_connections: 4,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+            crate::db::apply_schema(&pool).await.unwrap();
+            Some(Self { pool, admin, name })
+        }
+
+        pub async fn drop(self) {
+            self.pool.close().await;
+            let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DROP DATABASE \"{}\" WITH (FORCE)",
+                self.name
+            )))
+            .execute(&self.admin)
+            .await;
+        }
+    }
+
     /// `shop.mirror_state` rows are shared across the parallel tests
     /// that write them: they take turns.
     pub static MIRROR_STATE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());

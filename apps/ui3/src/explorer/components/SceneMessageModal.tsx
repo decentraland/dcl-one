@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Button from "../../atoms/Button";
 import Modal from "../../components/Modal";
 import { connectWallet, walletProvider } from "../../data/auth/wallet";
@@ -7,7 +7,7 @@ import { sceneRecipients, type SceneRecipient } from "../../data/catalyst/sceneO
 import { FRIEND_ACTIONS, requestFriendAction, useFriends } from "../../data/hooks/useFriends";
 import { useBridgeState } from "../../overlay/bridge";
 import SceneRecipientChoices from "./SceneRecipientChoices";
-import { chainName, fetchTipTarget, manaToWei, sendManaTip, type TipTarget } from "./manaTip";
+import { chainName, fetchTipTarget, forwardTip, manaToWei, sendManaTip, shouldForwardTip, type TipTarget } from "./manaTip";
 import { composeFeedback, feedbackHeader, FEEDBACK_MAX } from "./sceneMessage";
 import "./sceneowneractions.css";
 
@@ -46,6 +46,7 @@ function SceneMessageModal({ owner: initialOwner, recipients, loading = false, s
   const [error, setError] = useState("");
   const [hash, setHash] = useState("");
   const [copied, setCopied] = useState(false);
+  const forwarded = useRef(new Set<string>());
   const provider = includeTip ? walletProvider() : null;
   const wei = manaToWei(amount);
   const remaining = Math.max(0, FEEDBACK_MAX - feedbackHeader(sceneTitle, coords).length);
@@ -88,6 +89,7 @@ function SceneMessageModal({ owner: initialOwner, recipients, loading = false, s
         const from = await connectWallet();
         const tx = await sendManaTip(provider, { from, to: owner, wei, target });
         setHash(tx);
+        notifyTip(tx, from, target);
       }
       if (!body) { setPhase("tipped"); return; }
       const note = composeFeedback(sceneTitle, coords, text);
@@ -104,6 +106,13 @@ function SceneMessageModal({ owner: initialOwner, recipients, loading = false, s
       setError(e instanceof Error && e.message ? e.message : "Could not send. Please try again.");
       setPhase("compose");
     }
+  }
+
+  // Fire-and-forget: the tip already went through, so a failed notice is only logged.
+  function notifyTip(tx: string, from: string, tipTarget: TipTarget) {
+    if (forwarded.current.has(tx) || !shouldForwardTip({ target: tipTarget, hash: tx, from, signer: identity.address })) return;
+    forwarded.current.add(tx);
+    forwardTip(tx).catch(e => console.warn("[tip] could not notify the recipient", tx, e));
   }
 
   async function copyOwner() {

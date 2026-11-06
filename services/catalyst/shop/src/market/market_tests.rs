@@ -1895,6 +1895,93 @@ async fn a_signed_item_order_is_stored_once_and_only_behind_the_write_switch() {
     }
 }
 
+fn item_bid_json(signer: &str, contract: &str, item_id: &str) -> String {
+    format!(
+        r#"{{ "signer": "{signer}", "signature": "0x00", "type": "bid", "network": "MATIC", "chainId": 137,
+             "checks": {{ "uses": 1, "expiration": 4102444800000, "effective": 0, "salt": "0x1234", "contractSignatureIndex": 0, "signerSignatureIndex": 0, "allowedRoot": "0x", "externalChecks": [] }},
+             "sent": [ {{"assetType": 1, "contractAddress": "0x2222222222222222222222222222222222222222", "amount": "1500000000000000000", "extra": "0x"}} ],
+             "received": [ {{"assetType": 4, "contractAddress": "{contract}", "itemId": "{item_id}", "extra": "0x", "beneficiary": "{signer}"}} ] }}"#
+    )
+}
+
+async fn bid_notifications(pool: &PgPool, address: &str) -> Vec<(uuid::Uuid, Value)> {
+    sqlx::query_as("SELECT id, metadata FROM social.notifications WHERE address = $1 AND type = 'bid_received'")
+        .bind(address)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_local_bid_notifies_the_item_creator_once() {
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let t = tag();
+    let contract = contract_of(&t, 7);
+    let creator = contract_of(&t, 6);
+    sqlx::query(
+        "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, \
+             total_supply, max_supply, available, price, image, name, category, created_at, updated_at, reviewed_at, mirrored_at) \
+         VALUES ('matic', $1, 1, 137, 'wearable_v2', $2, $3, 'legendary', 0, 10, 10, 0, 'https://img.example/1.png', 'Space Jams', 'hat', 0, 0, 0, now())",
+    )
+    .bind(&contract)
+    .bind(format!("urn:decentraland:matic:collections-v2:{contract}:1"))
+    .bind(&creator)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let marketplace = listings::offchain_marketplace_v3(137).unwrap();
+    let signer = listings::test_support::signer().address().to_checksum(None);
+    let bid = |item: &str| {
+        let mut trade = listings::test_support::parse(&item_bid_json(&signer, &contract, item));
+        listings::test_support::sign(&mut trade, &marketplace);
+        trade
+    };
+
+    let trade = bid("1");
+    let id = listings::create_trade(&pool, Some(&state), &trade, &signer, 1_000)
+        .await
+        .unwrap();
+    assert!(matches!(
+        listings::create_trade(&pool, Some(&state), &trade, &signer, 1_000)
+            .await
+            .unwrap_err(),
+        listings::TradeCreationError::Duplicate
+    ));
+    // A bid on an item no index describes is stored without a notification.
+    let unknown = listings::create_trade(&pool, Some(&state), &bid("2"), &signer, 1_000)
+        .await
+        .unwrap();
+    let rows = bid_notifications(&pool, &creator).await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(
+        rows[0].1,
+        json!({
+            "image": "https://img.example/1.png",
+            "seller": creator,
+            "category": "wearable",
+            "rarity": "legendary",
+            "link": "https://decentraland.org/marketplace/account?section=bids",
+            "nftName": "Space Jams",
+            "price": "1500000000000000000",
+            "title": "Bid Received",
+            "description": "You received a bid of 1.5 MANA for this Space Jams.",
+            "network": "MATIC",
+        })
+    );
+
+    sqlx::query("DELETE FROM social.notifications WHERE address = $1")
+        .bind(&creator)
+        .execute(&pool)
+        .await
+        .unwrap();
+    delete_trade(&pool, &id).await;
+    delete_trade(&pool, &unknown).await;
+    cleanup_mirror(&pool, &[contract]).await;
+}
+
 #[tokio::test]
 async fn admin_moderation_is_bearer_gated_audited_and_idempotent() {
     let Some(state) = state_with_db(

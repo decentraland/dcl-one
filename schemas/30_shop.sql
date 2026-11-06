@@ -16156,6 +16156,21 @@ CREATE INDEX rental_event_signature_idx ON shop.rental_event (signature) WHERE k
 -- The lessor's signer index: WHERE kind = 'signer_index_updated' AND signer = l.lessor.
 CREATE INDEX rental_event_signer_idx ON shop.rental_event (signer, new_index) WHERE kind = 'signer_index_updated';
 
+-- The chain notification producers' progress (shop/src/rentals/notices.rs,
+-- shop/src/market/{transfer,sale,royalty}_notices.rs), one row each, advanced in the
+-- transaction that inserts the page's notifications: the last chain position
+-- handled; `rental_ended` orders by the rental's end time first. Seeded on
+-- the first pass at the published head, so history is never announced.
+CREATE TABLE shop.notification_cursor (
+    producer text PRIMARY KEY,
+    end_time bigint,
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT notification_cursor_producer_known CHECK (producer IN ('rental_started', 'rental_ended', 'transfer_received', 'royalties_earned', 'sales:traded:ethereum', 'sales:traded:matic', 'sales:order_successful:ethereum', 'sales:order_successful:matic')),
+    CONSTRAINT notification_cursor_end_time_shape CHECK ((producer = 'rental_ended') = (end_time IS NOT NULL))
+);
+
 -- The MANA transactions wallets reported after sending them (SHOP.md slice
 -- 3, src/shop/mana/{executions,tracker}.rs), tracked to a verdict by the
 -- `executions-track` job: the
@@ -16270,6 +16285,23 @@ CREATE TABLE shop.coupon_state (
     revoked boolean NOT NULL DEFAULT false,
     checked_at timestamp(3) without time zone NOT NULL DEFAULT timezone('UTC', now())::timestamp(3),
     CONSTRAINT coupon_state_uses_nonneg CHECK (uses >= 0)
+);
+
+-- The favorite-discount producer (shop::coupons::favorites): when it started
+-- (coupons that took effect earlier are never announced) and each coupon's
+-- announcement state. Workload: one row per coupon, written by the one leased
+-- job every 5 minutes; the pending scan joins shop.coupons (small). The per
+-- user caps read social.notifications, which is the ledger.
+CREATE TABLE shop.favorite_discount_cursor (
+    id integer PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    started_at timestamp(3) without time zone NOT NULL
+);
+
+CREATE TABLE shop.coupon_favorites_announcement (
+    coupon_id uuid PRIMARY KEY REFERENCES shop.coupons(id) ON DELETE CASCADE,
+    notified_at timestamp(3) without time zone,
+    attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    next_attempt_at timestamp(3) without time zone
 );
 
 -- The market federation's signed-action log (src/marketplace/federation.rs,
@@ -16707,3 +16739,17 @@ CREATE TABLE shop.mana_transfer (
 );
 CREATE INDEX mana_transfer_sender ON shop.mana_transfer (network, sender, block_number DESC, log_index DESC);
 CREATE INDEX mana_transfer_recipient ON shop.mana_transfer (network, recipient, block_number DESC, log_index DESC);
+
+-- Tip forwards (POST /events-notifier/forward-blockchain) waiting for the
+-- MANA transfer index to reach their transaction. Workload: one row per tip,
+-- deleted once notified, rejected or an hour old; the resolver reads them all
+-- and finds each transfer through mana_transfer_sender. A sender's claim never
+-- blocks another's: the key is (transaction, signer).
+CREATE TABLE shop.tip_claim (
+    transaction_hash text NOT NULL CHECK (transaction_hash ~ '^0x[0-9a-f]{64}$'),
+    sender text NOT NULL CHECK (sender ~ '^0x[0-9a-f]{40}$'),
+    created_at timestamp(3) without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    PRIMARY KEY (transaction_hash, sender)
+);
+CREATE INDEX tip_claim_sender ON shop.tip_claim (sender);
+

@@ -8,6 +8,12 @@
     "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
   },
   "normalization": "Every <type>.subject.handlebars and <type>.content.handlebars copied byte for byte; email-template.handlebars (the local preview wrapper, not sent) is not carried.",
+  "local_patches": [
+    {
+      "file": "tip_received.content.handlebars",
+      "change": "formatMana reads metadata.manaAmount (wei) instead of metadata.amount, which the producer sends as decimal MANA; upstream rendered about 0.00 MANA."
+    }
+  ],
   "files": {
     "ban_lifted.content.handlebars": "4de219c4a80d4e23680de733cc59aba3074a049a979f885999b054f054266463",
     "ban_lifted.subject.handlebars": "7aa7d7fe977f0d21c50b77c5d72d10e9890f6233f847f72bdc309cac43e13912",
@@ -87,7 +93,7 @@
     "streaming_place_updated.subject.handlebars": "f9fced890a7c95e19898d63e9c5db729ef295d2d2bb0ae5a25ad234656c88f3b",
     "streaming_time_exceeded.content.handlebars": "a1182759027ea88e452b750b84448997461f680ec425bf34cb0aad5c59fe2d07",
     "streaming_time_exceeded.subject.handlebars": "883301afe5af0dc2a39624d2371901f3cdb5d118ad998e9fd82617cc26c3f57b",
-    "tip_received.content.handlebars": "54fc95784e1a81666bba34469136d5dc4d961bec7fbcfc56840f791cf0a57d2d",
+    "tip_received.content.handlebars": "8e2c662518ba03988e9045ba59069e08cff34fcb9897597eb988db9794725b6b",
     "tip_received.subject.handlebars": "210a577ea41900f3c8a03c1fc0bf8149eab5ce5846757902b94fec8e889652c2",
     "worlds_access_restored.content.handlebars": "60829e39bc3c5b80c3f82c33f29a91727ce178cd167b392e20365421b72feff2",
     "worlds_access_restored.subject.handlebars": "94a8eb09cab31785999b638fea756654c194760aa5d8110b620ec6992e5a9eec",
@@ -102,6 +108,7 @@
   },
   "update_instructions": [
     "Copy the per-type templates from the pinned revision and update revision and the sha256 values here.",
+    "Re-apply local_patches after copying and record their sha256 values.",
     "Add or remove the type in the templates! list of ../templates.rs and its fixture in services/catalyst/tests/fixtures/notifications/email-metadata.json.",
     "Run cargo test -p catalyst-social notifications::templates."
   ]
