@@ -22,6 +22,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if lights.n_directional_lights > 0u {
         lit = fetch_directional_shadow(0u, in.world_position, normalize(in.world_normal), view_z);
     }
-    let fade = 1.0 - smoothstep(0.55, 1.0, length(in.world_position.xz) / catcher.y);
+    let fade = 1.0 - smoothstep(0.6, 1.0, length(in.world_position.xz) / catcher.y);
     return vec4<f32>(0.0, 0.0, 0.0, (1.0 - lit) * catcher.x * fade);
 }

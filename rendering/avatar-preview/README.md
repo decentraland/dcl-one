@@ -59,7 +59,7 @@ Commands, as JSON objects with an `op`:
 | `background` | `color` (`#rrggbb` or null for transparent) | the clear colour |
 | `emote` | `urn` (a urn or a base emote name), `loop` | plays on the avatar |
 | `stopEmote` | | |
-| `light` | `illuminance` (lux), `ambient`, `yaw`, `pitch` (radians, relative to the camera), `shadow` (0..1) | the light rig; unset fields keep their value |
+| `light` | `illuminance` (lux), `ambient`, `exposure` (stops), `yaw`, `pitch` (radians, relative to the camera), `shadow` (0..1), `shadowReach` (metres) | the light rig; unset fields keep their value. The toon shading ignores ambient light: `exposure` is what brightens or darkens the avatar |
 | `collectible` | `kind` (`wearable` or `emote`), `urn`, `definition` (an entity definition json, by url), `files` (name to url) | an item not on the catalyst; send it before the outfit or emote naming the urn |
 | `screenshot` | `id`, `width`, `height` | a PNG of the frame, scaled and cropped to fit |
 | `metrics` | `id` | triangle, material, texture and mesh counts |

@@ -199,6 +199,7 @@ fn setup_stage(mut commands: Commands, orbit: Res<OrbitCamera>, flags: Res<Stage
         host::projection_for(&orbit),
         Transform::from_xyz(0.0, 1.0, 6.0).looking_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y),
         platform::default_camera_components(),
+        bevy::render::camera::Exposure::BLENDER,
         PreviewCamera,
     ));
     if flags.no_bloom {

@@ -22,6 +22,11 @@ pub struct StageLight {
     pub pitch: f32,
     /// how dark the floor shadow gets, 0 for none
     pub shadow: f32,
+    /// metres from the feet where the floor shadow has faded out
+    pub shadow_reach: f32,
+    /// exposure in stops above bevy's default (EV100 9.7): the toon shading ignores ambient
+    /// light and scales with exposure, so this is what brightens or darkens the avatar
+    pub exposure: f32,
 }
 
 impl Default for StageLight {
@@ -34,6 +39,8 @@ impl Default for StageLight {
             yaw: 0.6,
             pitch: 0.65,
             shadow: 0.55,
+            shadow_reach: 4.0,
+            exposure: 0.0,
         }
     }
 }
@@ -96,9 +103,9 @@ fn spawn_stage(
         KeyLight,
     ));
     commands.spawn((
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(4.0, 4.0))),
+        Mesh3d(meshes.add(Plane3d::default().mesh().size(12.0, 12.0))),
         MeshMaterial3d(catchers.add(ShadowCatcherMaterial {
-            params: Vec4::new(light.shadow, 2.0, 0.0, 0.0),
+            params: Vec4::new(light.shadow, light.shadow_reach, 0.0, 0.0),
         })),
         Transform::from_xyz(0.0, 0.002, 0.0),
         NotShadowCaster,
@@ -115,6 +122,7 @@ fn apply_light(
     light: Res<StageLight>,
     orbit: Res<OrbitCamera>,
     mut keys: Query<(&mut DirectionalLight, &mut Transform), With<KeyLight>>,
+    mut cameras: Query<&mut bevy::render::camera::Exposure, With<crate::host::PreviewCamera>>,
     mut ambient: ResMut<AmbientLight>,
     catchers: Query<&MeshMaterial3d<ShadowCatcherMaterial>, With<ShadowCatcher>>,
     mut materials: ResMut<Assets<ShadowCatcherMaterial>>,
@@ -127,9 +135,13 @@ fn apply_light(
     }
     if light.is_changed() {
         ambient.brightness = light.ambient;
+        for mut exposure in cameras.iter_mut() {
+            exposure.ev100 = bevy::render::camera::Exposure::EV100_BLENDER - light.exposure;
+        }
         for handle in catchers.iter() {
             if let Some(material) = materials.get_mut(&handle.0) {
                 material.params.x = light.shadow;
+                material.params.y = light.shadow_reach.max(0.1);
             }
         }
     }

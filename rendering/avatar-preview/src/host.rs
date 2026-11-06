@@ -137,6 +137,8 @@ pub enum Command {
         yaw: Option<f32>,
         pitch: Option<f32>,
         shadow: Option<f32>,
+        shadow_reach: Option<f32>,
+        exposure: Option<f32>,
     },
     /// Capture the frame as PNG, `width` x `height` (the frame is scaled and cropped to fit).
     Screenshot {
@@ -386,6 +388,8 @@ fn apply_commands(
                 yaw,
                 pitch,
                 shadow,
+                shadow_reach,
+                exposure,
             } => {
                 let light = light.as_mut();
                 for (slot, value) in [
@@ -394,6 +398,8 @@ fn apply_commands(
                     (&mut light.yaw, yaw),
                     (&mut light.pitch, pitch),
                     (&mut light.shadow, shadow),
+                    (&mut light.shadow_reach, shadow_reach),
+                    (&mut light.exposure, exposure),
                 ] {
                     if let Some(value) = value {
                         *slot = value;
