@@ -18,6 +18,7 @@ class ConfigurationTest(unittest.TestCase):
             "GATEWAY_SITES_UPSTREAMS": ["unix:/tmp/socket", "sites:5212/path"],
             "GATEWAY_ADMIN_CIDRS": ["allow all;", "example.org", "203.0.113.1/33", "fe80::1%eth0/128"],
             "GATEWAY_TRUSTED_PROXY_CIDRS": ["0.0.0.0/0;"],
+            "GATEWAY_TRUSTED_SYNC_PEER_IPS": ["203.0.113.1;", "peer.example", "fe80::1%eth0"],
             "GATEWAY_RESOLVERS": ["127.0.0.1;include", "resolver.example", "fe80::1%eth0"],
             "GATEWAY_STORAGE_ROOT": ["relative", "/data;include", "/data\nroot"],
         }
@@ -41,6 +42,28 @@ class ConfigurationTest(unittest.TestCase):
         self.assertEqual(cfg["admins"], ["203.0.113.0/24", "2001:db8::/64"])
         self.assertEqual(cfg["apis"], ["apis-a:5210", "[::1]:5211"])
         self.assertEqual(cfg["resolvers"], "[::1] 127.0.0.1")
+
+    def test_sync_peers_get_an_uncounted_limit_key(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1",
+                                "GATEWAY_TRUSTED_SYNC_PEER_IPS": "203.0.113.7, 2001:db8::1"})
+        self.assertEqual(cfg["sync_peers"], ["203.0.113.7/32", "2001:db8::1/128"])
+        text = gateway.render({"sites": [], "internal": [], "node": [], "aliases": [], "deploy": []},
+                              cfg, "/mime.types")
+        self.assertIn("geo $sync_peer { default 0; 203.0.113.7/32 1; 2001:db8::1/128 1; }", text)
+        self.assertIn("limit_req_zone $binary_remote_addr zone=read:10m rate=30r/s;", text)
+        self.assertIn("limit_req_zone $content_limit_key zone=content:10m rate=100r/s;", text)
+        key_map = re.search(r'map "\$sync_peer:\$request_method:\$uri" \$content_limit_key \{(.*?)\}', text, re.S)[1]
+        exempt = re.search(r'"(~[^"]+)" ""', key_map)[1][1:]
+        # Upstream exempts sync peers on GET /contents/{hash} only.
+        for subject in ["1:GET:/content/contents/bafy1", "1:HEAD:/contents/bafy1", "1:GET:/contents/bafy1/"]:
+            with self.subTest(subject=subject):
+                self.assertTrue(re.search(exempt, subject))
+        for subject in ["0:GET:/content/contents/bafy1", "1:POST:/content/contents/bafy1",
+                        "1:GET:/content/entities/active", "1:GET:/content/contents/bafy1/active-entities",
+                        "1:GET:/worlds-content-server/contents/bafy1", "1:GET:/lambdas/profiles"]:
+            with self.subTest(subject=subject):
+                self.assertIsNone(re.search(exempt, subject))
+        self.assertIn("limit_req_zone $binary_remote_addr zone=deploy:10m rate=2r/s;", text)
 
     def test_uses_container_dns_without_a_fixed_host_address(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -66,11 +89,12 @@ class ConfigurationTest(unittest.TestCase):
         table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],
                  "deploy": ["/entities", "/content/entities"]}
         text = gateway.render(table, cfg, "/mime.types")
-        deploy = re.search(r'location ~ "([^"]+)" \{\n[^}]*client_max_body_size 200m;', text)[1]
-        for path in ["/entities", "/content/entities"]:
+        deploy = re.search(r'location ~\* "([^"]+)" \{\n[^}]*client_max_body_size 200m;', text)[1]
+        for path in ["/entities", "/content/entities", "/content/Entities", "/ENTITIES/"]:
             with self.subTest(path=path):
-                self.assertTrue(re.search(deploy, path))
-        self.assertIsNone(re.search(deploy, "/worlds-content-server/entities"))
+                # ~* matches ignoring case, as the content server's rewrite does.
+                self.assertTrue(re.search(deploy, path, re.IGNORECASE))
+        self.assertIsNone(re.search(deploy, "/worlds-content-server/entities", re.IGNORECASE))
         worlds = re.search(r'location ~ "([^"]+)" \{\n[^}]*client_max_body_size 360m; '
                            r'client_body_timeout 300s; limit_req zone=deploy', text)[1]
         for path in ["/worlds-content-server/entities", "/worlds-content-server/entities/"]:
@@ -79,6 +103,19 @@ class ConfigurationTest(unittest.TestCase):
         for path in ["/worlds-content-server/entities/active", "/entities"]:
             with self.subTest(path=path):
                 self.assertIsNone(re.search(worlds, path))
+
+    def test_active_entities_take_upstreams_ten_mib_body_cap(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],
+                 "deploy": ["/entities", "/content/entities"]}
+        text = gateway.render(table, cfg, "/mime.types")
+        active = re.search(r'location ~\* "([^"]+)" \{\n[^}]*client_max_body_size 10m;', text)[1]
+        for path in ["/content/entities/active", "/content/Entities/Active", "/entities/active/"]:
+            with self.subTest(path=path):
+                self.assertTrue(re.search(active, path, re.IGNORECASE))
+        for path in ["/content/entities/active/collections/urn", "/content/entities/scene"]:
+            with self.subTest(path=path):
+                self.assertIsNone(re.search(active, path, re.IGNORECASE))
 
     def test_worlds_caps_match_the_service_wire_limits(self):
         worlds = Path(__file__).parents[3] / "services/catalyst/worlds/src/core"

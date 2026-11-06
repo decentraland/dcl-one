@@ -11,12 +11,13 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 7] = [
+const PREPARED_PENDING_STEPS: [&str; 8] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
     "0024_social_referral_reward_receipt",
     "0025_social_referral_login_received_at",
+    "0026_content_snapshots_outdated",
     "0027_land_authz_cleared_legs",
     "0028_shop_items_search_text",
 ];
@@ -1043,5 +1044,123 @@ async fn earlier_event_hook_layouts_upgrade_without_losing_intents() {
             .unwrap()
             .is_empty()
     );
+    old.drop().await;
+}
+
+#[tokio::test]
+async fn world_admission_object_upgrade_and_explicit_ban_release_preserve_existing_state() {
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    let pool = &old.pool;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(release_v3()))
+        .execute(pool)
+        .await
+        .unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    catalyst::worlds::rooms::ensure_world_scene_ban_release(pool)
+        .await
+        .expect("a fresh upgraded catalogue does not need a release conversion");
+    // The previous main has the same schema version and throttle relation,
+    // but not this additive queue. Only this test-owned database is changed.
+    sqlx::query("DROP TABLE social.world_access_rechecks")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::raw_sql("INSERT INTO worlds.worlds(name) VALUES('release.dcl.eth'); INSERT INTO worlds.world_scenes(world_name,entity_id,deployment_auth_chain,entity,deployer,parcels,size) VALUES('release.dcl.eth','scene-old','[]','{}','owner',ARRAY['2,3'],1); INSERT INTO social.scene_bans(place_id,banned_address,banned_by) VALUES('scene-old','wallet','owner'); INSERT INTO social.world_secret_attempts(world_name,subject,attempts,window_start) VALUES('release.dcl.eth','caller',2,'2026-01-01');").execute(pool).await.unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    let installed: bool =
+        sqlx::query_scalar("SELECT to_regclass('social.world_access_rechecks') IS NOT NULL")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert!(installed);
+    let error = catalyst::worlds::rooms::ensure_world_scene_ban_release(pool)
+        .await
+        .expect_err("object migrations cannot certify the explicit row conversion");
+    assert!(
+        error
+            .to_string()
+            .contains("schemas/releases/world-scene-ban-keys.sql")
+    );
+    // Every Rust trim whitespace must preserve a declared base rather than
+    // choosing the lower fallback parcel. Include active and retained aliases.
+    let whitespace = [
+        '\t', '\n', '\u{b}', '\u{c}', '\r', ' ', '\u{85}', '\u{a0}', '\u{1680}', '\u{2000}',
+        '\u{2001}', '\u{2002}', '\u{2003}', '\u{2004}', '\u{2005}', '\u{2006}', '\u{2007}',
+        '\u{2008}', '\u{2009}', '\u{200a}', '\u{2028}', '\u{2029}', '\u{202f}', '\u{205f}',
+        '\u{3000}',
+    ];
+    for (i, space) in whitespace.into_iter().enumerate() {
+        let entity = format!("unicode-{i}");
+        let parcel = format!("{space}02{space},{space}003{space}");
+        assert_eq!(
+            catalyst::comms::world_identity::Parcel::parse(&parcel)
+                .unwrap()
+                .canonical(),
+            "2,3"
+        );
+        let document = serde_json::json!({"metadata":{"scene":{"base":parcel}}});
+        sqlx::query("INSERT INTO worlds.retired_world_scenes(world_name,entity_id,entity,parcels) VALUES('release.dcl.eth',$1,$2,$3)")
+            .bind(&entity).bind(document).bind(vec!["0,0".to_owned(), parcel])
+            .execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO social.scene_bans(place_id,banned_address,banned_by) VALUES($1,$2,'owner')")
+            .bind(&entity).bind(format!("unicode-wallet-{i}")).execute(pool).await.unwrap();
+    }
+    sqlx::raw_sql("INSERT INTO social.scene_bans(place_id,banned_address,banned_by) VALUES('genesis-unmapped','genesis-wallet','owner'); INSERT INTO worlds.retired_world_scenes(world_name,entity_id,entity,parcels) VALUES('release.dcl.eth','invalid-parcels','{}',ARRAY['invalid']); INSERT INTO social.scene_bans(place_id,banned_address,banned_by) VALUES('invalid-parcels','invalid-wallet','owner')")
+        .execute(pool).await.unwrap();
+    let release = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/releases/world-scene-ban-keys.sql"
+    ));
+    for _ in 0..2 {
+        sqlx::raw_sql(release).execute(pool).await.unwrap();
+    }
+    let bans: Vec<String> =
+        sqlx::query_scalar("SELECT place_id FROM social.scene_bans WHERE banned_address='wallet'")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+    assert_eq!(bans, vec!["release.dcl.eth:2,3"]);
+    catalyst::worlds::rooms::ensure_world_scene_ban_release(pool)
+        .await
+        .expect("converted catalogue passes while Genesis/unmapped/malformed rows remain");
+    let unicode_keys: Vec<String> = sqlx::query_scalar(
+        "SELECT place_id FROM social.scene_bans WHERE banned_address LIKE 'unicode-wallet-%'",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(unicode_keys.len(), whitespace.len());
+    assert!(unicode_keys.iter().all(|key| key == "release.dcl.eth:2,3"));
+    let untouched: i64 = sqlx::query_scalar("SELECT count(*) FROM social.scene_bans WHERE place_id IN ('genesis-unmapped','invalid-parcels')")
+        .fetch_one(pool).await.unwrap();
+    assert_eq!(untouched, 2);
+    // A retained-only mapping must also prevent serving until converted.
+    sqlx::query("INSERT INTO social.scene_bans(place_id,banned_address,banned_by) VALUES('unicode-0','retained-wallet','owner')")
+        .execute(pool).await.unwrap();
+    assert!(
+        catalyst::worlds::rooms::ensure_world_scene_ban_release(pool)
+            .await
+            .is_err()
+    );
+    sqlx::raw_sql(release).execute(pool).await.unwrap();
+    catalyst::worlds::rooms::ensure_world_scene_ban_release(pool)
+        .await
+        .unwrap();
+    let attempts: i32 = sqlx::query_scalar(
+        "SELECT attempts FROM social.world_secret_attempts WHERE world_name='release.dcl.eth'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(attempts, 2);
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
     old.drop().await;
 }

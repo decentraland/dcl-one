@@ -1,7 +1,33 @@
 //! The caller's address behind the gateway, which overwrites `X-Real-IP` and
 //! `X-Forwarded-For` with the peer it accepted (`infra/gateway/gateway.py`).
 
+use std::net::IpAddr;
+
 use axum::http::HeaderMap;
+
+/// Whether the socket peer is a direct backend proxy listed in
+/// `HTTP_TRUSTED_PROXY_CIDRS`: only such a peer may name the client in a
+/// forwarding header. The routes are reachable without the gateway too, so a
+/// header from any other peer is the client's own choice
+/// (docs/adr/2026-11-04-referral-trusted-proxy-ingress.md).
+pub fn is_trusted_proxy(peer: IpAddr, trusted_proxies: &[ipnet::IpNet]) -> bool {
+    let peer = peer.to_canonical();
+    trusted_proxies
+        .iter()
+        .any(|network| network.contains(&peer))
+}
+
+/// The one valid `X-Real-IP` a trusted proxy overwrote, canonical; `None`
+/// when it is missing, repeated or not exactly an address (no padding, port
+/// or brackets).
+pub fn single_real_ip(headers: &HeaderMap) -> Option<IpAddr> {
+    let mut values = headers.get_all("x-real-ip").iter();
+    let candidate = values.next()?.to_str().ok()?;
+    if values.next().is_some() {
+        return None;
+    }
+    Some(candidate.parse::<IpAddr>().ok()?.to_canonical())
+}
 
 /// `X-Real-IP`, else the last `X-Forwarded-For` entry; empty when neither is set.
 pub fn client_ip(headers: &HeaderMap) -> String {

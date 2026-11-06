@@ -1199,6 +1199,8 @@ async fn the_erc721_route_formats_the_active_wearable() {
     )
     .await;
     let _plain = seed("1", json!({ "name": "no rarity" })).await;
+    let _null_rarity = seed("3", json!({ "rarity": null })).await;
+    let _empty_rarity = seed("4", json!({ "rarity": "" })).await;
 
     let state = Arc::new(crate::ContentState::new(
         pool.clone(),
@@ -1247,8 +1249,7 @@ async fn the_erc721_route_formats_the_active_wearable() {
             "attributes": [
                 {"trait_type": "Rarity", "value": "epic"},
                 {"trait_type": "Category", "value": "hat"},
-                {"trait_type": "Tag", "value": "a"},
-                {"trait_type": "Body Shape", "value": "BaseMale"}
+                {"trait_type": "Tag", "value": "a"}
             ]
         })
     );
@@ -1269,6 +1270,19 @@ async fn the_erc721_route_formats_the_active_wearable() {
     assert_eq!(
         get_json(format!("/queries/erc721/137/{contract}/2")).await,
         (404, json!({"error": "Entity does not exist"}))
+    );
+    // CS-17: a null or empty rarity is not standard, and the chain id is
+    // upstream's `/^\d+$/` (no sign).
+    for item in ["3", "4"] {
+        assert_eq!(
+            get_json(format!("/queries/erc721/137/{contract}/{item}")).await,
+            (400, json!({"error": "Wearable is not standard."})),
+            "{item}"
+        );
+    }
+    assert_eq!(
+        get_json(format!("/queries/erc721/+137/{contract}/0")).await,
+        (400, json!({"error": "Invalid chainId '+137'"}))
     );
     state.denylist.add(&standard);
     assert_eq!(

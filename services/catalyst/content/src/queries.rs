@@ -109,23 +109,68 @@ fn unwrap_metadata(metadata: Option<&Value>) -> Option<Value> {
     metadata.and_then(|m| m.get("v").cloned())
 }
 
+/// Whether JavaScript reads a JSON value as true: everything but `null`,
+/// `false`, `0` and `""`.
+pub(crate) fn js_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_f64() != Some(0.0),
+        Value::String(s) => !s.is_empty(),
+        Value::Array(_) | Value::Object(_) => true,
+    }
+}
+
+/// An active entity in the key order the production peer answers
+/// `POST /entities/active` with: `id,type,pointers,content,version,timestamp,metadata`
+/// (`conformance/content-lambdas/captures/content-reads/CR-14-active-entity-key-order.json`).
+/// Upstream serves the entities it holds in its process cache, which a deploy
+/// or sync fills through `parseEntityFromObject` in that order
+/// (`decentraland/catalyst:src/logic/entities/component.ts:125-135`). A struct
+/// keeps its field order where a `Map` would sort the keys.
+#[derive(serde::Serialize)]
+struct ActiveEntityJson {
+    id: String,
+    #[serde(rename = "type")]
+    entity_type: String,
+    pointers: Vec<String>,
+    content: Vec<Value>,
+    version: String,
+    timestamp: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<Value>,
+}
+
+/// A `date_part('epoch', ..) * 1000` double as upstream sends it, a JS number:
+/// an integer in the common case, the fraction kept when there is one
+/// (`decentraland/catalyst:src/logic/deployments/component.ts:357`).
+pub(crate) fn js_millis(ms: f64) -> Value {
+    const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+    if ms.fract() == 0.0 && ms.abs() <= MAX_SAFE_INTEGER {
+        json!(ms as i64)
+    } else {
+        json!(ms)
+    }
+}
+
 fn row_to_doc(row: ActiveEntityRow) -> EntityDoc {
     let content: Vec<Value> = parse_content_json(&row.content_json)
         .into_iter()
         .map(|(key, hash)| json!({"file": key, "hash": hash}))
         .collect();
-    let mut obj = json!({
-        "version": row.version,
-        "id": row.entity_id,
-        "type": row.entity_type,
-        "timestamp": row.entity_timestamp as i64,
-        "pointers": row.entity_pointers,
-        "content": content,
-    });
-    if let Some(m) = unwrap_metadata(row.entity_metadata.as_ref()) {
-        obj["metadata"] = m;
+    let doc = ActiveEntityJson {
+        metadata: unwrap_metadata(row.entity_metadata.as_ref()),
+        id: row.entity_id,
+        entity_type: row.entity_type,
+        pointers: row.entity_pointers,
+        content,
+        version: row.version,
+        timestamp: js_millis(row.entity_timestamp),
+    };
+    EntityDoc {
+        json: Bytes::from(serde_json::to_vec(&doc).unwrap_or_default()),
+        id: doc.id,
     }
-    EntityDoc::from_value(&obj)
 }
 
 // Content lists sort by file name under upstream's collation: upstream reads
@@ -339,6 +384,9 @@ pub struct DeploymentQueryOptions {
     pub to: Option<i64>,
     pub only_currently_pointed: Option<bool>,
     pub fields: Vec<String>,
+    /// The `fields` the client listed, `None` for the defaults; `next`
+    /// carries them only then.
+    pub requested_fields: Option<Vec<String>>,
     pub sorting_field: Option<String>,
     pub sorting_order: Option<String>,
     pub offset: Option<i64>,
@@ -602,7 +650,9 @@ pub async fn get_deployments(
                 deployed_by: d.deployer_address,
                 pointers: Some(d.entity_pointers),
                 content: Some(content_items),
-                metadata: unwrap_metadata(d.entity_metadata.as_ref()),
+                // Upstream sends `metadata` only when it is truthy
+                // (`get-deployments-handler.ts:151-153`).
+                metadata: unwrap_metadata(d.entity_metadata.as_ref()).filter(js_truthy),
                 audit_info: Some(AuditInfo {
                     version: d.version,
                     auth_chain: d.auth_chain.unwrap_or_else(|| Value::Array(vec![])),
@@ -794,7 +844,13 @@ pub async fn get_pointer_changes(
     })
 }
 
-/// `limit: None` returns every row (the unpaginated legacy answer).
+/// `limit: None` returns every row (the unpaginated legacy answer). Rows come
+/// in table order, as upstream's cache is filled from an unordered `SELECT`
+/// at start and then in report order; this node has no report sequence, so
+/// a re-reported failure moves where the update puts its row. A page
+/// (`limit: Some`) is ordered by `failure_time, entity_id` instead: a
+/// retry's `ON CONFLICT DO UPDATE` moves a row's `ctid`, which would make
+/// `offset` paging skip and repeat rows.
 pub async fn failed_deployments(
     pool: &PgPool,
     offset: i64,
@@ -805,30 +861,33 @@ pub async fn failed_deployments(
         entity_id: String,
         entity_type: String,
         failure_timestamp: f64,
-        reason: String,
         auth_chain: Value,
         error_description: String,
         snapshot_hash: String,
         retry_count: i32,
         next_retry_at: f64,
     }
-    let rows: Vec<Row> = sqlx::query_as(
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         r#"
         SELECT
             entity_id,
             entity_type,
             date_part('epoch', failure_time) * 1000 AS failure_timestamp,
-            reason,
             auth_chain,
             error_description,
             snapshot_hash,
             retry_count,
             date_part('epoch', next_retry_at) * 1000 AS next_retry_at
         FROM content.failed_deployments
-        ORDER BY failure_time, entity_id
+        ORDER BY {}
         OFFSET $1 LIMIT $2
         "#,
-    )
+        if limit.is_some() {
+            "failure_time, entity_id"
+        } else {
+            "ctid"
+        }
+    )))
     .bind(offset.max(0))
     .bind(limit.map(|l| l.max(0)))
     .fetch_all(pool)
@@ -839,14 +898,12 @@ pub async fn failed_deployments(
             entity_id: r.entity_id,
             entity_type: r.entity_type,
             failure_timestamp: r.failure_timestamp as i64,
-            // The wire keeps the reference reasons; the description says which kind.
-            reason: match r.reason.as_str() {
-                "No entity" => r.reason,
-                _ => "Deployment error".to_string(),
-            },
+            // Upstream's only reason; the description says which kind.
+            reason: "Deployment error".to_string(),
             auth_chain: r.auth_chain,
             error_description: r.error_description,
-            snapshot_hash: r.snapshot_hash,
+            // Upstream leaves the key out for a failure outside a snapshot.
+            snapshot_hash: Some(r.snapshot_hash).filter(|h| !h.is_empty()),
             retry_count: r.retry_count,
             next_retry_at: r.next_retry_at as i64,
         })
@@ -880,7 +937,13 @@ pub fn provenance_json(
 /// The `/audit/{type}/{id}` document: version, auth chain and local
 /// timestamp, plus `localProvenance` when the entity was published against
 /// this node's write API.
-pub async fn audit_info(pool: &PgPool, entity_id: &str) -> Result<Option<Value>, sqlx::Error> {
+/// The audit row of `entity_id`, only when it was deployed as `entity_type`
+/// (canonical name): upstream filters on both.
+pub async fn audit_info(
+    pool: &PgPool,
+    entity_type: &str,
+    entity_id: &str,
+) -> Result<Option<Value>, sqlx::Error> {
     #[derive(sqlx::FromRow)]
     struct AuditRow {
         version: String,
@@ -902,11 +965,12 @@ pub async fn audit_info(pool: &PgPool, entity_id: &str) -> Result<Option<Value>,
                d.deleter_deployment IS NOT NULL AS superseded
         FROM content.deployments d
         LEFT JOIN content.local_entities le ON le.entity_id = d.entity_id
-        WHERE d.entity_id = $1
+        WHERE d.entity_id = $1 AND d.entity_type = $2
         LIMIT 1
         "#,
     )
     .bind(entity_id)
+    .bind(entity_type)
     .fetch_optional(pool)
     .await?;
 
@@ -914,7 +978,7 @@ pub async fn audit_info(pool: &PgPool, entity_id: &str) -> Result<Option<Value>,
         let mut value = json!({
             "version": r.version,
             "authChain": r.auth_chain,
-            "localTimestamp": r.local_timestamp as i64,
+            "localTimestamp": js_millis(r.local_timestamp),
         });
         if let (Some(signer), Some(origin), Some(published_at)) =
             (r.signer, r.origin, r.published_at)
@@ -926,8 +990,9 @@ pub async fn audit_info(pool: &PgPool, entity_id: &str) -> Result<Option<Value>,
     }))
 }
 
-/// Every generated snapshot, newest window first; a row without a hash (a
-/// window still being written) lists with an empty hash, as before.
+/// Every stored snapshot in division order (oldest window first), as
+/// upstream lists its current snapshots; a row without a hash is not a stored
+/// snapshot and is left out.
 pub async fn all_snapshots(pool: &PgPool) -> Result<Vec<SnapshotMetadata>, sqlx::Error> {
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -947,7 +1012,8 @@ pub async fn all_snapshots(pool: &PgPool) -> Result<Vec<SnapshotMetadata>, sqlx:
                replaced_hashes,
                date_part('epoch', generation_time) * 1000 AS gen_ts_ms
         FROM content.snapshots
-        ORDER BY end_timestamp DESC
+        WHERE hash IS NOT NULL AND hash <> ''
+        ORDER BY init_timestamp, end_timestamp
         "#,
     )
     .fetch_all(pool)
@@ -1031,6 +1097,45 @@ mod tests {
         assert_eq!(EntityDoc::json_array(&[]).as_ref(), b"[]");
         assert_eq!(a.id, "a");
         assert_eq!(a.to_value().unwrap()["x"], 1);
+    }
+
+    #[test]
+    fn active_entity_keys_follow_the_captured_order() {
+        let doc = row_to_doc(ActiveEntityRow {
+            entity_id: "bafy".into(),
+            entity_type: "scene".into(),
+            entity_pointers: vec!["0,0".into()],
+            entity_metadata: Some(json!({"v": {"k": 1}})),
+            entity_timestamp: 1_700_000_000_000.0,
+            version: "v3".into(),
+            content_json: json!([{"key": "a", "hash": "h"}]),
+        });
+        assert_eq!(doc.id, "bafy");
+        assert_eq!(
+            std::str::from_utf8(&doc.json).unwrap(),
+            r#"{"id":"bafy","type":"scene","pointers":["0,0"],"content":[{"file":"a","hash":"h"}],"version":"v3","timestamp":1700000000000,"metadata":{"k":1}}"#
+        );
+    }
+
+    /// CS-22: `/deployments` leaves out a falsy `metadata`.
+    #[test]
+    fn js_truthy_reads_as_javascript() {
+        for falsy in [json!(null), json!(false), json!(0), json!(0.0), json!("")] {
+            assert!(!js_truthy(&falsy), "{falsy}");
+        }
+        for truthy in [json!({}), json!([]), json!(1), json!("x"), json!(true)] {
+            assert!(js_truthy(&truthy), "{truthy}");
+        }
+    }
+
+    #[test]
+    fn js_millis_keeps_a_fraction_and_drops_a_zero_one() {
+        assert_eq!(js_millis(1_700_000_000_000.0).to_string(), "1700000000000");
+        assert_eq!(
+            js_millis(1_700_000_000_000.5).to_string(),
+            "1700000000000.5"
+        );
+        assert_eq!(js_millis(-1.0).to_string(), "-1");
     }
 
     #[test]
