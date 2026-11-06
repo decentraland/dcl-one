@@ -29,10 +29,37 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
         run: python3 tooling/web-preview.py resolve >> "$GITHUB_OUTPUT"
-  reviewer:
-    name: 'Publish UI reviewer: PR ${{ needs.source.outputs.pr }}'
+  pending:
+    name: Report pending publication approval
     needs: source
     if: vars.WEB_PREVIEW_REVIEWER_ENABLED == 'true' && needs.source.outputs.publish == 'true' && needs.source.outputs.reviewer == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    concurrency:
+      group: web-previews-comment-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: tooling/web-preview.py
+          sparse-checkout-cone-mode: false
+      - name: Show the source build awaiting human approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          PUBLICATION_RESULT: waiting for human approval
+        run: python3 tooling/web-preview.py report
+  reviewer:
+    name: 'Publish UI reviewer: PR ${{ needs.source.outputs.pr }}'
+    needs: [source, pending]
+    if: always() && needs.source.result == 'success' && vars.WEB_PREVIEW_REVIEWER_ENABLED == 'true' && needs.source.outputs.publish == 'true' && needs.source.outputs.reviewer == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
@@ -40,8 +67,7 @@ jobs:
       url: ${{ steps.cdn.outputs.url }}
     concurrency:
       group: web-preview-reviewer-publish-${{ needs.source.outputs.pr }}
-      cancel-in-progress: false
-      queue: max
+      cancel-in-progress: true
     permissions:
       contents: read
       actions: read

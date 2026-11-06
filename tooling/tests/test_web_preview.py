@@ -572,7 +572,7 @@ class WebPreviewTests(unittest.TestCase):
         with patch.object(preview, 'api', return_value=runs):
             self.assertTrue(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
         runs['workflow_runs'].append({'id': 125, 'pull_requests': [pr]})
-        with patch.object(preview, 'api', return_value=runs):
+        with patch.object(preview, 'api', side_effect=[runs, {'jobs': []}]):
             self.assertFalse(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
 
     def test_newest_run_without_pr_metadata_is_resolved_before_matching(self):
@@ -581,7 +581,7 @@ class WebPreviewTests(unittest.TestCase):
         for candidate, expected in ((review_pr(10), True), (pr, False), (None, True)):
             with (
                 self.subTest(candidate=candidate),
-                patch.object(preview, 'api', return_value=runs),
+                patch.object(preview, 'api', side_effect=[runs, {'jobs': []}]),
                 patch.object(preview, 'resolve', return_value=({}, candidate)),
             ):
                 self.assertEqual(
@@ -713,7 +713,7 @@ class WebPreviewTests(unittest.TestCase):
                 {'id': 124, 'pull_requests': [review_pr(base_sha='c' * 40)]},
             ]
         }
-        with patch.object(preview, 'api', return_value=runs):
+        with patch.object(preview, 'api', side_effect=[runs, {'jobs': []}]):
             self.assertFalse(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
 
     def test_other_bot_actors_and_pr_authors_cannot_publish(self):
@@ -782,11 +782,31 @@ class WebPreviewTests(unittest.TestCase):
         reviewer = {'type': 'User', 'reviewer': {'type': 'User', 'login': 'maintainer'}}
         environment = {
             'can_admins_bypass': False,
-            'protection_rules': [{'type': 'required_reviewers', 'reviewers': [reviewer]}],
+            'protection_rules': [
+                {
+                    'type': 'required_reviewers',
+                    'prevent_self_review': False,
+                    'reviewers': [reviewer],
+                }
+            ],
+            'deployment_branch_policy': {
+                'custom_branch_policies': True,
+                'protected_branches': False,
+            },
         }
-        with patch.object(preview, 'api', return_value=environment) as request:
+        with patch.object(
+            preview,
+            'api',
+            side_effect=[
+                environment,
+                {'default_branch': 'main'},
+                {'total_count': 1, 'branch_policies': [{'name': 'main', 'type': 'branch'}]},
+            ],
+        ) as request:
             preview.require_publication_environment('example/one')
-            request.assert_called_once_with('repos/example/one/environments/web-preview')
+            self.assertEqual(
+                request.call_args_list[0].args[0], 'repos/example/one/environments/web-preview'
+            )
         for invalid in (
             {},
             {**environment, 'can_admins_bypass': True},
@@ -821,6 +841,126 @@ class WebPreviewTests(unittest.TestCase):
         with patch.object(preview, 'api', side_effect=subprocess.CalledProcessError(1, ['gh'])):
             with self.assertRaises(subprocess.CalledProcessError):
                 preview.require_publication_environment('example/one')
+
+    def test_environment_rejects_missing_branch_policy_tags_wildcards_and_other_branches(self):
+        environment = {
+            'can_admins_bypass': False,
+            'protection_rules': [
+                {
+                    'type': 'required_reviewers',
+                    'reviewers': [
+                        {'type': 'User', 'reviewer': {'type': 'User', 'login': 'maintainer'}},
+                    ],
+                }
+            ],
+        }
+        for policy in (None, {}, {'protected_branches': True}, {'custom_branch_policies': False}):
+            with (
+                self.subTest(policy=policy),
+                patch.object(
+                    preview,
+                    'api',
+                    return_value={
+                        **environment,
+                        'deployment_branch_policy': policy,
+                    },
+                ),
+            ):
+                with self.assertRaisesRegex(ValueError, 'restrict deployments'):
+                    preview.require_publication_environment('example/one')
+        environment['deployment_branch_policy'] = {
+            'custom_branch_policies': True,
+            'protected_branches': False,
+        }
+        for branches in (
+            [],
+            [{'name': '*', 'type': 'branch'}],
+            [{'name': 'main', 'type': 'tag'}],
+            [{'name': 'feature', 'type': 'branch'}],
+            [{}],
+            [{'name': 'main', 'type': 'branch'}, {'name': 'feature', 'type': 'branch'}],
+        ):
+            with (
+                self.subTest(branches=branches),
+                patch.object(
+                    preview,
+                    'api',
+                    side_effect=[
+                        environment,
+                        {'default_branch': 'main'},
+                        {'total_count': len(branches), 'branch_policies': branches},
+                    ],
+                ),
+            ):
+                with self.assertRaisesRegex(ValueError, 'allow only the default branch'):
+                    preview.require_publication_environment('example/one')
+
+    def test_pending_approval_replaces_a_previous_preview_without_claiming_publication(self):
+        pr = review_pr()
+        run = {**build_run(pr), 'run_attempt': 1, 'html_url': 'https://github.com/example/run'}
+        old = {
+            'id': 5,
+            'user': {'login': 'github-actions[bot]'},
+            'body': preview.MARKER + '\n[Preview](https://cdn.example/old)',
+        }
+        with (
+            patch.object(preview, 'resolve', return_value=(run, pr)),
+            patch.object(
+                preview,
+                'api',
+                side_effect=[
+                    {'jobs': [{'name': 'UI reviewer', 'conclusion': 'success'}]},
+                    [old],
+                    {'workflow_runs': [{'id': 123}]},
+                    {},
+                ],
+            ) as request,
+        ):
+            preview.report('example/one', 123, '', 'waiting for human approval')
+            body = request.call_args.kwargs['body']['body']
+            self.assertIn('Publication: waiting for human approval', body)
+            self.assertNotIn('https://cdn.example/old', body)
+            self.assertNotIn('<!-- source-run:', body)
+
+    def test_metadata_edit_keeps_the_existing_comment_when_selection_was_skipped(self):
+        pr = review_pr()
+        run = build_run(pr)
+        with (
+            patch.object(preview, 'resolve', return_value=(run, pr)),
+            patch.object(
+                preview,
+                'api',
+                return_value={
+                    'jobs': [{'name': 'changes', 'conclusion': 'skipped'}],
+                },
+            ) as request,
+        ):
+            preview.report('example/one', 123, '', 'skipped')
+            self.assertEqual(request.call_count, 1)
+
+    def test_metadata_edit_does_not_supersede_an_actual_build_on_the_same_head(self):
+        pr = review_pr()
+        runs = {
+            'workflow_runs': [
+                {'id': 123, 'pull_requests': [pr]},
+                {'id': 124, 'pull_requests': [pr]},
+            ]
+        }
+        for conclusion, expected in (('skipped', True), ('success', False), (None, False)):
+            with (
+                self.subTest(conclusion=conclusion),
+                patch.object(
+                    preview,
+                    'api',
+                    side_effect=[
+                        runs,
+                        {'jobs': [{'name': 'changes', 'conclusion': conclusion}]},
+                    ],
+                ),
+            ):
+                self.assertEqual(
+                    preview.newest_run_for_pr('example/one', 123, build_run(pr), pr), expected
+                )
 
     def test_build_summary_distinguishes_artifacts_and_live_publication(self):
         for enabled, message in (

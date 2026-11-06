@@ -1,14 +1,15 @@
 name: Web previews / Build
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
 permissions:
   contents: read
 concurrency:
-  group: web-previews-${{ github.event.pull_request.number }}
+  group: web-previews-${{ github.event.pull_request.number }}-${{ github.event.action == 'edited' && github.event.changes.base == null && github.run_id || 'build' }}
   cancel-in-progress: true
 jobs:
   changes:
+    if: github.event.action != 'edited' || github.event.changes.base != null
     runs-on: ubuntu-24.04
     outputs:
       sites: ${{ steps.changes.outputs.sites }}
@@ -62,7 +63,7 @@ jobs:
   summary:
     name: Preview status
     needs: [changes, reviewer, sites]
-    if: always()
+    if: always() && needs.changes.result != 'skipped'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

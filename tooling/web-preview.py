@@ -192,6 +192,26 @@ def require_publication_environment(repository):
     ]
     if not reviewers or environment.get('can_admins_bypass') is not False:
         raise ValueError('web-preview must require a human reviewer and disable admin bypass')
+    policy = environment.get('deployment_branch_policy') or {}
+    if (
+        policy.get('custom_branch_policies') is not True
+        or policy.get('protected_branches') is not False
+    ):
+        raise ValueError('web-preview must restrict deployments to the default branch')
+    default = api(f'repos/{repository}')['default_branch']
+    policies = api(
+        f'repos/{repository}/environments/web-preview/deployment-branch-policies?per_page=100'
+    )
+    branches = policies['branch_policies']
+    if (
+        policies['total_count'] != 1
+        or len(branches) != 1
+        or branches[0].get('name') != default
+        or branches[0].get('type') != 'branch'
+    ):
+        raise ValueError(
+            'web-preview must allow only the default branch, without tags or wildcards'
+        )
 
 
 def build_summary(selection, reviewer, sites, enabled, repository, run_id):
@@ -258,7 +278,20 @@ def newest_run_for_pr(repository, run_id, run, pr):
             _, candidate_pr = resolve(repository, candidate_id)
             if candidate_pr and same_pull_request(candidate_pr, pr):
                 matching.append(candidate_id)
-    return bool(matching) and max(matching) == run_id
+    if run_id not in matching:
+        return False
+    for candidate_id in matching:
+        if candidate_id <= run_id:
+            continue
+        jobs = api(f'repos/{repository}/actions/runs/{candidate_id}/jobs?per_page=100')['jobs']
+        selection = selection_job(jobs)
+        if not selection or selection.get('conclusion') != 'skipped':
+            return False
+    return True
+
+
+def selection_job(jobs):
+    return next((job for job in jobs if job['name'] == 'changes'), None)
 
 
 def resolve(repository, run_id):
@@ -357,7 +390,10 @@ def report(repository, run_id, reviewer_url, publication_result):
         return
     jobs = api(f'repos/{repository}/actions/runs/{run_id}/jobs?per_page=100')['jobs']
     rows = []
-    selection = next((job for job in jobs if job['name'] == 'changes'), None)
+    selection = selection_job(jobs)
+    if selection and selection.get('conclusion') == 'skipped':
+        print('Preview selection was skipped; keep the existing preview status')
+        return
     if selection and selection['conclusion'] == 'failure':
         rows.append(f'| Preview selection | failure | [Build log]({selection["html_url"]}) |')
     for name, label in [('UI reviewer', 'UI reviewer'), ('Sites', 'Sites')]:
@@ -380,12 +416,10 @@ def report(repository, run_id, reviewer_url, publication_result):
         rows.append(f'| Preview selection | failure | [Build run]({run["html_url"]}) |')
     no_products = not rows
     if no_products:
-        rows.append('| Web previews | not selected | No web products in this commit |')
-    receipt = f'<!-- source-run:{run_id}:{run["run_attempt"]} -->'
+        rows.append('| Web previews | not selected | No web products in the cumulative PR diff |')
     body = '\n'.join(
         [
             MARKER,
-            receipt,
             '### Web previews',
             '',
             f'Commit `{run["head_sha"][:7]}`. [Build run]({run["html_url"]}).',
