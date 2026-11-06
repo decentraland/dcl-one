@@ -1189,7 +1189,7 @@ fn coupon_join() -> String {
              AND lower(mv.contract_address) = ANY(c.collections) \
              AND NOT COALESCE(cs.cancelled, false) AND NOT COALESCE(cs.revoked, false) \
              AND COALESCE(cs.uses, 0) < (c.checks->>'uses')::numeric \
-           ORDER BY c.discount_ppm DESC, c.expires_at ASC \
+           ORDER BY c.discount_ppm DESC, c.expires_at ASC, c.id ASC \
            LIMIT 1 \
          ) cp ON true"
     )

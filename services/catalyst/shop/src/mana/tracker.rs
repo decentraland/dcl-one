@@ -327,6 +327,29 @@ pub fn applied_coupon(
     Ok(Some((coupon.couponAddress, coupon.data.to_vec())))
 }
 
+/// The price of a trade whose transaction did not call the venue itself:
+/// the signed one, unless a coupon manager paired with the venue emitted an
+/// event in it, in which case a coupon was applied that the calldata does not
+/// show, and no price is guessed.
+pub fn routed_price(
+    chain_id: u64,
+    venue: Address,
+    logs: &[ReceiptLog],
+    signed: U256,
+) -> Result<U256, String> {
+    let managers = crate::mana::facts::paired_managers(crate::types::ChainId(chain_id), venue);
+    match logs
+        .iter()
+        .find(|l| managers.contains(&format!("{:#x}", l.address)))
+    {
+        Some(l) => Err(format!(
+            "the transaction reached the venue through another contract and the coupon manager {:#x} acted in it",
+            l.address
+        )),
+        None => Ok(signed),
+    }
+}
+
 /// The MANA an `accept_trade` must take from the buyer: the row's signed
 /// price, less the coupon its own transaction carried. Other kinds keep the
 /// row's price.
@@ -346,6 +369,16 @@ pub async fn expected_price(
         .venue
         .parse()
         .map_err(|_| ExpectedPriceError::Refused("the row's venue is not an address".into()))?;
+    let chain_id = row.chain_id.max(0) as u64;
+    // A transaction that called another contract (a router, a wallet's
+    // execute, a manager) has no top-level calldata to read the coupon from.
+    // It pays the signed price unless a coupon manager paired with the venue
+    // acted in it, which the tracker cannot price, so it refuses.
+    if receipt.to != Some(venue) {
+        return routed_price(chain_id, venue, &receipt.logs, signed)
+            .map(|price| (Some(price), None))
+            .map_err(ExpectedPriceError::Refused);
+    }
     let input = reader
         .transaction_input(&row.tx_hash)
         .await
@@ -354,14 +387,8 @@ pub async fn expected_price(
             ExpectedPriceError::Unreadable("the node does not know the transaction".into())
         })?;
     let reference = row.reference.as_deref().unwrap_or_default();
-    match applied_coupon(
-        row.chain_id.max(0) as u64,
-        venue,
-        reference,
-        receipt.to,
-        &input,
-    )
-    .map_err(ExpectedPriceError::Refused)?
+    match applied_coupon(chain_id, venue, reference, receipt.to, &input)
+        .map_err(ExpectedPriceError::Refused)?
     {
         None => Ok((Some(signed), None)),
         Some((address, data)) => {
@@ -773,6 +800,46 @@ mod tests {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    #[test]
+    fn a_routed_trade_pays_its_signed_price_unless_a_paired_coupon_manager_acted() {
+        let venue: Address = "0xe38ef22abe871513555cba89adfe45ab4f548ada"
+            .parse()
+            .unwrap();
+        let manager: Address = "0x655fdfa91d69ea49f4ce1a8f7f7e2622c8630813"
+            .parse()
+            .unwrap();
+        let signed = U256::from(2_000u32);
+        let transfer = log(
+            Address::repeat_byte(0xaa),
+            vec![TOPIC_TRANSFER.to_string()],
+            vec![0u8; 32],
+        );
+        assert_eq!(
+            routed_price(137, venue, &[transfer.clone()], signed),
+            Ok(signed)
+        );
+        assert!(
+            routed_price(
+                137,
+                venue,
+                &[transfer, log(manager, vec![topic_of(manager)], vec![])],
+                signed
+            )
+            .is_err(),
+            "a coupon applied through another contract is not guessed"
+        );
+        assert_eq!(
+            routed_price(
+                137,
+                Address::repeat_byte(0x01),
+                &[log(manager, vec![topic_of(manager)], vec![])],
+                signed
+            ),
+            Ok(signed),
+            "only a manager paired with the row's venue counts"
+        );
     }
 
     #[test]

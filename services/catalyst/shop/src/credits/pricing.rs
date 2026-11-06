@@ -304,19 +304,9 @@ impl Market for LocalMarket {
         trade: &crate::types::SignedTrade,
         trade_type: &str,
     ) -> Result<Option<crate::types::TradeCoupon>, ApiError> {
-        let Some(subject) = trade.sent.first() else {
-            return Ok(None);
-        };
-        crate::mana::facts::primary_trade_coupon(
-            &self.pool,
-            trade.venue.chain_id,
-            trade.venue.contract.address(),
-            trade_type,
-            &trade.signer.to_string(),
-            subject,
-        )
-        .await
-        .map_err(|e| ApiError::Internal(format!("coupon read failed: {e}")))
+        crate::mana::facts::primary_trade_coupon(&self.pool, trade, trade_type)
+            .await
+            .map_err(|e| ApiError::Internal(format!("coupon read failed: {e}")))
     }
 
     async fn mana_usd(&self) -> Result<String, ApiError> {

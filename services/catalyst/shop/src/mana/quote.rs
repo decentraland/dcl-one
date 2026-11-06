@@ -559,7 +559,7 @@ mod tests {
             r#"{{"signer":"{creator:#x}","signature":"0x{sig}","type":"public_item_order","network":"MATIC","chainId":137,
               "checks":{{"uses":10,"expiration":4102444800000,"effective":0,"salt":"0x{salt}","contractSignatureIndex":0,"signerSignatureIndex":0,"allowedRoot":"0x","externalChecks":[]}},
               "sent":[{{"assetType":4,"contractAddress":"{collection:#x}","itemId":"0","extra":"0x"}}],
-              "received":[{{"assetType":1,"contractAddress":"{mana:#x}","amount":"{price}","extra":"0x","beneficiary":"{creator:#x}"}}]}}"#,
+              "received":[{{"assetType":2,"contractAddress":"{mana:#x}","amount":"{price}","extra":"0x","beneficiary":"{creator:#x}"}}]}}"#,
             sig = "11".repeat(65),
             salt = uuid::Uuid::new_v4().simple(),
             mana = chain.mana,
@@ -612,13 +612,15 @@ mod tests {
             other => panic!("the listing carries no coupon: {other:?}"),
         }
         let line = Authoritative::derive(resolved.facts.clone()).unwrap();
-        let discounted = ManaWei::new(price).discounted(250_000).unwrap();
+        // $1 less 25% is $0.75, then converted at $0.50 a MANA: 1.5 MANA.
+        let rate = crate::types::ManaUsdRate::parse_usd_per_mana("0.5").unwrap();
+        let discounted = ManaWei::new(U256::from(1_500_000_000_000_000_000u128));
         assert_eq!(
-            quote(&line, PaymentMethod::Mana, None).unwrap(),
+            quote(&line, PaymentMethod::Mana, Some(&rate)).unwrap(),
             Quote::Mana { amount: discounted }
         );
         assert_eq!(
-            settlement_key(&line, PaymentMethod::Mana, None).map(|k| k.call),
+            settlement_key(&line, PaymentMethod::Mana, Some(&rate)).map(|k| k.call),
             Some(crate::types::SettlementCall::AcceptWithCoupon)
         );
         let execution =
