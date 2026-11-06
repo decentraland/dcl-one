@@ -3,7 +3,7 @@ mod draco;
 mod native_fs;
 #[cfg(target_arch = "wasm32")]
 mod wasm_fs;
-use std::io::Write;
+use std::{collections::VecDeque, io::Write};
 
 use base64::{engine::general_purpose, Engine};
 use bevy::log::{
@@ -25,17 +25,58 @@ pub(crate) async fn process_events(
     mut req_rx: UnboundedReceiver<AssetForProcessing>,
     resp_sx: UnboundedSender<Result<AssetForProcessing, ()>>,
 ) {
-    while let Some(req) = req_rx.blocking_recv() {
+    // requests taken from the channel, not yet processed
+    let mut pending: VecDeque<AssetForProcessing> = VecDeque::new();
+    loop {
+        if pending.is_empty() {
+            let Some(req) = req_rx.blocking_recv() else {
+                return;
+            };
+            pending.push_back(req);
+        }
+        while let Ok(req) = req_rx.try_recv() {
+            pending.push_back(req);
+        }
+        // a gltf that failed to load shows nothing until it is repaired, while a texture
+        // compression only improves one that is already showing: repairs go first, so a
+        // millisecond repair never waits behind a queue of 200ms compressions. ktx2 cache
+        // writes are pure i/o and free their stashed dds, so they go next
+        let priority = |req: &AssetForProcessing| match req.ty {
+            ProcessingAssetType::UnloadableGltf => 0,
+            ProcessingAssetType::Ktx2Cache => 1,
+            ProcessingAssetType::Gltf | ProcessingAssetType::Image => 2,
+        };
+        let next = pending
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, req)| priority(req))
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let req = pending.remove(next).expect("pending is not empty");
+        let cache_write = matches!(req.ty, ProcessingAssetType::Ktx2Cache);
+
+        // the read yields the entry's key (on web, the cache entry the url resolves to)
         let Ok((raw_bytes, key)) = read_file(&req.cache_path).await else {
             error!("can't read {:?}", req.cache_path);
+            if cache_write {
+                take_ktx2_result(&req);
+            }
             let _ = resp_sx.send(Err(()));
             continue;
         };
 
         let data = match req.ty {
-            ProcessingAssetType::Gltf | ProcessingAssetType::DracoGltf => {
-                let expect_draco = matches!(req.ty, ProcessingAssetType::DracoGltf);
-                match process_gltf(&raw_bytes, expect_draco) {
+            ProcessingAssetType::Ktx2Cache => match take_ktx2_result(&req) {
+                Some(dds) => dds,
+                None => {
+                    error!("no ktx2 transcode stashed for {:?}", req.base_path);
+                    let _ = resp_sx.send(Err(()));
+                    continue;
+                }
+            },
+            ProcessingAssetType::Gltf | ProcessingAssetType::UnloadableGltf => {
+                let expect_repair = matches!(req.ty, ProcessingAssetType::UnloadableGltf);
+                match process_gltf(&raw_bytes, expect_repair) {
                     Ok(gltf) => gltf,
                     Err(e) => {
                         error!("failed to process gltf {:?}: {:?}", req.base_path, e);
@@ -64,8 +105,17 @@ pub(crate) async fn process_events(
     }
 }
 
+/// The dds `Ktx2Loader` stashed for `req.base_path`, removed from the stash.
+fn take_ktx2_result(req: &AssetForProcessing) -> Option<Vec<u8>> {
+    crate::ktx2_loader::KTX2_RESULTS
+        .lock()
+        .ok()?
+        .remove(&req.base_path.to_string())
+        .map(|(_, dds)| dds)
+}
+
 #[derive(Debug)]
-enum ImageProcessError {
+pub(crate) enum ImageProcessError {
     CantLoad,
     DdsFailed,
 }
@@ -108,10 +158,7 @@ fn compress_decoded(img: image::DynamicImage) -> Result<Vec<u8>, ImageProcessErr
 
     info!(
         "size: {}/{} -> {}/{}",
-        initial_width,
-        initial_height,
-        resized.width(),
-        resized.height()
+        initial_width, initial_height, width, height
     );
     block_compression::encode::compress_rgba8(
         block_compression::CompressionVariant::BC7(BC7Settings::alpha_ultrafast()),
@@ -122,6 +169,96 @@ fn compress_decoded(img: image::DynamicImage) -> Result<Vec<u8>, ImageProcessErr
         width * 4,
     );
 
+    bc7_dds(width, height, compressed_data)
+}
+
+/// A Basis Universal KTX2 image (`KHR_texture_basisu`) as BC7: UASTC blocks are rewritten as BC7
+/// blocks, with no decode and search as `compress_decoded` does. The largest level within that
+/// path's 1024 cap is taken; a level still over it, or not whole 4x4 blocks, goes through RGBA
+/// and `compress_decoded` so the result matches what a PNG of that size would give.
+pub(crate) fn transcode_ktx2(bytes: &[u8]) -> Result<Vec<u8>, ImageProcessError> {
+    use basisu::{DecodeFlags, TargetFormat, Transcoder};
+
+    check_ktx2_header(bytes)?;
+    let texture = Transcoder::new(bytes).map_err(|_| ImageProcessError::CantLoad)?;
+    let level = (0..texture.level_count())
+        .find(|&level| {
+            texture
+                .image_level_info(level)
+                .is_ok_and(|info| info.width.max(info.height) <= 1024)
+        })
+        .unwrap_or(0);
+    let info = texture
+        .image_level_info(level)
+        .map_err(|_| ImageProcessError::CantLoad)?;
+
+    if info.width.max(info.height) <= 1024
+        && info.width.is_multiple_of(4)
+        && info.height.is_multiple_of(4)
+        && texture.supports(TargetFormat::Bc7Rgba)
+    {
+        let blocks = texture
+            .transcode(level, TargetFormat::Bc7Rgba, DecodeFlags::NONE)
+            .map_err(|_| ImageProcessError::CantLoad)?;
+        return bc7_dds(info.width, info.height, blocks);
+    }
+
+    let rgba = texture
+        .transcode(level, TargetFormat::Rgba32, DecodeFlags::NONE)
+        .map_err(|_| ImageProcessError::CantLoad)?;
+    let img = image::RgbaImage::from_raw(info.width, info.height, rgba)
+        .ok_or(ImageProcessError::CantLoad)?;
+    compress_decoded(image::DynamicImage::ImageRgba8(img))
+}
+
+const KTX2_MAGIC: &[u8] = b"\xABKTX 20\xBB\r\n\x1A\n";
+
+/// The largest KTX2 width or height taken. Its RGBA fallback is 256 MB, within the 512 MB
+/// `image` allows a PNG.
+const KTX2_MAX_SIZE: u32 = 8192;
+
+/// What this path takes from a KTX2 before `basisu` reads it: a single 2D UASTC image (vkFormat
+/// undefined, stored plain or zstd-supercompressed) within `KTX2_MAX_SIZE`. ktx2 files are scene
+/// content; the vendored `basisu` bounds every size and offset it reads, and this keeps the
+/// formats and sizes to the ones the explorer ships.
+fn check_ktx2_header(bytes: &[u8]) -> Result<(), ImageProcessError> {
+    let u32_at = |at: usize| -> Option<u32> {
+        Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
+    };
+
+    let valid = || -> Option<bool> {
+        let (format, width, height) = (u32_at(12)?, u32_at(20)?, u32_at(24)?);
+        let (depth, layers, faces, scheme) = (u32_at(28)?, u32_at(32)?, u32_at(36)?, u32_at(44)?);
+        // Check the DFD before Transcoder::new can initialize another codec's codebooks.
+        let dfd = usize::try_from(u32_at(48)?).ok()?;
+        let dfd_len = usize::try_from(u32_at(52)?).ok()?;
+        let descriptor = bytes.get(dfd..dfd.checked_add(dfd_len)?)?;
+        Some(
+            bytes.starts_with(KTX2_MAGIC)
+                && matches!(dfd_len, 44 | 60)
+                && descriptor.get(12) == Some(&166) // KHR_DF_MODEL_UASTC
+                && format == 0
+                && matches!(scheme, 0 | 2)
+                && (1..=KTX2_MAX_SIZE).contains(&width)
+                && (1..=KTX2_MAX_SIZE).contains(&height)
+                // one 2d image: the loader and the gltf repair take a single texture
+                && depth == 0
+                && layers <= 1
+                && faces == 1,
+        )
+    };
+
+    match valid() {
+        Some(true) => Ok(()),
+        _ => Err(ImageProcessError::CantLoad),
+    }
+}
+
+fn bc7_dds(
+    width: u32,
+    height: u32,
+    compressed_data: Vec<u8>,
+) -> Result<Vec<u8>, ImageProcessError> {
     let Ok(mut dds) = Dds::new_dxgi(ddsfile::NewDxgiParams {
         height,
         width,
@@ -145,13 +282,7 @@ fn compress_decoded(img: image::DynamicImage) -> Result<Vec<u8>, ImageProcessErr
     };
 
     if dds.get_height() == 0 || dds.get_width() == 0 {
-        error!(
-            "returned size zero processing {}/{} -> {}/{}",
-            initial_width,
-            initial_height,
-            resized.width(),
-            resized.height()
-        );
+        error!("returned size zero processing {}/{}", width, height);
         return Err(ImageProcessError::DdsFailed);
     }
 
@@ -165,7 +296,7 @@ enum GltfProcessError {
     InvalidHeader,
     ParseFailed,
     Draco(draco::DracoError),
-    NotDraco,
+    NothingToRepair,
 }
 
 impl From<ImageProcessError> for GltfProcessError {
@@ -174,8 +305,8 @@ impl From<ImageProcessError> for GltfProcessError {
     }
 }
 
-fn process_gltf(raw_bytes: &[u8], expect_draco: bool) -> Result<Vec<u8>, GltfProcessError> {
-    // failed-load (draco) requests can hand us arbitrary bytes, so parse fallibly
+fn process_gltf(raw_bytes: &[u8], expect_repair: bool) -> Result<Vec<u8>, GltfProcessError> {
+    // failed-load requests can hand us arbitrary bytes, so parse fallibly
     let (mut root, mut old_bin): (gltf_json::Root, Vec<u8>) = if raw_bytes.starts_with(b"glTF") {
         let glb = Glb::from_slice(raw_bytes).map_err(|_| GltfProcessError::ParseFailed)?;
         (
@@ -231,10 +362,36 @@ fn process_gltf(raw_bytes: &[u8], expect_draco: bool) -> Result<Vec<u8>, GltfPro
     } else {
         Vec::default()
     };
-    if expect_draco && draco_views.is_empty() {
-        // the gltf failed to load for some reason other than draco compression;
-        // there is nothing we can do to fix it
-        return Err(GltfProcessError::NotDraco);
+
+    // point KHR_texture_basisu textures at their KTX2 image, which the texture pass below
+    // transcodes to BC7, and drop the extension the loader rejects. each texture's original
+    // source and extension are kept, to put back if its KTX2 can't be transcoded
+    let basisu_required = root
+        .extensions_required
+        .iter()
+        .any(|e| e == "KHR_texture_basisu");
+    let mut basisu_textures = Vec::new();
+    for (index, texture) in root.textures.iter_mut().enumerate() {
+        let Some(extensions) = texture.extensions.as_mut() else {
+            continue;
+        };
+        let Some(basisu) = extensions.others.remove("KHR_texture_basisu") else {
+            continue;
+        };
+        let Some(source) = basisu.get("source").and_then(|source| source.as_u64()) else {
+            return Err(GltfProcessError::ParseFailed);
+        };
+        basisu_textures.push((index, texture.source, basisu));
+        texture.source = gltf_json::Index::new(source as u32);
+    }
+    root.extensions_used.retain(|e| e != "KHR_texture_basisu");
+    root.extensions_required
+        .retain(|e| e != "KHR_texture_basisu");
+
+    if expect_repair && draco_views.is_empty() && basisu_textures.is_empty() {
+        // the gltf failed to load for some reason other than draco compression or basisu
+        // textures; there is nothing we can do to fix it
+        return Err(GltfProcessError::NothingToRepair);
     }
 
     // collect all Raw Image Data first
@@ -285,8 +442,28 @@ fn process_gltf(raw_bytes: &[u8], expect_draco: bool) -> Result<Vec<u8>, GltfPro
     }
 
     // compress & append textures
+    let mut failed_ktx2 = Vec::new();
     for (i, raw_opt) in raw_images.into_iter().enumerate() {
-        if let Some(raw_pixels) = raw_opt {
+        if let Some(raw_pixels) = raw_opt.as_ref().filter(|raw| raw.starts_with(KTX2_MAGIC)) {
+            // the loader can't read KTX2 at all, so these are transcoded whatever their size
+            match transcode_ktx2(raw_pixels) {
+                Ok(bc7_data) => {
+                    root.images[i].mime_type =
+                        Some(gltf_json::image::MimeType("image/vnd-ms.dds".into()));
+                    append_image(&mut root, &mut new_bin, i, bc7_data);
+                }
+                // with the extension required there is no fallback to load instead
+                Err(e) if basisu_required => return Err(e.into()),
+                Err(e) => {
+                    warn!("ktx2 image {i} can't be transcoded ({e:?}), keeping its fallback");
+                    failed_ktx2.push(i);
+                    // the original view was zombied above, so carry the bytes over
+                    if root.images[i].buffer_view.is_some() {
+                        append_image(&mut root, &mut new_bin, i, raw_pixels.clone());
+                    }
+                }
+            }
+        } else if let Some(raw_pixels) = raw_opt {
             // apply the same worth-compressing gate as engine::check_assets: bc7
             // saves nothing on tiny images, and a 1-pixel dimension would resize
             // to zero. tiny or undecodable images keep their original bytes
@@ -311,30 +488,27 @@ fn process_gltf(raw_bytes: &[u8], expect_draco: bool) -> Result<Vec<u8>, GltfPro
                 None => continue,
             };
 
-            // append to new_bin
-            while !new_bin.len().is_multiple_of(4) {
-                new_bin.push(0);
-            }
-            let offset = new_bin.len() as u64;
-            new_bin.extend_from_slice(&new_data);
-
-            // Create NEW BufferView
-            let new_view_idx = root.buffer_views.len();
-            root.buffer_views.push(gltf_json::buffer::View {
-                buffer: gltf_json::Index::new(0),
-                byte_length: new_data.len().into(),
-                byte_offset: Some(offset.into()),
-                byte_stride: None,
-                name: Some("BC7_Data".into()),
-                target: None,
-                extensions: None,
-                extras: Default::default(),
-            });
-
-            // Update Image to point to new View
-            root.images[i].buffer_view = Some(gltf_json::Index::new(new_view_idx as u32));
-            root.images[i].uri = None;
+            append_image(&mut root, &mut new_bin, i, new_data);
         }
+    }
+
+    // textures whose KTX2 failed go back to their fallback source, with the extension
+    let mut restored = false;
+    for (index, source, basisu) in basisu_textures {
+        let texture = &mut root.textures[index];
+        if !failed_ktx2.contains(&texture.source.value()) {
+            continue;
+        }
+        texture.source = source;
+        if let Some(extensions) = texture.extensions.as_mut() {
+            extensions
+                .others
+                .insert("KHR_texture_basisu".to_owned(), basisu);
+        }
+        restored = true;
+    }
+    if restored {
+        root.extensions_used.push("KHR_texture_basisu".to_owned());
     }
 
     // Update Buffer Total Size
@@ -353,6 +527,30 @@ fn process_gltf(raw_bytes: &[u8], expect_draco: bool) -> Result<Vec<u8>, GltfPro
     let mut output = Vec::new();
     write_glb(&mut output, &root, &new_bin).unwrap();
     Ok(output)
+}
+
+/// Append `data` to the binary chunk as a new view and point image `i` at it.
+fn append_image(root: &mut gltf_json::Root, new_bin: &mut Vec<u8>, i: usize, data: Vec<u8>) {
+    while !new_bin.len().is_multiple_of(4) {
+        new_bin.push(0);
+    }
+    let offset = new_bin.len() as u64;
+    new_bin.extend_from_slice(&data);
+
+    let new_view_idx = root.buffer_views.len();
+    root.buffer_views.push(gltf_json::buffer::View {
+        buffer: gltf_json::Index::new(0),
+        byte_length: data.len().into(),
+        byte_offset: Some(offset.into()),
+        byte_stride: None,
+        name: Some("BC7_Data".into()),
+        target: None,
+        extensions: None,
+        extras: Default::default(),
+    });
+
+    root.images[i].buffer_view = Some(gltf_json::Index::new(new_view_idx as u32));
+    root.images[i].uri = None;
 }
 
 // Helper that doesn't borrow 'root' mutably
@@ -522,5 +720,128 @@ mod tests {
 
         assert_eq!(root.images[0].mime_type.as_ref().unwrap().0, "image/png");
         assert_eq!(view_bytes(&root, &bin, 0), png);
+    }
+
+    // 8x8 and 6x6 UASTC gradients, zstd-supercompressed (`basisu -uastc -ktx2`)
+    const UASTC_8: &[u8] = include_bytes!("../../testdata/uastc_8.ktx2");
+    const UASTC_6: &[u8] = include_bytes!("../../testdata/uastc_6.ktx2");
+
+    fn dds_size(bytes: &[u8]) -> (u32, u32) {
+        let dds = Dds::read(&mut std::io::Cursor::new(bytes)).unwrap();
+        assert_eq!(dds.get_dxgi_format(), Some(DxgiFormat::BC7_UNorm));
+        (dds.get_width(), dds.get_height())
+    }
+
+    #[test]
+    fn uastc_transcodes_to_bc7_in_whole_blocks() {
+        assert_eq!(dds_size(&transcode_ktx2(UASTC_8).unwrap()), (8, 8));
+        // not whole blocks: decoded and encoded like a png of that size
+        assert_eq!(dds_size(&transcode_ktx2(UASTC_6).unwrap()), (8, 8));
+    }
+
+    #[test]
+    fn basisu_gltf_is_repaired_to_a_dds_texture() {
+        let json = format!(
+            r#"{{"asset":{{"version":"2.0"}},
+                "extensionsUsed":["KHR_texture_basisu"],
+                "extensionsRequired":["KHR_texture_basisu"],
+                "images":[{{"mimeType":"image/ktx2","uri":"data:image/ktx2;base64,{}"}}],
+                "textures":[{{"extensions":{{"KHR_texture_basisu":{{"source":0}}}}}}]}}"#,
+            general_purpose::STANDARD.encode(UASTC_8),
+        );
+
+        let output = process_gltf(json.as_bytes(), true).unwrap();
+        let (root, bin) = parse_glb(&output);
+
+        assert!(root.extensions_used.is_empty());
+        assert!(root.extensions_required.is_empty());
+        assert_eq!(root.textures[0].source.value(), 0);
+        assert_eq!(
+            root.images[0].mime_type.as_ref().unwrap().0,
+            "image/vnd-ms.dds"
+        );
+        assert_eq!(dds_size(view_bytes(&root, &bin, 0)), (8, 8));
+        // the loader accepts it now
+        assert!(gltf::Gltf::from_slice(&output).is_ok());
+    }
+
+    // rejected by `check_ktx2_header` (size, format, scheme) or by the vendored `basisu` (ranges,
+    // lengths, levels)
+    #[test]
+    fn ktx2_with_an_oversized_or_inconsistent_header_is_rejected() {
+        let patched = |at: usize, value: &[u8]| {
+            let mut bytes = UASTC_8.to_vec();
+            bytes[at..at + value.len()].copy_from_slice(value);
+            bytes
+        };
+        // 40000x40000: the rgba fallback alone would be 6.4 GB
+        let huge = [&40_000u32.to_le_bytes()[..], &40_000u32.to_le_bytes()].concat();
+        assert!(transcode_ktx2(&patched(20, &huge)).is_err());
+        // level 0 reaching past the end of the file
+        assert!(transcode_ktx2(&patched(88, &u64::MAX.to_le_bytes())).is_err());
+        // level 0 declaring more bytes than an 8x8 image's four blocks hold
+        assert!(transcode_ktx2(&patched(96, &(1u64 << 40).to_le_bytes())).is_err());
+        // more levels than an 8x8 mip chain has
+        assert!(transcode_ktx2(&patched(40, &5u32.to_le_bytes())).is_err());
+        assert!(transcode_ktx2(&UASTC_8[..UASTC_8.len() / 2]).is_err());
+        // BasisLZ (ETC1S), and a declared GPU format such as BC7
+        assert!(transcode_ktx2(&patched(44, &1u32.to_le_bytes())).is_err());
+        assert!(transcode_ktx2(&patched(12, &145u32.to_le_bytes())).is_err());
+    }
+
+    #[test]
+    fn ktx2_rejects_other_codecs_before_transcoder_initialization() {
+        let mut bytes = UASTC_8.to_vec();
+        let dfd = u32::from_le_bytes(bytes[48..52].try_into().unwrap()) as usize;
+        assert!(check_ktx2_header(&bytes).is_ok());
+        for model in [163, 167, 168, 169] {
+            for scheme in [0u32, 2] {
+                bytes[dfd + 12] = model;
+                bytes[44..48].copy_from_slice(&scheme.to_le_bytes());
+                assert!(check_ktx2_header(&bytes).is_err());
+            }
+        }
+        bytes[dfd + 12] = 166;
+        bytes[48..52].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(check_ktx2_header(&bytes).is_err());
+        assert!(check_ktx2_header(&UASTC_8[..dfd + 32]).is_err());
+    }
+
+    #[test]
+    fn basisu_texture_with_a_bad_ktx2_keeps_its_fallback() {
+        let bad_ktx2 = [KTX2_MAGIC, &[0; 100]].concat();
+        let json = |required: &str| {
+            format!(
+                r#"{{"asset":{{"version":"2.0"}},
+                    "extensionsUsed":["KHR_texture_basisu"],
+                    "extensionsRequired":[{required}],
+                    "images":[{{"mimeType":"image/png","uri":"data:image/png;base64,{}"}},
+                              {{"mimeType":"image/ktx2","uri":"data:image/ktx2;base64,{}"}}],
+                    "textures":[{{"source":0,"extensions":{{"KHR_texture_basisu":{{"source":1}}}}}}]}}"#,
+                general_purpose::STANDARD.encode(png_bytes(2, 2)),
+                general_purpose::STANDARD.encode(&bad_ktx2),
+            )
+        };
+
+        let output = process_gltf(json("").as_bytes(), false).unwrap();
+        let (root, _) = parse_glb(&output);
+        assert_eq!(root.textures[0].source.value(), 0);
+        let extensions = root.textures[0].extensions.as_ref().unwrap();
+        assert!(extensions.others.contains_key("KHR_texture_basisu"));
+        assert_eq!(root.extensions_used, ["KHR_texture_basisu"]);
+        assert!(gltf::Gltf::from_slice(&output).is_ok());
+
+        // required: nothing to fall back to
+        let required = json(r#""KHR_texture_basisu""#);
+        assert!(process_gltf(required.as_bytes(), true).is_err());
+    }
+
+    #[test]
+    fn failed_gltf_without_draco_or_basisu_is_not_repaired() {
+        let json = r#"{"asset":{"version":"2.0"}}"#;
+        assert!(matches!(
+            process_gltf(json.as_bytes(), true),
+            Err(GltfProcessError::NothingToRepair)
+        ));
     }
 }
