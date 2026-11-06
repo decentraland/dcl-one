@@ -118,7 +118,9 @@ across workers:
   or loader to carry it. `image_processing` sets it to transcode UASTC to BC7, and uses the
   path to cache the result. Alongside it: KTX2 bytes are taken by their magic whatever
   type was declared (also under the `Guess` format setting, which the `image` crate can't
-  guess for KTX2), and a DDS where a KTX2 was declared decodes as DDS (a cached transcode at a
+  guess for KTX2), but only with no path (embedded) or at a `.ktx2` path: the cache write keys
+  on that extension, so an extension-less KTX2 fails to load rather than being transcoded on
+  every visit. A DDS where a KTX2 was declared decodes as DDS (a cached transcode at a
   `.ktx2` path).
 - Accessors with no `bufferView` are accepted (zero-filled per spec; Blender morph targets).
 - Texture decode is skipped when `load_materials` is empty, with a 1x1 placeholder under the
