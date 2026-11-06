@@ -5,8 +5,9 @@
 //
 // Two facts about the HUD shape every equip check:
 // - A card's EQUIP and UNEQUIP buttons are nested in the card and exist (non-empty box) only while
-//   the pointer is on it. `hud.hover` puts the pointer there with a real click, which also selects
-//   the card; the button is then picked by where it sits (over the card), never by its name alone.
+//   the pointer is on it. `pointAtCard` puts the pointer there with a real click near the card's top,
+//   which also selects the card; the button is then picked by where it sits (over the card), never
+//   by its name alone.
 // - Equipping edits the Backpack's draft look: the preview avatar wears it, and the player's
 //   profile does not change. The look is deployed when the Backpack closes (useEngineSession's
 //   commitAvatar, bridge-scene avatarDraft.ts), and only if the net look differs from the deployed
@@ -231,15 +232,46 @@ export interface Hovered {
   action: CardAction | undefined
 }
 
-/** Put the pointer on a card (a real click: it selects the card) and read the button it reveals. */
+/** Where on a card the pointer goes, as a share of its height from the top. The EQUIP / UNEQUIP
+ *  button grows in as the pointer arrives from a point in the card's middle (WearableCard's
+ *  `.action`, scaled from 80 px above itself), so a click at the centre can land on it while it
+ *  grows, and press it: an equipped emote was unequipped that way. */
+const CARD_POINTER_FROM_TOP = 0.15
+
+/** Put the pointer on a card with a real click near its top, which selects the card and presses
+ *  nothing else; the card as read before the pointer arrived. */
+export async function pointAtCard(explorer: Explorer, selector: Selector): Promise<Control> {
+  const control = await explorer.hud.waitActionable(selector, CONTROL_TIMEOUT_MS)
+  await explorer.clickAt(control.x + control.width / 2, control.y + control.height * CARD_POINTER_FROM_TOP)
+  return control
+}
+
+const sameAction = (a: CardAction | undefined, b: CardAction | undefined): boolean =>
+  a !== undefined &&
+  b !== undefined &&
+  a.label === b.label &&
+  JSON.stringify(a.selector) === JSON.stringify(b.selector) &&
+  Math.abs(a.control.x - b.control.x) <= 0.5 &&
+  Math.abs(a.control.y - b.control.y) <= 0.5 &&
+  Math.abs(a.control.width - b.control.width) <= 0.5
+
+/** Put the pointer on a card (a real click: it selects the card) and read the button it reveals,
+ *  once it has grown in: for 100 ms (WearableCard's `--dur-tap`) the last card's button shrinks
+ *  away beside it, still counted among the buttons of that name, so the index that names this one
+ *  holds only once two reads agree. */
 export async function hoverCard(explorer: Explorer, card: Card, labels: readonly string[] = ['EQUIP', 'UNEQUIP']): Promise<Hovered> {
-  await explorer.hud.wait(card.selector, { state: 'actionable', timeoutMs: CONTROL_TIMEOUT_MS })
-  const control = await explorer.hud.hover(card.selector)
+  const control = await pointAtCard(explorer, card.selector)
   try {
-    const action = await until(() => actionOver(explorer, control, labels), (found) => found !== undefined, {
+    await until(() => actionOver(explorer, control, labels), (found) => found !== undefined, {
       timeoutMs: HOVER_TIMEOUT_MS,
       intervalMs: 200,
       what: `a ${labels.join(' or ')} button over "${card.name}"`
+    })
+    const action = await settled(() => actionOver(explorer, control, labels), {
+      timeoutMs: HOVER_TIMEOUT_MS,
+      intervalMs: 150,
+      what: `the button over "${card.name}" to hold still`,
+      same: sameAction
     })
     return { control, action }
   } catch (error) {

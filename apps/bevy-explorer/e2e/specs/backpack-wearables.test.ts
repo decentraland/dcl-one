@@ -28,6 +28,7 @@ import {
   openBackpack,
   pagerVisible,
   pickHair,
+  pointAtCard,
   restoreHair,
   sameCards,
   searchFor,
@@ -76,7 +77,7 @@ scenario(
     })
     const [first] = await waitForCards(explorer, wearableCards)
     assert.ok(first, 'the search should list at least one wearable')
-    await explorer.hud.hover(first.selector)
+    await pointAtCard(explorer, first.selector)
     assert.equal((await explorer.hud.get(first.selector)).checked, true, `the first result "${first.name}" should read selected after a click`)
     assert.match(first.name, new RegExp(SEARCH_TERM, 'i'), `Selected search result '${first.name}' should match the search term '${SEARCH_TERM}'`)
     await closePage(explorer, 'backpack')
