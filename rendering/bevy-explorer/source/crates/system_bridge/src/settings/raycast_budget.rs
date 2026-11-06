@@ -57,12 +57,23 @@ pub(super) fn register(app: &mut App) {
     app.add_console_command::<RaycastBudgetCommand, _>(raycast_budget);
 }
 
-/// Show the milliseconds per frame spent on scene raycasts, or set them
+/// Show the milliseconds per frame spent on scene raycasts, or set them.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/raycast_budget")]
 struct RaycastBudgetCommand {
     /// New budget in milliseconds
     ms: Option<u32>,
+}
+
+fn parse_budget_ms(ms: u32) -> Result<u32, String> {
+    if ms > RaycastBudgetSetting::max() as u32 {
+        return Err(format!(
+            "raycast budget must be between {} and {} ms",
+            RaycastBudgetSetting::min(),
+            RaycastBudgetSetting::max()
+        ));
+    }
+    Ok(ms)
 }
 
 fn raycast_budget(
@@ -72,10 +83,13 @@ fn raycast_budget(
 ) {
     if let Some(Ok(command)) = input.take() {
         if let Some(ms) = command.ms {
-            if let Err(e) =
-                settings.set_value(&mut config, &RaycastBudgetSetting::title(), ms as f32)
-            {
-                input.reply_failed(format!("{e}"));
+            let result = parse_budget_ms(ms).and_then(|ms| {
+                settings
+                    .set_value(&mut config, &RaycastBudgetSetting::title(), ms as f32)
+                    .map_err(|e| e.to_string())
+            });
+            if let Err(e) = result {
+                input.reply_failed(e);
                 return;
             }
         }
@@ -87,7 +101,7 @@ fn raycast_budget(
 mod tests {
     use super::*;
     #[test]
-    fn setting_round_trips_the_config_and_clamps() {
+    fn setting_round_trips_the_config() {
         let mut config = AppConfig::default();
         assert_eq!(RaycastBudgetSetting::load(&config).value(), 2);
         RaycastBudgetSetting::from_int(7).save(&mut config);
@@ -95,6 +109,16 @@ mod tests {
         assert_eq!(
             (RaycastBudgetSetting::min(), RaycastBudgetSetting::max()),
             (0, 10)
+        );
+    }
+
+    #[test]
+    fn budget_command_rejects_values_over_10() {
+        assert!(parse_budget_ms(0).is_ok());
+        assert!(parse_budget_ms(10).is_ok());
+        assert_eq!(
+            parse_budget_ms(11),
+            Err("raycast budget must be between 0 and 10 ms".to_string())
         );
     }
 }

@@ -19,7 +19,7 @@ pub struct RaycastStats {
 }
 
 /// Report, as JSON, what the last frame's raycast pass did: `budgetMs`, `ran`, `deferred` and
-/// `spentMs`
+/// `spentMs`.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/raycast_stats")]
 pub(super) struct RaycastStatsCommand;
