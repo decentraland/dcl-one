@@ -472,7 +472,12 @@ async fn an_unsynced_copy_takes_the_deploy_types_it_names() {
         let id = crate::auth::hash_bytes_v1(&file);
         let (status, _, body) = call(
             &node.router(),
-            deploy_request("/content/entities", &id, &unsigned_chain(&id), &[(&id, &file)]),
+            deploy_request(
+                "/content/entities",
+                &id,
+                &unsigned_chain(&id),
+                &[(&id, &file)],
+            ),
         )
         .await;
         let refused = (status, json_of(&body))
@@ -1681,15 +1686,14 @@ async fn the_burst_limit_counts_a_direct_socket_not_its_header() {
     };
     let node = deploying_node("burst-direct-socket", settings).await;
     let router = node.router();
-    let from = |peer: [u8; 4], ip: &str| {
-        let mut request = form_request(ip, &entity_form());
-        request
-            .extensions_mut()
-            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
-                peer, 40000,
-            ))));
-        request
-    };
+    let from =
+        |peer: [u8; 4], ip: &str| {
+            let mut request = form_request(ip, &entity_form());
+            request.extensions_mut().insert(axum::extract::ConnectInfo(
+                std::net::SocketAddr::from((peer, 40000)),
+            ));
+            request
+        };
     // A direct client rotating its header: one budget, its socket's.
     for ip in ["203.0.113.30", "203.0.113.31"] {
         let (status, _, _) = call(&router, from([198, 51, 100, 7], ip)).await;
@@ -1707,7 +1711,11 @@ async fn the_burst_limit_counts_a_direct_socket_not_its_header() {
     let (status, _, _) = call(&router, from([10, 0, 0, 5], "203.0.113.33")).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
     let (status, _, _) = call(&router, from([10, 0, 0, 5], "203.0.113.34")).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "another client behind the proxy");
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "another client behind the proxy"
+    );
 }
 
 #[tokio::test]
@@ -2158,10 +2166,11 @@ async fn a_chunked_body_reserves_the_whole_body_cap() {
 }
 
 #[tokio::test]
-async fn a_cancelled_request_returns_its_reservation() {
+async fn a_cancelled_request_returns_its_reservation_and_source_share() {
     let cap = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
     let settings = Settings {
         max_in_memory_deployment_bytes: cap,
+        max_concurrent_uploads_per_source: 1,
         ..Settings::for_tests()
     };
     let node = deploying_node("upload-budget-cancel", settings).await;
@@ -2190,6 +2199,11 @@ async fn a_cancelled_request_returns_its_reservation() {
         waited += 1;
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
+    let sources = &node.state.source_uploads;
+    assert!(
+        sources.try_acquire("203.0.113.13", 1).is_err(),
+        "the request holds its source's only upload"
+    );
     pending.abort();
     let _ = pending.await;
     drop(tx);
@@ -2197,4 +2211,150 @@ async fn a_cancelled_request_returns_its_reservation() {
         budget.try_reserve(cap).is_some(),
         "the aborted request gave its reservation back"
     );
+    assert!(
+        matches!(sources.try_acquire("203.0.113.13", 1), Ok(Some(_))),
+        "the aborted request gave its source's upload back"
+    );
+}
+
+/// A database that drops its first `fail_first` connections (a lookup that
+/// fails at once and is passed over) and holds every later one unanswered.
+async fn stalling_pool(fail_first: usize) -> (PgPool, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let mut accepted = 0;
+        let mut held = Vec::new();
+        while let Ok((socket, _)) = listener.accept().await {
+            accepted += 1;
+            if accepted > fail_first {
+                held.push(socket);
+            }
+        }
+    });
+    let pool = PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_secs(60))
+        .connect_lazy(&format!("postgres://nobody@{addr}/nowhere"))
+        .unwrap();
+    (pool, server)
+}
+
+async fn stalled_deploying_node(
+    tag: &str,
+    fail_first: usize,
+    settings: Settings,
+) -> (TestNode, tokio::task::JoinHandle<()>) {
+    let (pool, server) = stalling_pool(fail_first).await;
+    let node = TestNode::with_pool_settings(tag, pool, settings).await;
+    attach(&node.state, true, None, None);
+    node.state.sync.set_state(SyncState::Syncing);
+    (node, server)
+}
+
+/// `POST /entities` skips the whole-request timeout, which still answers
+/// any other route's stall with 408; a read form not decided within
+/// `DEPLOYMENT_PROCESSING_TIMEOUT_MS` answers 503 with `Retry-After`.
+#[tokio::test]
+async fn a_deploy_skips_the_request_timeout_and_answers_503_at_its_processing_deadline() {
+    let settings = Settings {
+        request_timeout: Some(std::time::Duration::from_millis(200)),
+        deployment_processing_timeout: std::time::Duration::from_millis(800),
+        ..Settings::for_tests()
+    };
+    let (node, server) = stalled_deploying_node("processing-deadline", 0, settings).await;
+    let router = node.router();
+
+    let active = Request::post("/content/entities/active")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({"pointers": ["0,0"]}).to_string()))
+        .unwrap();
+    let (status, _, _) = call(&router, active).await;
+    assert_eq!(
+        status,
+        StatusCode::REQUEST_TIMEOUT,
+        "another route over the stalled database"
+    );
+
+    let started = std::time::Instant::now();
+    let (status, headers, body) = call(&router, form_request("203.0.113.40", &entity_form())).await;
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(800),
+        "answered at {:?}, before its processing deadline",
+        started.elapsed()
+    );
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"errors": ["Deployment processing exceeded the 800ms deadline."]})
+        )
+    );
+    assert_eq!(headers[header::RETRY_AFTER], "30");
+    server.abort();
+}
+
+/// A deploy stalled after its pointer claim (the newer-entity lookup on a
+/// database that never answers) holds its upload budget, its source's share
+/// and its pointer until its processing deadline, then lets all three go.
+#[tokio::test]
+async fn a_deploy_past_its_processing_deadline_releases_its_budget_share_and_claim() {
+    let cap = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
+    let settings = Settings {
+        max_in_memory_deployment_bytes: cap,
+        max_concurrent_uploads_per_source: 1,
+        deployment_processing_timeout: std::time::Duration::from_secs(2),
+        ..Settings::for_tests()
+    };
+    // The replay lookup's connection fails at once; the next one stalls.
+    let (node, server) = stalled_deploying_node("processing-stall", 1, settings).await;
+    let router = node.router();
+    let parcel = "71,-71";
+    let (bytes, id, chain) = signed_entity(&key(OWNER_KEY), scene(&[parcel], &[])).await;
+    let mut req = deploy_request("/content/entities", &id, &chain, &[(&id, &bytes)]);
+    req.headers_mut()
+        .insert("x-real-ip", HeaderValue::from_static("203.0.113.41"));
+    let pending = {
+        let router = router.clone();
+        tokio::spawn(async move { call(&router, req).await })
+    };
+
+    let deployer = node.state.deployer().unwrap().clone();
+    let mut waited = 0;
+    while !deployer.holds_pointer("scene", parcel) {
+        assert!(waited < 150, "the deploy never claimed its pointer");
+        waited += 1;
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let (budget, sources) = (&node.state.upload_budget, &node.state.source_uploads);
+    assert!(
+        budget.try_reserve(cap).is_none(),
+        "the deploy holds its reservation"
+    );
+    assert!(
+        sources.try_acquire("203.0.113.41", 1).is_err(),
+        "the deploy holds its source's only upload"
+    );
+
+    let (status, headers, body) = pending.await.unwrap();
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"errors": ["Deployment processing exceeded the 2000ms deadline."]})
+        )
+    );
+    assert_eq!(headers[header::RETRY_AFTER], "30");
+    assert!(
+        !deployer.holds_pointer("scene", parcel),
+        "the claim is released"
+    );
+    assert!(
+        budget.try_reserve(cap).is_some(),
+        "the reservation is released"
+    );
+    assert!(
+        matches!(sources.try_acquire("203.0.113.41", 1), Ok(Some(_))),
+        "the source's upload is released"
+    );
+    server.abort();
 }

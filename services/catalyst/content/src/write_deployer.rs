@@ -542,6 +542,15 @@ impl WriteDeployer {
         self.request_ttl_backwards_ms.load(Ordering::Relaxed)
     }
 
+    /// Whether a deploy of this process holds `pointer` of `etype`.
+    #[cfg(test)]
+    pub(crate) fn holds_pointer(&self, etype: &str, pointer: &str) -> bool {
+        self.pointers_in_flight
+            .lock()
+            .get(etype)
+            .is_some_and(|held| held.contains(pointer))
+    }
+
     /// Claims `pointers` of `etype` for one deploy; `Err` names the ones
     /// another deploy of this process holds, in the entity's order.
     fn claim_pointers<'a>(

@@ -169,6 +169,9 @@ pub struct Settings {
     pub max_in_flight_upload_bytes_per_source: u64,
     /// `MULTIPART_UPLOAD_TIMEOUT_MS`: how long a deploy form may take to arrive.
     pub multipart_upload_timeout: Duration,
+    /// `DEPLOYMENT_PROCESSING_TIMEOUT_MS`: how long a read deploy form may
+    /// take to be decided, the bound the blob collector's age floor assumes.
+    pub deployment_processing_timeout: Duration,
     /// The deployer's request TTL and per-pointer rate limits.
     pub deploy_limits: write_deployer::DeployLimits,
     /// `HTTP_TRUSTED_PROXY_CIDRS`: the only socket peers whose `X-Real-IP`
@@ -274,6 +277,9 @@ impl Settings {
             multipart_upload_timeout: Duration::from_millis(
                 config.worlds.multipart_upload_timeout_ms.max(1),
             ),
+            deployment_processing_timeout: Duration::from_millis(
+                config.worlds.deployment_processing_timeout_ms.max(1),
+            ),
             deploy_limits: write_deployer::DeployLimits::from_config(&config.content),
             trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
         }
@@ -313,6 +319,7 @@ impl Settings {
             max_concurrent_uploads_per_source: 4,
             max_in_flight_upload_bytes_per_source: create_entity::MAX_DEPLOYMENT_BYTES as u64,
             multipart_upload_timeout: Duration::from_secs(300),
+            deployment_processing_timeout: Duration::from_secs(300),
             deploy_limits: write_deployer::DeployLimits::default(),
             trusted_proxy_cidrs: Vec::new(),
         }
@@ -787,8 +794,9 @@ pub fn build_router(state: SharedState) -> Router {
         .layer(axum::middleware::from_fn(cors::cors_middleware))
         .layer(axum::middleware::from_fn(connection::keep_alive_hint));
     if let Some(timeout) = request_timeout {
-        // A deploy form has its own, longer bound: the upload timeout of
-        // [`create_entity`], upstream's 408 with what arrived.
+        // A deploy form has its own, longer bounds in [`create_entity`]: the
+        // upload timeout (upstream's 408 with what arrived), then the
+        // processing deadline (503 with `Retry-After`).
         app = app.layer(axum::middleware::from_fn(
             move |request: axum::extract::Request, next: axum::middleware::Next| async move {
                 let path = request.uri().path();

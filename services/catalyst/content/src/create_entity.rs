@@ -19,7 +19,8 @@
 //! body still arriving at the upload timeout (`MULTIPART_UPLOAD_TIMEOUT_MS`,
 //! upstream's text with what arrived); 503 `{errors}` with `Retry-After`
 //! when this node could not decide (a source unset or down, the store
-//! unreadable), its cause logged, not answered. The gates of
+//! unreadable), its cause logged, not answered, or did not decide a read
+//! form within `DEPLOYMENT_PROCESSING_TIMEOUT_MS` (worlds' text). The gates of
 //! [`super::writes`] come before any of it (404 read-only, 503 disabled),
 //! then the 503 with `Retry-After: 60` while the node is bootstrapping.
 //! Before the body is read, in upstream's order: a client address past its
@@ -374,6 +375,22 @@ pub fn deployment_failure_response(failure: DeployFailure) -> Response {
     response
 }
 
+/// The 503 of a read form not decided within `DEPLOYMENT_PROCESSING_TIMEOUT_MS`
+/// (worlds' text). Dropping the deploy there is safe: a client disconnect
+/// drops it at the same points, its guards release on drop, stored blobs are
+/// content-addressed and the write is one statement, so it either committed
+/// (a retry then answers the stored timestamp) or did not.
+fn processing_timed_out(timeout: Duration) -> Response {
+    tracing::warn!(
+        timeout_ms = timeout.as_millis() as u64,
+        "POST /entities: deployment processing timed out"
+    );
+    deployment_failure_response(DeployFailure::Unavailable(vec![format!(
+        "Deployment processing exceeded the {}ms deadline.",
+        timeout.as_millis()
+    )]))
+}
+
 /// `response` with a `Retry-After` of `value`.
 fn with_retry_after(mut response: Response, value: header::HeaderValue) -> Response {
     response.headers_mut().insert(header::RETRY_AFTER, value);
@@ -657,18 +674,23 @@ async fn deploy_form(
         Ok(charge) => charge,
         Err(retry_after) => return Ok(quota_exceeded_response(retry_after)),
     };
-    Ok(
-        match deploy_regular(state, &deployer, request, fields, files).await {
-            Ok(Answer::Decided(response)) => response,
-            Ok(Answer::Undecided(response)) => {
-                if let Some(charge) = charge {
-                    charge.refund();
-                }
-                response
+    let deploy = deploy_regular(state, &deployer, request, fields, files);
+    let Ok(answer) = tokio::time::timeout(settings.deployment_processing_timeout, deploy).await
+    else {
+        // Counted: the client may have chosen what stalled (its contract
+        // wallet's RPC), and the deploy may yet have committed.
+        return Ok(processing_timed_out(settings.deployment_processing_timeout));
+    };
+    Ok(match answer {
+        Ok(Answer::Decided(response)) => response,
+        Ok(Answer::Undecided(response)) => {
+            if let Some(charge) = charge {
+                charge.refund();
             }
-            Err(e) => e.into_response(),
-        },
-    )
+            response
+        }
+        Err(e) => e.into_response(),
+    })
 }
 
 /// A regular (single-request) deploy of a read form.
@@ -801,14 +823,19 @@ async fn partial_batch(
             - request.started.elapsed().as_millis() as i64,
     };
     let mut admission = partial_deployments::Admission::default();
-    let response = partial_deployments::handle(
-        deployer,
-        &state.settings.partial_uploads,
-        batch,
-        request.quota_exhausted,
-        &mut admission,
+    let timeout = state.settings.deployment_processing_timeout;
+    let response = tokio::time::timeout(
+        timeout,
+        partial_deployments::handle(
+            deployer,
+            &state.settings.partial_uploads,
+            batch,
+            request.quota_exhausted,
+            &mut admission,
+        ),
     )
-    .await;
+    .await
+    .unwrap_or_else(|_| processing_timed_out(timeout));
     if admission.created || (response.status() == StatusCode::BAD_REQUEST && !admission.admitted) {
         count();
     }
