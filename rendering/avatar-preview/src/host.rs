@@ -229,7 +229,7 @@ pub struct OrbitCamera {
     pub radius: f32,
     pub fov_degrees: f32,
     pub orthographic: bool,
-    /// the framed target; `pan` moves the view from it
+    /// the point the view orbits; `pan` slides the camera from it on the screen's axes
     pub target: Vec3,
     pub auto_rotate: bool,
     /// radians per second
@@ -246,7 +246,7 @@ pub struct OrbitCamera {
     pub zoom: f32,
     pub zoom_min: f32,
     pub zoom_max: f32,
-    pub pan: Vec3,
+    pub pan: Vec2,
     /// how much farther than `radius` the avatar's bounds need the camera, and where they move
     /// the target: set by `fit_to_bounds`, 1 and zero for an avatar of ordinary size
     pub fit: f32,
@@ -276,7 +276,7 @@ impl Default for OrbitCamera {
             zoom: 1.0,
             zoom_min: 1.0 / 1.5,
             zoom_max: 2.0,
-            pan: Vec3::ZERO,
+            pan: Vec2::ZERO,
             fit: 1.0,
             fit_target: Vec3::ZERO,
             dragging: false,
@@ -295,7 +295,7 @@ impl OrbitCamera {
     /// The view as the camera command last set it, and the controls' drift dropped.
     pub fn reset_view(&mut self) {
         self.zoom = 1.0;
-        self.pan = Vec3::ZERO;
+        self.pan = Vec2::ZERO;
         self.velocity = 0.0;
     }
 }
@@ -766,9 +766,9 @@ fn orbit_input(
             .max(1.0);
         let per_pixel =
             2.0 * orbit.distance() * (orbit.fov_degrees.to_radians() / 2.0).tan() / height;
-        let yaw = Quat::from_rotation_y(orbit.alpha);
-        let right = yaw * Vec3::X;
-        let pan = orbit.pan - right * delta.x * per_pixel + Vec3::Y * delta.y * per_pixel;
+        // on the screen's axes, as the Unity renderer slides its camera: the avatar still turns
+        // about its own axis, wherever the view has been moved to
+        let pan = orbit.pan + Vec2::new(-delta.x, delta.y) * per_pixel;
         orbit.pan = pan.clamp_length_max(2.0);
         orbit.since_drag = 0.0;
     }
@@ -876,12 +876,20 @@ fn fit_to_bounds(
     let tan_h = tan_v * aspect;
     // the avatar turns about the vertical axis through its root, as the Unity renderer's avatar
     // does, so the reach across is measured from that axis, not from the box's own centre
-    let axis = joints.get(root).map(|t| t.translation()).unwrap_or(Vec3::ZERO);
+    let axis = joints
+        .get(root)
+        .map(|t| t.translation())
+        .unwrap_or(Vec3::ZERO);
     // the distance a box needs, height or width bound, seen from the side it turns to
     let needs = |min: Vec3, max: Vec3| {
         let half_y = (max.y - min.y) / 2.0;
         let (near, far) = (min - axis, max - axis);
-        let across = near.x.abs().max(far.x.abs()).max(near.z.abs()).max(far.z.abs());
+        let across = near
+            .x
+            .abs()
+            .max(far.x.abs())
+            .max(near.z.abs())
+            .max(far.z.abs());
         (half_y / tan_v).max(across / tan_h) + across
     };
     let ordinary = {
@@ -932,11 +940,15 @@ fn place_camera(
     {
         orbit.alpha += orbit.auto_rotate_speed * dt;
     }
-    let target = orbit.target + orbit.fit_target + orbit.pan;
+    // the view orbits the avatar's own axis; the pan slides the camera across the screen
+    let pivot = orbit.target + orbit.fit_target;
     let rotation = Quat::from_rotation_y(orbit.alpha) * Quat::from_rotation_x(-orbit.beta);
-    let position = target + rotation * Vec3::new(0.0, 0.0, orbit.distance());
+    let orbited =
+        Transform::from_translation(pivot + rotation * Vec3::new(0.0, 0.0, orbit.distance()))
+            .looking_at(pivot, Vec3::Y);
+    let slide = orbited.rotation * orbit.pan.extend(0.0);
     for (mut transform, mut projection) in cameras.iter_mut() {
-        *transform = Transform::from_translation(position).looking_at(target, Vec3::Y);
+        *transform = orbited.with_translation(orbited.translation + slide);
         if orbit.is_changed() {
             *projection = projection_for(&orbit);
         }
