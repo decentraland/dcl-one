@@ -1,4 +1,6 @@
 use bevy::prelude::*;
+use common::util::watch_send_if_modified;
+use dcl_component::proto_components::sdk::components::VideoState;
 
 /// Component for the kind of transmitter that the entity is
 #[derive(Debug, Clone, Copy, Component)]
@@ -17,5 +19,14 @@ pub struct ActiveVideoCast;
 
 /// Component with the handle to the image that the transmitter
 /// should write to
-#[derive(Component, Deref)]
-pub struct ActiveTransmitter(pub(crate) Handle<Image>);
+#[derive(Component)]
+pub struct ActiveTransmitter {
+    pub image: Handle<Image>,
+    pub state: tokio::sync::watch::Sender<VideoState>,
+}
+
+impl ActiveTransmitter {
+    pub fn send_if_modified(&self, new_state: VideoState) -> bool {
+        watch_send_if_modified(&self.state, new_state)
+    }
+}
