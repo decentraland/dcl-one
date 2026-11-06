@@ -1,4 +1,5 @@
 import {
+  ColliderLayer,
   Entity,
   GltfContainer,
   InputAction,
@@ -23,7 +24,11 @@ import { Vector3 } from '@dcl/sdk/math'
  *   - z = 8 and z = 12: `far` (58, 1, 8), 50 m out, and `beyond` (158, 1, 12), 150 m out, past
  *     the cursor ray's 100 m. On the z = 8 line the wall would hide both; `beyond` is off that
  *     line so the ray to it passes beside `far`.
+ * So `near`, `wall` and `behind` sit on the z = 4 lane and `far` on z = 8: the wall blocks only
+ * `behind`.
  * `model` is the avocado glTF at (10, 0, 12), scaled 4, with its pointer events on the container.
+ * The avocado has no `_collider` mesh, so its visible meshes collide on CL_POINTER and CL_PHYSICS
+ * (`visibleMeshesCollisionMask`) for the pointer ray to hit it.
  *
  * `far` must be reachable at 50 m from the camera: its entry sets `maxCameraDistance: 60`
  * (`max_camera_distance`, present in the vendored SDK), which allows the interaction by camera
@@ -73,7 +78,10 @@ export function main() {
 
   const model = engine.addEntity()
   Transform.create(model, { position: Vector3.create(10, 0, 12), scale: Vector3.create(4, 4, 4) })
-  GltfContainer.create(model, { src: 'assets/avocado.glb' })
+  GltfContainer.create(model, {
+    src: 'assets/avocado.glb',
+    visibleMeshesCollisionMask: ColliderLayer.CL_POINTER | ColliderLayer.CL_PHYSICS,
+  })
   PointerEvents.create(model, {
     pointerEvents: [{ eventType: PointerEventType.PET_DOWN, eventInfo: { button: InputAction.IA_POINTER, hoverText: 'Model' } }],
   })
