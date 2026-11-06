@@ -69,6 +69,8 @@ use super::{
     AddCrdtInterfaceExt, ComponentTracker,
 };
 
+mod spawn_timing;
+
 pub struct GltfDefinitionPlugin;
 
 #[derive(SystemSet, Debug, PartialEq, Eq, Hash, Clone)]
@@ -190,6 +192,7 @@ impl Plugin for GltfDefinitionPlugin {
         );
         app.add_systems(Update, maintain_gltf_name_cache);
         app.add_systems(SpawnScene, update_ready_gltfs.after(scene_spawner_system));
+        spawn_timing::register(app);
         app.add_systems(Update, check_gltfs_ready.in_set(SceneSets::PostInit));
         app.add_systems(
             Update,
