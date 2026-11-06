@@ -97,21 +97,46 @@ async fn retry_access_rechecks(
     if !state.livekit.configured {
         return Ok(());
     }
-    let rows:Vec<(String,uuid::Uuid,chrono::NaiveDateTime)>=sqlx::query_as("WITH due AS (SELECT world_name FROM social.world_access_rechecks WHERE next_attempt_at<=timezone('UTC',now()) AND ($1::text IS NULL OR world_name=$1) ORDER BY next_attempt_at,world_name LIMIT $2 FOR UPDATE SKIP LOCKED) UPDATE social.world_access_rechecks q SET next_attempt_at=timezone('UTC',now())+interval '1 minute' FROM due WHERE q.world_name=due.world_name RETURNING q.world_name,q.revision,q.changed_at")
-        .bind(only_world).bind(WORLD_BATCH as i64).fetch_all(&state.pool).await?;
-    for (raw, _revision, changed_at) in rows {
+    let rows = claim_rechecks(&state.pool, only_world).await?;
+    for (raw, revision, changed_at, claimed_schedule) in rows {
         let Ok(world) = WorldName::parse(&raw) else {
             continue;
         };
         match readmit_world_rooms_in_inventory(state, &world, Some(changed_at), rooms).await {
-            // Keep the latest accepted cutoff after success: old LiveKit tokens
-            // can reconnect and refresh after an empty inventory or an eviction.
-            // The preclaimed next_attempt_at bounds repeated checks fairly.
-            Ok(()) => {}
+            // Retain the cutoff for live sweeps and reconnects. A newer revision
+            // or same-revision community wakeup must not be completed by this pass.
+            Ok(()) => {
+                complete_recheck(&state.pool, &raw, revision, claimed_schedule).await?;
+            }
             Err(error) => tracing::warn!(%error,%world,"world access recheck retained"),
         }
     }
     Ok(())
+}
+
+type ClaimedRecheck = (
+    String,
+    uuid::Uuid,
+    chrono::NaiveDateTime,
+    chrono::NaiveDateTime,
+);
+
+async fn claim_rechecks(
+    pool: &sqlx::PgPool,
+    only_world: Option<&str>,
+) -> Result<Vec<ClaimedRecheck>, sqlx::Error> {
+    sqlx::query_as("WITH due AS (SELECT world_name FROM social.world_access_rechecks WHERE next_attempt_at<=timezone('UTC',now()) AND ($1::text IS NULL OR world_name=$1) ORDER BY next_attempt_at,world_name LIMIT $2 FOR UPDATE SKIP LOCKED) UPDATE social.world_access_rechecks q SET next_attempt_at=timezone('UTC',now())+interval '1 minute' FROM due WHERE q.world_name=due.world_name RETURNING q.world_name,q.revision,q.changed_at,q.next_attempt_at")
+        .bind(only_world).bind(WORLD_BATCH as i64).fetch_all(pool).await
+}
+
+async fn complete_recheck(
+    pool: &sqlx::PgPool,
+    world: &str,
+    revision: uuid::Uuid,
+    claimed_schedule: chrono::NaiveDateTime,
+) -> Result<bool, sqlx::Error> {
+    Ok(sqlx::query("UPDATE social.world_access_rechecks SET next_attempt_at='infinity' WHERE world_name=$1 AND revision=$2 AND next_attempt_at=$3")
+        .bind(world).bind(revision).bind(claimed_schedule).execute(pool).await?.rows_affected() == 1)
 }
 
 /// Recheck live worlds even when an operator/name-deny change did not emit a
@@ -177,3 +202,103 @@ fn world_batch(state: &CommsState, rooms: &[String]) -> Vec<WorldName> {
     selected
 }
 
+#[cfg(test)]
+mod completion_tests {
+    use super::*;
+
+    async fn queue(pool: &sqlx::PgPool, world: &str) -> uuid::Uuid {
+        let revision = uuid::Uuid::new_v4();
+        sqlx::query("INSERT INTO social.world_access_rechecks(world_name,revision) VALUES($1,$2)")
+            .bind(world)
+            .bind(revision)
+            .execute(pool)
+            .await
+            .unwrap();
+        revision
+    }
+
+    async fn wake(pool: &sqlx::PgPool, world: &str) {
+        // Same-revision community enqueue, including after a completed revision.
+        sqlx::query("UPDATE social.world_access_rechecks SET next_attempt_at=LEAST(next_attempt_at,timezone('UTC',clock_timestamp())) WHERE world_name=$1")
+            .bind(world).execute(pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn completion_retains_cutoff_and_a_community_wakeup_reopens_it() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let world = format!("complete-{}.dcl.eth", uuid::Uuid::new_v4());
+        queue(&pool, &world).await;
+        let rows = claim_rechecks(&pool, Some(&world)).await.unwrap();
+        let (name, revision, cutoff, schedule) = &rows[0];
+        assert!(
+            complete_recheck(&pool, name, *revision, *schedule)
+                .await
+                .unwrap()
+        );
+        assert!(
+            claim_rechecks(&pool, Some(&world))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        // This is the live-sweep read; it never decodes the infinity schedule.
+        let retained: Vec<(String, chrono::NaiveDateTime)> = sqlx::query_as("SELECT world_name,changed_at FROM social.world_access_rechecks WHERE world_name=ANY($1::text[])")
+            .bind(vec![world.clone()]).fetch_all(&pool).await.unwrap();
+        assert_eq!(retained, vec![(world.clone(), *cutoff)]);
+        wake(&pool, &world).await;
+        let next = claim_rechecks(&pool, Some(&world)).await.unwrap();
+        assert_eq!(next.len(), 1);
+        assert_eq!((next[0].1, next[0].2), (*revision, *cutoff));
+    }
+
+    #[tokio::test]
+    async fn stale_completion_cannot_consume_a_community_wakeup_or_new_claim() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let world = format!("requeue-{}.dcl.eth", uuid::Uuid::new_v4());
+        queue(&pool, &world).await;
+        let old = claim_rechecks(&pool, Some(&world)).await.unwrap().remove(0);
+        wake(&pool, &world).await;
+        assert!(!complete_recheck(&pool, &world, old.1, old.3).await.unwrap());
+        let newer = claim_rechecks(&pool, Some(&world)).await.unwrap().remove(0);
+        assert!(!complete_recheck(&pool, &world, old.1, old.3).await.unwrap());
+        assert!(
+            complete_recheck(&pool, &world, newer.1, newer.3)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn new_edit_and_expired_claim_each_survive_old_completion() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let world = format!("edit-{}.dcl.eth", uuid::Uuid::new_v4());
+        queue(&pool, &world).await;
+        let old = claim_rechecks(&pool, Some(&world)).await.unwrap().remove(0);
+        let revision = uuid::Uuid::new_v4();
+        sqlx::query("UPDATE social.world_access_rechecks SET revision=$2,next_attempt_at=timezone('UTC',now()) WHERE world_name=$1")
+            .bind(&world).bind(revision).execute(&pool).await.unwrap();
+        assert!(!complete_recheck(&pool, &world, old.1, old.3).await.unwrap());
+        let claimed = claim_rechecks(&pool, Some(&world)).await.unwrap().remove(0);
+        // No completion on failed enforcement; after the lease expires a restart can retry.
+        sqlx::query("UPDATE social.world_access_rechecks SET next_attempt_at=timezone('UTC',now())-interval '1 second' WHERE world_name=$1")
+            .bind(&world).execute(&pool).await.unwrap();
+        let restarted = claim_rechecks(&pool, Some(&world)).await.unwrap().remove(0);
+        assert_eq!(restarted.1, revision);
+        assert!(
+            !complete_recheck(&pool, &world, claimed.1, claimed.3)
+                .await
+                .unwrap()
+        );
+        assert!(
+            complete_recheck(&pool, &world, restarted.1, restarted.3)
+                .await
+                .unwrap()
+        );
+    }
+}

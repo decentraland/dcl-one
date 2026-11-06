@@ -1390,3 +1390,26 @@ CREATE TABLE social.event_payloads (
     CONSTRAINT event_payloads_size_check CHECK (octet_length(payload) > 0 AND octet_length(payload) <= 536870912)
 );
 CREATE INDEX event_payloads_expiry_idx ON social.event_payloads (expires_at, id);
+
+-- Versioned admission SQL; installed by the schema object pass.
+CREATE FUNCTION social.world_authorization_started_5633b2b39c6d(text) RETURNS timestamp without time zone LANGUAGE plpgsql SET lock_timeout = '500ms' AS $admission$ BEGIN
+    PERFORM 1 FROM worlds.worlds WHERE name = $1 FOR SHARE;
+    IF NOT FOUND THEN
+        RETURN NULL;
+    END IF;
+    RETURN timezone('UTC', clock_timestamp());
+END $admission$;
+
+CREATE FUNCTION social.world_secret_refund_9424d3307765(text, text, timestamp without time zone) RETURNS void LANGUAGE plpgsql SET lock_timeout = '500ms' AS $admission$ DECLARE
+    charged integer;
+BEGIN
+    SELECT attempts INTO charged FROM social.world_secret_attempts
+    WHERE world_name = $1 AND subject = $2 AND window_start = $3 FOR UPDATE;
+    IF charged = 1 THEN
+        DELETE FROM social.world_secret_attempts
+        WHERE world_name = $1 AND subject = $2 AND window_start = $3;
+    ELSIF charged > 1 THEN
+        UPDATE social.world_secret_attempts SET attempts = attempts - 1
+        WHERE world_name = $1 AND subject = $2 AND window_start = $3;
+    END IF;
+END $admission$;

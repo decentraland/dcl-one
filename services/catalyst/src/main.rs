@@ -4,7 +4,7 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 
 use catalyst::config::Config;
-use catalyst::{builder, content, db, explore, http, ops, storage};
+use catalyst::{builder, comms, content, db, explore, http, ops, storage};
 use catalyst_config::posture;
 
 #[cfg(not(target_env = "msvc"))]
@@ -273,7 +273,7 @@ enum SchemaCommand {
     /// dev build's with the commit build's before the dev build migrates the
     /// database the two share.
     Layout,
-    /// Print this binary's content write-path functions as idempotent
+    /// Print this binary's content and admission functions as idempotent
     /// `CREATE OR REPLACE FUNCTION` statements, for an administrative role
     /// to apply to a database created before them:
     /// `catalyst schema functions | psql "$ADMIN_DSN"`.
@@ -416,6 +416,10 @@ async fn run() -> anyhow::Result<()> {
             command: SchemaCommand::Functions,
         } => {
             print!("{}", content::land_publish::content_functions_sql(true));
+            print!(
+                "{}",
+                comms::gatekeeper::admission::functions::social_functions_sql(true)
+            );
             Ok(())
         }
         Command::Builder {

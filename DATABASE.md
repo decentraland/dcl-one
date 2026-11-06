@@ -963,3 +963,28 @@ Private media credentials serialize same-call writers before a plain party read,
 then take sorted wallet transaction locks before locking/upserting the call.
 A conflict preserves its existing parties, creation time and prior participants.
 Pending expiry remains effective while a media writer waits for a wallet.
+
+### World admission SQL and completed access checks
+
+World admission stamps and shared-secret refunds each use one versioned SQL
+function. The function names include their signature, settings and body hash.
+The schema object pass installs the functions on existing databases. Run
+`catalyst schema migrate` before starting the new binary; `catalyst schema functions`
+also prints their administrative installation SQL. Existing function versions remain
+available to old binaries during a rollout. Admission returns unavailable if its
+required functions are missing.
+
+The stamp retains `FOR SHARE`. It must wait for non-key access updates from older
+binaries as well as newer access writers. A function-local 500 ms lock timeout
+restores the caller's setting after success or failure. Refunds lock and modify
+only the exact caller window charged by the reservation; the positive-attempt
+constraint and the existing table layout remain unchanged.
+
+A completed world access check retains its revision and authorization cutoff, but
+sets `next_attempt_at` to PostgreSQL infinity. Completion compares both the revision
+and the exact claimed schedule. A newer edit, later claim or same-revision community
+wakeup cannot be consumed by an older pass. Community closure advances the schedule
+with `LEAST`, including completed rows. The live-world sweep still reads retained
+cutoffs. The application decodes only finite claimed schedules and never decodes
+infinity as a Rust timestamp. This change adds no migration column and does not
+relax the stable-ban migration's coordinated rollout requirements.

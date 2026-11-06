@@ -98,20 +98,18 @@ impl SecretThrottle<'_> {
             return;
         }
         let result = async {
-            let mut tx = self.pool.begin().await?;
-            sqlx::raw_sql("SET LOCAL statement_timeout='1s'; SET LOCAL lock_timeout='500ms'").execute(&mut *tx).await?;
-            let attempts: Option<i32> = sqlx::query_scalar("SELECT attempts FROM social.world_secret_attempts WHERE world_name=$1 AND subject=$2 AND window_start=$3 FOR UPDATE")
-                .bind(self.world).bind(self.subject_key()).bind(reservation.window).fetch_optional(&mut *tx).await?;
-            if let Some(attempts) = attempts {
-                let statement = if attempts == 1 {
-                    "DELETE FROM social.world_secret_attempts WHERE world_name=$1 AND subject=$2 AND window_start=$3"
-                } else {
-                    "UPDATE social.world_secret_attempts SET attempts=attempts-1 WHERE world_name=$1 AND subject=$2 AND window_start=$3"
-                };
-                sqlx::query(statement).bind(self.world).bind(self.subject_key()).bind(reservation.window).execute(&mut *tx).await?;
-            }
-            tx.commit().await
-        }.await;
+            let functions = super::functions::installed(self.pool).await?;
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "SELECT social.{}($1,$2,$3)",
+                functions.refund
+            )))
+            .bind(self.world)
+            .bind(self.subject_key())
+            .bind(reservation.window)
+            .execute(self.pool)
+            .await
+        }
+        .await;
         if let Err(error) = result {
             tracing::warn!(%error, world=self.world, "world secret reservation refund failed; charge expires with its window");
         }
@@ -145,19 +143,15 @@ pub(crate) async fn authorization_started(
     pool: &PgPool,
     world: &WorldName,
 ) -> Result<NaiveDateTime, sqlx::Error> {
-    let mut tx = pool.begin().await?;
-    sqlx::raw_sql("SET LOCAL statement_timeout='1s'; SET LOCAL lock_timeout='500ms'")
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("SELECT name FROM worlds.worlds WHERE name=$1 FOR SHARE")
-        .bind(world.key())
-        .fetch_one(&mut *tx)
-        .await?;
-    let started = sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())")
-        .fetch_one(&mut *tx)
-        .await?;
-    tx.commit().await?;
-    Ok(started)
+    let functions = super::functions::installed(pool).await?;
+    let started: Option<NaiveDateTime> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT social.{}($1)",
+        functions.stamp
+    )))
+    .bind(world.key())
+    .fetch_one(pool)
+    .await?;
+    started.ok_or(sqlx::Error::RowNotFound)
 }
 
 pub(crate) const AUTHORIZATION_FIELD: &str = "worldAuthorization";
