@@ -9,6 +9,7 @@ use cef::{
 use cef_dll_sys::cef_paint_element_type_t;
 use std::cell::Cell;
 use std::os::raw::c_int;
+use std::time::{Duration, Instant};
 
 pub type TextureSender = Sender<RenderTexture>;
 
@@ -27,6 +28,10 @@ pub struct RenderTexture {
     pub height: u32,
     /// This buffer will be `width` *`height` * 4 bytes in size and represents a BGRA image with an upper-left origin
     pub buffer: Vec<u8>,
+    /// Time spent copying CEF's borrowed bitmap into the owned buffer.
+    pub bitmap_copy_time: Duration,
+    /// When the callback finished copying the bitmap, before sending it to Bevy.
+    pub bitmap_copied_at: Instant,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -145,14 +150,18 @@ impl ImplRenderHandler for RenderHandlerBuilder {
             cef_paint_element_type_t::PET_POPUP => RenderPaintElementType::Popup,
             _ => RenderPaintElementType::View,
         };
+        let copy_started_at = Instant::now();
+        let buffer =
+            unsafe { std::slice::from_raw_parts(buffer, (width * height * 4) as usize).to_vec() };
+        let bitmap_copied_at = Instant::now();
         let texture = RenderTexture {
             webview: self.webview,
             ty,
             width: width as u32,
             height: height as u32,
-            buffer: unsafe {
-                std::slice::from_raw_parts(buffer, (width * height * 4) as usize).to_vec()
-            },
+            buffer,
+            bitmap_copy_time: bitmap_copied_at - copy_started_at,
+            bitmap_copied_at,
         };
         let _ = self.texture_sender.send_blocking(texture);
     }

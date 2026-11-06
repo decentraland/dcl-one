@@ -46,10 +46,12 @@ use common::rpc::{RpcResultReceiver, RpcResultSender, RpcStreamSender};
 use common::structs::{OutOfWorld, PrimaryUser};
 use input_manager::{InputPriorities, MouseInteractionComponent};
 use std::collections::BTreeMap;
+use std::time::Instant;
 use system_bridge::{SystemApi, SystemBridge};
 
 // The HUD's console commands (`/hud_*`), registered in every native build with the HUD.
 mod automation;
+mod diagnostics;
 
 pub struct ReactHudCefPlugin {
     /// The boot realm when it is an explicit destination. Injected into the page URL as ?realm= —
@@ -93,6 +95,7 @@ impl Plugin for ReactHudCefPlugin {
             JsEmitEventPlugin::<PageEnvelope>::default(),
         ));
         app.add_plugins(automation::HudAutomationPlugin);
+        diagnostics::register(app);
         app.add_systems(Startup, spawn_hud);
         app.add_systems(
             Update,
@@ -306,6 +309,7 @@ fn update_hud_texture(
     mut er: EventReader<RenderTexture>,
     state: Option<Res<ReactHudCef>>,
     mut images: ResMut<Assets<Image>>,
+    mut stats: ResMut<diagnostics::HudPaintStats>,
 ) {
     let Some(state) = state else { return };
     for tex in er.read() {
@@ -323,6 +327,7 @@ fn update_hud_texture(
                 tex.buffer.len()
             );
         }
+        let started_at = Instant::now();
         *image = Image::new(
             Extent3d {
                 width: tex.width,
@@ -334,6 +339,7 @@ fn update_hud_texture(
             TextureFormat::Bgra8UnormSrgb,
             RenderAssetUsages::all(),
         );
+        stats.record(tex, started_at, started_at.elapsed());
     }
 }
 
