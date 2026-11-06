@@ -29,6 +29,18 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Scene roots and avatars register their hashes through component hooks; the publisher writes
   the values in place. See the
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
+- **Profiles always from the centralized catalyst.** unity-explorer switches between the
+  asset-bundle registry and a catalyst with `USE_CENTRALIZED_PROFILES` and reads a remote
+  player's catalyst from their LiveKit metadata. We read the base-domain catalyst's lambdas only:
+  `POST /lambdas/profiles` for full profiles and `POST /lambdas/profiles/metadata` for the compact
+  tier, which falls back to full where the route is missing, as unity-explorer forces full on a
+  catalyst. No flag, and no catalyst named by another player. See the
+  [ADR](../../../../docs/adr/2026-11-04-explorer-profiles-from-the-catalyst.md).
+- **Own profile versions never repeat.** unity-explorer's `SelfProfile` numbers an edit one above
+  the profile it holds, so after a failed publish puts the old profile back, the next edit reuses
+  the failed version. A failed deploy may still have reached the server, and a peer that read it
+  skips any other profile under that number, so our next edit goes above every version this session
+  gave the account (`CurrentUserProfile::bump_version`).
 - **Community chat (#223).** A community packet is taken only from the server's message
   router, which checks membership and stamps the author; unity-explorer also accepts one
   straight from a peer under the peer's own identity. Community history is stored like a DM's

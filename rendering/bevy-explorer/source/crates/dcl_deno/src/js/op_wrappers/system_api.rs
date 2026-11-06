@@ -1,6 +1,6 @@
 use common::{
     inputs::{HudPanel, SystemActionEvent},
-    profile::SerializedProfile,
+    profile::{CompactProfile, SerializedProfile},
     structs::{MicState, PermissionType, PermissionUsed, PermissionValue},
 };
 use dcl_component::proto_components::common::Vector2;
@@ -58,6 +58,7 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_get_bridge_stream(),
             op_read_bridge_stream(),
             op_get_user_profile(),
+            op_get_compact_profiles(),
             op_quit(),
             op_get_permission_request_stream(),
             op_read_permission_request_stream(),
@@ -397,6 +398,15 @@ pub async fn op_get_user_profile(
     #[string] address: String,
 ) -> Result<SerializedProfile, deno_core::anyhow::Error> {
     dcl_js::system_api::op_get_user_profile(state, address).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_get_compact_profiles(
+    state: Rc<RefCell<OpState>>,
+    #[serde] addresses: Vec<String>,
+) -> Result<Vec<CompactProfile>, deno_core::anyhow::Error> {
+    dcl_js::system_api::op_get_compact_profiles(state, addresses).await
 }
 
 #[op2(fast)]
