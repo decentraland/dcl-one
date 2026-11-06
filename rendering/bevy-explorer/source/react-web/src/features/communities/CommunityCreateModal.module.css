@@ -184,12 +184,12 @@
   align-items: center;
   gap: 10px;
   margin-top: 16px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--ink-7);
 }
 .notice {
   margin: 0 0 14px;
-  font-size: 14px;
+  font-size: var(--fs-md);
   line-height: 1.45;
   color: var(--ink-85);
 }
@@ -199,7 +199,7 @@
   list-style: none;
   border-radius: var(--r-control);
   background: var(--white-10);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 700;
   line-height: 1.5;
   color: var(--text);
