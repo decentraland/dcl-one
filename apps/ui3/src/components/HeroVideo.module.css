@@ -1,4 +1,4 @@
-.herovideo {
+.root {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -9,6 +9,6 @@
   transition: opacity 400ms ease-in;
   pointer-events: none;
 }
-.herovideo[data-ready="true"] {
+.root[data-ready="true"] {
   opacity: 1;
 }

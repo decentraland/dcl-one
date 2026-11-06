@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { asset } from "../asset";
-import "./herovideo.css";
+import styles from "./HeroVideo.module.css";
 
 const DESKTOP_QUERY = "(min-width: 900px)";
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
@@ -37,7 +37,7 @@ export default function HeroVideo() {
   if (!load) return null;
   return (
     <video
-      className="herovideo"
+      className={styles.root}
       autoPlay
       loop
       muted
