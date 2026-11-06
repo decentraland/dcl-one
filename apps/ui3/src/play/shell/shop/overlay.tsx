@@ -30,11 +30,13 @@ const FOCUSABLE = 'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"
 function Overlay({ view, handlers }: { view: ShellPurchaseView; handlers: ShellPurchaseHandlers }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const busy = view.step === 'processing'
-  // Focus the dialog's main action as each step shows (the last enabled button: BUY ITEM, CONTINUE…).
+  // Focus the dialog's main action as each step shows (the last enabled button: BUY ITEM, CONTINUE…). The
+  // click that opened it was in the app's frame, so the browser would take this focus for the keyboard's
+  // and ring the button, which the design doesn't draw; a Tab from here rings it as usual.
   useEffect(() => {
     const buttons = ref.current?.querySelectorAll<HTMLElement>(FOCUSABLE)
     const target = buttons && buttons.length > 0 ? buttons[buttons.length - 1] : ref.current
-    target?.focus()
+    target?.focus({ focusVisible: false } as FocusOptions)
   }, [view.step])
   const onKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'Escape') {
