@@ -1,7 +1,8 @@
 use super::*;
 use bevy_console::ConsoleCommand;
+use common::structs::PrimaryUser;
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
-use scene_runner::SceneEntity;
+use scene_runner::{renderer_context::RendererSceneContext, ContainingScene, SceneEntity};
 use serde_json::json;
 #[cfg(any(feature = "ffmpeg", feature = "html"))]
 use serde_json::Value;
@@ -129,13 +130,13 @@ fn source_label(source: &str) -> String {
 fn add_sink<T: AVPlayer>(row: &mut Value, sinks: Option<&AVSinks<T>>, images: &Assets<Image>) {
     let sink = sinks.and_then(|s| s.video.as_ref());
     row["hasSink"] = json!(sinks.is_some());
-    row["lastPlaybackState"] = json!(sink.and_then(|s| s.last_state).map(|s| s.as_str_name()));
+    row["lastPlaybackState"] = json!(sinks.map(|s| s.sent_state.as_str_name()));
     row["appliedVolume"] = json!(sinks.and_then(|s| s.sent_volume));
     row["frameRate"] = json!(sinks
         .and_then(|s| s.rate)
         .filter(|hz| hz.is_finite() && *hz > 0.0));
     row["textureSize"] = json!(sink
-        .filter(|_| T::has_video() && sinks.is_some_and(|s| s.rate.is_some()))
+        .filter(|_| T::HAS_VIDEO && sinks.is_some_and(|s| s.rate.is_some()))
         .and_then(|s| images.get(&s.image))
         .map(|image| [image.width(), image.height()]));
     row["timeSeconds"] = json!(sink
@@ -165,7 +166,7 @@ mod tests {
     fn a_video_without_a_reported_frame_rate_can_still_have_a_texture() {
         let mut images = Assets::<Image>::default();
         let image = images.add(Image::default());
-        let mut sinks = crate::video_stream::noop_sinks::<VideoPlayer>(String::new(), image);
+        let mut sinks = crate::video_stream::noop_sinks::<VideoPlayer>(String::new(), Some(image));
         sinks.rate = Some(0.0); // HTML media provides dimensions but no frame rate.
         let mut row = json!({});
         add_sink(&mut row, Some(&sinks), &images);
