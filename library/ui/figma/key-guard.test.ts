@@ -63,6 +63,8 @@ function guard(options: {
 beforeEach(async () => {
   root = await mkdtemp(path.join(tmpdir(), 'key-guard-'))
   git('init', '-q', '-b', 'main')
+  git('config', 'user.name', 'Fixture Dev')
+  git('config', 'user.email', 'fixture@example.com')
   await put('README.md', 'clean\n')
   commit('base')
   git('tag', 'base')
@@ -698,13 +700,17 @@ describe('when a merge includes upstream changes', () => {
     git('checkout', 'main')
     await put('conflict.txt', 'branch\n')
     commit('branch')
-    try {
-      git('-c', 'commit.gpgsign=false', 'merge', '--no-ff', 'upstream')
-    } catch {
-      /* Resolve below. */
-    }
+    const conflict = spawnSync(
+      'git',
+      ['-c', 'commit.gpgsign=false', 'merge', '--no-ff', 'upstream'],
+      { cwd: root, encoding: 'utf8' }
+    )
+    expect(conflict.status).toBe(1)
+    expect(conflict.stdout).toContain('CONFLICT')
+    expect(git('rev-parse', 'MERGE_HEAD')).toBe(git('rev-parse', 'upstream'))
     await put('conflict.txt', FAKE_KEY)
     commit('merge resolution')
+    expect(git('show', '-s', '--format=%P', 'HEAD').split(' ')).toHaveLength(2)
     const merged = git('rev-parse', '--short=12', 'HEAD')
     expect(
       guard({ range: 'upstream..HEAD', worktree: false, key: FAKE_KEY }).findings
