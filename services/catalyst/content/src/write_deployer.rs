@@ -314,8 +314,9 @@ struct DeployRateLimiter {
     unchanged_profile: Mutex<TtlBucket>,
 }
 
-/// This node's built-in per-pointer windows and key caps by entity type,
-/// used where no `DEPLOYMENT_RATE_LIMIT_*` setting names the type.
+/// The built-in per-pointer windows and key caps by entity type, upstream's
+/// (`getCacheConfigPerEntityMap` in `rate-limiter.ts`), used where no
+/// `DEPLOYMENT_RATE_LIMIT_*_<TYPE>` setting names the type.
 const REFERENCE_RATE_LIMITS: [(&str, Duration, usize); 6] = [
     ("profile", Duration::from_secs(3), 500),
     ("scene", Duration::from_secs(20), 1000),
@@ -327,9 +328,10 @@ const REFERENCE_RATE_LIMITS: [(&str, Duration, usize); 6] = [
 
 /// The deployer's request bounds: `REQUEST_TTL_BACKWARDS`, and per entity
 /// type the per-pointer rate limit's window and key cap. A type takes its
-/// own `DEPLOYMENT_RATE_LIMIT_TTL_<TYPE>` / `_MAX_<TYPE>`, else
-/// `DEPLOYMENTS_DEFAULT_RATE_LIMIT_TTL` / `_MAX` (upstream's names), else
-/// [`REFERENCE_RATE_LIMITS`].
+/// own `DEPLOYMENT_RATE_LIMIT_TTL_<TYPE>` / `_MAX_<TYPE>`, else its
+/// [`REFERENCE_RATE_LIMITS`] entry. As upstream's `rate-limiter.ts`,
+/// `DEPLOYMENTS_DEFAULT_RATE_LIMIT_TTL` / `_MAX` apply only to a type
+/// outside that table, and every type this node deploys is in it.
 #[derive(Clone, Debug)]
 pub struct DeployLimits {
     pub request_ttl_backwards_ms: i64,
@@ -377,12 +379,8 @@ impl DeployLimits {
             .iter()
             .map(|&(etype, ttl, max)| {
                 let (type_ttl, type_max) = per_type(etype);
-                let ttl = type_ttl
-                    .or(c.deployments_default_rate_limit_ttl_ms)
-                    .map_or(ttl, Duration::from_millis);
-                let max = type_max
-                    .or(c.deployments_default_rate_limit_max)
-                    .map_or(max, |m| usize::try_from(m).unwrap_or(usize::MAX));
+                let ttl = type_ttl.map_or(ttl, Duration::from_millis);
+                let max = type_max.map_or(max, |m| usize::try_from(m).unwrap_or(usize::MAX));
                 (etype, ttl, max)
             })
             .collect();

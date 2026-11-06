@@ -252,10 +252,12 @@ pub struct ContentConfig {
     #[arg(long, env = "REQUEST_TTL_BACKWARDS", default_value = "20m", value_parser = ms_duration)]
     pub request_ttl_backwards_ms: u64,
 
-    /// The per-pointer deploy rate limit of every entity type without its
-    /// own setting below: a pointer deployed within the window (a duration)
-    /// is refused, as is any deploy while more than `_MAX` pointers are
-    /// held. Unset, each type keeps this node's built-in window.
+    /// The per-pointer deploy rate limit (upstream's names) of an entity
+    /// type outside the per-type table below: a pointer deployed within the
+    /// window (a duration) is refused, as is any deploy while more than
+    /// `_MAX` pointers are held. As upstream's, every deployable type is in
+    /// that table, so a type without its own setting keeps its built-in
+    /// window whatever these say.
     #[arg(long, env = "DEPLOYMENTS_DEFAULT_RATE_LIMIT_TTL", value_parser = ms_duration)]
     pub deployments_default_rate_limit_ttl_ms: Option<u64>,
     #[arg(long, env = "DEPLOYMENTS_DEFAULT_RATE_LIMIT_MAX")]

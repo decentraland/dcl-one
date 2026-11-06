@@ -1077,3 +1077,39 @@ async fn a_local_scene_deploy_without_a_land_rights_source_is_undecidable_never_
         .unwrap();
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// As upstream's `rate-limiter.ts`: each type takes its own setting, else
+/// its built-in window; `DEPLOYMENTS_DEFAULT_RATE_LIMIT_*` (here the operator
+/// docs' `60`, read as 60 ms) changes none of them.
+#[test]
+fn the_default_rate_limit_leaves_every_types_own_window() {
+    let config = crate::config::Config::parse_for_tests(&[
+        "x",
+        "--database-url",
+        "postgres:///c",
+        "--deployments-default-rate-limit-ttl-ms",
+        "60",
+        "--deployments-default-rate-limit-max",
+        "300",
+        "--deployment-rate-limit-ttl-scene-ms",
+        "5s",
+        "--deployment-rate-limit-max-scene",
+        "7",
+    ])
+    .unwrap();
+    let limits = DeployLimits::from_config(&config.content);
+    let of = |etype: &str| {
+        limits
+            .rate_limits
+            .iter()
+            .find(|(t, ..)| *t == etype)
+            .map(|&(_, ttl, max)| (ttl, max))
+            .unwrap()
+    };
+    assert_eq!(of("profile"), (Duration::from_secs(3), 500));
+    assert_eq!(of("scene"), (Duration::from_secs(5), 7));
+    for &(etype, ttl, max) in REFERENCE_RATE_LIMITS.iter().filter(|(t, ..)| *t != "scene") {
+        assert_eq!(of(etype), (ttl, max), "{etype}");
+    }
+    assert_eq!(limits.rate_limits.len(), REFERENCE_RATE_LIMITS.len());
+}
