@@ -153,6 +153,9 @@ pub enum SystemApi {
     GetProfileChangedStream(RpcStreamSender<ProfileChangedEvent>),
     GetSceneLoadingUiStream(RpcStreamSender<SceneLoadingUi>),
     GetAnalyticsEventStream(RpcStreamSender<AnalyticsEvent>),
+    /// The preview server's texture import status for the previewed scene, as the preview socket
+    /// delivers it (`comms::preview`); nothing outside preview mode.
+    GetTextureOptimizationStream(RpcStreamSender<TextureOptimizationStatus>),
     // Native-only transport for the super-user bridge scene's BroadcastChannel: the scene posts page
     // -bound Envelopes via BridgeToPage, and subscribes to page->scene Envelopes via GetBridgeStream.
     // (In web the browser provides BroadcastChannel directly; native has no cross-process equivalent.)

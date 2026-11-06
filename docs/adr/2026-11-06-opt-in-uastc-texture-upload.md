@@ -59,8 +59,11 @@ is byte-for-byte what it was.
   are encoded, at most every 500 ms. `READY` or `FAILED` goes out once per run, and `READY` only
   when the overlay or the setting changed or `RUNNING` went out. A run that changes nothing sends
   nothing. A client that connects later receives the last status first. The client decides when to
-  reload; offering that reload in the explorer needs an explorer change that is not part of this
-  decision.
+  reload. The Bevy Explorer routes the message from its preview socket to the HUD (the
+  `getTextureOptimizationStream` system API), marking the first status per scene within two
+  seconds of the socket opening as the replay; the HUD shows one toast and offers **Reload**, which
+  drops the live scene as a save's `UpdateScene` does, except for a replayed `READY`, which the
+  freshly loaded scene already reflects.
 - **Deploy.** With the setting on, `deploy` runs over the release payload after the build, encoding
   in the foreground, with a progress line, whatever the cache lacks. A warm cache costs nothing. It
   holds the process's import lock until the payload is read, so no background swap lands in

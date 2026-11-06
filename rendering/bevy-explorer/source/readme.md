@@ -172,6 +172,7 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   after a teleport reads it first), `/avatar_state [all|<address>]`, `/chat_history [count]`
   (Nearby only), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),
+  `/preview_textures` (the preview server's last texture optimization status, in preview mode),
   `/voice_state`, `/entity_screen_position <entity> [--bounds]`, plus the older `/player_position`,
   `/get_user_data`, `/connected_players`, `/time` and the scene commands.
 - Chat: `/chat <channel> <word>`, `/dm <address> <message>`, `/community_chat <id> <message>`

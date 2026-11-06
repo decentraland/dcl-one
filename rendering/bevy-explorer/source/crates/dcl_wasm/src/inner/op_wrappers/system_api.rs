@@ -501,6 +501,26 @@ pub async fn op_read_analytics_event_stream(
 }
 
 #[wasm_bindgen]
+pub async fn op_get_texture_optimization_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_texture_optimization_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_texture_optimization_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    // json_compatible: a closed stream must end as null, not undefined, for the scene's loop
+    dcl_js::system_api::op_read_texture_optimization_stream(state.rc(), rid)
+        .await
+        .map(|v| {
+            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+                .unwrap()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
 pub async fn op_get_avatar_modifiers(state: &WorkerContext) -> Result<js_sys::Array, WasmError> {
     dcl_js::system_api::op_get_avatar_modifiers(state.rc())
         .await

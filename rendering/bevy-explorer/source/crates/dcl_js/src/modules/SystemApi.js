@@ -756,3 +756,26 @@ module.exports.getAnalyticsEventStream = async function() {
 
   return streamGenerator();
 }
+
+// the preview server's texture import status for the previewed scene (preview mode only)
+// type TextureOptimizationStatus = {
+//   sceneId: string,
+//   state: 'running' | 'ready' | 'failed',
+//   done: number, total: number, failed: number,
+//   bytesBefore: number, bytesAfter: number,
+//   enabled: boolean,
+//   replay: boolean, // the server's last status, replayed as the socket connected
+// }
+module.exports.getTextureOptimizationStream = async function() {
+  const rid = await Deno.core.ops.op_get_texture_optimization_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_texture_optimization_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}

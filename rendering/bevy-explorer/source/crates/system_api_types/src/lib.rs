@@ -244,6 +244,41 @@ pub struct AnalyticsEvent {
     pub properties: serde_json::Value,
 }
 
+/// Where the preview server's background texture import is: encoding, finished with new
+/// optimized files in place (the scene shows them on its next reload), or failed.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub enum TextureOptimizationState {
+    Running,
+    Ready,
+    Failed,
+}
+
+/// The preview server's texture import status for one scene, as the preview socket delivered it
+/// (`TextureOptimization` of `WsSceneMessage`). `done`, `total` and `failed` count this run's
+/// textures; `bytesBefore` and `bytesAfter` are the converted images' source and KTX2 sizes;
+/// `enabled` is whether the project serves the optimized files. `replay` marks the first status
+/// for the scene since the socket (re)connected, which is the server's last status sent before
+/// anything else, not news.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct TextureOptimizationStatus {
+    pub scene_id: String,
+    pub state: TextureOptimizationState,
+    pub done: u32,
+    pub total: u32,
+    pub failed: u32,
+    // f64: a plain JS number on every runtime (exact below 2^53 bytes)
+    pub bytes_before: f64,
+    pub bytes_after: f64,
+    pub enabled: bool,
+    pub replay: bool,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 #[derive(ts_rs::TS)]
