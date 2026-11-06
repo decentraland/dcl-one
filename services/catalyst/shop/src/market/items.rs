@@ -858,7 +858,6 @@ pub async fn list_items(
     Ok((rows.iter().map(row_to_item).collect(), total))
 }
 
-/// ethers-style `format!("{rate:.18}")`, `"0"` for an unusable rate.
 /// The rate as the exact decimal text a `NUMERIC` bind takes: never through
 /// a float, whose 0.1 is 0.100000000000000006 and moves a CEIL across a credit.
 pub fn rate_to_numeric_string(rate: ManaUsdRate) -> String {
