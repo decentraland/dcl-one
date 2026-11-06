@@ -1091,6 +1091,60 @@ async fn entity_reads_over_seeded_rows() {
     unseed(&pool, tag).await;
 }
 
+/// An id only a remote list (`DENYLIST_URLS`) names is hidden from the
+/// active-entity and history reads as an operator-listed one is
+/// (`AB-10-peer-active-by-denylisted-id.json`: production answers `[]`).
+#[tokio::test]
+async fn a_remote_listed_entity_is_hidden_from_the_reads() {
+    require_test_db!(Some(node) = TestNode::with_db("remotedeny").await);
+    let pool = node.state.pool.clone();
+    let tag = "remotedeny";
+    unseed(&pool, tag).await;
+    let scene = seed_deployment(&pool, tag, 1, "scene", "-7332,7332", 1_700_000_000_000).await;
+    let (status, body) = post_json(
+        node.router(),
+        "/content/entities/active",
+        json!({"ids": [scene.id]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_array().unwrap().len(), 1);
+
+    node.state
+        .denylist
+        .set_remote("https://registry.example/denylist", [scene.id.clone()]);
+    for body in [
+        json!({"ids": [scene.id]}),
+        json!({"pointers": [scene.pointer]}),
+    ] {
+        let (status, answer) = post_json(node.router(), "/content/entities/active", body).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(answer, json!([]));
+    }
+    let (status, answer) = get_json(
+        node.router(),
+        &format!("/content/entities/scene?id={}", scene.id),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(answer, json!([]));
+    let (status, _) = get_json(
+        node.router(),
+        &format!("/content/contents/{}/active-entities", scene.hash),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, answer) = get_json(
+        node.router(),
+        &format!("/content/deployments?entityId={}", scene.id),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(answer["deployments"], json!([]));
+
+    unseed(&pool, tag).await;
+}
+
 #[tokio::test]
 async fn history_reads_over_seeded_rows() {
     require_test_db!(Some(node) = TestNode::with_db("history").await);

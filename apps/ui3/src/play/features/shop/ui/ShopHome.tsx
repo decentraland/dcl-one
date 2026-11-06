@@ -10,6 +10,8 @@ import styles from './ShopHome.module.css'
 const ROW_PAGE = 5
 /** What a hovered card grows into: 5% and a 3px ring, ~8px a side and ~11px top and bottom. */
 const HOVER_ROOM = 12
+/** An outfit's render rises 53px over its card, as the design draws it, and its ring needs room above that. */
+const OUTFIT_RISE = 53
 
 /** An outfit's tile: its picture on its gradient. */
 export interface ShopHomeOutfit {
@@ -53,7 +55,7 @@ export function ShopHome<T extends { id: string }, O extends ShopHomeOutfit>({
   return (
     <div className={styles.home}>
       {outfits != null && outfits.length > 0 && (
-        <Rail variant="shop" perPage={4} gap={20} bleed={HOVER_ROOM} className={styles.outfits}>
+        <Rail variant="shop" perPage={4} gap={20} bleed={HOVER_ROOM} bleedTop={OUTFIT_RISE + HOVER_ROOM} className={styles.outfits}>
           {outfits.map((o) => (
             <button
               key={o.id}
@@ -63,7 +65,12 @@ export function ShopHome<T extends { id: string }, O extends ShopHomeOutfit>({
               style={{ '--from': o.gradientFrom || undefined, '--to': o.gradientTo || undefined } as React.CSSProperties}
               onClick={() => onOutfit(o)}
             >
-              {o.image != null && <img src={o.image} alt="" />}
+              {o.image != null && (
+                <span className={styles.outfitArt}>
+                  <img src={o.image} alt="" />
+                </span>
+              )}
+              <span className={styles.outfitFade} aria-hidden="true" />
             </button>
           ))}
         </Rail>
@@ -120,7 +127,8 @@ function HomeRow<T extends { id: string }>({
           ))}
         </div>
       ) : (
-        <Rail perPage={ROW_PAGE} gap={20} bleed={HOVER_ROOM}>
+        // The design's rows page with the arrows only: no dots under them.
+        <Rail perPage={ROW_PAGE} gap={20} bleed={HOVER_ROOM} dots={false}>
           {(row.items ?? []).map((item) => (
             <div key={item.id} className={styles.slot}>
               {renderCard(item)}

@@ -25,7 +25,7 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
 use sqlx::PgPool;
 
-use crate::content::queries::active_entity_docs_by_pointers;
+use crate::content::queries::{active_entity_docs_by_pointers, retain_non_denylisted};
 use crate::shared::cache::TtlMap;
 use crate::shared::http_util::lambdas_internal_error;
 use crate::shared::query_params::{parse_int_js, parse_query_string, qs_get_array, qs_get_string};
@@ -76,7 +76,7 @@ pub(crate) async fn cached_base_wearables(state: &MarketplaceState) -> Arc<Vec<B
         .lambdas
         .base_wearables
         .get_or_fetch((), || async {
-            match base_wearables::fetch_base_wearables(&state.pool).await {
+            match base_wearables::fetch_base_wearables(&state.pool, &state.denylist).await {
                 Ok(base) if !base.is_empty() => Ok(Arc::new(base)),
                 Ok(_) => Err(()),
                 Err(e) => {
@@ -859,9 +859,10 @@ async fn definitions_for(
     if pointers.is_empty() {
         return Vec::new();
     }
-    let docs = active_entity_docs_by_pointers(&state.pool, &pointers)
+    let mut docs = active_entity_docs_by_pointers(&state.pool, &pointers)
         .await
         .unwrap_or_default();
+    retain_non_denylisted(&mut docs, &state.denylist);
     docs.iter()
         .filter_map(|d| d.to_value())
         .filter_map(|e| extract(&e, &state.settings.content_public_url))

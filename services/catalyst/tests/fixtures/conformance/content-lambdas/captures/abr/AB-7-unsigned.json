@@ -1,0 +1,21 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://asset-bundle-registry.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/entities/status",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "101"
+    },
+    "body": {
+      "error": "Invalid Auth Chain",
+      "message": "This endpoint requires a signed fetch request. See ADR-44."
+    }
+  }
+}
