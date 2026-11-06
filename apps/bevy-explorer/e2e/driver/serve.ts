@@ -96,7 +96,8 @@ export function resolveFile(root: string, requestPath: string): string | undefin
  *  absolute address (`apps/sites/src/routes/routes/play_.bridge.about.ts`); so does this server. */
 export const BRIDGE_ABOUT_PATH = '/bridge-scene/static/BevyExplorerUI/about'
 const BRIDGE_CONTENT_PATH = '/bridge-scene/static/'
-const RELATIVE_BRIDGE_URN = /^urn:decentraland:entity:(baf[a-z2-7]+)\?=&baseUrl=\/bridge-scene\/static\/$/
+// the entity's hash as a base32 CIDv1 (`baf…`, what the scene build writes) or a CIDv0 (`Qm…`)
+const RELATIVE_BRIDGE_URN = /^urn:decentraland:entity:(baf[a-z2-7]+|Qm[1-9A-HJ-NP-Za-km-z]{44})\?=&baseUrl=\/bridge-scene\/static\/$/
 
 /** The realm document with its scene's root-relative content url made absolute under `origin`.
  *  A document whose url is absolute already is left as it is (a build exported with
@@ -109,7 +110,8 @@ export function bridgeAbout(about: string, origin: string): string {
   if (!Array.isArray(urns) || urns.length !== 1 || typeof urns[0] !== 'string') return about
   const match = RELATIVE_BRIDGE_URN.exec(urns[0])
   if (!match) {
-    if (/[?&]baseUrl=\//.test(urns[0])) throw new Error(`the bridge scene's realm names a root-relative content url this server does not know how to serve: ${urns[0]}`)
+    // root-relative, not protocol-relative (`//host/…`), which the engine takes as it is
+    if (/[?&]baseUrl=\/(?!\/)/.test(urns[0])) throw new Error(`the bridge scene's realm names a root-relative content url this server does not know how to serve: ${urns[0]}`)
     return about
   }
   const content = new URL(BRIDGE_CONTENT_PATH, origin).href

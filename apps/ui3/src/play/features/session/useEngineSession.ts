@@ -2490,7 +2490,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         }
         welcomeLink.current = urlDestination.current
         urlDestination.current = null
-        if (hudLoginPending.current != null) {
+        // only a sign-in that ran lands it: a run with nothing pending answers no /hud_login
+        if (login != null && hudLoginPending.current != null) {
           hudLoginPending.current.landed = true
           hudLoginPending.current.welcomeAwaited = welcomeShown()
           setHudLoginTick((n) => n + 1)
@@ -3061,6 +3062,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       pendingLogin.current = loginCall
       pendingLoginType.current = loginType
       setSubmitted(true)
+      // at once, not on the next render: a /hud_login in the same task is refused as signed in
+      submittedRef.current = true
       // A ?position/?realm link launches straight there (pickDestination, from the url effect).
       if (urlDestination.current != null) return true
       // Otherwise the lobby: launch now holding the world back, so signing in, the avatar and
@@ -3070,6 +3073,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       // an engine launched for the guest start page keeps its stage, avatar and all, into the lobby
       if (!launchedRef.current) setLobbyStageReady(false)
       setBusy(true)
+      busyRef.current = true
       let ran = false
       const run = (): void => {
         if (ran || driverRef.current == null) return
@@ -3105,12 +3109,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     (request: HudLoginRequest): Promise<HudLoginReply> =>
       new Promise((resolve, reject) => {
         // the refs, as the command may come between a render and the effect that hands it over
+        if (hudLoginPending.current != null) return reject(new Error('a /hud_login is already under way'))
         if (fatalErrorRef.current != null) return reject(new Error(fatalErrorRef.current.message))
         if (submittedRef.current) return reject(new Error('already signed in: /logout first'))
         // a sign-out under a sign-in the engine has not answered yet: busy until it does
         if (busyRef.current) return reject(new Error('a sign-in is still finishing'))
         if (!engineReady) return reject(new Error('the engine is not ready to take a sign-in yet'))
-        if (hudLoginPending.current != null) return reject(new Error('a /hud_login is already under way'))
         const { identity, guest, defaultOnError, pick, destination } = request
         const previous = storedRef.current
         const login: StoredLogin = { address: rootAddress(identity).toLowerCase(), identity, guest }

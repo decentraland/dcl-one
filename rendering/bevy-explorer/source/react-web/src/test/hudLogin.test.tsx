@@ -248,6 +248,20 @@ describe('/hud_login through the session', () => {
     expect(h.session().welcome.error).toBe('deploy refused')
   })
 
+  it("refuses a sign-in in the same task as another's submit, before the next render", async () => {
+    const driver = new IdentityDriver()
+    const h = await ready(driver)
+    let refused: Promise<Reply> | undefined
+    act(() => {
+      h.session().login.exploreAsGuest()
+      refused = login(ENCODED)
+    })
+    await expect(refused).rejects.toThrow('already signed in')
+    await waitFor(() => expect(h.session().phase).toBe('lobby'))
+    expect(driver.calls).toContain('loginGuest')
+    expect(driver.identityLogins).toEqual([])
+  })
+
   it('refuses a second sign-in while one is under way', async () => {
     const driver = new IdentityDriver()
     driver.hold = true
