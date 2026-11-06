@@ -27,7 +27,7 @@ import filterIcon from '../../assets/backpack/icon-filter.webp'
 import emptySearchArt from '../../assets/backpack/empty-search.webp'
 import cartIcon from '../../assets/shop/cart.svg'
 import { cartRequestLines, cartUnits, inWorldCart, inWorldCartInputFor, useInWorldCart } from './cartStore'
-import { CATALOGUE_SORTS, categoriesFor, defaultFilters, pageCount, useShopCatalogue, type CatalogueFilters, type CatalogueKind } from './catalogueQuery'
+import { CATALOGUE_SORTS, categoriesFor, defaultFilters, pageCount, statusOf, useShopCatalogue, type CatalogueFilters, type CatalogueKind } from './catalogueQuery'
 import { useShopFlag } from './flagsQuery'
 import { homeQueries, useNewest, useShopOutfits, useTrending, type OutfitSummary } from './homeQuery'
 import { tryOnUrn, webOutfitUrl, webShopUrl } from './itemLinks'
@@ -372,12 +372,11 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   const pickSection = (next: Section): void => {
     if (next !== section) enterSection(next)
   }
-  // As on the web Shop, both rows lead to the catalogue: New keeps its order (on sale, newest first);
-  // Trending has no order of its own there, so it opens the catalogue as it stands by default.
-  const viewAll = (row: 'trending' | 'newest'): void => {
+  // As on the web Shop, both rows lead to the catalogue as it opens (its items grid, `/items`): on sale and
+  // newest first, New's own order. No status is picked for the player, so a search still widens to all.
+  const viewAll = (): void => {
     enterSection('wearables')
-    const search = draft.trim().toLowerCase()
-    setFilters(row === 'newest' ? { ...defaultFilters('wearable'), status: 'on_sale', sort: 'newest', search } : { ...defaultFilters('wearable'), search })
+    setFilters({ ...defaultFilters('wearable'), search: draft.trim().toLowerCase() })
   }
   const pickSort = (id: string): void => {
     const next = CATALOGUE_SORTS.find((s) => s.id === id)
@@ -397,8 +396,10 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   const sortLabel = CATALOGUE_SORTS.find((s) => s.id === filters.sort)?.label ?? CATALOGUE_SORTS[0].label
   // A new page or filter set shows the last rows, dimmed, until it answers.
   const stale = grid.isPlaceholderData
-  // Only a narrowed feed has somewhere wider to go.
-  const narrowed = JSON.stringify({ ...filters, sort: 'newest' }) !== JSON.stringify(defaultFilters(kind))
+  // Only a narrowed feed has somewhere wider to go. The status counts as it reads: "On sale" picked by hand
+  // is the default, not a narrowing (exploring would land on the same page).
+  const narrowed =
+    JSON.stringify({ ...filters, sort: 'newest', status: statusOf(filters) }) !== JSON.stringify({ ...defaultFilters(kind), status: statusOf(defaultFilters(kind)) })
   const categories = categoriesFor(kind)
   return (
     <MainMenuShell
@@ -425,7 +426,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                     <ChevronDown size={18} />
                   </Button>
                   {menu === 'filters' && (
-                    <ShopFilters className={styles.menu} filters={filters} onChange={patch} onClose={() => setMenu(null)} showDeals={creatorSales} showSmart={kind === 'wearable'} />
+                    <ShopFilters className={styles.menu} filters={{ ...filters, status: statusOf(filters) }} onChange={patch} onClose={() => setMenu(null)} showDeals={creatorSales} showSmart={kind === 'wearable'} />
                   )}
                 </div>
                 <div className={styles.menuWrap}>
