@@ -52,6 +52,11 @@ pub(crate) mod support {
             Self::build(tag, None, settings).await
         }
 
+        /// A node over `pool` (a stalling one, say) with `settings`.
+        pub async fn with_pool_settings(tag: &str, pool: sqlx::PgPool, settings: Settings) -> Self {
+            Self::build(tag, Some(pool), settings).await
+        }
+
         /// `None` (skip) without CATALYST_TEST_DATABASE_URL; otherwise over
         /// the process's scratch database (`db::scratch`).
         pub async fn with_db(tag: &str) -> Option<Self> {
@@ -263,6 +268,15 @@ async fn edge_case_fixtures_replay_exactly() {
     let has_db = std::env::var("CATALYST_TEST_DATABASE_URL").is_ok();
     // A node that has caught up reports Syncing; the status fixture was captured on one.
     node.state.sync.set_state(SyncState::Syncing);
+    // The write fixture is a node that takes deploys (upstream outside `READ_ONLY`).
+    node.state.attach_writes(
+        true,
+        std::sync::Arc::new(super::write_deployer::WriteDeployer::with_optional_eip1654(
+            node.state.pool.clone(),
+            node.state.storage.clone(),
+            None,
+        )),
+    );
 
     let mut failures = Vec::new();
     let mut replayed = 0;

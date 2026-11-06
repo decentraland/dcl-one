@@ -107,10 +107,6 @@
   .shop-summary {
     gap: 8px;
   }
-
-  .shop-summary__value {
-    font-size: 20px;
-  }
 }
 
 /* Scoped past the shared .shop-price__credits (CreditsAmount), whose gap and weight are the cards'. */
