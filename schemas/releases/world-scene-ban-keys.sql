@@ -1,3 +1,4 @@
+BEGIN;
 -- Copy active and retained scene bans to stable world/base keys, then remove
 -- every mapped legacy alias. Existing keys keep the newest author/time.
 -- Genesis and unmapped rows stay. Stop old replicas before migration: old
@@ -54,3 +55,5 @@ WITH mapping AS (
 )
 DELETE FROM social.scene_bans b USING mapping m
  WHERE b.place_id = m.entity_id AND b.place_id <> m.ban_key;
+
+COMMIT;

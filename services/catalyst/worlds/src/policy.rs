@@ -2510,8 +2510,8 @@ mod tests {
             p.can_access(&world, &visitor, Some("open sesame"), None, None, now())
                 .await
                 .unwrap(),
-            Access::Allowed(AccessGrant::SharedSecret),
-            "the lobby room carries no scene ban"
+            Access::Banned(Ban::Scene),
+            "the lobby also enforces the active scene ban"
         );
         sqlx::query("INSERT INTO social.user_bans (banned_address, banned_by, reason, expires_at) VALUES ($1, 'mod', 'r', $2)")
             .bind(&visitor)

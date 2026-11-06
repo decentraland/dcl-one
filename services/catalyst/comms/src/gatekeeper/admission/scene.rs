@@ -1100,7 +1100,7 @@ pub(crate) async fn readmit_world_rooms(
         .list_rooms()
         .await
         .map_err(|error| error.to_string())?;
-    let cutoff = chrono::DateTime::from_timestamp(cutoff, 0).map(|at| at.naive_utc());
+    let cutoff = Some(chrono::DateTime::from_timestamp(cutoff, 0).map(|at| at.naive_utc()).unwrap_or(chrono::NaiveDateTime::MAX));
     Ok(
         readmit_world_rooms_in_inventory(state, world, cutoff, &rooms)
             .await

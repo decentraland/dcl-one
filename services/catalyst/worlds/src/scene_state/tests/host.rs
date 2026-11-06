@@ -867,9 +867,17 @@ async fn a_shared_secret_world_reads_the_secret_from_the_signed_metadata() {
             .await
             .is_none()
     );
+    assert!(
+        join(addr, &world, VISITOR_KEY, r#"{"secret":"new words"}"#)
+            .await
+            .is_none(),
+        "three wrong guesses share the caller budget even after a correct secret"
+    );
+    sqlx::query("UPDATE social.world_secret_attempts SET window_start=timezone('UTC',now())-interval '61 seconds' WHERE world_name=$1")
+        .bind(world.key()).execute(&h.state.pool).await.unwrap();
     let (mut ws, _) = join(addr, &world, VISITOR_KEY, r#"{"secret":"new words"}"#)
         .await
-        .expect("the new secret admits");
+        .expect("the new secret admits after the charged window expires");
     assert_eq!(
         h.state.sweep().await,
         SweepSummary::default(),
