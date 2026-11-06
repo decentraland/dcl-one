@@ -3,11 +3,10 @@
 # run, from the run's job and artifact lists (the trusted Actions API; the run's own code reaches
 # this only as job names and artifact names, which render inside table cells).
 #
-# Environment: REPO (owner/name), RUN_ID, RUN_URL, HEAD_SHA (the commit the run built), JOBS_FILE
-# (the run's /jobs response), ARTIFACTS_FILE (its /artifacts response) and OUT_DIR (where build.md
-# and tests.md are written; the working directory by default). PREVIEW_VERSION, when set, is the
-# version of @dcl-regenesislabs/bevy-explorer-web this run published under the pull request's pr-<n>
-# tag; the web app row then links its CDN preview, on the zone services.
+# Environment: REPO (owner/name), RUN_ID, RUN_URL, HEAD_SHA (the PR head), JOBS_FILE (the run's
+# /jobs response), ARTIFACTS_FILE (its /artifacts response) and OUT_DIR (where build.md and tests.md
+# are written; the working directory by default). PR_PREVIEW=true enables the npm lookup for the
+# exact package uploaded by the run. Its gitHead must match the web build's checkout SHA.
 #
 # The build section covers the products: the web app (*Web engine, HUD and bridge scene*) and the
 # headless engine (*Headless Smoke*), with their artifacts' download links, and the `benchmark`
@@ -97,8 +96,8 @@ artifact_link() {
 job_time() { if [[ "$1" =~ ^[0-9]+$ ]]; then fmt_secs "$1"; else printf '—'; fi; }
 job_cell() { if [ -n "$2" ]; then printf '[%s](%s)' "$1" "$2"; else printf '%s' "$1"; fi; }
 
-SHORT_SHA="${HEAD_SHA:0:7}"
-FOOTER="<sub>[Run summary]($RUN_URL) · commit \`$SHORT_SHA\`</sub>"
+FOOTER="[Run summary]($RUN_URL) · PR head \`${HEAD_SHA:0:7}\`"
+web_revision=""
 
 # --- build -----------------------------------------------------------------------------------
 state=none
@@ -106,10 +105,32 @@ rows=""
 IFS=$'\t' read -r conclusion url secs <<< "$(job_fields "$WEB_JOB")" || true
 if [ -n "${url:-}${conclusion:-}" ]; then
   state=$(fold_state "$state" "$conclusion")
-  downloads=$(artifact_link 'bevy-explorer-web-' 'web app')
-  if [ "$conclusion" = success ] && [[ "${PREVIEW_VERSION:-}" =~ ^[0-9A-Za-z.-]+$ ]]; then
-    preview="[preview](https://cdn.decentraland.org/@dcl-regenesislabs/bevy-explorer-web/$PREVIEW_VERSION/index.html?position=0%2C-2&baseDomain=decentraland.zone)"
-    downloads="${downloads:+$downloads · }$preview"
+  # The web artifact is named with github.sha, the checkout SHA. The run's head_sha
+  # identifies the PR branch even when the checkout is GitHub's test merge.
+  IFS=$'\t' read -r web_name web_id <<< "$(jq -r '
+    [.artifacts[] | select(.name | test("^bevy-explorer-web-[0-9a-f]{40}$"))]
+    | max_by(.created_at) | select(. != null)
+    | [.name, (if .expired == false then .id else "" end)] | @tsv' "$ARTIFACTS_FILE" | tr -d '\r')"
+  downloads=""
+  web_revision="${web_name#bevy-explorer-web-}"
+  if [ -n "$web_id" ]; then
+    downloads="[web app](https://github.com/$REPO/actions/runs/$RUN_ID/artifacts/$web_id)"
+  fi
+  if [ "$conclusion" = success ] && [ "${PR_PREVIEW:-false}" = true ] && [ -n "$web_revision" ]; then
+    # Oddish uploads the versioned npm tarball to this run. Look up that immutable
+    # version so a later move or deletion of the PR's dist-tag cannot change the answer.
+    version=$(jq -r --arg run "$RUN_ID" '
+      [.artifacts[] | select(.name | test("^dcl-regenesislabs-bevy-explorer-web-[0-9]+\\.[0-9]+\\.[0-9]+-" + $run + "\\.commit-[0-9a-f]{7,40}\\.tgz$"))]
+      | max_by(.created_at) | .name // empty
+      | ltrimstr("dcl-regenesislabs-bevy-explorer-web-") | rtrimstr(".tgz")' "$ARTIFACTS_FILE" | tr -d '\r')
+    if [[ -n "$version" && "$web_revision" == "${version##*.commit-}"* ]]; then
+      published_sha=$(npm view "@dcl-regenesislabs/bevy-explorer-web@$version" gitHead --prefer-online \
+        --registry=https://registry.npmjs.org 2>/dev/null | tr -d '\r' || true)
+      if [ "$published_sha" = "$web_revision" ]; then
+        preview="[preview](https://cdn.decentraland.org/@dcl-regenesislabs/bevy-explorer-web/$version/index.html?position=0%2C-2&baseDomain=decentraland.zone)"
+        downloads="${downloads:+$downloads · }$preview"
+      fi
+    fi
   fi
   rows="$rows| $(job_cell 'Web app' "$url") | $(result_cell "$conclusion" Built) | $(job_time "$secs") | ${downloads:-—} |"$'\n'
 fi
@@ -153,7 +174,11 @@ esac
     echo "<sub>Benchmark runner: $runners</sub>"
     echo
   fi
-  echo "$FOOTER"
+  if [ -n "$web_revision" ]; then
+    echo "<sub>$FOOTER · Web build \`${web_revision:0:7}\`</sub>"
+  else
+    echo "<sub>$FOOTER</sub>"
+  fi
 } > "$OUT_DIR/build.md"
 
 # --- tests -----------------------------------------------------------------------------------
@@ -197,5 +222,5 @@ esac
     printf '%s' "$rows"
   fi
   echo
-  echo "$FOOTER"
+  echo "<sub>$FOOTER</sub>"
 } > "$OUT_DIR/tests.md"

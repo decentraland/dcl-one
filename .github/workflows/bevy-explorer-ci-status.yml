@@ -145,10 +145,8 @@ jobs:
           JOBS_FILE: jobs.json
           ARTIFACTS_FILE: artifacts.json
           OUT_DIR: sections
+          PR_PREVIEW: ${{ github.event.workflow_run.event == 'pull_request' }}
         run: |
-          # The PR preview, when this run published it: pr-<n> points at 0.1.0-<run id>.commit-<sha>.
-          v=$(npm view "@dcl-regenesislabs/bevy-explorer-web@pr-$PR_NUMBER" version 2>/dev/null || true)
-          if [[ "$v" =~ ^0\.1\.0-$RUN_ID\.commit-[0-9a-f]+$ ]]; then export PREVIEW_VERSION="$v"; fi
           gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" > jobs.json
           gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" > artifacts.json
           mkdir -p sections

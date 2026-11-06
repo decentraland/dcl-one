@@ -84,7 +84,7 @@ check "macOS row" tests.md '| [Test Suite (macOS)]('
 check "an hour-long job" tests.md '| ✅ Passed | 1h 1m |'
 check "headless smoke is a test row" tests.md '| [Headless Smoke](https://github.com/o/r/actions/runs/1/job/Headless-Smoke) | ✅ Passed | 15m 0s |'
 check_absent "rustfmt is not a test row" tests.md 'Rustfmt'
-check "footer names the run and the commit" tests.md '<sub>[Run summary](https://github.com/o/r/actions/runs/1) · commit `1111111`</sub>'
+check "footer names the run and the commit" tests.md '<sub>[Run summary](https://github.com/o/r/actions/runs/1) · PR head `1111111`</sub>'
 
 # 2. A failed Linux suite, a cancelled Windows one, a web build that failed with no artifact.
 jobs "$(job Changes success 40)" "$(job 'Test Suite (windows-2025)' cancelled 100)" \
@@ -127,20 +127,43 @@ check "grey build badge" build.md 'Build-Cancelled-lightgrey'
 check "grey tests badge" tests.md 'Tests-Cancelled-lightgrey'
 check "the cancelled headline" tests.md 'Push a new commit or re-run the workflow to refresh this section.'
 
-# 7. A PR preview: linked beside the web app on the zone services, only for a built web app, and
-#    never with a version that is not a plain npm version.
+# 6. A PR preview uses the actual web checkout and the package from this run.
+WEB_SHA=abc1234222222222222222222222222222222222
+VERSION=0.1.1-1.commit-abc1234
 jobs "$(job Changes success 40)" "$(job 'Web engine, HUD and bridge scene' success 1300)"
-artifacts "bevy-explorer-web-$SHA:11"
-PREVIEW_VERSION=0.1.0-1.commit-abc1234 compose
+artifacts "bevy-explorer-web-$WEB_SHA:11" "dcl-regenesislabs-bevy-explorer-web-$VERSION.tgz:12"
+cat > "$WORK/npm" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+[[ "$1" = view && "$2" = "@dcl-regenesislabs/bevy-explorer-web@$PUBLISHED_VERSION" && "$3" = gitHead ]]
+printf '%s\n' "$PUBLISHED_SHA"
+EOF
+chmod +x "$WORK/npm"
+preview_compose() {
+  PR_PREVIEW=true PATH="$WORK:$PATH" PUBLISHED_VERSION="$VERSION" PUBLISHED_SHA="$1" compose
+}
+preview_compose "$WEB_SHA"
 check "the preview is linked after the web app" build.md \
-  '[web app](https://github.com/o/r/actions/runs/1/artifacts/11) · [preview](https://cdn.decentraland.org/@dcl-regenesislabs/bevy-explorer-web/0.1.0-1.commit-abc1234/index.html?position=0%2C-2&baseDomain=decentraland.zone) |'
-PREVIEW_VERSION='0.1.0)[x](https://evil' compose
-check_absent "a malformed version is not linked" build.md 'preview'
+  "[web app](https://github.com/o/r/actions/runs/1/artifacts/11) · [preview](https://cdn.decentraland.org/@dcl-regenesislabs/bevy-explorer-web/$VERSION/index.html?position=0%2C-2&baseDomain=decentraland.zone) |"
+check "the build report distinguishes the PR head from the web build" build.md \
+  'PR head `1111111` · Web build `abc1234`'
+preview_compose abc1234333333333333333333333333333333333
+check_absent "a package with a different full SHA is not linked" build.md '[preview]'
+artifacts "bevy-explorer-web-$WEB_SHA:11" "dcl-regenesislabs-bevy-explorer-web-0.1.1-2.commit-abc1234.tgz:12"
+VERSION=0.1.1-2.commit-abc1234 preview_compose "$WEB_SHA"
+check_absent "a package for a different run is not linked" build.md '[preview]'
+artifacts "bevy-explorer-web-$WEB_SHA:11" "dcl-regenesislabs-bevy-explorer-web-0.1.1-1.commit-7654321.tgz:12"
+VERSION=0.1.1-1.commit-7654321 preview_compose "$WEB_SHA"
+check_absent "a version for a different checkout is not linked" build.md '[preview]'
+artifacts "bevy-explorer-web-$WEB_SHA:11:true" "dcl-regenesislabs-bevy-explorer-web-$VERSION.tgz:12"
+preview_compose "$WEB_SHA"
+check "an expired Actions download can still have a CDN preview" build.md '[preview]'
+check_absent "the expired Actions download is hidden" build.md 'artifacts/11'
 jobs "$(job Changes success 40)" "$(job 'Web engine, HUD and bridge scene' failure 300)"
-PREVIEW_VERSION=0.1.0-1.commit-abc1234 compose
-check_absent "a failed web build has no preview" build.md 'preview'
+preview_compose "$WEB_SHA"
+check_absent "a failed web build has no preview" build.md '[preview]'
 
-# 6. A job name with table furniture renders as text.
+# 7. A job name with table furniture renders as text.
 jobs "$(job Changes success 40)" "$(job 'Test Suite (ubuntu|24.04)' success 10)"
 artifacts
 compose
