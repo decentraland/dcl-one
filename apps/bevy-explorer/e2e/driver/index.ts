@@ -1,5 +1,5 @@
 export { type Console, ConsoleError, FakeConsole, normalizeLine, commandOf, redact, redactLine, secretOf } from './console.ts'
-export { Explorer, Hud } from './explorer.ts'
+export { Explorer, Hud, sameBox } from './explorer.ts'
 export type { WorldState, Control, NotFound, HudRead, HudInput, HudEntry, HudState, UserData, AvatarReport, ChatHistory, ChatMessage, VoiceState, ScreenPosition, Position, CommandRecord, HudLoginReply } from './explorer.ts'
 export { type Selector, type SelectorObject, selectorArg } from './selectors.ts'
 export { until, settled, sleep, TimeoutError } from './wait.ts'

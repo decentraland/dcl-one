@@ -5,8 +5,8 @@
 // never a pass.
 import { after, test, type TestContext } from 'node:test'
 import path from 'node:path'
-import type { Console } from './console.ts'
-import type { Explorer } from './explorer.ts'
+import { type Console, ConsoleError, scrubCredentials } from './console.ts'
+import type { Explorer, HudRead } from './explorer.ts'
 import { ScenarioReport } from './report.ts'
 import type { Selector } from './selectors.ts'
 import { BOOT_ALLOWANCE_MS, closeSessions, openExplorer, WORLD_HUD, type OpenOptions } from './session.ts'
@@ -54,19 +54,24 @@ export const EVIDENCE_TIMEOUT_MS = 30_000
 export async function failureEvidence(console_: Console, timeoutMs = EVIDENCE_TIMEOUT_MS): Promise<Record<string, Uint8Array | string>> {
   if (!console_.evidence) return {}
   const evidence = await withinBudget(console_.evidence(), timeoutMs, "the page's screenshot and console")
-  const files: Record<string, Uint8Array | string> = { 'console.txt': `${evidence.console.slice(-CONSOLE_TAIL_LINES).join('\n')}\n` }
+  // the report is a public artifact: a line can carry a credential (a room's access token)
+  const lines = evidence.console.slice(-CONSOLE_TAIL_LINES).map(scrubCredentials)
+  const files: Record<string, Uint8Array | string> = { 'console.txt': `${lines.join('\n')}\n` }
   if (evidence.screenshot) files['page.jpg'] = evidence.screenshot
   return files
 }
 
-/** The rail's top button takes a click only with nothing over the world: a page hides the rail,
- *  a popup (the passport, the debug panel, a dialog) covers it. */
-const RAIL_TOP: Selector = WORLD_HUD
 /** The rail buttons of the panels that open beside the rail, which leave it uncovered: each reads
- *  pressed while its panel is open. */
+ *  pressed while its panel is open. (The rail's top button, `WORLD_HUD`, takes a click only with
+ *  nothing over the world: a page hides the rail, a popup such as the passport covers it.) */
 export const RAIL_PANELS = ['Profile', 'Notifications', 'Skybox', 'Emotes', 'Friends'] as const
+/** The rail's own settings popover, which its button shows through `aria-expanded`, not as pressed. */
+export const RAIL_SETTINGS: Selector = { name: 'Sidebar settings', role: 'dialog' }
 /** The chat input while it has the focus, and with it the keys, which then never reach the engine. */
 export const CHAT_TYPING: Selector = { name: 'Write a message', role: 'textbox' }
+/** What a client without the HUD answers a `/hud_*` command: the standalone built without the
+ *  CEF HUD has none, and one whose page is not up says so (`src/react_hud_cef/automation.rs`). */
+const NO_HUD = /Command not recognized|there is no HUD page|the HUD page has not started yet/
 /** Escape closes one layer a press (a dropdown, a modal, the page under it, the chat input's
  *  focus), and a failed scenario can leave several. */
 export const REST_ESCAPES = 4
@@ -74,21 +79,24 @@ export const REST_ESCAPES = 4
 export const REST_SETTLE_MS = 1_500
 
 /** The HUD as a scenario's start finds it: at `rest`, with something `open` that Escape closes,
- *  or with `no-hud` to read (the standalone built without its bundle). */
+ *  or with `no-hud` to read (the standalone built without its bundle). Any other error is the
+ *  scenario's: it fails at its start saying so. */
 type Rest = 'rest' | 'open' | 'no-hud'
 
 async function hudRest(explorer: Explorer): Promise<Rest> {
+  let rail: HudRead
   try {
-    const rail = await explorer.hud.read(RAIL_TOP)
-    if (!rail.found) return (await explorer.hud.list()).length === 0 ? 'no-hud' : 'open'
-    if (!rail.actionable || (await explorer.hud.isVisible(CHAT_TYPING))) return 'open'
-    for (const name of RAIL_PANELS) {
-      if ((await explorer.hud.find({ name, role: 'button' }))?.checked) return 'open'
-    }
-    return 'rest'
-  } catch {
-    return 'no-hud'
+    rail = await explorer.hud.read(WORLD_HUD)
+  } catch (error) {
+    if (error instanceof ConsoleError && NO_HUD.test(error.output)) return 'no-hud'
+    throw error
   }
+  if (!rail.found) return (await explorer.hud.list()).length === 0 ? 'no-hud' : 'open'
+  if (!rail.actionable || (await explorer.hud.isVisible(CHAT_TYPING)) || (await explorer.hud.isVisible(RAIL_SETTINGS))) return 'open'
+  for (const name of RAIL_PANELS) {
+    if ((await explorer.hud.find({ name, role: 'button' }))?.checked) return 'open'
+  }
+  return 'rest'
 }
 
 /** Close what an earlier scenario left open, a layer per Escape, until the HUD is at rest: the

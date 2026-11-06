@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { ConsoleError, FakeConsole, redactLine } from '../driver/console.ts'
+import { ConsoleError, FakeConsole, commandOf, redactLine } from '../driver/console.ts'
 import { type CommandRecord, Explorer, type WorldState } from '../driver/explorer.ts'
 import { enterWorld } from '../driver/session.ts'
 
@@ -170,7 +170,7 @@ describe('Explorer', () => {
     assert.deepEqual(fake.sent('hud_click'), [])
   })
 
-  test('hud.click waits for a sliding control to hold still, and aims where it stopped', async () => {
+  test('hud.click waits for a sliding control to hold still before it clicks', async () => {
     let reads = 0
     const fake = new FakeConsole({
       hud_wait: control({ y: 10 }),
@@ -179,8 +179,8 @@ describe('Explorer', () => {
       hud_click: control({ y: 40, input: 'trusted' })
     })
     await new Explorer(fake).hud.click({ name: 'Emotes', role: 'tab' })
-    assert.equal(fake.sent('hud_read').length, 3)
-    assert.equal(fake.sent('hud_click').length, 1)
+    // the click comes after the third read, the first that agreed with the one before it
+    assert.deepEqual(fake.lines.map(commandOf), ['hud_wait', 'hud_read', 'hud_read', 'hud_read', 'hud_click'])
   })
 
   test('hud.fill waits for the field, sends the selector with the text and returns the field', async () => {

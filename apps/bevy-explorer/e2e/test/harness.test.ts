@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { FakeConsole } from '../driver/console.ts'
+import { ConsoleError, FakeConsole } from '../driver/console.ts'
 import { Explorer } from '../driver/explorer.ts'
 import { CONSOLE_TAIL_LINES, REST_ESCAPES, closeToRest, failureEvidence, specName, withinBudget } from '../driver/harness.ts'
 import { TimeoutError } from '../driver/wait.ts'
@@ -9,8 +9,9 @@ const button = (name: string, actionable: boolean, checked = false) =>
   JSON.stringify({ found: true, role: 'button', name, text: '', disabled: false, visible: true, actionable, checked, x: 0, y: 0, width: 10, height: 10 })
 
 /** A HUD that needs `layers` Escapes before the rail takes a click; `typing` keeps the chat input
- *  focused; `panel` names a rail panel open until the first Escape. */
-function hud(layers: number, options: { typing?: boolean; empty?: boolean; panel?: string } = {}): FakeConsole {
+ *  focused; `panel` names a rail panel, and `popover` the rail's settings popover, open until the
+ *  first Escape. */
+function hud(layers: number, options: { typing?: boolean; empty?: boolean; panel?: string; popover?: boolean } = {}): FakeConsole {
   let escapes = 0
   return new FakeConsole({
     press_key: () => {
@@ -20,6 +21,7 @@ function hud(layers: number, options: { typing?: boolean; empty?: boolean; panel
     hud_read: (line) => {
       if (options.empty) return '{"found":false}'
       if (line.includes('Write a message')) return options.typing ? button('Write a message', true) : '{"found":false}'
+      if (line.includes('"role":"dialog"')) return options.popover && escapes === 0 ? button('Sidebar settings', true).replace('"button"', '"dialog"') : '{"found":false}'
       if (line.includes('Sidebar settings')) return button('Sidebar settings', escapes >= layers)
       const name = /"name":"([^"]+)"/.exec(line)?.[1] ?? ''
       return button(name, true, name === options.panel && escapes === 0)
@@ -37,6 +39,12 @@ describe('closeToRest', () => {
 
   test('presses Escape for a panel open beside the rail', async () => {
     const fake = hud(0, { panel: 'Notifications' })
+    await closeToRest(new Explorer(fake), 300)
+    assert.deepEqual(fake.sent('press_key'), ['/press_key Escape'])
+  })
+
+  test("presses Escape for the rail's settings popover, which its button shows as expanded, not pressed", async () => {
+    const fake = hud(0, { popover: true })
     await closeToRest(new Explorer(fake), 300)
     assert.deepEqual(fake.sent('press_key'), ['/press_key Escape'])
   })
@@ -62,6 +70,23 @@ describe('closeToRest', () => {
   test('a client without a HUD gets no press', async () => {
     const fake = hud(1, { empty: true })
     await closeToRest(new Explorer(fake), 300)
+    assert.equal(fake.sent('press_key').length, 0)
+  })
+
+  test("a client without the HUD's commands (the standalone without its bundle) gets no press", async () => {
+    const fake = new FakeConsole({ press_key: 'pressed Escape' })
+    await closeToRest(new Explorer(fake), 300)
+    assert.equal(fake.sent('press_key').length, 0)
+  })
+
+  test("any other error is the scenario's, not a HUD at rest", async () => {
+    const fake = new FakeConsole({
+      press_key: 'pressed Escape',
+      hud_read: (line) => {
+        throw new ConsoleError(line, 'the test runner did not answer a trusted click within 10000 ms')
+      }
+    })
+    await assert.rejects(closeToRest(new Explorer(fake), 300), /did not answer/)
     assert.equal(fake.sent('press_key').length, 0)
   })
 })

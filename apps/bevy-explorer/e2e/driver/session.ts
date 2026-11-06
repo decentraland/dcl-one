@@ -6,7 +6,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { chromeArgs } from './chrome.ts'
-import { type Console, ConsoleError } from './console.ts'
+import { type Console, ConsoleError, scrubCredentials } from './console.ts'
 import { Explorer, type HudLoginReply, type WorldState } from './explorer.ts'
 import { buildAuthIdentity, newPrivateKey } from './identity.ts'
 import { NativeConsole, spawnNative } from './native.ts'
@@ -110,10 +110,12 @@ export async function closeSessions(): Promise<void> {
 export async function keepBootFailure(boot: number, error: BootError): Promise<void> {
   const dir = path.join(REPORT_DIR, 'boot-failures')
   await mkdir(dir, { recursive: true })
-  await writeFile(path.join(dir, `boot-${boot}.console.txt`), `${error.message}\n\n${error.console.join('\n')}\n`)
+  // the report and the log are public: a line can carry a credential (a room's access token)
+  const lines = error.console.map(scrubCredentials)
+  await writeFile(path.join(dir, `boot-${boot}.console.txt`), `${error.message}\n\n${lines.join('\n')}\n`)
   if (error.screenshot) await writeFile(path.join(dir, `boot-${boot}.jpg`), error.screenshot)
-  const tail = error.console.slice(-20)
-  console.error(`[e2e] the page's console, the last ${tail.length} of ${error.console.length} lines (all of them in ${dir}):\n${tail.join('\n')}`)
+  const tail = lines.slice(-20)
+  console.error(`[e2e] the page's console, the last ${tail.length} of ${lines.length} lines (all of them in ${dir}):\n${tail.join('\n')}`)
 }
 
 /** How long the world is waited for once signed in. */

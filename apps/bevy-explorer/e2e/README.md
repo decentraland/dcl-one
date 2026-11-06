@@ -82,7 +82,9 @@ console command, its reply or error and its time; `/login_identity` and `/hud_lo
 redacted) and
 `final.png` (the engine's frame as the scenario left it). A failed scenario adds `page.jpg`, the
 page as it looked, the HUD included (on the web the engine's frame has none), and `console.txt`,
-the page's last 200 console lines. A failed visual scenario adds `frame.png`, `reference.png` and
+the page's last 200 console lines. What the report keeps of the page's console, here and for a
+boot, has its credentials replaced as the engine's own benchmark log does
+(`crates/perf_output/src/scrub.rs`: an `access_token`, a named key or signature, an identity). A failed visual scenario adds `frame.png`, `reference.png` and
 `diff.png`. A client that fails to boot, at the open, at the
 console's coming or on the way into the world, leaves `boot-failures/boot-<n>.console.txt`, what
 the page said, and `boot-<n>.jpg`, how it looked; it is booted once more for the next scenario,
@@ -109,8 +111,9 @@ What the driver does for every scenario, so a spec need not:
 
 - **A rested HUD to start from.** Each scenario starts with Escape, a layer per press, until the
   rail's top button takes a click (a page hides the rail, a popup covers it), no panel beside the
-  rail reads pressed and the chat input does not hold the keys. A HUD already at rest gets no
-  Escape. The web boot waits for the HUD's own world (the rail), which comes after the engine's.
+  rail reads pressed, the rail's settings popover is closed and the chat input does not hold the
+  keys. A HUD already at rest gets no Escape; a client with no HUD (the standalone built without
+  it) gets none, and any other error fails the scenario at its start. The web boot waits for the HUD's own world (the rail), which comes after the engine's.
 - **Clicks that land.** `hud.click`, `hud.fill` and `hud.hover` wait for the control to be
   actionable and to hold still (two reads 60 ms apart): pages slide and fade in for a third of a
   second, and a click aimed at a control on its way lands where it no longer is.

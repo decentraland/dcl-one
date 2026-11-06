@@ -13,7 +13,7 @@
 //   commitAvatar, bridge-scene avatarDraft.ts), and only if the net look differs from the deployed
 //   one. So the engine's profile version and `/avatar_state` grow after the close, not after the
 //   press: `commitBackpack` closes the page and waits for the version.
-import { TimeoutError, settled, until, type AvatarReport, type Control, type Explorer, type HudEntry, type Selector } from '../driver/index.ts'
+import { TimeoutError, sameBox, settled, until, type AvatarReport, type Control, type Explorer, type HudEntry, type Selector } from '../driver/index.ts'
 import { closePage, openWithKey } from './pages.ts'
 
 /** One grid page: the catalogue's shared budget (the catalogue can still be arriving). */
@@ -247,13 +247,7 @@ export async function pointAtCard(explorer: Explorer, selector: Selector): Promi
 }
 
 const sameAction = (a: CardAction | undefined, b: CardAction | undefined): boolean =>
-  a !== undefined &&
-  b !== undefined &&
-  a.label === b.label &&
-  JSON.stringify(a.selector) === JSON.stringify(b.selector) &&
-  Math.abs(a.control.x - b.control.x) <= 0.5 &&
-  Math.abs(a.control.y - b.control.y) <= 0.5 &&
-  Math.abs(a.control.width - b.control.width) <= 0.5
+  a !== undefined && b !== undefined && a.label === b.label && JSON.stringify(a.selector) === JSON.stringify(b.selector) && sameBox(a.control, b.control)
 
 /** Put the pointer on a card (a real click: it selects the card) and read the button it reveals,
  *  once it has grown in: for 100 ms (WearableCard's `--dur-tap`) the last card's button shrinks
@@ -267,17 +261,20 @@ export async function hoverCard(explorer: Explorer, card: Card, labels: readonly
       intervalMs: 200,
       what: `a ${labels.join(' or ')} button over "${card.name}"`
     })
-    const action = await settled(() => actionOver(explorer, control, labels), {
-      timeoutMs: HOVER_TIMEOUT_MS,
-      intervalMs: 150,
-      what: `the button over "${card.name}" to hold still`,
-      same: sameAction
-    })
-    return { control, action }
   } catch (error) {
+    // no button: an incompatible item, or an equipped one of a required category
     if (error instanceof TimeoutError) return { control, action: undefined }
     throw error
   }
+  // a button that shows but never holds still is an error, not a card without one
+  const action = await settled(() => actionOver(explorer, control, labels), {
+    timeoutMs: HOVER_TIMEOUT_MS,
+    intervalMs: 150,
+    what: `the button over "${card.name}" to hold still`,
+    same: sameAction,
+    strict: true
+  })
+  return { control, action }
 }
 
 /** Wait for the `label` button over a card whose pointer is still on it (an equip flips EQUIP to UNEQUIP). */
@@ -509,32 +506,51 @@ export interface HairPick {
   start: LookStart
 }
 
+/** Scan the grid's pages from the one shown, until `scan` finds what it looks for: that and its
+ *  page (1 first), or undefined once every page was scanned. The pager wraps from the last page to
+ *  the first and never disables its arrow (`Pager.tsx`), so a page whose cards were seen before
+ *  ends the search; so does a grid with no other page, whose `next` gives the same cards back. */
+export async function searchPages<T>(
+  first: Card[],
+  next: () => Promise<Card[]>,
+  scan: (cards: Card[], page: number) => Promise<T | undefined>
+): Promise<{ found: T; page: number } | undefined> {
+  const seen = new Set<string>()
+  let cards = first
+  for (let page = 1; ; page++) {
+    const key = cards.map((card) => card.name).join('\n')
+    if (seen.has(key)) return undefined
+    seen.add(key)
+    const found = await scan(cards, page)
+    if (found !== undefined) return { found, page }
+    cards = await next()
+  }
+}
+
 /** Filter to Hair and find the page with the hair the avatar wears (a card that offers UNEQUIP),
  *  and on it the first card to equip; nothing is pressed. The catalogue sorts the hairs, so the
  *  worn one can be on any page. One the grid does not list is an error here, before any change:
  *  the scenario could not put it back. */
 export async function pickHair(explorer: Explorer): Promise<HairPick> {
-  let cards = await showCategory(explorer, 'Hair')
+  const cards = await showCategory(explorer, 'Hair')
   const start = await startLook(explorer)
   const worn = renderedUrn(start.before, 'hair')
-  for (let page = 1; ; page++) {
+  const next = async (): Promise<Card[]> => ((await pagerVisible(explorer)) ? nextPage(explorer, wearableCards) : wearableCards(explorer))
+  const result = await searchPages(cards, next, async (page, number) => {
     let card: Card | undefined
     let equipped: Card | undefined
-    for (const candidate of cards.slice(0, PAGE_SIZE)) {
+    for (const candidate of page.slice(0, PAGE_SIZE)) {
       if (card && (equipped || worn === undefined)) break
       const { action } = await hoverCard(explorer, candidate)
       if (action?.label === 'EQUIP' && !card) card = candidate
       if (action?.label === 'UNEQUIP' && !equipped) equipped = candidate
     }
-    if (equipped || worn === undefined) {
-      if (!card) throw new Error(`Every card of Hair page ${page} is equipped or cannot be equipped: ${cards.map((c) => c.name).join(', ')}`)
-      return { card, equipped, page, start }
-    }
-    if (!(await pagerVisible(explorer)) || !(await explorer.hud.find({ name: 'Next page', role: 'button' }))?.actionable) {
-      throw new Error(`the hair the avatar wears (${worn}) is on none of the ${page} Hair pages, so the scenario could not put it back`)
-    }
-    cards = await nextPage(explorer, wearableCards)
-  }
+    if (!equipped && worn !== undefined) return undefined
+    if (!card) throw new Error(`Every card of Hair page ${number} is equipped or cannot be equipped: ${page.map((c) => c.name).join(', ')}`)
+    return { card, equipped }
+  })
+  if (!result) throw new Error(`the hair the avatar wears (${worn}) is on none of the Hair pages, so the scenario could not put it back`)
+  return { ...result.found, page: result.page, start }
 }
 
 /** Press EQUIP on a card and wait for it to flip to UNEQUIP. The Backpack stays open: the look is

@@ -177,7 +177,8 @@ const STILL_MS = 60
 
 const DEFAULT_ARRIVAL_TIMEOUT_MS = 180_000
 
-const sameBox = (a: Control, b: Control): boolean =>
+/** Two reads of a control's box agree, to half a pixel. */
+export const sameBox = (a: Control, b: Control): boolean =>
   Math.abs(a.x - b.x) <= 0.5 && Math.abs(a.y - b.y) <= 0.5 && Math.abs(a.width - b.width) <= 0.5 && Math.abs(a.height - b.height) <= 0.5
 
 /** The error as it may be rethrown: a transport's own error (a timeout, a closed driver) can
