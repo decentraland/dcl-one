@@ -41,6 +41,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   with a "Default" choice; a flood of lines on one conversation is one sound (400 ms). The
   member-of list is read up to 10 pages of 100 (unity-explorer reads one), and one pair of clips
   serves focused and unfocused channels alike, played by the bridge scene from its own content.
+- **Community creation and editing.** The form follows unity-explorer's (fields, limits, texts,
+  the content check's two refusal screens, every HTTP 400 read as the check's answer), with
+  these differences. CANCEL on the refusal screen asks "Discard this community?" first, as the
+  form's own CANCEL does; unity-explorer closes at once. A failed delete shows its message on
+  the community card, like the card's other actions, instead of as a toast. A picture saved by
+  an edit is kept by the bridge for the session, since its URL does not change. My Communities
+  reads the member-of list, so unlisted communities show there; Browse is still one page of 50.
+  The places picker is not ported yet.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.
