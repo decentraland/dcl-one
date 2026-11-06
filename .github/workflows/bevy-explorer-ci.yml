@@ -555,7 +555,10 @@ jobs:
       - name: Identify compiled engine inputs
         id: engine-inputs
         working-directory: .
-        run: echo "key=$(python3 tooling/play-artifact.py engine-cache-key)" >> "$GITHUB_OUTPUT"
+        # A failing script must fail the step: an empty key would make restore-keys match any engine.
+        run: |
+          key=$(python3 tooling/play-artifact.py engine-cache-key)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
       - name: Restore compiled engine
         id: engine-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0

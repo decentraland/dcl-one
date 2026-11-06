@@ -37,6 +37,10 @@ class WorkflowTest(unittest.TestCase):
     def test_pr_web_builds_skip_wasm_opt_only_while_the_benchmark_is_off(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
         job = workflow.split('\n  build-deploy-web:\n', 1)[1].split('\n  headless-packages:\n', 1)[0]
+        self.assertIn('          key=$(python3 tooling/play-artifact.py engine-cache-key)\n'
+                      '          echo "key=$key" >> "$GITHUB_OUTPUT"\n', job)
+        self.assertIn("      - name: Save tested compiled engine\n"
+                      "        if: steps.engine-cache.outputs.cache-matched-key == ''\n", job)
         self.assertIn("      BEVY_WEB_OPT: ${{ github.event_name == 'pull_request' && "
                       "vars.BENCHMARK_ENABLED_RUNNERS == 'none' && 'unoptimized' || 'optimized' }}\n", job)
         self.assertIn('          key: bevy-engine-v1-${{ env.BEVY_WEB_OPT }}-${{ steps.engine-inputs.outputs.key }}\n'
