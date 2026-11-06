@@ -40,25 +40,24 @@ UPLOAD_STEP = 'Upload the complete web app'
 MAX_BYTES = 2 * 1024**3
 
 
-def api(path, deadline=None):
+def read(request, deadline=None, limit=60):
     # Retry reads within the caller's existing wait budget. Non-waiting imports
     # and final publication checks get only four retries; no writes are repeated.
     attempt = 0
     while True:
-        timeout = 60 if deadline is None else min(60, deadline - time.monotonic())
+        timeout = limit if deadline is None else min(limit, deadline - time.monotonic())
         if timeout <= 0:
             raise TimeoutError('GitHub read exceeded the configured wait deadline')
         try:
-            response = subprocess.check_output(
-                ['gh', 'api', '--method', 'GET', f'repos/{REPO}/{path}'],
-                text=True, stderr=subprocess.PIPE, timeout=timeout)
+            return request(timeout)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-            transient = isinstance(exc, subprocess.TimeoutExpired) or re.search(
-                r'\(HTTP (?:500|502|503|504)\)', exc.stderr or '')
+            stderr = exc.stderr.decode(errors='replace') if isinstance(exc.stderr, bytes) else (exc.stderr or '')
+            # gh reports "Service Unavailable (HTTP 503)" for a JSON error and "HTTP 503" for a bare one.
+            transient = isinstance(exc, subprocess.TimeoutExpired) or re.search(r'\bHTTP (?:500|502|503|504)\b', stderr)
             exhausted = attempt >= 4 if deadline is None else time.monotonic() >= deadline
             if not transient or exhausted:
-                if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
-                    print(exc.stderr, file=sys.stderr, end='')
+                if isinstance(exc, subprocess.CalledProcessError) and stderr:
+                    print(stderr, file=sys.stderr, end='')
                 raise
             delay = min(30, 2 ** min(attempt + 1, 5))
             if deadline is not None:
@@ -68,8 +67,23 @@ def api(path, deadline=None):
             if deadline is not None and time.monotonic() >= deadline:
                 raise
             attempt += 1
-        else:
-            return json.loads(response)
+
+
+def api(path, deadline=None):
+    def request(timeout):
+        return json.loads(subprocess.check_output(
+            ['gh', 'api', '--method', 'GET', f'repos/{REPO}/{path}'],
+            text=True, stderr=subprocess.PIPE, timeout=timeout))
+    return read(request, deadline)
+
+
+def download(record, archive, deadline=None):
+    """Save an artifact archive; a transient failure starts the file over."""
+    def request(timeout):
+        with archive.open('wb') as output:
+            subprocess.run(['gh', 'api', f'repos/{REPO}/actions/artifacts/{record["id"]}/zip'],
+                           stdout=output, stderr=subprocess.PIPE, check=True, timeout=timeout)
+    read(request, deadline, limit=300)
 
 
 def workflow_runs(deadline=None):
@@ -238,9 +252,7 @@ def download_run(run, pr=None, production=False, receipt=None, deadline=None, *,
     with tempfile.TemporaryDirectory(prefix='play-ci-') as temporary:
         tmp = Path(temporary)
         archive = tmp / 'web.zip'
-        with archive.open('wb') as output:
-            subprocess.run(['gh', 'api', f'repos/{REPO}/actions/artifacts/{record["id"]}/zip'],
-                           stdout=output, check=True, timeout=300)
+        download(record, archive, deadline)
         with archive.open('rb') as stream:
             if hashlib.file_digest(stream, 'sha256').hexdigest() != checksum.split(':')[1]:
                 raise ValueError('GitHub Explorer archive digest mismatch')
@@ -297,6 +309,9 @@ def fetch(wait=0, production=False, receipt=None):
     read_deadline = deadline if wait > 0 else None
     checked = set()
     keys = {}
+    # This commit's own finished Bevy runs: the ones to rerun when nothing else can supply it.
+    head = pr['head'] if pr else os.environ.get('GITHUB_SHA')
+    own = {}
     candidates = workflow_runs(read_deadline)
     while True:
         pending = set()
@@ -306,6 +321,8 @@ def fetch(wait=0, production=False, receipt=None):
             if not trusted(run, pr) or attempt in checked:
                 continue
             if run['status'] == 'completed' and run['conclusion'] != 'success':
+                if match_inputs and run['head_sha'] == head:
+                    own.setdefault(run['id'], run['conclusion'])
                 checked.add(attempt)
                 continue
             revision = pr['merge'] if run['event'] == 'pull_request' else run['head_sha']
@@ -342,6 +359,9 @@ def fetch(wait=0, production=False, receipt=None):
         if not pending or time.monotonic() >= deadline:
             recovery = ('Refresh main with: gh workflow run bevy-explorer-ci.yml --ref main. '
                         'Wait for its successful web build, then retry with matching inputs. ')
+            if own:
+                runs = ', '.join(f'{run_id} ({conclusion})' for run_id, conclusion in sorted(own.items()))
+                recovery = f'The Bevy CI run of this commit did not succeed: {runs}. Rerun it, then this job. ' + recovery
             if not production:
                 recovery += ('For local development, build with make bevy-web and use '
                              '--from-build apps/bevy-explorer/dist/web. ')

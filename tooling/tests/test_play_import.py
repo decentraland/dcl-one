@@ -103,6 +103,38 @@ class GitHubReadTests(unittest.TestCase):
                 play.api('actions/runs/42', deadline=10)
             get.assert_not_called()
 
+    def test_bare_http_status_lines_are_transient_too(self):
+        failure = subprocess.CalledProcessError(1, ['gh', 'api'], stderr='gh: HTTP 503\n')
+        with patch.object(play.subprocess, 'check_output', side_effect=[failure, '{"jobs": []}']), \
+                patch.object(play.time, 'sleep') as sleep:
+            self.assertEqual(play.api('actions/runs/42/jobs'), {'jobs': []})
+        sleep.assert_called_once_with(2)
+
+    def test_artifact_download_retries_a_transient_failure_from_a_clean_file(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        archive = Path(temporary.name) / 'web.zip'
+        calls = []
+
+        def gh(args, **kwargs):
+            calls.append((args, kwargs['timeout']))
+            kwargs['stdout'].write(b'partial' if len(calls) == 1 else b'archive')
+            if len(calls) == 1:
+                raise subprocess.CalledProcessError(1, args, stderr=b'gh: HTTP 503\n')
+            return subprocess.CompletedProcess(args, 0)
+
+        with patch.object(play.subprocess, 'run', side_effect=gh), patch.object(play.time, 'sleep') as sleep:
+            play.download({'id': 9}, archive)
+        self.assertEqual(archive.read_bytes(), b'archive')
+        self.assertEqual(calls, [(['gh', 'api', f'repos/{play.REPO}/actions/artifacts/9/zip'], 300)] * 2)
+        sleep.assert_called_once_with(2)
+        # Any other failure is reported at once.
+        missing = subprocess.CalledProcessError(1, ['gh', 'api'], stderr=b'gh: HTTP 404\n')
+        with patch.object(play.subprocess, 'run', side_effect=missing), patch.object(play.time, 'sleep') as sleep, \
+                self.assertRaises(subprocess.CalledProcessError):
+            play.download({'id': 9}, archive)
+        sleep.assert_not_called()
+
 
 class PlayImportTests(unittest.TestCase):
     def setUp(self):
@@ -606,6 +638,29 @@ class PlayImportTests(unittest.TestCase):
             destination = play.fetch()
         self.assertEqual(api.call_count, 3)
         self.assertEqual(json.loads((destination / contract.MANIFEST).read_text())['build_revision'], SHA)
+
+    def test_a_finished_run_of_this_commit_that_cannot_supply_it_is_named_for_a_rerun(self):
+        pr = {'number': 7, 'head': SHA, 'base': 'b' * 40, 'merge': 'c' * 40}
+        own = run(id=51, event='pull_request', head_branch='feature', pull_requests=[{'number': 7}], conclusion='failure')
+        other = run(id=50, head_sha='d' * 40, conclusion='cancelled')
+        with patch.object(play, 'api', return_value={'workflow_runs': [own, other]}), \
+                patch.object(play, 'current_pr', return_value=pr), \
+                patch.object(play, 'engine_changed', return_value=True), \
+                patch.object(contract, 'inputs', return_value='ours'), \
+                patch.object(play, 'download_run') as download, \
+                self.assertRaisesRegex(RuntimeError, r'did not succeed: 51 \(failure\)\. Rerun it, then this job') as failure:
+            play.fetch()
+        download.assert_not_called()
+        self.assertNotIn('50', str(failure.exception))
+        # A main push whose own run was replaced by a newer push names that run.
+        superseded = run(id=52, conclusion='cancelled')
+        with patch.object(play, 'api', return_value={'workflow_runs': [superseded, other]}), \
+                patch.object(play, 'current_pr', return_value=None), \
+                patch.object(contract, 'inputs', return_value='ours'), \
+                patch.dict(play.os.environ, {'GITHUB_SHA': SHA}), \
+                self.assertRaisesRegex(RuntimeError, r'did not succeed: 52 \(cancelled\)') as failure:
+            play.fetch()
+        self.assertNotIn('50', str(failure.exception))
 
     def test_pr_without_engine_changes_still_requires_a_trusted_successful_run(self):
         pr = {'number': 7, 'head': SHA, 'base': 'b' * 40, 'merge': 'c' * 40}
