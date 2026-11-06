@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { risingIds } from './lineIds'
+import { risingIds, rowKeys } from './lineIds'
 
 describe('risingIds', () => {
   const counter = (start: number) => {
@@ -28,5 +28,19 @@ describe('risingIds', () => {
     const lines = [{ id: 2 }, { id: 1 }]
     risingIds(lines, counter(3))
     expect(lines).toEqual([{ id: 2 }, { id: 1 }])
+  })
+})
+
+describe('rowKeys', () => {
+  it('keys a row on its message id', () => {
+    expect(rowKeys(['0xa:1', '0xb:2'])).toEqual(['0xa:1#0', '0xb:2#0'])
+  })
+
+  it('tells rows repeating a message id apart by their order', () => {
+    expect(rowKeys(['0xa:1', '0xa:1', '0xb:2', '0xa:1'])).toEqual(['0xa:1#0', '0xa:1#1', '0xb:2#0', '0xa:1#2'])
+  })
+
+  it('keys a row without a message id on its position', () => {
+    expect(rowKeys(['', '0xa:1', ''])).toEqual(['#0', '0xa:1#0', '#2'])
   })
 })

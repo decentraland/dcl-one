@@ -274,6 +274,19 @@ describe('community chat domain', () => {
     expect(shown.slice(0, 2)).toEqual([['m1', 0], ['m2', 1]])
   })
 
+  it('two lines sharing a message id keep their own ids across reads', async () => {
+    const h = renderSession()
+    await enterWithCommunities(h)
+    const chat = () => h.session().chat
+    const twin = (message: string) => ({ from: MOJITO, message, receivedAt: 1000, messageId: `${MOJITO}:1`, reactions: [] })
+    const entries = [twin('first'), twin('second'), { from: BOB, message: 'third', receivedAt: 2000, messageId: `${BOB}:2`, reactions: [] }]
+    act(() => chat().select('community:c1'))
+    act(() => h.driver.emit({ kind: 'dmHistory', address: 'community:c1', entries }))
+    expect(chat().messages.map((m) => [m.message, m.id])).toEqual([['first', 0], ['second', 1], ['third', 2]])
+    act(() => h.driver.emit({ kind: 'dmHistory', address: 'community:c1', entries }))
+    expect(chat().messages.map((m) => [m.message, m.id])).toEqual([['first', 0], ['second', 1], ['third', 2]])
+  })
+
   it('a reaction on a community line is applied to the line shown, without reading the store back', async () => {
     const h = renderSession()
     await enterWithCommunities(h)

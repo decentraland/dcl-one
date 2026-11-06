@@ -251,6 +251,42 @@ describe('community chat domain', () => {
     expect(chat().messages.map((m) => [m.message, m.id])).toEqual([['m300', 202]])
   })
 
+  it('a line appended while the history of a tab is read stays last, with an id above the lines read after it', async () => {
+    const h = renderSession()
+    await enterWithCommunities(h)
+    const chat = () => h.session().chat
+    const entry = (n: number) => ({ from: MOJITO, message: `m${n}`, receivedAt: n * 1000, messageId: `${MOJITO}:${n}`, reactions: [] })
+    act(() => chat().select('community:c1'))
+    act(() => h.driver.emit({ kind: 'dmHistory', address: 'community:c1', entries: [entry(1), entry(2)] }))
+    act(() => chat().select('Nearby'))
+    // two lines land while the tab is in the background: the store has them, the tab does not
+    act(() => h.driver.emit({ kind: 'chat', chat: { sender: BOB, message: 'm3', channel: 'community:c1', messageId: `${BOB}:3` } }))
+    act(() => h.driver.emit({ kind: 'chat', chat: { sender: BOB, message: 'm4', channel: 'community:c1', messageId: `${BOB}:4` } }))
+    // the tab is shown again: its history is asked for, and a live line lands before the answer
+    act(() => chat().select('community:c1'))
+    act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: 'm5', channel: 'community:c1', messageId: `${MOJITO}:5` } }))
+    act(() => h.driver.emit({ kind: 'dmHistory', address: 'community:c1', entries: [entry(1), entry(2), { from: BOB, message: 'm3', receivedAt: 3000, messageId: `${BOB}:3`, reactions: [] }, { from: BOB, message: 'm4', receivedAt: 4000, messageId: `${BOB}:4`, reactions: [] }] }))
+    const shown = chat().messages.map((m) => [m.message, m.id])
+    expect(shown.map(([message]) => message)).toEqual(['m1', 'm2', 'm3', 'm4', 'm5'])
+    const ids = shown.map(([, id]) => id as number)
+    for (let i = 1; i < ids.length; i++) expect(ids[i]).toBeGreaterThan(ids[i - 1])
+    // the lines shown before keep their ids
+    expect(shown.slice(0, 2)).toEqual([['m1', 0], ['m2', 1]])
+  })
+
+  it('two lines sharing a message id keep their own ids across reads', async () => {
+    const h = renderSession()
+    await enterWithCommunities(h)
+    const chat = () => h.session().chat
+    const twin = (message: string) => ({ from: MOJITO, message, receivedAt: 1000, messageId: `${MOJITO}:1`, reactions: [] })
+    const entries = [twin('first'), twin('second'), { from: BOB, message: 'third', receivedAt: 2000, messageId: `${BOB}:2`, reactions: [] }]
+    act(() => chat().select('community:c1'))
+    act(() => h.driver.emit({ kind: 'dmHistory', address: 'community:c1', entries }))
+    expect(chat().messages.map((m) => [m.message, m.id])).toEqual([['first', 0], ['second', 1], ['third', 2]])
+    act(() => h.driver.emit({ kind: 'dmHistory', address: 'community:c1', entries }))
+    expect(chat().messages.map((m) => [m.message, m.id])).toEqual([['first', 0], ['second', 1], ['third', 2]])
+  })
+
   it('a reaction on a community line is applied to the line shown, without reading the store back', async () => {
     const h = renderSession()
     await enterWithCommunities(h)

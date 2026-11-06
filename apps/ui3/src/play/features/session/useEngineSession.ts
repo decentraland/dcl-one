@@ -38,6 +38,7 @@ import { openProfileCard } from '../profileCard/ProfileCard'
 import { formatConsoleReply, parseChatCommand } from '../chat/chatCommands'
 import { applyLanguageSetting, clearAutoTranslate } from '../chat/translation'
 import { clearPingMode, shouldPing } from '../chat/ping'
+import { risingIds, rowKeys } from '../chat/lineIds'
 import { communityChannel, communityIdOf } from '../../engine/communityChannel'
 import { mentionName, mentionsName } from '../../engine/mention'
 import { PREF, getPref, setPref } from '../../lib/prefs'
@@ -1295,32 +1296,31 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           const communityId = communityIdOf(key)
           const communityOpen = communityId != null && communityConvosRef.current.some((c) => c.id === communityId) && !closedCommunitiesRef.current.has(communityId)
           if (!openTabsRef.current.has(key) && !communityOpen) break
-          // A line keeps the id it was shown with (matched on messageId; on its position for the
-          // DMs stored before ids, whose store is never trimmed), so a re-read after the engine
-          // trimmed the store leaves keys, the NEW separator and the open reaction bar on the same
-          // lines; only lines not shown before get new, higher ids.
+          // A line keeps the id it was shown with, so a re-read after the engine trimmed the store
+          // leaves keys, the NEW separator and the open reaction bar on the same lines.
           const entries = msg.entries.slice(Math.max(0, msg.entries.length - MAX_CHAT_LINES))
           // a line appended while this read was pending, and stored after the read was queued, is
           // not in the answer: it stays behind the stored rows until a later read returns it
           const appended = appendedRef.current.get(key)
           setDmLines((prev) => {
             const shown = prev[key] ?? []
-            const idKey = (messageId: string, i: number): string => (messageId !== '' ? messageId : `#${i}`)
-            const known = new Map(shown.map((l, i) => [idKey(l.messageId, i), l.id]))
+            const known = new Map(rowKeys(shown.map((l) => l.messageId)).map((k, i) => [k, shown[i].id]))
+            const keys = rowKeys(entries.map((e) => e.messageId))
             const lines: ChatLine[] = entries.map((e, i) => ({
               sender: e.from,
               message: e.message,
               channel: key,
               messageId: e.messageId,
-              id: known.get(idKey(e.messageId, i)) ?? nextDmId(key),
+              id: known.get(keys[i]) ?? nextDmId(key),
               ts: e.receivedAt,
               reactions: e.reactions
             }))
-            if (appended == null || appended.size === 0) return { ...prev, [key]: lines }
+            const nextId = (): number => nextDmId(key)
+            if (appended == null || appended.size === 0) return { ...prev, [key]: risingIds(lines, nextId) }
             const stored = new Set(lines.map((l) => l.messageId))
             const pending = shown.filter((l) => appended.has(l.messageId) && !stored.has(l.messageId))
             appendedRef.current.set(key, new Set(pending.map((l) => l.messageId)))
-            return { ...prev, [key]: [...lines, ...pending].slice(-MAX_CHAT_LINES) }
+            return { ...prev, [key]: risingIds([...lines, ...pending], nextId).slice(-MAX_CHAT_LINES) }
           })
           break
         }

@@ -272,11 +272,14 @@
   line-height: 20px;
   color: var(--text);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .navRight {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: none;
 }
 .membersBtn {
   height: 32px;
