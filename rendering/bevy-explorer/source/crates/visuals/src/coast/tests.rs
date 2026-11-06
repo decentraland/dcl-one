@@ -208,6 +208,21 @@ fn the_flat_ocean_stays_below_the_deepest_trough() {
     assert!(OCEAN_DROP > waves::tests::wave_bound() + 0.2);
 }
 
+/// The sea writes no depth, so the flat ocean discards itself under the wave grid: the hole stays
+/// inside the grid wherever the snapped grid centre sits, and covers every moving wave.
+#[test]
+fn the_flat_ocean_gives_way_under_the_wave_grid() {
+    const {
+        assert!(
+            OCEAN_PLANE_HOLE + waves::WAVE_GRID_SPACING_M * 0.5 <= waves::WAVE_GRID_SIZE_M * 0.5
+        );
+        assert!(OCEAN_PLANE_HOLE >= waves::WAVE_FADE.y);
+    }
+    // the shader tells the plane by height: it sits under `OCEAN_PLANE_TOP`, the deepest trough
+    // above it
+    assert!(SEA_LEVEL - waves::tests::wave_bound() > SEA_LEVEL - OCEAN_DROP + 0.1);
+}
+
 #[test]
 fn shader_wave_constants_match_the_cpu_constants() {
     use std::collections::BTreeSet;
@@ -268,7 +283,15 @@ fn shader_wave_constants_match_the_cpu_constants() {
             used.insert(piece.split('}').next().unwrap().to_string());
         }
     }
-    let names: BTreeSet<_> = expected.into_iter().map(|(name, _)| name).collect();
+    let plane = ocean_plane_defs().into_iter().map(|def| match def {
+        ShaderDefVal::UInt(name, _) => name,
+        other => panic!("unexpected def {other:?}"),
+    });
+    let names: BTreeSet<_> = expected
+        .into_iter()
+        .map(|(name, _)| name)
+        .chain(plane)
+        .collect();
     assert_eq!(used, names);
 }
 

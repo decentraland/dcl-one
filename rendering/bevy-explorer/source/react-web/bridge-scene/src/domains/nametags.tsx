@@ -17,7 +17,6 @@ import {
   CameraMode,
   CameraType,
   Material,
-  MaterialTransparencyMode,
   MeshRenderer,
   PlayerIdentityData,
   Transform,
@@ -270,20 +269,18 @@ function tagElement(userId: string): () => ReactEcs.JSX.Element | null {
   }
 }
 
-// The pill material: the UiCanvas texture, alpha-blended + faintly emissive so it stays legible.
-// `opacity` fades the whole pill by distance (albedo alpha for the body, emissive for the glow text).
+// The pill material: the UiCanvas texture, unlit and alpha-blended. Unlit like Unity's nametags,
+// which are UI: no light, shade or shadow reaches the pill, so a shadow falling across it (the
+// avatar's own, as the camera closes in) never darkens it. The texture doubles as the alpha
+// texture so its transparent corners blend at full opacity. `opacity` fades the whole pill by
+// distance. Unlit materials cast no shadow.
 function setTagMaterial(tag: Entity, opacity: number): void {
   const uiTexture = { tex: { $case: 'uiTexture' as const, uiTexture: { uiCanvasEntity: tag } } }
-  Material.setPbrMaterial(tag, {
-    transparencyMode: MaterialTransparencyMode.MTM_ALPHA_BLEND,
-    // The bevy client defaults cast_shadows to true; explicit false marks the quad NotShadowCaster
-    // so the pill doesn't cast a shadow (bevy-ui-scene PR #74).
-    castShadows: false,
+  Material.setBasicMaterial(tag, {
     texture: uiTexture,
-    emissiveTexture: uiTexture,
-    emissiveColor: Color4.White(),
-    emissiveIntensity: 0.2 * opacity,
-    albedoColor: Color4.create(1, 1, 1, opacity)
+    alphaTexture: uiTexture,
+    diffuseColor: Color4.create(1, 1, 1, opacity),
+    castShadows: false
   })
 }
 

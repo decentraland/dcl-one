@@ -1,6 +1,7 @@
-// Stars, added onto the finished frame after depth of field so they stay pin sharp at screen
-// resolution. Each pixel of clear night sky looks up the few star cells around its view
-// direction on a cube grid and adds any star that lands within a pixel or two of it. The
+// Stars, added at screen resolution: after depth of field where the view has it, else before
+// the transparent pass (see stars.rs). Each pixel of clear night sky looks up the few star cells
+// around its view direction on a cube grid and adds any star that lands within a pixel or two of
+// it. The
 // output is blended additively, so pixels with no star are discarded.
 
 #import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput

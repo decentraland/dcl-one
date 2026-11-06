@@ -49,7 +49,8 @@ describe('graphics presets', () => {
   const web: Setting[] = [
     { ...base, name: 'Anti-aliasing', namedVariants: variants('Off', 'FXAA (Low)', 'FXAA (High)') },
     { ...base, name: 'Shadow Distance', namedVariants: [] },
-    { ...base, name: 'Lens Flare', namedVariants: variants('Off', 'On') }
+    { ...base, name: 'Lens Flare', namedVariants: variants('Off', 'On') },
+    { ...base, name: 'Bloom', namedVariants: variants('Off', 'Low', 'High') }
   ]
   const native: Setting[] = [
     {
@@ -65,6 +66,8 @@ describe('graphics presets', () => {
     expect(target(web, 'Anti-aliasing')).toBe(2)
     expect(target(web, 'Shadow Distance')).toBe(60)
     expect(target(web, 'Lens Flare')).toBe(1)
+    // Unity's Medium enables bloom, and its halos show
+    expect(target(web, 'Bloom')).toBe(2)
   })
 
   it('Medium picks MSAA 2x when the engine publishes it', () => {

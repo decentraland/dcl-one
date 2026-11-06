@@ -16,7 +16,8 @@
     forward_io::{VertexOutput, FragmentOutput},
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
-    mesh_view_bindings::{globals, view, view_transmission_texture, view_transmission_sampler},
+    mesh_view_bindings::{globals, lights, view, view_transmission_texture, view_transmission_sampler},
+    shadows,
 }
 #import "embedded://shaders/simplex.wgsl"::simplex_noise_3d
 #ifdef TONEMAP_IN_SHADER
@@ -24,9 +25,20 @@
 #endif
 #import "embedded://visuals/coast_surf.wgsl"::coast_surf
 #import "embedded://visuals/coast_profile.wgsl"::coast_profile
+#import "embedded://shaders/shadow_softening.wgsl"::soften_directional_shadow
+
+// same softened sun shadows as scene materials (see bound_material.wgsl)
+override fn shadows::fetch_directional_shadow(light_id: u32, frag_position: vec4<f32>, surface_normal: vec3<f32>, view_z: f32) -> f32 {
+    let base = shadows::fetch_directional_shadow(light_id, frag_position, surface_normal, view_z);
+    // the far bound of the last cascade is the shadow distance for this light
+    let light = &lights.directional_lights[light_id];
+    let far = (*light).cascades[max((*light).num_cascades, 1u) - 1u].far_bound;
+    let to_frag = frag_position.xyz - view.world_position;
+    return soften_directional_shadow(base, far, dot(to_frag, to_frag));
+}
 
 #ifdef ENVIRONMENT_MAP
-#import bevy_pbr::{ambient, clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting, mesh_view_bindings::lights}
+#import bevy_pbr::{ambient, clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting}
 #import "embedded://shaders/sky_envmap_lookup.wgsl"::{sky_envmap_input, sky_envmap_level}
 
 // the sky envmap, levelled towards the flat ambient light, is the only ambient light
@@ -176,6 +188,14 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // blend; there is no intersection term)
     var color = apply_pbr_lighting(pbr);
     color = vec4(mix(scene, color.rgb, saturate(fog + foam)), color.a);
+    // the flat ocean plane lies under the wave grid that follows the camera, and the sea writes
+    // no depth (WaterExtension::specialize), so the plane gives way wherever the grid covers it;
+    // the waves never reach it (coast/tests.rs), and the check sits after every derivative
+    let from_grid = abs(in.world_position.xz - wave.camera_xz);
+    if in.world_position.y < bitcast<f32>(#{OCEAN_PLANE_TOP}u)
+        && max(from_grid.x, from_grid.y) < bitcast<f32>(#{OCEAN_PLANE_HOLE}u) {
+        discard;
+    }
     var out: FragmentOutput;
     out.color = main_pass_post_lighting_processing(pbr, color);
     return out;

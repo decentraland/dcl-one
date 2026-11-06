@@ -35,7 +35,7 @@ impl AppSetting for BloomSetting {
         match self {
             BloomSetting::Off => "Off: No bloom.",
             BloomSetting::Low => "Low: A subtle bloom effect is applied.",
-            BloomSetting::High => "High: The bloom effect smacks you in the face and makes it hard to see.",
+            BloomSetting::High => "High: Unity's bloom, as in the Medium and High presets: bright and emissive surfaces glow.",
         })
     }
 

@@ -42,9 +42,9 @@ flowchart LR
 ## The scene loop
 
 `run_scene_loop` runs a separate `Schedule` (`SceneLoopSchedule`) repeatedly inside the frame
-budget. It is also the frame pacer on native: the budget is one frame at the monitor refresh
-rate under vsync, or at the configured fps target, and after the loop the thread spin-sleeps to
-the deadline.
+budget. It is also the frame pacer on native: the budget is one frame at the configured fps
+target, under vsync no faster than the monitor refresh rate, and after the loop the thread
+spin-sleeps to the deadline.
 
 Each pass of the loop runs four chained sets (`SceneLoopSets`):
 
@@ -128,11 +128,13 @@ Other named sets: `RealmLifecycle` for systems that react to a realm change, `Te
 ## Render world
 
 The render app is bevy's. We add a few `RenderSet::Prepare*` systems for custom materials and
-uniforms, and three render-graph nodes in `Core3d`: the lens flare between `EndMainPass` and
-`Bloom` (`crates/visuals/src/lens_flare.rs`), then, between `DepthOfField` and `Tonemapping`, the
-hover glow (`crates/scene_material/src/highlight`, whose mask phase also adds queue and sort
-systems in `RenderSet::QueueMeshes` and `RenderSet::PhaseSort`) and the stars pass
-(`crates/visuals/src/stars.rs`). The world camera renders to an image that a `Core2d` compositor
+uniforms, and four render-graph nodes in `Core3d`: the early stars pass between
+`MainTransmissivePass` and `MainTransparentPass`, which draws for views without depth of field
+(every MSAA view), the lens flare between `EndMainPass` and `Bloom`
+(`crates/visuals/src/lens_flare.rs`), then, between `DepthOfField` and `Tonemapping`, the hover
+glow (`crates/scene_material/src/highlight`, whose mask phase also adds queue and sort systems in
+`RenderSet::QueueMeshes` and `RenderSet::PhaseSort`) and the stars pass for views with depth of
+field (`crates/visuals/src/stars.rs`). The world camera renders to an image that a `Core2d` compositor
 camera (`crates/visuals/src/upscale.rs`, order 1) draws onto the window; that camera carries the
 UI. Render-world ordering follows bevy's conventions, not ours.
 

@@ -22,7 +22,8 @@ use bevy::{
     render::{
         mesh::{MeshVertexBufferLayoutRef, PrimitiveTopology},
         render_resource::{
-            AsBindGroup, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError,
+            AsBindGroup, RenderPipelineDescriptor, ShaderDefVal, ShaderRef,
+            SpecializedMeshPipelineError,
         },
     },
 };
@@ -68,6 +69,19 @@ const OCEAN_SIZE: f32 = 32768.0;
 const OCEAN_SNAP: f32 = 64.0;
 /// The flat ocean lies below the wave grid's deepest trough (0.69 m), so the two never z-fight.
 const OCEAN_DROP: f32 = 1.0;
+/// Half the side of the square around the camera where the flat ocean discards itself, under the
+/// wave grid: the grid's half side less its snap, since the grid centre is the camera snapped.
+const OCEAN_PLANE_HOLE: f32 = waves::WAVE_GRID_SIZE_M * 0.5 - waves::WAVE_GRID_SPACING_M;
+
+/// coast_water.wgsl's defs for which fragments are the flat ocean's (below `OCEAN_PLANE_TOP`) and
+/// where it gives way to the wave grid; floats as their bits
+fn ocean_plane_defs() -> [ShaderDefVal; 2] {
+    let float = |name: &str, value: f32| ShaderDefVal::UInt(name.into(), value.to_bits());
+    [
+        float("OCEAN_PLANE_TOP", SEA_LEVEL - OCEAN_DROP + 0.1),
+        float("OCEAN_PLANE_HOLE", OCEAN_PLANE_HOLE),
+    ]
+}
 
 pub(crate) struct CoastPlugin;
 
@@ -80,7 +94,14 @@ impl Plugin for CoastPlugin {
 
         app.init_resource::<CoastState>()
             .add_plugins(MaterialPlugin::<CliffMaterial>::default())
-            .add_plugins(MaterialPlugin::<WaterMaterial>::default())
+            // no depth prepass: the sea writes no depth (see `WaterExtension::specialize`), and a
+            // prepass would put it into the depth buffer anyway. Without depth the ocean plane
+            // would draw over the wave grid above it, so the plane discards itself under the grid
+            // (coast_water.wgsl)
+            .add_plugins(MaterialPlugin::<WaterMaterial> {
+                prepass_enabled: false,
+                ..default()
+            })
             .add_systems(Startup, setup)
             .add_systems(
                 PostUpdate,
@@ -154,6 +175,12 @@ impl MaterialExtension for WaterExtension {
         descriptor.vertex.shader_defs.extend(defs.iter().cloned());
         if let Some(fragment) = descriptor.fragment.as_mut() {
             fragment.shader_defs.extend(defs);
+            fragment.shader_defs.extend(ocean_plane_defs());
+        }
+        // Ocean.mat's `_ZWrite` is 0: the sea tests depth but writes none, so alpha-blended
+        // geometry below the surface, drawn later in the transparent pass, is not hidden by it
+        if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
+            depth_stencil.depth_write_enabled = false;
         }
         Ok(())
     }

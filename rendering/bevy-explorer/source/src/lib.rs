@@ -223,7 +223,7 @@ pub struct DecentralandArguments {
     /// `--features inspect`
     #[arg(long, value_name = "scene_hash", help_heading = DEBUG)]
     pub inspect: Option<String>,
-    /// Target fps (default 60; overridden by the refresh rate when vsync is on). Also `/fps`
+    /// Target fps (default 60; under vsync no faster than the refresh rate). Also `/fps`
     #[arg(long = "fps", value_name = "n", help_heading = SETTINGS)]
     pub fps_target: Option<usize>,
     /// Run the portable/startup scenes in preview mode

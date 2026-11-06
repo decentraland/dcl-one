@@ -946,8 +946,8 @@ impl Default for GraphicsSettings {
             window: WindowSetting::Windowed,
             // fullscreen_res: FullscreenResSetting(UVec2::new(1280,720)),
             fog: FogSetting::On,
-            bloom: BloomSetting::Off, // Medium's bloom is on without HDR, so invisible
-            dof: DofSetting::Off,     // Unity has none
+            bloom: BloomSetting::High, // Medium's bloomEnabled; High is Unity's bloom
+            dof: DofSetting::Off,      // Unity has none
             ssao: SsaoSetting::Off,
             sky_reflections: SkyReflectionSetting::High,
             oob: 2.0,
@@ -1085,18 +1085,27 @@ pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShad
     })
 }
 
-/// The sun's shadow depth bias (a world length) and normal bias for a quality and a shadow
-/// distance. unity: `QualityPresetsAsset.asset` DepthBias 1.75 (Medium) and 1.56 (High) in shadow
-/// map texels, NormalBias 0; the texel is sized from the widest cascade, about twice its far
-/// bound across the map, so the near cascades of High carry more bias than Unity's.
-pub fn sun_shadow_bias(setting: ShadowSetting, distance: f32) -> (f32, f32) {
+/// bevy's default directional depth bias, a world length: the constant floor under the
+/// per-cascade normal bias
+pub const SUN_SHADOW_DEPTH_BIAS: f32 = 0.02;
+/// URP's soft shadow kernel radius, by which `ShadowUtils.GetShadowBias` scales the bias of soft
+/// shadows
+const SOFT_SHADOW_KERNEL_RADIUS: f32 = 2.5;
+
+/// The sun's shadow depth bias (a world length) and normal bias (shadow map texels) for a quality.
+/// unity: `QualityPresetsAsset.asset` DepthBias 1.75 (Medium) and 1.56 (High) texels of each
+/// cascade, times the soft kernel radius. bevy's depth bias is one world length for every
+/// cascade, so those texels go to its normal bias, the bias bevy scales by each cascade's texel;
+/// the depth bias stays bevy's small default. A depth bias sized from the widest cascade instead
+/// over-biased the near cascades and still let the soft filter's wide kernel shade the ground with
+/// its own shadow (acne) on the far ones.
+pub fn sun_shadow_bias(setting: ShadowSetting) -> (f32, f32) {
     let texels = match setting {
         ShadowSetting::Off => return (0.0, 0.0),
         ShadowSetting::Low => 1.75,
         ShadowSetting::High => 1.56,
     };
-    let texel_size = 2.0 * distance.max(MIN_CASCADE) / SUN_SHADOW_MAP_SIZE as f32;
-    (texels * texel_size, 0.0)
+    (SUN_SHADOW_DEPTH_BIAS, texels * SOFT_SHADOW_KERNEL_RADIUS)
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -2024,7 +2033,7 @@ mod tests {
         assert_eq!((g.fps_target, g.vsync, g.render_scale), (60, true, 1.0));
         assert_eq!(
             (g.bloom, g.avatar_outline, g.lens_flare),
-            (BloomSetting::Off, true, true)
+            (BloomSetting::High, true, true)
         );
         assert_eq!(
             (
@@ -2052,8 +2061,10 @@ mod tests {
 
     #[test]
     fn generation_4_resets_managed_fields_and_keeps_the_rest() {
-        let mut cfg = AppConfig::default();
-        cfg.settings_generation = 3;
+        let mut cfg = AppConfig {
+            settings_generation: 3,
+            ..Default::default()
+        };
         cfg.graphics.ambient_brightness = 10;
         cfg.graphics.oob = 0.0;
         cfg.graphics.dof = DofSetting::High;
@@ -2115,10 +2126,17 @@ mod tests {
 
     #[test]
     fn sun_shadow_bias_is_unitys_texels() {
-        // medium: 1.75 texels of a 1024 map spanning twice 60 m
-        let (depth, normal) = sun_shadow_bias(ShadowSetting::Low, 60.0);
-        assert!((depth - 1.75 * 120.0 / 1024.0).abs() < 1e-5 && normal == 0.0);
-        assert_eq!(sun_shadow_bias(ShadowSetting::Off, 60.0), (0.0, 0.0));
+        // Unity's texels times the soft kernel radius, per cascade texel through the normal bias;
+        // the depth bias is bevy's small floor, whatever the quality
+        assert_eq!(
+            sun_shadow_bias(ShadowSetting::Low),
+            (SUN_SHADOW_DEPTH_BIAS, 1.75 * 2.5)
+        );
+        assert_eq!(
+            sun_shadow_bias(ShadowSetting::High),
+            (SUN_SHADOW_DEPTH_BIAS, 1.56 * 2.5)
+        );
+        assert_eq!(sun_shadow_bias(ShadowSetting::Off), (0.0, 0.0));
     }
 
     #[test]

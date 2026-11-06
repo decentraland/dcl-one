@@ -19,7 +19,7 @@ const PRESET_VALUES: Record<string, [PresetValue, PresetValue, PresetValue]> = {
   'Target Frame Rate': ['30 fps', '60 fps', '144 fps'],
   'Render Resolution': [50, 100, 100],
   'Anti-aliasing': ['Off', ['MSAA 2x', 'FXAA (High)'], ['MSAA 8x', 'FXAA (High)']],
-  Bloom: ['Off', 'Off', 'High'], // Medium's bloom is on without HDR, so invisible
+  Bloom: ['Off', 'High', 'High'], // High is Unity's bloom; Medium and High both enable it
   'Avatar Outline': ['Off', 'On', 'On'],
   'Shadow settings': ['Off', 'Low', 'High'],
   'Shadow Distance': [40, 60, 100],

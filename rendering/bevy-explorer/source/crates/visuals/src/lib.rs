@@ -323,12 +323,9 @@ fn apply_global_light(
         return;
     }
 
-    let (shadow_depth_bias, shadow_normal_bias) = shadow_bias.0.unwrap_or_else(|| {
-        sun_shadow_bias(
-            setting.graphics.shadow_settings,
-            setting.graphics.shadow_distance,
-        )
-    });
+    let (shadow_depth_bias, shadow_normal_bias) = shadow_bias
+        .0
+        .unwrap_or_else(|| sun_shadow_bias(setting.graphics.shadow_settings));
     let mut directional_layers = RenderLayers::none();
     for (entity, layer, mut light_trans, mut directional) in sun.iter_mut() {
         if !next_light.layers.intersects(&RenderLayers::layer(layer.0)) {
@@ -471,10 +468,7 @@ fn shadow_bias_console_command(
     setting: Res<AppConfig>,
 ) {
     if let Some(Ok(command)) = input.take() {
-        let preset = sun_shadow_bias(
-            setting.graphics.shadow_settings,
-            setting.graphics.shadow_distance,
-        );
+        let preset = sun_shadow_bias(setting.graphics.shadow_settings);
         bias.0 = command
             .depth
             .map(|depth| (depth, command.normal.unwrap_or(preset.1)));

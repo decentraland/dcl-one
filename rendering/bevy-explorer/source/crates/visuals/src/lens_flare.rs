@@ -11,7 +11,10 @@ use bevy::{
         core_3d::graph::{Core3d, Node3d},
         fullscreen_vertex_shader::fullscreen_shader_vertex_state,
     },
-    ecs::{query::QueryItem, system::lifetimeless::Read},
+    ecs::{
+        query::{Has, QueryItem},
+        system::lifetimeless::Read,
+    },
     image::BevyDefault as _,
     platform::collections::HashMap,
     prelude::*,
@@ -19,7 +22,8 @@ use bevy::{
         extract_component::{ExtractComponent, ExtractComponentPlugin},
         extract_resource::{ExtractResource, ExtractResourcePlugin},
         render_graph::{
-            NodeRunError, RenderGraphApp, RenderGraphContext, RenderLabel, ViewNode, ViewNodeRunner,
+            NodeRunError, RenderGraph, RenderGraphApp, RenderGraphContext, RenderLabel, ViewNode,
+            ViewNodeRunner,
         },
         render_resource::{
             binding_types::{texture_depth_2d, texture_depth_2d_multisampled, uniform_buffer},
@@ -348,8 +352,20 @@ impl Plugin for LensFlarePlugin {
     }
 
     fn finish(&self, app: &mut App) {
-        app.sub_app_mut(RenderApp)
-            .init_resource::<LensFlarePipeline>();
+        let render_app = app.sub_app_mut(RenderApp);
+        render_app.init_resource::<LensFlarePipeline>();
+        // bevy orders the wireframe pass only between the main pass and post processing. Under
+        // MSAA it draws into the multisampled frame and resolves it again, which overwrites
+        // whatever was drawn onto the resolved frame before it: the flare, bloom and the
+        // highlight outlines. It goes first, ahead of the flare and so of all of them.
+        let has_wireframe = render_app
+            .world()
+            .resource::<RenderGraph>()
+            .get_sub_graph(Core3d)
+            .is_some_and(|graph| graph.get_node_state(Node3d::Wireframe).is_ok());
+        if has_wireframe {
+            render_app.add_render_graph_edge(Core3d, Node3d::Wireframe, LensFlareLabel);
+        }
     }
 }
 
@@ -397,13 +413,16 @@ fn update_lens_flare_settings(
 #[derive(Component, Clone)]
 struct LensFlareView;
 
+// Every camera is extracted, with or without `LensFlare`: returning `None` is what removes the
+// marker from a render-world view whose camera lost `LensFlare`. Filtering on `With<LensFlare>`
+// would skip that camera and leave the flare drawing after the setting is turned off.
 impl ExtractComponent for LensFlareView {
-    type QueryData = ();
-    type QueryFilter = With<LensFlare>;
+    type QueryData = Has<LensFlare>;
+    type QueryFilter = With<Camera3d>;
     type Out = Self;
 
-    fn extract_component(_: QueryItem<'_, Self::QueryData>) -> Option<Self> {
-        Some(Self)
+    fn extract_component(flare: QueryItem<'_, Self::QueryData>) -> Option<Self> {
+        flare.then_some(Self)
     }
 }
 
@@ -872,7 +891,11 @@ mod tests {
                     close_when_requested: false,
                 }),
         );
-        app.add_plugins((assets::EmbedAssetsPlugin, LensFlarePlugin));
+        app.add_plugins((
+            assets::EmbedAssetsPlugin,
+            bevy::pbr::wireframe::WireframePlugin::default(),
+            LensFlarePlugin,
+        ));
         // the light ahead of the cameras and up, at noon
         let toward_light = Vec3::new(0.0, 0.2, -1.0).normalize();
         app.insert_resource(SceneGlobalLight {
@@ -885,6 +908,20 @@ mod tests {
         });
         app.finish();
         app.cleanup();
+
+        // the wireframe pass, which resolves the MSAA frame again, runs before the flare
+        let graph = app.sub_app(RenderApp).world().resource::<RenderGraph>();
+        let flare_inputs: Vec<_> = graph
+            .get_sub_graph(Core3d)
+            .unwrap()
+            .iter_node_inputs(LensFlareLabel)
+            .unwrap()
+            .map(|(_, input)| input.label)
+            .collect();
+        assert!(
+            flare_inputs.contains(&Node3d::Wireframe.intern()),
+            "the flare comes after the wireframe pass"
+        );
 
         let world = app.world_mut();
         let mut target = Image::new_fill(
@@ -985,5 +1022,26 @@ mod tests {
             .iter(render_world)
             .count();
         assert_eq!(drawing, 2, "both cameras draw the flare");
+
+        // turning the flare off (the setting removes `LensFlare`) stops it drawing: the render
+        // world's views keep their components between frames, so the extraction has to remove
+        // the marker itself
+        let main_world = app.world_mut();
+        let cameras: Vec<Entity> = main_world
+            .query_filtered::<Entity, With<LensFlare>>()
+            .iter(main_world)
+            .collect();
+        for camera in cameras {
+            main_world.entity_mut(camera).remove::<LensFlare>();
+        }
+        for _ in 0..3 {
+            app.update();
+        }
+        let render_world = app.sub_app_mut(RenderApp).world_mut();
+        let flaring = render_world
+            .query_filtered::<(), With<LensFlareView>>()
+            .iter(render_world)
+            .count();
+        assert_eq!(flaring, 0, "no view flares once LensFlare is removed");
     }
 }

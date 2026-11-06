@@ -24,8 +24,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   flare, the stars and the avatar glow composite pick their pipeline from `view.hdr` and were
   tuned on the HDR path; tonemapping and the sky envmap feed the same target. A per-preset
   toggle would recreate the camera and its target on every preset change. Unity's Medium has
-  bloom enabled with HDR off, so it is effectively invisible there; our Medium maps bloom to Off
-  to reproduce what Unity shows rather than the checkbox. This is a look-parity call, not a
+  bloom enabled with HDR off, and its halos still show on bright and emissive surfaces, so our
+  Medium enables the same bloom as High. On our HDR target emissive values above 1 bloom fully,
+  so Medium's halos can be stronger than Unity's 8-bit ones. This is a look-parity call, not a
   measured one: the cost of the 16-bit target on Low-class machines has not been measured, and
   the render scale is the cheaper lever already in the presets.
 - **Lens flare before depth of field.** bevy blooms before DoF, so the flare runs straight after
@@ -42,15 +43,25 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Ocean.** Water depth comes from the coast profile, not the depth buffer; the foam is
   procedural surface foam with no intersection term; the waves fade out by 500 m and a flat plane
   1 m below takes over; the ripple normals are ours; lighting stays bevy PBR although
-  `Ocean.mat` is `_UNLIT`; refraction has no depth test; the refracted scene is fogged twice.
+  `Ocean.mat` is `_UNLIT`; refraction has no depth test; the refracted scene is fogged twice. As
+  in Unity (`_ZWrite` 0) the sea writes no depth, so alpha-blended geometry under the surface
+  draws over it, unrefracted, instead of vanishing; the refraction samples only opaque geometry.
 - **Imposter cross-fade blends.** Imposters fade with alpha blending over 0.5 s, not blue-noise
   dithering; the live scene is not dithered; the floor quad and bigger-mip replacements pop.
 - **Presets on the web and vSync.** The web has no MSAA, so web Medium and High use FXAA (High);
-  vSync has no HUD setting and defaults on; loading and population settings are outside the
-  presets; DoF and SSAO stay available but are Off in every preset because Unity has neither.
+  vSync has no HUD setting and defaults on, and the target frame rate still caps the frame rate
+  under it (Unity's Low turns vSync off for its 30 fps limit); loading and population settings
+  are outside the presets; DoF and SSAO stay available but are Off in every preset because Unity
+  has neither.
 - **Render scale compositor.** The world always renders to an image that a 2D camera composites
   onto the window: a plain copy at scale 1, FSR EASU below it; bevy's CAS at 0.92 stands in for
   RCAS; the UI rides the compositor at full resolution; `/screenshot` captures the window.
+- **Sun shadow bias goes to bevy's normal bias.** URP biases each cascade by its own texel
+  (`DepthBias` 1.75 or 1.56 texels, times the soft kernel radius 2.5). bevy's depth bias is one
+  world length for every cascade and only its normal bias scales per cascade texel, so Unity's
+  texels times 2.5 are the normal bias and the depth bias stays bevy's 0.02 m. A depth bias
+  sized from the widest cascade let the soft filter shade the ground with its own shadow,
+  jagged-edged patches in Low and High alike, and lost contact shadows.
 - **Sky preset curves are linear.** The fog and flare keys are interpolated linearly; Unity's
   curve tangents are not carried.
 - **Scene and download priority without distance buckets.** unity-explorer ranks scenes and

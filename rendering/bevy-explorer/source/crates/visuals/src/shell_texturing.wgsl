@@ -4,7 +4,7 @@
     #import bevy_pbr::forward_io::{VertexOutput, FragmentOutput};
     #import bevy_pbr::pbr_fragment::pbr_input_from_vertex_output;
     #import bevy_pbr::pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing};
-    #import bevy_pbr::{mesh_view_bindings::lights, shadows};
+    #import bevy_pbr::{mesh_view_bindings::lights, pbr_types, shadows};
     #import "embedded://shaders/shadow_softening.wgsl"::soften_directional_shadow
 #endif
 #import bevy_pbr::mesh_functions::get_tag;
@@ -152,6 +152,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
 #ifndef PREPASS_PIPELINE
     var pbr_input = pbr_input_from_vertex_output(in, is_front, true);
+    // built from the vertex output, not a StandardMaterial, so the fog flag must be set here or
+    // distance fog skips the grass
+    pbr_input.material.flags |= pbr_types::STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
     pbr_input.material.reflectance = vec3(0.125);
     pbr_input.material.base_color = mix(shell.root_color, shell.tip_color, color_factor);
 

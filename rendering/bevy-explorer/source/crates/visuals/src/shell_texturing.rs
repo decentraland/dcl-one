@@ -312,7 +312,6 @@ fn spawn_ground(mut commands: Commands, mut materials: ResMut<Assets<TerrainFlat
                 perceptual_roughness: 1.0,
                 metallic: 0.0,
                 depth_bias: -100.0,
-                fog_enabled: false,
                 ..Default::default()
             },
             extension: TerrainExtension::default(),
@@ -714,6 +713,41 @@ impl<B: Bundle + Clone> SpawnableList<ChildOf> for ParcelGrassShellSpawnList<B> 
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// Every shader that lights a surface fades the sun shadow out towards the shadow distance,
+    /// as URP does. One without the override cuts the shadow off hard at the distance, and
+    /// receivers side by side (ground and grass, a face and its body) disagree.
+    #[test]
+    fn every_lit_shader_fades_the_sun_shadow() {
+        let dirs = [
+            concat!(env!("CARGO_MANIFEST_DIR"), "/src"),
+            concat!(
+                env!("DCL_ONE_ROOT"),
+                "/rendering/bevy-explorer/source/crates/assets/src/assets/shaders"
+            ),
+        ];
+        let mut lit = 0;
+        for dir in dirs {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.extension().is_none_or(|ext| ext != "wgsl") {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).unwrap();
+                if !source.contains("apply_pbr_lighting(") {
+                    continue;
+                }
+                lit += 1;
+                assert!(
+                    source.contains("override fn shadows::fetch_directional_shadow")
+                        && source.contains("soften_directional_shadow(base, far,"),
+                    "{} lights a surface without the sun shadow fade",
+                    path.display()
+                );
+            }
+        }
+        assert!(lit >= 8, "only {lit} lit shaders found");
+    }
 
     /// The softened sun shadow overrides compile on this machine's adapter, in a renderer with no
     /// window: a grass shell (`shell_texturing.wgsl`, main pass and prepass) and a rock

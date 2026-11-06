@@ -461,6 +461,17 @@ impl Plugin for SceneRunnerPlugin {
     }
 }
 
+/// The frames per second the scene loop paces to: the fps target, and under vsync no faster than
+/// the monitor. A target of 0 means no target, so vsync alone sets the pace.
+fn frame_rate(vsync: bool, refresh_hz: Option<f64>, fps_target: usize) -> f64 {
+    let target = fps_target as f64;
+    match (vsync, refresh_hz) {
+        (true, Some(refresh)) if fps_target == 0 => refresh,
+        (true, Some(refresh)) => refresh.min(target),
+        _ => target,
+    }
+}
+
 fn run_scene_loop(world: &mut World) {
     let mut window_query = world.query_filtered::<Entity, With<PrimaryWindow>>();
     let winit_windows = world.get_non_send_resource::<WinitWindows>();
@@ -476,14 +487,9 @@ fn run_scene_loop(world: &mut World) {
         .map_or(config.graphics.fps_target, |session| {
             session.fps_target(config)
         });
-    let fps = if config.graphics.vsync {
-        // TODO this should use video mode if we add fullscreen video modes
-        refresh_rate
-            .map(|rr| ((rr as f64 + 999.0) / 1000.0).ceil())
-            .unwrap_or(fps_target as f64)
-    } else {
-        fps_target as f64
-    };
+    // TODO this should use video mode if we add fullscreen video modes
+    let refresh_hz = refresh_rate.map(|rr| ((rr as f64 + 999.0) / 1000.0).ceil());
+    let fps = frame_rate(config.graphics.vsync, refresh_hz, fps_target);
     let mut loop_schedule = world.resource_mut::<SceneLoopSchedule>();
     let mut schedule = std::mem::take(&mut loop_schedule.schedule);
 
@@ -662,6 +668,22 @@ fn scene_tick_key(partition: PartitionData, active: bool, age: f64) -> FloatOrd 
 
 #[cfg(test)]
 mod tick_key_tests;
+
+#[cfg(test)]
+mod frame_rate_tests {
+    use super::frame_rate;
+
+    /// Under vsync the fps target still caps the loop: Low's 30 fps holds on a 60 Hz monitor.
+    #[test]
+    fn the_fps_target_caps_the_loop_under_vsync() {
+        assert_eq!(frame_rate(true, Some(60.0), 30), 30.0);
+        assert_eq!(frame_rate(true, Some(60.0), 999), 60.0);
+        assert_eq!(frame_rate(true, Some(144.0), 60), 60.0);
+        assert_eq!(frame_rate(true, Some(60.0), 0), 60.0);
+        assert_eq!(frame_rate(true, None, 30), 30.0);
+        assert_eq!(frame_rate(false, Some(60.0), 144), 144.0);
+    }
+}
 
 pub use common::structs::OutOfWorld;
 
