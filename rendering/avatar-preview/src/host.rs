@@ -129,6 +129,15 @@ pub enum Command {
         #[serde(default)]
         files: std::collections::HashMap<String, String>,
     },
+    /// The light rig (see `stage::StageLight`); unset fields keep their value.
+    #[serde(rename_all = "camelCase")]
+    Light {
+        illuminance: Option<f32>,
+        ambient: Option<f32>,
+        yaw: Option<f32>,
+        pitch: Option<f32>,
+        shadow: Option<f32>,
+    },
     /// Capture the frame as PNG, `width` x `height` (the frame is scaled and cropped to fit).
     Screenshot {
         id: String,
@@ -252,6 +261,7 @@ fn apply_commands(
     mut avatars: Query<(Entity, &mut AvatarSelection, &mut AvatarShape), With<PreviewAvatar>>,
     mut pending: ResMut<PendingOutfit>,
     mut inline: InlineCollectibles,
+    mut light: ResMut<crate::stage::StageLight>,
     mut orbit: ResMut<OrbitCamera>,
     mut cameras: Query<(Entity, &mut Camera, &mut Projection), With<PreviewCamera>>,
     windows: Query<Entity, With<PrimaryWindow>>,
@@ -368,6 +378,26 @@ fn apply_commands(
             } => {
                 if let Err(message) = inline.register(&kind, &urn, definition, files) {
                     emit(&Event::Error { message });
+                }
+            }
+            Command::Light {
+                illuminance,
+                ambient,
+                yaw,
+                pitch,
+                shadow,
+            } => {
+                let light = light.as_mut();
+                for (slot, value) in [
+                    (&mut light.illuminance, illuminance),
+                    (&mut light.ambient, ambient),
+                    (&mut light.yaw, yaw),
+                    (&mut light.pitch, pitch),
+                    (&mut light.shadow, shadow),
+                ] {
+                    if let Some(value) = value {
+                        *slot = value;
+                    }
                 }
             }
             Command::StopEmote => {

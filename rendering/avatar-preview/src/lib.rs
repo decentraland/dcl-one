@@ -4,6 +4,7 @@
 //! surface in `host` (commands in, events out).
 
 mod host;
+mod stage;
 
 use assets::EmbedAssetsPlugin;
 use avatar::{AvatarRenderPlugin, AvatarSelection, AvatarShape};
@@ -123,6 +124,7 @@ pub fn run(canvas: &str, base_domain: Option<&str>, flags: &str) {
         CollectiblesPlugin,
         AvatarRenderPlugin,
         HostPlugin,
+        stage::StagePlugin,
     ));
     app.insert_resource(AppConfig::default())
         .insert_resource(PreviewMode::default())
@@ -201,18 +203,21 @@ fn setup_stage(mut commands: Commands, orbit: Res<OrbitCamera>, flags: Res<Stage
     ));
     if flags.no_bloom {
         camera.remove::<bevy::core_pipeline::bloom::Bloom>();
+    } else {
+        // only what is brighter than white blooms (emissive parts), as in the Unity preview: the
+        // Explorer's thresholdless bloom haloes the whole avatar on a transparent page
+        camera.insert(bevy::core_pipeline::bloom::Bloom {
+            intensity: 0.15,
+            prefilter: bevy::core_pipeline::bloom::BloomPrefilter {
+                threshold: 1.0,
+                threshold_softness: 0.5,
+            },
+            ..bevy::core_pipeline::bloom::Bloom::OLD_SCHOOL
+        });
     }
     if flags.no_msaa {
         camera.insert(Msaa::Off);
     }
-    commands.spawn((
-        DirectionalLight {
-            illuminance: 8000.0,
-            shadows_enabled: true,
-            ..default()
-        },
-        Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, -0.6, -1.0, 0.0)),
-    ));
 }
 
 /// The avatar entity exists from the first `outfit` command on: a selection the Explorer's

@@ -24,7 +24,11 @@ const BODY = {
   male: 'urn:decentraland:off-chain:base-avatars:BaseMale',
   female: 'urn:decentraland:off-chain:base-avatars:BaseFemale',
 };
-const DEFAULT_RADIUS = 6; // metres at the default 26.2 degree field of view: a 2 m avatar framed
+// the default framing, measured against wearable-preview's Unity renderer: the avatar fills most
+// of the panel's height, seen from slightly above
+const DEFAULT_RADIUS = 4.6; // metres at the default 26.2 degree field of view
+const DEFAULT_TARGET_Y = 0.95;
+const DEFAULT_BETA = 0.12;
 const DEFAULT_BACKGROUND = '#1a1720';
 // wearable-preview's emote names (PreviewEmote) that the catalyst's base-emotes collection has;
 // the rest (idle, walk, run, jump, fashion poses, love) are its own files and fall back to idle
@@ -100,7 +104,7 @@ const state = {
   applying: null,
   emote: { urn: null, playing: false },
   pending: new Map(), // request id -> { resolve, reject }
-  camera: { alpha: 0, beta: 0.05, radius: DEFAULT_RADIUS, target: [0, 1, 0] },
+  camera: { alpha: 0, beta: DEFAULT_BETA, radius: DEFAULT_RADIUS, target: [0, DEFAULT_TARGET_Y, 0] },
   log: () => {},
 };
 const options = () => ({ ...state.options, ...state.overrides });
@@ -290,7 +294,7 @@ function zoomFactor(zoom) {
 
 function cameraFrom(o) {
   const c = state.camera;
-  c.target = [o.offsetX || 0, 1 + (o.offsetY || 0), o.offsetZ || 0];
+  c.target = [o.offsetX || 0, DEFAULT_TARGET_Y + (o.offsetY || 0), o.offsetZ || 0];
   if (o.cameraX !== null || o.cameraY !== null || o.cameraZ !== null) {
     const dx = (o.cameraX || 0) - c.target[0], dy = (o.cameraY || 0) - c.target[1], dz = (o.cameraZ || 0) - c.target[2];
     c.radius = Math.max(0.5, Math.hypot(dx, dy, dz));
@@ -369,6 +373,9 @@ window.addEventListener('message', async (event) => {
   if (data.type === 'update' && data.payload && typeof data.payload.options === 'object') {
     state.overrides = { ...state.overrides, ...data.payload.options };
     apply();
+  } else if (data.type === 'bevy_light' && data.payload && typeof data.payload === 'object') {
+    // not part of the preview protocol: web/compare.html tunes the light rig with it
+    command({ op: 'light', ...data.payload });
   } else if (data.type === 'controller_request' && data.payload && typeof data.payload.id === 'string') {
     const { id, namespace, method, params } = data.payload;
     const ns = controller[namespace];

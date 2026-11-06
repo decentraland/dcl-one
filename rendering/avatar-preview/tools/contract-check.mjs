@@ -31,7 +31,7 @@ const chrome = spawn(chromePath, [
   // headed browser, but an iframe's console is not captured)
   ...(process.env.SITE_ISOLATION ? [] : ['--disable-features=site-per-process']),
   `--user-data-dir=${process.env.CHROME_PROFILE || 'C:\\Users\\Public\\dcl-preview-chrome-profile'}`,
-  `--remote-debugging-port=${port}`, '--window-size=512,768',
+  `--remote-debugging-port=${port}`, `--window-size=${process.env.WINDOW || '512,768'}`,
   // CHROME_EXTRA_ARGS: more flags, space-separated (for example a GPU backend selection)
   ...(process.env.CHROME_EXTRA_ARGS ? process.env.CHROME_EXTRA_ARGS.split(' ').filter(Boolean) : []),
   'about:blank',
@@ -64,7 +64,7 @@ ws.onmessage = (m) => {
 };
 await send('Runtime.enable'); await send('Page.enable'); await send('Network.enable');
 await send('Network.setCacheDisabled', { cacheDisabled: true });
-await send('Emulation.setDeviceMetricsOverride', { width: 512, height: 768, deviceScaleFactor: 1, mobile: false });
+{ const [w, h] = (process.env.WINDOW || '512,768').split(',').map(Number); await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false }); }
 await send('Page.navigate', { url });
 const evaluate = async (expression) => (await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })).result?.value;
 

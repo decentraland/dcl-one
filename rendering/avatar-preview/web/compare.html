@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Preview comparison</title>
+  <style>
+    :root { --bg: #5b2a8c; }
+    html, body { margin: 0; height: 100%; font: 13px system-ui; color: #eee; background: var(--bg); }
+    header { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; padding: 8px 14px; background: rgba(0,0,0,.35); }
+    header label { display: flex; gap: 6px; align-items: center; }
+    header input[type=range] { width: 110px; }
+    header output { width: 3.5em; font-variant-numeric: tabular-nums; }
+    main { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; height: calc(100% - 70px); box-sizing: border-box; }
+    figure { margin: 0; display: flex; flex-direction: column; min-height: 0; }
+    figcaption { padding: 4px 0; opacity: .8; }
+    iframe { flex: 1; width: 100%; border: 0; background: transparent; }
+  </style>
+</head>
+<body>
+  <!-- The reference renderer and this one side by side, with the same preview options (this page's
+       query string, minus its own keys). `ref=<origin>` names the reference (default: the
+       production wearable-preview, asked for its Unity renderer); `bg=<hex>` the page colour. The
+       sliders send the light rig to the Bevy frame. -->
+  <header>
+    <label>key light <input id="illuminance" type="range" min="0" max="20000" step="250"><output></output></label>
+    <label>ambient <input id="ambient" type="range" min="0" max="8000" step="100"><output></output></label>
+    <label>yaw <input id="yaw" type="range" min="-3.14" max="3.14" step="0.05"><output></output></label>
+    <label>pitch <input id="pitch" type="range" min="0.1" max="1.5" step="0.05"><output></output></label>
+    <label>shadow <input id="shadow" type="range" min="0" max="1" step="0.05"><output></output></label>
+    <button id="copy" type="button">copy light</button>
+  </header>
+  <main>
+    <figure><figcaption id="refcap">reference</figcaption><iframe id="ref" allow="autoplay"></iframe></figure>
+    <figure><figcaption>bevy</figcaption><iframe id="bevy" allow="autoplay"></iframe></figure>
+  </main>
+  <script>
+    const own = new URLSearchParams(location.search);
+    const refOrigin = own.get('ref') || 'https://wearable-preview.decentraland.org';
+    if (own.get('bg')) document.documentElement.style.setProperty('--bg', '#' + own.get('bg').replace('#', ''));
+    const query = new URLSearchParams(location.search);
+    for (const k of ['ref', 'bg']) query.delete(k);
+    const refQuery = new URLSearchParams(query);
+    refQuery.set('unity', 'true');
+    if (!refQuery.has('mode')) refQuery.set('mode', 'marketplace');
+    document.getElementById('ref').src = `${refOrigin}/?${refQuery}`;
+    document.getElementById('refcap').textContent = `reference: ${refOrigin}`;
+    const bevy = document.getElementById('bevy');
+    bevy.src = `${location.origin}/?${query}`;
+
+    // defaults mirror stage::StageLight
+    const light = { illuminance: 7000, ambient: 2000, yaw: 0.6, pitch: 0.65, shadow: 0.55 };
+    for (const k of Object.keys(light)) if (own.has(k)) light[k] = Number(own.get(k));
+    const send = () => bevy.contentWindow && bevy.contentWindow.postMessage({ type: 'bevy_light', payload: light }, '*');
+    for (const [k, v] of Object.entries(light)) {
+      const input = document.getElementById(k);
+      const out = input.nextElementSibling;
+      input.value = v; out.value = v;
+      input.addEventListener('input', () => { light[k] = Number(input.value); out.value = input.value; send(); });
+    }
+    window.addEventListener('message', (e) => { if (e.source === bevy.contentWindow && e.data?.type === 'load') send(); });
+    document.getElementById('copy').addEventListener('click', () => navigator.clipboard.writeText(JSON.stringify(light)));
+  </script>
+</body>
+</html>

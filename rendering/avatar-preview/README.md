@@ -18,7 +18,11 @@ for avatars, wearables and emotes, replacing the Unity renderer slot of
 - `src/lib.rs`: the module. `start(canvas, baseDomain, onEvent)` boots the shared plugins,
   points the collectible resolver at the catalyst and waits for the first `outfit` command.
 - `src/host.rs`: the host surface, below.
+- `src/stage.rs`, `src/shadow_catcher.wgsl`: the light rig and the floor that shows only the
+  avatar's shadow, so a transparent canvas still grounds it on the host page.
 - `web/preview.js`: the `wearable-preview` iframe contract over the host surface.
+- `web/compare.html`: wearable-preview's Unity renderer (`ref=<origin>`, default production) and
+  this one side by side with the same preview options, with sliders that tune the light rig live.
 - `web/harness.html`: embeds the page in an iframe from another origin, as the shop does, and
   lists the messages it sends (`?target=<origin>&page=<file>` plus the preview's own query).
   `web/blank.html` is a transparent page for checking the embedding itself.
@@ -55,6 +59,7 @@ Commands, as JSON objects with an `op`:
 | `background` | `color` (`#rrggbb` or null for transparent) | the clear colour |
 | `emote` | `urn` (a urn or a base emote name), `loop` | plays on the avatar |
 | `stopEmote` | | |
+| `light` | `illuminance` (lux), `ambient`, `yaw`, `pitch` (radians, relative to the camera), `shadow` (0..1) | the light rig; unset fields keep their value |
 | `collectible` | `kind` (`wearable` or `emote`), `urn`, `definition` (an entity definition json, by url), `files` (name to url) | an item not on the catalyst; send it before the outfit or emote naming the urn |
 | `screenshot` | `id`, `width`, `height` | a PNG of the frame, scaled and cropped to fit |
 | `metrics` | `id` | triangle, material, texture and mesh counts |
@@ -86,7 +91,14 @@ their files map to their urls, `data:` and `blob:` included, and an id that is n
 `urn:decentraland:off-chain:base-avatars:preview-<id>` (or `base-emotes` for an emote).
 
 A transparent background (`disableBackground`) presents the canvas with premultiplied alpha,
-so the host page shows through around the avatar.
+so the host page shows through around the avatar, with the avatar's shadow on it.
+
+The look follows the Explorer's lobby preview (its noon sun, about 7000 lux, and the ambient its
+camera layer overrides to) and the Unity renderer's framing and light placement, measured with
+`web/compare.html`: the key light keeps its place relative to the camera as it orbits, and bloom
+takes only what is brighter than white (emissive parts). Open differences from the Unity
+renderer: its colours are deeper and more saturated, and it draws a soft light pool under the
+feet.
 
 Not supported yet, answered with an error: `emote.pause`, `emote.goTo`, `emote.getLength`,
 `physics.setSpringBonesParams`; social emotes; the Unity `mode` flows.
