@@ -1,5 +1,5 @@
 //! Room identity conformance at signed HTTP and LiveKit Twirp boundaries.
-//! The catalogue is a deterministic SceneIdentity fixture; no database guard.
+//! Scene identity is deterministic; mint and durable revocation fixtures use scratch storage.
 use super::*;
 use crate::interfaces::SceneIdentity;
 use crate::rooms::{ActiveDeployment, ResolveError, ResolvedRoom, RoomRequest};
@@ -164,6 +164,21 @@ fn canonical_state() -> CommsState {
     state
 }
 
+// Mints order their signed authorization stamp against the durable world row.
+async fn canonical_stored_state(worlds: &[&str]) -> Option<CommsState> {
+    let pool = scratch().await?;
+    for world in worlds {
+        sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1) ON CONFLICT DO NOTHING")
+            .bind(WorldName::parse(world).unwrap().key())
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let mut state = canonical_state();
+    state.pool = pool;
+    Some(state)
+}
+
 fn jwt_claims(adapter: &str) -> serde_json::Value {
     super::super::livekit::decode_jwt_payload(adapter.split("access_token=").nth(1).unwrap())
 }
@@ -218,8 +233,8 @@ impl SceneIdentity for BoundaryCatalogue {
     }
 }
 
-async fn mint_boundary_token(world: &str, scene: &str) -> (Arc<CommsState>, String) {
-    let mut state = canonical_state();
+async fn mint_boundary_token(world: &str, scene: &str) -> Option<(Arc<CommsState>, String)> {
+    let mut state = canonical_stored_state(&[world]).await?;
     state.livekit.configured = true;
     state.livekit.api_secret = "s".repeat(32);
     state.scenes = Arc::new(BoundaryCatalogue {
@@ -246,7 +261,7 @@ async fn mint_boundary_token(world: &str, scene: &str) -> (Arc<CommsState>, Stri
         StatusCode::OK,
         "boundary keys remain valid mint inputs: {value}"
     );
-    (
+    Some((
         state,
         value["fixedAdapter"]
             .as_str()
@@ -255,7 +270,7 @@ async fn mint_boundary_token(world: &str, scene: &str) -> (Arc<CommsState>, Stri
             .nth(1)
             .unwrap()
             .to_owned(),
-    )
+    ))
 }
 
 fn verify_boundary_proof(
@@ -300,7 +315,9 @@ async fn canonical_mint_preserves_previously_valid_relay_room_byte_budgets() {
     ] {
         let legacy = format!("scene-{world}-{}", scene.to_lowercase());
         assert!(legacy.len() <= 256);
-        let (state, jwt) = mint_boundary_token(&world, &scene).await;
+        let Some((state, jwt)) = mint_boundary_token(&world, &scene).await else {
+            return;
+        };
         let mut legacy_claims = super::super::livekit::decode_jwt_payload(&jwt);
         legacy_claims["video"]["room"] = serde_json::json!(legacy);
         let legacy_jwt = crate::shared::livekit::sign_hs256(
@@ -329,7 +346,9 @@ async fn canonical_mint_preserves_previously_valid_webhook_room_byte_budgets() {
         ("w".to_owned(), "K".repeat(504)),
     ] {
         assert_eq!(format!("scene-{world}-{}", scene.to_lowercase()).len(), 512);
-        let (state, jwt) = mint_boundary_token(&world, &scene).await;
+        let Some((state, jwt)) = mint_boundary_token(&world, &scene).await else {
+            return;
+        };
         let room = super::super::livekit::decode_jwt_payload(&jwt)["video"]["room"]
             .as_str()
             .unwrap()
@@ -351,7 +370,9 @@ async fn canonical_mint_preserves_previously_valid_webhook_room_byte_budgets() {
 
 #[tokio::test]
 async fn canonical_escape_rooms_reach_twirp_metadata_kicks_and_ingress_verbatim() {
-    let (state, jwt) = mint_boundary_token("w", "\u{212a}\u{1e9e}").await;
+    let Some((state, jwt)) = mint_boundary_token("w", "\u{212a}\u{1e9e}").await else {
+        return;
+    };
     let room = super::super::livekit::decode_jwt_payload(&jwt)["video"]["room"]
         .as_str()
         .unwrap()
@@ -428,7 +449,10 @@ async fn canonical_escape_rooms_reach_twirp_metadata_kicks_and_ingress_verbatim(
 
 #[tokio::test]
 async fn canonical_world_client_and_authoritative_tokens_are_byte_identical() {
-    let state = Arc::new(canonical_state());
+    let Some(state) = canonical_stored_state(&["mixed.dcl.eth", "single.eth"]).await else {
+        return;
+    };
+    let state = Arc::new(state);
     for (realm, scene, expected) in [
         ("MiXeD.dcl.eth", "SceneA", "w1:d:mixed.dcl.ethSceneA"),
         ("MIXED.DCL.ETH", "SceneB", "w1:d:mixed.dcl.ethSceneB"),
@@ -1045,17 +1069,17 @@ async fn refused_complete_rooms_never_project_webhook_identity_or_host_events() 
 }
 
 #[tokio::test]
-async fn refused_room_among_canonical_rooms_makes_revocation_inventory_incomplete() {
+async fn unrelated_refused_room_does_not_block_target_world_revocation_inventory() {
     let fixture = axum::Router::new().route("/twirp/livekit.RoomService/ListRooms", axum::routing::post(|| async { Json(serde_json::json!({"rooms":[{"name":"w1:d:mixed.dcl.ethSceneA"},{"name":"world-foo.dcl.eth-scene"}]})) }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let mut state = canonical_state();
     state.livekit.configured = true;
     state.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
-    let error = scene::live_world_rooms(&state, &WorldName::parse("mixed.dcl.eth").unwrap())
+    let rooms = scene::live_world_rooms(&state, &WorldName::parse("mixed.dcl.eth").unwrap())
         .await
-        .unwrap_err();
-    assert!(error.contains("world-foo.dcl.eth-scene") && error.contains("Ambiguous"));
+        .unwrap();
+    assert_eq!(rooms, vec!["w1:d:mixed.dcl.ethSceneA"]);
     server.abort();
 }
 
@@ -1079,7 +1103,7 @@ async fn relay_classifier_store_fault_is_unavailable() {
 }
 
 #[tokio::test]
-async fn inventory_distinguishes_empty_unrelated_transport_and_catalogue_failure() {
+async fn world_inventory_is_target_scoped_and_independent_of_catalogue_authority() {
     let responses = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from([
         (StatusCode::OK, serde_json::json!({"rooms":[]})),
         (
@@ -1125,7 +1149,10 @@ async fn inventory_distinguishes_empty_unrelated_transport_and_catalogue_failure
     );
     assert!(scene::live_world_rooms(&state, &world).await.is_err());
     state.scenes = Arc::new(RetryCatalogue(std::sync::atomic::AtomicBool::new(true)));
-    assert!(scene::live_world_rooms(&state, &world).await.is_err());
+    assert_eq!(
+        scene::live_world_rooms(&state, &world).await.unwrap(),
+        vec!["world-mixed.dcl.eth"]
+    );
     server.abort();
 }
 
@@ -1196,11 +1223,19 @@ async fn canonical_world_revocation_reaches_a_connected_room_after_redeployment(
         }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let removed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let mut state = canonical_state();
+        let Some(mut state) = canonical_stored_state(&["mixed.dcl.eth"]).await else {
+            return;
+        };
         state.scenes = Arc::new(RedeployCatalogue(removed.clone()));
         state.livekit.configured = true;
         state.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
         if access_changed {
+            sqlx::query("INSERT INTO social.world_access_rechecks (world_name, revision, changed_at, next_attempt_at) VALUES ($1, $2, timezone('UTC', now()), timezone('UTC', now())) ON CONFLICT (world_name) DO UPDATE SET revision=EXCLUDED.revision, changed_at=EXCLUDED.changed_at, next_attempt_at=EXCLUDED.next_attempt_at")
+                .bind("mixed.dcl.eth")
+                .bind(uuid::Uuid::new_v4())
+                .execute(&state.pool)
+                .await
+                .unwrap();
             state.policy = Arc::new(StubPolicy {
                 access: Ok(crate::access::Access::NotAllowed),
                 admission: Some(crate::access::WorldAdmission::Open(
@@ -1322,6 +1357,16 @@ impl crate::interfaces::AccessPolicy for PerWalletPolicy {
         _device_id: Option<&str>,
         _now: chrono::NaiveDateTime,
     ) -> Result<crate::access::Access, crate::AuthorityNotEstablished> {
+        if matches!(
+            self.inner.admission,
+            Some(crate::access::WorldAdmission::Open(
+                crate::access::AccessType::Unrestricted
+            ))
+        ) {
+            return Ok(crate::access::Access::Allowed(
+                crate::access::AccessGrant::Unrestricted,
+            ));
+        }
         let undetermined = *actor == self.undetermined && {
             let mut left = self.undetermined_failures.lock().unwrap();
             let fails = *left > 0;
@@ -1621,18 +1666,30 @@ async fn an_undetermined_access_decision_is_retried_until_it_evicts() {
 }
 
 #[tokio::test]
-async fn a_readmission_pass_spares_later_joiners_and_counts_a_failed_roster_as_incomplete() {
+async fn readmission_requires_signed_freshness_and_retains_failed_rosters() {
     use crate::access::{AccessType, WorldAdmission};
     use axum::response::IntoResponse;
     let wallet = |n: u8| Address::parse(&format!("0x{n:040x}")).unwrap();
     let (stale, rejoined) = (wallet(3), wallet(5));
+    let mut state = canonical_state();
+    let fresh_metadata = serde_json::json!({
+        "worldAuthorization": super::super::admission::world_mint::authorization_proof(
+            &state.livekit.api_secret,
+            &WorldName::parse("mixed.dcl.eth").unwrap(),
+            rejoined.as_str(),
+            "w1:d:mixed.dcl.ethSceneA",
+            chrono::DateTime::from_timestamp(201, 0).unwrap().naive_utc(),
+        )
+    })
+    .to_string();
     let requests = Arc::new(std::sync::Mutex::new(
         Vec::<(String, serde_json::Value)>::new(),
     ));
     let capture = requests.clone();
+    // Both reconnected after the edit; only freshly signed authorization survives.
     let roster = serde_json::json!({"participants": [
-        {"identity": stale.as_str(), "sid": "PA_a", "metadata": "{}", "joinedAt": "100"},
-        {"identity": rejoined.as_str(), "sid": "PA_b", "metadata": "{}", "joinedAt": "201"},
+        {"identity": stale.as_str(), "sid": "PA_a", "metadata": "{}", "joinedAt": "201"},
+        {"identity": rejoined.as_str(), "sid": "PA_b", "metadata": fresh_metadata, "joinedAt": "201"},
     ]});
     let fixture = axum::Router::new().route(
         "/twirp/livekit.RoomService/{method}",
@@ -1658,7 +1715,6 @@ async fn a_readmission_pass_spares_later_joiners_and_counts_a_failed_roster_as_i
         ),
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let mut state = canonical_state();
     state.livekit.configured = true;
     state.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
     state.policy = Arc::new(PerWalletPolicy {
