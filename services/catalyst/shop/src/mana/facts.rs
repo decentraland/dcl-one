@@ -851,6 +851,7 @@ async fn live_coupon(
            AND lower(c.coupon_manager) = ANY($3) \
            AND c.effective_since <= timezone('UTC', now()) AND c.expires_at > timezone('UTC', now()) \
            AND lower($4) = ANY(c.collections) \
+           AND c.discount_type = 1 AND c.discount_ppm > 0 AND c.discount_ppm < 1000000 \
            AND NOT COALESCE(cs.cancelled, false) AND NOT COALESCE(cs.revoked, false) \
            AND COALESCE(cs.uses, 0) < (c.checks->>'uses')::numeric \
          ORDER BY c.discount_ppm DESC, c.expires_at ASC, c.id ASC \
@@ -866,18 +867,30 @@ async fn live_coupon(
     let Some((id, address, discount_type, ppm, root, collections, signature, checks)) = row else {
         return Ok(None);
     };
-    let bad = |what: String| ResolveError::Db(format!("coupon {id}: {what}"));
-    let coupon_address: Address = address
-        .trim()
-        .parse()
-        .map_err(|_| bad(format!("address {address}")))?;
-    let discount_ppm = u32::try_from(ppm)
-        .ok()
-        .filter(|p| *p > 0 && *p < crate::types::TradeCoupon::PPM)
-        .ok_or_else(|| bad(format!("discount {ppm} ppm")))?;
-    let discount_type =
-        u64::try_from(discount_type).map_err(|_| bad(format!("discount type {discount_type}")))?;
-    let checks = serde_json::from_value(checks).map_err(|e| bad(format!("checks: {e}")))?;
+    // The SQL already keeps only rate coupons with a discount in range. A
+    // row that still does not decode is logged and the trade sells at its
+    // signed price: one bad row must not take the listing down.
+    let decoded = (|| {
+        let coupon_address: Address = address
+            .trim()
+            .parse()
+            .map_err(|_| format!("address {address}"))?;
+        let discount_ppm = u32::try_from(ppm)
+            .ok()
+            .filter(|p| *p > 0 && *p < crate::types::TradeCoupon::PPM)
+            .ok_or_else(|| format!("discount {ppm} ppm"))?;
+        let discount_type =
+            u64::try_from(discount_type).map_err(|_| format!("discount type {discount_type}"))?;
+        let checks = serde_json::from_value(checks).map_err(|e| format!("checks: {e}"))?;
+        Ok::<_, String>((coupon_address, discount_ppm, discount_type, checks))
+    })();
+    let (coupon_address, discount_ppm, discount_type, checks) = match decoded {
+        Ok(decoded) => decoded,
+        Err(what) => {
+            tracing::warn!(coupon = %id, "skipping a coupon row that does not decode: {what}");
+            return Ok(None);
+        }
+    };
     Ok(Some(super::calls::CouponIn {
         id,
         coupon_address,
@@ -1350,6 +1363,57 @@ mod tests {
             format!("{:#x}", coupon.coupon_address),
             "0xc914507fe297b2dddd1232ac3a8903f1c125e794"
         );
+
+        // A bigger coupon that is not a rate coupon never ranks.
+        let flat = insert(
+            &mut created,
+            v3_manager,
+            650_000,
+            live,
+            collection,
+            &creator,
+            None,
+        )
+        .await;
+        sqlx::query("UPDATE shop.coupons SET discount_type = 2 WHERE id = $1::uuid")
+            .bind(&flat)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            lookup(v3).await.map(|c| c.id),
+            Some(best.clone()),
+            "only rate coupons rank"
+        );
+        // One that ranks first but does not decode is skipped, not an error:
+        // the trade sells at its signed price rather than not at all.
+        let broken = insert(
+            &mut created,
+            v3_manager,
+            690_000,
+            live,
+            collection,
+            &creator,
+            None,
+        )
+        .await;
+        sqlx::query("UPDATE shop.coupons SET checks = '{\"uses\": 10}'::jsonb WHERE id = $1::uuid")
+            .bind(&broken)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            live_coupon(&pool, ChainId::POLYGON, v3, &creator, collection)
+                .await
+                .expect("a bad row is not a resolve error")
+                .is_none(),
+            "a coupon row that does not decode prices the trade without a coupon"
+        );
+        sqlx::query("DELETE FROM shop.coupons WHERE id = $1::uuid")
+            .bind(&broken)
+            .execute(&pool)
+            .await
+            .unwrap();
         let v2: Address = "0xa40b1d129b8906888720686f3a01921ddf37716f"
             .parse()
             .unwrap();

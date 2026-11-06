@@ -7,6 +7,7 @@ import type { Session } from "../../model/settlement";
 import { presentPayment } from "../../payment/present";
 import {
   BOOK,
+  CREATOR_COUPON_ADDRESS,
   creatorOrder,
   estateResale,
   nameRegistration,
@@ -157,8 +158,9 @@ describe("resolving a line for settlement against the offer the buyer confirmed"
   });
 
   it("a coupon line settles with the coupon the offer was priced with, or goes stale", async () => {
-    const COUPON = "0xc914507fe297b2dddd1232ac3a8903f1c125e794";
-    const priced = { ...creatorOrder(session, "wearable", 100_000), coupon: { id: "sale-1", couponAddress: COUPON, discountPpm: 100_000 } };
+    const COUPON = CREATOR_COUPON_ADDRESS;
+    const priced = creatorOrder(session, "wearable", 100_000);
+    expect(priced.coupon).toEqual({ id: "sale-1", couponAddress: COUPON, discountPpm: 100_000 });
     const { lines } = cartWith([{ offer: priced, tradeId: "trade-creator-1", name: "Order" }]);
     const line = { ...lines[0]!, method: "mana" as const };
     const now = Date.now();
