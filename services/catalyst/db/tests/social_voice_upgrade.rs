@@ -16,6 +16,7 @@ const PREPARED_PENDING_STEPS: [&str; 7] = [
     "0025_social_referral_login_received_at",
     "0026_content_snapshots_outdated",
     "0027_land_authz_cleared_legs",
+    "0028_shop_items_search_text",
 ];
 const PREPARED_V2: &str = include_str!(concat!(
     env!("DCL_ONE_ROOT"),

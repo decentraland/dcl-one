@@ -327,7 +327,19 @@ pub async fn quote_line(
             Ok(r) => r,
             Err(e) => return OfferAnswer::Error(line_error(index, e)),
         };
-    let reader = state.reader(resolved.chain.chain_id);
+    let reader = match state.reader(resolved.chain.chain_id).await {
+        Ok(reader) => reader,
+        Err(refusal) => {
+            tracing::warn!(error = %refusal, "refusing to quote through a mismatched chain endpoint");
+            return OfferAnswer::Error(LineError {
+                index,
+                error: "Service Unavailable",
+                message: refusal.to_string(),
+                refusal: None,
+                source: None,
+            });
+        }
+    };
     let (checks, fingerprint, name_reads) = verify::checks(&resolved, reader.as_ref()).await;
     let resolved = match name_reads {
         Some((price, owner)) => facts::with_name_reads(resolved, price, owner),

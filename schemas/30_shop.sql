@@ -185,6 +185,8 @@ CREATE TABLE shop.items (
     listings integer,
     owners integer,
     mirrored_at timestamp without time zone NOT NULL,
+    -- The subgraph `Item.searchText`, for the lambdas catalog's `textSearch`.
+    search_text text,
     PRIMARY KEY (network, contract_address, item_id),
     CONSTRAINT items_urn_key UNIQUE (urn),
     CONSTRAINT items_network_known CHECK (network IN ('ethereum', 'matic')),
