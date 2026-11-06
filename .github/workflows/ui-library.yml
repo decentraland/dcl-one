@@ -98,7 +98,7 @@ jobs:
       - name: Check retirements and removals against the base
         if: github.event_name == 'pull_request'
         run: |
-          git worktree add --detach "$RUNNER_TEMP/figma-base" HEAD^1
+          GIT_LFS_SKIP_SMUDGE=1 git worktree add --detach "$RUNNER_TEMP/figma-base" HEAD^1
           # Scope, not tolerance: with no library in the base there is nothing to guard against yet.
           if [ ! -d "$RUNNER_TEMP/figma-base/library/ui/figma" ]; then
             echo "first introduction of library/ui; no base ledger to compare"
