@@ -38,6 +38,7 @@ pub mod start;
 pub mod storage;
 pub mod storage_cli;
 pub mod storage_remote;
+pub mod textures;
 pub mod tunnel;
 pub mod ux;
 pub mod watch;
