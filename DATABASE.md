@@ -988,8 +988,9 @@ still decides admission.
 The caller secret budget keeps the existing `attempts/window_start` table and
 configured limit. Mint, adapter and scene-host paths share it. Attempts charge
 before verification; cancellation keeps the charge until expiry. Non-invalid-secret
-answers refund only their exact charged window. Expiry cleanup removes at most
-1,000 rows per scheduled pass. This does not add a cross-caller world ceiling.
+answers refund only their exact charged window. Expiry cleanup deletes in batches
+of 1,000 rows and continues while a batch is full, for at most 10 s per scheduled
+pass. This does not add a cross-caller world ceiling.
 
 For rollout, stop all old API and scene-host replicas before running `catalyst schema migrate` and then applying
 `schemas/releases/world-scene-ban-keys.sql` with the administrative database role, then start the updated binaries. Old binaries cannot enforce the

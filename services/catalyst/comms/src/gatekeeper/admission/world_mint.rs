@@ -116,13 +116,29 @@ impl SecretThrottle<'_> {
     }
 }
 
+/// The expiry sweep deletes this many rows per statement.
+const SWEEP_BATCH: i64 = 1000;
+/// The expiry sweep stops after this time. The next run continues.
+const SWEEP_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Drops expired throttle windows (the `comms-secret-attempts-sweep` job).
+/// The sweep deletes in short batches. It continues while a batch is full,
+/// so a backlog drains in one run. It stops when a batch is short or when
+/// the time budget is used.
 pub async fn sweep_secret_attempts(pool: &PgPool, now: NaiveDateTime) -> anyhow::Result<()> {
-    sqlx::query("DELETE FROM social.world_secret_attempts WHERE (world_name,subject) IN (SELECT world_name,subject FROM social.world_secret_attempts WHERE window_start <= $1 ORDER BY window_start LIMIT 1000 FOR UPDATE SKIP LOCKED)")
-        .bind(window_start_cutoff(now))
-        .execute(pool)
-        .await?;
-    Ok(())
+    let cutoff = window_start_cutoff(now);
+    let started = std::time::Instant::now();
+    loop {
+        let removed = sqlx::query("DELETE FROM social.world_secret_attempts WHERE (world_name,subject) IN (SELECT world_name,subject FROM social.world_secret_attempts WHERE window_start <= $1 ORDER BY window_start LIMIT $2 FOR UPDATE SKIP LOCKED)")
+            .bind(cutoff)
+            .bind(SWEEP_BATCH)
+            .execute(pool)
+            .await?
+            .rows_affected();
+        if removed < SWEEP_BATCH as u64 || started.elapsed() >= SWEEP_BUDGET {
+            return Ok(());
+        }
+    }
 }
 
 fn too_many_attempts() -> ApiError {
@@ -640,6 +656,29 @@ mod throttle_tests {
                 "key", &world, "wallet", "room", metadata, cutoff
             ));
         }
+    }
+
+    #[tokio::test]
+    async fn the_sweep_drains_a_backlog_larger_than_one_batch() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let world = format!("sweep-{}.dcl.eth", uuid::Uuid::new_v4());
+        let now = chrono::Utc::now().naive_utc();
+        let expired = window_start_cutoff(now) - chrono::TimeDelta::seconds(1);
+        sqlx::query("INSERT INTO social.world_secret_attempts(world_name,subject,attempts,window_start) SELECT $1,'expired-'||n,1,$2 FROM generate_series(1,$3) AS n")
+            .bind(&world).bind(expired).bind(SWEEP_BATCH * 2 + 1).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO social.world_secret_attempts(world_name,subject,attempts,window_start) VALUES($1,'live',1,$2)")
+            .bind(&world).bind(now).execute(&pool).await.unwrap();
+        sweep_secret_attempts(&pool, now).await.unwrap();
+        let left: Vec<String> = sqlx::query_scalar(
+            "SELECT subject FROM social.world_secret_attempts WHERE world_name=$1",
+        )
+        .bind(&world)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(left, vec!["live".to_string()]);
     }
 
     #[tokio::test]
