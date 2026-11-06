@@ -195,6 +195,36 @@ fn a_mirror_refuses_a_blank_nft_worker() {
     check_of(&[db, (ENV, "journey")]).unwrap();
 }
 
+/// O-1: a mirror lists the approved third-party providers from lamb2's
+/// default registry and may not blank it; island and journey name none.
+#[test]
+fn a_mirror_reads_the_third_party_registry() {
+    const KEY: &str = "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL";
+    const TPR: &str = "https://subgraph.decentraland.org/tpr-matic-mainnet";
+    assert_eq!(expanded(Posture::Mirror, &[])[KEY], TPR);
+    for posture in [Posture::Island, Posture::Journey] {
+        assert_eq!(expanded(posture, &[])[KEY], "");
+    }
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    let c = parsed(&[db, (ENV, "mirror")]);
+    assert_eq!(
+        c.validator.third_party_registry_l2_subgraph_url.as_deref(),
+        Some(TPR)
+    );
+    let check_of = |pairs: &[(&str, &str)]| {
+        let c = parsed(pairs);
+        let map = env(pairs);
+        check(&c, &lookup(&map))
+    };
+    for blank in ["", " "] {
+        let err = check_of(&[db, (ENV, "mirror"), (KEY, blank)])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(&format!("{KEY} is empty: unset it")), "{err}");
+    }
+    check_of(&[db, (ENV, "island")]).unwrap();
+}
+
 #[test]
 fn a_mirror_explorer_lists_chain_owned_items_only() {
     assert_eq!(

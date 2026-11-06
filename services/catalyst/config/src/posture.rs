@@ -297,6 +297,13 @@ const ROWS: &[Row] = &[
         "NFT_WORKER_BASE_URL",
         "https://nfts.decentraland.org",
     ),
+    // The approved third-party providers, lamb2's and the catalyst's default
+    // registry on Polygon mainnet.
+    upstream(
+        "mirrors",
+        "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",
+        "https://subgraph.decentraland.org/tpr-matic-mainnet",
+    ),
     // lamb2's explorer backpack lists chain-owned tokens only: a mirror
     // answers the same; island and journey also list this node's escrow grants.
     row(
@@ -829,9 +836,18 @@ fn refuse_followers(posture: Posture, env: &Lookup) -> anyhow::Result<()> {
 }
 
 /// A mirror serves the public third-party routes, which lamb2 answers from
-/// the NFT worker: without `NFT_WORKER_BASE_URL` the chain path leaves an
-/// open mapping's tokens out, so a mirror may not blank it.
+/// the registry subgraph and the NFT worker: without
+/// `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL` every route lists no provider, and
+/// without `NFT_WORKER_BASE_URL` the chain path leaves an open mapping's
+/// tokens out, so a mirror may blank neither.
 fn refuse_chain_read_third_party(config: &Config) -> anyhow::Result<()> {
+    if Config::non_empty(&config.validator.third_party_registry_l2_subgraph_url).is_none() {
+        anyhow::bail!(
+            "{ENV}=mirror lists the approved third-party providers from the registry subgraph, \
+             as lamb2 does, but THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL is empty: unset it to read \
+             Decentraland's registry"
+        );
+    }
     if Config::non_empty(&config.market_upstreams.nft_worker_base_url).is_none() {
         anyhow::bail!(
             "{ENV}=mirror answers the third-party wearables from the NFT worker, as lamb2 does, \

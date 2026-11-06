@@ -106,10 +106,10 @@ These problems show up in several files, so one fix can close several rows.
   - **EIP-1654** (contract-wallet signatures) needs `ETH_RPC_URL`.
 
   Upstream ships production defaults for each of these sources. In this tree `NODE_POSTURE=mirror` sets the
-  collections, marketplace and LAND subgraph URLs and `NFT_WORKER_BASE_URL`, turns on the chain indexes, and
-  leaves `ETH_RPC_URL` at the binary's default (`services/catalyst/config/src/posture.rs:262-325`). With `NODE_POSTURE` unset, `island`
-  or `journey`, the subgraph URLs stay unset (LL-3). The third-party registry URL has no default under any
-  posture. The sources each route reads are listed in each file's "Data dependency" and "Where dcl-one gets
+  collections, marketplace, third-party registry and LAND subgraph URLs and `NFT_WORKER_BASE_URL`, turns on
+  the chain indexes, and leaves `ETH_RPC_URL` at the binary's default (`services/catalyst/config/src/posture.rs`).
+  A mirror refuses to start with the third-party registry URL or the NFT worker set empty. With `NODE_POSTURE`
+  unset, `island` or `journey`, the subgraph URLs stay unset (LL-3). The sources each route reads are listed in each file's "Data dependency" and "Where dcl-one gets
   the data" sections.
 
 ## Rows that need a live capture
