@@ -11,6 +11,16 @@ pub struct ContentConfig {
     #[arg(long, env = "SYNC_SOURCE", default_value = "http://127.0.0.1:5140")]
     pub sync_source: String,
 
+    /// Sync from the DAO catalyst list: the L1 Catalyst registry read over
+    /// ETH_RPC_URL (mainnet or sepolia by ETH_NETWORK) when the worker starts
+    /// and every 30 minutes, without this node's own entry (PUBLIC_URL,
+    /// CONTENT_URL). Peers join and leave the running worker once its
+    /// bootstrap is done. SYNC_SOURCE is the list used while no registry read
+    /// has succeeded (no ETH_RPC_URL, another network, a failing RPC, a list
+    /// naming only this node); read-through keeps reading SYNC_SOURCE.
+    #[arg(long, env = "SYNC_FROM_DAO", default_value_t = false, action = clap::ArgAction::Set)]
+    pub sync_from_dao: bool,
+
     /// Comma-separated subset of scene,wearable,emote,store,outfits,profile;
     /// empty syncs every type. Snapshots are marked processed for this subset
     /// only, so widening it later needs an explicit resync.

@@ -236,6 +236,18 @@ fn a_mirror_catalog_takes_the_upstream_filters_only() {
     assert!(c.market_upstreams.lambdas_catalog_extensions_enabled);
 }
 
+/// CS-25: a mirror syncs from the DAO catalyst list, `SYNC_SOURCE` its fallback.
+#[test]
+fn a_mirror_syncs_from_the_dao_list() {
+    assert_eq!(expanded(Posture::Mirror, &[])["SYNC_FROM_DAO"], "true");
+    for posture in [Posture::Island, Posture::Journey] {
+        assert_eq!(expanded(posture, &[])["SYNC_FROM_DAO"], "false");
+    }
+    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
+    assert!(c.content.sync_from_dao);
+    assert!(!c.content.sync_source.is_empty());
+}
+
 #[test]
 fn read_through_copies_a_miss_on_a_mirror_only() {
     assert_eq!(
