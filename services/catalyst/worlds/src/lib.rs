@@ -423,6 +423,7 @@ pub fn app_router(
             "/contents/{hashId}",
             get(crate::content::get_content::get_world_content)
                 .head(crate::content::get_content::get_world_content)
+                .route_layer(crate::content::get_content::compression_layer())
                 .with_state(blobs.clone()),
         )
         // The deploy clients' pre-upload check, over the same blob store.
@@ -434,6 +435,7 @@ pub fn app_router(
             "/ipfs/{hashId}",
             get(crate::content::get_content::get_world_content)
                 .head(crate::content::get_content::get_world_content)
+                .route_layer(crate::content::get_content::compression_layer())
                 .with_state(blobs),
         )
         .route(
