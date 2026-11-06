@@ -438,6 +438,32 @@ mod roster_regressions {
     use super::*;
     use crate::interfaces::test_support::{StubDirectory, StubPolicy, StubScenes};
     #[tokio::test]
+    async fn disabled_livekit_retains_work_and_rotation_is_bounded() {
+        let mut state = CommsState::new(
+            sqlx::PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap(),
+            crate::http::Outbound::for_tests(),
+            super::super::Settings::for_tests(),
+            None,
+            None,
+            Arc::new(StubPolicy::default()),
+            Arc::new(StubScenes::default()),
+            Arc::new(crate::presence::Presence::new()),
+            Arc::new(StubDirectory::default()),
+        );
+        state.livekit.configured = false;
+        let rooms: Vec<_> = (0..WORLD_BATCH + 4)
+            .map(|n| format!("world-world{n:02}.dcl.eth"))
+            .collect();
+        let first = world_batch(&state, &rooms);
+        let second = world_batch(&state, &rooms);
+        assert_eq!(first.len(), WORLD_BATCH);
+        assert_eq!(second.len(), WORLD_BATCH);
+        assert!(second.iter().take(4).all(|world| !first.contains(world)));
+        sweep(&state).await.unwrap();
+        retry_access_rechecks(&state, None, &rooms).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn a_roster_fault_is_undecided_and_cannot_complete_a_secret_change() {
         let fixture=axum::Router::new()
             .route("/twirp/livekit.RoomService/ListRooms",axum::routing::post(||async{axum::Json(serde_json::json!({"rooms":[{"name":"w1:d:mixed.dcl.ethSceneA","sid":"RM_a","metadata":"{}"}]}))}))

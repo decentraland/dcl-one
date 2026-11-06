@@ -1142,7 +1142,12 @@ async fn notification_failure_rolls_back_scene_ban_before_kick_or_room_metadata(
     .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{response}");
     assert!(
-        media.lock().unwrap().requests.is_empty(),
+        media
+            .lock()
+            .unwrap()
+            .requests
+            .iter()
+            .all(|(method, _)| method == "ListRooms"),
         "failed persistence must not kick or alter room metadata"
     );
     let counts: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM social.scene_bans WHERE banned_address=$1),(SELECT count(*) FROM social.livekit_removal_intents WHERE wallet=$1),(SELECT count(*) FROM social.notifications WHERE address=$1)").bind(&target).fetch_one(&pool).await.unwrap();
