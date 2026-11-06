@@ -201,7 +201,8 @@ The HUD and input:
   (`null`, `blocked by entity <id>`, `no collider hit`, `beyond 100 m`, `entity not live`, `input
   held by the HUD`, `timed out waiting for target|tick|release`). `--event down` keeps the press
   held until `--event up` or `/hover_entity --clear`; other pointer commands are refused meanwhile
-  (`src/automation/pointer.rs`).
+  (`src/automation/pointer.rs`). `--frames` is at most 1800, and a hover's deadline is never
+  shorter than its frames plus 3, whatever `--timeout-frames` says.
 
 The accepted design makes these commands the client's agent surface in every build,
 so agents and tests share the same interface. Its native implementation asks the page where

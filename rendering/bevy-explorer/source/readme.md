@@ -200,7 +200,8 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   them real (below); without one they fall back to DOM events and say `"input": "synthetic"`.
 - Scene pointer: `/hover_entity <entity>` and `/click_entity <entity>` hover and click a scene
   entity by id through the pointer pipeline, on native and web alike, and answer with the hit, the
-  hover entries, the scene's pointer events and a diagnosis (`docs/guidelines/running.md`).
+  hover entries, the scene's pointer events and a diagnosis (`docs/guidelines/running.md`). A hover
+  lasts at most 1800 frames (`--frames`) and is never cut short by `--timeout-frames`.
 - The preview-only commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
 
 **The loopback console.** Every native build, the headless client mode included, carries a JSON-RPC

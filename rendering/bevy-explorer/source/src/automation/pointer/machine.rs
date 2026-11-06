@@ -87,7 +87,8 @@ enum Stage {
 impl Stage {
     fn name(self) -> &'static str {
         match self {
-            Stage::Target | Stage::Hovering => "target",
+            Stage::Target => "target",
+            Stage::Hovering => "hover",
             Stage::Tick => "tick",
             Stage::Release | Stage::Done => "release",
         }
@@ -96,7 +97,8 @@ impl Stage {
 
 /// The steps of a hover or click, decided from one [`Observed`] frame at a time. Nothing is
 /// evaluated before `started + 2` (the aim needs a frame to reach the pointer target); past
-/// `started + timeout` the job times out naming the stage it waited in. A failure does not
+/// `started + timeout` the job times out naming the stage it waited in; a hover's deadline is at
+/// least `started + frames + 3`, so the default timeout never cuts a long hover short. A failure does not
 /// release a press itself: [`ClickMachine::holds_press`] tells the caller to.
 pub struct ClickMachine {
     kind: ClickKind,
@@ -115,7 +117,10 @@ impl ClickMachine {
         Self {
             kind,
             entity,
-            timeout,
+            timeout: match kind {
+                ClickKind::Hover(frames) => timeout.max(frames.saturating_add(3)),
+                _ => timeout,
+            },
             started,
             stage: Stage::Target,
             pressed: kind == ClickKind::Up,
@@ -203,6 +208,18 @@ impl ClickMachine {
     fn finish(&mut self, result: Result<(), String>) -> Vec<Effect> {
         self.stage = Stage::Done;
         vec![Effect::Finish(result)]
+    }
+}
+
+/// The longest hover `/hover_entity --frames` accepts.
+pub const MAX_HOVER_FRAMES: u32 = 1800;
+
+/// The refusal for a hover longer than [`MAX_HOVER_FRAMES`].
+pub fn check_hover_frames(frames: u32) -> Result<(), String> {
+    if frames > MAX_HOVER_FRAMES {
+        Err(format!("frames must be at most {MAX_HOVER_FRAMES}"))
+    } else {
+        Ok(())
     }
 }
 
@@ -559,6 +576,39 @@ mod tests {
         assert_eq!(
             binding_error("primary", &InputIdentifier::Key(KeyCode::KeyE)),
             None
+        );
+    }
+
+    #[test]
+    fn hover_of_1800_frames_finishes_within_its_deadline() {
+        let mut m = ClickMachine::new(ClickKind::Hover(1800), 7, 600, 0);
+        assert!(m
+            .step(
+                2,
+                Observed {
+                    target: seen(7),
+                    ..Default::default()
+                }
+            )
+            .is_empty());
+        assert_eq!(
+            m.step(
+                1802,
+                Observed {
+                    target: seen(7),
+                    ..Default::default()
+                }
+            ),
+            vec![Effect::Finish(Ok(()))]
+        );
+    }
+
+    #[test]
+    fn frames_over_1800_are_refused() {
+        assert_eq!(check_hover_frames(1800), Ok(()));
+        assert_eq!(
+            check_hover_frames(1801),
+            Err("frames must be at most 1800".to_owned())
         );
     }
 }

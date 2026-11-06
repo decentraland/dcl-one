@@ -61,7 +61,8 @@ const FOREIGN_HIT: u32 = u32::MAX;
 
 mod machine;
 pub use machine::{
-    binding_error, refuse_while_held, ClickKind, ClickMachine, Effect, Observed, TargetSeen,
+    binding_error, check_hover_frames, refuse_while_held, ClickKind, ClickMachine, Effect,
+    Observed, TargetSeen,
 };
 use machine::{refine_diagnosis, ENTITY_NOT_LIVE, HUD_HOLDS_INPUT};
 
@@ -212,7 +213,9 @@ fn wind_down(
 
 /// Hover a scene entity of the active scene through the pointer pipeline, for --frames frames,
 /// and answer, as JSON, with the hit, the hover entries, the pointer events the scene got and a
-/// diagnosis when the entity was not hovered. --clear ends any aim and releases a held press
+/// diagnosis when the entity was not hovered. --frames is at most 1800, and a hover may always
+/// take its frames plus 3 whatever --timeout-frames says. --clear ends any aim and releases a held
+/// press
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/hover_entity")]
 pub struct HoverEntityCommand {
@@ -222,10 +225,10 @@ pub struct HoverEntityCommand {
     /// rather than at its origin (the origin when it has none)
     #[arg(long)]
     bounds: bool,
-    /// Frames to hover for
+    /// Frames to hover for, at most 1800
     #[arg(long, default_value_t = DEFAULT_HOVER_FRAMES)]
     frames: u32,
-    /// Frames the hover may take in all
+    /// Frames the hover may take in all; never fewer than --frames plus 3
     #[arg(long, default_value_t = DEFAULT_TIMEOUT_FRAMES)]
     timeout_frames: u32,
     /// End any aim, releasing a held press, instead of hovering
@@ -444,6 +447,8 @@ fn hover_entity_cmd(mut input: ConsoleCommand<HoverEntityCommand>, mut control: 
     };
     let result = if command.clear {
         control.clear()
+    } else if let Err(refusal) = check_hover_frames(command.frames) {
+        Answer::Failed(refusal)
     } else if let Some(entity) = command.entity.as_deref() {
         control.start(Request {
             command: "/hover_entity",
