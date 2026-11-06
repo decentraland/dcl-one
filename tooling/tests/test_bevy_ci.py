@@ -24,6 +24,16 @@ def producers(outcome='success'):
 
 
 class WorkflowTest(unittest.TestCase):
+    def test_main_runs_are_not_cancelled_by_the_next_push(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
+        lines = workflow.split('\nconcurrency:\n', 1)[1].splitlines(True)
+        # The workflow-level block only: it ends at the next top-level key.
+        block = ''.join(lines[:next(i for i, line in enumerate(lines) if line[:1] not in (' ', '#'))])
+        self.assertIn("  group: bevy-explorer-ci-${{ github.event.pull_request.number && format('pr-{0}', "
+                      "github.event.pull_request.number) || github.ref }}\n", block)
+        self.assertIn("  cancel-in-progress: ${{ github.event_name == 'pull_request' || "
+                      "github.ref != 'refs/heads/main' }}\n", block)
+
     def test_gateway_route_step_requires_the_ignored_fixture_to_pass(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
         _, _, after = workflow.partition('      - name: Test Explorer routes against the gateway\n')

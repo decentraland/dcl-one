@@ -97,12 +97,18 @@ over 12000 characters, re-reads to confirm the write and collapses duplicate com
 (`upsert-ci-status.sh`). The scripts' tests (`test-*.sh`, against a stubbed `gh`) run in CI's
 *Integration guards*.
 
-Image and headless publishers run on successful main CI completion. They verify the source
-repository, workflow, SHA, attempt, complete platform matrix and artifacts before publishing.
-The launcher takes its version from all four platform packages, never the callback run ID.
-Unrelated newer commits do not supersede a component's release. Any failed consumer build
-also fails the coordinated run and prevents automatic publication; graphical acceptance is
-still a separate verdict. The standalone manual build/release entrypoints remain available.
+On main, a new push does not cancel a running CI run: it waits, replacing any run already waiting,
+so each completed run tests every earlier commit. A manual dispatch or re-run on main also waits
+and can replace a waiting push; to re-test main, push or dispatch rather than re-running an older
+run. A pull request push replaces that pull request's running run. Image and headless publishers
+run on successful main CI completion. They verify the source repository, workflow, SHA, attempt,
+complete platform matrix and artifacts before publishing. The launcher takes its version from all
+four platform packages, never the callback run ID. An APIs + Sites or headless release is
+superseded only by a newer main run that changed that component and succeeded or was re-run (an
+earlier attempt may have published); a newer first attempt still waiting or failed does not. Any
+failed consumer build also fails the coordinated run and prevents automatic publication; graphical
+acceptance is still a separate verdict. The standalone manual build/release entrypoints remain
+available.
 
 For timing queries, image jobs now appear under `Bevy Explorer / CI` as `APIs + Sites / build (...)`;
 non-Linux package jobs use `Headless packages / build (...)`. Linux package compilation is the
