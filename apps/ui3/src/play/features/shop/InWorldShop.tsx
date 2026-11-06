@@ -111,6 +111,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   // Each ADD TO CART shows the toast again (its key restarts it).
   const [toast, setToast] = useState(0)
   const cartArea = useRef<HTMLDivElement>(null)
+  const cartButton = useRef<HTMLButtonElement>(null)
   const backdrop = useRef<HTMLDivElement>(null)
   const scroller = useRef<HTMLDivElement>(null)
   const homeScroller = useRef<HTMLDivElement>(null)
@@ -155,19 +156,24 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   const purchase = useShopPurchase(() => onNavigate('backpack'))
   // A guest login's cart is the signed-out one, which the account takes over once one signs in.
   const cart = useInWorldCart(capabilities?.reason === 'guest' ? null : (capabilities?.buyer ?? null))
-  // Escape closes the cart first, and so does a press anywhere else.
+  // Escape or the cart's X closes it, the focus back on the cart button; a press anywhere else closes it
+  // where the press went.
+  const closeCart = useCallback((refocus: boolean) => {
+    setCartOpen(false)
+    if (refocus) cartButton.current?.focus()
+  }, [])
   useEffect(() => {
     if (!cartOpen) return
     const away = (e: PointerEvent): void => {
-      if (!cartArea.current?.contains(e.target as Node)) setCartOpen(false)
+      if (!cartArea.current?.contains(e.target as Node)) closeCart(false)
     }
     document.addEventListener('pointerdown', away, true)
-    const unregister = registerCancelLayer(() => setCartOpen(false))
+    const unregister = registerCancelLayer(() => closeCart(true))
     return () => {
       document.removeEventListener('pointerdown', away, true)
       unregister()
     }
-  }, [cartOpen])
+  }, [cartOpen, closeCart])
   useEffect(() => {
     if (toast === 0) return
     const t = setTimeout(() => setToast(0), TOAST_MS)
@@ -404,6 +410,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
             {credits != null && <CreditsPill credits={credits} />}
             <div ref={cartArea} className={styles.cartArea}>
               <button
+                ref={cartButton}
                 type="button"
                 className={styles.cart}
                 aria-label={cart.length > 0 ? `Cart, ${cartUnits(cart)} ${cartUnits(cart) === 1 ? 'item' : 'items'}` : 'Cart'}
@@ -434,7 +441,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                     canIncrement: inWorldCart.canAdd(l)
                   }))}
                   total={cart.reduce((n, l) => n + l.credits * l.quantity, 0)}
-                  onClose={() => setCartOpen(false)}
+                  onClose={() => closeCart(true)}
                   onQuantity={(key, quantity) => {
                     const [contract, itemId] = key.split(':')
                     void inWorldCart.setQuantity({ contract, itemId }, quantity)
@@ -449,11 +456,10 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
             </div>
           </div>
         </header>
-        {toast > 0 && (
-          <ShopCartToast key={toast} className={styles.toast}>
-            1 Item Added to Cart
-          </ShopCartToast>
-        )}
+        {/* Mounted while the page is, so a screen reader announces the toast as it lands in it. */}
+        <div className={styles.toast} role="status" aria-live="polite">
+          {toast > 0 && <ShopCartToast key={toast}>1 Item Added to Cart</ShopCartToast>}
+        </div>
 
         <div className={styles.stage}>
           {/* The engine draws the avatar preview here, seen through the backdrop's hole. */}

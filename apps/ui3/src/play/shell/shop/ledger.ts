@@ -100,6 +100,16 @@ function isDisplay(v: unknown): boolean {
   )
 }
 
+/**
+ * A record written in the one-item shape (an `item` and its `display`, before purchases bought several),
+ * in today's: one line of one unit, and one display. Anything else is left as it is, to be checked whole.
+ */
+function upgrade(v: unknown): unknown {
+  if (!isObject(v) || !('item' in v) || 'items' in v) return v
+  const { item, display, ...rest } = v
+  return { ...rest, items: isObject(item) ? [{ ...item, quantity: 1 }] : item, ...(display !== undefined ? { displays: [display] } : {}) }
+}
+
 /** A stored operation of `buyer`'s, every field the shape this page writes. */
 function isRecord(v: unknown, buyer: string): v is OperationRecord {
   if (!isObject(v)) return false
@@ -144,7 +154,7 @@ export function createLedger(storage: () => Storage | null): Ledger {
   const parse = (s: Storage, key: string, buyer: string, id: string): OperationRecord | null => {
     try {
       const raw = s.getItem(key)
-      const v = raw ? (JSON.parse(raw) as unknown) : null
+      const v = raw ? upgrade(JSON.parse(raw) as unknown) : null
       return isRecord(v, buyer) && v.id === id ? v : null
     } catch {
       return null

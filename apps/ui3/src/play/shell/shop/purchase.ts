@@ -305,6 +305,10 @@ type PartOutcome =
   | { kind: 'failed'; message: string; retry: 'cancelled' | 'failed' | null; topUp?: number }
 
 const NOT_BOUGHT = "This purchase didn't go through. Nothing was bought."
+/** How a checkout says one of its transactions ended. */
+const NEVER_WENT = 'one of its transactions never went out.'
+const PART_FAILED = 'one of its transactions didn’t go through.'
+const REVERTED_PART = 'one of its transactions failed on-chain, and its Credits were returned.'
 const unitsOf = (lines: ShopLine[]): number => lines.reduce((n, l) => n + l.quantity, 0)
 const sameItem = (a: { contract: string; itemId: string }, b: { contract: string; itemId: string }): boolean => a.contract === b.contract && a.itemId === b.itemId
 
@@ -445,12 +449,15 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       }
     })
   }
-  /** A watched purchase reached its end: its dialog (or its checkout's), if it is the one up, says so. */
-  const settled = (op: Operation, state: 'succeeded' | 'failed' | 'cancelled', extra: Partial<Operation> = {}, message?: string): void => {
+  /**
+   * A watched purchase reached its end: its dialog (or its checkout's), if it is the one up, says so.
+   * `part` says how it ended as one transaction of a checkout ("one of its transactions…").
+   */
+  const settled = (op: Operation, state: 'succeeded' | 'failed' | 'cancelled', extra: Partial<Operation> = {}, message?: string, part?: string): void => {
     move(op, state, extra)
     const co = op.checkout
     if (co) {
-      if (state !== 'succeeded') co.failures.push(message ?? NOT_BOUGHT)
+      if (state !== 'succeeded') co.failures.push(part ?? (state === 'cancelled' ? NEVER_WENT : PART_FAILED))
       if (dialog?.checkout === co && !running) presentCheckout(co)
       return
     }
@@ -476,12 +483,10 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       showSuccess(anchor, co.displays)
       return
     }
-    // One reason is said as it is; several, as what they add up to.
+    // Each part's reason is said as one transaction of it; several, as what they add up to.
     const message =
       bought === 0
-        ? co.failures.length === 1
-          ? co.failures[0]
-          : `None of its transactions went through: nothing was bought.${co.cart ? ' Everything is still in your cart.' : ''}`
+        ? `None of its transactions went through: nothing was bought.${co.cart ? ' Everything is still in your cart.' : ''}`
         : partly(co.failures.length === 1 ? co.failures[0] : 'more than one of its transactions didn’t go through.', co.cart)
     show(anchor, { step: 'failed', message, retry: false }, { onClose: () => hide(anchor) })
   }
@@ -521,7 +526,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       return true
     }
     if (progress && (progress.status === 'failed' || progress.status === 'expired')) {
-      settled(op, 'failed', {}, progress.failure?.message)
+      settled(op, 'failed', {}, progress.failure?.message, progress.failure?.message)
       return true
     }
     if (!progress) {
@@ -540,7 +545,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           return true
         }
         if (receipt?.status === 'reverted') {
-          settled(op, 'failed', {}, 'The transaction failed on-chain. Nothing was bought.')
+          settled(op, 'failed', {}, 'The transaction failed on-chain. Nothing was bought.', REVERTED_PART)
           return true
         }
       }
@@ -561,7 +566,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         return true
       }
       if (result.status === 'failed') {
-        settled(op, 'failed', {}, result.failure.kind === 'reverted' ? 'The transaction failed on-chain. Nothing was bought and your Credits were returned.' : result.failure.message)
+        const reverted = result.failure.kind === 'reverted'
+        settled(op, 'failed', {}, reverted ? 'The transaction failed on-chain. Nothing was bought and your Credits were returned.' : result.failure.message, reverted ? REVERTED_PART : result.failure.message)
         return true
       }
       // A hash with no receipt may have been dropped or replaced: the server's record of the credit
@@ -576,7 +582,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         if (record === 'expired') {
           op.expiredSince ??= svc.now()
           if (svc.now() - op.expiredSince >= EXPIRY_CONFIRM_MS) {
-            settled(op, 'failed', {}, 'This purchase never went through, and its Credits expired unused: nothing was bought.')
+            settled(op, 'failed', {}, 'This purchase never went through, and its Credits expired unused: nothing was bought.', 'one of its transactions never went through, and its Credits expired unused.')
             return true
           }
         } else op.expiredSince = undefined
@@ -922,6 +928,29 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     running = true
     // Several groups show as one checkout; one group is its own operation's dialog, as ever.
     const co: Checkout | undefined = quote.parts.length > 1 ? { ops: [], displays: quote.items, parts: quote.parts.length, cart: req.cart === true, failures: [] } : undefined
+    // Several groups are all reviewed before any runs, as the web Shop's checkout does: one that can't be
+    // bought is refused with nothing spent, never found after another group was paid.
+    const reviewed = new Map<QuotePart, Resolved>()
+    if (co) {
+      show(op, { step: 'processing', balance: quote.balance, count: quote.items.length }, { onClose: () => {} })
+      for (const part of quote.parts) {
+        let review: Awaited<ReturnType<typeof reviewPart>>
+        try {
+          review = await reviewPart(part, quote)
+        } catch (e) {
+          console.warn('[shell/shop] could not review the purchase', e)
+          running = false
+          fail(op, "We couldn't start this purchase. Nothing was charged.", again)
+          return
+        }
+        if ('why' in review) {
+          running = false
+          fail(op, review.why, review.retry === 'cancelled' ? again : undefined)
+          return
+        }
+        reviewed.set(part, review.resolved)
+      }
+    }
     // Followed only once the checkout's dialog is up: a watch that settles at once then updates it.
     const follow: Operation[] = []
     try {
@@ -945,7 +974,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           move(run, 'cancelled')
           break
         }
-        const outcome = await runPart(run, part, quote, wallet, current)
+        const outcome = await runPart(run, part, quote, wallet, current, reviewed.get(part))
         if (outcome.kind === 'pending') follow.push(run)
         if (outcome.kind !== 'failed') continue
         if (i > 0) {
@@ -971,8 +1000,26 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   /** A checkout's failure after part of it went out: what went stands, the rest didn't. */
   const partly = (why: string, cart: boolean): string => `Part of this purchase went through, but not all of it: ${why}${cart ? ' What wasn’t bought is still in your cart.' : ''}`
 
-  /** One group, as its own operation, through the executor: never resubmitted, and followed if handed off. */
-  const runPart = async (op: Operation, part: QuotePart, quote: Quote, wallet: Eip1193Provider, current: () => boolean): Promise<PartOutcome> => {
+  /**
+   * A group's lines as the chain and the server read them now (the sale's live terms), or why it can't be
+   * bought, and whether TRY AGAIN may read the terms anew.
+   */
+  const reviewPart = async (part: QuotePart, quote: Quote): Promise<{ resolved: Resolved } | { why: string; retry: 'cancelled' | null }> => {
+    const single = quote.items.length === 1
+    const review = await reviewCart(part.priced, quote.session, quote.buyer, svc.resolvers(quote.client))
+    const resolved: Resolved = new Map(review.buyable.map((r) => [r.line.id, r]))
+    const missing = part.priced.map((p) => p.line).find((l) => !resolved.has(l.id))
+    if (!missing) return { resolved }
+    const name = single ? 'this item' : missing.display.name
+    const why = review.own.length ? `You already own ${name}.` : review.stale.length ? `${single ? 'Its' : `${name}’s`} price changed. Try again to see the new one.` : `${single ? 'This item' : name} can't be bought right now.`
+    return { why, retry: review.stale.length ? 'cancelled' : null }
+  }
+
+  /**
+   * One group, as its own operation, through the executor: never resubmitted, and followed if handed off.
+   * `reviewed`: its lines as the checkout already reviewed them, before any group ran.
+   */
+  const runPart = async (op: Operation, part: QuotePart, quote: Quote, wallet: Eip1193Provider, current: () => boolean, reviewed?: Resolved): Promise<PartOutcome> => {
     const { group } = part
     const chainId = group.key.chainId
     const manager = svc.manager(chainId)
@@ -1012,18 +1059,12 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       }
       return send(input, init)
     }) as typeof fetch
-    const single = quote.items.length === 1
     let unmirror = (): void => {}
     let result: GroupResult
     try {
-      const review = await reviewCart(part.priced, quote.session, quote.buyer, svc.resolvers(quote.client))
-      const resolved = new Map(review.buyable.map((r) => [r.line.id, r]))
-      const missing = lines.find((l) => !resolved.has(l.id))
-      if (missing) {
-        const name = single ? 'this item' : missing.display.name
-        const why = review.own.length ? `You already own ${name}.` : review.stale.length ? `${single ? 'Its' : `${name}’s`} price changed. Try again to see the new one.` : `${single ? 'This item' : name} can't be bought right now.`
-        return refused(why, review.stale.length ? 'cancelled' : null)
-      }
+      const review = reviewed ? { resolved: reviewed } : await reviewPart(part, quote)
+      if ('why' in review) return refused(review.why, review.retry)
+      const { resolved } = review
       store.startCheckout([group])
       // Every step the executor writes to the checkout is copied into the operation's record.
       const mirror = (): void => {

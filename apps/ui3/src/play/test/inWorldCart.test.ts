@@ -388,6 +388,76 @@ describe('the in-world cart', () => {
     }
   })
 
+  it('takes a signed-out cart over within the cap, and leaves what doesn’t fit in it', async () => {
+    const s = storage()
+    const cart = createInWorldCart({ storage: () => s, watch: () => () => {} })
+    cart.scopeTo(A)
+    await cart.add(item('1', { available: 100 }))
+    await cart.setQuantity(item('1'), 20)
+    cart.scopeTo(null)
+    await cart.add(item('2', { available: 100 }))
+    await cart.setQuantity(item('2'), 20)
+    cart.scopeTo(A)
+    await vi.waitFor(() => expect(cart.getSnapshot().map((l) => `${l.itemId}x${l.quantity}`)).toEqual(['1x20', '2x10']))
+    // The ten that didn't fit are still the signed-out cart's.
+    cart.scopeTo(null)
+    expect(cart.getSnapshot().map((l) => `${l.itemId}x${l.quantity}`)).toEqual(['2x10'])
+  })
+
+  it('leaves a signed-out cart as it is until the account’s cart that took it over is written', async () => {
+    const shared = storage()
+    const refuse = { on: false }
+    const flakyStorage: CartStorage = {
+      getItem: shared.getItem,
+      setItem: (k, v) => {
+        if (refuse.on && k.endsWith(A)) throw new Error('full')
+        shared.setItem(k, v)
+      },
+      removeItem: shared.removeItem
+    }
+    const cart = createInWorldCart({ storage: () => flakyStorage, watch: () => () => {} })
+    await cart.add(item('1'))
+    refuse.on = true
+    cart.scopeTo(A)
+    await vi.waitFor(() => expect(cart.getSnapshot().map((l) => l.itemId)).toEqual(['1']))
+    // The account's write didn't land: a reload now still finds the signed-out cart.
+    const meanwhile = createInWorldCart({ storage: () => shared, watch: () => () => {} })
+    expect(meanwhile.getSnapshot().map((l) => l.itemId)).toEqual(['1'])
+    // Once a write lands, it carries the taken-over lines, and the signed-out cart lets them go.
+    refuse.on = false
+    await cart.add(item('2'))
+    const reloaded = createInWorldCart({ storage: () => shared, watch: () => () => {} })
+    expect(reloaded.getSnapshot()).toEqual([])
+    reloaded.scopeTo(A)
+    expect(reloaded.getSnapshot().map((l) => l.itemId)).toEqual(['1', '2'])
+  })
+
+  it('writes under the origin’s Web Lock when the browser has one', async () => {
+    const request = vi.fn((_name: string, fn: () => unknown) => Promise.resolve(fn()))
+    Object.defineProperty(navigator, 'locks', { value: { request }, configurable: true })
+    try {
+      const s = storage()
+      const cart = createInWorldCart({ storage: () => s, watch: () => () => {} })
+      cart.scopeTo(A)
+      expect(await cart.add(item('1'))).toBe(true)
+      expect(request).toHaveBeenCalledWith('dcl-inworld-shop:cart', expect.any(Function))
+    } finally {
+      Reflect.deleteProperty(navigator, 'locks')
+    }
+  })
+
+  it('shows another tab’s write as the window hears of it', async () => {
+    const s = storage()
+    const cart = createInWorldCart({ storage: () => s })
+    cart.scopeTo(A)
+    const other = createInWorldCart({ storage: () => s, watch: () => () => {} })
+    other.scopeTo(A)
+    await other.add(item('1'))
+    expect(cart.getSnapshot()).toEqual([])
+    window.dispatchEvent(new StorageEvent('storage', { key: `dcl-inworld-shop:cart:v2:${A}` }))
+    expect(cart.getSnapshot().map((l) => l.itemId)).toEqual(['1'])
+  })
+
   it('stays in memory when storage refuses it', async () => {
     const cart = createInWorldCart({
       storage: () => ({

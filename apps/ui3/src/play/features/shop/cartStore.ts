@@ -171,10 +171,12 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
   type Change = (record: CartRecord) => CartRecord | null
   /** What storage last gave for each record (its text and the record parsed from it). */
   const stored = new Map<string, { raw: string | null; record: CartRecord }>()
+  /** A change storage didn't take yet, and what to do once it does. */
+  type Pending = { change: Change; written?: () => void }
   /** This page's changes to a record that storage didn't take yet, replayed on what storage holds. */
-  const pending = new Map<string, Change[]>()
+  const pending = new Map<string, Pending[]>()
   /** The last view of each record: what storage held, with the very list of pending changes put on it. */
-  const views = new Map<string, { base: CartRecord; changes: readonly Change[]; record: CartRecord }>()
+  const views = new Map<string, { base: CartRecord; changes: readonly Pending[]; record: CartRecord }>()
 
   /** The record as storage holds it now; what it last gave when it can't be read. */
   const fromStorage = (key: string): CartRecord => {
@@ -209,7 +211,7 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
     // The same base and the same list (each change makes a new one), or it is put together again.
     const view = views.get(key)
     if (view && view.base === base && view.changes === changes) return view.record
-    const record = changes.reduce((r, change) => change(r) ?? r, base)
+    const record = changes.reduce((r, p) => p.change(r) ?? r, base)
     views.set(key, { base, changes, record })
     return record
   }
@@ -234,15 +236,20 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
   /**
    * One change applied to `who`'s record as it stands (call it holding the lock): written whole if storage
    * takes it, which takes this page's pending changes with it; otherwise kept to replay on whatever
-   * storage holds next, never written over another tab's record as a stale whole.
+   * storage holds next, never written over another tab's record as a stale whole. `written` runs once
+   * storage holds the change, now or with a later write.
    */
-  const apply = (who: string | null, change: Change): boolean => {
+  const apply = (who: string | null, change: Change, written?: () => void): boolean => {
     const key = keyOf(who)
+    const waiting = pending.get(key) ?? []
     const next = change(read(who))
     if (!next) return false
-    if (persist(key, next)) pending.delete(key)
-    else pending.set(key, [...(pending.get(key) ?? []), change])
     views.delete(key)
+    if (persist(key, next)) {
+      pending.delete(key)
+      for (const p of waiting) p.written?.()
+      written?.()
+    } else pending.set(key, [...waiting, { change, written }])
     return true
   }
   const notify = (): void => listeners.forEach((l) => l())
@@ -301,22 +308,34 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
       notify()
       if (who == null) return
       // A signed-out cart is the account's once it signs in: its lines join, within the cap, under the lock.
+      // The units taken leave the signed-out cart only once the account's cart holding them is written
+      // (now, or with a later write); the units that don't fit stay in it.
       void lock(() => {
         const guest = read(null).lines
         if (guest.length === 0) return
-        apply(who, (mine) => {
+        let taken = new Map<string, number>()
+        const merge: Change = (mine) => {
+          taken = new Map()
           const merged = [...mine.lines]
           for (const g of guest) {
             const at = merged.findIndex((l) => sameItem(l, g))
-            const others = cartUnits(merged) - (at >= 0 ? merged[at].quantity : 0)
-            const quantity = Math.min((at >= 0 ? merged[at].quantity : 0) + g.quantity, capFor(g, others))
-            if (quantity <= 0) continue
+            const had = at >= 0 ? merged[at].quantity : 0
+            const quantity = Math.max(had, Math.min(had + g.quantity, capFor(g, cartUnits(merged) - had)))
+            if (quantity === had) continue
+            taken.set(`${g.contract}:${g.itemId}`, quantity - had)
             if (at >= 0) merged[at] = { ...merged[at], quantity }
             else merged.push({ ...g, quantity })
           }
-          return { lines: merged, applied: mine.applied }
-        })
-        apply(null, (g) => (g.lines.length > 0 ? { lines: [], applied: g.applied } : null))
+          return taken.size > 0 ? { lines: merged, applied: mine.applied } : null
+        }
+        const leave: Change = (g) => {
+          const lines = g.lines.flatMap((l) => {
+            const units = taken.get(`${l.contract}:${l.itemId}`) ?? 0
+            return l.quantity > units ? [{ ...l, quantity: l.quantity - units }] : []
+          })
+          return lines.length === g.lines.length && lines.every((l, i) => l === g.lines[i]) ? null : { lines, applied: g.applied }
+        }
+        apply(who, merge, () => void apply(null, leave))
         if (account === who) refresh()
       })
     },

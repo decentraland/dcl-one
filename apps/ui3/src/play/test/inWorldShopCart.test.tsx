@@ -119,8 +119,10 @@ describe('the in-world Shop’s cart', () => {
     serveCatalogue()
     answerShell()
     renderShop()
+    // The live region is there before the toast is, so it is announced as it lands in it.
+    const region = await screen.findByText((_, el) => el?.getAttribute('aria-live') === 'polite' && el.getAttribute('role') === 'status')
     await addFromPanel()
-    expect(await screen.findByText('1 Item Added to Cart')).toBeInTheDocument()
+    expect(await within(region).findByText('1 Item Added to Cart')).toBeInTheDocument()
     await waitFor(() => expect(cartButton()).toHaveAccessibleName('Cart, 1 item'))
     await userEvent.click(screen.getByRole('button', { name: 'Add to cart' }))
     await waitFor(() => expect(cartButton()).toHaveAccessibleName('Cart, 2 items'))
@@ -172,6 +174,8 @@ describe('the in-world Shop’s cart', () => {
     await screen.findByRole('region', { name: 'Your cart' })
     act(() => void expect(dispatchCancelLayer()).toBe(true))
     await waitFor(() => expect(screen.queryByRole('region', { name: 'Your cart' })).toBeNull())
+    // The focus goes back to the cart button.
+    expect(document.activeElement).toBe(cartButton())
     await userEvent.click(cartButton())
     await screen.findByRole('region', { name: 'Your cart' })
     await userEvent.click(screen.getByRole('heading', { name: 'Shop' }))

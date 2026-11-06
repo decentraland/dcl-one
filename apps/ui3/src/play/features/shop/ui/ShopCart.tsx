@@ -139,10 +139,10 @@ export function ShopCart({ lines, total, onClose, onQuantity, onRemove, onChecko
   )
 }
 
-/** "1 Item Added to Cart": the design's toast under the header's right end. */
+/** "1 Item Added to Cart": the design's toast under the header's right end (put it in a live region). */
 export function ShopCartToast({ children, className }: { children: React.ReactNode; className?: string }): React.JSX.Element {
   return (
-    <div className={`${styles.toast} ${className ?? ''}`.trim()} role="status">
+    <div className={`${styles.toast} ${className ?? ''}`.trim()}>
       <img src={toastCheck} alt="" width={24} height={24} />
       <span>{children}</span>
     </div>

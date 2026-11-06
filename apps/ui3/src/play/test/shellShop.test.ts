@@ -552,6 +552,19 @@ describe('the shell purchase', () => {
     expect((await t.buy()).operation).toBe(id)
   })
 
+  it('follows a record left in the one-item shape (an earlier page’s), as one unit of its item', async () => {
+    const storage = memoryStorage()
+    const id = '0f0e0d0c-0000-4000-8000-00000000abce'
+    storage.setItem(
+      `dcl-inworld-shop:record:v1:${BUYER}:${id}`,
+      JSON.stringify({ id, buyer: BUYER, item: { contract: CONTRACT, itemId: '7' }, display: { name: 'Golden Armour', creator: 'Aurora', rarity: 'epic', credits: 5 }, state: 'pending', txHash: TX, chainId: 137, createdAt: 1, updatedAt: 1 })
+    )
+    const t = setup({ storage, receipts: { [TX]: 'success' } })
+    await t.shop.request('shop.capabilities', undefined)
+    await vi.waitFor(() => expect(t.events.find((e) => e.operation === id)?.state).toBe('succeeded'))
+    expect(t.events.find((e) => e.operation === id)).toMatchObject({ items: [{ contract: CONTRACT, itemId: '7', quantity: 1 }] })
+  })
+
   it('skips a stored record that isn’t the shape this page writes, or another buyer’s', async () => {
     for (const record of [
       { state: 'pending', txHash: 'not a hash', chainId: 137 },
@@ -1324,6 +1337,21 @@ describe('a purchase of several items (the cart)', () => {
     expect(view).toMatchObject({ step: 'insufficient', balance: 1 })
     expect(view.step === 'insufficient' && view.items.map((i) => i.name)).toEqual(['Golden Armour', 'Silver Boots'])
     expect(t.run).toHaveBeenCalledTimes(1)
+  })
+
+  it('reviews every group before any runs: one that can’t be bought refuses the checkout with nothing spent', async () => {
+    const t = setup({
+      items: ITEMS,
+      offers: mixed,
+      // The store's mint of Silver Boots is gone; the creator's listing of Golden Armour is fine.
+      resolvers: () => ({ trade: async () => creatorTrade(), store: async () => null })
+    })
+    await t.checkout('7', '8')
+    ;(await t.until('confirm')).handlers.onConfirm?.()
+    const { view } = await t.until('failed')
+    expect(view).toMatchObject({ message: "Silver Boots can't be bought right now.", retry: false })
+    expect(t.run).not.toHaveBeenCalled()
+    expect(t.events.some((e) => e.state === 'processing')).toBe(false)
   })
 
   it('names the buyer on every operation it reports', async () => {
