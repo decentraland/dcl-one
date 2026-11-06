@@ -83,6 +83,21 @@ function noChromeMessage(env) {
   return `Google Chrome is not installed (looked in ${looked}); install it, or point CHROME_PATH at it`;
 }
 
+/** The credential a console line carries: the first argument of `/login_identity` or
+ *  `/hud_login` that is neither a flag nor the value of one that takes a value, an AuthIdentity
+ *  (an ephemeral private key and a signed delegation valid for days), or undefined. The e2e
+ *  suite's `driver/console.ts` has the same rule, which its tests keep in step. */
+export function secretOf(line) {
+  return /^\s*\/?(?:login_identity|hud_login)\s+(?:--(?:name|look|realm|position|profiles)\s+\S+\s+|--\S+\s+)*([^-\s]\S*)/.exec(line)?.[1];
+}
+
+/** `text` with the line's credential replaced wherever it appears, for what the command line
+ *  prints: a reply, an error or a timeout may quote the line. */
+export function redact(line, text) {
+  const secret = secretOf(line);
+  return secret === undefined ? text : text.split(secret).join('<redacted>');
+}
+
 /** Does a call of the binding from this execution context count? Only from a default (not an
  *  isolated-world, as a browser extension's) context of the origin the runner opened: another
  *  origin's frame must not be able to make input. */
@@ -749,10 +764,10 @@ async function main(argv) {
     const run = async (command) => {
       try {
         const output = await driver.console(command);
-        console.log(JSON.stringify({ command, ok: true, output }));
+        console.log(JSON.stringify({ command: redact(command, command), ok: true, output: redact(command, output) }));
       } catch (error) {
         failed = true;
-        console.log(JSON.stringify({ command, ok: false, error: error.message }));
+        console.log(JSON.stringify({ command: redact(command, command), ok: false, error: redact(command, error.message) }));
       }
     };
     if (options.commands.length > 0) {

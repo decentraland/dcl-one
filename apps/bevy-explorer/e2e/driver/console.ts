@@ -9,10 +9,14 @@ export interface Console {
   close(): Promise<void>
 }
 
-/** The credential a line carries: `/login_identity`'s payload, an AuthIdentity (an ephemeral
- *  private key and a signed delegation that stays valid for days). */
+/** The credential a line carries: the payload of `/login_identity` or `/hud_login`, an
+ *  AuthIdentity (an ephemeral private key and a signed delegation that stays valid for days):
+ *  the first word that is neither a flag nor the value of one that takes a value, as a
+ *  hand-typed line may put `--guest` or `--name x` first (the commands refuse such a line, but
+ *  after it was logged). The web driver's `driver.mjs` has the same rule, which a test keeps in
+ *  step. */
 export function secretOf(line: string): string | undefined {
-  return /^\s*\/?login_identity\s+(\S+)/.exec(line)?.[1]
+  return /^\s*\/?(?:login_identity|hud_login)\s+(?:--(?:name|look|realm|position|profiles)\s+\S+\s+|--\S+\s+)*([^-\s]\S*)/.exec(line)?.[1]
 }
 
 /** `text` with the line's credential replaced wherever it appears: a reply, an error or a timeout

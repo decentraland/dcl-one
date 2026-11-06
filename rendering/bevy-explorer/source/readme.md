@@ -192,6 +192,11 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
   `hidden`, `enabled`, `actionable`; `"timeout"` ms). A selector is the name or JSON
   `{"name", "role", "index", "exact"}`; several matches need an `index`.
+- Signing in through the HUD (web, under a test runner driving the browser): `/hud_login
+  <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>]
+  [--position <x,y>]`, with an AuthIdentity encoded as `/login_identity` takes it, lands in the
+  lobby or on the way to the destination; `/login_identity` alone signs the engine in under a HUD
+  that keeps its start page.
 - Input: `/press_key <code> [--state down|up]` (`KeyboardEvent.code` names) and
   `/click_at <x> <y> [--button left|right|middle]`. Natively these and the HUD commands go through
   CEF and the window's own input, always real. On the web the page needs a DevTools client to make

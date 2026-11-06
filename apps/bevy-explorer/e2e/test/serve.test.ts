@@ -3,7 +3,13 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
-import { COMMON_HEADERS, headersFor, resolveFile, serveWebApp, type StaticServer } from '../driver/serve.ts'
+import { BRIDGE_ABOUT_PATH, COMMON_HEADERS, bridgeAbout, headersFor, resolveFile, serveWebApp, type StaticServer } from '../driver/serve.ts'
+
+const BRIDGE_HASH = 'bafkreiexample'
+const BRIDGE_ABOUT = {
+  comms: { fixedAdapter: 'offline:offline' },
+  configurations: { realmName: 'BevyExplorerUI', scenesUrn: [`urn:decentraland:entity:${BRIDGE_HASH}?=&baseUrl=/bridge-scene/static/`] }
+}
 
 describe('serveWebApp', () => {
   let dir: string
@@ -15,6 +21,8 @@ describe('serveWebApp', () => {
     await writeFile(path.join(dir, 'index.html'), '<!doctype html><title>shell</title>')
     await writeFile(path.join(dir, 'app.html'), '<!doctype html><title>app</title>')
     await writeFile(path.join(dir, 'engine', 'engine.js'), 'export {}')
+    await mkdir(path.join(dir, 'bridge-scene', 'static', 'BevyExplorerUI'), { recursive: true })
+    await writeFile(path.join(dir, ...BRIDGE_ABOUT_PATH.split('/').filter(Boolean)), JSON.stringify(BRIDGE_ABOUT))
     server = await serveWebApp(dir, 0)
   })
 
@@ -59,11 +67,79 @@ describe('serveWebApp', () => {
     assert.equal((await fetch(`${server.url}..%2Fx`)).status, 400)
   })
 
+  test("the bridge scene's realm names this origin's absolute content url, as Sites serves it", async () => {
+    const response = await fetch(server.url + BRIDGE_ABOUT_PATH.slice(1))
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('content-type'), 'application/json; charset=utf-8')
+    assert.equal(response.headers.get('cross-origin-embedder-policy'), 'credentialless')
+    const about = (await response.json()) as typeof BRIDGE_ABOUT
+    assert.deepEqual(about.comms, BRIDGE_ABOUT.comms)
+    assert.deepEqual(about.configurations, {
+      realmName: 'BevyExplorerUI',
+      scenesUrn: [`urn:decentraland:entity:${BRIDGE_HASH}?=&baseUrl=${server.url}bridge-scene/static/`]
+    })
+    const head = await fetch(server.url + BRIDGE_ABOUT_PATH.slice(1), { method: 'HEAD' })
+    assert.equal(head.headers.get('content-length'), String(Buffer.byteLength(JSON.stringify(about))))
+    assert.equal(await head.text(), '')
+    // a query string, an escaped or a doubled slash change nothing: the file decides
+    for (const spelling of [`${BRIDGE_ABOUT_PATH.slice(1)}?x=1`, BRIDGE_ABOUT_PATH.slice(1).replace('/about', '%2Fabout'), BRIDGE_ABOUT_PATH.slice(1).replace('/about', '//about')]) {
+      const same = (await (await fetch(server.url + spelling)).json()) as typeof BRIDGE_ABOUT
+      assert.deepEqual(same, about, spelling)
+    }
+  })
+
   test('HEAD carries the length and no body', async () => {
     const response = await fetch(`${server.url}app.html`, { method: 'HEAD' })
     assert.equal(response.status, 200)
     assert.equal(response.headers.get('content-length'), String(Buffer.byteLength('<!doctype html><title>app</title>')))
     assert.equal(await response.text(), '')
+  })
+})
+
+describe('bridgeAbout', () => {
+  test('leaves a document alone whose content url is absolute already, or that is not the bridge', () => {
+    const absolute = JSON.stringify({ configurations: { scenesUrn: [`urn:decentraland:entity:${BRIDGE_HASH}?=&baseUrl=https://cdn.example/bridge-scene/static/`] } })
+    assert.equal(bridgeAbout(absolute, 'http://127.0.0.1:1'), absolute)
+    // protocol-relative is not root-relative: the engine takes it as it is
+    const protocolRelative = JSON.stringify({ configurations: { scenesUrn: [`urn:decentraland:entity:${BRIDGE_HASH}?=&baseUrl=//cdn.example/bridge-scene/static/`] } })
+    assert.equal(bridgeAbout(protocolRelative, 'http://127.0.0.1:1'), protocolRelative)
+    const other = JSON.stringify({ configurations: { scenesUrn: ['urn:decentraland:entity:bafa?=&baseUrl=/x/', 'urn:decentraland:entity:bafb?=&baseUrl=/y/'] } })
+    assert.equal(bridgeAbout(other, 'http://127.0.0.1:1'), other)
+    assert.equal(bridgeAbout('{}', 'http://127.0.0.1:1'), '{}')
+  })
+
+  test('rewrites a CIDv0 hash as well', () => {
+    const cid = 'Qm' + 'a'.repeat(44)
+    const about = JSON.stringify({ configurations: { scenesUrn: [`urn:decentraland:entity:${cid}?=&baseUrl=/bridge-scene/static/`] } })
+    assert.deepEqual(JSON.parse(bridgeAbout(about, 'http://127.0.0.1:1')), { configurations: { scenesUrn: [`urn:decentraland:entity:${cid}?=&baseUrl=http://127.0.0.1:1/bridge-scene/static/`] } })
+  })
+
+  test('refuses a root-relative content url it does not know, naming it', () => {
+    const unknown = JSON.stringify({ configurations: { scenesUrn: [`urn:decentraland:entity:${BRIDGE_HASH}?=&baseUrl=/elsewhere/`] } })
+    assert.throws(() => bridgeAbout(unknown, 'http://127.0.0.1:1'), /root-relative content url this server does not know how to serve: urn:decentraland:entity:bafkreiexample\?=&baseUrl=\/elsewhere\//)
+  })
+
+  test('the server answers such a document, or one that is not JSON, with 503 and says so', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'e2e-serve-bridge-'))
+    const server = await serveWebApp(dir, 0)
+    const original = console.error
+    const said: string[] = []
+    console.error = (line: unknown) => said.push(String(line))
+    try {
+      await mkdir(path.join(dir, 'bridge-scene', 'static', 'BevyExplorerUI'), { recursive: true })
+      const file = path.join(dir, ...BRIDGE_ABOUT_PATH.split('/').filter(Boolean))
+      await writeFile(file, JSON.stringify({ configurations: { scenesUrn: ['urn:decentraland:entity:bafkreiother?=&baseUrl=/elsewhere/'] } }))
+      const response = await fetch(server.url + BRIDGE_ABOUT_PATH.slice(1))
+      assert.equal(response.status, 503)
+      assert.equal(said.filter((line) => line.includes(BRIDGE_ABOUT_PATH) && line.includes('/elsewhere/')).length, 1)
+      await writeFile(file, 'not json')
+      assert.equal((await fetch(server.url + BRIDGE_ABOUT_PATH.slice(1))).status, 503)
+      assert.equal(said.length, 2)
+    } finally {
+      console.error = original
+      await server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })
 

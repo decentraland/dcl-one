@@ -8,7 +8,8 @@
 
 import { renderHook, act, waitFor, type RenderHookResult } from '@testing-library/react'
 import { expect, vi } from 'vitest'
-import type { LoginDriver } from '../engine/driver'
+import type { LoginDriver, NewAccountPick } from '../engine/driver'
+import type { AuthIdentity } from '../features/auth/sso'
 import type { PageToScene, SceneToPage } from '../engine/protocol'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
 import { useEngineSession, type EngineSession, type ProfileState } from '../features/session/useEngineSession'
@@ -46,8 +47,11 @@ export class FakeDriver implements LoginDriver {
   async logout(): Promise<void> {
     this.calls.push('logout')
   }
-  async loginWithIdentity(): Promise<void> {
+  /** What `loginWithIdentity` was handed, in order (a `/hud_login`'s identity and pick). */
+  readonly identityLogins: { identity: AuthIdentity; defaultOnError?: boolean; guest?: boolean; pick?: NewAccountPick }[] = []
+  async loginWithIdentity(identity: AuthIdentity, defaultOnError?: boolean, guest?: boolean, pick?: NewAccountPick): Promise<void> {
     this.calls.push('loginWithIdentity')
+    this.identityLogins.push({ identity, defaultOnError, guest, pick })
   }
   async jumpIn(): Promise<void> {
     this.calls.push('jumpIn')
@@ -108,6 +112,8 @@ export interface Harness {
   result: RenderHookResult<EngineSession, unknown>['result']
   /** The current session value (re-read after acts). */
   session: () => EngineSession
+  /** Take the session down, as leaving the page does. */
+  unmount: () => void
 }
 
 /** Render the real session hook wired to a FakeDriver (pass a subclass to simulate boot panics). */
@@ -116,8 +122,8 @@ export function renderSession(
   driver: FakeDriver = new FakeDriver()
 ): Harness {
   if (previousLogin) driver.previousLogin = previousLogin
-  const { result } = renderHook(() => useEngineSession(() => driver))
-  return { driver, result, session: () => result.current }
+  const { result, unmount } = renderHook(() => useEngineSession(() => driver))
+  return { driver, result, session: () => result.current, unmount }
 }
 
 /**

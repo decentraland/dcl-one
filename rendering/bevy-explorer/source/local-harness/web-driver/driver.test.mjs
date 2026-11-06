@@ -19,7 +19,7 @@ import * as nodeModule from 'node:module';
 import path from 'node:path';
 import { after, before, beforeEach, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { acceptsBinding, findChrome, launch } from './driver.mjs';
+import { acceptsBinding, findChrome, launch, redact, secretOf } from './driver.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(HERE, 'fixture');
@@ -53,6 +53,19 @@ describe('acceptsBinding', () => {
 
   test('refuses a context it does not know', () => {
     assert.equal(acceptsBinding(undefined, origin), false);
+  });
+});
+
+describe('redact', () => {
+  test("keeps a sign-in line's credential out of what the command line prints", () => {
+    assert.equal(secretOf('/hud_login eyJhIjoxfQ== --guest'), 'eyJhIjoxfQ==');
+    assert.equal(secretOf('login_identity eyJhIjoxfQ== --name tester'), 'eyJhIjoxfQ==');
+    assert.equal(secretOf('/teleport 1 2'), undefined);
+    assert.equal(secretOf('/hud_login --guest eyJhIjoxfQ== --look 1'), 'eyJhIjoxfQ==');
+    assert.equal(secretOf('/hud_login --name tester --look 1 eyJhIjoxfQ== --guest'), 'eyJhIjoxfQ==');
+    assert.equal(secretOf('/login_identity --profiles https://x.example/lambdas eyJhIjoxfQ=='), 'eyJhIjoxfQ==');
+    assert.equal(redact('/hud_login eyJhIjoxfQ== --guest', '/hud_login eyJhIjoxfQ== --guest did not finish: eyJhIjoxfQ=='), '/hud_login <redacted> --guest did not finish: <redacted>');
+    assert.equal(redact('/teleport 1 2', 'failed to set location'), 'failed to set location');
   });
 });
 

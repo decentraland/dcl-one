@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { ConsoleError, FakeConsole, commandOf, normalizeLine } from '../driver/console.ts'
+import { pathToFileURL } from 'node:url'
+import { ConsoleError, FakeConsole, commandOf, normalizeLine, redactLine, secretOf } from '../driver/console.ts'
+import { WEB_DRIVER } from '../driver/paths.ts'
 
 describe('normalizeLine', () => {
   test('adds the slash and collapses whitespace', () => {
@@ -53,6 +55,31 @@ describe('ConsoleError', () => {
     assert.equal(error.line, '/login_identity <redacted> --name tester')
     assert.equal(error.output, 'the identity <redacted> is not base64 JSON')
     assert.equal(error.message, '`/login_identity <redacted> --name tester` failed: the identity <redacted> is not base64 JSON')
+  })
+
+  test('the credential is the first word that is not a bare flag, as the web driver has it', async () => {
+    const lines = [
+      '/hud_login eyJhIjoxfQ== --guest',
+      '/hud_login --guest eyJhIjoxfQ== --look 1',
+      '/hud_login --name tester --look 1 eyJhIjoxfQ== --guest',
+      '/login_identity --profiles https://x.example/lambdas eyJhIjoxfQ==',
+      'login_identity eyJhIjoxfQ==',
+      '/teleport 1 2',
+      '/hud_login'
+    ]
+    const expected = ['eyJhIjoxfQ==', 'eyJhIjoxfQ==', 'eyJhIjoxfQ==', 'eyJhIjoxfQ==', 'eyJhIjoxfQ==', undefined, undefined]
+    assert.deepEqual(lines.map(secretOf), expected)
+    assert.equal(redactLine('/hud_login --guest eyJhIjoxfQ=='), '/hud_login --guest <redacted>')
+    assert.equal(redactLine('/hud_login --name tester --look 1 eyJhIjoxfQ=='), '/hud_login --name tester --look 1 <redacted>')
+    // the web driver's command line redacts by the same rule
+    const driver = (await import(pathToFileURL(WEB_DRIVER).href)) as { secretOf: (line: string) => string | undefined }
+    assert.deepEqual(lines.map(driver.secretOf), expected)
+  })
+
+  test('keeps a /hud_login payload out as well', () => {
+    const error = new ConsoleError('/hud_login eyJhIjoxfQ== --guest --realm https://realm.example', 'profile fetch failed for eyJhIjoxfQ==')
+    assert.equal(error.line, '/hud_login <redacted> --guest --realm https://realm.example')
+    assert.equal(error.output, 'profile fetch failed for <redacted>')
   })
 
   test('leaves every other line as it is', () => {
