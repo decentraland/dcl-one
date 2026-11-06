@@ -103,7 +103,7 @@ async function channel(c: CommunityRaw): Promise<CommunityChannel> {
 // malformed answer would delete its history.
 const MEMBER_OF_PAGE = 100
 const MEMBER_OF_PAGES = 10
-async function memberOf(): Promise<CommunityChannel[]> {
+async function memberOf(): Promise<CommunityRaw[]> {
   const b = await base('v2')
   const raw: CommunityRaw[] = []
   for (let page = 0; page < MEMBER_OF_PAGES; page++) {
@@ -114,7 +114,7 @@ async function memberOf(): Promise<CommunityChannel[]> {
     raw.push(...rows)
     if (rows.length < MEMBER_OF_PAGE || (res?.total != null && raw.length >= res.total)) break
   }
-  return await Promise.all(raw.map(channel))
+  return raw
 }
 
 async function one(id: string): Promise<CommunityChannel | undefined> {
@@ -230,6 +230,7 @@ export function registerCommunities(ctx: Ctx): void {
     const communities = await list()
     communities.forEach(remember)
     ctx.send({ kind: 'communities', communities })
+    await sendMembership()
   })
   ctx.on('getCommunity', async (msg) => {
     const raw = await rawOne(msg.id).catch((e: unknown) => {
@@ -244,15 +245,19 @@ export function registerCommunities(ctx: Ctx): void {
   })
   // The member-of list is authoritative when it arrives: an empty one closes every community
   // chat. So a failed read sends nothing, and the page keeps the list it has (the next join, leave
-  // or login reads it again), rather than emptying it for a passing error.
-  const sendChannels = async (): Promise<void> => {
-    const communities = await memberOf().catch((e: unknown) => {
+  // or login reads it again), rather than emptying it for a passing error. One read feeds both the
+  // chat channels and My Communities, which lists every membership, unlisted ones included (the
+  // browse list leaves those out), as unity-explorer's does.
+  const sendMembership = async (): Promise<void> => {
+    const raw = await memberOf().catch((e: unknown) => {
       console.error('[communities] member-of list failed', e)
       return undefined
     })
-    if (communities != null) ctx.send({ kind: 'communityChannels', communities })
+    if (raw == null) return
+    ctx.send({ kind: 'communityChannels', communities: await Promise.all(raw.map(channel)) })
+    ctx.send({ kind: 'myCommunities', communities: await communities(raw) })
   }
-  ctx.on('getCommunityChannels', sendChannels)
+  ctx.on('getCommunityChannels', sendMembership)
   ctx.on('setCommunityChannels', (msg) => {
     BevyApi.social.setCommunityChannels(msg.ids)
   })
@@ -316,7 +321,7 @@ export function registerCommunities(ctx: Ctx): void {
       })
     ctx.send(result)
     ctx.send({ kind: 'communities', communities: await list() })
-    await sendChannels()
+    await sendMembership()
   })
   // Every write reports a rejection to the page (the modal shows it) and then re-reads the list,
   // so the buttons always reflect the server.
@@ -338,7 +343,7 @@ export function registerCommunities(ctx: Ctx): void {
       if (community != null) ctx.send({ kind: 'community', community })
     }
     // joining or leaving changes the chat channels too
-    await sendChannels()
+    await sendMembership()
   }
   ctx.on('joinCommunity', async (msg) => {
     await write(msg.id, 'join', async () => await signed(`${await base('v1')}/${encodeURIComponent(msg.id)}/members`, 'POST'))

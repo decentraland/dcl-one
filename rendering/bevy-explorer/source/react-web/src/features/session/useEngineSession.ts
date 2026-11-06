@@ -210,6 +210,8 @@ export type CommunitySave = { status: 'saving' } | { status: 'done'; result: Com
 
 export interface CommunitiesState {
   list: Community[]
+  /** Every community the user is a member of, unlisted ones included (My Communities). */
+  mine: Community[]
   open: boolean
   toggle: () => void
   /** Create a community (name, description, Public/Private, discoverable, picture as a data URL).
@@ -1100,6 +1102,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [communityDetail, setCommunityDetail] = useState<CommunityDetailMessage | null>(null)
   const [communityError, setCommunityError] = useState<{ id: string; message: string } | null>(null)
   const [communitySave, setCommunitySave] = useState<CommunitySave | null>(null)
+  const [myCommunities, setMyCommunities] = useState<Community[]>([])
   const [mapParcel, setMapParcel] = useState({ x: 0, y: 0 })
   const [mapOpen, setMapOpen] = useState(false)
   // Minimap pose: a ref, not state — see MinimapState.pose for why.
@@ -1578,6 +1581,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'communitySaveResult':
           setCommunitySave({ status: 'done', result: msg })
+          break
+        case 'myCommunities':
+          setMyCommunities(msg.communities)
           break
         case 'communityDetail':
           setCommunityDetail(msg)
@@ -3728,7 +3734,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       saveOutfit, deleteOutfit, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
-    communities: { list: communities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, save: communitySave, clearSave: clearCommunitySave, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
+    communities: { list: communities, mine: myCommunities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, save: communitySave, clearSave: clearCommunitySave, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
     map: mapSlice,
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces },

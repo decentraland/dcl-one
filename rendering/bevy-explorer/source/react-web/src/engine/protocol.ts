@@ -1268,6 +1268,12 @@ export interface CommunityChannelsMessage {
   kind: 'communityChannels'
   communities: CommunityChannel[]
 }
+/** Every community the local user is a member of, unlisted ones included, for My Communities
+ *  (scene → page). Sent from the same member-of read as `communityChannels`. */
+export interface MyCommunitiesMessage {
+  kind: 'myCommunities'
+  communities: Community[]
+}
 /** The local user joined (or was told they are in) a community (scene → page). */
 export interface CommunityChannelAddedMessage {
   kind: 'communityChannelAdded'
@@ -1793,6 +1799,7 @@ export type SceneToPage =
   | VoiceActivityMessage
   | CommunityActionFailedMessage
   | CommunitySaveResultMessage
+  | MyCommunitiesMessage
   | TravelResultMessage
   | AvatarSaveFailedMessage
   | RequestFailedMessage

@@ -329,7 +329,8 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
   // the browse list only holds what the Communities page fetched; a card opened from elsewhere
   // (the chat's "View Community") has its community fetched by id, and a join or leave that
   // re-reads the list (its first page) does not take it away
-  const community = communities.list.find((c) => c.id === communityId) ?? communities.cards[communityId]
+  const community =
+    communities.list.find((c) => c.id === communityId) ?? communities.mine.find((c) => c.id === communityId) ?? communities.cards[communityId]
   const listed = community != null
   useEffect(() => {
     if (!listed) fetch(communityId)

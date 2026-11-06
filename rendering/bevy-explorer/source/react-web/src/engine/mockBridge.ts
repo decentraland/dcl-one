@@ -896,6 +896,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'getCommunities') {
       reply({ kind: 'communities', communities: mockCommunities })
+      reply({ kind: 'myCommunities', communities: mockCommunities.filter((c) => c.role !== 'none') })
       return
     }
     if (msg.kind === 'getCommunity') {
@@ -944,6 +945,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       setTimeout(() => {
         reply({ kind: 'communitySaveResult', mode: 'create', id })
         reply({ kind: 'communities', communities: mockCommunities })
+      reply({ kind: 'myCommunities', communities: mockCommunities.filter((c) => c.role !== 'none') })
       }, 600)
       return
     }
@@ -955,18 +957,21 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         reply({ kind: 'communityChannelAdded', community: { id: c.id, name: c.name, thumbnail: c.thumbnail ?? '', role: c.role } })
       }
       reply({ kind: 'communities', communities: mockCommunities })
+      reply({ kind: 'myCommunities', communities: mockCommunities.filter((c) => c.role !== 'none') })
       return
     }
     if (msg.kind === 'requestToJoinCommunity') {
       const c = mockCommunities.find((x) => x.id === msg.id)
       if (c) c.pendingRequestId = `req-${c.id}`
       reply({ kind: 'communities', communities: mockCommunities })
+      reply({ kind: 'myCommunities', communities: mockCommunities.filter((c) => c.role !== 'none') })
       return
     }
     if (msg.kind === 'cancelJoinRequest') {
       const c = mockCommunities.find((x) => x.id === msg.id)
       if (c) delete c.pendingRequestId
       reply({ kind: 'communities', communities: mockCommunities })
+      reply({ kind: 'myCommunities', communities: mockCommunities.filter((c) => c.role !== 'none') })
       return
     }
     if (msg.kind === 'leaveCommunity') {
@@ -977,6 +982,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         reply({ kind: 'communityChannelRemoved', id: c.id })
       }
       reply({ kind: 'communities', communities: mockCommunities })
+      reply({ kind: 'myCommunities', communities: mockCommunities.filter((c) => c.role !== 'none') })
       return
     }
     if (msg.kind === 'getCommunityDetail') {
