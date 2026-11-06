@@ -51,12 +51,34 @@ jobs:
       - name: Build the static reviewer with relative assets
         working-directory: library/ui
         run: pnpm review:build --base ./
+      - name: Verify reviewer navigation and resources under a versioned CDN path
+        run: node tooling/web-preview-browser.mjs library/ui/figma/review/review-dist
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: web-preview-reviewer
           path: library/ui/figma/review/review-dist/
           if-no-files-found: error
           retention-days: 7
+  summary:
+    name: Preview status
+    needs: [changes, reviewer, sites]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          sparse-checkout: tooling/web-preview.py
+          sparse-checkout-cone-mode: false
+      - name: Explain preview availability independently of publication
+        env:
+          SELECTION_RESULT: ${{ needs.changes.result }}
+          REVIEWER_RESULT: ${{ needs.reviewer.result }}
+          SITES_RESULT: ${{ needs.sites.result }}
+          PUBLICATION_ENABLED: ${{ vars.WEB_PREVIEW_REVIEWER_ENABLED }}
+        run: python3 tooling/web-preview.py build-summary
   sites:
     name: Sites
     needs: changes

@@ -30,10 +30,14 @@ jobs:
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
         run: python3 tooling/web-preview.py resolve >> "$GITHUB_OUTPUT"
   reviewer:
+    name: 'Publish UI reviewer: PR ${{ needs.source.outputs.pr }}'
     needs: source
     if: vars.WEB_PREVIEW_REVIEWER_ENABLED == 'true' && needs.source.outputs.publish == 'true' && needs.source.outputs.reviewer == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    environment:
+      name: web-preview
+      url: ${{ steps.cdn.outputs.url }}
     concurrency:
       group: web-preview-reviewer-publish-${{ needs.source.outputs.pr }}
       cancel-in-progress: false
@@ -58,6 +62,10 @@ jobs:
             library/ui/figma/key-guard.mjs
             library/ui/figma/key-guard-allow.json
           sparse-checkout-cone-mode: false
+      - name: Require a protected publication environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tooling/web-preview.py check-environment
       - name: Require the CDN publication configuration
         env:
           CDN_TOKEN: ${{ secrets.GITLAB_CDN_DEPLOYER_TOKEN }}

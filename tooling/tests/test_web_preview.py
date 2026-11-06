@@ -76,6 +76,7 @@ class WebPreviewTests(unittest.TestCase):
         for path in [
             'tooling/web-preview.py',
             'tooling/tests/test_web_preview.py',
+            'tooling/web-preview-browser.mjs',
             '.github/workflows/web-previews.yml',
             '.github/workflows/web-previews-publish.yml',
         ]:
@@ -776,6 +777,109 @@ class WebPreviewTests(unittest.TestCase):
         ):
             self.assertEqual(preview.api('repos/example/one'), [1, 2])
             sleep.assert_called_once_with(1)
+
+    def test_publication_requires_a_human_reviewer_and_no_admin_bypass(self):
+        reviewer = {'type': 'User', 'reviewer': {'type': 'User', 'login': 'maintainer'}}
+        environment = {
+            'can_admins_bypass': False,
+            'protection_rules': [{'type': 'required_reviewers', 'reviewers': [reviewer]}],
+        }
+        with patch.object(preview, 'api', return_value=environment) as request:
+            preview.require_publication_environment('example/one')
+            request.assert_called_once_with('repos/example/one/environments/web-preview')
+        for invalid in (
+            {},
+            {**environment, 'can_admins_bypass': True},
+            {**environment, 'can_admins_bypass': None},
+            {**environment, 'protection_rules': []},
+            {**environment, 'protection_rules': [{'type': 'required_reviewers', 'reviewers': []}]},
+        ):
+            with (
+                self.subTest(environment=invalid),
+                patch.object(preview, 'api', return_value=invalid),
+            ):
+                with self.assertRaisesRegex(ValueError, 'human reviewer'):
+                    preview.require_publication_environment('example/one')
+        for invalid in (
+            {},
+            {'type': 'Team', 'reviewer': {'type': 'User', 'login': 'team'}},
+            {'type': 'User', 'reviewer': None},
+            {'type': 'User', 'reviewer': {'type': 'Bot', 'login': 'app'}},
+            {'type': 'User', 'reviewer': {'type': 'User', 'login': 'app[bot]'}},
+        ):
+            rules = [{'type': 'required_reviewers', 'reviewers': [invalid]}]
+            with (
+                self.subTest(reviewer=invalid),
+                patch.object(
+                    preview, 'api', return_value={**environment, 'protection_rules': rules}
+                ),
+            ):
+                with self.assertRaisesRegex(ValueError, 'human reviewer'):
+                    preview.require_publication_environment('example/one')
+
+    def test_missing_or_unreadable_environment_cannot_authorize_publication(self):
+        with patch.object(preview, 'api', side_effect=subprocess.CalledProcessError(1, ['gh'])):
+            with self.assertRaises(subprocess.CalledProcessError):
+                preview.require_publication_environment('example/one')
+
+    def test_build_summary_distinguishes_artifacts_and_live_publication(self):
+        for enabled, message in (
+            (False, 'CDN publication disabled'),
+            (True, 'Pending the separate publisher, source checks and human approval'),
+        ):
+            with self.subTest(enabled=enabled):
+                summary = preview.build_summary(
+                    'success', 'success', 'success', enabled, 'example/one', 123
+                )
+                self.assertIn(message, summary)
+                self.assertIn('SSR hosting integration is pending', summary)
+                self.assertIn('https://github.com/example/one/actions/runs/123', summary)
+                self.assertIn('must be installed on the default branch', summary)
+                self.assertNotIn('[Preview]', summary)
+
+    def test_build_summary_reports_failed_selection_and_failed_or_cancelled_products(self):
+        for selection, reviewer in (
+            ('failure', 'skipped'),
+            ('success', 'failure'),
+            ('success', 'cancelled'),
+        ):
+            with self.subTest(selection=selection, reviewer=reviewer):
+                summary = preview.build_summary(
+                    selection, reviewer, 'skipped', False, 'example/one', 123
+                )
+                if selection == 'failure':
+                    self.assertIn('| Preview selection | failure |', summary)
+                else:
+                    self.assertIn(
+                        'Unavailable: build or CDN-path validation did not succeed', summary
+                    )
+                self.assertNotIn('CDN publication disabled', summary)
+
+    def test_build_summary_reports_no_selected_products(self):
+        summary = preview.build_summary('success', 'skipped', 'skipped', False, 'example/one', 123)
+        self.assertIn('| Web previews | not selected |', summary)
+        self.assertNotIn('| UI reviewer |', summary)
+
+    def test_summary_cli_writes_the_github_job_summary_without_a_source_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'summary.md'
+            with (
+                patch.object(preview.sys, 'argv', ['web-preview.py', 'build-summary']),
+                patch.dict(
+                    os.environ,
+                    {
+                        'GITHUB_REPOSITORY': 'example/one',
+                        'GITHUB_RUN_ID': '123',
+                        'SELECTION_RESULT': 'success',
+                        'REVIEWER_RESULT': 'success',
+                        'SITES_RESULT': 'skipped',
+                        'GITHUB_STEP_SUMMARY': str(output),
+                    },
+                    clear=True,
+                ),
+            ):
+                preview.main()
+            self.assertIn('CDN publication disabled', output.read_text())
 
 
 if __name__ == '__main__':

@@ -22,6 +22,7 @@ PIPELINE_INPUTS = {
     '.github/workflows/web-previews-publish.yml',
     'tooling/web-preview.py',
     'tooling/tests/test_web_preview.py',
+    'tooling/web-preview-browser.mjs',
 }
 PACKAGE = '@dcl-regenesislabs/dcl-one-ui-review'
 MARKER = '<!-- web-pr-previews -->'
@@ -176,6 +177,56 @@ def api(path, *, method='GET', body=None, paginate=False):
                     return [item for page in value for item in page] if paginate else value
         print(f'Transient GitHub API failure; retrying ({attempt + 1}/{attempts})', file=sys.stderr)
         time.sleep(2**attempt)
+
+
+def require_publication_environment(repository):
+    environment = api(f'repos/{repository}/environments/web-preview')
+    reviewers = [
+        item
+        for rule in environment.get('protection_rules', [])
+        if rule.get('type') == 'required_reviewers'
+        for item in rule.get('reviewers', [])
+        if item.get('type') == 'User'
+        and (item.get('reviewer') or {}).get('type') == 'User'
+        and not bot_account(item.get('reviewer'))
+    ]
+    if not reviewers or environment.get('can_admins_bypass') is not False:
+        raise ValueError('web-preview must require a human reviewer and disable admin bypass')
+
+
+def build_summary(selection, reviewer, sites, enabled, repository, run_id):
+    run_url = f'https://github.com/{repository}/actions/runs/{run_id}'
+    rows = [
+        '## Web previews',
+        '',
+        '| Product | Build | Preview |',
+        '| --- | --- | --- |',
+    ]
+    if selection != 'success':
+        rows.append(f'| Preview selection | {selection} | See the changes job |')
+    for label, result in [('UI reviewer', reviewer), ('Sites', sites)]:
+        if result == 'skipped':
+            continue
+        if result != 'success':
+            state = 'Unavailable: build or CDN-path validation did not succeed'
+        elif label == 'Sites':
+            state = 'Build only. SSR hosting integration is pending'
+        elif not enabled:
+            state = 'CDN publication disabled: source CDN-path verification and activation pending'
+        else:
+            state = 'Pending the separate publisher, source checks and human approval'
+        rows.append(f'| {label} | {result} | {state} |')
+    if reviewer == sites == 'skipped' and selection == 'success':
+        rows.append('| Web previews | not selected | No web products in the cumulative PR diff |')
+    rows += [
+        '',
+        f'[Build logs and downloadable artifacts]({run_url}). Artifacts expire after seven days.',
+        '',
+        'The publisher workflow must be installed on the default branch. '
+        'A successful build does not confirm a deployed preview. '
+        'The publisher posts the verified CDN URL in the PR comment after human approval.',
+    ]
+    return '\n'.join(rows) + '\n'
 
 
 def same_pull_request(candidate, pr):
@@ -379,6 +430,8 @@ def main():
     select.add_argument('--head', required=True)
     sub.add_parser('resolve')
     sub.add_parser('check-publication')
+    sub.add_parser('check-environment')
+    sub.add_parser('build-summary')
     package = sub.add_parser('package-reviewer')
     package.add_argument('source', type=Path)
     package.add_argument('target', type=Path)
@@ -396,6 +449,21 @@ def main():
             print(f'{name}={str(name in selected).lower()}')
         return
     repository = os.environ['GITHUB_REPOSITORY']
+    if args.command == 'build-summary':
+        summary = build_summary(
+            os.environ['SELECTION_RESULT'],
+            os.environ['REVIEWER_RESULT'],
+            os.environ['SITES_RESULT'],
+            os.environ.get('PUBLICATION_ENABLED') == 'true',
+            repository,
+            int(os.environ['GITHUB_RUN_ID']),
+        )
+        with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as output:
+            output.write(summary)
+        return
+    if args.command == 'check-environment':
+        require_publication_environment(repository)
+        return
     run_id = int(os.environ['SOURCE_RUN_ID'])
     if args.command == 'report':
         report(
@@ -416,6 +484,7 @@ def main():
     if not require_reviewer(repository, run_id):
         raise ValueError('Reviewer did not produce one successful job and static artifact')
     if args.command == 'check-publication':
+        require_publication_environment(repository)
         return
     if args.command == 'package-reviewer':
         package_reviewer(args.source, args.target, run['head_sha'], run_id)
