@@ -486,7 +486,7 @@ async fn an_authority_outage_keeps_secret_and_owner_grants_through_the_sweep() {
         return;
     };
     let visitor_key = format!("0x{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
-    let previous = Address::parse("0x3333333333333333333333333333333333333333").unwrap();
+    let previous = Address::parse(&Wallet::from_hex(&visitor_key).unwrap().address()).unwrap();
     let holder = Address::parse("0x4444444444444444444444444444444444444444").unwrap();
     let world = world_name();
     let hash = bcrypt::hash("open sesame", 4).unwrap();
@@ -509,6 +509,13 @@ async fn an_authority_outage_keeps_secret_and_owner_grants_through_the_sweep() {
     )
     .await;
     let addr = serve(h.state.clone()).await;
+    // The stored owner cannot establish independent ownership during the outage.
+    // A wrong secret remains denied; a valid one retries the full policy under budget.
+    assert!(
+        join(addr, &world, &visitor_key, r#"{"secret":"wrong"}"#)
+            .await
+            .is_none()
+    );
     let (mut visitor_ws, _) = join(addr, &world, &visitor_key, r#"{"secret":"open sesame"}"#)
         .await
         .expect("the secret admits without asking the authority");

@@ -979,10 +979,12 @@ Access edits commit a unique revision and database-clock cutoff to
 retry intent before their advisory wakeups. Maintenance shares one room inventory
 between 16 due edits and a rotating batch of 16 live worlds. Cutoffs stay after
 success so an old token cannot regain access by reconnecting. World tokens carry
-additive signed authorization metadata bound to world, wallet, room and mint
+additive signed authorization attributes bound to world, wallet, room and mint
 start time. The short `FOR SHARE` stamp orders against existing access writers.
-Legacy tokens, key rotation, or clients replacing metadata may require a fresh
-mint after an access edit. Existing main ownership, ENS and scoped grant policy
+The `dcl.worldAuthorization` participant attribute survives normal client metadata
+replacement. Previously issued signed metadata proofs remain readable when the
+attribute is absent; an invalid present attribute fails closed. Legacy unsigned
+tokens and key rotation may require a fresh mint after an access edit. Existing main ownership, ENS and scoped grant policy
 still decides admission.
 
 The caller secret budget keeps the existing `attempts/window_start` table and

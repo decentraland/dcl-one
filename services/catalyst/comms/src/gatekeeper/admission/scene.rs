@@ -28,7 +28,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use sqlx::Row;
 
-use crate::access::{Access, AccessType, LandOperators, SceneRef, WorldAdmission};
+use crate::access::{Access, LandOperators, SceneRef, WorldAdmission};
 use crate::shared::cache::TtlMap;
 use crate::world_identity::{Parcel, ParcelSet, SceneId, WorldName, is_world_realm_name};
 use crate::{Address, AuthorityNotEstablished, PermissionDecision};
@@ -396,22 +396,21 @@ pub async fn has_world_access_permission(
         subject: caller,
         max_attempts: state.world_mint.max_secret_attempts,
     };
-    let reservation = if admission == WorldAdmission::Open(AccessType::SharedSecret) {
-        Some(
-            throttle
-                .reserve(now)
-                .await
-                .map_err(|_| service_unavailable(WORLD_ACCESS_UNAVAILABLE_MSG))?
-                .ok_or_else(|| ApiError::http(429, "Too many shared-secret attempts"))?,
-        )
-    } else {
-        None
-    };
-    let access = state
+    // A no-secret decision also catches an access-type change since world_admission.
+    let mut access = state
         .policy
-        .can_access(&world, identity, secret, scene.as_ref(), device_id, now)
+        .can_access(&world, identity, None, scene.as_ref(), device_id, now)
         .await;
-    if let Some(reservation) = reservation {
+    if matches!(access, Ok(Access::InvalidSecret)) || (access.is_err() && secret.is_some()) {
+        let reservation = throttle
+            .reserve(now)
+            .await
+            .map_err(|_| service_unavailable(WORLD_ACCESS_UNAVAILABLE_MSG))?
+            .ok_or_else(|| ApiError::http(429, "Too many shared-secret attempts"))?;
+        access = state
+            .policy
+            .can_access(&world, identity, secret, scene.as_ref(), device_id, now)
+            .await;
         throttle
             .settle(matches!(access, Ok(Access::InvalidSecret)), reservation)
             .await;
@@ -1059,7 +1058,11 @@ pub(crate) async fn readmit_world_rooms_in_inventory(
                             world,
                             &participant.identity,
                             &room,
-                            participant.metadata.as_deref(),
+                            participant
+                                .attributes
+                                .get(super::world_mint::AUTHORIZATION_ATTRIBUTE)
+                                .map(String::as_str)
+                                .or(participant.metadata.as_deref()),
                             cutoff,
                         )
                     }),

@@ -1352,11 +1352,16 @@ impl crate::interfaces::AccessPolicy for PerWalletPolicy {
         &self,
         _world: &WorldName,
         actor: &Address,
-        _secret: Option<&str>,
+        secret: Option<&str>,
         _scene: Option<&SceneId>,
         _device_id: Option<&str>,
         _now: chrono::NaiveDateTime,
     ) -> Result<crate::access::Access, crate::AuthorityNotEstablished> {
+        if secret == Some("valid-fixture-secret") {
+            return Ok(crate::access::Access::Allowed(
+                crate::access::AccessGrant::SharedSecret,
+            ));
+        }
         if matches!(
             self.inner.admission,
             Some(crate::access::WorldAdmission::Open(
@@ -1689,7 +1694,7 @@ async fn readmission_requires_signed_freshness_and_retains_failed_rosters() {
     // Both reconnected after the edit; only freshly signed authorization survives.
     let roster = serde_json::json!({"participants": [
         {"identity": stale.as_str(), "sid": "PA_a", "metadata": "{}", "joinedAt": "201"},
-        {"identity": rejoined.as_str(), "sid": "PA_b", "metadata": fresh_metadata, "joinedAt": "201"},
+        {"identity": rejoined.as_str(), "sid": "PA_b", "metadata": "{\"displayName\":\"Unity replacement\"}", "attributes": {"dcl.worldAuthorization": fresh_metadata}, "joinedAt": "201"},
     ]});
     let fixture = axum::Router::new().route(
         "/twirp/livekit.RoomService/{method}",
@@ -1744,4 +1749,93 @@ async fn readmission_requires_signed_freshness_and_retains_failed_rosters() {
         .collect();
     assert_eq!(removed, vec![stale.as_str().to_string()]);
     server.abort();
+}
+
+#[tokio::test]
+async fn independent_access_bypasses_exhausted_ip_budget_but_secret_retry_does_not() {
+    use crate::access::{AccessType, WorldAdmission};
+    let Some(mut state) = canonical_stored_state(&["mixed.dcl.eth"]).await else {
+        return;
+    };
+    let wallet = |n: u8| Address::parse(&format!("0x{n:040x}")).unwrap();
+    let (owner, ordinary, uncertain) = (wallet(1), wallet(2), wallet(3));
+    state.world_mint.max_secret_attempts = 1;
+    state.policy = Arc::new(PerWalletPolicy {
+        inner: StubPolicy {
+            admission: Some(WorldAdmission::Open(AccessType::SharedSecret)),
+            ..Default::default()
+        },
+        denied: ordinary.clone(),
+        undetermined: uncertain.clone(),
+        undetermined_failures: usize::MAX.into(),
+    });
+    let throttle = super::super::admission::world_mint::SecretThrottle {
+        pool: &state.pool,
+        world: "mixed.dcl.eth",
+        subject: "192.0.2.1",
+        max_attempts: 1,
+    };
+    assert!(
+        throttle
+            .reserve(chrono::Utc::now().naive_utc())
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        scene::has_world_access_permission(
+            &state,
+            &owner,
+            "mixed.dcl.eth",
+            Some("SceneA"),
+            None,
+            None,
+            "192.0.2.1"
+        )
+        .await
+        .unwrap()
+    );
+    for actor in [&ordinary, &uncertain] {
+        assert!(
+            scene::has_world_access_permission(
+                &state,
+                actor,
+                "mixed.dcl.eth",
+                Some("SceneA"),
+                Some("valid-fixture-secret"),
+                None,
+                "192.0.2.1"
+            )
+            .await
+            .is_err()
+        );
+    }
+    // An independent authority failure does not invalidate a secret: the full policy
+    // may authorize it, but only after reserving a different caller's budget.
+    assert!(
+        scene::has_world_access_permission(
+            &state,
+            &uncertain,
+            "mixed.dcl.eth",
+            Some("SceneA"),
+            Some("valid-fixture-secret"),
+            None,
+            "192.0.2.2"
+        )
+        .await
+        .unwrap()
+    );
+    assert!(
+        scene::has_world_access_permission(
+            &state,
+            &uncertain,
+            "mixed.dcl.eth",
+            Some("SceneA"),
+            Some("wrong"),
+            None,
+            "192.0.2.2"
+        )
+        .await
+        .is_err()
+    );
 }
