@@ -13,7 +13,7 @@ use common::dynamics::{PLAYER_COLLIDER_HEIGHT, PLAYER_COLLIDER_RADIUS};
 use serde::{Deserialize, Serialize};
 
 pub const UNKNOWN_USER: &str = "Unknown";
-pub const UNKNOWN_USER_WALLET: &str = "0x000000000000000000000000000000000000000";
+pub const UNKNOWN_USER_WALLET: &str = "0x0000000000000000000000000000000000000000";
 pub const UNKNOWN_PLACE: &str = "Unknown place";
 
 /// The saved photo's size and the share of the screen it is cut from.

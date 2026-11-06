@@ -1,9 +1,12 @@
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen, act } from '@testing-library/react'
+import { afterEach, describe, it, expect, vi } from 'vitest'
+import { render, screen, act, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { PhotoModeSnapshot } from '../engine/protocol'
 import type { PhotoModeState } from '../features/session/useEngineSession'
 import { PhotoModeOverlay } from '../features/photoMode/PhotoModeOverlay'
+import { setBindingsSnapshot } from '../lib/bindingLabels'
+
+afterEach(() => setBindingsSnapshot([])) // module store leaks across tests
 
 // DOMAIN: the photo-mode overlay — the buttons reach the engine through the session, and the
 // capture effect follows the session's last capture.
@@ -57,6 +60,24 @@ describe('photo mode overlay', () => {
   ] as [string, Partial<PhotoModeSnapshot>][])('Shoot is disabled while %s', (_what, over) => {
     render(<PhotoModeOverlay photoMode={photoMode({ snapshot: snapshot(over) })} onOpenGallery={vi.fn()} />)
     expect(screen.getByRole('button', { name: 'Shoot' })).toBeDisabled()
+  })
+
+  it('the camera controls follow the bindings, scene movement included', async () => {
+    act(() =>
+      setBindingsSnapshot([
+        [{ Scene: 'IaForward' }, ['KeyI']],
+        [{ Scene: 'IaModifier' }, ['KeyM']],
+        [{ System: 'HideNames' }, ['KeyH']]
+      ])
+    )
+    render(<PhotoModeOverlay photoMode={photoMode()} onOpenGallery={vi.fn()} />)
+    await userEvent.click(screen.getByRole('button', { name: /camera controls/i }))
+    const panel = within(screen.getByRole('dialog', { name: 'Camera controls' }))
+    const keysOf = (text: string): (string | null)[] =>
+      Array.from(panel.getByText(text).closest('li')?.querySelectorAll('span > span') ?? []).map((k) => k.textContent)
+    expect(keysOf('Move Forward/Backward')).toEqual(['I', 'S'])
+    expect(keysOf('Increase Move/Pan Speed')).toEqual(['M'])
+    expect(keysOf('Show/Hide Name tags')).toEqual(['H'])
   })
 
   it('a full storage replaces Shoot with the notice', () => {

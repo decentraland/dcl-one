@@ -7,6 +7,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { Close, MaskIcon, MouseIcon, ScrollIcon } from '../../design'
 import { keyHintFor, useBindingsSnapshot, type BindingsSnapshot } from '../../lib/bindingLabels'
 import { registerCancelLayer } from '../../lib/cancelLayers'
+import type { ActionWire } from '../../engine/protocol'
 import type { PhotoModeState } from '../session/useEngineSession'
 import { normalizedFrameSize } from './frame'
 import shootArt from '../../assets/photo-mode/shoot.png'
@@ -21,7 +22,7 @@ const SPLASH_MS = 500
 const PAUSE_MS = 100
 const FLY_MS = 500
 
-function key(snap: BindingsSnapshot, action: string, fallback: string): string {
+function key(snap: BindingsSnapshot, action: string | ActionWire, fallback: string): string {
   return keyHintFor(snap, action) ?? fallback
 }
 
@@ -31,11 +32,11 @@ function controlRows(snap: BindingsSnapshot): Row[] {
   return [
     { icon: 'mouse', text: 'Click and Drag to Move' },
     { icon: 'scroll', text: 'Zoom In/Out' },
-    { keys: [key(snap, 'IaForward', 'W'), key(snap, 'IaBackward', 'S')], text: 'Move Forward/Backward' },
-    { keys: [key(snap, 'IaLeft', 'A'), key(snap, 'IaRight', 'D')], text: 'Pan Left/Right' },
+    { keys: [key(snap, { Scene: 'IaForward' }, 'W'), key(snap, { Scene: 'IaBackward' }, 'S')], text: 'Move Forward/Backward' },
+    { keys: [key(snap, { Scene: 'IaLeft' }, 'A'), key(snap, { Scene: 'IaRight' }, 'D')], text: 'Pan Left/Right' },
     { keys: [key(snap, 'PhotoCameraUp', 'R'), key(snap, 'PhotoCameraDown', 'F')], text: 'Pan Down/Up' },
     { keys: [key(snap, 'PhotoTiltLeft', 'Q'), key(snap, 'PhotoTiltRight', 'E')], text: 'Rotate Left/Right' },
-    { keys: [key(snap, 'IaModifier', 'Shift')], text: 'Increase Move/Pan Speed' },
+    { keys: [key(snap, { Scene: 'IaModifier' }, 'Shift')], text: 'Increase Move/Pan Speed' },
     { keys: [key(snap, 'HideUi', 'U')], text: 'Show/Hide UI' },
     { keys: [key(snap, 'HideNames', 'N')], text: 'Show/Hide Name tags' },
     { keys: [key(snap, 'PhotoMode', 'C')], text: 'Open/Exit Camera' }

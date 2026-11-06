@@ -10,6 +10,9 @@ use wallet::{sign_service_request, Wallet};
 
 use crate::metadata::{ScreenshotMetadata, UNKNOWN_PLACE};
 
+/// How long after a failed status fetch an open photo mode asks the service again.
+const STORAGE_RETRY_SECS: f64 = 5.0;
+
 /// How many photos the player keeps and may keep. Nothing is known until the service answers,
 /// and until then there is no room for a photo.
 #[derive(Resource, Default, Debug)]
@@ -20,6 +23,8 @@ pub struct CameraReelStorage {
     /// The address the counts belong to.
     pub address: Option<String>,
     pub(crate) fetch: Option<Task<Result<StorageResponse, String>>>,
+    /// When a failed fetch is asked again while photo mode is open, in elapsed seconds.
+    pub(crate) retry_at: Option<f64>,
 }
 
 impl CameraReelStorage {
@@ -338,21 +343,31 @@ mod tests {
 
 /// Fetches the storage counts for the signed-in address when it changes and whenever photo mode
 /// opens, so a photo deleted from the gallery frees its slot here too. A fetch that failed is
-/// retried when a photo is asked for.
+/// retried when a photo is asked for and, while photo mode stays open, every few seconds: the
+/// HUD's Shoot is disabled until the status is known, so it recovers without reopening photo mode.
 pub(crate) fn fetch_storage_status(
     mut storage: ResMut<CameraReelStorage>,
     wallet: Res<Wallet>,
     mut opened: EventReader<crate::mode::PhotoModeChanged>,
     mut takes: EventReader<crate::capture::TakePhotoRequest>,
+    in_photo_mode: Query<(), With<crate::PhotoCamera>>,
+    time: Res<Time>,
     ipfs: ipfs::IpfsAssetServer,
 ) {
     use common::util::{TaskCompat, TaskExt};
 
+    let now = time.elapsed_secs_f64();
     if let Some(result) = storage.fetch.as_mut().and_then(|task| task.complete()) {
         storage.fetch = None;
         match result {
-            Ok(response) => storage.set(response.current_images, response.max_images),
-            Err(message) => warn!("camera reel storage status: {message}"),
+            Ok(response) => {
+                storage.set(response.current_images, response.max_images);
+                storage.retry_at = None;
+            }
+            Err(message) => {
+                warn!("camera reel storage status: {message}");
+                storage.retry_at = Some(now + STORAGE_RETRY_SECS);
+            }
         }
     }
 
@@ -367,11 +382,13 @@ pub(crate) fn fetch_storage_status(
         storage.loaded = false;
         storage.current = 0;
         storage.max = 0;
+        storage.retry_at = None;
     }
     let Some(address) = address else {
         return;
     };
-    let retry = asked && !storage.loaded;
+    let due = !in_photo_mode.is_empty() && storage.retry_at.is_some_and(|at| now >= at);
+    let retry = (asked || due) && !storage.loaded;
     if (address_changed || opened || retry) && storage.fetch.is_none() {
         storage.fetch = Some(bevy::tasks::IoTaskPool::get().spawn_compat(fetch_storage(
             ipfs.ipfs().client(),
