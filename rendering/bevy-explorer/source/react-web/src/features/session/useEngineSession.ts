@@ -612,6 +612,8 @@ export interface ChatState {
 }
 
 const MAX_CHAT_LINES = 200
+/** The notifications list keeps at most this many, the size of the bridge's full fetch. */
+export const NOTIFICATIONS_KEPT = 50
 // The least time between two notification pings of one conversation and kind: a flood of lines
 // is one sound, not one per line.
 const PING_INTERVAL_MS = 400
@@ -1478,10 +1480,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           const at = (n: AppNotification): number => notificationTimeMs(n.timestamp) ?? 0
           const fresh = msg.notifications.filter((n) => !known.has(n.id)).sort((a, b) => at(b) - at(a))
           if (fresh.length === 0) break
-          notificationsRef.current = [...fresh, ...notificationsRef.current]
+          // Kept to the size of the full fetch: older ones come back when the panel refetches.
+          notificationsRef.current = [...fresh, ...notificationsRef.current].slice(0, NOTIFICATIONS_KEPT)
           setNotifications((prev) => {
             const have = new Set(prev.map((n) => n.id))
-            return [...fresh.filter((n) => !have.has(n.id)), ...prev]
+            return [...fresh.filter((n) => !have.has(n.id)), ...prev].slice(0, NOTIFICATIONS_KEPT)
           })
           // Newest first in the list; toasts play in arrival order.
           queueNotificationToasts([...fresh].reverse())

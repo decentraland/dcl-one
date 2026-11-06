@@ -8,7 +8,7 @@ import {
   queueNotificationToasts
 } from '../features/notifications/NotificationToast'
 import { ago } from '../features/notifications/summary'
-import type { NotificationsState } from '../features/session/useEngineSession'
+import { NOTIFICATIONS_KEPT, type NotificationsState } from '../features/session/useEngineSession'
 import { fakeSession, renderSession, enterAsGuest } from './harness'
 
 const notif = (id: string, over: Partial<AppNotification> = {}): AppNotification => ({
@@ -117,5 +117,18 @@ describe('notificationsNew in the session', () => {
     expect(screen.getByText('Title a')).toBeTruthy()
     act(() => vi.advanceTimersByTime(TOAST_MS))
     expect(screen.queryByRole('button', { name: /Title a/ })).toBeNull()
+  })
+
+  it('keeps the list to the size of the full fetch as new ones arrive', async () => {
+    vi.useRealTimers()
+    const h = renderSession()
+    await enterAsGuest(h)
+    const old = Array.from({ length: NOTIFICATIONS_KEPT }, (_, i) => notif(`old${i}`, { timestamp: String(Date.now() - (i + 10) * 60_000) }))
+    act(() => h.driver.emit({ kind: 'notifications', notifications: old }))
+    act(() => h.driver.emit({ kind: 'notificationsNew', notifications: [notif('new1'), notif('new2')] }))
+    const ids = h.session().notifications.list.map((n) => n.id)
+    expect(ids).toHaveLength(NOTIFICATIONS_KEPT)
+    expect(ids.slice(0, 2).sort()).toEqual(['new1', 'new2'])
+    expect(ids).not.toContain(`old${NOTIFICATIONS_KEPT - 1}`)
   })
 })
