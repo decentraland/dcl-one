@@ -31,9 +31,40 @@ is not deterministic.
 
 ## Decision
 
-`dcl-scene-cli start --optimize-textures` and `dcl-scene-cli deploy --optimize-textures` convert the
-images that GLB and glTF models sample. The flag is off by default; without it, every payload is
-byte-for-byte what it was.
+`dcl-scene-cli` converts the images that GLB and glTF models sample. `start` converts them in the
+background, always, the way a game engine imports assets. Whether the preview serves the converted
+files and `deploy` uploads them is a per-project setting, off by default. With it off, every payload
+is byte-for-byte what it was.
+
+- **Setting.** `.dcl-one/settings.json` holds `optimizeTextures` and `keepSourceTextures`, both off
+  when missing. `--optimize-textures` / `--no-optimize-textures` and `--keep-source-textures` /
+  `--no-keep-source-textures` on `start` and `deploy` set and store them. Later runs and a deploy
+  started from the preview page read them back.
+- **Background import.** `start` runs one import thread per project, at startup and after every
+  watch batch. A request during a run queues exactly one more run. The encoder uses all cores but
+  one, and the preview never waits for it. A run whose inputs (the publishable files' sizes and
+  modification times, and the setting) are unchanged does nothing. The import fills the cache
+  whether or not the setting is on, so turning it on, or deploying, finds the textures encoded.
+- **Swap.** A run builds a complete overlay and replaces the previous one in a single step. Until
+  then the preview serves the previous overlay. Rewritten models are staged under the sha256 of
+  their bytes, so a run never rewrites a file the overlay in use names, and staged models the new
+  overlay no longer names are deleted after the swap. `start` sends no reload when a run ends: the
+  next reload, from a save or from the client, serves the new files.
+- **Status.** Each run reports on the live-reload socket with
+  `decentraland.sdk.development.TextureOptimization`, case `texture_optimization = 3` of
+  `WsSceneMessage`. The message carries the scene id, the state (`TOS_RUNNING`, `TOS_READY`,
+  `TOS_FAILED`), the textures done, total and failed, the source and KTX2 bytes of the converted
+  images, and whether the setting is on. A JSON text frame `TEXTURE_OPTIMIZATION` carries the same
+  fields in camelCase, as `SCENE_UPDATE` does for `UpdateScene`. `RUNNING` goes out while textures
+  are encoded, at most every 500 ms. `READY` or `FAILED` goes out once per run, and `READY` only
+  when the overlay or the setting changed or `RUNNING` went out. A run that changes nothing sends
+  nothing. A client that connects later receives the last status first. The client decides when to
+  reload; offering that reload in the explorer needs an explorer change that is not part of this
+  decision.
+- **Deploy.** With the setting on, `deploy` runs over the release payload after the build, encoding
+  in the foreground, with a progress line, whatever the cache lacks. A warm cache costs nothing. It
+  holds the process's import lock until the payload is read, so no background swap lands in
+  between, then puts the preview's overlay back.
 
 - **Format.** UASTC LDR 4x4 in a Zstandard-supercompressed KTX2, encoded with
   `-uastc -ktx2 -uastc_level 1 -uastc_rdo_l 1.0`. Base colour and emissive slots (and the colour
@@ -47,7 +78,7 @@ byte-for-byte what it was.
 - **Encoder.** Basis Universal's official `basisu_st.wasm` at tag `v2_50`, pinned by sha256 in
   `apps/dcl-scene-cli/basisu-release.lock` beside its Apache-2.0 license and notice. It is embedded
   in the binary and run in-process by wasmtime over WASI preview 1, one instance per texture in its
-  own scratch directory, on as many threads as cores. The module is compiled once per process. NaN
+  own scratch directory, on as many threads as cores (one fewer in the background). The module is compiled once per process. NaN
   canonicalization and deterministic relaxed SIMD are enabled, so the output does not depend on
   the CPU.
 - **Models.** Each converted image becomes an external file beside the model,
@@ -62,19 +93,23 @@ byte-for-byte what it was.
   An image stays as it was when its KTX2 is not smaller than the source, it cannot be decoded or
   encoded, or a texture samples it through another extension.
 - **Originals.** Creator files are never written to or deleted. An original image file is left out
-  of the published list only when every model that names it was rewritten without it, and its file
-  name appears in no published `.js`, `.json`, `.crdt` or `.composite` file. That covers the bundle
-  and its chunks, `main.crdt`, composites and `scene.json`. `--keep-source-textures` keeps every
-  original.
-- **Staging.** Rewritten models, KTX2 files, a `manifest.json` and a cache live in
-  `.dcl-one/optimized-textures/`. The cache is keyed by the source's sha256, the encoder identity
+  of the published list only when every model that names it was rewritten without it, and no
+  published `.js`, `.json`, `.crdt` or `.composite` file names it. That covers the bundle and its
+  chunks, `main.crdt`, composites and `scene.json`. A file is named by its file name anywhere, or by
+  its bare stem in single, double or back quotes, the shape of code that appends the extension
+  itself. `deploy` warns about the originals it leaves out, since a texture path built at runtime
+  would 404. It also lists the originals it treats differently from the preview's last import: the
+  deploy searches the release bundle and the preview the dev bundle. `--keep-source-textures` keeps
+  every original.
+- **Staging.** Rewritten models, KTX2 files, the background import's `manifest.json`, the last
+  deploy's `deploy-manifest.json` and a cache live in `.dcl-one/optimized-textures/`. The cache is keyed by the source's sha256, the encoder identity
   (module sha256 and arguments), the colour mode and the size cap, so an unchanged texture is never
   encoded again.
 - **Preview equals upload.** The overlay (staged sources, added KTX2 files, left-out originals) is
   applied where the payload is decided: `deploy`'s file list and `payload_path`, and the preview's
-  scene entity and `/content/contents`. The preview serves the bytes a deploy uploads, and a deploy
-  started from the preview page optimizes with the preview's settings. A failed optimization stops
-  a deploy rather than publishing the originals.
+  scene entity and `/content/contents`. Once an import finishes, the preview serves the bytes a
+  deploy uploads. A texture that fails to encode keeps its original. A failed run stops a deploy
+  rather than publishing a half-optimized scene.
 - **Scope.** Only textures that GLB and glTF models sample. Textures that scene code loads directly
   (SDK `Material` and UI textures) are not converted.
 
@@ -82,8 +117,11 @@ byte-for-byte what it was.
 
 Scene payloads shrink, and the Bevy Explorer skips its decode and BC7 compression for these
 textures. Content hashes are the same whichever machine deploys. The binary embeds the 8.4 MB
-module (deflated) and links wasmtime with Cranelift. The first optimization of a large scene takes
-minutes; later runs re-encode only changed textures.
+module (deflated) and links wasmtime with Cranelift. The first import of a large scene takes
+minutes of background work on all cores but one. Later runs re-encode only changed textures, and a
+deploy after a preview finds them cached. Until a run finishes, a changed model or texture is
+served as the previous import left it. The status message adds a case to `WsSceneMessage`; clients
+that ignore unknown oneof cases are unaffected.
 
 Clients without KTX2 support show converted models untextured, because no fallback is published.
 These include Unity's local raw-glTF preview and Bevy Explorer builds older than its
@@ -91,6 +129,8 @@ These include Unity's local raw-glTF preview and Bevy Explorer builds older than
 
 - the production asset-bundle converter (abgen) ingests KTX2 for Unity clients;
 - the shipped Bevy Explorer loads `KHR_texture_basisu` natively.
+
+These gates apply to the setting's default only; the background import already runs.
 
 Updating the encoder means pinning a new module in `basisu-release.lock`. That changes the encoder
 identity, so every texture is encoded again and gets a new content hash.
