@@ -12,6 +12,9 @@ use bevy::{
     render::view::screenshot::{Screenshot, ScreenshotCaptured},
     window::PrimaryWindow,
 };
+use collectibles::{
+    urn::CollectibleUrn, wearables::Wearable, CollectibleType, Collectibles, Emote,
+};
 use common::structs::{EmoteCommand, EmoteLifecycle, EmoteLifecycleEvent, EmoteMask};
 use dcl_component::proto_components::{
     common::Color3,
@@ -113,6 +116,19 @@ pub enum Command {
         r#loop: bool,
     },
     StopEmote,
+    /// An item that is not on the catalyst (an unpublished wearable or emote, or a pose the page
+    /// ships): `urn` resolves to `definition` (an entity definition json, by url) whose files are
+    /// fetched from `files` (name to url: http, `data:` or `blob:`). Send it before the outfit or
+    /// emote that names the urn.
+    #[serde(rename_all = "camelCase")]
+    Collectible {
+        /// `wearable` or `emote`
+        kind: String,
+        urn: String,
+        definition: String,
+        #[serde(default)]
+        files: std::collections::HashMap<String, String>,
+    },
     /// Capture the frame as PNG, `width` x `height` (the frame is scaled and cropped to fit).
     Screenshot {
         id: String,
@@ -235,6 +251,7 @@ fn apply_commands(
     mut commands: Commands,
     mut avatars: Query<(Entity, &mut AvatarSelection, &mut AvatarShape), With<PreviewAvatar>>,
     mut pending: ResMut<PendingOutfit>,
+    mut inline: InlineCollectibles,
     mut orbit: ResMut<OrbitCamera>,
     mut cameras: Query<(Entity, &mut Camera, &mut Projection), With<PreviewCamera>>,
     windows: Query<Entity, With<PrimaryWindow>>,
@@ -343,6 +360,16 @@ fn apply_commands(
                     });
                 }
             }
+            Command::Collectible {
+                kind,
+                urn,
+                definition,
+                files,
+            } => {
+                if let Err(message) = inline.register(&kind, &urn, definition, files) {
+                    emit(&Event::Error { message });
+                }
+            }
             Command::StopEmote => {
                 for (entity, _, _) in avatars.iter() {
                     commands.entity(entity).insert(EmoteCommand {
@@ -421,6 +448,62 @@ fn apply_commands(
                 queue.push_front(command);
             }
         });
+    }
+}
+
+/// Registers host-supplied items with the ipfs layer and points their urns at them.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct InlineCollectibles<'w, 's> {
+    ipfs: Res<'w, ipfs::IpfsResource>,
+    wearables: ResMut<'w, Collectibles<Wearable>>,
+    emotes: ResMut<'w, Collectibles<Emote>>,
+    next: Local<'s, u32>,
+}
+
+impl InlineCollectibles<'_, '_> {
+    fn register(
+        &mut self,
+        kind: &str,
+        urn: &str,
+        definition: String,
+        files: std::collections::HashMap<String, String>,
+    ) -> Result<(), String> {
+        *self.next += 1;
+        let id = format!("inline-{}", *self.next);
+        let entry = |ext: &str| format!("collectible.{ext}");
+        let definition_files = match kind {
+            "wearable" => [
+                entry(Wearable::extension()),
+                entry(Wearable::data_extension()),
+            ],
+            "emote" => [entry(Emote::extension()), entry(Emote::data_extension())],
+            other => return Err(format!("collectible kind `{other}`: wearable or emote")),
+        };
+        let mut collection = ipfs::ContentMap::from_content(files);
+        for file in definition_files {
+            collection = collection.with(file, definition.clone());
+        }
+        // files map to whole urls: an empty base keeps them as they are
+        self.ipfs.add_collection(
+            id.clone(),
+            collection,
+            Some(ipfs::IpfsModifier {
+                base_url: Some(String::new()),
+            }),
+            None,
+        );
+        match kind {
+            "wearable" => {
+                let urn =
+                    CollectibleUrn::<Wearable>::new(urn).map_err(|e| format!("{urn}: {e:?}"))?;
+                self.wearables.insert_inline(urn, id);
+            }
+            _ => {
+                let urn = CollectibleUrn::<Emote>::new(urn).map_err(|e| format!("{urn}: {e:?}"))?;
+                self.emotes.insert_inline(urn, id);
+            }
+        }
+        Ok(())
     }
 }
 

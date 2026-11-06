@@ -32,6 +32,17 @@ const BASE_EMOTES = {
   clap: 'clap', dab: 'dab', dance: 'dance', money: 'money', wave: 'wave',
   'fist-pump': 'fistpump', 'head-explode': 'headexplode',
 };
+// wearable-preview's poses that are its own files, not catalyst emotes: shipped in web/emotes/ and
+// registered with the engine under this collection the first time they are asked for
+const POSE_EMOTES = {
+  fashion: true, 'fashion-2': true, 'fashion-3': true, 'fashion-4': true,
+  walk: true, run: true, love: false, jump: false, // name: loops
+};
+// the engine accepts off-chain urns in its known collections only; an inline registration replaces
+// the catalyst lookup for that exact urn, so these names never reach the content server
+const POSE_COLLECTION = 'urn:decentraland:off-chain:base-emotes';
+const inlineUrn = (id, isEmote) => (/^urn:decentraland:/i.test(id) ? id
+  : `urn:decentraland:off-chain:${isEmote ? 'base-emotes' : 'base-avatars'}:preview-${String(id).replace(/[^a-zA-Z0-9_-]/g, '-')}`);
 const MARKETPLACE = { prod: 'https://marketplace-api.decentraland.org', dev: 'https://marketplace-api.decentraland.zone' };
 const PEER = { prod: 'https://peer.decentraland.org', dev: 'https://peer.decentraland.zone' };
 
@@ -179,6 +190,62 @@ async function fetchItem(o) {
   return { urn: nft.urn, category: nft.category };
 }
 
+// --- items that are not on the catalyst: registered with the engine by definition and file urls ---
+const registered = new Map(); // urn -> registration key, so an unchanged item is sent once
+const dataUrl = (json) => `data:application/json,${encodeURIComponent(JSON.stringify(json))}`;
+
+function registerCollectible(kind, urn, metadata, files) {
+  const key = JSON.stringify([kind, metadata, files]);
+  if (registered.get(urn) === key) return;
+  registered.set(urn, key);
+  const definition = dataUrl({ id: urn, pointers: [urn], content: [], metadata });
+  command({ op: 'collectible', kind, urn, definition, files });
+}
+
+function registerPose(name) {
+  const urn = `${POSE_COLLECTION}:preview-${name}`;
+  const file = `${name}.glb`;
+  registerCollectible('emote', urn, {
+    id: urn, name, description: '', thumbnail: '',
+    emoteDataADR74: {
+      representations: [{ bodyShapes: [BODY.male, BODY.female], mainFile: file, contents: [file] }],
+      loop: POSE_EMOTES[name],
+    },
+  }, { [file]: new URL(`./emotes/${file}`, import.meta.url).href });
+  return urn;
+}
+
+// a WearableDefinition or EmoteDefinition (@dcl/schemas): representations carry their files as
+// `{key, url}` (or `{key, blob}` for unpublished items); the engine takes names and a url map
+function registerDefinition(def) {
+  const isEmote = !!def.emoteDataADR74;
+  const files = {};
+  const toNames = (representations) => (representations || []).map((r) => {
+    const contents = (r.contents || []).map((c) => {
+      if (typeof c === 'string') return c;
+      files[c.key] = c.url || (c.blob ? URL.createObjectURL(c.blob) : '');
+      return c.key;
+    });
+    return isEmote ? { ...r, contents } : { overrideHides: [], overrideReplaces: [], ...r, contents };
+  });
+  const metadata = isEmote
+    ? { ...def, name: def.name || '', description: def.description || '', thumbnail: def.thumbnail || '',
+        emoteDataADR74: { ...def.emoteDataADR74, representations: toNames(def.emoteDataADR74.representations) } }
+    : { ...def, thumbnail: def.thumbnail || '',
+        data: { tags: [], hides: [], replaces: [], ...def.data, representations: toNames(def.data?.representations) } };
+  const urn = inlineUrn(def.id, isEmote);
+  registerCollectible(isEmote ? 'emote' : 'wearable', urn, { ...metadata, id: urn }, files);
+  return { urn, isEmote };
+}
+
+async function inlineDefinitions(o) {
+  const defs = [];
+  for (const url of o.urls || []) defs.push(await getJson(url));
+  for (const b64 of o.base64s || []) defs.push(JSON.parse(atob(b64)));
+  if (o.blob) defs.push(o.blob);
+  return defs.map(registerDefinition);
+}
+
 async function resolveOutfit(o) {
   const peer = o.peerUrl || (o.env === 'dev' ? PEER.dev : PEER.prod);
   const outfit = { op: 'outfit', bodyShape: o.bodyShape || null, wearables: [], skin: o.skin, hair: o.hair, eyes: o.eyes };
@@ -196,6 +263,9 @@ async function resolveOutfit(o) {
     outfit.eyes = o.eyes || (avatar.eyes?.color ? hex(avatar.eyes.color) : null);
   }
   outfit.wearables.push(...(o.urns || []));
+  for (const item of await inlineDefinitions(o)) {
+    if (item.isEmote) itemEmote = itemEmote || item.urn; else outfit.wearables.push(item.urn);
+  }
   outfit.bodyShape = outfit.bodyShape || BODY.female;
   for (const k of ['skin', 'hair', 'eyes']) if (outfit[k] && !outfit[k].startsWith('#')) outfit[k] = '#' + outfit[k];
   return { outfit, itemEmote };
@@ -206,7 +276,8 @@ function emoteUrn(name) {
   if (!name) return null;
   if (name.startsWith('urn:')) return name;
   if (BASE_EMOTES[name]) return BASE_EMOTES[name];
-  if (name !== 'idle') console.warn(`emote "${name}" is not in the catalyst's base emotes; idling`);
+  if (name in POSE_EMOTES) return registerPose(name);
+  if (name !== 'idle') console.warn(`emote "${name}" is unknown; idling`);
   return null;
 }
 

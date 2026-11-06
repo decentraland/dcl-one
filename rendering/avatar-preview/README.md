@@ -55,6 +55,7 @@ Commands, as JSON objects with an `op`:
 | `background` | `color` (`#rrggbb` or null for transparent) | the clear colour |
 | `emote` | `urn` (a urn or a base emote name), `loop` | plays on the avatar |
 | `stopEmote` | | |
+| `collectible` | `kind` (`wearable` or `emote`), `urn`, `definition` (an entity definition json, by url), `files` (name to url) | an item not on the catalyst; send it before the outfit or emote naming the urn |
 | `screenshot` | `id`, `width`, `height` | a PNG of the frame, scaled and cropped to fit |
 | `metrics` | `id` | triangle, material, texture and mesh counts |
 
@@ -78,11 +79,17 @@ The page speaks the `@dcl/schemas` preview protocol: options from the URL (`cont
 `/lambdas/profiles/{id}`, so the engine only receives urns.
 
 Emote names map to the catalyst's base emotes (`clap`, `dab`, `dance`, `money`, `wave`,
-`fist-pump`, `head-explode`); the names wearable-preview serves from its own files (`fashion`
-poses, `love`, `walk`, `run`, `jump`) idle for now. A transparent background (`disableBackground`) presents the canvas with premultiplied alpha,
-so the host page shows through around the avatar. Not supported yet, answered with an error:
-`emote.pause`, `emote.goTo`, `emote.getLength`, `physics.setSpringBonesParams`; `url`,
-`base64` and `blob` items; social emotes; the Unity `mode` flows.
+`fist-pump`, `head-explode`) or to the poses in `web/emotes/` (`fashion`, `fashion-2..4`,
+`love`, `walk`, `run`, `jump`). `url`, `base64` and `blob` items (unpublished wearables and
+emotes, as the Builder sends them) register with the engine through the `collectible` command:
+their files map to their urls, `data:` and `blob:` included, and an id that is not a urn maps to
+`urn:decentraland:off-chain:base-avatars:preview-<id>` (or `base-emotes` for an emote).
+
+A transparent background (`disableBackground`) presents the canvas with premultiplied alpha,
+so the host page shows through around the avatar.
+
+Not supported yet, answered with an error: `emote.pause`, `emote.goTo`, `emote.getLength`,
+`physics.setSpringBonesParams`; social emotes; the Unity `mode` flows.
 
 ## Embedding it in the shop
 
