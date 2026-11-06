@@ -2,7 +2,22 @@
 // options from the URL and `update` messages, `controller_request`s, and `ready`, `load`,
 // `error`, `emote_event` and `controller_response` back to the host. Profiles resolve here, so
 // the engine only ever receives urns.
-import init, { start, preview_command } from './pkg/dcl_avatar_preview.js';
+// The module is imported by build id (`pkg/build.json`, written by build.sh and always
+// revalidated): a browser that cached an earlier module keeps it for other urls only.
+let start;
+let preview_command;
+async function loadModule() {
+  let build = 'dev';
+  try {
+    const response = await fetch(new URL('./pkg/build.json', import.meta.url), { cache: 'no-store' });
+    if (response.ok) build = String((await response.json()).build);
+  } catch { /* no build id: the module loads by its plain url */ }
+  const glue = new URL(`./pkg/dcl_avatar_preview.js?v=${build}`, import.meta.url);
+  const wasm = new URL(`./pkg/dcl_avatar_preview_bg.wasm?v=${build}`, import.meta.url);
+  const module = await import(glue.href);
+  await module.default(wasm);
+  ({ start, preview_command } = module);
+}
 
 const RENDERER = 'bevy';
 const BODY = {
@@ -11,6 +26,14 @@ const BODY = {
 };
 const DEFAULT_RADIUS = 6; // metres at the default 26.2 degree field of view: a 2 m avatar framed
 const DEFAULT_BACKGROUND = '#1a1720';
+// wearable-preview's emote names (PreviewEmote) that the catalyst's base-emotes collection has;
+// the rest (idle, walk, run, jump, fashion poses, love) are its own files and fall back to idle
+const BASE_EMOTES = {
+  clap: 'clap', dab: 'dab', dance: 'dance', money: 'money', wave: 'wave',
+  'fist-pump': 'fistpump', 'head-explode': 'headexplode',
+};
+const MARKETPLACE = { prod: 'https://marketplace-api.decentraland.org', dev: 'https://marketplace-api.decentraland.zone' };
+const PEER = { prod: 'https://peer.decentraland.org', dev: 'https://peer.decentraland.zone' };
 
 const parent = window.parent || window;
 const send = (type, payload) => parent.postMessage({ type, payload }, '*');
@@ -49,6 +72,8 @@ export function parseOptions(search) {
     disableDefaultEmotes: flag(p.get('disableDefaultEmotes')),
     disableDefaultWearables: flag(p.get('disableDefaultWearables')),
     peerUrl: p.get('peerUrl'),
+    marketplaceServerUrl: p.get('marketplaceServerUrl') || p.get('nftServerUrl'),
+    env: p.get('env'),
     type: p.get('type'),
     lockAlpha: p.get('lockAlpha') === 'true',
     lockBeta: p.get('lockBeta') === 'true',
@@ -122,18 +147,46 @@ function onEngineEvent(json) {
 // --- resolving options into commands ---
 const hex = (c) => '#' + [c.r, c.g, c.b].map((v) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0')).join('');
 
+const getJson = async (url) => {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`${url}: ${response.status}`);
+  return response.json();
+};
+
+// `default` picks one of the stock profiles, as wearable-preview does; a content hash is a profile
+// entity; anything else is an address the lambdas resolve
 async function fetchProfile(peer, profile) {
-  const response = await fetch(`${peer}/lambdas/profiles/${profile}`);
-  if (!response.ok) throw new Error(`profile ${profile}: ${response.status}`);
-  const json = await response.json();
+  if (profile === 'default') profile = `default${Math.floor(Math.random() * 159) + 1}`;
+  const json = /^(bafy|Qm)/.test(profile)
+    ? (await getJson(`${peer}/content/contents/${profile}`)).metadata
+    : await getJson(`${peer}/lambdas/profiles/${profile}`);
   const avatar = json?.avatars?.[0]?.avatar;
   if (!avatar) throw new Error(`profile ${profile}: no avatar`);
   return avatar;
 }
 
+// a marketplace item (contract + item id) or NFT (contract + token id): its urn and category
+async function fetchItem(o) {
+  const server = o.marketplaceServerUrl || (o.env === 'dev' ? MARKETPLACE.dev : MARKETPLACE.prod);
+  if (o.itemId) {
+    const { data } = await getJson(`${server}/v1/items?contractAddress=${o.contractAddress}&itemId=${o.itemId}`);
+    if (!data?.length) throw new Error(`item ${o.contractAddress}:${o.itemId} not found`);
+    return { urn: data[0].urn, category: data[0].category };
+  }
+  const { data } = await getJson(`${server}/v1/nfts?contractAddress=${o.contractAddress}&tokenId=${o.tokenId}`);
+  if (!data?.length) throw new Error(`nft ${o.contractAddress}:${o.tokenId} not found`);
+  const nft = data[0].nft;
+  return { urn: nft.urn, category: nft.category };
+}
+
 async function resolveOutfit(o) {
-  const peer = o.peerUrl || 'https://peer.decentraland.org';
+  const peer = o.peerUrl || (o.env === 'dev' ? PEER.dev : PEER.prod);
   const outfit = { op: 'outfit', bodyShape: o.bodyShape || null, wearables: [], skin: o.skin, hair: o.hair, eyes: o.eyes };
+  let itemEmote = null;
+  if (o.contractAddress && (o.itemId || o.tokenId)) {
+    const item = await fetchItem(o);
+    if (item.category === 'emote') itemEmote = item.urn; else outfit.wearables.push(item.urn);
+  }
   if (o.profile) {
     const avatar = await fetchProfile(peer, o.profile);
     outfit.bodyShape = o.bodyShape || avatar.bodyShape || null;
@@ -145,7 +198,16 @@ async function resolveOutfit(o) {
   outfit.wearables.push(...(o.urns || []));
   outfit.bodyShape = outfit.bodyShape || BODY.female;
   for (const k of ['skin', 'hair', 'eyes']) if (outfit[k] && !outfit[k].startsWith('#')) outfit[k] = '#' + outfit[k];
-  return outfit;
+  return { outfit, itemEmote };
+}
+
+// an emote option: an item's urn, a base emote name, or nothing playable (idle)
+function emoteUrn(name) {
+  if (!name) return null;
+  if (name.startsWith('urn:')) return name;
+  if (BASE_EMOTES[name]) return BASE_EMOTES[name];
+  if (name !== 'idle') console.warn(`emote "${name}" is not in the catalyst's base emotes; idling`);
+  return null;
 }
 
 // wearable-preview's zoom: 1..100 to a factor of 1..2.8 on the camera distance
@@ -187,11 +249,12 @@ async function apply() {
   const run = (async () => {
     command(cameraFrom(o));
     command({ op: 'background', color: o.disableBackground ? null : (o.background ? (o.background.startsWith('#') ? o.background : '#' + o.background) : DEFAULT_BACKGROUND) });
-    command(await resolveOutfit(o));
-    const emote = o.emote;
-    if (emote && emote !== 'idle' && !o.disableDefaultEmotes) {
-      state.emote.urn = emote;
-      command({ op: 'emote', urn: emote, loop: false });
+    const { outfit, itemEmote } = await resolveOutfit(o);
+    command(outfit);
+    const urn = itemEmote || (o.disableDefaultEmotes ? null : emoteUrn(o.emote));
+    if (urn) {
+      state.emote.urn = urn;
+      command({ op: 'emote', urn, loop: false });
     }
   })();
   state.applying = run;
@@ -248,11 +311,36 @@ window.addEventListener('message', async (event) => {
   }
 });
 
+// the engine's catalyst follows the host's `peerUrl` (`peer.<domain>`), unless the page says
+function baseDomainFor(o) {
+  const peer = o.peerUrl || (o.env === 'dev' ? PEER.dev : PEER.prod);
+  try {
+    const host = new URL(peer).hostname;
+    return host.startsWith('peer.') ? host.slice('peer.'.length) : null;
+  } catch { return null; }
+}
+
+// a page-level failure (a panic unwinding out of the module, a script error) reaches the host as
+// `error`, once, so an embedding page can show its error state instead of waiting for `load`
+let reportedFatal = false;
+function reportFatal(message) {
+  if (reportedFatal) return;
+  reportedFatal = true;
+  send('error', { message });
+}
+window.addEventListener('error', (e) => reportFatal(`${e.message} (${e.filename}:${e.lineno})`));
+window.addEventListener('unhandledrejection', (e) => reportFatal(String(e.reason?.message ?? e.reason)));
+
 export async function boot({ canvas, baseDomain = null, log = () => {} } = {}) {
   state.log = log;
   send('ready', null);
-  await init();
-  start(canvas, baseDomain, onEngineEvent);
+  try {
+    await loadModule();
+    start(canvas, baseDomain || baseDomainFor(options()), onEngineEvent, new URLSearchParams(location.search).get('flags'));
+  } catch (e) {
+    reportFatal(`renderer failed to start: ${e?.message ?? e}`);
+    throw e;
+  }
   state.engineReady = true;
   await apply();
 }
