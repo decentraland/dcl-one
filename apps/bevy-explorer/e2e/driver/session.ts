@@ -207,8 +207,7 @@ async function nativeConsole(target: Target, realm: string, position: string): P
  *  the HUD derives its phase from its own flow. The HUD then goes to `destination` from the lobby,
  *  which releases the hold; a guest is a fresh account the engine marks as one, as the HUD's own
  *  guest is. The standalone signs in by console at its `--realm` and `--position`, and waits as
- *  `enterWorld` does: its HUD's `Jump In`, or the realm asked for through the console when the
- *  world stays held. */
+ *  `enterWorld` does, pressing its HUD's `Jump In` when it offers one. */
 export async function signIn(
   explorer: Explorer,
   target: Target,
@@ -247,7 +246,7 @@ export async function signIn(
   } else if (mode === 'guest') {
     await explorer.loginGuest()
   }
-  return enterWorld(explorer, WORLD_TIMEOUT_MS, target.transport === 'native' ? destination.realm : undefined)
+  return enterWorld(explorer)
 }
 
 /** `x,y` as a parcel. */
@@ -275,35 +274,17 @@ export async function arrive(explorer: Explorer, realm: string, position: string
   return explorer.teleport(x, y)
 }
 
-/** How long a held, realm-connected world is left to its HUD before the console is asked for the
- *  realm: a `Jump In` that mounts within it wins. */
-export const HELD_GRACE_MS = 5000
-
-/** Wait for the world. Until it comes, one action at most: `Jump In` is pressed once the HUD
- *  offers it as actionable; otherwise, with `heldRealm`, `/changerealm <heldRealm>` is sent once
- *  the state has been signed in, held and realm-connected for `heldGraceMs` with no `Jump In`.
- *  The path taken is logged. */
-export async function enterWorld(explorer: Explorer, timeoutMs = WORLD_TIMEOUT_MS, heldRealm?: string, heldGraceMs = HELD_GRACE_MS): Promise<WorldState> {
+/** Wait for the world, pressing the lobby's `Jump In` when it offers one. */
+export async function enterWorld(explorer: Explorer, timeoutMs = 300_000): Promise<WorldState> {
   let jumped = false
-  let heldSince: number | undefined
   return until(
     async () => {
       const state = await explorer.worldState()
       if (state.inWorld || jumped) return state
       const jump = await explorer.hud.find({ name: 'Jump In', role: 'button', index: 0 }).catch(() => undefined)
       if (jump?.actionable) {
-        console.error('[e2e] entering the world through the HUD Jump In')
         await explorer.hud.click({ name: 'Jump In', role: 'button', index: 0 })
         jumped = true
-      } else if (heldRealm && state.signedIn && state.worldHeld && state.realmConnected) {
-        heldSince ??= Date.now()
-        if (Date.now() - heldSince >= heldGraceMs) {
-          console.error(`[e2e] no Jump In after ${heldGraceMs} ms of a held world: asking the console for ${heldRealm}`)
-          await explorer.run(`/changerealm ${heldRealm}`)
-          jumped = true
-        }
-      } else {
-        heldSince = undefined
       }
       return state
     },

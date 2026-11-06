@@ -171,7 +171,8 @@ impl IpfsIo {
             let mut observe = timing.as_deref_mut().map(DownloadTiming::begin_attempt);
             let result = platform::http::fetch_with_permit(
                 permit,
-                || {
+                request,
+                |request| {
                     add_saturating(&self.request_metrics.attempts, 1);
                     if attempt > 1 {
                         add_saturating(&self.request_metrics.retries, 1);

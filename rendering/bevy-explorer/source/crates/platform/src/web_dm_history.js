@@ -1,8 +1,8 @@
 // Local DM history on web, in IndexedDB. Stored plain: the origin is the boundary here, and the
 // account address that native derives its key from already sits in this origin's storage.
 //
-// `messages` holds one record per DM (autoincrement id = arrival order), indexed by
-// [account, partner].
+// `messages` holds one record per message or reaction (autoincrement id = arrival order),
+// indexed by [account, partner].
 
 const DB_NAME = 'dcl-dm-history'
 const DB_VERSION = 1
@@ -72,6 +72,28 @@ export async function dmHistoryDelete(account, partner) {
     const tx = db.transaction(MESSAGES, 'readwrite')
     const keys = await request(tx.objectStore(MESSAGES).index(BY_CONVERSATION).getAllKeys(conversationKey(account, partner)))
     for (const key of keys) tx.objectStore(MESSAGES).delete(key)
+    await complete(tx)
+  })
+}
+
+// keeps only the last `keep` messages of a conversation and every record after the oldest of
+// them (the reactions to them), and never more than the last `keepRecords` records (reactions
+// alone can grow a conversation); ids are arrival order
+export async function dmHistoryTrim(account, partner, keep, keepRecords) {
+  await withDb(async (db) => {
+    const tx = db.transaction(MESSAGES, 'readwrite')
+    const rows = await request(tx.objectStore(MESSAGES).index(BY_CONVERSATION).getAll(conversationKey(account, partner)))
+    // the oldest message to keep is the `keep`-th from the end; fewer messages than that keeps all
+    let seen = 0
+    let firstKept = keep === 0 ? rows.length : 0
+    for (let i = rows.length - 1; i >= 0 && keep > 0; i--) {
+      if (rows[i].reaction == null && ++seen === keep) {
+        firstKept = i
+        break
+      }
+    }
+    firstKept = Math.max(firstKept, rows.length - keepRecords)
+    for (const row of rows.slice(0, firstKept)) tx.objectStore(MESSAGES).delete(row.id)
     await complete(tx)
   })
 }

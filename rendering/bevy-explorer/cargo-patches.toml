@@ -57,6 +57,8 @@ fastwebsockets = { git = "https://github.com/robtfm/fastwebsockets", rev = "1db2
 naga_oil = { git = "https://github.com/robtfm/naga_oil", rev = "9007b2ffe3e8f509ffc9b1481f039de78cf31699" }
 # https://github.com/robtfm/parry (branch fix-bvh-negative-scale-0.25)
 parry3d-f64 = { git = "https://github.com/robtfm/parry", rev = "1d3d84559da96ae6033035a17ac57b36cc447416" }
+# https://github.com/robtfm/rust-ffmpeg (branch audio-linesize-0-6.1)
+ffmpeg-next = { git = "https://github.com/robtfm/rust-ffmpeg", rev = "140c74769d0ecceff78997542392afac95fe6ca3" }
 # https://github.com/robtfm/wgpu (branch 24.0.5-dcl)
 naga = { git = "https://github.com/robtfm/wgpu", rev = "e25f3d4b0d7f478ea12105984270a25bbeeb0a64" }
 wgpu = { git = "https://github.com/robtfm/wgpu", rev = "e25f3d4b0d7f478ea12105984270a25bbeeb0a64" }
