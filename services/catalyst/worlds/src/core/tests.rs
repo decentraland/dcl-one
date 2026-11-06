@@ -3053,7 +3053,27 @@ async fn community_allow_lists_require_membership_and_revoke_on_exit() {
     );
 
     // Deleting a community, or taking it off the list, re-decides everyone.
+    let before: (uuid::Uuid, chrono::NaiveDateTime) = sqlx::query_as(
+        "SELECT revision,changed_at FROM social.world_access_rechecks WHERE world_name=$1",
+    )
+    .bind(world.key())
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE social.world_access_rechecks SET next_attempt_at=timezone('UTC',now())+interval '1 day' WHERE world_name=$1")
+        .bind(world.key()).execute(&f.pool).await.unwrap();
     f.state.community_closed(joined).await;
+    let after: (uuid::Uuid, chrono::NaiveDateTime, bool) = sqlx::query_as("SELECT revision,changed_at,next_attempt_at<=timezone('UTC',now()) FROM social.world_access_rechecks WHERE world_name=$1")
+        .bind(world.key()).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(
+        (after.0, after.1),
+        before,
+        "community wake preserves edit ordering"
+    );
+    assert!(
+        after.2,
+        "community closure must persist a due retry before its wakeup"
+    );
     assert_eq!(
         recorded.take(),
         vec![Revocation::AccessSetting {

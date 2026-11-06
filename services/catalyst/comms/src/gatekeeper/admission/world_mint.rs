@@ -780,7 +780,7 @@ mod throttle_tests {
         }
         let migration = include_str!(concat!(
             env!("DCL_ONE_ROOT"),
-            "/schemas/migrations/0029_world_scene_ban_keys.sql"
+            "/schemas/releases/world-scene-ban-keys.sql"
         ));
         for _ in 0..2 {
             sqlx::raw_sql(migration).execute(&pool).await.unwrap();

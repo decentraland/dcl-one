@@ -506,8 +506,8 @@ async fn media_fixture() -> (
             data.requests.push((method.clone(),body.clone()));
             match method.as_str() {
                 "ListRooms" => {
-                    let room = body["names"][0].as_str().unwrap();
-                    Json(json!({"rooms":[{"name":room,"sid":"RM_toolkit","metadata":data.metadata.get(room).cloned().unwrap_or(json!({"presenters":["canary"]})).to_string()}]})).into_response()
+                    let rooms: Vec<String> = if let Some(room) = body["names"][0].as_str() { vec![room.to_owned()] } else { data.connected.keys().chain(data.metadata.keys()).cloned().collect::<BTreeSet<_>>().into_iter().collect() };
+                    Json(json!({"rooms": rooms.into_iter().map(|room| json!({"name":room,"sid":"RM_toolkit","metadata":data.metadata.get(&room).cloned().unwrap_or(json!({"presenters":["canary"]})).to_string()})).collect::<Vec<_>>() })).into_response()
                 }
                 "UpdateRoomMetadata" => {
                     data.metadata.insert(body["room"].as_str().unwrap().to_owned(),serde_json::from_str(body["metadata"].as_str().unwrap()).unwrap());
@@ -756,7 +756,15 @@ async fn toolkit_store_fault_cannot_reach_media() {
         .await;
         assert!(status.is_server_error(), "{method} {path}: {value}");
     }
-    assert!(media.lock().unwrap().requests.is_empty());
+    assert!(
+        media
+            .lock()
+            .unwrap()
+            .requests
+            .iter()
+            .all(|(method, _)| method == "ListRooms"),
+        "store failures must not mutate media"
+    );
     server.abort();
 }
 
