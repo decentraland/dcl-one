@@ -1,7 +1,8 @@
 // Rail — a horizontal carousel paged a whole page at a time: dots below (one per page, none for a
-// single page) and prev/next arrows that fade in while the section is hovered.
+// single page) and prev/next arrows that fade in while the section is hovered. The pages are what the
+// viewport can actually scroll through: when every card fits there is one, so neither shows.
 
-import { Children, useCallback, useEffect, useRef, useState } from 'react'
+import { Children, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import arrowLeft from '../assets/rail/arrow-left.png'
 import arrowRight from '../assets/rail/arrow-right.png'
 import { MaskIcon } from './MaskIcon'
@@ -10,6 +11,18 @@ import styles from './Rail.module.css'
 function pageStride(el: HTMLDivElement, perPage: number, gap: number): number {
   const card = el.firstElementChild?.firstElementChild as HTMLElement | null
   return perPage * ((card?.offsetWidth ?? 0) + gap)
+}
+
+/**
+ * The pages the viewport scrolls through: one per stride, the last clamped to the end, and one when the
+ * cards fit (the end `bleed` is padding, not a card). Before it has a width (no layout yet), `fallback`.
+ */
+function measuredPages(el: HTMLDivElement, perPage: number, gap: number, bleed: number, fallback: number): number {
+  if (el.clientWidth === 0) return fallback
+  const max = el.scrollWidth - el.clientWidth
+  if (max <= bleed + 1) return 1
+  const stride = pageStride(el, perPage, gap)
+  return stride > 0 ? 1 + Math.ceil((max - 1) / stride) : fallback
 }
 
 export function Rail({
@@ -40,8 +53,29 @@ export function Rail({
 }): React.JSX.Element {
   const viewport = useRef<HTMLDivElement>(null)
   const count = Children.count(children)
-  const pages = Math.max(1, Math.ceil(count / perPage))
+  const countPages = Math.max(1, Math.ceil(count / perPage))
+  const [pages, setPages] = useState(countPages)
   const [page, setPage] = useState(0)
+
+  // Measured on every resize of the viewport or its cards, so a wider window drops the pages it no longer needs.
+  useLayoutEffect(() => {
+    const el = viewport.current
+    if (el == null) return
+    const measure = (): void => {
+      const next = measuredPages(el, perPage, gap, bleed, countPages)
+      setPages(next)
+      setPage((p) => Math.min(p, next - 1))
+    }
+    measure()
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure)
+      return () => window.removeEventListener('resize', measure)
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    if (el.firstElementChild != null) observer.observe(el.firstElementChild)
+    return () => observer.disconnect()
+  }, [bleed, count, countPages, gap, perPage])
 
   const goTo = useCallback(
     (p: number) => {
