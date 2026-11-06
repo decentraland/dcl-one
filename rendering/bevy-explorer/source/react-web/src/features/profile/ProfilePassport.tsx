@@ -1,6 +1,6 @@
 // Passport — the full-screen profile view opened from the chat profile menu's
 // "View Profile" (Figma node 8337-…). Header (name/address/copy/mutuals + FRIEND /
-// ADD FRIEND), OVERVIEW / BADGES / PHOTOS tabs, the avatar as the catalyst full-body
+// ADD FRIEND), OVERVIEW / BADGES / PHOTOS / CREATIONS tabs, the avatar as the catalyst full-body
 // snapshot (2D, falling back to the face), then badges + about-me + fields + links.
 // (No engine/3D render here — that's only the Backpack's avatar preview.)
 //
@@ -8,8 +8,9 @@
 // (badges/info/mutuals) by address; the 2D picture is the fallback meanwhile.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, Button, ColorPicker, ContextMenu, ControlButton, EquippedItemCard, Icon, Kebab, Pencil, ReportFlag, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem } from '../../design'
+import { Avatar, BlockUserIcon, Button, ColorPicker, ContextMenu, ControlButton, EmptyState, EquippedItemCard, Icon, Kebab, Pencil, ReportFlag, Spinner, Tabs, Tooltip, showConfirm, type ContextMenuItem, type EquippedItemCardProps, type TabItem } from '../../design'
 import { registerCancelLayer } from '../../lib/cancelLayers'
+import { fetchCreations, marketplaceUrl, type CreationItem, type Creations } from '../shop/shopApi'
 import { nativeProfileImage } from '../../lib/baseDomain'
 import { CategoryIcon } from '../backpack/categoryIcons'
 import { catalystThumbUrl, shortAddr, splitName, userColor } from '../../lib/identity'
@@ -19,8 +20,8 @@ import { ProfileEditForm } from './ProfileEditForm'
 import type { Relationship } from '../chat/ProfileCardPresentation'
 import styles from './ProfilePassport.module.css'
 
-type Tab = 'overview' | 'badges' | 'photos'
-const PASSPORT_TABS: TabItem<Tab>[] = (['overview', 'badges', 'photos'] as const).map((t) => ({ id: t, label: t.toUpperCase() }))
+type Tab = 'overview' | 'badges' | 'photos' | 'creations'
+const PASSPORT_TABS: TabItem<Tab>[] = (['overview', 'badges', 'photos', 'creations'] as const).map((t) => ({ id: t, label: t.toUpperCase() }))
 // A single selected-but-disabled tab: the same bar, holding the same height, with nothing to switch to.
 const EDIT_TAB: TabItem<'edit'>[] = [{ id: 'edit', label: 'EDIT PROFILE', disabled: true }]
 // unity-explorer's name colour presets (UI/ColorPicker/NameColors.asset), in its order.
@@ -207,6 +208,86 @@ function EquippedRow({ tiles }: { tiles: EquippedTile[] }): React.JSX.Element {
     <div className={styles.equippedRow}>
       {tiles.map(({ key, ...tile }) => <EquippedItemCard key={key} {...tile} />)}
     </div>
+  )
+}
+
+// The Creations tab's tiles, after unity-explorer's CreationsDetailsPassportModuleController: an item
+// on primary sale offers Buy with its Credits price, any other item View. Both open the item's shop
+// page, as unity-explorer does whenever it can't buy in-world. The button stays on the card, as in
+// unity-explorer, so a hovered card doesn't cover the row below.
+const creationTile = (item: CreationItem, emote: boolean): EquippedTile => ({
+  key: item.urn || item.id,
+  thumbnail: item.thumbnail,
+  name: item.name,
+  rarity: item.rarity,
+  shopUrl: item.url ? marketplaceUrl(item) : undefined,
+  shopLabel: item.isOnSale ? 'Buy' : 'View',
+  pinShop: true,
+  price: item.isOnSale && (item.priceCredits ?? 0) > 0 ? `${item.priceCredits} Credits` : undefined,
+  categoryIcon: emote ? <Icon name="emotes" size={15} /> : <CategoryIcon category={item.data?.wearable?.category ?? item.category} size={15} />
+})
+
+type CreationsLoad = { status: 'loading' } | { status: 'ready'; creations: Creations } | { status: 'error' }
+
+/** The Creations tab. Mounted only while the tab is open, so each visit loads afresh, like
+ *  unity-explorer's passport. */
+function CreationsSection({ address }: { address: string }): React.JSX.Element {
+  const [load, setLoad] = useState<CreationsLoad>({ status: 'loading' })
+  const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    const ctl = new AbortController()
+    setLoad({ status: 'loading' })
+    // A reply that lands after the address changed (or the tab closed) belongs to the old request.
+    fetchCreations(address, ctl.signal).then(
+      (creations) => {
+        if (!ctl.signal.aborted) setLoad({ status: 'ready', creations })
+      },
+      () => {
+        if (!ctl.signal.aborted) setLoad({ status: 'error' })
+      }
+    )
+    return () => ctl.abort()
+  }, [address, attempt])
+
+  if (load.status === 'loading') {
+    return (
+      <section className={styles.card}>
+        <div className={styles.empty}>
+          <Spinner size={34} />
+        </div>
+      </section>
+    )
+  }
+  if (load.status === 'error') {
+    return (
+      <section className={styles.card}>
+        <EmptyState
+          variant="inline"
+          tone="error"
+          title="Couldn't load the creations"
+          subtitle="Please try again."
+          actions={[{ label: 'Retry', onClick: () => setAttempt((n) => n + 1) }]}
+        />
+      </section>
+    )
+  }
+  const { wearables, emotes } = load.creations
+  return (
+    <section className={styles.card}>
+      {wearables.length === 0 && emotes.length === 0 && <div className={styles.empty}>There are no creations to show yet.</div>}
+      {wearables.length > 0 && (
+        <>
+          <h2 className={styles.cardTitle}>Wearables</h2>
+          <EquippedRow tiles={wearables.map((w) => creationTile(w, false))} />
+        </>
+      )}
+      {emotes.length > 0 && (
+        <>
+          <h2 className={styles.cardTitle}>Emotes</h2>
+          <EquippedRow tiles={emotes.map((e) => creationTile(e, true))} />
+        </>
+      )}
+    </section>
   )
 }
 
@@ -595,6 +676,10 @@ export function ProfilePassport({
                 )}
               </section>
             )}
+
+            {/* Keyed on the lowercased address: the passport opens with the address it was given, then
+                switches to the stored profile's lowercase one, which is the same creator. */}
+            {tab === 'creations' && <CreationsSection key={profile.address.toLowerCase()} address={profile.address.toLowerCase()} />}
           </div>
         </div>
       </div>
