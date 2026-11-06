@@ -781,6 +781,9 @@ mod throttle_tests {
             .await
             .unwrap()
             .unwrap();
+        crate::gatekeeper::admission::functions::installed(&pool)
+            .await
+            .unwrap();
         let held = pool.acquire().await.unwrap();
         let error = authorization_started(&pool, &world).await.unwrap_err();
         assert!(
