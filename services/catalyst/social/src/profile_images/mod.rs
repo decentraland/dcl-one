@@ -4,11 +4,12 @@
 //! `snapshots` URLs point at (`PROFILE_CDN_BASE_URL` in
 //! `marketplace::profiles`).
 //!
-//! The first source is the ONE database and blob store: a profile deployed
-//! to this node carries its own `face256.png` and `body.png` content files, so
-//! the image is a keyed lookup plus a blob read ([`resolver`]). Sync does not
-//! fetch those files for profiles deployed elsewhere, so for them the image is
-//! rendered from the avatar in the entity's metadata, as the old crate did:
+//! The first source is the ONE database and blob store: a profile carries its
+//! own `face256.png` and `body.png` content files, which a local deploy, sync
+//! and the read-through all store, so the image is a keyed lookup plus a blob
+//! read ([`resolver`]). A profile whose files this node does not hold (an
+//! entity without them, or a blob not stored yet) has its image rendered from
+//! the avatar in the entity's metadata, as the old crate did:
 //! behind `PROFILE_IMAGES_RENDER_ENABLED` ([`render`], [`queue`]) with the
 //! engine's headless `avatar_render` (`PROFILE_IMAGES_RENDERER=bevy`, the
 //! default) or the godot-explorer client on a throwaway X display (`godot`).

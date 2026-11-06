@@ -30,7 +30,7 @@ use super::catalog::{
 };
 use super::mirrors::require_priced;
 use super::readers::{self, Ttl, cached, int_of, str_of};
-use super::shop::{SHOP_SORT_VALUES, ShopSortBy};
+use super::shop::{MAX_USD_WEI, SHOP_SORT_VALUES, ShopSortBy};
 use super::wire::{
     ApiError, ChainId, DataTotal, NETWORK_VALUES, NFT_CATEGORY_VALUES, Network, NftCategory,
     Params, clamp_first, clamp_skip, fix_urn,
@@ -448,15 +448,22 @@ pub(crate) fn emote_play_mode_clause(modes: &[String]) -> Option<bool> {
 /// The credit price, a bare expression the WHERE and ORDER BY reuse so the
 /// filter and the displayed price cannot disagree: a USD-pegged trade
 /// bypasses the rate, a MANA one and the store price go through it.
+///
+/// A USD value above [`MAX_USD_WEI`] prices in no credits (0, as an item not
+/// sold in credits), the ceiling the listings feed already drops rows over: a
+/// price no bigint credit amount can hold (Amoy carries an item at 2^256-1 wei)
+/// otherwise fails the cast, and with it every page that holds the row.
 fn price_credits_expr(rate_p: &str) -> String {
-    format!(
+    let usd_wei = format!(
         "CASE WHEN items.available > 0 AND ut.id IS NOT NULL AND {v3} THEN \
-            CASE WHEN ut.received_asset_type = {usd} THEN CEIL(ut.amount_received / {credit}) \
-                 ELSE CEIL(ut.amount_received * {rate_p}::numeric / {credit}) END \
-         WHEN items.available > 0 AND items.search_is_store_minter = true THEN CEIL(items.price * {rate_p}::numeric / {credit}) \
-         ELSE 0 END",
+            CASE WHEN ut.received_asset_type = {usd} THEN ut.amount_received \
+                 ELSE ut.amount_received * {rate_p}::numeric END \
+         WHEN items.available > 0 AND items.search_is_store_minter = true THEN items.price * {rate_p}::numeric END",
         v3 = v3_minter_expr(),
         usd = ASSET_TYPE_USD_PEGGED_MANA,
+    );
+    format!(
+        "CASE WHEN ({usd_wei}) <= {MAX_USD_WEI}::numeric THEN CEIL(({usd_wei}) / {credit}) ELSE 0 END",
         credit = USD_WEI_PER_CREDIT_SQL
     )
 }

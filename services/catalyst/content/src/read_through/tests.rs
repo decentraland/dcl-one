@@ -771,8 +771,10 @@ async fn a_file_the_peers_lack_is_read_from_a_file_source_which_is_never_asked_f
     assert_eq!((worlds.active_calls(), worlds.audit_calls()), (0, 0));
 }
 
+/// A profile's avatar render is stored like any other content file, and one a node is missing
+/// (a blob lost, or a node that once synced without renders) is fetched on its first read.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_profile_render_sync_skips_stays_a_miss_for_the_content_route() {
+async fn a_profile_render_is_stored_and_a_missing_one_is_filled_on_read() {
     let fake = start_fake().await;
     require_test_db!(Some(node) = Node::new("render", &fake, HANG_GUARD, true).await);
     let address = format!("0x{}{}", unique(), &unique()[..8]);
@@ -785,17 +787,20 @@ async fn a_profile_render_sync_skips_stays_a_miss_for_the_content_route() {
         .unwrap();
     assert_eq!(docs.len(), 1);
     assert!(
-        !node.holds(&profile.file_hash).await,
-        "sync skips the render"
+        node.holds(&profile.file_hash).await,
+        "the render is stored with its entity"
     );
 
+    node.storage.delete(&profile.file_hash).await.unwrap();
+    assert!(!node.holds(&profile.file_hash).await);
     let content_calls = fake.content_calls();
-    let (status, _) = node
+    let (status, body) = node
         .get(&format!("/content/contents/{}", profile.file_hash))
         .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(fake.content_calls(), content_calls);
-    assert!(!node.holds(&profile.file_hash).await);
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(hash_bytes_v1(&body), profile.file_hash);
+    assert_eq!(fake.content_calls(), content_calls + 1);
+    assert!(node.holds(&profile.file_hash).await);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

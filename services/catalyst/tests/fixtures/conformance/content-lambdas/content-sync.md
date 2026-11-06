@@ -758,8 +758,9 @@ Their synchronizer reads, in this order:
 3. `GET /pointer-changes` from the latest window end, following `pagination.next` while `moreData`
    is true.
 
-For these steps dcl-one serves every field that upstream serves, in a compatible shape. The ways a
-peer would see a difference:
+For these steps dcl-one serves every field that upstream serves, in a compatible shape, and every
+content hash it lists is one `GET /contents/{hash}` serves (CS-24). The ways a peer would see a
+difference:
 
 - **Re-processing.** The snapshot bytes and CIDs differ from an upstream node's for the same data
   (sorted `authChain` keys, integer timestamps, a tiebreak on `entity_id`). A peer re-processes
@@ -994,6 +995,23 @@ catalyst list and its `/about` is healthy.
       `NormalizePath`); `/content/Deployments` is routed as `/content/deployments` by
       `services/catalyst/content/src/routing.rs` `upstream_routing`, as CR-16 (test
       `content_paths_match_case_insensitively`). Only paths under `/content/` are rewritten.
+    - Severity: none (closed).
+
+24. **CS-24 · `/deployments`, `/pointer-changes`, snapshots · every listed content hash is served.** Status: MATCH, no work.
+    - Upstream: a synced entity is stored with every content file it lists
+      (`decentraland/catalyst:src/logic/batch-deployer/component.ts:87`, `downloadEntityAndContentFiles`
+      from `@dcl/snapshots-fetcher`, which is not in the clone), so a peer syncing from it can fetch
+      each hash its history and snapshots name through `GET /contents/{hash}`.
+    - dcl-one: sync and the read-through download every content file of an entity, a profile's
+      `face.png`, `face128.png`, `face256.png` and `body.png` included
+      (`services/catalyst/content/src/deploy_remote_entity.rs` `extract_content_hashes`; test
+      `profiles_fetch_every_avatar_render`). A hash this node lists but does not hold (a database
+      synced before the renders were stored, or a lost blob) is fetched from the sync sources on its
+      first `GET /contents/{hash}` when `READ_THROUGH_ENABLED` is on, as `NODE_POSTURE=mirror` sets it
+      (`services/catalyst/content/src/read_through.rs` `fill_content`; test
+      `a_profile_render_is_stored_and_a_missing_one_is_filled_on_read`). Until that read,
+      `/available-content` answers `false` for it. No background job re-fetches the content files of
+      deployments already stored.
     - Severity: none (closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not
