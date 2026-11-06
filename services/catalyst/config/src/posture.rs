@@ -173,6 +173,13 @@ const ROWS: &[Row] = &[
     ),
     upstream("sync", "SYNC_SOURCE", DCL_PEERS),
     mirrored("sync", "READ_THROUGH_ENABLED"),
+    // Decentraland's moderation list, hidden from the content reads as the
+    // upstream catalyst hides it (its DENYLIST_URLS default).
+    upstream(
+        "sync",
+        "DENYLIST_URLS",
+        "https://asset-bundle-registry.decentraland.org/denylist",
+    ),
     same("sync", "PHASED_SYNC", "true"),
     row(
         "sync",
@@ -669,6 +676,7 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
     if config.node.sync_enabled && config.content.sync_source.trim().is_empty() {
         anyhow::bail!("SYNC_ENABLED=true with an empty SYNC_SOURCE: there is no peer to sync from");
     }
+    config.content.denylist_urls()?;
     let Some(posture) = posture else {
         return Ok(());
     };
