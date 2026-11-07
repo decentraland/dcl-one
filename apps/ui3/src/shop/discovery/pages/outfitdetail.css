@@ -88,8 +88,9 @@
   color: var(--shop-soft-white, #fcfcfc);
   overflow-wrap: anywhere;
 }
+/* Upstream's Meta is a bare <p> that keeps the browser's 1em margins: 12px above and below, on top of the gap. */
 .shop-outfit__meta {
-  margin: 0;
+  margin: 1em 0;
   font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.04em;
