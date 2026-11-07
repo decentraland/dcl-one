@@ -4,6 +4,7 @@
 // cannot be equal between two renders (3D previews, live timers) and say why; expected entries
 // are deliberate differences, each with the rule (the repository's AGENTS.md) or code behind it.
 import type { Page } from "playwright-core";
+import { collectionOfItem, creatorOfProfile } from "./lib/discover.mts";
 import type { Expectation } from "./lib/structure.mts";
 
 
@@ -27,8 +28,9 @@ export type PageSpec = {
   signedIn?: boolean;
   /** Interactions after the first render (both sides do the same thing). */
   setup?: (page: Page, side: Side, targets: Record<string, string>) => Promise<void>;
-  /** While recording: read targets later pages need (from the reference). */
-  discover?: (page: Page) => Promise<Record<string, string>>;
+  /** While recording: read targets later pages need (from the reference). A null target was not found: the
+   *  recording drops it, so a page reading it refuses rather than compare the previous set's. */
+  discover?: (page: Page, targets: Readonly<Record<string, string>>) => Promise<Record<string, string | null>>;
   keys: KeyElement[];
   masks?: Mask[];
   regions?: Region[];
@@ -180,9 +182,7 @@ export const PAGES: PageSpec[] = [
     unrecorded: [PROMO_PREVIEW, NEWSLETTER_EMBED],
     discover: async (page) => {
       const href = await page.locator("xpath=(//*[@data-testid='outfit-card']//a[@href] | //a[@data-testid='outfit-card'])[1]").getAttribute("href").catch(() => null);
-      const found: Record<string, string> = {};
-      if (href) found.outfit = new URL(href, page.url()).pathname.replace(/^(?!\/shop)/, "/shop");
-      return found;
+      return { outfit: href ? new URL(href, page.url()).pathname.replace(/^(?!\/shop)/, "/shop") : null };
     },
   },
   {
@@ -206,7 +206,7 @@ export const PAGES: PageSpec[] = [
       if (!href) throw new Error("no card in the reference items grid to take as the detail page");
       const second = await page.locator("[data-testid=grid] [data-testid=card] a[data-testid=card-link]").nth(1).getAttribute("href", { timeout: 5_000 }).catch(() => null);
       const shop = (h: string) => new URL(h, page.url()).pathname.replace(/^(?!\/shop)/, "/shop");
-      return { item: shop(href), ...(second ? { item2: shop(second) } : {}) };
+      return { item: shop(href), item2: second ? shop(second) : null };
     },
     maxHeight: 3000,
     masks: [WEBGL],
@@ -254,11 +254,35 @@ export const PAGES: PageSpec[] = [
       { match: /^key:preview$/, why: NO_MODELS, only: ["text"] },
       { match: /(^|\/)detail-play-mode$|^key:tag\.play-mode$|^"PLAY ONCE"$/, status: "only-reference", why: PLAY_MODE },
     ],
-    discover: async (page) => {
+    discover: async (page, targets) => {
       const shop = (h: string | null) => (h ? new URL(h, page.url()).pathname.replace(/^(?!\/shop)/, "/shop") : null);
-      const collection = shop(await page.locator("xpath=(//main//a[contains(@href,'/collection/')])[1]").getAttribute("href").catch(() => null));
-      const creator = shop(await page.locator("xpath=(//main//a[contains(@href,'/creator/')])[1]").getAttribute("href").catch(() => null));
-      return { ...(collection ? { collection } : {}), ...(creator ? { creator } : {}) };
+      const link = (contains: string) => page.locator(`xpath=(//main//a[contains(@href,'${contains}')])[1]`).getAttribute("href", { timeout: 2_000 }).catch(() => null);
+      // The pinned reference names the item's collection and creator as text, not links. Its collection is the
+      // item's contract (/shop/collection/<contract>, a page the reference serves), and its creator is the account
+      // that collection page links to as its profile (/shop/items/creator/<address>).
+      const collection = shop(await link("/collection/")) ?? collectionOfItem(shop(page.url()) ?? "");
+      let creator = shop(await link("/creator/"));
+      if (!creator && collection) {
+        // Opened in the item capture's context, so its answers are recorded with the same routes and clock. That
+        // context's request log is shared too: a host only the collection page asks for is listed under item@.
+        // Best-effort: a collection page that fails keeps the collection found above, and the creator already known
+        // for that same collection (from the previous set or another viewport), which is still its creator.
+        let other: Page | undefined;
+        try {
+          other = await page.context().newPage();
+          await other.goto(new URL(collection, page.url()).href, { waitUntil: "load" });
+          // The first profile link in <main> is the collection header's creator, which renders before the cards. A
+          // layout that put another profile link first would record that account; the creator page would then
+          // show its items, not this collection's.
+          const profile = await other.locator("xpath=(//main//a[contains(@href,'/profile/0x')])[1]").getAttribute("href", { timeout: 15_000 });
+          creator = profile ? creatorOfProfile(profile) : null;
+        } catch {
+          creator = targets.collection === collection ? (targets.creator ?? null) : null;
+        } finally {
+          await other?.close().catch(() => {});
+        }
+      }
+      return { collection, creator };
     },
     unrecorded: [PREVIEW_AVATAR, NEWSLETTER_EMBED],
   },
@@ -414,7 +438,15 @@ const target = (key: string) => (t: Record<string, string>) => {
 PAGES.push(
   plain("collection", "A collection (the detail page's)", target("collection")),
   plain("creator", "A creator's items (the detail page's)", target("creator")),
-  plain("outfit", "An outfit (Buy the Look, the home's first)", target("outfit")),
+  plain("outfit", "An outfit (Buy the Look, the home's first)", target("outfit"), {
+    masks: [
+      {
+        selector: { reference: ["[data-testid=outfit-detail-preview]"], "dcl-one": ["[data-testid=outfit-detail-preview]"] },
+        why: "the outfit's 3D preview: the reference's wearable-preview iframe and ui3's own renderer draw different frames (its models are not recorded); its box is still compared structurally",
+      },
+      WEBGL,
+    ],
+  }),
   plain("credits", "Buy credits", "/shop/credits"),
   plain("not-found", "A path the Shop does not have", "/shop/no-such-page"),
 );
