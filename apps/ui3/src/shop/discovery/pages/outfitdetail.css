@@ -1,8 +1,11 @@
 /* from: shop@2d3bf62:app/src/pages/OutfitDetail.styles.ts, app/src/styles/{card,chip,crumbs}.styles.ts,
    app/src/styles/index.css (.page, .skeleton). */
+/* As upstream's .page around its Root (padding 80px less the Root's -56px margin): the page still fills the
+   first viewport below the nav, so the footer sits below the fold on a short outfit. */
 .shop-page.shop-outfit {
   display: block;
   max-width: 1760px;
+  min-height: calc(100vh - var(--shop-nav-h, 92px));
   padding: 28px var(--shop-gutter, 54px) 24px;
   color: var(--shop-soft-white, #fcfcfc);
   font-family: var(--shop-sans, inherit);
@@ -85,8 +88,9 @@
   color: var(--shop-soft-white, #fcfcfc);
   overflow-wrap: anywhere;
 }
+/* Upstream's Meta is a bare <p> that keeps the browser's 1em margins: 12px above and below, on top of the gap. */
 .shop-outfit__meta {
-  margin: 0;
+  margin: 1em 0;
   font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.04em;
@@ -336,7 +340,7 @@
   background: var(--shop-buy-btn, linear-gradient(180.93deg, #ff7439 2.82%, #ff2d55 97.47%));
   color: #fff;
   font: inherit;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.46px;
   text-transform: uppercase;
