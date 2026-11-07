@@ -95,6 +95,19 @@
   opacity: 0.5;
 }
 
+/* a page's CTA beside a field (the Shop's CLAIM NAME): 52px, semibold caps, 24px each side */
+.cta {
+  height: 52px;
+  padding: 0 24px;
+  border-radius: var(--r-md);
+  font-size: var(--type-16);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0;
+}
+.cta:disabled {
+  opacity: 0.5;
+}
+
 /* variants */
 .primary {
   background: var(--brand);

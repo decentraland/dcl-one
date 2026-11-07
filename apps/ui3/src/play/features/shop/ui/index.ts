@@ -3,6 +3,7 @@
 // data and wires them to the HUD. When library/ui exists this folder is library/ui/apps/shop/
 // (docs/ui-standards.md, App-specific UI); test/shopUiBoundary.test.ts keeps it movable.
 
+export { AvatarNametag, NAMETAG_PLACEHOLDER } from './AvatarNametag'
 export { EmoteControls } from './EmoteControls'
 export { buyableInWorld, PriceTag } from './PriceTag'
 export { ShopFilters, type ShopFilterPatch, type ShopFilterStatus, type ShopFilterValues } from './ShopFilters'
@@ -13,6 +14,7 @@ export { ShopItemPanel, type ShopItemHide, type ShopItemPanelProps } from './Sho
 export { CreditsPill } from './CreditsPill'
 export { ShopItemTile, type ShopItemTileProps } from './ShopItemTile'
 export { ShopModal, ShopModalGap, type ShopModalProps } from './ShopModal'
+export { ShopNames, type ShopNameStatus, type ShopNamesProps } from './ShopNames'
 export { pressedWith, type PressedWith } from './pressedWith'
 export { ShopPurchaseDialog, type ShopPurchaseDialogProps, type ShopPurchaseItem, type ShopPurchaseStep } from './ShopPurchaseDialog'
 export { CreditsIcon } from './CreditsIcon'

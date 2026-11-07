@@ -263,3 +263,10 @@
   top: 864px;
   pointer-events: auto;
 }
+
+/* Names' nametag over the avatar: centred 302px in and 126px down its 573px slot, as the design's Avatar
+   places it. */
+.nametag {
+  left: 302.44px;
+  top: 125.97px;
+}
