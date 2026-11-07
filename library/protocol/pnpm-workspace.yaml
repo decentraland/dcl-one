@@ -1,0 +1,13 @@
+# Supply-chain hardening (pnpm 12 reads its settings here, not from .npmrc):
+# - No dependency runs code at install time: every one that declares an install
+#   script is listed below and refused (theirs only print notices). A new one
+#   makes pnpm warn, which is the moment to decide on it.
+# - New deps get saved with exact versions; ranges make every lockfile
+#   regeneration a chance to pull a freshly-compromised patch release.
+# - A release has to be a week old before it resolves.
+saveExact: true
+minimumReleaseAge: 10080
+allowBuilds:
+  '@dcl/ts-proto': false
+  protobufjs: false
+  ts-proto-descriptors: false

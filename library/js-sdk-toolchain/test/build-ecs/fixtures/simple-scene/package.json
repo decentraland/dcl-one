@@ -14,10 +14,10 @@
     "watch": "sdk-commands build --watch"
   },
   "devDependencies": {
-    "@dcl/ecs": "file:../../../../packages/@dcl/ecs",
-    "@dcl/js-runtime": "file:../../../../packages/@dcl/js-runtime",
-    "@dcl/sdk": "file:../../../../packages/@dcl/sdk",
-    "@dcl/sdk-commands": "file:../../../../packages/@dcl/sdk-commands"
+    "@dcl/ecs": "workspace:*",
+    "@dcl/js-runtime": "workspace:*",
+    "@dcl/sdk": "workspace:*",
+    "@dcl/sdk-commands": "workspace:*"
   },
   "dependencies": {
     "@dcl/ecs-math": "2.1.0"

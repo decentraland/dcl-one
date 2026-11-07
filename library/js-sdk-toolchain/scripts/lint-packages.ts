@@ -27,7 +27,7 @@ for (const pkg of packages) {
     try {
       // Use the root ESLint to lint this specific package
       const fixFlag = shouldFix ? '--fix' : ''
-      execSync(`NODE_OPTIONS="--max-old-space-size=4096" npx eslint ${pkg} --ext .ts,.tsx ${fixFlag}`, {
+      execSync(`NODE_OPTIONS="--max-old-space-size=4096" pnpm exec eslint ${pkg} --ext .ts,.tsx ${fixFlag}`, {
         stdio: 'inherit',
         cwd: process.cwd()
       })

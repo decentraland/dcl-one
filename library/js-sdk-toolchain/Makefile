@@ -48,14 +48,15 @@ export DEVELOPER_MODE=true
 
 install:
 	$(MAKE) -C ../protocol install
-	npm --prefix ../protocol run build
-	npm i --silent
+	pnpm --dir ../protocol run build
+	pnpm install --frozen-lockfile
+	$(MAKE) sync-deps
 ifndef SDK_PROTOC
 	test -x "$(PROTOC_DOWNLOADED)" || $(MAKE) install-protobuf
 endif
 
 lint:
-	npx tsx scripts/lint-packages.ts
+	pnpm exec tsx scripts/lint-packages.ts
 
 sync-deps:
 	$(SYNC_PACK) format --config .syncpackrc.json --source "packages/*/package.json" --source "package.json"
@@ -66,7 +67,7 @@ lint-packages:
 	$(SYNC_PACK) format --config .syncpackrc.json  --source "packages/*/package.json" --source "package.json"
 
 lint-fix: sync-deps
-	npx tsx scripts/lint-packages.ts --fix
+	pnpm exec tsx scripts/lint-packages.ts --fix
 
 test:
 	node_modules/.bin/jest --detectOpenHandles --forceExit --colors test/
@@ -81,10 +82,10 @@ test-file:
 
 init-test-scene:
 	git clone https://github.com/decentraland/sdk7-scene-template test-scene
-	cd test-scene && npm i ./../packages/@dcl/sdk  && npm i ./../packages/@dcl/sdk-commands  && npm i ./../packages/@dcl/js-runtime
+	cd test-scene && pnpm add ../packages/@dcl/sdk ../packages/@dcl/sdk-commands ../packages/@dcl/js-runtime
 
 format:
-	npx prettier --write "**/*.{js,ts,tsx,json}" --loglevel=error
+	pnpm exec prettier --write "**/*.{js,ts,tsx,json}" --log-level=error
 
 install-protobuf:
 	curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$(PROTOBUF_VERSION)/$(PROTOBUF_ZIP)
@@ -130,11 +131,7 @@ deep-clean-and-snapshot:
 .PHONY: build test install docs deep-clean-and-snapshot update-snapshots lint-packages
 
 deep-clean:
-	rm -rf node_modules/ \
-		packages/@dcl/ecs/node_modules/ \
-		packages/@dcl/react-ecs/node_modules/ \
-		packages/@dcl/sdk/node_modules/ \
-		packages/@dcl/sdk-commands/node_modules \
+	rm -rf node_modules/ packages/@dcl/*/node_modules/ test/snapshots/node_modules/ test/build-ecs/fixtures/*/node_modules/
 	make clean
 
 update-snapshots: export UPDATE_SNAPSHOTS=true
@@ -149,11 +146,11 @@ clean:
 	@rm -rf packages/@dcl/ecs/src/components/generated/ packages/@dcl/ecs/temp/
 	@rm -rf packages/@dcl/js-runtime/apis.d.ts
 	@rm -rf packages/@dcl/react-ecs/dist/ packages/@dcl/react-ecs/src/generated/ packages/@dcl/react-ecs/temp/
-	@rm -rf packages/@dcl/sdk/package-lock.json packages/@dcl/sdk/types/env/ packages/@dcl/sdk/types/rpc-modules/
+	@rm -rf packages/@dcl/sdk/types/env/ packages/@dcl/sdk/types/rpc-modules/
 	@rm -rf scripts/rpc-api-generation/src/modules/ scripts/rpc-api-generation/src/proto/
-	@rm -rf test/build-ecs/fixtures/dcl-test-lib-integration/bin/ test/build-ecs/fixtures/dcl-test-lib-integration/node_modules/
-	@rm -rf test/build-ecs/fixtures/ecs7-scene/bin/ test/build-ecs/fixtures/ecs7-scene/node_modules/
-	@rm -rf test/build-ecs/fixtures/simple-scene-with-bundled/bin/ test/build-ecs/fixtures/simple-scene-with-bundled/node_modules/
-	@rm -rf test/build-ecs/fixtures/simple-scene-with-library/bin/ test/build-ecs/fixtures/simple-scene-with-library/node_modules/
-	@rm -rf test/build-ecs/fixtures/simple-scene/bin/ test/build-ecs/fixtures/simple-scene/node_modules/
+	@rm -rf test/build-ecs/fixtures/dcl-test-lib-integration/bin/
+	@rm -rf test/build-ecs/fixtures/ecs7-scene/bin/
+	@rm -rf test/build-ecs/fixtures/simple-scene-with-bundled/bin/
+	@rm -rf test/build-ecs/fixtures/simple-scene-with-library/bin/
+	@rm -rf test/build-ecs/fixtures/simple-scene/bin/
 	@rm -rf test/ecs/snippets/dist/

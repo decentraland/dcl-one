@@ -14,7 +14,9 @@ module.exports = {
       }
     ]
   },
-  transformIgnorePatterns: ['node_modules/(?!(@dcl/(ecs-math|quests-client))/)'],
+  // ESM-only dependencies that need transforming. The lookahead spans the whole path so it finds
+  // them under pnpm's node_modules/.pnpm/<name>@<version>/node_modules/ as well.
+  transformIgnorePatterns: ['node_modules/(?!.*@dcl/(ecs-math|quests-client)/)'],
   coverageDirectory: 'coverage',
   coverageThreshold: {
     global: {

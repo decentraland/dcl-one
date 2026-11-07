@@ -565,10 +565,7 @@ function collectScriptData(
  */
 async function prepareRuntimeCode(fs: BundleComponents['fs']): Promise<string> {
   const runtimeCodePath = path.join(__dirname, 'runtime-script.ts')
-  const runtimeCode = await fs.readFile(runtimeCodePath, 'utf-8')
-
-  // fix nested asset-packs path (importing from @dcl/inspector is banned in scene bundles, @dcl/asset-packs is not)
-  return runtimeCode.replace(/@dcl\/inspector\/node_modules\/@dcl\/asset-packs/g, '@dcl/asset-packs')
+  return fs.readFile(runtimeCodePath, 'utf-8')
 }
 
 /**

@@ -9,7 +9,7 @@
     "@babel/plugin-transform-modules-commonjs": "^7.28.5",
     "@babel/plugin-transform-react-jsx": "^7.28.5",
     "@babel/preset-typescript": "^7.28.5",
-    "@dcl/protocol": "file:../protocol",
+    "@dcl/protocol": "link:../protocol",
     "@dcl/quickjs-emscripten": "^0.21.0-3680274614.commit-1808aa1",
     "@dcl/ts-proto": "1.153.0",
     "@types/fs-extra": "^9.0.12",
@@ -23,9 +23,13 @@
   },
   "devDependencies": {
     "@dcl/eslint-config": "^3.1.0",
+    "@eslint/eslintrc": "3.3.6",
     "@types/node": "^24.10.1",
+    "eslint": "9.39.5",
     "npm-package-arg": "^12.0.2",
+    "prettier": "3.9.5",
     "syncpack": "^13.0.4",
+    "tsx": "4.23.15",
     "typedoc": "^0.23.28"
   },
   "engines": {
@@ -34,22 +38,9 @@
   "homepage": "https://github.com/decentraland/js-sdk-toolchain#readme",
   "keywords": [],
   "license": "Apache-2.0",
-  "overrides": {
-    "protobufjs": "^7.6.3",
-    "semver@<7.5.2": "^7.5.4",
-    "minimatch@<3.1.4": "^3.1.4",
-    "zod@<=3.22.2": "^3.23.8",
-    "ajv@<6.14.0": "^6.14.0",
-    "minimatch@>=9.0.0 <9.0.7": "^9.0.7",
-    "test-exclude": "^7.0.1",
-    "glob@10": "^13.0.6"
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/decentraland/dcl-one.git",
     "directory": "library/js-sdk-toolchain"
-  },
-  "scripts": {
-    "postinstall": "make sync-deps"
   }
 }

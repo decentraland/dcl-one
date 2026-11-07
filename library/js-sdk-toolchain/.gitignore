@@ -6,7 +6,6 @@ coverage
 **/.DS_Store
 .idea
 packages/**/*.js
-packages/@dcl/sdk/package-lock.json
 packages/@dcl/sdk/**/*.js
 packages/@dcl/sdk/**/*.d.ts
 !packages/@dcl/sdk/src/ethereum-provider/text-encoding.d.ts
@@ -20,9 +19,7 @@ test/sdk/simple-scene
 **/bin/game.js.map
 **/*.js.map
 
-test/build-ecs/fixtures/*/package-lock.json
 packages/@dcl/playground-assets/etc/playground-assets.api.json
-test/snapshots/*/package-lock.json
 test/snapshots/**/*.js
 test/snapshots/**/*.js.map
 test/**/*.crdt
