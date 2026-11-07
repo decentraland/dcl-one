@@ -140,8 +140,7 @@ pub async fn get_index(
 
 async fn build_index(state: &SharedState, limit: i64, offset: i64) -> AppResult<IndexResponse> {
     let base_url = state.settings.content_server_url();
-    let banned = state.names.snapshot(&state.pool).await.normalized();
-    let scenes = queries::list_index_scenes(&state.pool, &banned, limit, offset).await?;
+    let scenes = queries::list_index_scenes(&state.pool, limit, offset).await?;
     let now = chrono::Utc::now();
 
     let mut data: Vec<WorldIndexEntry> = Vec::new();

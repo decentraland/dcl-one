@@ -16,8 +16,8 @@ Pinned revisions:
   on them say so.
 - dcl-one: origin main `2da8b8aea`, Rust workspace `services/catalyst`.
 
-Everything below is from reading the code, except the rows marked fixed, which name the dcl-one
-test that pins them. Nothing was captured from a live server. `file-type@16.5.4` (`core.js`) was read
+Everything below is from reading the code; a closed row names the dcl-one test that pins it.
+Nothing was captured from a live server. `file-type@16.5.4` (`core.js`) was read
 from its published tarball for WR-04.
 
 Files read:
@@ -79,7 +79,7 @@ Files read:
   `Settings::content_server_url` is `<PUBLIC_URL>/worlds-content-server` (`worlds/src/lib.rs`).
   `/about` (`scenesUrn` `baseUrl`, skybox textures, minimap images) and `/index` (`thumbnail`) link
   `<content_server_url>/contents/<hash>`, the worlds handler, as upstream links `HTTP_BASE_URL` (its
-  own host); the comms adapter keeps `PUBLIC_URL` (WR-12, fixed).
+  own host); the comms adapter keeps `PUBLIC_URL` (WR-12).
 - **Error envelope.** Upstream installs `errorHandler` first (`src/controllers/routes.ts:168`):
   `InvalidRequestError` → 400 `{"error":"Bad request","message":…}`, `NotFoundError` → 404
   `{"error":"Not Found",…}`, `NotAuthorizedError` → 401 `{"error":"Not Authorized",…}`, anything
@@ -97,7 +97,7 @@ Files read:
   `text/plain; charset=utf-8` for every path no router claims, `/worlds-content-server/*`
   included (`content/src/lib.rs:728-735,841`). A 405 is axum's; `content::routing::upstream_allow`
   rewrites its `Allow` to koa-router's spelling (`HEAD, GET`) under `/content/` and
-  `/worlds-content-server/` (WR-26, fixed).
+  `/worlds-content-server/` (WR-26).
 - **CORS.** Upstream configures `@dcl/http-server` with `{methods: [GET,HEAD,OPTIONS,DELETE,POST,PUT],
   maxAge: 86400}` (`src/components.ts:96-107`): any `OPTIONS`, on any path, answers 204 before
   routing with `Access-Control-Allow-Origin: *`, the methods, the requested headers reflected (none
@@ -108,7 +108,7 @@ Files read:
   `GET,HEAD,POST,PUT,DELETE,PATCH,OPTIONS`, the requested headers reflected or a fixed list, max-age
   86400, `Access-Control-Expose-Headers: *` when the handler set none, and `X-Content-Type-Options:
   nosniff` (`shared/src/cors.rs:15-85`). Every route under `/worlds-content-server` carries it,
-  the prefix-only reads included (WR-06, fixed); the shape is WR-32.
+  the prefix-only reads included (WR-06); the shape is WR-32.
 - **Rate limits.** Upstream applies none to the routes in this file. This tree's gateway limits
   `/worlds-content-server/(contents|ipfs)/` with `zone=content` (100 r/s, burst 1000) and every other
   path with the server-wide `zone=read` (30 r/s, burst 60), answering nginx's HTML 429
@@ -157,7 +157,7 @@ mount (`content/src/get_content.rs:95-132,147-281`) at both paths under the pref
 | Key format | `IPFSv2.validate` (`^(ba)[a-zA-Z0-9]{57}$`, `@dcl/schemas`) or a lowercase 64-hex SHA-256 (`content-file-handler.ts:47-51`). Anything else → **400**, no body. `Qm…` CIDv0 → 400. | `is_canonical_cid` (CIDv0 `Qm…` of 46, or `ba` + base32 lowercase, ≥58) or, on this mount, a lowercase 64-hex SHA-256 read as the raw-leaf CIDv1 of that digest (`get_content.rs:163-174`, `library/dcl-auth/src/hash.rs:176-204`). Anything else → **404** (intended, `docs/worlds-compatibility.md` "Legacy content keys"). CIDv0 keys are served (WR-09). |
 | SHA-256 key | The blob stored under that literal key. | The blob whose raw-leaf CIDv1 has that digest, so a file of one chunk (256 KiB) or less (intended, same doc entry). Pinned by `worlds_contents_sniff_and_answer_legacy_sha256_keys` (`worlds/src/core/tests.rs:5405`). |
 | `Range` (GET) | `parseRangeHeader` (`content-file-handler.ts:85-111`): `bytes=S-E`, `bytes=S-`, `bytes=-N` by regex `^bytes=(\d*)-(\d*)$`; multi-range, other units, `bytes=-` → unsupported → full 200; `-0`, start ≥ size, end < start → 416 `Content-Range: bytes */size`. Compressed or unknown-size files ignore the range. | `parse_range_header` (`content/src/formatters.rs:41-83`): the same outcomes for the cases upstream tests (`test/unit/content-file-handler.spec.ts:12-186`, `test/integration/get-endpoints.spec.ts:63-229`). Edge differences in WR-08. |
-| `Range` (HEAD) | Ignored: `headContentFile` answers 200 with the full headers (`content-file-handler.ts:200-211`). | Ignored on this mount: 200 with the full headers (WR-05, fixed). |
+| `Range` (HEAD) | Ignored: `headContentFile` answers 200 with the full headers (`content-file-handler.ts:200-211`). | Ignored on this mount: 200 with the full headers (WR-05). |
 | `If-None-Match` | Ignored. | A match answers 304 with `ETag`, `Cache-Control`, `Access-Control-Expose-Headers: ETag` (`get_content.rs:180-184`, `formatters.rs:9-33`) (WR-10). |
 | Denylist | None. | The content denylist answers 404 (`get_content.rs:175-177`) (WR-09). |
 | Missing blob | 404. | 404, unless the content read-through is on and fills it from the sync sources first (`get_content.rs:186-197`) (WR-09). |
@@ -171,10 +171,10 @@ mount (`content/src/get_content.rs:95-132,147-281`) at both paths under the pref
 | 206 | The sniff reads the file's first 4100 bytes (a failed read falls back to octet-stream); `Content-Length` of the window; `Content-Range: bytes S-E/size` (`content-file-handler.ts:176-197`). | The sniff reads bytes 0–63 of the file; same `Content-Length` and `Content-Range`. MATCH except the sniffer (WR-04). |
 | 416 | `Content-Range: bytes */size` only. | `Content-Range: bytes */size` and `Access-Control-Expose-Headers: Content-Range` (`get_content.rs:198-208`). MATCH (one extra header). |
 | 400 | Invalid key: empty body. | Not answered: an invalid key is a 404 (WR-02). |
-| 404 | Missing: empty body. | Empty body (`get_world_content`) (WR-03, fixed). |
+| 404 | Missing: empty body. | Empty body (`get_world_content`) (WR-03). |
 | 500 | A storage error other than `RangeError` rethrows → `{"error":"Internal Server Error"}` (`content-file-handler.ts:163-173`). | A storage fault → 500 `{"error":"Internal Server Error"}` (`content/src/errors.rs:56-61`). MATCH. |
 | Full GET with `STORAGE_X_ACCEL_BASE` | n/a | The app answers 200 with `X-Accel-Redirect` and nginx serves the file, adding its own `Cache-Control: public, max-age=31536000, immutable` and `Access-Control-Allow-Origin: *` (`get_content.rs:263-275`, `infra/gateway/gateway.py:221-229`). Which `Cache-Control` the client sees needs a capture (WR-25). |
-| CORS | `Access-Control-Allow-Origin: *` on a request with `Origin`. | `shared::cors` (WR-06 fixed; shape WR-32). |
+| CORS | `Access-Control-Allow-Origin: *` on a request with `Origin`. | `shared::cors` (WR-06; shape WR-32). |
 
 ### Data dependency
 
@@ -194,7 +194,7 @@ Upstream: `availableContentHandler` (`content-file-handler.ts:213-242`). dcl-one
 
 | aspect | upstream | dcl-one |
 |---|---|---|
-| Parsing | `URLSearchParams.getAll('cid')`: only the literal key `cid`. | `url::form_urlencoded` over the literal `cid` pairs (`worlds/src/available_content.rs` `cid_values`) (WR-24, fixed). |
+| Parsing | `URLSearchParams.getAll('cid')`: only the literal key `cid`. | `url::form_urlencoded` over the literal `cid` pairs (`worlds/src/available_content.rs` `cid_values`) (WR-24). |
 | No cid | 400 `{"error":"Bad request","message":"At least one cid query parameter is required."}` | Same (`available_content.rs:36-38`; test `available_content_under_the_worlds_prefix_reports_deployed_files`). MATCH. |
 | > 500 cids | 400 `Too many cid query parameters. Maximum allowed is 500.` | Same (`available_content.rs:39-43`). MATCH. |
 | Invalid cid | Any cid failing `IPFSv2.validate` (an empty value included) → 400 `Invalid cid format.` | `is_ipfs_v2`, the same regex (`available_content.rs:18-21,44-46`). MATCH. |
@@ -219,7 +219,7 @@ Upstream: `activeEntitiesHandler` (`src/controllers/handlers/active-entities.ts:
 |---|---|---|
 | Body read | `request.json()`, no content-type check, no body cap (`@dcl/http-server` is built without `maxBodySize`). Invalid or empty JSON throws a `SyntaxError` → 500 `{"error":"Internal Server Error"}`. | Raw bytes, no content-type check, 256 KiB cap (`core/mod.rs:623-626`) under the gateway's 1 MiB (`gateway.py:366`). Invalid JSON → 400 `Invalid request. Request body is not valid` (`active.rs:23-24`) (WR-13, WR-16). |
 | Shape | Not an object, or `pointers` not an array → 400 `{"error":"Bad request","message":"Invalid request. Request body is not valid"}` (`active-entities-handler.spec.ts:17-28`). | Same message and envelope (`active.rs:25-29`). MATCH. |
-| Pointers | Non-empty strings kept; more than 50 → 400 `Maximum 50 pointers allowed per request`; lowercased and deduplicated (`active-entities.ts:17-29`). | Same filter, same cap and message, deduplicated by lowercase key (`active.rs`). A pointer with surrounding whitespace finds nothing; one that is not a `WorldName` (inner whitespace, `/` or a control character) is dropped, which also finds nothing upstream (WR-14, fixed). |
+| Pointers | Non-empty strings kept; more than 50 → 400 `Maximum 50 pointers allowed per request`; lowercased and deduplicated (`active-entities.ts:17-29`). | Same filter, same cap and message, deduplicated by lowercase key (`active.rs`). A pointer with surrounding whitespace finds nothing; one that is not a `WorldName` (inner whitespace, `/` or a control character) is dropped, which also finds nothing upstream (WR-14). |
 | Deny list | `checkNameDenyList`: the name lowercased, first `.eth` and first `.dcl` removed, compared case-insensitively (`src/adapters/name-deny-list-checker.ts`). | The same normalization over the `banned-names` list (`worlds/src/core/names.rs:93-99`; source: the explorer-api mirror instead of `DCL_LISTS_URL`). MATCH. |
 | Query | `DISTINCT ON (world_name)` the newest `DEPLOYED` scene, `ORDER BY world_name, created_at DESC`. | The same `DISTINCT ON` over `worlds.world_scenes` (which keeps only live scenes; retired ones move to `worlds.retired_world_scenes`). MATCH. |
 | Body | `[{...entity, id, metadata: {...metadata, owner}}]`: the stored entity's keys in their jsonb order, `id` and `metadata` at their places, `owner` last in `metadata` (`worlds-manager.ts:854-861`). | `id` inserted, `metadata.owner` the row's owner (`null` when it has none); `serde_json` without `preserve_order`, so keys come out sorted (`store.rs` `entities_for_worlds`) (WR-15). |
@@ -242,10 +242,10 @@ Upstream: `getIndexHandler` (`src/controllers/handlers/index-handler.ts:10-36`) 
 | aspect | upstream | dcl-one |
 |---|---|---|
 | `limit`, `offset` | `parseInt`; a positive limit is clamped to 10,000, else 10,000; a non-negative offset, else 0. | `js_parse_int`, the same bounds (`index.rs:165-172`, tests `index_limit_clamps_at_max`, `index_offset_parses_and_defaults`). MATCH. |
-| Paged set | `getRawWorldRecords({}, {limit, offset})`: every `worlds` row ordered by name, `worlds.name != ALL(<deny list, suffix-stripped>)` (WR-17), blocked wallets not excluded; then a world with no deployed scene is skipped, so a page can be shorter than `limit` (`worlds-manager.ts:322-382`, `worlds-indexer.ts:20-32`). | Worlds that have scenes, `blocked_since IS NULL`, not on the deny list (the checker's normalization), ordered by name, paged in SQL (`queries.rs` `list_index_scenes`) (WR-17, WR-19). |
+| Paged set | `getRawWorldRecords({}, {limit, offset})`: every `worlds` row ordered by name, `worlds.name != ALL(<deny list, suffix-stripped>)` (WR-17), blocked wallets not excluded; then a world with no deployed scene is skipped, so a page can be shorter than `limit` (`worlds-manager.ts:322-382`, `worlds-indexer.ts:20-32`). | Worlds that have scenes, `blocked_since IS NULL`, ordered by name, paged in SQL; no deny-list filter, which lists the same worlds as upstream's (`queries.rs` `list_index_scenes`) (WR-17, WR-19). |
 | Scenes per world | All deployed scenes, newest first. | All scenes, newest first. MATCH. |
-| Scene fields | `id`; `title: display.title \|\| ''`; `description: display.description \|\| ''`; `thumbnail: <base>/contents/<hash>` or **absent**; `pointers: parcels`; `runtimeVersion` or **absent**; `timestamp: entity.timestamp \|\| Date.now()` (`worlds-indexer.ts:34-46`). | The same (`index.rs` `scene_summary`; test `scene_summary_fills_missing_fields_as_upstream`) (WR-18, fixed). |
-| Thumbnail base | `HTTP_BASE_URL`, else the request's origin (`index-handler.ts:15`). | `<PUBLIC_URL>/worlds-content-server`, the worlds `/contents` (WR-12, fixed). |
+| Scene fields | `id`; `title: display.title \|\| ''`; `description: display.description \|\| ''`; `thumbnail: <base>/contents/<hash>` or **absent**; `pointers: parcels`; `runtimeVersion` or **absent**; `timestamp: entity.timestamp \|\| Date.now()` (`worlds-indexer.ts:34-46`). | The same (`index.rs` `scene_summary`; test `scene_summary_fills_missing_fields_as_upstream`) (WR-18). |
+| Thumbnail base | `HTTP_BASE_URL`, else the request's origin (`index-handler.ts:15`). | `<PUBLIC_URL>/worlds-content-server`, the worlds `/contents` (WR-12). |
 | `lastUpdated` | ISO time of this request's build. | ISO time of the memoized page's build, up to 30 s old; `ETag` and `If-None-Match` → 304 (`index.rs:18-31,97-131`) (WR-20). |
 | Errors | 500 `{"error":"Internal Server Error"}`. | Same (content envelope). MATCH. |
 
@@ -265,7 +265,7 @@ Upstream: `statusHandler` (`src/controllers/handlers/status-handler.ts:14-39`). 
 | `content.worldsCount` | `{ens, dcl}` over worlds with `deployed_scene_count > 0`, split on the `.dcl.eth` suffix (`worlds-manager.ts:802-820`). | Distinct `world_name` of `worlds.world_scenes`, split on `LIKE '%.dcl.eth'` (`queries.rs:263-275`). Mirrored worlds count as deployed here. MATCH. |
 | `comms` | The LiveKit adapter's status, cached 60 s: `{adapterType:"livekit", statusUrl:"https://<host>/", rooms, users, timestamp}`, `details` dropped; world rooms with players, scene rooms excluded; a LiveKit error reads as 0/0 (`comms-adapter.ts:137-172,222-245`). | `{adapterType, statusUrl, rooms, users, timestamp}` in that order from this node's presence registry, live; `adapterType:"offline"` with no `statusUrl` when no LiveKit host is set (`status.rs:121-144`) (WR-21). |
 | Extra | — | `personalWorlds` (`null` when off) and `mirror` (`status.rs:88-96,152-187`). |
-| CORS | `*`. | `shared::cors` (WR-06 fixed; shape WR-32). |
+| CORS | `*`. | `shared::cors` (WR-06; shape WR-32). |
 
 Upstream test `test/integration/get-endpoints.spec.ts:42-61` expects `comms.rooms`/`users` from its
 LiveKit mock; the equivalent here depends on the presence feed (Pulse/LiveKit webhook). The root
@@ -336,7 +336,7 @@ Upstream: `bearerTokenMiddleware(AUTH_SECRET)` then `garbageCollectionHandler`
 | `POST /reprocess-ab` | admin | 404 | 404 |
 | `POST /gc` | admin | admin | 404 |
 
-The links `/about` and `/index` build point at the middle column (WR-12, fixed). The root column is
+The links `/about` and `/index` build point at the middle column (WR-12). The root column is
 documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
 
 ## Backlog (WR-)
@@ -344,263 +344,190 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
 1. **WR-01 · `/contents`, `/ipfs` · range outcomes, headers and HEAD body.** Status: MATCH, no work.
    - Upstream: `parseRangeHeader` and the header set (`content-file-handler.ts:53-111`); tests
      `test/unit/content-file-handler.spec.ts:12-186,288-345`, `test/integration/get-endpoints.spec.ts:27-229`.
-   - dcl-one: `parse_range_header` and `content_file_headers` (`content/src/formatters.rs:41-102`)
+   - dcl-one: `parse_range_header` and `content_file_headers` (`content/src/formatters.rs:51,95`)
      give the same 200/206/416 outcomes, `ETag`, `Cache-Control`, `Accept-Ranges` and
-     `Content-Length` for every tested case; HEAD has no body (`get_content.rs:248-261`).
+     `Content-Length` for every tested case; HEAD has no body (`content/src/get_content.rs` `serve`).
    - Severity: none (closed).
 
-2. **WR-02 · `/contents`, `/ipfs` · an invalid key answers 404, upstream 400.** Status: kept: intended (worlds-compatibility.md "Legacy content keys").
+2. **WR-02 · `/contents`, `/ipfs` · an invalid key answers 404, upstream 400.** Status: intended (worlds-compatibility.md).
    - Upstream: 400, empty body (`content-file-handler.ts:126,203`; `get-endpoints.spec.ts:199-212`,
      `content-file-handler.spec.ts:548-567`).
-   - dcl-one: 404 (`get_content.rs:163-174`).
-   - Drop-in: no known client branches on 400 versus 404 for a hash it built; a test that probes a
-     bad key sees a different status. Does not break replacement.
-   - Proposed fix: keep: intended, the shared handler treats every unknown key as absent.
-   - Severity: P2.
+   - dcl-one: a key that is neither a canonical CID nor a 64-hex SHA-256 is a miss, the bare 404 of
+     WR-03 (`content/src/get_content.rs:266`, `get_world_content` at `:243`). Listed under "Legacy
+     content keys". No known client branches on 400 versus 404 for a hash it built.
+   - Severity: none (closed).
 
-3. **WR-03 · `/contents`, `/ipfs` · the 404 has a JSON body.** Status: MATCH (fixed).
+3. **WR-03 · `/contents`, `/ipfs` · the 404 body.** Status: MATCH, no work.
    - Upstream: `{status: 404}`, empty body (`content-file-handler.ts:118,135,174,207`).
-   - dcl-one: `{"error":"No content found with hash <key>"}` (`get_content.rs:80-82`).
-   - Proposed fix: in `content/src/get_content.rs` `serve`, answer a bare 404 when `mount` is
-     `WORLDS` (the root keeps the catalyst body its fixtures pin).
-   - Fixed as proposed (`get_world_content`; an invalid key is the same bare 404). Pinned by
-     `worlds/src/core/tests.rs` `worlds_contents_answer_wcs_misses_heads_and_types` and
-     `content/src/get_content.rs` `the_worlds_mount_answers_a_legacy_sha256_key_and_the_root_does_not`.
-   - Severity: P2.
+   - dcl-one: `get_world_content` answers a miss, and an invalid key, with a 404 and no body
+     (`content/src/get_content.rs:243-255`, `Mount::bare_not_found`); the root keeps the catalyst
+     body. Pinned by `worlds/src/core/tests.rs:5518` `worlds_contents_answer_wcs_misses_heads_and_types`
+     and `content/src/get_content.rs:861`
+     `the_worlds_mount_answers_a_legacy_sha256_key_and_the_root_does_not`.
+   - Severity: none (closed).
 
-4. **WR-04 · `/contents`, `/ipfs` · the Content-Type sniffer.** Status: fixed for the scene-file formats; rarer formats open.
+4. **WR-04 · `/contents`, `/ipfs` · the Content-Type sniffer.** Status: open for formats past byte 64.
    - Upstream: `file-type@16` `fromStream` over a 4100-byte sample; JSON and other text are
-     `application/octet-stream` (`content-file-handler.ts:14-41`; `file-type` not read, its JSON
-     non-detection is the comment's statement at lines 18-21). It also tells `ftyp` brands apart
-     (`M4A` audio, `qt` QuickTime) and detects fonts, AVIF, BMP, FLAC, WebAssembly and many more.
-   - dcl-one: 14 signatures over 32 bytes; every `ftyp` file is `video/mp4`; a body opening with
-     `{` or `[` is `application/json` (`get_content.rs:24-66,105-118`). The JSON rule is listed as
-     intended ("Content types come from the catalyst's sniffer, so JSON is `application/json`"),
-     but the code comment at `get_content.rs:99-102` says the worlds mount answers JSON "as
-     worlds-content-server does", which the upstream handler does not.
-   - Drop-in: browsers and engines read these files by extension from the scene manifest; a client
-     that keys on `Content-Type` for fonts, audio or `.mov` sees `application/octet-stream` or
-     `video/mp4` instead.
-   - Proposed fix: add the `file-type` signatures scene files use (woff/woff2/ttf/otf, AVIF, BMP,
-     FLAC, WebAssembly, the `M4A`/`qt` brands) to `detect_content_type`, read the head up to 4100
-     bytes on the worlds mount, and correct the comment in `content/src/get_content.rs`. Keep the
-     JSON rule (documented).
-   - Fixed on the worlds mount only (`file_type_extra`, read from `file-type@16.5.4` `core.js`): BMP
-     (checked first, as there), the `ftyp` major brands (`avif`, `heic`/`mif1`/`msf1`/`hevc`, `qt`,
-     `M4A`/`M4B`/`M4V`/`F4*`, `3gp`/`3g2`, `crx`), woff/woff2/otf/ttf, FLAC, WebAssembly, RIFF
-     `audio/vnd.wave`/AVI and the Ogg codecs, over a 64-byte head. The comment is corrected and the
-     JSON rule documented (worlds-compatibility.md "Content types"). The root's `?includeMimeType`
-     table is unchanged. Pinned by `get_content.rs`
-     `the_worlds_mount_reads_file_types_other_signatures` and `worlds/src/core/tests.rs`
-     `worlds_contents_answer_wcs_misses_heads_and_types`.
+     `application/octet-stream` (`content-file-handler.ts:14-41`).
+   - dcl-one: the worlds mount reads a 64-byte head through `file_type_extra`
+     (`content/src/get_content.rs:140`, read from `file-type@16.5.4` `core.js`): BMP first, the
+     `ftyp` major brands (`avif`, `heic`/`mif1`/`msf1`/`hevc`, `qt`, `M4A`/`M4B`/`M4V`/`F4*`,
+     `3gp`/`3g2`, `crx`), woff/woff2/otf/ttf, FLAC, WebAssembly, RIFF `audio/vnd.wave`/AVI and the
+     Ogg codecs, then `detect_content_type`. A body opening with `{` or `[` is `application/json`
+     (worlds-compatibility.md "Content types"). The root's `?includeMimeType` table is separate.
+     Pinned by `content/src/get_content.rs:803` `the_worlds_mount_reads_file_types_other_signatures`
+     and `worlds_contents_answer_wcs_misses_heads_and_types`.
+   - Proposed fix: none planned; a format a scene needs is added to `file_type_extra` from
+     `core.js`.
    - Left: formats `file-type` finds past byte 64 or by parsing (an MP3 after an ID3 tag, Matroska
      versus WebM by doctype, PDF/AI, the rest of its table) answer as `detect_content_type` does.
    - Severity: P2.
 
-5. **WR-05 · `/contents`, `/ipfs` · HEAD with a `Range` header.** Status: MATCH (fixed).
+5. **WR-05 · `/contents`, `/ipfs` · HEAD with a `Range` header.** Status: MATCH, no work.
    - Upstream: `headContentFile` ignores `Range` and answers 200 with the full length.
-   - dcl-one: 206 with the window length and `Content-Range` (`get_content.rs:209-237`).
-   - Proposed fix: in `serve`, skip range parsing for `HEAD` on the `WORLDS` mount. Size S.
-   - Fixed as proposed (`Mount::head_ignores_range`). Pinned by `get_content.rs`
-     `a_worlds_head_ignores_its_range` (the root keeps its 206) and
+   - dcl-one: the worlds mount skips range parsing on HEAD (`Mount::head_ignores_range`,
+     `content/src/get_content.rs:302`); the root keeps its 206. Pinned by
+     `content/src/get_content.rs:840` `a_worlds_head_ignores_its_range` and
      `worlds_contents_answer_wcs_misses_heads_and_types`.
-   - Severity: P2.
+   - Severity: none (closed).
 
-6. **WR-06 · `/worlds-content-server/{status,contents,ipfs,openapi.json}` · no CORS headers.** Status: MATCH (fixed).
+6. **WR-06 · `/worlds-content-server/{status,contents,ipfs,available-content,openapi.json,health/*}` · CORS.** Status: MATCH, no work.
    - Upstream: the server-wide CORS middleware answers every request with `Origin`
      (`Access-Control-Allow-Origin: *`) and every preflight with 204 (`src/components.ts:96-107`).
-   - dcl-one: these four routes are added to `content_server` after `router(worlds)` applied
-     `cors_middleware` and `nul_guard_middleware`, so they carry neither (`worlds/src/lib.rs:394-422`).
-     `/available-content` and `/health/*` add their own layers. A preflight to one of the four is a
-     405 from axum. Behind the gateway, `$cors_fallback` adds `Access-Control-Allow-Origin: *` to a
-     response without one (`gateway.py:262-265,352`), so plain GETs read; a preflighted request still
-     fails, and a node served without the gateway gives browsers no CORS at all.
-   - Proposed fix: in `worlds/src/lib.rs` `app_router`, apply `nul_guard_middleware` and
-     `cors_middleware` to `content_server` after its last route (or as `route_layer`s on these four),
-     and drop the per-route layers on `/available-content`; add a cross-origin GET and a preflight
-     case to `worlds_contents_sniff_and_answer_legacy_sha256_keys`. Size S.
-   - Fixed: the prefix-only reads (`/status`, `/contents`, `/available-content`, `/ipfs`,
-     `/openapi.json`, `/health/*`) are one router with `nul_guard_middleware` and `cors_middleware`
-     (`worlds/src/lib.rs` `app_router`), the per-route layers dropped. Pinned by
-     `worlds/src/core/tests.rs` `worlds_prefix_reads_answer_cors_and_preflights`. The header shape is
-     WR-32.
-   - Severity: P1 (a browser client of a node without the gateway cannot read world content).
+   - dcl-one: the prefix-only reads are one router behind `nul_guard_middleware` and
+     `cors_middleware` (`worlds/src/lib.rs:411-440`, `app_router`), so a cross-origin GET carries
+     the CORS headers and a preflight answers 204. Pinned by `worlds/src/core/tests.rs:5459`
+     `worlds_prefix_reads_answer_cors_and_preflights`. The header shape is WR-32.
+   - Severity: none (closed).
 
-7. **WR-07 · `/contents`, `/ipfs` · `If-None-Match` answers 304.** Status: kept: intended (worlds-compatibility.md "Conditional reads").
+7. **WR-07 · `/contents`, `/ipfs` · `If-None-Match` answers 304.** Status: intended (worlds-compatibility.md).
    - Upstream: always 200.
-   - dcl-one: 304 on a matching ETag (`get_content.rs:180-184`).
-   - Proposed fix: keep: a conditional request is only sent by a cache that holds the immutable
-     body. Record it in `docs/worlds-compatibility.md`.
-   - Severity: P2.
+   - dcl-one: 304 on a matching ETag (`content/src/get_content.rs:282`). Listed under "Conditional
+     reads": a conditional request is only sent by a cache that holds the immutable body.
+   - Severity: none (closed).
 
-8. **WR-08 · `/contents`, `/ipfs` · `Range` edge spellings.** Status: MATCH (fixed).
+8. **WR-08 · `/contents`, `/ipfs` · `Range` edge spellings.** Status: MATCH, no work.
    - Upstream: `^bytes=(\d*)-(\d*)$`; a signed number (`bytes=+5-`) is unsupported → 200; an
      overflowing number parses as a large integer → 416.
-   - dcl-one: `u64::parse` accepts `+5` → 206; an overflow fails the parse → 200
-     (`formatters.rs:48-79`).
-   - Proposed fix: accept ASCII digits only and treat an overflow as unsatisfiable in
-     `parse_range_header` (shared with the root mount; check the content-reads fixtures first). Size S.
-   - Fixed in `parse_range_header` (`range_number`): ASCII digits only; a number past `u64`
-     saturates, so an overflowing start is 416, an overflowing end is clamped (206) and an
-     overflowing suffix is the whole file, as `parseInt` gives upstream. Both mounts: the content
-     reads backlog lists only `bytes=a-b`, `bytes=a-`, `bytes=-n` with anything else ignored, and no
-     content fixture sends a sign or an overflow. Pinned by `content/src/formatters.rs`
+   - dcl-one: `range_number` (`content/src/formatters.rs:44`) reads ASCII digits only and saturates
+     past `u64`, so an overflowing start is 416, an overflowing end is clamped (206) and an
+     overflowing suffix is the whole file, on both mounts. Pinned by `content/src/formatters.rs:218`
      `parse_range_reads_digits_only_and_saturates`.
-   - Severity: P2.
+   - Severity: none (closed).
 
-9. **WR-09 · `/contents`, `/ipfs` · CIDv0 keys, the denylist and the read-through.** Status: kept: intended (worlds-compatibility.md "Legacy content keys").
+9. **WR-09 · `/contents`, `/ipfs` · CIDv0 keys, the denylist and the read-through.** Status: intended (worlds-compatibility.md).
    - Upstream: `Qm…` → 400; no denylist; a missing key is 404.
    - dcl-one: `Qm…` keys are served; denylisted keys answer 404; with `READ_THROUGH_ENABLED` a
-     missing key is fetched from the sync sources before the 404 (`get_content.rs:163-197`).
-   - Proposed fix: keep: a consequence of the one blob store; add the CIDv0 and denylist rules to
-     `docs/worlds-compatibility.md` "Legacy content keys".
-   - Severity: P2.
+     missing key is fetched from the sync sources before the 404 (`content/src/get_content.rs:266-290`).
+     A consequence of the one blob store, listed under "Legacy content keys".
+   - Severity: none (closed).
 
 10. **WR-10 · `/contents` · the extra `Access-Control-Expose-Headers` entry and 416 header.** Status: MATCH, no work.
     - Upstream: `ETag, Accept-Ranges, Content-Range`.
     - dcl-one: `ETag, Content-Range, Accept-Ranges, Content-Length`; a 416 also exposes
-      `Content-Range` (`formatters.rs:89-92`, `get_content.rs:198-208`). A superset that exposes
-      nothing sensitive.
-    - Severity: none.
+      `Content-Range` (`content/src/formatters.rs:95-102`). A superset that exposes nothing
+      sensitive.
+    - Severity: none (closed).
 
-11. **WR-11 · `/available-content` · a denylisted cid is left out of the answer.** Status: fixed; `available: false` kept: intended (worlds-compatibility.md).
-    - Upstream: every requested cid (deduplicated) is listed.
-    - dcl-one: the content handler drops denylisted cids before the lookup
-      (`content/src/available_content.rs:32-36`), so the worlds answer can be shorter than the
-      request.
-    - Proposed fix: in `worlds/src/available_content.rs`, list a denylisted cid as
-      `{cid, available: false}` (the deploy client then uploads it, and the deploy refuses it as it
-      does now), keeping the content handler's rule for the root.
-    - Fixed as proposed: the worlds handler no longer calls the content handler; every requested
-      cid is listed once, a denylisted one as `available: false` (upstream: what its store holds).
-      Pinned by `worlds/src/core/tests.rs`
-      `available_content_reads_literal_cids_and_lists_denylisted_ones`.
-    - Severity: P2.
+11. **WR-11 · `/available-content` · a denylisted cid.** Status: intended (worlds-compatibility.md).
+    - Upstream: every requested cid (deduplicated) is listed, `available` from what its store holds.
+    - dcl-one: every requested cid is listed once, in first-occurrence order; a denylisted cid is
+      `available: false` without a lookup (`worlds/src/available_content.rs:43-75`), so the deploy
+      client uploads it and the deploy refuses it. Listed under "`/available-content`". Pinned by
+      `worlds/src/core/tests.rs:5571` `available_content_reads_literal_cids_and_lists_denylisted_ones`.
+    - Severity: none (closed).
 
-12. **WR-12 · `/contents`, `/available-content`, `/entities/active`, `/status` · the root is the catalyst's, and worlds links point at it.** Status: MATCH (fixed) for the links; the root paths are WR-23.
+12. **WR-12 · `/about`, `/index` · content links.** Status: MATCH, no work.
     - Upstream: one host; `/about` and `/index` link `HTTP_BASE_URL/contents/…`, which is that host
       (`index-handler.ts:15,27`).
-    - dcl-one: on the root host these four paths are the catalyst content server's
-      (`content/src/lib.rs:741-813`); the worlds versions answer under `/worlds-content-server` and on
-      the `worlds-content-server.<domain>` vhost (`gateway.py:280-289`). `/about` and `/index` build
-      their links from `PUBLIC_URL`, the root (`worlds/src/about.rs:182-188,223,259`,
-      `worlds/src/index.rs:135,188`), so world files are fetched through the catalyst handler: no
-      sniffed `Content-Type` (everything `application/octet-stream`), no SHA-256 keys (a mirrored
-      world whose thumbnail is a legacy key gets a 404 link), the catalyst GET quota.
-    - Drop-in: a client configured with the vhost or the prefix gets the worlds answers for its own
-      requests, but follows links that leave that mount.
-    - Proposed fix: give the worlds read routes a worlds base URL (`<PUBLIC_URL>/worlds-content-server`
-      unless a `WORLDS_PUBLIC_URL` overrides it) in `worlds::Settings` (`worlds/src/lib.rs:134-139`)
-      and use it for every `/contents/` link in `about.rs` and `index.rs`; keep `PUBLIC_URL` for the
-      comms mint, which is mounted at both. Size M. Coordinate with the about area.
-    - Fixed without a new variable: `Settings::content_server_url` is `<PUBLIC_URL>/worlds-content-server`
-      (`PUBLIC_URL` itself when it already names the prefix); `/about` (`scenesUrn` `baseUrl`, skybox
-      textures, minimap images) and `/index` (`thumbnail`) use it, the comms adapter keeps
-      `PUBLIC_URL`. Pinned by `worlds/src/about.rs`
-      `about_points_scenes_and_files_at_this_node_and_keeps_mirrored_ens_names`,
-      `worlds/src/core/tests.rs` `index_leaves_out_banned_worlds_and_answers_upstream_fields` and
-      `tests/worlds_mirror.rs`.
-    - Severity: P1.
+    - dcl-one: `Settings::content_server_url` is `<PUBLIC_URL>/worlds-content-server` (`PUBLIC_URL`
+      itself when it already names the prefix) (`worlds/src/lib.rs:172`); `/about` (`scenesUrn`
+      `baseUrl`, skybox textures, minimap images, `worlds/src/about.rs:183`) and `/index`
+      (`thumbnail`, `worlds/src/index.rs:142`) link the worlds `/contents` under it; the comms
+      adapter keeps `PUBLIC_URL`. The root paths that are the catalyst's are WR-23. Pinned by
+      `worlds/src/about.rs:560` `about_points_scenes_and_files_at_this_node_and_keeps_mirrored_ens_names`,
+      `worlds/src/core/tests.rs:5621` `index_lists_deny_listed_worlds_and_answers_upstream_fields`
+      and `tests/worlds_mirror.rs`.
+    - Severity: none (closed).
 
-13. **WR-13 · `/entities/active` · unparsable JSON answers 400, upstream 500.** Status: kept: intended (worlds-compatibility.md "`POST /entities/active`").
+13. **WR-13 · `/entities/active` · unparsable JSON answers 400, upstream 500.** Status: intended (worlds-compatibility.md).
     - Upstream: `request.json()` throws outside `InvalidRequestError` → 500
       `{"error":"Internal Server Error"}`.
-    - dcl-one: 400 `Invalid request. Request body is not valid` (`active.rs:23-24`).
-    - Proposed fix: keep (a client error is a 400) and list it in `docs/worlds-compatibility.md`.
-    - Severity: P2.
+    - dcl-one: 400 `Invalid request. Request body is not valid` (`worlds/src/core/active.rs:24`).
+      Listed under "`POST /entities/active`": a client error is a 400.
+    - Severity: none (closed).
 
-14. **WR-14 · `/entities/active` · pointers are trimmed and parsed as world names.** Status: MATCH (fixed).
+14. **WR-14 · `/entities/active` · pointers are looked up as sent.** Status: MATCH, no work.
     - Upstream: the raw string, lowercased; `" foo.dcl.eth"` finds nothing.
-    - dcl-one: `WorldName::parse` trims, so `" foo.dcl.eth"` finds `foo.dcl.eth`; a name with inner
-      whitespace, `/` or a control character is dropped, which also finds nothing upstream
-      (`comms/src/world_identity.rs:63-80`, `active.rs:44-49`).
-    - Proposed fix: skip a pointer that differs from its trim in `active.rs` (or keep and document).
-      Size S.
-    - Fixed as proposed. Pinned by `worlds/src/core/tests.rs`
-      `active_entities_look_up_pointers_as_sent_and_fold_a_null_owner`.
-    - Severity: P2.
+    - dcl-one: a pointer that differs from its trim is skipped before `WorldName::parse`
+      (`worlds/src/core/active.rs:45-49`), so `" foo.dcl.eth"` finds nothing; a name with inner
+      whitespace, `/` or a control character is dropped, which also finds nothing upstream. Pinned by
+      `worlds/src/core/tests.rs:5663` `active_entities_look_up_pointers_as_sent_and_fold_a_null_owner`.
+    - Severity: none (closed).
 
-15. **WR-15 · `/entities/active` · key order and a world without an owner.** Status: owner fixed; key order open.
+15. **WR-15 · `/entities/active` · key order and a world without an owner.** Status: open for key order.
     - Upstream: the entity's jsonb key order with `id` and `metadata` in place; `metadata.owner` is
       always set (to the row's `owner`).
-    - dcl-one: keys sorted (`serde_json` without `preserve_order`); `metadata.owner` absent when the
-      world row has no owner (`store.rs:1159-1176`).
-    - Proposed fix: write `"owner": null` when the row has none; leave key order (JSON clients do not
-      read it). Size S.
-    - Fixed: `"owner": null` (`store.rs` `entities_for_worlds`). Pinned by
-      `active_entities_look_up_pointers_as_sent_and_fold_a_null_owner`.
-    - Left: keys are sorted; the jsonb order would need `serde_json`'s `preserve_order` for the
-      workspace.
+    - dcl-one: `metadata.owner` is the row's owner, `null` when it has none
+      (`worlds/src/core/store.rs:1172`, pinned by
+      `active_entities_look_up_pointers_as_sent_and_fold_a_null_owner`); keys come out sorted
+      (`serde_json` without `preserve_order`).
+    - Proposed fix: none planned; JSON clients do not read key order.
+    - Left: the jsonb order would need `serde_json`'s `preserve_order` for the workspace.
     - Severity: P2.
 
-16. **WR-16 · `/entities/active` · body cap.** Status: kept: intended (worlds-compatibility.md "`POST /entities/active`").
+16. **WR-16 · `/entities/active` · body cap.** Status: intended (worlds-compatibility.md).
     - Upstream: no cap.
     - dcl-one: 256 KiB (axum's 413 text), under the gateway's server-wide 1 MiB
-      (`core/mod.rs:623-626`, `gateway.py:366`). Fifty world names fit in a few KiB.
-    - Proposed fix: keep.
-    - Severity: P2.
+      (`worlds/src/core/mod.rs:625`, `gateway.py:366`). Fifty world names fit in a few KiB. Listed
+      under "`POST /entities/active`".
+    - Severity: none (closed).
 
-17. **WR-17 · `/index` · the name deny list is not applied.** Status: fixed; kept: intended (worlds-compatibility.md "`/index`").
-    - Upstream: `getRawWorldRecords` filters `worlds.name != ALL(getBannedNames())`
-      (`worlds-manager.ts:326-349`), and `getBannedNames` strips `.eth` and `.dcl` from each entry
-      (`name-deny-list-checker.ts:51-54`) while world names keep their suffix, so the filter only
-      drops a world named exactly like a stripped entry: a banned `foo.dcl.eth` is listed. Every
-      other read (`/about`, `/entities/active`, the limits) refuses it through `checkNameDenyList`.
-    - dcl-one: `list_index_scenes` has no deny-list filter (`queries.rs:228-235`); a banned world
-      that still has scene rows is listed, and the index's consumers (mirrors, asset-bundle
-      snapshot jobs) process it.
-    - Proposed fix: pass `state.names.snapshot(&state.pool)`'s normalized names into
-      `list_index_scenes` (`worlds/src/queries.rs`) and exclude them with the deny list's
-      normalization (strip `.eth`/`.dcl`, lowercase) in SQL; extend the memo key or clear the memo
-      when the list changes. Size S.
-    - Fixed as proposed, in SQL over `lower(name)` with the first `.eth` and `.dcl` removed (the
-      checker's normalization); the 30 s memo bounds how long a list change takes. This leaves out
-      worlds upstream's filter lists, so it is recorded as intended. Pinned by
-      `worlds/src/core/tests.rs` `index_leaves_out_banned_worlds_and_answers_upstream_fields`.
-    - Severity: P1 (moderation: a banned world is published to downstream consumers).
+17. **WR-17 · `/index` · the name deny list.** Status: MATCH, no work.
+    - Upstream: `getRawWorldRecords` appends a deny-list filter before paging, but `getBannedNames`
+      strips `.eth` and `.dcl` from each deny-list entry (`name-deny-list-checker.ts:51-54`) and the
+      query compares the result with full world names, `worlds.name != ALL(...)`
+      (`worlds-manager.ts:345-346`), so `foo.dcl.eth` is never excluded. A world name always carries
+      its suffix, so the filter excludes no world; no upstream test pins an exclusion.
+    - dcl-one: `list_index_scenes` has no deny-list filter (`worlds/src/queries.rs:224-236`), so a
+      deny-listed world is listed on both trees. Pinned by `worlds/src/core/tests.rs:5621`
+      `index_lists_deny_listed_worlds_and_answers_upstream_fields`.
+    - Severity: none (closed).
 
-18. **WR-18 · `/index` · `null` where upstream answers `''` or leaves the field out.** Status: MATCH (fixed).
+18. **WR-18 · `/index` · missing scene fields.** Status: MATCH, no work.
     - Upstream: `title`/`description` `''` when missing; `thumbnail` and `runtimeVersion` absent
       when missing; `timestamp` falls back to `Date.now()` (`worlds-indexer.ts:38-46`; test
       `index-handler.spec.ts:86` expects `thumbnail` undefined).
-    - dcl-one: `null` for each (`index.rs:54-67,174-203`).
-    - Proposed fix: in `worlds/src/index.rs` `IndexSceneSummary`, make `title` and `description`
-      `String` (`unwrap_or_default`), add `skip_serializing_if = "Option::is_none"` to `thumbnail`
-      and `runtime_version`, and default `timestamp` to the build time; check that this tree's
-      mirror (`worlds/src/mirror.rs`) reads the upstream shape. Size S.
-    - Fixed as proposed (a `null` `runtimeVersion` is left out too; a `0` timestamp is the build
-      time, as `||`). The mirror reads no `/index` field this changes. `IndexSceneSummary` in
-      `library/catalyst-api` (ts-rs, OpenAPI) and the sites zod schema follow. Pinned by
-      `worlds/src/index.rs` `scene_summary_fills_missing_fields_as_upstream` and
-      `index_leaves_out_banned_worlds_and_answers_upstream_fields`.
-    - Severity: P1 (a consumer that reads `title.length` or tests `thumbnail === undefined` breaks).
+    - dcl-one: `scene_summary` (`worlds/src/index.rs`) answers `''`, leaves out `thumbnail` and a
+      missing or `null` `runtimeVersion`, and answers the page's build time for a missing or `0`
+      timestamp, as `||`. `IndexSceneSummary` in `library/catalyst-api` (ts-rs, OpenAPI) and the
+      sites zod schema carry the same shape. Pinned by `worlds/src/index.rs`
+      `scene_summary_fills_missing_fields_as_upstream` and
+      `index_lists_deny_listed_worlds_and_answers_upstream_fields`.
+    - Severity: none (closed).
 
-19. **WR-19 · `/index` · paging set and blocked worlds.** Status: kept: intended (worlds-compatibility.md "`/index`").
+19. **WR-19 · `/index` · paging set and blocked worlds.** Status: intended (worlds-compatibility.md).
     - Upstream: pages over every `worlds` row and skips scene-less ones afterwards, so `limit=N` can
       return fewer than N and offsets count scene-less rows; blocked wallets are not filtered.
     - dcl-one: pages over worlds with scenes; operator-blocked worlds (`blocked_since`) are left out
-      (`queries.rs:228-235`). With no parameters (how the known consumers call it) the set differs
-      only by blocked and banned worlds.
-    - Proposed fix: keep the paging (fuller pages); list the blocked-world exclusion in
-      `docs/worlds-compatibility.md` next to "Operator disables apply at once".
-    - Severity: P2.
+      (`worlds/src/queries.rs:234`). With no parameters (how the known consumers call it) the set
+      differs only by blocked worlds. Listed under "`/index`".
+    - Severity: none (closed).
 
-20. **WR-20 · `/index` · 30-second memo and ETag.** Status: kept: intended (worlds-compatibility.md "`/index`", "Conditional reads").
+20. **WR-20 · `/index` · 30-second memo and ETag.** Status: intended (worlds-compatibility.md).
     - Upstream: built per request, no ETag.
     - dcl-one: a page is reused for 30 s (cleared by a mirror pass), with an `ETag` and 304
-      (`index.rs:18-38,97-131`); `lastUpdated` is the memo's build time.
-    - Proposed fix: keep (bounded cost of a deprecated wide scan).
-    - Severity: P2.
+      (`worlds/src/index.rs:19-31`); `lastUpdated` is the memo's build time. Listed under "`/index`"
+      and "Conditional reads": the bounded cost of a deprecated wide scan.
+    - Severity: none (closed).
 
-21. **WR-21 · `/status` · comms block source and extra fields.** Status: kept: intended (worlds-compatibility.md "`/status`").
+21. **WR-21 · `/status` · comms block source and extra fields.** Status: intended (worlds-compatibility.md).
     - Upstream: always `adapterType: "livekit"` with `statusUrl`, counts from LiveKit's room listing
       cached 60 s; no other top-level fields.
     - dcl-one: counts from the presence registry (empty while presence is stale), live;
       `adapterType: "offline"` without `statusUrl` when no LiveKit host is set; extra `personalWorlds`
-      and `mirror` (`status.rs:88-96,121-144`).
-    - Proposed fix: keep the extra fields (superset); add "offline" `/status` to
-      `docs/worlds-compatibility.md` "LiveKit only". Depends on the presence feed for the counts.
-    - Severity: P2.
+      and `mirror` (`worlds/src/status.rs:88-96,119-144`). Listed under "`/status`".
+    - Severity: none (closed).
 
 22. **WR-22 · `POST /reprocess-ab` · missing.** Status: open.
     - Upstream: section 9: bearer, schema validator (415 / 400 `{ok:false,…}`), 400
@@ -620,25 +547,21 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
       waits for an abgen world-reprocess contract.
     - Severity: P1 (operator tooling that re-converts a world gets a 404).
 
-23. **WR-23 · mounts · the root collisions are not documented.** Status: kept: intended (worlds-compatibility.md "Mounts").
-    - dcl-one: `docs/worlds-compatibility.md` says the surface is served "at the root and under
-      `/worlds-content-server`", but `/contents`, `/available-content`, `POST /entities/active` and
-      `/status` at the root are the catalyst's, and `/ipfs`, `/gc` exist only under the prefix.
-    - Proposed fix: state in `docs/worlds-compatibility.md` that worlds clients use the
-      `worlds-content-server.<domain>` host or the `/worlds-content-server` prefix, and list the
-      four root paths that answer as the catalyst.
-    - Documented as proposed, with `POST /entities` and the prefix-only paths.
-    - Severity: P2.
+23. **WR-23 · mounts · the root collisions.** Status: intended (worlds-compatibility.md).
+    - dcl-one: at the root, `/contents`, `/available-content`, `POST /entities`,
+      `POST /entities/active` and `/status` are the catalyst's, and `DELETE /entities/{name}`,
+      `/ipfs`, `/gc` exist only under the prefix. `docs/worlds-compatibility.md` "Mounts" says
+      worlds clients use the `worlds-content-server.<domain>` host or the `/worlds-content-server`
+      prefix and lists those paths.
+    - Severity: none (closed).
 
-24. **WR-24 · `/available-content` · `cid[]` and `cid[0]` are read as `cid`.** Status: MATCH (fixed).
-    - Upstream: `getAll('cid')` ignores them; `?cid[]=<cid>` answers 400 `At least one cid query
-      parameter is required.`
-    - dcl-one: `strip_array_index` folds them into `cid` (`shared/src/query_params.rs:16-38`).
-    - Proposed fix: read the literal `cid` pairs in `worlds/src/available_content.rs` (a
-      `URLSearchParams` reading, as `core::http::QueryPairs`). Size S.
-    - Fixed as proposed (`cid_values`). Pinned by `worlds/src/available_content.rs`
-      `only_the_literal_cid_name_counts` and `available_content_reads_literal_cids_and_lists_denylisted_ones`.
-    - Severity: P2.
+24. **WR-24 · `/available-content` · only the literal `cid` key.** Status: MATCH, no work.
+    - Upstream: `getAll('cid')` ignores `cid[]` and `cid[0]`; `?cid[]=<cid>` answers 400 `At least
+      one cid query parameter is required.`
+    - dcl-one: `cid_values` reads the literal `cid` pairs (`worlds/src/available_content.rs:36`).
+      Pinned by `worlds/src/available_content.rs:87` `only_the_literal_cid_name_counts` and
+      `available_content_reads_literal_cids_and_lists_denylisted_ones`.
+    - Severity: none (closed).
 
 25. **WR-25 · `/contents` with `STORAGE_X_ACCEL_BASE` · headers nginx adds.** Status: open (needs a capture against a gateway-fronted node).
     - dcl-one: a full GET is handed to nginx, whose protected-storage location adds
@@ -650,86 +573,77 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
       `add_header` for that location.
     - Severity: P2.
 
-26. **WR-26 · 405 · `Allow` spelling under the prefix.** Status: MATCH (fixed).
+26. **WR-26 · 405 · `Allow` spelling under the prefix.** Status: MATCH, no work.
     - Upstream: `Allow: HEAD, GET` (koa-router registration order, `", "`).
-    - dcl-one: axum's `GET,HEAD` under `/worlds-content-server`; `upstream_allow` rewrites only
-      `/content/` (`content/src/routing.rs:140-170`).
-    - Proposed fix: apply `upstream_allow_value` to `/worlds-content-server/` paths too. Size S.
-    - Fixed as proposed (`content/src/routing.rs` `upstream_allow`). A path with several methods
-      lists them `HEAD, GET, POST, PUT, DELETE, PATCH`, not koa-router's registration order. Pinned
-      by `routing.rs` `a_405_lists_upstreams_allow_under_both_prefixes`.
-    - Severity: P2.
+    - dcl-one: `upstream_allow` rewrites a 405's `Allow` under `/content/` and
+      `/worlds-content-server/` (`content/src/routing.rs:140-160`). A path with several methods lists
+      them `HEAD, GET, POST, PUT, DELETE, PATCH`, not koa-router's registration order; no upstream
+      route under this area has more than `HEAD, GET` or one write method. Pinned by
+      `content/src/routing.rs:334` `a_405_lists_upstreams_allow_under_both_prefixes`.
+    - Severity: none (closed).
 
-27. **WR-27 · `POST /gc` · not at the root.** Status: kept: intended (worlds-compatibility.md "Mounts").
+27. **WR-27 · `POST /gc` · not at the root.** Status: intended (worlds-compatibility.md).
     - Upstream: `/gc` at its host root.
     - dcl-one: only `/worlds-content-server/gc` (and `/admin/gc`); `root_router` leaves it out
-      (`core/mod.rs:588-603`), so the root answers 404 although no other route uses the path. The
-      vhost reaches it.
-    - Proposed fix: keep (operator tooling targets the worlds host) and say so in WR-23's
-      documentation.
-    - Severity: P2.
+      (`worlds/src/core/mod.rs:591-598`). The vhost reaches it; operator tooling targets the worlds
+      host. Listed under "Mounts".
+    - Severity: none (closed).
 
-28. **WR-28 · `POST /gc` · the token variable and bearer parsing.** Status: kept: intended (worlds-compatibility.md "`/gc`").
+28. **WR-28 · `POST /gc` · the token variable and bearer parsing.** Status: Kept by decision.
     - Upstream: `AUTH_SECRET` (required at startup); `split(' ')` takes the second word, so
       `Bearer <secret> extra` passes.
     - dcl-one: `CATALYRST_WORLDS_ADMIN_TOKEN` (unset: every request 401); the whole remainder after
-      `Bearer ` must match (`admin_bearer.rs:37-43`, `config/src/worlds.rs:96-99`).
-    - Proposed fix: accept `AUTH_SECRET` as a second env name for the token in
-      `config/src/worlds.rs`, so an operator's existing secret works; keep the strict parse. Size S.
-    - Kept: `AUTH_SECRET` is the generic name several Decentraland services read, each with its own
-      value; in this one process it would also open the worlds `/admin/*` and federation routes the
-      same token gates. Documented instead.
-    - Severity: P2.
+      `Bearer ` must match (`library/dcl-auth/src/admin_bearer.rs:37-43`, `worlds/src/core/auth.rs:31-39`).
+    - Decision: `AUTH_SECRET` is the generic name several Decentraland services read, each with its
+      own value; in this one process it would also open the worlds `/admin/*` and federation routes
+      the same token gates. Listed under "`/gc`".
+    - Severity: none (closed).
 
-29. **WR-29 · `POST /gc` · refused while worlds writes are off.** Status: kept: intended (worlds-compatibility.md "`/gc`").
+29. **WR-29 · `POST /gc` · refused while worlds writes are off.** Status: intended (worlds-compatibility.md).
     - dcl-one: 503 `{ok:false,error:"Service Unavailable",message}` with `Retry-After: 3600` until a
-      restore is demonstrated (`worlds/src/writes.rs:1-75`, DATABASE.md). Upstream has no such gate.
-    - Proposed fix: keep: intended; list `/gc` among the gated routes in `docs/worlds-compatibility.md`.
-    - Severity: P2.
+      restore is demonstrated (`worlds/src/writes.rs:30-75`, DATABASE.md). Upstream has no such gate.
+      Listed under "`/gc`".
+    - Severity: none (closed).
 
-30. **WR-30 · `POST /gc` · typed query parameters.** Status: fixed (worlds 400); the parameters kept: intended (worlds-compatibility.md "`/gc`").
+30. **WR-30 · `POST /gc` · typed query parameters.** Status: intended (worlds-compatibility.md).
     - Upstream: the query is ignored.
-    - dcl-one: `dry_run`, `min_age_secs`, `allow_empty_active_set` are typed; an unparsable value is
-      axum's plain-text 400 (`admin.rs:61-69`).
-    - Proposed fix: read them leniently (a non-boolean `dry_run` is false) or answer the worlds 400
-      envelope, in `worlds/src/core/admin.rs`. Size S.
-    - Fixed with the worlds 400 envelope (`GcQuery::parse`, after the bearer, so an unauthenticated
-      request is a 401 whatever its query): a lenient `dry_run` would turn a typo into a real
-      deletion. Pinned by `admin.rs` `an_unparsable_gc_query_value_is_a_worlds_400`.
-    - Severity: P2.
+    - dcl-one: `dry_run`, `min_age_secs`, `allow_empty_active_set` are read by `GcQuery::parse`
+      after the bearer (`worlds/src/core/admin.rs:72`, called at `:118`), so an unauthenticated
+      request is a 401 whatever its query, and an unparsable value is a worlds 400
+      `Invalid query parameter <key>: <value>`. A lenient `dry_run` would turn a typo into a real
+      deletion. Listed under "`/gc`". Pinned by `worlds/src/core/admin.rs:498`
+      `an_unparsable_gc_query_value_is_a_worlds_400`.
+    - Severity: none (closed).
 
-31. **WR-31 · `POST /gc` · the deferred messages.** Status: MATCH (fixed) for the lock timeout; the in-progress message kept: intended (worlds-compatibility.md "`/gc`").
+31. **WR-31 · `POST /gc` · the deferred messages.** Status: MATCH, no work.
     - Upstream: one 503 message, `The content lock is still busy, please retry shortly.`
       (`content-locks/errors.ts`; test `garbage-collection.spec.ts:222-242`).
-    - dcl-one: `Garbage collection deferred: deployments kept the content lock busy.` for a lock
-      timeout, and `A garbage collection run is already in progress.` for a concurrent run
-      (`admin.rs:74,111-116,148-153`).
-    - Proposed fix: answer upstream's message for `GcError::LockTimeout` in `admin.rs`; keep the
-      in-progress message (upstream has no run lock). Size S.
-    - Fixed as proposed (`GC_LOCK_BUSY_MESSAGE`). Not pinned by a test: the lock timeout needs a
-      deploy holding the content lock past the collector's wait.
-    - Severity: P2.
+    - dcl-one: a lock timeout answers 503 `GC_LOCK_BUSY_MESSAGE`, upstream's text, with
+      `Retry-After: 60` (`worlds/src/core/admin.rs:96,173`). A second concurrent run answers 503
+      `A garbage collection run is already in progress.`, a case upstream has no run lock for
+      (intended, worlds-compatibility.md "`/gc`"). No test holds the content lock past the
+      collector's wait.
+    - Severity: none (closed).
 
-32. **WR-32 · CORS shape on the worlds routes.** Status: kept: intended (worlds-compatibility.md "CORS").
+32. **WR-32 · CORS shape on the worlds routes.** Status: intended (worlds-compatibility.md).
     - Upstream: `*`, no credentials, methods `GET, HEAD, OPTIONS, DELETE, POST, PUT`, no default
       expose list.
     - dcl-one: the origin reflected with credentials and `Vary: Origin`, `PATCH` among the methods,
       `Access-Control-Expose-Headers: *` by default, `nosniff` (`shared/src/cors.rs:15-85`). Every
-      request upstream admits is admitted.
-    - Proposed fix: keep (documented decision 2026-07-31); add it to `docs/worlds-compatibility.md`.
-    - Severity: P2.
+      request upstream admits is admitted. Listed under "CORS".
+    - Severity: none (closed).
 
 33. **WR-33 · error envelope on the worlds routes.** Status: MATCH, no work.
     - Upstream: `errorHandler` labels (`@dcl/http-commons` `error-handler.ts`).
-    - dcl-one: `envelope` (`comms/src/worlds_envelope.rs:120-140`); the 400s of `/available-content`
+    - dcl-one: `envelope` (`comms/src/worlds_envelope.rs:150`); the 400s of `/available-content`
       and `/entities/active` and the 401s of `/gc` carry upstream's exact messages.
-    - Severity: none.
+    - Severity: none (closed).
 
 34. **WR-34 · unknown route · 404 body.** Status: MATCH, no work.
     - Upstream: 404 `Not found`, `text/plain; charset=utf-8`.
     - dcl-one: the content fallback answers the same for any path, under the prefix included
       (`content/src/lib.rs:728-735,841`).
-    - Severity: none.
+    - Severity: none (closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not
 

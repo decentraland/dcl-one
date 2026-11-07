@@ -5613,11 +5613,12 @@ async fn available_content_reads_literal_cids_and_lists_denylisted_ones() {
     );
 }
 
-/// `/index` (`worlds-indexer.ts`): a deny-listed world is not listed (WR-17),
+/// `/index` (`worlds-indexer.ts`): a deny-listed world is listed, as upstream's
+/// filter (full names against suffix-stripped entries) lists it (WR-17),
 /// missing fields are `''`, left out or `Date.now()` (WR-18), and the
 /// thumbnail links the worlds `/contents` (WR-12).
 #[tokio::test]
-async fn index_leaves_out_banned_worlds_and_answers_upstream_fields() {
+async fn index_lists_deny_listed_worlds_and_answers_upstream_fields() {
     let Some(f) = fixture().await else { return };
     let (listed, banned) = (world_name(), world_name());
     for world in [&listed, &banned] {
@@ -5641,7 +5642,7 @@ async fn index_leaves_out_banned_worlds_and_answers_upstream_fields() {
             .find(|w| w["name"] == world.key())
             .cloned()
     };
-    assert!(entry(&banned).is_none(), "{body}");
+    assert!(entry(&banned).is_some(), "{body}");
     let listed = entry(&listed).expect("the allowed world is listed");
     let scene = &listed["scenes"][0];
     assert_eq!(scene["title"], "Indexed");

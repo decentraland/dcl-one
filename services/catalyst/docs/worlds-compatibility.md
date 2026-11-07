@@ -294,13 +294,10 @@ difference not listed here is a gap, not a decision.
 - **`POST /entities/active`** answers a body that is not JSON with 400
   `Invalid request. Request body is not valid` (upstream: 500) and caps the
   body at 256 KiB (413).
-- **`/index`** leaves out worlds on the name deny list, compared as every
-  other worlds read compares them (upstream's filter compares the full
-  name with the suffix-stripped entries, so it lists them), and worlds an
-  operator disabled. It pages over worlds with a deployed scene, so a page
-  holds `limit` worlds while more remain. A page is reused for 30 seconds
-  (or until a mirror pass changes the scenes); `lastUpdated` is its build
-  time.
+- **`/index`** leaves out worlds an operator disabled. It pages over worlds
+  with a deployed scene, so a page holds `limit` worlds while more remain. A
+  page is reused for 30 seconds (or until a mirror pass changes the scenes);
+  `lastUpdated` is its build time.
 - **`/status`** counts rooms and users from this node's presence, live
   (upstream: LiveKit's room listing, cached 60 seconds), answers
   `adapterType: "offline"` without `statusUrl` when no LiveKit host is set,
