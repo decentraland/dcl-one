@@ -191,7 +191,7 @@ jobs:
             libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
       - name: Install clang for webrtc-sys
         if: runner.os == 'Linux'
-        run: ../../../apps/bevy-explorer/install-clang.sh
+        uses: ./.github/actions/bevy-explorer-clang
       - name: install ffmpeg deps (macOs)
         if: runner.os == 'macos'
         run: |
@@ -361,7 +361,7 @@ jobs:
             libasound2-dev libudev-dev libgl-dev libx11-dev libxext-dev \
             libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
       - name: Install clang for webrtc-sys
-        run: ../../../apps/bevy-explorer/install-clang.sh
+        uses: ./.github/actions/bevy-explorer-clang
       - name: Build headless engine and sidecar
         run: python3 ../../../apps/bevy-explorer/build-headless.py
       - name: Record the vendored Bevy's file times for the cache
@@ -499,7 +499,7 @@ jobs:
             libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev \
             libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
       - name: Install clang for webrtc-sys
-        run: ../../../apps/bevy-explorer/install-clang.sh
+        uses: ./.github/actions/bevy-explorer-clang
       - run: cargo clippy --locked -- -D warnings
         shell: bash
       - name: Record the vendored Bevy's file times for the cache
