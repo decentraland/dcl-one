@@ -32,7 +32,7 @@ export function AvatarNametag({
       ) : (
         <span className={styles.text} style={{ color }}>
           {name}
-          {typing && <span className={styles.caret} />}
+          {typing && <span className={styles.caret} data-testid="nametag-caret" />}
         </span>
       )}
       <img className={styles.badge} src={verifiedIcon} alt="" />
