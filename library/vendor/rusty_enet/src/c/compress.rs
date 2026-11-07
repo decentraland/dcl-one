@@ -460,6 +460,10 @@ pub(crate) unsafe fn enet_range_coder_compress(
     }
     out_data.offset_from(out_start) as i64 as usize
 }
+#[allow(
+    unused_assignments,
+    reason = "the ENET_RANGE_CODER_DECODE expansion for the escape symbol refreshes decode_code, which nothing reads once the decode loop ends; kept verbatim from the C"
+)]
 pub(crate) unsafe fn enet_range_coder_decompress(
     context: *mut u8,
     mut in_data: *const u8,

@@ -11,7 +11,7 @@
   "normalization": "Exact upstream and patched file bytes. Repository .gitattributes disables newline conversion for this subtree. SHA256 manifests are UTF-8 with LF lines and lexicographically sorted repository-relative paths. No Git metadata or Cargo cache marker is imported.",
   "manifests": {
     "upstream-files.sha256": "7bce19bf15feb754a84a36ffd7e17f1d2a540cda764a2f7179b69021c3394fca",
-    "checksums.sha256": "0e460ae4b4d714d631ef01f5809809431bc171f6a69b341cf83b9ce4f9874f88"
+    "checksums.sha256": "357d78c6e2328ab91161187c39221a3cc01ed4c5adc442c92f66c78f60f23736"
   },
   "patches": [
     {
@@ -57,6 +57,14 @@
       "sha256": "f136948351b53762596f1b006772918d0ab8dc4dd82c8e641ec668eca2afe7c0",
       "changes": [
         "Poll the host for up to five seconds in the oversized-declaration test instead of once: macOS delivers loopback datagrams asynchronously, so a single non-blocking poll after send_to raced and failed on the macOS runners"
+      ]
+    },
+    {
+      "path": "patches/0006-rust-1-99-warnings.patch",
+      "sha256": "c972b9a121af59f0b66e3c376ac69a14d0866ee0ea8afdc45135a4204aab810e",
+      "changes": [
+        "Name the borrowed lifetime in the Host and connected-host check_events, service and handle_event return types (Event<'_, S>), which rustc 1.99 reports as mismatched lifetime syntaxes",
+        "Allow unused_assignments on enet_range_coder_decompress with a reason: the escape-symbol ENET_RANGE_CODER_DECODE expansion refreshes decode_code that nothing reads once the loop ends; the transcription stays verbatim"
       ]
     }
   ],
