@@ -262,7 +262,7 @@ async fn a_stalled_analytics_request_times_out_without_holding_the_caller() {
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let mut config = settings(format!("http://{address}/events"));
-    config.request_timeout_ms = Some(20.0);
+    config.request_timeout_ms = Some(5_000.0);
     let analytics = Analytics::new(&crate::http::Outbound::for_tests(), config)
         .unwrap()
         .unwrap();
@@ -273,13 +273,14 @@ async fn a_stalled_analytics_request_times_out_without_holding_the_caller() {
         .await
         .unwrap()
         .unwrap();
-    tokio::time::timeout(Duration::from_secs(30), async {
-        while weak.upgrade().is_some() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("timed-out task releases adapter and client handle");
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(6)).await;
+    task_turns().await;
+    assert!(
+        weak.upgrade().is_none(),
+        "timed-out task releases adapter and client handle"
+    );
+    tokio::time::resume();
     assert!(
         tokio::time::timeout(Duration::from_millis(30), entries.recv())
             .await
