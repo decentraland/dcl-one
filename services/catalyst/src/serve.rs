@@ -1452,6 +1452,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .with_context(|| format!("binding {addr} (HTTP_SERVER_HOST + HTTP_SERVER_PORT)"))?;
+    let shutdown = shutdown_signal();
     tracing::info!(%addr, "catalyst listening");
     let shutdown_jobs = jobs.clone();
     axum::serve(
@@ -1461,7 +1462,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         >(app),
     )
     .with_graceful_shutdown(async move {
-        shutdown_signal().await;
+        shutdown.await;
         socket_restart.cancel();
         // Workers first, so cursors and batches settle while the listener
         // still answers; then the listener drains.
@@ -2605,20 +2606,21 @@ fn social_states(
     })
 }
 
-pub(crate) async fn shutdown_signal() {
+pub(crate) fn shutdown_signal() -> impl std::future::Future<Output = ()> {
     let ctrl_c = tokio::signal::ctrl_c();
     #[cfg(unix)]
-    {
-        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("installing the SIGTERM handler");
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("installing the SIGTERM handler");
+    async move {
+        #[cfg(unix)]
         tokio::select! {
             _ = ctrl_c => tracing::info!("SIGINT received"),
             _ = term.recv() => tracing::info!("SIGTERM received"),
         }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = ctrl_c.await;
-        tracing::info!("shutdown signal received");
+        #[cfg(not(unix))]
+        {
+            let _ = ctrl_c.await;
+            tracing::info!("shutdown signal received");
+        }
     }
 }
