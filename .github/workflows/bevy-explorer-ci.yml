@@ -675,6 +675,8 @@ jobs:
           echo "PUBLIC_URL=$PUBLIC_URL"
           npm run build --prefix react-web
       - name: Test scene Fetch in Chromium
+        env:
+          DEBUG: pw:browser  # Chrome's own output, timestamped
         run: CHROME_BIN="$(command -v google-chrome)" npm run test:scene-fetch --prefix react-web
       - name: Bundle bridge scene
         run: |
