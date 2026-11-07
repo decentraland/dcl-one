@@ -38,6 +38,7 @@ export const CardActionButton = ({
     as='button'
     views={cardActionButtonViews}
     defaultKey='default'
+    component='CardActionButton'
     select={{
       values: {  },
       booleans: {  },

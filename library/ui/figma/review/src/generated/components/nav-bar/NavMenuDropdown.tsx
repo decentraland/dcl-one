@@ -418,6 +418,7 @@ export const NavMenuDropdown = ({
     as='button'
     views={navMenuDropdownViews}
     defaultKey='state:default|tab:whatsOn'
+    component='NavMenuDropdown'
     select={{
       values: { state, tab },
       booleans: {  },

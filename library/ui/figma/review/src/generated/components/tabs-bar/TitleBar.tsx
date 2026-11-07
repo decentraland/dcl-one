@@ -1108,6 +1108,7 @@ export const TitleBar = ({
     as='div'
     views={titleBarViews}
     defaultKey='variant:backpack'
+    component='TitleBar'
     select={{
       values: { variant },
       booleans: {  },

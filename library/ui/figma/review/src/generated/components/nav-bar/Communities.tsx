@@ -93,6 +93,7 @@ export const Communities = ({
     as='div'
     views={communitiesViews}
     defaultKey='default'
+    component='Communities'
     select={{
       values: {  },
       booleans: { stat },

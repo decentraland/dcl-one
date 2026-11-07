@@ -239,6 +239,7 @@ export const ProfilePic = ({
     as='div'
     views={profilePicViews}
     defaultKey='size:72'
+    component='ProfilePic'
     select={{
       values: { size },
       booleans: {  },

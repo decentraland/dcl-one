@@ -649,6 +649,7 @@ export const NavMenuTab = ({
     as='button'
     views={navMenuTabViews}
     defaultKey='tab:whatsOn|size:md'
+    component='NavMenuTab'
     select={{
       values: { tab, size },
       booleans: {  },

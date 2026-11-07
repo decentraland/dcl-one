@@ -1061,6 +1061,7 @@ export const NavProfileMenu = ({
     as='div'
     views={navProfileMenuViews}
     defaultKey='viewport:desktop|manaOwner'
+    component='NavProfileMenu'
     select={{
       values: { viewport },
       booleans: { manaOwner },

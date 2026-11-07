@@ -195,6 +195,7 @@ export const Spinner = ({
     as='div'
     views={spinnerViews}
     defaultKey='variant:dark|step:1'
+    component='Spinner'
     select={{
       values: { variant, step },
       booleans: {  },

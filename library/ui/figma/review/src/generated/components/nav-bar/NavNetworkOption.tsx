@@ -79,6 +79,7 @@ export const NavNetworkOption = ({
     as='button'
     views={navNetworkOptionViews}
     defaultKey='default'
+    component='NavNetworkOption'
     select={{
       values: {  },
       booleans: {  },

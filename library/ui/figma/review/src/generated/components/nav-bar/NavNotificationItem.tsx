@@ -131,6 +131,7 @@ export const NavNotificationItem = ({
     as='button'
     views={navNotificationItemViews}
     defaultKey='state:unread'
+    component='NavNotificationItem'
     select={{
       values: { state },
       booleans: {  },

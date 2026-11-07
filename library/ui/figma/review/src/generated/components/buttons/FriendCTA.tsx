@@ -495,6 +495,7 @@ export const FriendCTA = ({
     as='button'
     views={friendCTAViews}
     defaultKey='variant:friend|viewport:desktop'
+    component='FriendCTA'
     select={{
       values: { variant, viewport },
       booleans: {  },

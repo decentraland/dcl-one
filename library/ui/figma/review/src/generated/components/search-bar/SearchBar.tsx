@@ -2819,6 +2819,7 @@ export const SearchBar = ({
     as='div'
     views={searchBarViews}
     defaultKey='state:default|product:web'
+    component='SearchBar'
     select={{
       values: { state, product },
       booleans: {  },

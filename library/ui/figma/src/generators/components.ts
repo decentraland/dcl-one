@@ -337,7 +337,6 @@ function emitComponent(
         `${prop.name} = ${prop.kind === 'boolean' ? String(prop.default) : quote(String(prop.default))}`
     ),
     ...slots.map((slot) => slot.name),
-    ...omittedTextSlots.map((slot) => `${slot.name}: _${slot.name}`),
     ...semanticNames,
     'forceState',
     '...rest'
@@ -394,6 +393,7 @@ function emitComponent(
     `    as=${quote(spec.tag)}`,
     `    views={${varName}Views}`,
     `    defaultKey=${quote(spec.defaultKey)}`,
+    `    component=${quote(spec.name)}`,
     '    select={{',
     `      ${selection}`,
     '    }}',
@@ -401,6 +401,10 @@ function emitComponent(
     ...(semanticNames.length ? [`    semanticProps={{ ${semanticNames.join(', ')} }}`] : []),
     '    forceState={forceState}',
     ...(disabled ? ['    disabled={disabled}'] : []),
+    // Text overrides the type forbids stay in rest for untyped callers; the runtime drops them before the DOM.
+    ...(omittedTextSlots.length
+      ? [`    suppressedProps={[${omittedTextSlots.map((slot) => quote(slot.name)).join(', ')}]}`]
+      : []),
     '    {...rest}',
     '  />',
     ')',

@@ -81,6 +81,7 @@ export const Settings = ({
     as='div'
     views={settingsViews}
     defaultKey='default'
+    component='Settings'
     select={{
       values: {  },
       booleans: { stat },

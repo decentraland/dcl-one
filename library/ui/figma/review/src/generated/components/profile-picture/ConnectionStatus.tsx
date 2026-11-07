@@ -55,6 +55,7 @@ export const ConnectionStatus = ({
     as='div'
     views={connectionStatusViews}
     defaultKey='variant:online'
+    component='ConnectionStatus'
     select={{
       values: { variant },
       booleans: {  },

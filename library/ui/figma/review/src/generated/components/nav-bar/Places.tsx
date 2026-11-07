@@ -81,6 +81,7 @@ export const Places = ({
     as='div'
     views={placesViews}
     defaultKey='default'
+    component='Places'
     select={{
       values: {  },
       booleans: { stat },

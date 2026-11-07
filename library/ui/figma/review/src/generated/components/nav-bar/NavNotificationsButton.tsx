@@ -473,6 +473,7 @@ export const NavNotificationsButton = ({
     as='button'
     views={navNotificationsButtonViews}
     defaultKey='state:closed'
+    component='NavNotificationsButton'
     select={{
       values: { state },
       booleans: {  },

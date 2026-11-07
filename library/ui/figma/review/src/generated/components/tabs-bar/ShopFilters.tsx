@@ -968,6 +968,7 @@ export const ShopFilters = ({
     as='div'
     views={shopFiltersViews}
     defaultKey='status:default|type:filters'
+    component='ShopFilters'
     select={{
       values: { status, type },
       booleans: {  },

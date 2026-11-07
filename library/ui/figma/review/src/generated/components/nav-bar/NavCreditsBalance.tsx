@@ -107,6 +107,7 @@ export const NavCreditsBalance = ({
     as='button'
     views={navCreditsBalanceViews}
     defaultKey='state:empty'
+    component='NavCreditsBalance'
     select={{
       values: { state },
       booleans: {  },

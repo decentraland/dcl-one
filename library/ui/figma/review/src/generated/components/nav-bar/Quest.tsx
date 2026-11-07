@@ -82,6 +82,7 @@ export const Quest = ({
     as='div'
     views={questViews}
     defaultKey='default'
+    component='Quest'
     select={{
       values: {  },
       booleans: { stat },

@@ -147,6 +147,7 @@ export const SearchResultItem = ({
     as='button'
     views={searchResultItemViews}
     defaultKey='product:explorer'
+    component='SearchResultItem'
     select={{
       values: { product },
       booleans: {  },

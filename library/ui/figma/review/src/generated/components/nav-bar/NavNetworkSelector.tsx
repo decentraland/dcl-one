@@ -435,6 +435,7 @@ export const NavNetworkSelector = ({
     as='div'
     views={navNetworkSelectorViews}
     defaultKey='state:closed|viewport:desktop'
+    component='NavNetworkSelector'
     select={{
       values: { state, viewport },
       booleans: {  },

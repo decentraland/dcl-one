@@ -743,6 +743,7 @@ export const NavProfileButton = ({
     as='button'
     views={navProfileButtonViews}
     defaultKey='variant:desktop|state:default'
+    component='NavProfileButton'
     select={{
       values: { variant, state },
       booleans: {  },

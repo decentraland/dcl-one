@@ -229,6 +229,11 @@ type FigmaViewProps = {
   disabled?: boolean
   // Values for the href/onActivate props a component's opt-in semantics declare.
   semanticProps?: SemanticProps
+  // The component's name, for the error an uncaptured variant selection raises.
+  component?: string
+  // Props the component's type forbids (text overrides it does not expose). An untyped caller may still pass
+  // them, so they are dropped here instead of reaching the DOM.
+  suppressedProps?: readonly string[]
 } & Omit<HTMLAttributes<HTMLElement>, 'children'>
 
 function FigmaView({
@@ -241,12 +246,17 @@ function FigmaView({
   disabled,
   semanticProps = {},
   className,
-  ...rest
+  component,
+  suppressedProps = [],
+  ...forwarded
 }: FigmaViewProps) {
   const interaction = useContext(FigmaInteractions)
   const trigger = useRef<HTMLButtonElement>(null)
   const surface = useRef<HTMLDivElement>(null)
-  const view = pickView(views, defaultKey, select)
+  const rest = Object.fromEntries(
+    Object.entries(forwarded).filter(([name]) => !suppressedProps.includes(name))
+  )
+  const view = pickView(views, defaultKey, select, component)
   const disclosure = interaction?.disclosure
   useEffect(() => {
     if (!disclosure?.open) return

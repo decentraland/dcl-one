@@ -2675,6 +2675,7 @@ export const Button = ({
     as='button'
     views={buttonViews}
     defaultKey='variant:primary|size:xl|viewport:desktop'
+    component='Button'
     select={{
       values: { variant, size, viewport },
       booleans: {  },

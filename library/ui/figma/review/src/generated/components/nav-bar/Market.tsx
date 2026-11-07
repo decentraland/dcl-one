@@ -81,6 +81,7 @@ export const Market = ({
     as='div'
     views={marketViews}
     defaultKey='default'
+    component='Market'
     select={{
       values: {  },
       booleans: { stat },

@@ -4767,6 +4767,7 @@ export const PlaceCard = ({
     as='button'
     views={placeCardViews}
     defaultKey='layout:below|product:explorer|state:add|access:public|size:lg|viewport:desktop'
+    component='PlaceCard'
     select={{
       values: { layout, product, state, access, size, viewport },
       booleans: {  },

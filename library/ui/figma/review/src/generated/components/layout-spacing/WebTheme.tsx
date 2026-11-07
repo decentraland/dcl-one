@@ -3352,6 +3352,7 @@ export const WebTheme = ({
     as='div'
     views={webThemeViews}
     defaultKey='viewport:largeDesktop'
+    component='WebTheme'
     select={{
       values: { viewport },
       booleans: {  },

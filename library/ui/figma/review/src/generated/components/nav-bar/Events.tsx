@@ -115,6 +115,7 @@ export const Events = ({
     as='div'
     views={eventsViews}
     defaultKey='default'
+    component='Events'
     select={{
       values: {  },
       booleans: { stat },

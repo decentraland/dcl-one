@@ -1432,6 +1432,7 @@ export const ShopModals = ({
     as='div'
     views={shopModalsViews}
     defaultKey='device:desktop'
+    component='ShopModals'
     select={{
       values: { device },
       booleans: { scroll },

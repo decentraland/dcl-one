@@ -115,6 +115,7 @@ export const Backpack = ({
     as='div'
     views={backpackViews}
     defaultKey='default'
+    component='Backpack'
     select={{
       values: {  },
       booleans: { stat },

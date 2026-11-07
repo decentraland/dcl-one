@@ -358,6 +358,7 @@ export const NavBarExplorer = ({
     as='div'
     views={navBarExplorerViews}
     defaultKey='default'
+    component='NavBarExplorer'
     select={{
       values: {  },
       booleans: {  },

@@ -88,6 +88,7 @@ export const CameraReel = ({
     as='div'
     views={cameraReelViews}
     defaultKey='default'
+    component='CameraReel'
     select={{
       values: {  },
       booleans: { stat },

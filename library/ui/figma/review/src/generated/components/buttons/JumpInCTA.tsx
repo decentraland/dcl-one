@@ -617,6 +617,7 @@ export const JumpInCTA = ({
     as='button'
     views={jumpInCTAViews}
     defaultKey='size:xl|viewport:desktop'
+    component='JumpInCTA'
     select={{
       values: { size, viewport },
       booleans: {  },

@@ -81,6 +81,7 @@ export const Map = ({
     as='div'
     views={mapViews}
     defaultKey='default'
+    component='Map'
     select={{
       values: {  },
       booleans: { stat },

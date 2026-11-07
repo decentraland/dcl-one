@@ -38,6 +38,7 @@ export const CloseCTA = ({
     as='button'
     views={closeCTAViews}
     defaultKey='default'
+    component='CloseCTA'
     select={{
       values: {  },
       booleans: {  },

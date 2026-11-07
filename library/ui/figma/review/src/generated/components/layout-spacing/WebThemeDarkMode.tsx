@@ -1648,6 +1648,7 @@ export const WebThemeDarkMode = ({
     as='div'
     views={webThemeDarkModeViews}
     defaultKey='viewPort:largeDesktop'
+    component='WebThemeDarkMode'
     select={{
       values: { viewPort },
       booleans: {  },

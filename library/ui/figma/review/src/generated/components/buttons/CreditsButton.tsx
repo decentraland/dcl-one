@@ -189,6 +189,7 @@ export const CreditsButton = ({
     as='button'
     views={creditsButtonViews}
     defaultKey='viewport:desktop'
+    component='CreditsButton'
     select={{
       values: { viewport },
       booleans: {  },

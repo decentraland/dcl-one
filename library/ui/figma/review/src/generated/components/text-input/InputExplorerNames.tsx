@@ -477,6 +477,7 @@ export const InputExplorerNames = ({
     as='div'
     views={inputExplorerNamesViews}
     defaultKey='variant:empty'
+    component='InputExplorerNames'
     select={{
       values: { variant },
       booleans: {  },

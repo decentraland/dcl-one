@@ -2320,14 +2320,6 @@ export const NavBar = ({
   signedIn = false,
   balances = 'none',
   theme = 'dark',
-  label: _label,
-  label2: _label2,
-  label3: _label3,
-  label4: _label4,
-  label5: _label5,
-  label6: _label6,
-  label7: _label7,
-  label8: _label8,
   label2Href,
   label3Href,
   label4Href,
@@ -2344,6 +2336,7 @@ export const NavBar = ({
     as='div'
     views={navBarViews}
     defaultKey='viewport:largeDesktop|balances:none|theme:dark'
+    component='NavBar'
     select={{
       values: { viewport, balances, theme },
       booleans: { signedIn },
@@ -2352,6 +2345,7 @@ export const NavBar = ({
     slots={{}}
     semanticProps={{ label2Href, label3Href, label4Href, labelHref, logoHref, onMenu, onNotifications, onProfile, onSignIn }}
     forceState={forceState}
+    suppressedProps={['label', 'label2', 'label3', 'label4', 'label5', 'label6', 'label7', 'label8']}
     {...rest}
   />
 )

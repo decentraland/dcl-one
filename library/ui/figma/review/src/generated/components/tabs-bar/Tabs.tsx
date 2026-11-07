@@ -113,6 +113,7 @@ export const Tabs = ({
     as='button'
     views={tabsViews}
     defaultKey='device:mobile'
+    component='Tabs'
     select={{
       values: { device },
       booleans: {  },

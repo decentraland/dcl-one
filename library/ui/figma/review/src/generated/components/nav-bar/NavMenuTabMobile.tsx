@@ -153,6 +153,7 @@ export const NavMenuTabMobile = ({
     as='div'
     views={navMenuTabMobileViews}
     defaultKey='state:default'
+    component='NavMenuTabMobile'
     select={{
       values: { state },
       booleans: {  },

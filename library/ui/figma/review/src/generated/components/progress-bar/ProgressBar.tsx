@@ -113,6 +113,7 @@ export const ProgressBar = ({
     as='div'
     views={progressBarViews}
     defaultKey='status:03'
+    component='ProgressBar'
     select={{
       values: { status },
       booleans: {  },

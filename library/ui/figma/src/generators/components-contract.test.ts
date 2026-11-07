@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
+import { ESLint } from 'eslint'
 import ts from 'typescript'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { projectRoot } from '../../test/snapshot.js'
@@ -26,6 +27,15 @@ function sourceFor(spec: ComponentSpec): string {
   return generateComponents([spec], {}).files.find((file) =>
     file.path.endsWith(`/${spec.name}.tsx`)
   )!.content
+}
+
+// Lints a generated component as the library lints promoted ones, at components/<Name>/<Name>.tsx.
+async function lintAsPromoted(name: string, source: string) {
+  const library = path.resolve(projectRoot, '..')
+  const [result] = await new ESLint({ cwd: library }).lintText(source, {
+    filePath: path.join(library, 'components', name, `${name}.tsx`)
+  })
+  return result!.messages.map((message) => `${message.ruleId}: ${message.message}`)
 }
 
 function contractDiagnostics(source: string, assignments: string): string[] {
@@ -127,6 +137,35 @@ describe('generated public component contracts', () => {
       expect(source).toContain('slots={{}}')
     })
 
+    it('should hand every suppressed text prop to the runtime to drop, binding none of them', () => {
+      const omitted = spec.slots.filter((slot) => slot.kind === 'text').map((slot) => slot.name)
+      expect(omitted.length).toBeGreaterThan(1)
+      expect(source).toContain(
+        `suppressedProps={[${omitted.map((name) => `'${name}'`).join(', ')}]}`
+      )
+      expect(source).not.toMatch(/\b_label\d*\b/)
+    })
+
+    it('should pass the library lint once promoted', async () => {
+      expect(await lintAsPromoted('NavBar', source)).toEqual([])
+    })
+
+    it('should fail that lint if a suppressed prop were bound to an unused alias (control)', async () => {
+      const aliased = source.replace('  forceState,\n', '  label: _label,\n  forceState,\n')
+      expect(aliased).not.toBe(source)
+      expect(await lintAsPromoted('NavBar', aliased)).toContainEqual(
+        expect.stringContaining('@typescript-eslint/no-unused-vars')
+      )
+    })
+
+    it('should regenerate byte-identically from a fresh capture read', async () => {
+      expect(sourceFor(await navbarSpec())).toBe(source)
+    })
+
+    it('should name the component for the runtime error on an uncaptured selection', () => {
+      expect(source).toContain("component='NavBar'")
+    })
+
     it('should retain semantic link targets independently of text overrides', () => {
       expect(source).toContain('labelHref?: string')
     })
@@ -144,6 +183,10 @@ describe('generated public component contracts', () => {
     beforeEach(async () => {
       spec = await navbarSpec()
       delete spec.exposeTextSlots
+    })
+
+    it('should suppress nothing when every text override is public', () => {
+      expect(sourceFor(spec)).not.toContain('suppressedProps')
     })
 
     it('should preserve text overrides if the setting is omitted', () => {
@@ -183,11 +226,13 @@ describe('when a variant value contains a line terminator', () => {
 })
 
 describe('when a JavaScript caller supplies suppressed text slots', () => {
-  it('should consume them before forwarding DOM attributes', async () => {
+  // The runtime drops them before the DOM (figma-runtime.dom.test.tsx renders that); the type forbids them.
+  it('should type each as never and list it for the runtime to drop', async () => {
     const spec = await navbarSpec()
     const source = sourceFor(spec)
+    const suppressed = /suppressedProps=\{\[([^\]]*)\]\}/.exec(source)?.[1] ?? ''
     for (const slot of spec.slots.filter((item) => item.kind === 'text')) {
-      expect(source).toContain(`${slot.name}: _${slot.name}`)
+      expect(suppressed).toContain(`'${slot.name}'`)
       expect(source).toContain(`${slot.name}?: never`)
     }
   })

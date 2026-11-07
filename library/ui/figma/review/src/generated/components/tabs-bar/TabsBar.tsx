@@ -1468,6 +1468,7 @@ export const TabsBar = ({
     as='div'
     views={tabsBarViews}
     defaultKey='page:create|viewport:desktop'
+    component='TabsBar'
     select={{
       values: { page, viewport },
       booleans: {  },

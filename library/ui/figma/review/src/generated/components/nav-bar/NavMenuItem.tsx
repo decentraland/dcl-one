@@ -50,6 +50,7 @@ export const NavMenuItem = ({
     as='button'
     views={navMenuItemViews}
     defaultKey='default'
+    component='NavMenuItem'
     select={{
       values: {  },
       booleans: {  },

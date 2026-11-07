@@ -1249,6 +1249,7 @@ export const InputWebCreatorTools = ({
     as='button'
     views={inputWebCreatorToolsViews}
     defaultKey='state:default|viewport:desktop'
+    component='InputWebCreatorTools'
     select={{
       values: { state, viewport },
       booleans: {  },
