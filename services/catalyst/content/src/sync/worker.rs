@@ -509,6 +509,7 @@ impl Leader {
             spawn_dao_refresh(&self.jobs, &ctx, dao.clone(), self.client.clone(), peers_tx);
         }
         let retry_peers = Arc::new(RwLock::new(initial));
+        let (bootstrapped_tx, bootstrapped) = watch::channel(false);
         spawn_failed_deployment_jobs(
             &self.jobs,
             &ctx,
@@ -525,9 +526,13 @@ impl Leader {
                 deployer,
                 failed,
                 peers: retry_peers.clone(),
+                bootstrapped: Some(bootstrapped),
             },
         );
-        run_sync_job(orchestrator, peers, retry_peers, ctx).await
+        run_sync_job(orchestrator, peers, retry_peers, ctx, move || {
+            let _ = bootstrapped_tx.send(true);
+        })
+        .await
     }
 }
 
@@ -558,10 +563,34 @@ struct FailedDeploymentDeps {
     deployer: Arc<LiveSyncDeployer>,
     failed: Arc<LiveFailedDeploymentsStore>,
     peers: Arc<RwLock<Vec<String>>>,
+    /// Set once the sync leader's bootstrap completed; `None` where there is no bootstrap.
+    bootstrapped: Option<watch::Receiver<bool>>,
+}
+
+/// How long the retry loop waits for the sync leader's bootstrap before it starts anyway.
+const RETRY_FAILED_START: Duration = Duration::from_secs(60);
+/// The same for the prune loop.
+const PRUNE_START: Duration = Duration::from_secs(300);
+
+/// Returns at bootstrap completion or after `delay`, whichever comes first, so a peer that never
+/// answers holds the node in `Bootstrapping` without holding the loop; at once with no bootstrap
+/// to wait for, and on cancellation, which the loop then sees.
+async fn wait_to_start(
+    ctx: &JobContext,
+    bootstrapped: Option<watch::Receiver<bool>>,
+    delay: Duration,
+) {
+    let Some(mut bootstrapped) = bootstrapped else {
+        return;
+    };
+    tokio::select! {
+        _ = ctx.cancel.cancelled() => {}
+        _ = tokio::time::timeout(delay, bootstrapped.wait_for(|done| *done)) => {}
+    }
 }
 
 /// `retry-failed` (when enabled; it also sets [`UNDECIDED_RECORDS`](crate::sync::retry_failed::UNDECIDED_RECORDS)) and
-/// `failed-deployments-prune`, scoped to `ctx`.
+/// `failed-deployments-prune`, scoped to `ctx`; each starts per [`wait_to_start`].
 fn spawn_failed_deployment_jobs(
     jobs: &Arc<Jobs>,
     ctx: &JobContext,
@@ -581,7 +610,9 @@ fn spawn_failed_deployment_jobs(
             deps.failed,
             deps.peers,
         );
+        let bootstrapped = deps.bootstrapped.clone();
         jobs.spawn_scoped(ctx, "retry-failed", move |ctx| async move {
+            wait_to_start(&ctx, bootstrapped, RETRY_FAILED_START).await;
             let trace = ctx.clone();
             retry
                 .run(ctx.cancel.clone(), move |outcome| match outcome {
@@ -594,12 +625,13 @@ fn spawn_failed_deployment_jobs(
     }
     let ttl_days = settings.prune_ttl_days;
     let pool = deps.pool;
+    let bootstrapped = deps.bootstrapped;
     jobs.spawn_scoped(ctx, "failed-deployments-prune", move |ctx| async move {
+        wait_to_start(&ctx, bootstrapped, PRUNE_START).await;
         let trace = ctx.clone();
         run_prune_loop(
             pool,
             ttl_days,
-            Duration::from_secs(300),
             ctx.cancel.clone(),
             move |outcome| match outcome {
                 Ok(pruned) => trace.progress(format!("pruned {pruned}")),
@@ -641,6 +673,7 @@ pub fn start_failed_deployments(
             deployer: deployer.clone(),
             failed: Arc::new(LiveFailedDeploymentsStore::new(pool.clone())),
             peers: Arc::new(RwLock::new(peers.clone())),
+            bootstrapped: None,
         };
         async move {
             deployer.spawn_flush_ticker(&jobs, &ctx);
@@ -919,5 +952,52 @@ mod tests {
     #[tokio::test]
     async fn without_sync_a_process_without_fleet_jobs_runs_neither_loop() {
         assert!(failed_deployment_jobs(true, false).await.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_loop_starts_at_bootstrap_or_after_its_delay_whichever_comes_first() {
+        let jobs = Arc::new(Jobs::new());
+        let gate = |bootstrapped: Option<watch::Receiver<bool>>, delay: Duration| {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let cancel = jobs.spawn("gate", move |ctx| async move {
+                wait_to_start(&ctx, bootstrapped, delay).await;
+                let _ = tx.send(());
+                Ok(())
+            });
+            (cancel, rx)
+        };
+        let start = tokio::time::Instant::now();
+
+        gate(None, PRUNE_START).1.await.unwrap();
+        assert_eq!(start.elapsed(), Duration::ZERO, "no bootstrap to wait for");
+
+        let (bootstrapped, rx) = watch::channel(false);
+        let (_, started) = gate(Some(rx), PRUNE_START);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        bootstrapped.send(true).unwrap();
+        started.await.unwrap();
+        let at_bootstrap = start.elapsed();
+        assert!(
+            at_bootstrap >= Duration::from_secs(1) && at_bootstrap < PRUNE_START,
+            "started at the bootstrap, after {at_bootstrap:?}"
+        );
+
+        let (_held, rx) = watch::channel(false);
+        let (_, started) = gate(Some(rx), RETRY_FAILED_START);
+        started.await.unwrap();
+        let after_delay = start.elapsed() - at_bootstrap;
+        assert!(
+            after_delay >= RETRY_FAILED_START && after_delay < PRUNE_START,
+            "a held bootstrap released the loop after {after_delay:?}"
+        );
+
+        let (_held, rx) = watch::channel(false);
+        let (cancel, started) = gate(Some(rx), PRUNE_START);
+        cancel.cancel();
+        started.await.unwrap();
+        assert!(
+            start.elapsed() - at_bootstrap - after_delay < Duration::from_secs(1),
+            "cancellation released the loop"
+        );
     }
 }

@@ -51,6 +51,13 @@ struct Fixture {
     social: Arc<crate::comms::interfaces::test_support::StubDirectory>,
 }
 
+async fn wait_for_lock(pool: &PgPool, blocker: i32, count: i64) {
+    assert!(crate::shared::test_wait::until(async || {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid))")
+            .bind(blocker).fetch_one(pool).await.unwrap() >= count
+    }).await, "the expected transactions did not reach the held lock");
+}
+
 /// Personal worlds are not published here: the policy's cap counts every
 /// personal world in the shared scratch database, so a route test that
 /// leaves one behind would fail `policy::tests`; the cap and the personal
@@ -71,6 +78,10 @@ async fn fixture_with_ens(ens_cap: i64) -> Option<(Fixture, crate::ens::test_sup
     .await?;
     Some((f, ens))
 }
+
+/// Held across a collector run: the run lock is one per database and the lib tests share
+/// the scratch database, so a concurrent run answers 503.
+static GC_RUNS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 async fn fixture_full(
     personal: PersonalWorldsPolicy,
@@ -4248,6 +4259,7 @@ async fn every_route_answers_its_contract() {
     .await;
     expect(app, Case::new("get", "/admin/worlds"), 401).await;
     expect(app, Case::new("post", "/admin/gc?dry_run=true"), 401).await;
+    let gc_runs = GC_RUNS.lock().await;
     let gc = expect(
         app,
         Case::new("post", "/gc?dry_run=true").bearer(ADMIN_TOKEN),
@@ -4285,6 +4297,7 @@ async fn every_route_answers_its_contract() {
     assert_eq!(busy.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(busy.headers()[header::RETRY_AFTER], "60");
     running.commit().await.unwrap();
+    drop(gc_runs);
     let detail = expect(
         app,
         Case::new("get", format!("/admin/worlds/{w}")).bearer(ADMIN_TOKEN),
@@ -6056,7 +6069,11 @@ async fn a_deploy_reusing_a_blob_the_collector_removed_is_deferred_under_the_sto
         .unwrap();
 
     // The collector's batch holds the exclusive side; the publish waits on the shared side.
-    let batch = catalyst_storage::gc::lock_store_exclusive(&f.pool)
+    let mut batch = catalyst_storage::gc::lock_store_exclusive(&f.pool)
+        .await
+        .unwrap();
+    let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *batch)
         .await
         .unwrap();
     let publish = tokio::spawn({
@@ -6089,7 +6106,7 @@ async fn a_deploy_reusing_a_blob_the_collector_removed_is_deferred_under_the_sto
             .await
         }
     });
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    wait_for_lock(&f.pool, blocker, 1).await;
     assert!(!publish.is_finished(), "the publish waits for the batch");
     f.storage.delete_strict(&reused).await.unwrap();
     batch.commit().await.unwrap();
@@ -6451,13 +6468,17 @@ async fn a_quota_block_waits_for_a_concurrent_unblock_and_reevaluates() {
         .execute(&mut *held)
         .await
         .unwrap();
+    let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *held)
+        .await
+        .unwrap();
     let (state, wallet) = (f.state.clone(), owner.clone());
     let pass = tokio::spawn(async move {
         state
             .block_if_over_quota(&wallet, chrono::Utc::now().naive_utc())
             .await
     });
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    wait_for_lock(&f.pool, blocker, 1).await;
     assert!(!pass.is_finished(), "the block waits for the lock");
     sqlx::query("DELETE FROM worlds.world_scenes WHERE world_name = $1")
         .bind(world.key())
@@ -7133,6 +7154,10 @@ async fn concurrent_publishes_cannot_overrun_the_allowance_together() {
         .execute(&mut *held)
         .await
         .unwrap();
+    let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *held)
+        .await
+        .unwrap();
     let mut publishes = Vec::new();
     for ((world, charge), tag) in [&a, &b].into_iter().zip(charges).zip(['c', 'e']) {
         let (id, entity) = (cid(tag), scene_at(1, &["0,0"]));
@@ -7167,7 +7192,7 @@ async fn concurrent_publishes_cannot_overrun_the_allowance_together() {
             .await
         }));
     }
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    wait_for_lock(&f.pool, blocker, 2).await;
     assert!(
         publishes.iter().all(|p| !p.is_finished()),
         "both wait for the lock"

@@ -4,6 +4,8 @@ import re
 import tempfile
 import unittest
 
+import nginx_map
+
 SPEC = importlib.util.spec_from_file_location("gateway", Path(__file__).parents[1] / "gateway.py")
 gateway = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gateway)
@@ -32,6 +34,20 @@ class ConfigurationTest(unittest.TestCase):
         self.assertEqual(cfg["admins"], [])
         self.assertEqual(cfg["trusted"], [])
         self.assertEqual(cfg["storage"], "")
+
+    def test_operator_paths_keep_the_telemetry_dash_gate(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        text = gateway.render({"sites": [], "internal": [], "node": [], "aliases": [], "deploy": []},
+                              cfg, "/mime.types")
+        maps = nginx_map.parse(text)
+        gated = ["/admin/api/jobs", "/server.data", "/metabase/", "/telemetry/dash/sql",
+                 "/telemetry/dash/SQL.data", "/telemetry/dash/flag", "/telemetry/dash/group/target.data",
+                 "/telemetry/dash/admin", "/telemetry/dash/admin.data", "/telemetry/dash/admin/users"]
+        public = ["/telemetry/dash", "/telemetry/dash/overview", "/telemetry/dash/sqlx",
+                  "/telemetry/dash/administrator", "/telemetry"]
+        for uri, expected in [(uri, "1") for uri in gated] + [(uri, "0") for uri in public]:
+            with self.subTest(uri=uri):
+                self.assertEqual(nginx_map.Request(maps, uri=uri)["operator_path"], expected)
 
     def test_canonicalizes_networks_and_supports_multiple_upstreams(self):
         cfg = gateway.settings({

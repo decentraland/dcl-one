@@ -390,7 +390,6 @@ pub fn spawn_jobs(state: &Arc<super::State>, jobs: &crate::jobs::Jobs) {
     });
     let pool = state.pool.clone();
     jobs.spawn_leased("community-ranking", move |ctx| { let pool = pool.clone(); async move {
-        tokio::select! { _=ctx.cancel.cancelled()=>return Ok(()), _=tokio::time::sleep(Duration::from_secs(1800))=>{} }
         loop {
             match recalculate(&pool,Utc::now().naive_utc()).await {
                 Ok(count)=>ctx.progress(format!("{count} community scores calculated")),

@@ -21,6 +21,7 @@ use catalyst::comms::protocol::archipelago::archipelago::{
     ChallengeRequestMessage, ClientPacket, IslandChangedMessage, ServerPacket,
     SignedChallengeMessage, client_packet, server_packet,
 };
+use catalyst::comms::protocol::pulse::decentraland::pulse::PeerClusterChange;
 use futures::{SinkExt, StreamExt};
 use nats_broker::Broker;
 use prost::Message;
@@ -231,7 +232,17 @@ async fn reconciliation_announces_current_sessions_after_a_real_broker_restart()
     assert!(state.gatekeeper.bus.is_enabled());
     wait_for(|| bus.is_ready()).await;
     assert_eq!(next_lookup(&mut lookups).await.1, old_session.as_bytes());
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::timeout(
+        catalyst::shared::test_wait::HANG_GUARD,
+        state
+            .gatekeeper
+            .island_subscriber()
+            .upgrade()
+            .unwrap()
+            .settle(),
+    )
+    .await
+    .unwrap();
     drain(&mut lookups);
     assert_eq!(
         next_lookup(&mut lookups).await.1,
@@ -245,7 +256,17 @@ async fn reconciliation_announces_current_sessions_after_a_real_broker_restart()
         .registry
         .on_peer_disconnected(&address, &old_session, old.id);
     wait_for(|| !bus.is_ready()).await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::timeout(
+        catalyst::shared::test_wait::HANG_GUARD,
+        state
+            .gatekeeper
+            .island_subscriber()
+            .upgrade()
+            .unwrap()
+            .settle(),
+    )
+    .await
+    .unwrap();
     drain(&mut lookups);
 
     let mut expected = HashSet::new();
@@ -455,7 +476,7 @@ impl NatsBus for CompletionFaultBus {
             self.completions.lock().unwrap().push(payload.clone());
             if self
                 .lose
-                .fetch_update(
+                .try_update(
                     std::sync::atomic::Ordering::SeqCst,
                     std::sync::atomic::Ordering::SeqCst,
                     |n| n.checked_sub(1),
@@ -583,12 +604,11 @@ async fn actual_island(ws: &mut WsStream) -> IslandChangedMessage {
     tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             let frame = ws.next().await.expect("current socket open").unwrap();
-            if let WsMessage::Binary(bytes) = frame {
-                if let Some(server_packet::Message::IslandChanged(island)) =
+            if let WsMessage::Binary(bytes) = frame
+                && let Some(server_packet::Message::IslandChanged(island)) =
                     ServerPacket::decode(bytes.as_ref()).unwrap().message
-                {
-                    return island;
-                }
+            {
+                return island;
             }
         }
     })
@@ -615,13 +635,13 @@ fn jwt_payload(island: &IslandChangedMessage, session: &str) -> serde_json::Valu
 async fn no_island(ws: &mut WsStream) {
     let observed = tokio::time::timeout(Duration::from_millis(400), async {
         while let Some(Ok(frame)) = ws.next().await {
-            if let WsMessage::Binary(bytes) = frame {
-                if matches!(
+            if let WsMessage::Binary(bytes) = frame
+                && matches!(
                     ServerPacket::decode(bytes.as_ref()).unwrap().message,
                     Some(server_packet::Message::IslandChanged(_))
-                ) {
-                    return true;
-                }
+                )
+            {
+                return true;
             }
         }
         false
@@ -657,10 +677,20 @@ async fn real_pulse_retained_recovery_reaches_signed_ws_with_lost_completion_and
     let address = format!("{:#x}", wallet.address());
     let (mut a, session_a) = assigned_socket(port, &wallet).await;
     let mut world = pulse_tracker::World::new(broker.url());
+    let mut hints = client
+        .subscribe(format!("peer.{address}.cluster_change"))
+        .await
+        .unwrap();
+    client.flush().await.unwrap();
     world.place(0, &address, &session_a);
     world.pass();
     // This assignment hint predates the gatekeeper subscription and is deliberately lost.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        PeerClusterChange::decode(next(&mut hints).await.payload)
+            .unwrap()
+            .session,
+        session_a
+    );
     let world = Arc::new(std::sync::Mutex::new(world));
     let ticking = world.clone();
     let ticks = tokio::spawn(async move {
@@ -672,8 +702,9 @@ async fn real_pulse_retained_recovery_reaches_signed_ws_with_lost_completion_and
     state.gatekeeper.start_island_feed(&jobs, state.clone());
     let first = actual_island(&mut a).await;
     jwt_payload(&first, &session_a);
+    let issued_at = chrono::Utc::now().timestamp();
     // Registration refresh in the same room must deliver the complete new credential.
-    tokio::time::sleep(Duration::from_millis(1100)).await;
+    wait_for(|| chrono::Utc::now().timestamp() > issued_at).await;
     world.lock().unwrap().place(0, &address, &session_a);
     let refreshed = actual_island(&mut a).await;
     assert_eq!(first.island_id, refreshed.island_id);
@@ -766,13 +797,35 @@ async fn real_pulse_departed_pending_wallet_cleans_without_socket_and_unknown_di
     let address = format!("0x{:040x}", 201);
     let a = format!("0x{:040x}", 202);
     let b = format!("0x{:040x}", 203);
+    let mut hints = client
+        .subscribe(format!("peer.{address}.cluster_change"))
+        .await
+        .unwrap();
+    client.flush().await.unwrap();
     world.place(0, &address, &a);
     world.pass();
+    assert_eq!(
+        PeerClusterChange::decode(next(&mut hints).await.payload)
+            .unwrap()
+            .session,
+        a
+    );
     world.place(0, &address, &b);
     world.pass();
+    assert_eq!(
+        PeerClusterChange::decode(next(&mut hints).await.payload)
+            .unwrap()
+            .session,
+        b
+    );
     world.remove(0);
     world.pass();
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        PeerClusterChange::decode(next(&mut hints).await.payload)
+            .unwrap()
+            .session,
+        b
+    );
     let jobs = catalyst::jobs::Jobs::new();
     let state = real_state(fault.clone(), &jobs, &livekit, Some(db.pool.clone()), None).await;
     state.gatekeeper.start_island_feed(&jobs, state.clone());
@@ -803,7 +856,13 @@ async fn real_pulse_departed_pending_wallet_cleans_without_socket_and_unknown_di
     world.remove(1);
     world.pass();
     wait_for(|| livekit.count() == 2).await;
-    tokio::time::sleep(Duration::from_millis(2300)).await;
+    let subscriber = state.gatekeeper.island_subscriber().upgrade().unwrap();
+    for _ in 0..2 {
+        state.gatekeeper.announce_session(&address2, &d);
+        tokio::time::timeout(catalyst::shared::test_wait::HANG_GUARD, subscriber.settle())
+            .await
+            .unwrap();
+    }
     assert_eq!(
         livekit.count(),
         2,
@@ -1071,7 +1130,13 @@ async fn real_pulse_read_only_replica_refresh_and_unknown_restart_survive_ban_li
         .place(1, &other_address, &other_session);
     world.lock().unwrap().pass();
     actual_island(&mut unrelated).await;
-    tokio::time::sleep(Duration::from_millis(1200)).await;
+    let subscriber = restarted.gatekeeper.island_subscriber().upgrade().unwrap();
+    for _ in 0..2 {
+        restarted.gatekeeper.announce_session(&address, &session_c);
+        tokio::time::timeout(catalyst::shared::test_wait::HANG_GUARD, subscriber.settle())
+            .await
+            .unwrap();
+    }
     assert_eq!(
         livekit.count(),
         1,
