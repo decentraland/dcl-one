@@ -23,6 +23,7 @@ import { useCampaign } from "../hooks";
 import { t } from "../intl";
 import { localized, toContentfulLocale } from "../lib/contentful";
 import { MarketAnnouncementBar, MarketFooter } from "./MarketChrome";
+import ShopCreditsChip, { ShopHeldCredits } from "./ShopCreditsChip";
 import ShopFooter from "./ShopFooter";
 import "./shoptheme.css";
 import "./shopchrome.css";
@@ -122,6 +123,7 @@ function ShopSubnav({ tabs, active, iap, signedIn, set }: { tabs: Tab[]; active:
       </nav>
       <hr className="shop-subnav__divider" aria-hidden="true" />
       {hidesSearch || market ? null : <SearchDropdown />}
+      {signedIn ? <ShopHeldCredits /> : null}
       {!creditsCta ? null : (
         <Link className="shop-subnav__credits shop-buy-ring" to={`${SHOP_BASE}/credits`}>
           <Icon name="credits" size={20} />
@@ -197,7 +199,7 @@ export default function ShopChrome({ children, topbar, footer }: { children?: Re
     <ChromeShell
       className="shop-chrome"
       ariaLabel="Shop"
-      topbar={topbar ?? <DclTopBar variant="sites" active="shop" signedIn={signedIn} account={wallet.account ?? undefined} onSignIn={wallet.host?.onSignIn} />}
+      topbar={topbar ?? <DclTopBar variant="sites" active="shop" signedIn={signedIn} account={wallet.account ?? undefined} onSignIn={wallet.host?.onSignIn} balances={<ShopCreditsChip />} />}
       subnav={false}
       right={
         <>
