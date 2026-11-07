@@ -21,6 +21,7 @@ use catalyst::comms::protocol::archipelago::archipelago::{
     ChallengeRequestMessage, ClientPacket, IslandChangedMessage, ServerPacket,
     SignedChallengeMessage, client_packet, server_packet,
 };
+use catalyst::comms::protocol::pulse::decentraland::pulse::PeerClusterChange;
 use futures::{SinkExt, StreamExt};
 use nats_broker::Broker;
 use prost::Message;
@@ -677,10 +678,20 @@ async fn real_pulse_retained_recovery_reaches_signed_ws_with_lost_completion_and
     let address = format!("{:#x}", wallet.address());
     let (mut a, session_a) = assigned_socket(port, &wallet).await;
     let mut world = pulse_tracker::World::new(broker.url());
+    let mut hints = client
+        .subscribe(format!("peer.{address}.cluster_change"))
+        .await
+        .unwrap();
+    client.flush().await.unwrap();
     world.place(0, &address, &session_a);
     world.pass();
     // This assignment hint predates the gatekeeper subscription and is deliberately lost.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        PeerClusterChange::decode(next(&mut hints).await.payload)
+            .unwrap()
+            .session,
+        session_a
+    );
     let world = Arc::new(std::sync::Mutex::new(world));
     let ticking = world.clone();
     let ticks = tokio::spawn(async move {
@@ -786,13 +797,35 @@ async fn real_pulse_departed_pending_wallet_cleans_without_socket_and_unknown_di
     let address = format!("0x{:040x}", 201);
     let a = format!("0x{:040x}", 202);
     let b = format!("0x{:040x}", 203);
+    let mut hints = client
+        .subscribe(format!("peer.{address}.cluster_change"))
+        .await
+        .unwrap();
+    client.flush().await.unwrap();
     world.place(0, &address, &a);
     world.pass();
+    assert_eq!(
+        PeerClusterChange::decode(next(&mut hints).await.payload)
+            .unwrap()
+            .session,
+        a
+    );
     world.place(0, &address, &b);
     world.pass();
+    assert_eq!(
+        PeerClusterChange::decode(next(&mut hints).await.payload)
+            .unwrap()
+            .session,
+        b
+    );
     world.remove(0);
     world.pass();
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        PeerClusterChange::decode(next(&mut hints).await.payload)
+            .unwrap()
+            .session,
+        b
+    );
     let jobs = catalyst::jobs::Jobs::new();
     let state = real_state(fault.clone(), &jobs, &livekit, Some(db.pool.clone()), None).await;
     state.gatekeeper.start_island_feed(&jobs, state.clone());
