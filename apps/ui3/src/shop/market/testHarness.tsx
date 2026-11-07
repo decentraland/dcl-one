@@ -26,7 +26,7 @@ export function testIdentity(signer: string, ms = 3_600_000): AuthIdentity {
 
 export type Who = "signedOut" | "web2" | "web3";
 
-export type Mounted = { shop: FakeShop; wallet: FakeWallet; host: ShopWalletHost; client: QueryClient };
+export type Mounted = { shop: FakeShop; wallet: FakeWallet; host: ShopWalletHost; client: QueryClient; router: ReturnType<typeof createMemoryRouter> };
 
 export function mountShop(opts: { path: string; who: Who; routes?: FakeRoute[]; wallet?: FakeWallet; host?: Partial<ShopWalletHost> }): Mounted & ReturnType<typeof render> {
   const wallet = opts.wallet ?? fakeWallet();
@@ -50,7 +50,7 @@ export function mountShop(opts: { path: string; who: Who; routes?: FakeRoute[]; 
       </ShopWalletProvider>
     </QueryClientProvider>,
   );
-  return { ...view, shop, wallet, host, client };
+  return { ...view, shop, wallet, host, client, router };
 }
 
 /** For stories: the same providers around a single element, with a fixed session. */

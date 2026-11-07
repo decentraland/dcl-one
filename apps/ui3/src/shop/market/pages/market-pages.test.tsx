@@ -2,6 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { decodeFunctionData, type Hex } from "viem";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import salesEmptyArt from "../../components/empty-art/sales-empty.svg?url";
 import { CHAIN } from "../../model/chain";
 import { BOOK } from "../../payment/fixtures";
 import { resetArchivedBidsForTests } from "../store/archivedBids";
@@ -91,11 +92,116 @@ describe("My items", () => {
 
   it("the old Marketplace section names land on their Shop section; empty, error and outage each explain themselves", async () => {
     const m = mountShop({ path: "/shop/my-items?section=ens", who: "web3", routes: [nfts([]), importable(0)] });
-    expect(await screen.findByRole("button", { name: "Names" })).toHaveAttribute("aria-current", "page");
+    // The section nav is the Collectibles category nav, as upstream's: NAMEs is pressed.
+    expect(await screen.findByRole("button", { name: "NAMEs" })).toHaveAttribute("aria-pressed", "true");
     expect(await screen.findAllByTestId("shop-asset-tile")).toHaveLength(1);
     m.unmount();
     mountShop({ path: "/shop/my-items?section=emotes", who: "web3", routes: [nfts([]), importable(0)] });
-    expect(await screen.findByTestId("shop-empty")).toHaveTextContent("You have no emotes yet");
+    const empty = await screen.findByTestId("owned-empty");
+    expect(empty).toHaveTextContent("Nothing here... yet!");
+    expect(within(empty).getByRole("link", { name: "Explore Shop" })).toHaveAttribute("href", "/shop/items");
+    expect(screen.getByTestId("browse-count")).toHaveTextContent("0 Items");
+  });
+
+  it("Wearables open to their sub-categories, as upstream's My Assets: one narrows the owned list and shows as a chip", async () => {
+    const m = mountShop({ path: "/shop/my-items", who: "web3", routes: [nfts(), importable(0)] });
+    await screen.findAllByTestId("shop-asset-tile");
+    expect(within(screen.getByTestId("my-items-sidebar")).getByRole("heading", { name: "Items" })).toBeInTheDocument();
+    const last = () => m.shop.requests.filter((r) => r.url.pathname.endsWith("/v1/nfts")).at(-1)!.url.searchParams;
+    // A group is its flag, as the catalog's: never a list of categories the server would narrow to the first.
+    fireEvent.click(await screen.findByRole("button", { name: "Head" }));
+    await waitFor(() => expect(last().get("isWearableHead")).toBe("true"));
+    expect(last().getAll("wearableCategory")).toEqual([]);
+    expect(within(screen.getByTestId("filter-chips")).getByRole("button", { name: /Head/ })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Accessories" }));
+    await waitFor(() => expect(last().get("isWearableAccessory")).toBe("true"));
+    expect(last().get("isWearableHead")).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Upper Body" }));
+    await waitFor(() => expect(last().getAll("wearableCategory")).toEqual(["upper_body"]));
+    // The chip clears it, and so does Clear all.
+    fireEvent.click(within(screen.getByTestId("filter-chips")).getByRole("button", { name: /Upper Body/ }));
+    await waitFor(() => expect(last().getAll("wearableCategory")).toEqual([]));
+    fireEvent.click(await screen.findByRole("button", { name: "Head" }));
+    await waitFor(() => expect(last().get("isWearableHead")).toBe("true"));
+    fireEvent.click(within(screen.getByTestId("filter-chips").parentElement!).getByRole("button", { name: /Clear all/i }));
+    await waitFor(() => expect(last().get("isWearableHead")).toBeNull());
+  });
+
+  it("a sub-category stays with its section: a section change from outside the sidebar drops it, and Back does not bring it back", async () => {
+    const m = mountShop({ path: "/shop/my-items?section=emotes", who: "web3", routes: [nfts(), importable(0)] });
+    const last = () => m.shop.requests.filter((r) => r.url.pathname.endsWith("/v1/nfts")).at(-1)!.url.searchParams;
+    fireEvent.click(await screen.findByRole("button", { name: "Dance" }));
+    await waitFor(() => expect(last().getAll("emoteCategory")).toEqual(["dance"]));
+    // The header's My Assets tab: /shop/my-items with no section, i.e. Wearables.
+    await act(async () => void (await m.router.navigate("/shop/my-items")));
+    await waitFor(() => expect(last().get("category")).toBe("wearable"));
+    expect(last().getAll("wearableCategory")).toEqual([]);
+    expect(last().get("emoteCategory")).toBeNull();
+    expect(screen.queryByTestId("filter-chips")).toBeNull();
+    await act(async () => void (await m.router.navigate(-1)));
+    await waitFor(() => expect(last().get("category")).toBe("emote"));
+    expect(last().getAll("emoteCategory")).toEqual([]);
+    expect(screen.queryByTestId("filter-chips")).toBeNull();
+  });
+
+  it("from LAND, Wearables opens its group and a sub-category narrows the wearables", async () => {
+    const m = mountShop({ path: "/shop/my-items?section=land", who: "web3", routes: [nfts(), importable(0)] });
+    expect(await screen.findByRole("button", { name: "LAND" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(await screen.findByRole("button", { name: "Wearables" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Head" }));
+    await waitFor(() => expect(m.shop.requests.some((r) => r.url.searchParams.get("category") === "wearable" && r.url.searchParams.get("isWearableHead") === "true")).toBe(true));
+  });
+
+  it("the toolbar's Clear all clears the chips and keeps the search; Not for sale is asked of the server", async () => {
+    const m = mountShop({ path: "/shop/my-items", who: "web3", routes: [nfts(), importable(0)] });
+    const last = () => m.shop.requests.filter((r) => r.url.pathname.endsWith("/v1/nfts")).at(-1)!.url.searchParams;
+    await screen.findAllByTestId("shop-asset-tile");
+    fireEvent.click(screen.getByRole("button", { name: "Not for sale" }));
+    await waitFor(() => expect(last().get("isOnSale")).toBe("false"));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search your items" }), { target: { value: "hat" } });
+    await waitFor(() => expect(last().get("search")).toBe("hat"));
+    fireEvent.click(within(screen.getByTestId("filter-chips").parentElement!).getByRole("button", { name: /Clear all/i }));
+    await waitFor(() => expect(last().get("isOnSale")).toBeNull());
+    expect(last().get("search")).toBe("hat");
+    expect(screen.getByRole("searchbox", { name: "Search your items" })).toHaveValue("hat");
+  });
+
+  it("on a phone, Wearables opened from LAND keeps the filters drawer open to choose a sub-category", async () => {
+    const m = mountShop({ path: "/shop/my-items?section=land", who: "web3", routes: [nfts(), importable(0)] });
+    fireEvent.click(await screen.findByTestId("open-filters"));
+    expect(screen.getByTestId("browse-sidebar")).toHaveAttribute("data-open", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Wearables" }));
+    await waitFor(() => expect(m.router.state.location.search).toContain("section=wearables"));
+    expect(screen.getByTestId("browse-sidebar")).toHaveAttribute("data-open", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Head" }));
+    await waitFor(() => expect(m.shop.requests.some((r) => r.url.searchParams.get("isWearableHead") === "true")).toBe(true));
+    // A section without sub-categories closes the drawer on the way.
+    fireEvent.click(screen.getByRole("button", { name: "NAMEs" }));
+    await waitFor(() => expect(m.router.state.location.search).toContain("section=names"));
+    expect(screen.getByTestId("browse-sidebar")).not.toHaveAttribute("data-open");
+  });
+
+  it("an empty list says what is empty: nothing owned, nothing matching the filters, nothing on sale", async () => {
+    const none: FakeRoute = { method: "GET", path: /^\/v1\/nfts$/, reply: () => ({ body: { data: [], total: 0 } }) };
+    const m = mountShop({ path: "/shop/my-items?section=names", who: "web3", routes: [none, importable(0)] });
+    expect(await screen.findByTestId("owned-empty")).toHaveTextContent("No NAMEs yet");
+    // A status with no match is no match, not "no NAMEs".
+    fireEvent.click(screen.getByRole("button", { name: "On sale" }));
+    await waitFor(() => expect(screen.getByTestId("owned-empty")).toHaveTextContent("Nothing matches these filters"));
+    expect(screen.getByTestId("owned-empty").querySelector("img")!.getAttribute("src")).toBe(salesEmptyArt);
+    fireEvent.click(within(screen.getByTestId("owned-empty")).getByRole("button", { name: "Clear all" }));
+    await waitFor(() => expect(screen.getByTestId("owned-empty")).toHaveTextContent("No NAMEs yet"));
+    m.unmount();
+    // A search with no match offers to clear it, never to explore the Shop.
+    const w = mountShop({ path: "/shop/my-items", who: "web3", routes: [none, importable(0)] });
+    expect(await screen.findByTestId("owned-empty")).toHaveTextContent("Nothing here... yet!");
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search your items" }), { target: { value: "zzz" } });
+    await waitFor(() => expect(screen.getByTestId("owned-empty")).toHaveTextContent("Nothing matches these filters"));
+    expect(within(screen.getByTestId("owned-empty")).queryByRole("link", { name: "Explore Shop" })).toBeNull();
+    fireEvent.click(within(screen.getByTestId("owned-empty")).getByRole("button", { name: "Clear all" }));
+    await waitFor(() => expect(screen.getByTestId("owned-empty")).toHaveTextContent("Nothing here... yet!"));
+    expect(screen.getByRole("searchbox", { name: "Search your items" })).toHaveValue("");
+    expect(w.shop.requests.filter((r) => r.url.pathname.endsWith("/v1/nfts")).at(-1)!.url.searchParams.get("search")).toBeNull();
   });
 
   it("an index that has not caught up is an outage with its reason, not an empty page", async () => {
@@ -105,7 +211,9 @@ describe("My items", () => {
       routes: [{ method: "GET", path: /^\/v1\/nfts$/, reply: () => ({ status: 503, body: { error: "Service Unavailable", message: "no pass yet", source: "nft-indexer" } }) }, importable(0)],
     });
     expect(await screen.findByTestId("shop-outage")).toHaveTextContent("the NFT index is still catching up");
-    expect(screen.queryByTestId("shop-empty")).toBeNull();
+    expect(screen.queryByTestId("owned-empty")).toBeNull();
+    // No count over an outage: "0 Items" would read as an empty backpack.
+    expect(screen.getByTestId("browse-count")).not.toHaveTextContent("0 Items");
   });
 
   it("with the store dashboard off, creations stay reachable from My items (as upstream)", async () => {
@@ -113,7 +221,7 @@ describe("My items", () => {
     setShopCapabilities({ myStore: false });
     try {
       mountShop({ path: "/shop/my-items?section=creations", who: "web3", routes: [nfts(), importable(0)] });
-      expect(await screen.findByRole("button", { name: "Creations" })).toHaveAttribute("aria-current", "page");
+      expect(await screen.findByRole("button", { name: "My Creations" })).toHaveAttribute("aria-pressed", "true");
       expect(screen.queryByRole("link", { name: "My store" })).toBeNull();
       expect(await screen.findByRole("group", { name: "Period" })).toBeInTheDocument();
     } finally {
