@@ -2415,8 +2415,9 @@ fn social_states(
         explore.clone(),
     ));
 
-    if let Some(analytics) = social_analytics(config, http_client)? {
-        communities.set_analytics(analytics);
+    let analytics = social_analytics(config, http_client)?;
+    if let Some(analytics) = &analytics {
+        communities.set_analytics(analytics.clone());
     }
 
     let notifications = Arc::new(notifications::State::new(
@@ -2425,6 +2426,9 @@ fn social_states(
             admin_token: non_empty(&config.social.catalyrst_notifications_admin_token),
             events_base_url: public_url.clone(),
             events_asset_base_url: explore.settings.events_asset_base_url.clone(),
+            signing_key: non_empty(&config.social.signing_key),
+            service_base_url: config.social.notifications_service_base_url.clone(),
+            community_cdn_url: communities.settings.cdn_url.clone(),
             jump_in_site_url: explore.settings.jump_in_site_url.clone(),
             event_slack_notices: explore.settings.events_upcoming_summaries_enabled
                 && explore.settings.operator_writes_enabled
@@ -2436,22 +2440,24 @@ fn social_states(
             email: notifications::EmailConfig {
                 sendgrid_api_key: non_empty(&config.social.sendgrid_api_key),
                 from_email: non_empty(&config.social.sendgrid_from_email),
+                notification_template_id: non_empty(
+                    &config.social.sendgrid_notification_template_id,
+                ),
                 validate_email_template_id: non_empty(
                     &config.social.sendgrid_validate_email_template_id,
                 ),
                 validate_credits_email_template_id: non_empty(
                     &config.social.sendgrid_validate_credits_email_template_id,
                 ),
-                notification_template_id: non_empty(
-                    &config.social.sendgrid_notification_template_id,
-                ),
                 account_base_url: config.social.account_base_url.clone(),
-                marketplace_base_url: config.social.marketplace_base_url.clone(),
                 turnstile_secret_key: non_empty(&config.social.turnstile_secret_key),
                 domain_blacklist: notifications::EmailConfig::parse_domain_blacklist(
                     &config.social.email_domain_blacklist,
                 ),
+                sandbox_mode: config.social.sendgrid_sandbox_mode,
+                environment: non_empty(&config.social.social_environment).unwrap_or_default(),
             },
+            notification_service_token: non_empty(&config.social.notification_service_token),
             first_wear_enabled: config.social.first_wear_enabled,
             first_wear: notifications::FirstWearSettings {
                 shop_item_base_url: config.social.shop_item_base_url.clone(),
@@ -2460,12 +2466,20 @@ fn social_states(
             delivery_interval: Duration::from_secs(
                 config.social.notification_delivery_interval_secs,
             ),
+            delivery_max_age: notifications::delivery::max_age_from_secs(
+                config.social.notification_delivery_max_age_secs,
+            ),
+            current_version: config.social.social_rpc_current_version.clone(),
+            commit_hash: config.node.commit_hash.clone(),
         },
         http_client.clone(),
         eip1654.clone(),
         Some(market.index.clone()),
     ));
 
+    if let Some(analytics) = analytics {
+        notifications.set_analytics(analytics);
+    }
     communities.referral.set_mailer(notifications.email.clone());
 
     let badges = Arc::new(badges::State::new(

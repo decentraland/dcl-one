@@ -217,7 +217,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 75] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 77] {
         [
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
             (
@@ -261,6 +261,7 @@ impl Config {
                 &mut self.social.catalyrst_badges_admin_token,
             ),
             ("SENDGRID_API_KEY", &mut self.social.sendgrid_api_key),
+            ("SIGNING_KEY", &mut self.social.signing_key),
             ("SLACK_WEBHOOK", &mut self.explore.events_slack_webhook),
             (
                 "PLACES_MODERATION_WEBHOOK",
@@ -301,6 +302,10 @@ impl Config {
             (
                 "TURNSTILE_SECRET_KEY",
                 &mut self.social.turnstile_secret_key,
+            ),
+            (
+                "NOTIFICATION_SERVICE_TOKEN",
+                &mut self.social.notification_service_token,
             ),
             (
                 "CATALYRST_EVENTS_ADMIN_TOKEN",

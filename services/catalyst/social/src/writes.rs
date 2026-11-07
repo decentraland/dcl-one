@@ -22,7 +22,8 @@
 //! broadcasts a presence frame), so an operator can disconnect an abusive
 //! socket on a read-only node; `/admin/social/reset-settings` is a durable
 //! write and stays gated. Everything else that is not a `GET`/`HEAD`/`OPTIONS`
-//! is gated.
+//! is gated, as is every method of the email unsubscribe links (a `GET`
+//! that writes the subscription).
 
 use axum::Router;
 use axum::extract::{Request, State};
@@ -46,10 +47,16 @@ const OPEN_WHILE_DISABLED: &[&str] = &[
     "/admin/social/force-presence",
 ];
 
+/// Route-local prefixes whose reads write too: the notification emails' one-click unsubscribe links.
+const WRITING_READS: &[&str] = &["/unsubscribe/"];
+
 pub const DISABLED_MESSAGE: &str = "social writes are disabled on this node (SOCIAL_WRITES_ENABLED=false): a backup restore has to be demonstrated before this node accepts user writes";
 
 /// Whether `method` on `path` is a write this gate refuses while disabled.
 pub fn is_gated(method: &Method, path: &str) -> bool {
+    if WRITING_READS.iter().any(|prefix| path.starts_with(prefix)) {
+        return true;
+    }
     if matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS) {
         return false;
     }
@@ -187,6 +194,11 @@ mod tests {
         );
         assert!(!is_gated(&Method::POST, "/admin/social/disconnect"));
         assert!(!is_gated(&Method::POST, "/admin/social/force-presence"));
+        assert!(
+            is_gated(&Method::GET, "/unsubscribe/0xabc/item_sold"),
+            "an unsubscribe link writes even as a GET"
+        );
+        assert!(is_gated(&Method::HEAD, "/unsubscribe/0xabc"));
     }
 
     #[tokio::test]

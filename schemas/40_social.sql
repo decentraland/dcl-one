@@ -736,6 +736,10 @@ CREATE TABLE social.notification_deliveries (
 CREATE INDEX notification_deliveries_due_idx
     ON social.notification_deliveries (next_attempt_at, notification_id) WHERE state = 'pending';
 
+-- Retention: terminal rows oldest first, deleted in bounded batches after 30 days.
+CREATE INDEX notification_deliveries_terminal_idx
+    ON social.notification_deliveries (updated_at) WHERE state <> 'pending';
+
 -- details is the @dcl/schemas SubscriptionDetails document, read and written
 -- as a unit; the 0001 unconfirmed_email/email_confirmation_token columns were
 -- superseded by unconfirmed_emails (0002) and are not carried.
