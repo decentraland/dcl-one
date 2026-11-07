@@ -1,6 +1,7 @@
 // The page's hold on the preview avatar: a drag turns it, the wheel zooms its camera within its bounds toward
 // the pointer's height, and unmounting gives the turn and the zoom back.
 import { describe, it, expect, vi } from 'vitest'
+import { useLayoutEffect } from 'react'
 import { fireEvent, render, waitFor } from '@testing-library/react'
 import { AvatarDragSurface, DEGREES_PER_PX } from '../features/engine/AvatarDragSurface'
 import { PREVIEW_MAX_ZOOM } from '../engine/protocol'
@@ -91,6 +92,29 @@ describe('AvatarDragSurface', () => {
     fireEvent.wheel(el, { deltaY: 2000 })
     view.unmount()
     expect(onZoom).toHaveBeenLastCalledWith(1, 0.5)
+  })
+
+  it('gives its changes back before the next page reports its own preview (the lobby after the Backpack)', async () => {
+    const log: string[] = []
+    // As EngineViewport does: the page that takes over reports its region from its layout effect.
+    function NextPage(): null {
+      useLayoutEffect(() => {
+        log.push('lobby:open')
+      }, [])
+      return null
+    }
+    function Host({ open }: { open: boolean }): React.JSX.Element {
+      return open ? <AvatarDragSurface onRotate={(d) => log.push(`rotate:${d}`)} onZoom={(z) => log.push(`zoom:${z}`)} /> : <NextPage />
+    }
+    const view = render(<Host open />)
+    const el = view.container.firstElementChild as HTMLElement
+    fireEvent.pointerDown(el, { pointerId: 1, button: 0, clientX: 100 })
+    fireEvent.pointerMove(el, { pointerId: 1, clientX: 140 })
+    fireEvent.wheel(el, { deltaY: -200 })
+    await waitFor(() => expect(log).toContain(`rotate:${40 * DEGREES_PER_PX}`))
+    view.rerender(<Host open={false} />)
+    // The Backpack's avatar is turned back and its zoom given back while it is still the one on show.
+    expect(log.slice(-3)).toEqual([`rotate:${-(40 * DEGREES_PER_PX)}`, 'zoom:1', 'lobby:open'])
   })
 
   it('leaves the turn and the zoom alone on unmount when neither was changed', () => {

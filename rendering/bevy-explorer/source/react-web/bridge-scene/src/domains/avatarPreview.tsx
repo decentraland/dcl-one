@@ -635,11 +635,14 @@ export function registerAvatarPreview(ctx: Ctx): void {
   })
 
   // The page's drag over the preview turns the avatar, and its wheel zooms the camera: the page drives both,
-  // as the drag-lock (onMouseDragLocked below) doesn't reach the preview in every host.
+  // as the drag-lock (onMouseDragLocked below) doesn't reach the preview in every host. Both are the preview's
+  // (the Backpack's, the Shop's) alone: a late one never turns or zooms the lobby's avatar.
   ctx.on('previewRotate', (msg) => {
+    if (stage !== 'backpack') return
     turnAvatar(msg.degrees)
   })
   ctx.on('previewZoom', (msg) => {
+    if (stage !== 'backpack') return
     const next = Math.min(PREVIEW_MAX_ZOOM, Math.max(1, Number.isFinite(msg.zoom) ? msg.zoom : 1))
     const anchor = Number.isFinite(msg.anchor) ? Math.min(1, Math.max(0, msg.anchor)) : 0.5
     // The height under the anchor stays where it is: the same share of the view above the centre, before and after.

@@ -5,7 +5,7 @@
 // frame, and on unmount gives back what it changed (the turn, and the zoom it last sent, even with a change
 // still waiting for its frame), so the next page to show the preview starts at its own facing and framing.
 
-import { useEffect, useRef } from 'react'
+import { useLayoutEffect, useRef } from 'react'
 import { PREVIEW_MAX_ZOOM } from '../../engine/protocol'
 import styles from './AvatarDragSurface.module.css'
 
@@ -69,7 +69,9 @@ export function AvatarDragSurface({
     if (pending.current.frame === 0) pending.current.frame = nextFrame(flush)
   }
 
-  useEffect(
+  // Given back in the layout cleanup: before the next page's EngineViewport reports its region (in its layout
+  // effect), so the scene turns this page's avatar back, not one the next page already stood up (the lobby's).
+  useLayoutEffect(
     () => () => {
       const p = pending.current
       if (p.frame !== 0) cancelFrame(p.frame)
