@@ -16,25 +16,21 @@ BROAD = "tooling/catalyst-test.sh " + SELECTION
 VENDOR = "cargo test --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --lib"
 VENDOR_CHECK = "cargo check --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --all-features --all-targets"
 BEVY = "cargo test --all --profile ci-test --locked -- --test-threads=1"
-TEST_SCRIPT = """set -euo pipefail
-cd "$(dirname "$0")/../services/catalyst"
-logs="${CARGO_TARGET_DIR:-target}/test-logs"
-mkdir -p "$logs"
-cargo test --locked "$@" --no-run --message-format=json-render-diagnostics | python3 -c '
-import json, sys
-for line in sys.stdin:
-    artifact = json.loads(line)
-    if artifact.get("executable") and artifact.get("profile", {}).get("test"):
-        print(artifact["executable"])
-' > "$logs/binaries"
-cores=$(getconf _NPROCESSORS_ONLN)
-xargs -P "${CATALYST_TEST_JOBS:-$(( cores < 16 ? cores : 16 ))}" -I{} sh -c '
-log="$2/$(basename "$1").log"
-"$1" > "$log" 2>&1 || { cat "$log"; exit 1; }
-sed -n "s|^test result|$(basename "$1")|p" "$log"
-' _ {} "$logs" < "$logs/binaries"
-cargo test --locked "$@" --doc
-"""
+TEST_SCRIPT = [
+    'cargo test --locked "$@" --no-run --message-format=json-render-diagnostics | python3 -c \'',
+    'if artifact.get("executable") and artifact.get("profile", {}).get("test"):',
+    'print(artifact["executable"])',
+    '\' > "$logs/binaries"',
+    '[ -s "$logs/binaries" ] || { echo "catalyst-test: no test binaries found" >&2; exit 1; }',
+    'grep -E \'/(archipelago|pulse)_[^/]*$\' "$logs/binaries" > "$logs/sockets" || [ $? -eq 1 ]',
+    'grep -v -E \'/(archipelago|pulse)_[^/]*$\' "$logs/binaries" > "$logs/others" || [ $? -eq 1 ]',
+    'xargs -P "$1" -I{} sh -c \'',
+    '"$1" > "$log" 2>&1 || { cat "$log"; exit 1; }',
+    'run "$jobs" < "$logs/binaries"',
+    'run "$jobs" < "$logs/others"',
+    'run "$socket_jobs" < "$logs/sockets"',
+    'cargo test --locked "$@" --doc',
+]
 
 
 def require(condition, message):
@@ -87,10 +83,16 @@ def validate_runtime_script(script):
 
 
 def validate_test_script(script):
-    # Fixed contract: the script compiles the make selection unfiltered, runs every test
-    # binary without arguments and then the doc-tests. Comment lines are inert.
-    body = "\n".join(line for line in script.splitlines() if line.strip() and not line.lstrip().startswith("#")) + "\n"
-    require(body == TEST_SCRIPT, "catalyst-test.sh must compile the selection unfiltered, run every test binary without arguments and the doc-tests exactly once; update the guard's contract with the script")
+    # Pins the lines that keep the run complete: bash under set -e, the selection compiled
+    # unfiltered, every listed binary run without arguments in both phases, the doc-tests,
+    # and no exit before the end. Comment lines are inert.
+    require(script.splitlines()[:1] == ["#!/usr/bin/env bash"], "catalyst-test.sh must run under bash")
+    lines = [line.strip() for line in script.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    require(lines[:1] == ["set -euo pipefail"], "catalyst-test.sh must stop at the first failing step")
+    positions = [[index for index, line in enumerate(lines) if line == pinned] for pinned in TEST_SCRIPT]
+    require(all(len(found) == 1 for found in positions) and positions == sorted(positions),
+            "catalyst-test.sh must compile the selection unfiltered, run every listed binary without arguments and the doc-tests exactly once; update the guard's pinned lines with the script")
+    require(not any(line.startswith("exit") for line in lines), "catalyst-test.sh must not exit before the doc-tests")
 
 
 def validate_bevy_workflow(workflow):

@@ -198,9 +198,13 @@ class InventoryTests(unittest.TestCase):
         script = (ROOT / "tooling/catalyst-test.sh").read_text()
         guard.validate_test_script(script)
         guard.validate_test_script(script.replace("# Run the node", "# Runs the node"))
-        for bad in [script.replace('"$@" --no-run', '"$@" --test unrelated --no-run'),
+        for bad in [script.replace("#!/usr/bin/env bash", "#!/usr/bin/env true"),
+                    script.replace("set -euo pipefail", "set -uo pipefail"),
+                    script.replace('"$@" --no-run', '"$@" --test unrelated --no-run'),
                     script.replace('"$1" > "$log"', '"$1" --skip required > "$log"'),
-                    script.replace('< "$logs/binaries"', '< <(head -n 1 "$logs/binaries")'),
+                    script.replace('run "$jobs" < "$logs/binaries"', 'run "$jobs" < <(head -n 1 "$logs/binaries")'),
+                    script.replace('< "$logs/others"', '< <(head -n 1 "$logs/others")'),
+                    script.replace('run "$socket_jobs" < "$logs/sockets"\n', ''),
                     script.replace('print(artifact["executable"])', 'print(artifact["executable"]) if "comms" not in artifact["executable"] else None'),
                     script.replace('cargo test --locked "$@" --doc\n', ''),
                     script.replace("cores=", "exit 0\ncores=")]:

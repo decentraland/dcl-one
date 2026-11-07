@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Run the node test binaries concurrently. Each process makes its own scratch database.
+# Run the node test binaries concurrently; tests create their own scratch databases.
+# The socket binaries (archipelago_*, pulse_*) keep wall-clock budgets, so they run with at
+# most one test thread per core: after the others when the pool would oversubscribe the cores.
 set -euo pipefail
 cd "$(dirname "$0")/../services/catalyst"
 logs="${CARGO_TARGET_DIR:-target}/test-logs"
@@ -11,10 +13,28 @@ for line in sys.stdin:
     if artifact.get("executable") and artifact.get("profile", {}).get("test"):
         print(artifact["executable"])
 ' > "$logs/binaries"
-cores=$(getconf _NPROCESSORS_ONLN)
-xargs -P "${CATALYST_TEST_JOBS:-$(( cores < 16 ? cores : 16 ))}" -I{} sh -c '
+[ -s "$logs/binaries" ] || { echo "catalyst-test: no test binaries found" >&2; exit 1; }
+cores=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN)
+jobs="${CATALYST_TEST_JOBS:-$(( cores < 16 ? cores : 16 ))}"
+[ "$jobs" -ge 1 ] || { echo "catalyst-test: CATALYST_TEST_JOBS must be at least 1" >&2; exit 1; }
+# jobs * RUST_TEST_THREADS tests run at once, each with up to 10 of the cluster's 400 connections.
+export RUST_TEST_THREADS="${RUST_TEST_THREADS:-4}"
+socket_jobs=$(( cores / RUST_TEST_THREADS ))
+[ "$socket_jobs" -ge 1 ] || socket_jobs=1
+[ "$socket_jobs" -le "$jobs" ] || socket_jobs="$jobs"
+grep -E '/(archipelago|pulse)_[^/]*$' "$logs/binaries" > "$logs/sockets" || [ $? -eq 1 ]
+grep -v -E '/(archipelago|pulse)_[^/]*$' "$logs/binaries" > "$logs/others" || [ $? -eq 1 ]
+run() {
+  xargs -P "$1" -I{} sh -c '
 log="$2/$(basename "$1").log"
 "$1" > "$log" 2>&1 || { cat "$log"; exit 1; }
 sed -n "s|^test result|$(basename "$1")|p" "$log"
-' _ {} "$logs" < "$logs/binaries"
+' _ {} "$logs"
+}
+if [ "$socket_jobs" -eq "$jobs" ]; then
+  run "$jobs" < "$logs/binaries"
+else
+  run "$jobs" < "$logs/others"
+  run "$socket_jobs" < "$logs/sockets"
+fi
 cargo test --locked "$@" --doc
