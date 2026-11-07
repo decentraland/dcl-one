@@ -19,7 +19,8 @@
 //! trade record by anyone, for a known order (404). The writes sit behind
 //! `DATA_WRITES_ENABLED` (the router's gate). A bid, a bid's accept and an
 //! order are the Marketplace's, refused before the preflight while its rollout
-//! is off (`features`); their cancels stay open. That gate is on a client's
+//! is off (`features`); their cancels stay open, and so does a trade record
+//! (it only appends a fill to an order the log already holds). That gate is on a client's
 //! write only: bids and orders pulled from peers still enter the log, and the
 //! reads serve them (the Shop's pages hide them without the Marketplace).
 //!

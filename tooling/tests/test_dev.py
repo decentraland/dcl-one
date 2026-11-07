@@ -39,6 +39,14 @@ class DevTest(unittest.TestCase):
         with patch.dict(os.environ, {'FOUNDATION_DEV_PROFILE': 'offline'}):
             self.config = dev.settings(create=True)
 
+    def test_a_dev_stack_starts_with_the_marketplace_override_on_and_keeps_a_developers_own(self):
+        queries = []
+        with patch.object(dev, 'sql', lambda config, query, database='catalyst': queries.append(query) or ''):
+            dev.seed_dev_flags(self.config)
+        self.assertEqual(len(queries), 1)
+        self.assertIn("('dapps', 'dapps-shop-marketplace-features', true)", queries[0])
+        self.assertIn('ON CONFLICT (app, name) DO NOTHING', queries[0])
+
     def test_trades_snapshot_comes_from_a_local_file(self):
         snapshot = self.state / 'trades.sql.gz'
         snapshot.write_bytes(gzip.compress(b'-- trades'))

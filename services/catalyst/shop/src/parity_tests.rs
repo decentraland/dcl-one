@@ -958,6 +958,20 @@ async fn with_the_marketplace_rollout_off_lists_bids_and_resale_orders_are_refus
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
 
+    // The caller's own Favorites row is the plain favorite too, by its real id.
+    let own = lists::get_or_create_default_list(&state.pool, &sf::address().to_lowercase())
+        .await
+        .unwrap();
+    let (status, body) = call(
+        app(),
+        "POST",
+        &picks,
+        signed_headers("post", &picks, "{}", true).await,
+        Some(json!({ "pickedFor": [own] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
     // The federation log takes no bid or resale order either: refused before the signature is read.
     for path in [
         "/v1/federation/bid",

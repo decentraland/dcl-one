@@ -3,10 +3,13 @@
 //! Referer). The fetched document is held in memory only: `explore_api.feature_flags` also has a `dapps` row,
 //! which Social writes asking as its own service, and the two answers may differ. On top of it go this node's
 //! local overrides (`explore_api.feature_flags_local`, app `dapps`). Before the first answer, and when the service
-//! is not configured, only the overrides count: every other flag is off and the features it opens stay closed.
+//! is not configured, only the overrides count: every other flag is off and the features it opens stay closed. A
+//! failed read keeps the last answer for a while ([`STALE_AFTER_REFRESHES`] refreshes, ten minutes at least), so a
+//! blip does not switch features off; past that it is dropped and only the overrides count again, so a flag
+//! switched off upstream reaches a node that cannot hear the service.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use parking_lot::Mutex;
@@ -27,6 +30,15 @@ pub const APP: &str = "dapps";
 pub const MARKETPLACE_FEATURES: &str = "shop-marketplace-features";
 
 const TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How many refresh periods a failed read keeps the last answer for.
+pub const STALE_AFTER_REFRESHES: u32 = 10;
+const STALE_AT_LEAST: Duration = Duration::from_secs(600);
+
+/// Whether an answer read `age` ago still stands while the service cannot be read.
+fn still_stands(age: Duration, refresh: Duration) -> bool {
+    age <= (refresh * STALE_AFTER_REFRESHES).max(STALE_AT_LEAST)
+}
 
 /// Where the flags come from (`SHOP_FEATURE_FLAGS_*`, as sites' `FEATURE_FLAGS_URL` and `FEATURE_FLAGS_ORIGIN`).
 #[derive(Clone, Debug)]
@@ -51,7 +63,7 @@ impl Default for Source {
 /// The flags as this node enforces them, and the last document the service answered.
 pub struct DappsFlags {
     snapshot: feature_flags::Snapshot,
-    fetched: Mutex<Option<Value>>,
+    fetched: Mutex<Option<(Value, Instant)>>,
 }
 
 impl DappsFlags {
@@ -104,13 +116,26 @@ impl MarketplaceState {
     }
 
     /// Reads the service (when configured) and applies the local overrides on top. A failed read keeps the last
-    /// document the service answered; before any answer only the overrides count.
+    /// document the service answered while it still stands (see the module doc); before any answer, and once it
+    /// no longer does, only the overrides count.
     pub async fn refresh_feature_flags(&self) -> anyhow::Result<()> {
         if !self.flags_source.url.is_empty() {
             match self.fetch_feature_flags().await {
-                Ok(doc) => *self.dapps_flags.fetched.lock() = Some(doc),
+                Ok(doc) => *self.dapps_flags.fetched.lock() = Some((doc, Instant::now())),
                 Err(error) => {
-                    tracing::warn!(%error, "dapps feature flags: keeping the last answer")
+                    let mut held = self.dapps_flags.fetched.lock();
+                    match held.as_ref().map(|(_, at)| at.elapsed()) {
+                        Some(age) if still_stands(age, self.flags_source.refresh) => {
+                            tracing::warn!(%error, age_secs = age.as_secs(), "dapps feature flags: keeping the last answer")
+                        }
+                        Some(age) => {
+                            tracing::error!(%error, age_secs = age.as_secs(), "dapps feature flags: the last answer is too old, only this node's overrides count");
+                            *held = None;
+                        }
+                        None => {
+                            tracing::warn!(%error, "dapps feature flags: no answer yet, only this node's overrides count")
+                        }
+                    }
                 }
             }
         }
@@ -118,7 +143,8 @@ impl MarketplaceState {
             .dapps_flags
             .fetched
             .lock()
-            .clone()
+            .as_ref()
+            .map(|(doc, _)| doc.clone())
             .unwrap_or_else(|| document(false));
         let doc = feature_flags::with_local_overrides(&self.pool, APP, base)
             .await
@@ -182,6 +208,22 @@ mod tests {
             format!("{APP}-{MARKETPLACE_FEATURES}"),
             "dapps-shop-marketplace-features"
         );
+    }
+
+    #[test]
+    fn a_failed_read_keeps_the_last_answer_for_ten_refreshes_and_ten_minutes_at_least() {
+        let minute = Duration::from_secs(60);
+        assert!(still_stands(
+            Duration::from_secs(599),
+            Duration::from_secs(10)
+        ));
+        assert!(!still_stands(
+            Duration::from_secs(601),
+            Duration::from_secs(10)
+        ));
+        assert!(still_stands(minute * 10, minute));
+        assert!(still_stands(minute * 20, minute * 2));
+        assert!(!still_stands(minute * 21, minute * 2));
     }
 
     #[test]

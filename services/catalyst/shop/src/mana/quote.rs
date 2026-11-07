@@ -422,9 +422,7 @@ pub async fn quote_line(
         return OfferAnswer::Error(LineError {
             index,
             error: "Forbidden",
-            message:
-                "the Marketplace's features are off on this node (dapps-shop-marketplace-features)"
-                    .into(),
+            message: crate::market::features::refusal(),
             refusal: None,
             source: None,
         });
