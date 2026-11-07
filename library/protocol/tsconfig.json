@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "target": "es2016" /* Set the JavaScript language version for emitted JavaScript and include compatible library declarations. */,
+    "lib": ["es2017", "dom"] /* The generated code calls Object.entries and types globalThis.atob/btoa; explicit so every TypeScript version agrees. */,
     "module": "commonjs" /* Specify what module code is generated. */,
     "outDir": "out-js",
     "declaration": true,

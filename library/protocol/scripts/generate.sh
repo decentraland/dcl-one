@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # The npm package's generated TypeScript and JavaScript (out-ts, out-js) from public/*.proto.
 set -e # stop execution on first non-zero result
 
@@ -13,10 +13,10 @@ mkdir -p "$(pwd)/out-cs"
 for file in "$(pwd)"/public/*.proto; do
   echo "> Generating $file"
   node_modules/.bin/protoc \
-    --plugin=./node_modules/.bin/protoc-gen-dcl_ts_proto \
+    --plugin=./node_modules/.bin/protoc-gen-ts_proto \
     --csharp_out="$(pwd)/out-cs" \
-    --dcl_ts_proto_opt=esModuleInterop=true,returnObservable=false,outputServices=generic-definitions,fileSuffix=.gen,oneof=unions \
-    --dcl_ts_proto_out="$(pwd)/out-ts" \
+    --ts_proto_opt=esModuleInterop=true,returnObservable=false,outputServices=generic-definitions,fileSuffix=.gen,oneof=unions,emitDefaultValues=json-methods,annotateFilesWithVersion=false \
+    --ts_proto_out="$(pwd)/out-ts" \
     -I="$(pwd)/proto" \
     -I="$(pwd)/public" \
     "$file";
