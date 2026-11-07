@@ -42,7 +42,11 @@ body > p { margin: 40vh 24px 0; color: #fff; font: 16px system-ui, sans-serif; t
 
 export default function PlayShell() {
   useEffect(() => {
-    void import("@ui/play/shell/mount").then((m) => m.mountPlayShell());
+    // The in-world Shop buys with sites' sign-in wallet, which the shell holds for the app. Its code loads
+    // only on the app's first shop request, never before the shell mounts.
+    void import("@ui/play/shell/mount").then((m) =>
+      m.mountPlayShell({ shopWallet: () => import("@/data/lib/auth/shop-wallet").then((wallet) => wallet.playShopWallet()) }),
+    );
   }, []);
   return <style>{SHELL_STYLE}</style>;
 }

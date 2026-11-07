@@ -564,7 +564,9 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
             { id: 'r1', address: '0x77a0b1c2d3e4f5061728394a5b6c7d8e9f001122', name: 'SpottyGoat', message: 'Met you at the plaza!' }
           ],
           sent: [{ id: 's1', address: '0x9f8c2a1b4d6e7f0a3b5c8d9e1f2a4b6c8d0e1f23', name: 'Johnny' }],
-          blocked: []
+          blocked: [],
+          // The unnamed nearby player has blocked you: their passport offers no CHAT or friend button.
+          blockedBy: ['0xc0ffee254729296a45a3885639ac7e10f9d54979']
         }),
       1600
     )
@@ -857,8 +859,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'previewFocus') return
-    // No engine in mock mode — the Shop's stage and emote try-on have no avatar to show on.
-    if (msg.kind === 'previewStage' || msg.kind === 'previewEmote') return
+    // No engine in mock mode — the Shop's stage, emote try-on, turning and zoom have no avatar to show on.
+    if (msg.kind === 'previewStage' || msg.kind === 'previewEmote' || msg.kind === 'previewRotate' || msg.kind === 'previewZoom') return
     if (msg.kind === 'previewAvatar') {
       // No engine in mock mode — avatar preview has nothing to render.
       return
@@ -1013,7 +1015,9 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         setTimeout(() => {
           const fresh: AppNotification[] = [
             { id: 'n7', type: 'community_invite_received', read: false, timestamp: new Date().toISOString(), metadata: { communityName: 'Toxic Events', communityId: 'c5', thumbnailUrl: 'https://picsum.photos/seed/dcl/80/80' } },
-            { id: 'n8', type: 'social_service_friendship_request', read: false, timestamp: new Date(Date.now() - 1000).toISOString(), metadata: { sender: { address: '0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4', name: 'Sharknado' } } }
+            { id: 'n8', type: 'social_service_friendship_request', read: false, timestamp: new Date(Date.now() - 1000).toISOString(), metadata: { sender: { address: '0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4', name: 'Sharknado' } } },
+            // Opens the reward popup as well as its toast.
+            { id: 'n9', type: 'reward_in_progress', read: false, timestamp: new Date(Date.now() - 2000).toISOString(), metadata: { title: 'New item unlocked', description: 'Your reward is being processed', tokenName: 'Mock Reward Hat', tokenImage: 'https://picsum.photos/seed/reward/256/256', tokenRarity: 'epic', tokenCategory: 'hat' } }
           ]
           mockNotifications.unshift(...fresh)
           reply({ kind: 'notificationsNew', notifications: fresh })

@@ -971,6 +971,32 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .context("the Shop's MANA settlement venues")?,
     );
     shop::mana::spawn_jobs(&mana, &jobs);
+    // The Shop prices at the settlement chain's newest marketplace's own feed
+    // (`shop::mana::feed_rate`), read in the background; without an endpoint or a
+    // marketplace on that chain it keeps the spot.
+    let settlement = mana.settings.collections_chain_id;
+    match shop::mana::feed_rate::settlement_venue(&mana.venues, settlement) {
+        Some((url, marketplace)) => shop::mana::feed_rate::install(
+            Arc::new(
+                shop::credits::feed::ChainFeed::new(
+                    Arc::new(shop::evm::chain::ChainComponent::new(
+                        http_client.clone(),
+                        &url,
+                        shop::evm::chain::DEFAULT_RPC_TIMEOUT,
+                    )),
+                    config.shop.credits_usd_pegged_feed_max_age_secs,
+                )
+                .reading_past_tolerance(),
+            ),
+            settlement,
+            marketplace,
+            config.shop.credits_usd_pegged_feed_max_age_secs,
+        ),
+        None => tracing::info!(
+            chain_id = settlement,
+            "shop MANA/USD: no endpoint or marketplace for the settlement chain; the Shop prices at the market spot"
+        ),
+    }
     let social = social_states(
         &config,
         &pool,

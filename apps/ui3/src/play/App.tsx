@@ -23,7 +23,7 @@ import { PlacesPage } from './features/places/PlacesPage'
 import { EventsPage } from './features/events/EventsPage'
 import { ShopPage } from './features/shop/ShopPage'
 import { IN_WORLD_SHOP } from './features/shop/entry'
-// `?shop=new`: the in-world Shop that will replace ShopPage, loaded only when it is asked for. lazy()
+// The in-world Shop, which replaces ShopPage (`?shop=old` keeps ShopPage while it is retired), loaded only when it is first opened. lazy()
 // keeps a failed load, so a crash swaps in a fresh one for the next open.
 const loadInWorldShop = () => lazy(() => import('./features/shop/InWorldShop'))
 let InWorldShop = /* @__PURE__ */ loadInWorldShop()
@@ -210,7 +210,7 @@ function Hud(): React.JSX.Element {
   // mounted for good once wanted: `?editor`, or Create opened
   const [editorWanted, setEditorWanted] = useState(params.has('editor'))
   if (EDITOR_BUILD && EDITOR && !editorWanted && session.create.open) setEditorWanted(true)
-  // mounted for good once the Shop is first opened (`?shop=new`)
+  // mounted for good once the Shop is first opened (unless `?shop=old`)
   const [shopWanted, setShopWanted] = useState(false)
   if (IN_WORLD_SHOP && !shopWanted && session.shop.open) setShopWanted(true)
 
@@ -481,6 +481,8 @@ function Hud(): React.JSX.Element {
                   focus={session.backpack.focus}
                   stage={session.backpack.stage}
                   emote={session.backpack.emote}
+                  rotate={session.backpack.rotate}
+                  zoom={session.backpack.zoom}
                   noEngine={MODE === 'mock'}
                 />
               </Suspense>

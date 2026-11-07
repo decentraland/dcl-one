@@ -26,6 +26,9 @@
   --lavender: #c640cd; /* DCL/Lavender — secondary badge */
   --red: #ff0000; /* DCL/Red — blocked */
   --white-10: rgba(255, 255, 255, 0.1); /* DCL/White10% — dividers */
+  --shop-card-hover: rgba(255, 255, 255, 0.2); /* DCL/White20% — the Shop cart's hovered card */
+  --pale-black: #43404a; /* DCL/Pale Black — the Shop toast's rim */
+  --silver: #a09ba8; /* DCL/Silver — the NAME field's placeholder and suffix, an empty nametag */
   --divider-strong: rgba(255, 255, 255, 0.2); /* list section hairlines (friends) */
   --panel-translucent: rgba(0, 0, 0, 0.72); /* see-through side panel over the world */
   --panel-head: rgba(0, 0, 0, 0.55); /* header band layered on --panel-translucent */
@@ -38,7 +41,15 @@
   --menu-rim: #302d36; /* user menu popover rim */
   --danger-strong: #ff0000; /* destructive hover outline (remove friend / cancel request) */
   --black-40: rgba(0, 0, 0, 0.4);
+  --black-80: rgba(0, 0, 0, 0.8); /* Transparencies/Black 80: an outfit card's hover row */
   --black-30: rgba(0, 0, 0, 0.3);
+  --black-50: rgba(0, 0, 0, 0.5);
+  --black-90: rgba(0, 0, 0, 0.9); /* the Shop's dialog scrim */
+  --black-10: rgba(0, 0, 0, 0.1); /* the Shop toast's shadow */
+  --cart-badge-ring: #2b0044; /* the Shop cart badge's ring */
+  --shop-modal: #4c147c; /* the New Shop's dialogs (Buy Item, Purchase successful…) */
+  --brand-purple: #691fa9; /* Brand/Purple: a card's thumbnail base, the skeleton's band */
+  --brand-purple-dark: #4c147c; /* Brand/Purple Dark: the skeleton's base */
 
   /* status */
   --online: #57df41;
@@ -197,6 +208,9 @@
   --loading-pill-edge: #ba67f1;
 
   --r-xs: 6px;
+  --r-shop-cart-close: 7.5px; /* the Shop cart's close button */
+  --r-shop-cart-action: 5.429px; /* the Shop cart card's favourite and remove */
+  --r-shop-cart-price: 6.221px; /* the Shop cart card's price */
   --r-sm: 8px;
   --r-button: 9.6px;
   --r-md: 12px; /* light buttons and popups */
@@ -205,6 +219,7 @@
   --r-xl: 24px;
 
   --type-9: 9px;
+  --type-10: 10px;
   --type-11: 11px;
   --type-12: 12px;
   --type-13: 13px;
@@ -212,11 +227,16 @@
   --type-15: 15px;
   --type-16: 16px;
   --type-18: 18px;
+  --type-shop-cart-price: 18.664px; /* the Shop cart card's price */
+  --type-20: 20px;
   --type-22: 22px;
   --type-24: 24px;
   --type-30: 30px;
   --type-32: 32px;
   --type-36: 36px;
+  --type-60: 60px;
+  --type-shop-nametag: 32.44px; /* the Shop's NAMEs nametag over the avatar: the 18px nametag at 1.802× */
+  --h2-tracking: -0.5px; /* the design's typography/h2 (Inter Semi Bold 60) */
 
   /* Lobby cards. Translucent values are measured on screen against the parity capture, not
      copied from layout alphas (those blend in linear space). */
@@ -240,6 +260,7 @@
   --rail-arrow-pressed: rgb(13, 13, 15);
   --ease-outcubic: cubic-bezier(0.215, 0.61, 0.355, 1);
   --type-96: 96px;
+  --fw-light: 300;
   --fw-regular: 400;
   --fw-medium: 500;
   --fw-semibold: 600;
@@ -307,40 +328,60 @@
 
 /* ---- item rarity (Unity NftRarityColors.asset) ----
    Set `data-rarity` on a tile and read --rm (main) / --rl (light sheen) anywhere inside it,
-   pseudo-elements included. Unknown or missing values fall through to base. */
+   pseudo-elements included. Unknown or missing values fall through to base.
+   --rarity / --rarity-light are the design system's (DCL-ONE UI Style Guide, Rarities/<rarity> and its
+   Light; base is Neutrals/Gray), which the Shop's cards draw with. */
 [data-rarity] {
   --rm: #a09ba8;
   --rl: #cfcdd4;
+  --rarity: #cfcdd4;
+  --rarity-light: #cfcdd4;
 }
 [data-rarity='common'] {
   --rm: #73d3d3;
   --rl: #b5fff6;
+  --rarity: #73d3d3;
+  --rarity-light: #acf8f8;
 }
 [data-rarity='uncommon'] {
   --rm: #ff8362;
   --rl: #ffe0c8;
+  --rarity: #ff8362;
+  --rarity-light: #ffe0b2;
 }
 [data-rarity='rare'] {
   --rm: #34ce76;
   --rl: #9bf3c2;
+  --rarity: #34ce76;
+  --rarity-light: #73ffaf;
 }
 [data-rarity='epic'] {
   --rm: #438fff;
   --rl: #a9d4ff;
+  --rarity: #438fff;
+  --rarity-light: #81e1ff;
 }
 [data-rarity='legendary'] {
   --rm: #b058ff;
   --rl: #e0c0ff;
+  --rarity: #a14bf3;
+  --rarity-light: #e8b9ff;
 }
 [data-rarity='mythic'] {
   --rm: #ff4bec;
   --rl: #ffb0f3;
+  --rarity: #ff4bed;
+  --rarity-light: #f6c1ff;
 }
 [data-rarity='unique'] {
   --rm: #ffc747;
   --rl: #ffe6a8;
+  --rarity: #fea217;
+  --rarity-light: #fff280;
 }
 [data-rarity='exotic'] {
   --rm: #a5e242;
   --rl: #d6f59a;
+  --rarity: #9cd71e;
+  --rarity-light: #dbf0ad;
 }

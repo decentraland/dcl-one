@@ -2586,6 +2586,7 @@ impl super::feed::MarketplaceFeed for FakeFeed {
             updated_at_s: chrono::Utc::now().timestamp(),
             block: 1,
             block_hash: alloy_primitives::B256::ZERO,
+            block_time_s: chrono::Utc::now().timestamp(),
         })
     }
 }
@@ -5778,4 +5779,31 @@ async fn a_discounted_purchase_offer_authorizes_its_discounted_credits_price() {
     let (status, v) = authorize(offered).await;
     assert_eq!(status, StatusCode::CONFLICT, "the discount ended: {v}");
     db.drop().await;
+}
+
+#[tokio::test]
+async fn pricing_memoizes_the_spot_but_never_the_marketplace_feed() {
+    // The feed is one slot the refresher keeps current; a second memo here would
+    // answer a rate the quote and the catalog have since dropped.
+    let market = Arc::new(FakeMarket::default().with_mana_usd("0.5"));
+    let pricing = super::pricing::Pricing::new(market.clone(), 0);
+    crate::mana::feed_rate::tests::wired(Some(crate::mana::feed_rate::tests::reading(
+        "0.5",
+        chrono::Utc::now().timestamp(),
+    )));
+    pricing.fetch_mana_usd().await.unwrap();
+    pricing.fetch_mana_usd().await.unwrap();
+    assert_eq!(
+        market.oracle_reads.load(Ordering::SeqCst),
+        2,
+        "the feed's slot is asked each time"
+    );
+    crate::mana::feed_rate::with_test_slot(None);
+    pricing.fetch_mana_usd().await.unwrap();
+    pricing.fetch_mana_usd().await.unwrap();
+    assert_eq!(
+        market.oracle_reads.load(Ordering::SeqCst),
+        3,
+        "the spot keeps its 20 s memo"
+    );
 }

@@ -22,11 +22,12 @@ import { DEFAULT_REALM } from '../../lib/baseDomain'
 import { checkRealm, realmCheckMessage } from '../../lib/realmCheck'
 import { entryRealm } from '../../lib/entryParams'
 import { color3ToHex, hexToColor3 } from '../../lib/color'
-import { closeTopPopup, hasOpenPopup, subscribePopups } from '../../design'
+import { closeTopPopup, hasOpenPopup, subscribePopups, topPopupOrder } from '../../design'
 import { requestDebugPanel } from '../debug/useDebugPanel'
 import { emitFriendEvent } from '../friends/friendEvents'
 import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
 import { clearNotificationToasts, queueNotificationToasts } from '../notifications/NotificationToast'
+import { clearRewardPopups, queueRewardPopups } from '../rewards/RewardPopup'
 import { bootMode } from '../../lib/bootMode'
 import { notificationTimeMs } from '../../lib/notificationTime'
 import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
@@ -168,6 +169,11 @@ export interface BackpackState {
   stage: (rect: { x: number; y: number; width: number; height: number } | null) => void
   /** Play an emote on the preview avatar (again for every call); null stops it. */
   emote: (urn: string | null) => void
+  /** Turn the preview avatar by `degrees` about its vertical axis (a drag over it). */
+  rotate: (degrees: number) => void
+  /** Zoom the preview avatar's camera: `zoom` × the framing in use, 1 to PREVIEW_MAX_ZOOM, keeping the height
+   *  `anchor` (0 top, 1 bottom of the camera's view) where it is (the wheel over it). */
+  zoom: (zoom: number, anchor: number) => void
   /** Categories shown even though an equipped item hides them. */
   forceRender: string[]
   /** Replace the force-render list (shown at once, deployed with the look on close). */
@@ -381,6 +387,8 @@ export interface FriendsState {
   blocked: string[]
   /** The blocked accounts with their profiles (display); `blocked` stays the address set. */
   blockedUsers: BlockedUser[]
+  /** Lowercased addresses of users who have blocked the local user. */
+  blockedBy: string[]
   /** Signed in, social service still starting. */
   loading: boolean
   open: boolean
@@ -1016,8 +1024,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     sent: FriendRequest[]
     blocked: string[]
     blockedUsers: BlockedUser[]
+    blockedBy: string[]
     loading: boolean
-  }>({ available: false, friends: [], received: [], sent: [], blocked: [], blockedUsers: [], loading: false })
+  }>({ available: false, friends: [], received: [], sent: [], blocked: [], blockedUsers: [], blockedBy: [], loading: false })
   const [friendsOpen, setFriendsOpen] = useState(false)
   // In-flight friend actions as `op:address`, so their buttons disable until the service answers.
   const [friendPending, setFriendPending] = useState<ReadonlySet<string>>(new Set())
@@ -1455,6 +1464,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             sent: msg.sent,
             blocked: msg.blocked,
             blockedUsers: msg.blockedUsers ?? [],
+            blockedBy: msg.blockedBy ?? [],
             loading: msg.loading === true
           })
           seedProfiles([...msg.friends, ...msg.received, ...msg.sent])
@@ -1519,8 +1529,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             const have = new Set(prev.map((n) => n.id))
             return [...fresh.filter((n) => !have.has(n.id)), ...prev].slice(0, NOTIFICATIONS_KEPT)
           })
-          // Newest first in the list; toasts play in arrival order.
-          queueNotificationToasts([...fresh].reverse())
+          // Newest first in the list; toasts and reward popups play in arrival order.
+          const arrived = [...fresh].reverse()
+          queueNotificationToasts(arrived)
+          // A popup, unlike the toasts, would still render with the HUD hidden (?hud=0).
+          if (!bootMode().hideHud) queueRewardPopups(arrived)
           break
         }
         case 'emotes':
@@ -2809,6 +2822,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const emotePreview = useCallback((urn: string | null) => {
     driverRef.current?.send({ kind: 'previewEmote', urn })
   }, [])
+  const rotatePreview = useCallback((degrees: number) => {
+    driverRef.current?.send({ kind: 'previewRotate', degrees })
+  }, [])
+  const zoomPreview = useCallback((zoom: number, anchor: number) => {
+    driverRef.current?.send({ kind: 'previewZoom', zoom, anchor })
+  }, [])
   const setForceRender = useCallback((categories: string[]) => {
     setForceRenderState(categories)
     driverRef.current?.send({ kind: 'setForceRender', categories })
@@ -3033,6 +3052,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setAvatarColors(undefined)
     setNotifications([])
     clearNotificationToasts()
+    clearRewardPopups()
     setCommunities([])
     setCommunityCards({})
     setFriendPending(new Set())
@@ -3548,12 +3568,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     if ((window as EngineFocusWindow).__engineTextFocus) return
     if (EDITOR_BUILD && !hudActsOn(editorMode, action)) return
     // 'Cancel' is the one action handled even with a popup open: the engine resolved the
-    // cancel key or gamepad button, and this is the single layered close — topmost popup
-    // first, else the topmost registered leaf layer (lightbox, open dropdown — see
-    // cancelLayers), else any open panels. One layer per press.
+    // cancel key or gamepad button, and this is the single layered close — the most recent of
+    // the topmost popup and the topmost registered leaf layer (lightbox, open dropdown, a menu
+    // inside a popup — see cancelLayers) first, else any open panels. One layer per press.
     if (action === 'Cancel') {
+      if (dispatchCancelLayer(topPopupOrder())) return
       if (hasOpenPopup()) closeTopPopup()
-      else if (dispatchCancelLayer()) return
       // the lobby sits under the panels it opens: close those first, then the lobby
       else if (anyPanelOpenExceptLobby) panelSetters.forEach((set) => set(false))
       else setLobbyOpen(false)
@@ -3674,6 +3694,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       sent: friendsData.sent,
       blocked: friendsData.blocked,
       blockedUsers: friendsData.blockedUsers,
+      blockedBy: friendsData.blockedBy,
       loading: friendsData.loading,
       open: friendsOpen,
       toggle: toggleFriends,
@@ -3715,7 +3736,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     emotes: { list: emotes, open: emotesOpen, toggle: toggleEmotes, play: playEmote, equip: equipEmote },
     backpack: {
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
-      equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, stage: stagePreview, emote: emotePreview, forceRender, setForceRender,
+      equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, stage: stagePreview, emote: emotePreview, rotate: rotatePreview, zoom: zoomPreview, forceRender, setForceRender,
       outfits: outfits.outfits, outfitSlots: ownedNames.length > 0 ? 10 : 5,
       saveOutfit, deleteOutfit, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit

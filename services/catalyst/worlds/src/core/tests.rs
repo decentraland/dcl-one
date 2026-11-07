@@ -3089,6 +3089,30 @@ async fn community_allow_lists_require_membership_and_revoke_on_exit() {
             world: world.clone()
         }]
     );
+    // A completed check parks the row at infinity (comms `complete_recheck`).
+    // A closure makes it due again. The revision and the cutoff do not change.
+    sqlx::query(
+        "UPDATE social.world_access_rechecks SET next_attempt_at='infinity' WHERE world_name=$1",
+    )
+    .bind(world.key())
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    f.state.community_closed(joined).await;
+    let reopened: (uuid::Uuid, chrono::NaiveDateTime, bool) = sqlx::query_as("SELECT revision,changed_at,next_attempt_at<=timezone('UTC',now()) FROM social.world_access_rechecks WHERE world_name=$1")
+        .bind(world.key()).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(
+        (reopened.0, reopened.1),
+        before,
+        "a closure is not a new edit"
+    );
+    assert!(reopened.2, "a closure reopens a completed check");
+    assert_eq!(
+        recorded.take(),
+        vec![Revocation::AccessSetting {
+            world: world.clone()
+        }]
+    );
     expect(
         &f.app,
         Case::new("delete", community_path(other))

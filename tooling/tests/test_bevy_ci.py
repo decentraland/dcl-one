@@ -34,6 +34,25 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("  cancel-in-progress: ${{ github.event_name == 'pull_request' || "
                       "github.ref != 'refs/heads/main' }}\n", block)
 
+    def test_pr_web_builds_skip_wasm_opt_only_while_the_benchmark_is_off(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
+        job = workflow.split('\n  build-deploy-web:\n', 1)[1].split('\n  headless-packages:\n', 1)[0]
+        self.assertIn('          key=$(python3 tooling/play-artifact.py engine-cache-key)\n'
+                      '          echo "key=$key" >> "$GITHUB_OUTPUT"\n', job)
+        self.assertIn("      - name: Save tested compiled engine\n"
+                      "        if: steps.engine-cache.outputs.cache-matched-key == ''\n", job)
+        self.assertIn("      BEVY_WEB_OPT: ${{ github.event_name == 'pull_request' && "
+                      "vars.BENCHMARK_ENABLED_RUNNERS == 'none' && 'unoptimized' || 'optimized' }}\n", job)
+        self.assertIn('          key: bevy-engine-v1-${{ env.BEVY_WEB_OPT }}-${{ steps.engine-inputs.outputs.key }}\n'
+                      '          restore-keys: bevy-engine-v1-optimized-${{ steps.engine-inputs.outputs.key }}\n',
+                      job)
+        self.assertIn("verify-engine .cache/bevy-engine ${{ env.BEVY_WEB_OPT == 'optimized' && '--production' || '' }}\n",
+                      job)
+        self.assertIn("build-web.py --engine-cache ../../../.cache/bevy-engine "
+                      "${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }}\n", job)
+        self.assertIn('          path: .cache/bevy-engine\n'
+                      '          key: ${{ steps.engine-cache.outputs.cache-primary-key }}\n', job)
+
     def test_gateway_route_step_requires_the_ignored_fixture_to_pass(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
         _, _, after = workflow.partition('      - name: Test Explorer routes against the gateway\n')

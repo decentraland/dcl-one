@@ -758,8 +758,9 @@ Their synchronizer reads, in this order:
 3. `GET /pointer-changes` from the latest window end, following `pagination.next` while `moreData`
    is true.
 
-For these steps dcl-one serves every field that upstream serves, in a compatible shape. The ways a
-peer would see a difference:
+For these steps dcl-one serves every field that upstream serves, in a compatible shape, and every
+content hash it lists is one `GET /contents/{hash}` serves (CS-24). The ways a peer would see a
+difference:
 
 - **Re-processing.** The snapshot bytes and CIDs differ from an upstream node's for the same data
   (sorted `authChain` keys, integer timestamps, a tiebreak on `entity_id`). A peer re-processes

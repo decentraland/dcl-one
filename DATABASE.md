@@ -57,7 +57,8 @@ the data and its operations.
    that drops, renames, retypes or deletes is refused: that change is its own
    reviewed release (record the data-safe release procedure and evidence in the task report).
    A changed body of a hash-named write function (`content.deploy_entity_<hash>`,
-   `content.unpublish_scene_<hash>`) is a new function; `migrate` creates it and
+   `content.unpublish_scene_<hash>`, `social.world_authorization_started_<hash>`,
+   `social.world_secret_refund_<hash>`) is a new function; `migrate` creates it and
    leaves the old one for binaries still calling it. `catalyst schema status`
    lists the old ones as superseded after migrate (run before `migrate`, that
    includes the one the running binary still calls); drop them by hand once no
@@ -1014,8 +1015,10 @@ still decides admission.
 The caller secret budget keeps the existing `attempts/window_start` table and
 configured limit. Mint, adapter and scene-host paths share it. Attempts charge
 before verification; cancellation keeps the charge until expiry. Non-invalid-secret
-answers refund only their exact charged window. Expiry cleanup removes at most
-1,000 rows per scheduled pass. This does not add a cross-caller world ceiling.
+answers refund only their exact charged window. Expiry cleanup deletes in batches
+of 1,000 rows and continues while a batch is full. The 10-second sweep budget is
+checked between batches, so an in-flight batch can overrun it; it is not a hard
+deadline. This does not add a cross-caller world ceiling.
 
 For rollout, stop all old API and scene-host replicas before running `catalyst schema migrate` and then applying
 `schemas/releases/world-scene-ban-keys.sql` with the administrative database role, then start the updated binaries. `catalyst serve` refuses startup while active or retained
@@ -1023,3 +1026,40 @@ world scenes still have mapped entity-id bans awaiting this conversion; fresh da
 unmapped or Genesis bans do not require it. Old binaries cannot enforce the
 new stable ban keys. A binary-only rollback is not supported after rekeying;
 restore the matching pre-migration database backup. Do not reset a database.
+
+### World admission SQL and completed access checks
+
+World admission stamps and shared-secret refunds each use one versioned SQL
+function. The function names include their signature, settings and body hash.
+The schema object pass installs the functions on existing databases. Run
+`catalyst schema migrate` before starting the new binary; `catalyst schema functions`
+also prints their administrative installation SQL. Existing function versions remain
+available to old binaries during a rollout. Admission returns unavailable if its
+required functions are missing.
+
+The stamp retains `FOR SHARE`. It must wait for non-key access updates from older
+binaries as well as newer access writers. A function-local 500 ms lock timeout
+restores the caller's setting after success or failure. A one-second client deadline
+bounds the stamp and refund wait, including pool acquisition. The server retains
+the pool's configured statement timeout; a client timeout does not prove that a
+dispatched server statement stopped. Stamp timeouts return unavailable, and a
+refund timeout leaves the reservation to expire unless its dispatched refund completes.
+Refunds lock and modify
+only the exact caller window charged by the reservation; the positive-attempt
+constraint and the existing table layout remain unchanged.
+
+A completed world access check retains its revision and authorization cutoff, but
+sets `next_attempt_at` to PostgreSQL infinity. Completion compares both the revision
+and the exact claimed schedule, and checks that the lease is still unexpired after
+acquiring the row lock. A newer edit, later claim or same-revision community wakeup
+cannot be consumed by an older pass. Completion-write failures are logged and leave
+retry intent intact; they do not stop the remaining batch or the live-world sweep.
+Community closure advances the schedule with `LEAST`, including completed rows. The live-world sweep still reads retained
+cutoffs. After completion, stale-token re-enforcement relies on that rotating
+sweep rather than repeated due-queue work: visiting all live worlds takes
+`ceil(live_worlds / 16)` maintenance ticks (approximately that many minutes at
+the normal 60-second cadence). Outages and slow calls can extend the wall-clock
+latency; this is not a guaranteed deadline. The application decodes only finite
+claimed schedules and never decodes infinity as a Rust timestamp. This change adds
+no migration column and does not relax the stable-ban migration's coordinated
+rollout requirements.
