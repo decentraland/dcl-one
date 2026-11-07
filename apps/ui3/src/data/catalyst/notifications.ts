@@ -27,7 +27,7 @@ export function parseNotifications(raw: unknown): Notification[] {
     rows,
     NotificationSchema,
     isUsableNotification,
-    (row) => ({ ...row, timestamp: Number(row.timestamp) }),
+    (row) => ({ ...row, address: row.address ?? "", timestamp: Number(row.timestamp) }),
   );
   out.sort((a, b) => b.timestamp - a.timestamp);
   return out;

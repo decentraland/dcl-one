@@ -39,6 +39,7 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
         market_settings(&config, &content::own_hosts(&config))?,
     ));
     market.spawn_index_jobs(&jobs);
+    shop::rentals::index::spawn_job(&market, &jobs, config.shop.shop_rentals_index_enabled);
     let land = Arc::new(land_authz::LandAuthzState::new(
         pool.clone(),
         http.clone(),

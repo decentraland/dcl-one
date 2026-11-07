@@ -137,6 +137,7 @@ fn metadata(row: &RentRow, base: &str, started: bool) -> Value {
         )
     };
     json!({
+        "address": row.lessor,
         "contract": row.contract_address,
         "lessor": row.lessor,
         "tenant": row.tenant,
@@ -482,7 +483,7 @@ mod tests {
         assert_eq!(
             rows[1].3,
             json!({
-                "contract": land, "lessor": lessor, "tenant": tenant, "operator": tenant,
+                "address": lessor, "contract": land, "lessor": lessor, "tenant": tenant, "operator": tenant,
                 "startedAt": (t0 + 3 * DAY + 5).to_string(),
                 "endedAt": (t0 + 6 * DAY).to_string(),
                 "tokenId": "8",

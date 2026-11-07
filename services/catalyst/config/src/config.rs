@@ -217,7 +217,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 77] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 79] {
         [
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
             (
@@ -306,6 +306,14 @@ impl Config {
             (
                 "NOTIFICATION_SERVICE_TOKEN",
                 &mut self.social.notification_service_token,
+            ),
+            (
+                "NOTIFICATIONS_GOVERNANCE_TOKEN",
+                &mut self.social.notifications_governance_token,
+            ),
+            (
+                "NOTIFICATIONS_REWARDS_TOKEN",
+                &mut self.social.notifications_rewards_token,
             ),
             (
                 "CATALYRST_EVENTS_ADMIN_TOKEN",
