@@ -651,12 +651,16 @@ mod tests {
             }
         };
         let canonical = format!("https://places.example.org/places/place/?position={x}.{y}");
-        for uri in [
+        let mut requests = vec![
             format!("/places/place?id={place}"),
             format!("/places/place?position={position}"),
             format!("/places/place?id=nope&position={x}|{y}"),
             format!("/places/place?position={x};{y}"),
-        ] {
+        ];
+        if y == 0 {
+            requests.push(format!("/places/place?position={x},-0"));
+        }
+        for uri in requests {
             let (link, html) = get(uri.clone()).await;
             assert!(
                 html.contains(

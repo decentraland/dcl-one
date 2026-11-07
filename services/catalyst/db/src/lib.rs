@@ -305,13 +305,13 @@ pub async fn apply_schema(pool: &PgPool) -> Result<(), ApplySchemaError> {
     Ok(())
 }
 
-/// The lib crate's database-backed tests share one throwaway database per
-/// test process, `catalyst_test_lib_<pid>_<rand>`, created on the cluster
-/// `CATALYST_TEST_DATABASE_URL` names (the database in that URL is never
-/// touched, so a live node's rows are out of reach) and seeded with
-/// schema.sql; the tests seed uuid-scoped rows inside it. There is no
-/// in-process teardown: the next test process drops every
-/// `catalyst_test_lib_<pid>_*` whose pid is gone.
+/// `pool` shares one throwaway database per test process for uuid-scoped
+/// fixtures; `isolated_pool` creates a fresh database per call for tests
+/// that read or rewrite whole tables. Both use `catalyst_test_lib_<pid>_<rand>`
+/// databases on the cluster `CATALYST_TEST_DATABASE_URL` names, seeded with
+/// schema.sql. The database in that URL is never touched, so a live node's
+/// rows are out of reach. There is no in-process teardown: the next test
+/// process drops every `catalyst_test_lib_<pid>_*` whose pid is gone.
 #[cfg(any(test, feature = "scratch"))]
 pub mod scratch {
     use super::*;
