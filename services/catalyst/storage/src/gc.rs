@@ -213,6 +213,7 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
     ("shop.trade_event.hashed_signature", "an order digest"),
     ("shop.trade_event.tx_hash", "a transaction hash"),
     ("shop.mana_transfer.transaction_hash", "a transaction hash"),
+    ("shop.tip_claim.transaction_hash", "a transaction hash"),
     ("shop.coupons.hashed_signature", "an order digest"),
     ("shop.fed_actions.signature_hash", "an envelope digest"),
     ("shop.fed_actions.target_hash", "an envelope digest"),

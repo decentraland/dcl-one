@@ -19,6 +19,8 @@
 //! as the old query did. An index a route needs that is not published
 //! answers the unavailable envelope naming it.
 
+use std::collections::HashMap;
+
 use axum::response::{IntoResponse, Response};
 use chrono::Utc;
 use sqlx::{PgPool, Row};
@@ -903,6 +905,73 @@ pub struct AssetDescription {
     pub name: Option<String>,
 }
 
+fn describe(r: &sqlx::postgres::PgRow, land_image_base: &str) -> AssetDescription {
+    AssetDescription {
+        owner: r.get::<Option<String>, _>("owner").unwrap_or_default(),
+        image: land_image_url(
+            land_image_base,
+            &r.get::<String, _>("category"),
+            r.get::<Option<String>, _>("image").unwrap_or_default(),
+        ),
+        category: r.get("category"),
+        rarity: r.get("rarity"),
+        name: r.get("name"),
+    }
+}
+
+/// The source SQL that describes `contract`'s tokens.
+fn source_of(net: ChainNet, contract: &str) -> String {
+    if contract == LAND_REGISTRY_MAINNET || contract == ESTATE_REGISTRY_MAINNET {
+        land_source(false)
+    } else if contract == DCL_REGISTRAR {
+        names_source()
+    } else {
+        collection_source(net)
+    }
+}
+
+/// [`asset_meta`] of many `(contract, token_id)` at once, one query per
+/// source, keyed as asked; non-numeric token ids describe nothing.
+pub async fn asset_metas(
+    pool: &PgPool,
+    land_image_base: &str,
+    network: &str,
+    keys: &[(String, String)],
+) -> Result<HashMap<(String, String), AssetDescription>, sqlx::Error> {
+    let net = ChainNet::parse(network).unwrap_or(ChainNet::Matic);
+    let mut groups: HashMap<String, (Vec<String>, Vec<String>)> = HashMap::new();
+    for (contract, token) in keys {
+        if token.is_empty() || !token.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let g = groups
+            .entry(source_of(net, &contract.to_ascii_lowercase()))
+            .or_default();
+        g.0.push(contract.clone());
+        g.1.push(token.clone());
+    }
+    let mut out = HashMap::new();
+    for (sources, (contracts, tokens)) in groups {
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT u.contract, u.token, c.owner, c.image, c.category, c.rarity, c.name \
+             FROM UNNEST($1::text[], $2::text[]) AS u(contract, token) \
+             CROSS JOIN LATERAL (SELECT owner, image, category, rarity, name FROM ({sources}) c \
+                 WHERE c.contract_address = lower(u.contract) AND c.token_id = u.token::numeric LIMIT 1) c"
+        )))
+        .bind(&contracts)
+        .bind(&tokens)
+        .fetch_all(pool)
+        .await?;
+        for r in &rows {
+            out.insert(
+                (r.get("contract"), r.get("token")),
+                describe(r, land_image_base),
+            );
+        }
+    }
+    Ok(out)
+}
+
 /// One nft's description from the indexes (collections, names, LAND);
 /// `None` when no index row names it.
 pub async fn asset_meta(
@@ -914,13 +983,7 @@ pub async fn asset_meta(
 ) -> Result<Option<AssetDescription>, sqlx::Error> {
     let net = ChainNet::parse(network).unwrap_or(ChainNet::Matic);
     let contract = contract.to_ascii_lowercase();
-    let sources = if contract == LAND_REGISTRY_MAINNET || contract == ESTATE_REGISTRY_MAINNET {
-        land_source(false)
-    } else if contract == DCL_REGISTRAR {
-        names_source()
-    } else {
-        collection_source(net)
-    };
+    let sources = source_of(net, &contract);
     let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT owner, image, category, rarity, name FROM ({sources}) c WHERE c.contract_address = $1 AND c.token_id = $2::numeric LIMIT 1"
     )))
@@ -928,17 +991,7 @@ pub async fn asset_meta(
     .bind(token_id)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(|r| AssetDescription {
-        owner: r.get::<Option<String>, _>("owner").unwrap_or_default(),
-        image: land_image_url(
-            land_image_base,
-            &r.get::<String, _>("category"),
-            r.get::<Option<String>, _>("image").unwrap_or_default(),
-        ),
-        category: r.get("category"),
-        rarity: r.get("rarity"),
-        name: r.get("name"),
-    }))
+    Ok(row.map(|r| describe(&r, land_image_base)))
 }
 
 #[cfg(test)]

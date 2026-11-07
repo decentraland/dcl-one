@@ -1453,10 +1453,11 @@ async fn the_notifications_host_answers_as_its_captures() {
         let notes =
             crate::test_fixtures::replay_signed(&app, "/notifications", name, &fx, &auth).await;
         // friend_first_wear and land_transfer_received are this service's
-        // own types, absent from upstream's @dcl/schemas list.
+        // own types; item_discounted postdates the capture.
         let expected: &[&str] = if *name == "subscription-signed" {
             &[
                 "details.message_type.friend_first_wear extra",
+                "details.message_type.item_discounted extra",
                 "details.message_type.land_transfer_received extra",
             ]
         } else {

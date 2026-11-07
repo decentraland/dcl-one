@@ -3,7 +3,15 @@ import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { FakeBridge } from "../../test/fakeBridge";
 import { fetchLiveNotifications, markNotificationsRead } from "./notifications";
-import { parseNotificationsLoose } from "./notificationsView";
+import {
+  categoryForType,
+  notificationBody,
+  notificationImage,
+  notificationLink,
+  notificationTitle,
+  parseNotificationsLoose,
+  type Notification,
+} from "./notificationsView";
 
 type SignedFetchSent = { id: string; url: string; method: string };
 
@@ -52,4 +60,21 @@ it("keeps every row of a real node inbox, with its string timestamp as epoch ms"
   ]);
   expect(rows[0]!.metadata).toEqual({ badgeId: "welcome" });
   expect(parseNotificationsLoose(JSON.parse(nodeResponse)).map((n) => n.timestamp)).toEqual([1699999999999]);
+});
+
+it("shows a favorite on sale as a marketplace notice with its server copy, image and shop link", () => {
+  const base: Notification = {
+    id: "d1", type: "item_discounted", address: "0x0000000000000000000000000000000000000001", timestamp: 1,
+    read: false, created_at: "", updated_at: "",
+    metadata: {
+      title: "A favorite is on sale", description: "Hat is 25% off.", image: "https://example.com/t.png",
+      link: "https://example.com/shop/item/0x0000000000000000000000000000000000000002/7", nftName: "Hat", discountPct: 25,
+    },
+  };
+  expect(categoryForType(base.type)).toBe("marketplace");
+  expect([notificationTitle(base), notificationBody(base), notificationImage(base), notificationLink(base)]).toEqual([
+    "A favorite is on sale", "Hat is 25% off.", "https://example.com/t.png", "https://example.com/shop/item/0x0000000000000000000000000000000000000002/7",
+  ]);
+  const bare = { ...base, metadata: { nftName: "Hat", discountPct: 25 } };
+  expect([notificationTitle(bare), notificationBody(bare)]).toEqual(["A favorite is on sale", "Hat is 25% off."]);
 });

@@ -136,6 +136,7 @@ pub const NOTIFICATION_TYPES: &[&str] = &[
     "governance_tender_passed",
     "governance_whale_vote",
     "governance_voted_on_behalf",
+    "item_discounted",
     "item_sold",
     "item_published",
     "rental_ended",

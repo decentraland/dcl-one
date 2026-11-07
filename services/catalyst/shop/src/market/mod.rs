@@ -76,6 +76,7 @@ pub mod mirrors;
 pub mod neighbours;
 pub mod nft_index;
 pub mod nft_reads;
+pub mod notice_cursor;
 pub mod nfts;
 pub mod orders;
 pub mod owners;
@@ -84,13 +85,17 @@ pub mod profiles;
 pub mod rankings;
 pub mod readers;
 pub mod rentals;
+pub mod royalty_notices;
+pub mod sale_notices;
 pub mod sales;
 pub mod search;
 pub mod shop;
 pub mod signed;
 pub mod third_party;
+pub mod tips;
 pub mod trade_events;
 pub mod trades;
+pub mod transfer_notices;
 pub mod user_items;
 pub mod users;
 pub mod wire;
@@ -223,6 +228,8 @@ pub struct MarketSettings {
     /// The chain indexes (`nft`, `trade_events`), the neighbours job and the
     /// coupon state reader (`chain_walk::IndexSettings`; every default off).
     pub indexes: chain_walk::IndexSettings,
+    /// The tip forward's thresholds and pending cap.
+    pub tips: tips::TipSettings,
 }
 
 /// No derived `Debug`: `admin_token` is a bearer. Prints whether one is set,
@@ -245,6 +252,7 @@ impl std::fmt::Debug for MarketSettings {
             .field("catalog_cache_ttl", &self.catalog_cache_ttl)
             .field("marketplace_base_url", &self.marketplace_base_url)
             .field("indexes", &self.indexes)
+            .field("tips", &self.tips)
             .finish_non_exhaustive()
     }
 }
@@ -260,6 +268,7 @@ impl Default for MarketSettings {
             catalog_cache_ttl: Duration::from_secs(30),
             marketplace_base_url: "https://decentraland.org/marketplace".to_string(),
             indexes: chain_walk::IndexSettings::default(),
+            tips: tips::TipSettings::default(),
         }
     }
 }
@@ -303,12 +312,19 @@ impl MarketSettings {
             catalog_cache_ttl: Duration::from_secs(catalog_cache_ttl_secs),
             marketplace_base_url: marketplace_base_url.trim_end_matches('/').to_string(),
             indexes: chain_walk::IndexSettings::default(),
+            tips: tips::TipSettings::default(),
         })
     }
 
     /// The chain indexes' knobs (`main.rs` fills them from `Config`).
     pub fn with_indexes(mut self, indexes: chain_walk::IndexSettings) -> Self {
         self.indexes = indexes;
+        self
+    }
+
+    /// The tip forward's knobs (`main.rs` fills them from `Config`).
+    pub fn with_tips(mut self, tips: tips::TipSettings) -> Self {
+        self.tips = tips;
         self
     }
 }
@@ -608,6 +624,16 @@ impl MarketplaceState {
     pub fn spawn_api_jobs(self: &Arc<Self>, jobs: &Jobs) {
         crate::coupons::spawn_job(self, jobs);
         federation::spawn_job(self, jobs);
+        tips::spawn_job(self, jobs);
+        sale_notices::spawn(self, jobs);
+        royalty_notices::spawn(
+            self.pool.clone(),
+            self.settings.market.marketplace_base_url.clone(),
+            self.settings.market.indexes.nft_enabled,
+            jobs,
+        );
+        transfer_notices::spawn(self, jobs);
+        crate::rentals::notices::spawn(self, jobs);
     }
 
     /// The JSON-RPC endpoint the chain indexes and the coupon reader use on
