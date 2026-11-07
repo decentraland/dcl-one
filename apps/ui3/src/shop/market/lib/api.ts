@@ -16,6 +16,7 @@ import type { Order } from "@catalyst-api/market/Order";
 import type { Owner } from "@catalyst-api/market/Owner";
 import type { Sale } from "@catalyst-api/market/Sale";
 import { isShopApiError } from "../../api/client";
+import { catalogCategoryParams } from "../../discovery/lib/categories";
 import { shopClient, type ShopClient } from "../../api/shop";
 import { parseManaWei, type ManaWei } from "../../model/money";
 
@@ -120,8 +121,10 @@ export async function fetchMyAssets(owner: string, filters: MyAssetsFilters = {}
     orderDirection: "desc",
     search: filters.search,
     itemRarity: filters.rarities,
-    wearableCategory: filters.wearableCategories,
-    emoteCategory: filters.emoteCategories,
+    // One category per read, as the catalog's: a group (Head, Accessories) is its flag, never a list of categories,
+    // which /v1/nfts would narrow to the first.
+    ...catalogCategoryParams(filters.wearableCategories),
+    ...catalogCategoryParams(filters.emoteCategories),
     isOnSale: filters.onlyOnSale ? "true" : undefined,
     isOnRent: filters.onlyOnRent ? "true" : undefined,
   });

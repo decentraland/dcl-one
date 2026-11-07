@@ -2,25 +2,25 @@
 // The Shop's empty-state panel, shared by the pages that say "nothing here yet" (My Favorites, My Items).
 import { Link } from "react-router";
 
-import "../pages/shopfavorites.css";
+import styles from "./EmptyPanel.module.css";
 
 export type EmptyCta = { label: string; to: string } | { label: string; onClick: () => void };
 
 export function EmptyPanel({ icon, title, body, cta, testId }: { icon: string; title: string; body?: string; cta?: EmptyCta; testId?: string }) {
   return (
-    <div className="shop-fav-empty" data-testid={testId}>
-      <img className="shop-fav-empty__img" src={icon} alt="" aria-hidden />
-      <div className="shop-fav-empty__text">
-        <p className="shop-fav-empty__title">{title}</p>
-        {body ? <p className="shop-fav-empty__body">{body}</p> : null}
+    <div className={styles.panel} data-testid={testId}>
+      <img className={styles.img} src={icon} alt="" aria-hidden />
+      <div className={styles.text}>
+        <p className={styles.title}>{title}</p>
+        {body ? <p className={styles.body}>{body}</p> : null}
       </div>
       {cta ? (
         "to" in cta ? (
-          <Link className="shop-fav-empty__cta" to={cta.to}>
+          <Link className={styles.cta} to={cta.to}>
             {cta.label}
           </Link>
         ) : (
-          <button type="button" className="shop-fav-empty__cta" onClick={cta.onClick}>
+          <button type="button" className={styles.cta} onClick={cta.onClick}>
             {cta.label}
           </button>
         )

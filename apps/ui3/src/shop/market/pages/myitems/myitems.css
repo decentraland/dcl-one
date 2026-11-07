@@ -186,10 +186,6 @@
   outline: 2px solid #fcfcfc;
   outline-offset: 2px;
 }
-.shop-myitems__empty {
-  display: flex;
-  justify-content: center;
-}
 
 @media (max-width: 768px) {
   .shop-myitems {

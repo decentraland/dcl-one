@@ -16,8 +16,8 @@ import "../../discovery/components/filters.css";
 import "../../discovery/components/filterbar.css";
 import { CATEGORIES, SUBCAT_MAP } from "../../discovery/lib/categories";
 import { RARITIES, rarityColor } from "../../discovery/lib/rarity";
-import itemsEmptyIllustration from "../../discovery/pages/creator/items-empty.svg?url";
-import salesEmptyIllustration from "../../history/assets/sales-empty.svg?url";
+import itemsEmptyIllustration from "../../components/empty-art/items-empty.svg?url";
+import salesEmptyIllustration from "../../components/empty-art/sales-empty.svg?url";
 import { shopPath } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { myStoreAccess, useShopCapabilities } from "../../seller/lib/featureFlags";
@@ -44,7 +44,7 @@ const SORTS = [
 type SortKey = (typeof SORTS)[number]["key"];
 /** The sidebar's CategoryFilter keys for the sections it lists (upstream's CATEGORY_OF_SECTION). */
 const CATEGORY_OF_SECTION: Partial<Record<MyItemsSection | "creations", string>> = { wearables: "wearable", emotes: "emote", names: "names" };
-const SECTION_OF_CATEGORY: Record<string, MyItemsSection> = { wearable: "wearables", emote: "emotes", names: "names" };
+const SECTION_OF_CATEGORY = Object.fromEntries(Object.entries(CATEGORY_OF_SECTION).map(([section, category]) => [category, section])) as Record<string, MyItemsSection>;
 
 /** The section a sub-category (or one of its leaves) belongs to: Head is a wearable's, Dance an emote's. */
 function sectionOfSub(key: string): MyItemsSection | null {
@@ -160,28 +160,31 @@ function useOwned(address: string, section: Exclude<MyItemsSection, "bids">, f: 
   return { query, items, total };
 }
 
-function OwnedGrid({ section, owned, onSale }: { section: Exclude<MyItemsSection, "bids">; owned: ReturnType<typeof useOwned>; onSale: boolean }) {
+function OwnedGrid({
+  section,
+  owned,
+  onSale,
+  filtered,
+  onClear,
+}: {
+  section: Exclude<MyItemsSection, "bids">;
+  owned: ReturnType<typeof useOwned>;
+  onSale: boolean;
+  /** A search, status, rarity or sub-category narrows the list: an empty grid is then no match, not an empty backpack. */
+  filtered: boolean;
+  onClear: () => void;
+}) {
   const { query, items } = owned;
   const what = SECTION_LABEL[section].toLowerCase();
   if (query.isPending) return <Loading label={`Loading your ${what}…`} />;
   if (query.isError) return <LoadFailure error={query.error} what={`Your ${what}`} onRetry={() => void query.refetch()} />;
-  // As upstream's owned-empty: a "nothing on sale" grid is a listings state, not an empty backpack.
-  if (items.length === 0)
-    return (
-      <div className="shop-myitems__empty">
-        {section === "names" ? (
-          <EmptyPanel testId="owned-empty" icon={itemsEmptyIllustration} title="No NAMEs yet" body="Claim a unique NAME to stand out in Decentraland — it’ll appear here once it’s yours." />
-        ) : (
-          <EmptyPanel
-            testId="owned-empty"
-            icon={onSale ? salesEmptyIllustration : itemsEmptyIllustration}
-            title="Nothing here... yet!"
-            body="Explore the Shop and find something awesome to make it yours."
-            cta={{ label: "Explore Shop", to: shopPath("items") }}
-          />
-        )}
-      </div>
-    );
+  if (items.length === 0) {
+    // As upstream's owned-empty: a "nothing on sale" grid is a listings state, not an empty backpack.
+    const icon = onSale ? salesEmptyIllustration : itemsEmptyIllustration;
+    if (filtered) return <EmptyPanel testId="owned-empty" icon={icon} title="Nothing matches these filters" body="Try other filters, or clear them to see everything you own." cta={{ label: "Clear all", onClick: onClear }} />;
+    if (section === "names") return <EmptyPanel testId="owned-empty" icon={itemsEmptyIllustration} title="No NAMEs yet" body="Claim a unique NAME to stand out in Decentraland — it’ll appear here once it’s yours." />;
+    return <EmptyPanel testId="owned-empty" icon={icon} title="Nothing here... yet!" body="Explore the Shop and find something awesome to make it yours." cta={{ label: "Explore Shop", to: shopPath("items") }} />;
+  }
   return (
     <>
       <div className="shop-grid mk-grid" data-testid="grid">
@@ -318,6 +321,15 @@ function OwnedMain({
   const owned = useOwned(address, section, { status, rarities, subCategory: showRarity ? subCategory : null, search, sort });
   const toggleRarity = (r: string) => setRarities((rs) => (rs.includes(r) ? rs.filter((x) => x !== r) : [...rs, r]));
 
+  const clearAll = () => {
+    setStatus("all");
+    setRarities([]);
+    setSearchInput("");
+    setSearch("");
+    onSubCategory(null);
+  };
+  const filtered = status !== "all" || rarities.length > 0 || !!search || (showRarity && !!subCategory);
+
   const chips = [
     ...(status !== "all" ? [{ key: "status", label: STATUS_LABEL[status], onRemove: () => setStatus("all") }] : []),
     ...rarities.map((r) => ({ key: `rarity-${r}`, label: r[0]!.toUpperCase() + r.slice(1), onRemove: () => toggleRarity(r) })),
@@ -368,14 +380,10 @@ function OwnedMain({
         query={search}
         onOpenFilters={() => setFiltersOpen(true)}
         chips={chips}
-        onClearChips={() => {
-          setStatus("all");
-          setRarities([]);
-          onSubCategory(null);
-        }}
+        onClearChips={clearAll}
         search={<MySearch value={searchInput} onChange={setSearchInput} />}
       />
-      <OwnedGrid section={section} owned={owned} onSale={status === "on_sale"} />
+      <OwnedGrid section={section} owned={owned} onSale={status === "on_sale"} filtered={filtered} onClear={clearAll} />
     </BrowseLayout>
   );
 }
@@ -395,22 +403,21 @@ export function MyItemsView({
 }) {
   const shown = section === "creations" && storeOn ? "wearables" : section;
   const [filtersOpen, setFiltersOpen] = useState(false);
-  // A sub-category is held with the section it filters, and only ever applies to that section: a section change
-  // from anywhere (the sidebar, the header's My Assets, a ?section= link) leaves it behind.
-  const [picked, setPicked] = useState<{ section: MyItemsSection; key: string } | null>(null);
-  const subCategory = picked && picked.section === shown && sectionOfSub(picked.key) === shown ? picked.key : null;
+  // A sub-category filters the section it was picked in: any section change (the sidebar, the header's My Assets, a
+  // ?section= link, Back) drops it, as it drops the section's other filters (OwnedMain is keyed by section).
+  const [subCategory, setSubCategory] = useState<string | null>(null);
+  const [subFor, setSubFor] = useState(shown);
+  if (subFor !== shown) {
+    setSubFor(shown);
+    setSubCategory(null);
+  }
   const pick = (s: MyItemsSection | "creations") => {
     setFiltersOpen(false);
-    setPicked(null);
     onSection(s);
   };
-  // A sub-category picked from another section's group (the group is open while LAND shows) goes there first.
+  // Only the shown section's group is open (CategoryFilter collapses the others), so a picked sub-category is its.
   const pickSub = (key: string | null) => {
-    if (key === null) return setPicked(null);
-    const section = sectionOfSub(key);
-    if (!section) return;
-    if (section !== shown) pick(section);
-    setPicked({ section, key });
+    if (key === null || sectionOfSub(key) === shown) setSubCategory(key);
   };
   // As upstream: the Collectibles category nav (Wearables and Emotes open to their sub-categories), with no
   // "Shop All" and with "My Creations" as its extra entry while the store dashboard is off. dcl-one's own
@@ -434,7 +441,7 @@ export function MyItemsView({
         />
         <div className="shop-cats shop-myitems__cats">
           {(["land", "bids"] as const).map((s) => (
-            <button key={s} type="button" className="shop-cats__cat" data-selected={shown === s || undefined} aria-current={shown === s ? "page" : undefined} onClick={() => pick(s)}>
+            <button key={s} type="button" className="shop-cats__cat" data-selected={shown === s || undefined} aria-pressed={shown === s} onClick={() => pick(s)}>
               <span>{SECTION_LABEL[s]}</span>
             </button>
           ))}
