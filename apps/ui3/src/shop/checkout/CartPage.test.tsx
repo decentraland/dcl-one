@@ -421,9 +421,8 @@ describe("the cart page", () => {
 
   it("wallet rejection: the group fails as cancelled, nothing is bought, and the checkout can resume", async () => {
     const { demo } = renderCart({ session: "web3", lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat" }] });
-    await waitFor(() => expect(confirmButton()).toBeEnabled());
     demo.wallet.next = "reject";
-    await act(async () => fireEvent.click(confirmButton()));
+    await clickWhenEnabled(confirmButton);
     await screen.findByText("You cancelled the request in your wallet.");
     expect(demo.cart.getSnapshot().lines).toHaveLength(1);
     expect(screen.getByText("A purchase from this cart didn't finish")).toBeTruthy();
