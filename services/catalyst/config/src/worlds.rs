@@ -131,6 +131,14 @@ pub struct WorldsConfig {
     )]
     pub worlds_owner_reconcile_interval_secs: u64,
 
+    /// Wallets a world's access allow-list may hold.
+    #[arg(long, env = "ACCESS_MAX_WALLETS", default_value_t = 1000)]
+    pub access_max_wallets: u32,
+
+    /// Communities a world's access allow-list may hold.
+    #[arg(long, env = "ACCESS_MAX_COMMUNITIES", default_value_t = 50)]
+    pub access_max_communities: u32,
+
     /// Entries a deployed entity's `content` may list, at most the 10,000 file parts a deploy may upload.
     #[arg(long, env = "MAX_FILE_COUNT", default_value_t = 10_000, value_parser = clap::value_parser!(u32).range(1..=10_000))]
     pub max_file_count: u32,

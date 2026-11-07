@@ -136,7 +136,8 @@ difference not listed here is a gap, not a decision.
   `GET /world/{name}/permissions` reports the live holder and, like
   `/limits`, answers 503 while the authority cannot answer; the comms owner
   read for stream-key notices is unavailable then too. Neither falls back
-  to the stored owner. Publishes of one world are serialized, so a publish
+  to the stored owner. The owner-gated permission edits answer the same
+  503 (upstream: 500). Publishes of one world are serialized, so a publish
   by a new holder always sees the owner it replaces.
 - **Capacity check fails closed.** When the live occupancy of a world cannot
   be recovered, the comms mint answers 503 instead of counting zero
@@ -319,10 +320,25 @@ difference not listed here is a gap, not a decision.
 - **Settings events.** `PUT /world/{name}/settings` publishes no
   `WorldSettingsChangedEvent` or `WorldSpawnCoordinateSetEvent`; the
   explore crate reads the worlds tables directly.
+- **No settings events.** An access change is not published as a
+  `world-settings-changed` event; in-tree readers read the stored access
+  type.
 
 ## Permissions
 
 - **Community ids** in an allow-list must be UUIDs.
+- **Allow-list documents** are stored normalized: `GET .../permissions`
+  returns the access wallets lowercased and deduplicated, in the order they
+  were added, and the community ids as lowercase UUIDs, whatever spelling
+  and order were posted.
+- **Permission payloads** are checked more strictly: `deployment`,
+  `streaming` and access wallets must be addresses (400 `Invalid address:
+  <w>.`), `nft` must be a string, a `secret` that is not a non-empty string
+  is a 400 (upstream: 500 for a non-string), and a parcel coordinate outside
+  32 bits is 400 `Invalid parcels: …` (upstream stores it).
+- **Parcel holder lookups** (`POST .../permissions/{permission}/parcels`)
+  match the requested parcels in canonical form, so `00,01` finds a grant on
+  `0,1`.
 - **Removing a grant's last parcel** deletes the grant. Upstream keeps the
   row, which then becomes world-wide.
 - **Streaming permission** is enforced when a participant asks to stream,
