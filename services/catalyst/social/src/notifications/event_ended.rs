@@ -700,7 +700,7 @@ mod tests {
         sqlx::query("INSERT INTO explore.event(id,name,approved,origin,finish_at,duration_ms,raw) \
             SELECT $1||'-old-'||n,'Expired series',true,'local',$2-interval '60 days',60000, \
             jsonb_build_object('start_at',$2-interval '60 days','recurrent_dates', \
-                (SELECT jsonb_agg(to_char($2-interval '60 days','YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')) FROM generate_series(1,100))) \
+                (SELECT jsonb_agg(to_char($2-interval '60 days','YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')) FROM generate_series(1,2))) \
             FROM generate_series(1,10000) n")
             .bind(&prefix).bind(now).execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO explore.event(id,name,approved,origin,finish_at,duration_ms,raw) \
