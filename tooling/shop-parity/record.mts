@@ -48,6 +48,8 @@ if (process.argv.includes("--fill")) {
   const targets: Record<string, string> = { ...(live.manifest?.targets ?? {}) };
   const now = live.manifest?.recordedAt ? Date.parse(live.manifest.recordedAt) : Date.now();
   let current: PageSpec | null = null;
+  /** The targets a discover found in this run, on any viewport. */
+  const found = new Set<string>();
   const commit = spawnSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).stdout.trim();
   const run = () =>
     runAll(live, specs, selectViewports(arg("--viewports")), {
@@ -59,14 +61,24 @@ if (process.argv.includes("--fill")) {
       },
       onPage: async (side, page) => {
         if (side === "reference" && current?.discover) {
-          // targets starts from the previous manifest: a target not found this time is dropped, never kept from it.
+          // targets starts from the previous manifest. discover runs once per viewport: a target one of them found
+          // in this run stays, and one that a discover reports as not found, with no viewport finding it, is dropped
+          // rather than kept from the previous set.
           for (const [key, value] of Object.entries(await current.discover(page))) {
-            if (value == null) delete targets[key];
-            else targets[key] = value;
+            if (value != null) {
+              targets[key] = value;
+              found.add(key);
+            } else if (!found.has(key)) delete targets[key];
           }
         }
       },
-      onResult: (r) => console.log(`recorded ${r.page}@${r.viewport}: ${r.sides.reference.error ?? "reference ok"}, ${r.sides["dcl-one"].error ?? "dcl-one ok"}`),
+      onResult: (r) => {
+        console.log(`recorded ${r.page}@${r.viewport}: ${r.sides.reference.error ?? "reference ok"}, ${r.sides["dcl-one"].error ?? "dcl-one ok"}`);
+        // A reference that failed before discover ran read no target here: what no viewport found keeps the previous set's.
+        if (r.sides.reference.error && specs.some((s) => s.id === r.page && s.discover)) {
+          console.warn(`  ${r.page}@${r.viewport} read no targets: a target no viewport found in this run is the previous set's`);
+        }
+      },
     });
   // Saved even if the run dies midway: running the same command again goes on from what was read.
   const { results } = await savingAfter(live, run, () => ({
