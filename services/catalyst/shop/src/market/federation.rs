@@ -17,7 +17,11 @@
 //! item (the nft index; its envelope until published); an order only by an
 //! owner of a token of the item who holds no active lease on it (403); a
 //! trade record by anyone, for a known order (404). The writes sit behind
-//! `DATA_WRITES_ENABLED` (the router's gate).
+//! `DATA_WRITES_ENABLED` (the router's gate). A bid, a bid's accept and an
+//! order are the Marketplace's, refused before the preflight while its rollout
+//! is off (`features`); their cancels stay open. That gate is on a client's
+//! write only: bids and orders pulled from peers still enter the log, and the
+//! reads serve them (the Shop's pages hide them without the Marketplace).
 //!
 //! What changed: the five old tables (`market_bids_local`, ...) are the
 //! `kind` of one log, and their five BIGSERIALs are one `seq`, so the one

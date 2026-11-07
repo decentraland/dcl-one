@@ -258,6 +258,11 @@ const ROWS: &[Row] = &[
         "SHOP_FEATURE_FLAGS_URL",
         "https://feature-flags.decentraland.org",
     ),
+    upstream(
+        "mirrors",
+        "SHOP_FEATURE_FLAGS_ORIGIN",
+        "https://decentraland.org",
+    ),
     upstream("social analytics", "ANALYTICS_API_URL", ""),
     upstream(
         "community compliance",

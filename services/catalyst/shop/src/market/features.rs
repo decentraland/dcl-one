@@ -21,7 +21,9 @@ pub const APP: &str = "dapps";
 
 /// The Marketplace inside the Shop (apps/ui3 market/access.tsx): resales, bids, LAND, NAME resale, listing an
 /// owned token, favorites lists. Off, this node refuses them: a resale or a rental is not quoted, an NFT order or
-/// a bid is not accepted, and a list is not written.
+/// a bid is not accepted, a list is not written, a LAND rental is not listed, and the federation log takes no bid
+/// or order. The refusal holds on every mount of these routes, `/marketplace-api` included: scoping it to the
+/// Shop's paths would leave the same writes open one path over.
 pub const MARKETPLACE_FEATURES: &str = "shop-marketplace-features";
 
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -68,6 +70,11 @@ impl DappsFlags {
     }
 }
 
+/// The refusal's message, the same on every route that answers it.
+pub(crate) fn refusal() -> String {
+    format!("the Marketplace's features are off on this node ({APP}-{MARKETPLACE_FEATURES})")
+}
+
 fn document(marketplace: bool) -> Value {
     let flags = if marketplace {
         json!({ format!("{APP}-{MARKETPLACE_FEATURES}"): true })
@@ -93,12 +100,7 @@ impl MarketplaceState {
         if self.marketplace_features() {
             return Ok(());
         }
-        Err(super::wire::ApiError::http(
-            403,
-            format!(
-                "the Marketplace's features are off on this node ({APP}-{MARKETPLACE_FEATURES})"
-            ),
-        ))
+        Err(super::wire::ApiError::http(403, refusal()))
     }
 
     /// Reads the service (when configured) and applies the local overrides on top. A failed read keeps the last
@@ -151,6 +153,14 @@ impl MarketplaceState {
 pub(super) fn spawn_job(state: &Arc<MarketplaceState>, jobs: &Jobs) {
     let state = state.clone();
     let interval = state.flags_source.refresh.max(Duration::from_secs(10));
+    // The service answers by Referer: the site asked as decides the answer, so it is logged once.
+    if state.flags_source.url.is_empty() {
+        tracing::info!(
+            "dapps feature flags: no service configured, only this node's overrides count"
+        );
+    } else {
+        tracing::info!(url = %state.flags_source.url, origin = %state.flags_source.origin, "dapps feature flags");
+    }
     jobs.spawn_periodic(
         "shop-dapps-flags",
         PeriodicCfg::every(interval),

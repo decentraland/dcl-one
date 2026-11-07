@@ -446,7 +446,7 @@ pub struct ShopConfig {
     pub shop_feature_flags_url: String,
 
     /// The site the flags are asked for: the service answers by Referer (as sites' `FEATURE_FLAGS_ORIGIN`).
-    /// Empty asks as the origin of `SHOP_BASE_URL`.
+    /// The mirror posture asks as decentraland.org; empty asks as the origin of `SHOP_BASE_URL`.
     #[arg(long, env = "SHOP_FEATURE_FLAGS_ORIGIN", default_value = "")]
     pub shop_feature_flags_origin: String,
 

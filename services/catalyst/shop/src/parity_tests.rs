@@ -998,6 +998,10 @@ async fn the_marketplace_flag_reads_this_nodes_overrides_and_never_writes_the_sh
         .unwrap()
     };
     let before = stored().await;
+    // A run that failed before its cleanup leaves the override behind: start from none.
+    feature_flags::clear_local_flag(&pool, "dapps", key)
+        .await
+        .unwrap();
 
     // No service configured: only this node's overrides count, on top of an empty document.
     feature_flags::set_local_flag(&pool, "dapps", key, true)
