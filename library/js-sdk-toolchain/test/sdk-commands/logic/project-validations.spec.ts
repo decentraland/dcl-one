@@ -50,28 +50,28 @@ describe('isEditorScene', () => {
     expect(result).toBe(false)
   })
 
-  it('returns false when composite contains only asset-packs::Script', async () => {
+  it('returns false when composite contains only smart-items::Script', async () => {
     const fs = makeMockFs(true, {
       version: 1,
-      components: [{ name: 'asset-packs::Script' }]
+      components: [{ name: 'smart-items::Script' }]
     })
     const result = await isEditorScene({ fs } as any, WORKING_DIR)
     expect(result).toBe(false)
   })
 
-  it('returns true when composite contains a non-Script asset-packs:: component', async () => {
+  it('returns true when composite contains a non-Script smart-items:: component', async () => {
     const fs = makeMockFs(true, {
       version: 1,
-      components: [{ name: 'asset-packs::Trigger' }]
+      components: [{ name: 'smart-items::Trigger' }]
     })
     const result = await isEditorScene({ fs } as any, WORKING_DIR)
     expect(result).toBe(true)
   })
 
-  it('returns true when composite contains asset-packs::Script and a non-Script asset-packs:: component', async () => {
+  it('returns true when composite contains smart-items::Script and a non-Script smart-items:: component', async () => {
     const fs = makeMockFs(true, {
       version: 1,
-      components: [{ name: 'asset-packs::Script' }, { name: 'asset-packs::Trigger' }]
+      components: [{ name: 'smart-items::Script' }, { name: 'smart-items::Trigger' }]
     })
     const result = await isEditorScene({ fs } as any, WORKING_DIR)
     expect(result).toBe(true)
@@ -84,7 +84,7 @@ describe('isEditorScene', () => {
   })
 
   it('returns false when components is not an array', async () => {
-    const fs = makeMockFs(true, { version: 1, components: { name: 'asset-packs::Trigger' } })
+    const fs = makeMockFs(true, { version: 1, components: { name: 'smart-items::Trigger' } })
     const result = await isEditorScene({ fs } as any, WORKING_DIR)
     expect(result).toBe(false)
   })
@@ -98,12 +98,30 @@ describe('isEditorScene', () => {
     expect(result).toBe(false)
   })
 
-  it('returns true when composite contains multiple non-Script asset-packs:: components', async () => {
+  it('returns true when composite contains multiple non-Script smart-items:: components', async () => {
     const fs = makeMockFs(true, {
       version: 1,
-      components: [{ name: 'core::Transform' }, { name: 'asset-packs::Action' }, { name: 'asset-packs::State' }]
+      components: [{ name: 'core::Transform' }, { name: 'smart-items::Action' }, { name: 'smart-items::State' }]
     })
     const result = await isEditorScene({ fs } as any, WORKING_DIR)
     expect(result).toBe(true)
+  })
+
+  it('returns true when composite carries a legacy asset-packs:: component', async () => {
+    const fs = makeMockFs(true, {
+      version: 1,
+      components: [{ name: 'core::Transform' }, { name: 'asset-packs::Trigger' }]
+    })
+    const result = await isEditorScene({ fs } as any, WORKING_DIR)
+    expect(result).toBe(true)
+  })
+
+  it('returns false when composite contains only the legacy asset-packs::Script', async () => {
+    const fs = makeMockFs(true, {
+      version: 1,
+      components: [{ name: 'asset-packs::Script' }]
+    })
+    const result = await isEditorScene({ fs } as any, WORKING_DIR)
+    expect(result).toBe(false)
   })
 })

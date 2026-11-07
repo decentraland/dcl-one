@@ -4,6 +4,11 @@
     "declaration": true,
     "stripInternal": true,
     "outDir": ".",
+    "baseUrl": ".",
+    "paths": {
+      "@dcl/sdk": ["src/index.ts"],
+      "@dcl/sdk/*": ["src/*"]
+    },
     "removeComments": false
   },
   "include": ["src"],

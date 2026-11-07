@@ -1,18 +1,14 @@
-jest.mock(
-  '@dcl/inspector/node_modules/@dcl/asset-packs/dist/events',
-  () => ({
-    getActionEvents: jest.fn((entity) => ({
-      emit: jest.fn()
-    }))
-  }),
-  { virtual: true }
-)
+jest.mock('../../../packages/@dcl/sdk/src/smart-items/events', () => ({
+  getActionEvents: jest.fn((entity) => ({
+    emit: jest.fn()
+  }))
+}))
 
-import { getActionEvents } from '@dcl/inspector/node_modules/@dcl/asset-packs/dist/events'
-import { runScripts } from '../../../packages/@dcl/sdk-commands/src/logic/runtime-script'
+import { getActionEvents } from '../../../packages/@dcl/sdk/src/smart-items/events'
+import { runScripts } from '../../../packages/@dcl/sdk/src/smart-items/scripts'
 import { IEngine, Entity, EntityState } from '../../../packages/@dcl/ecs/dist'
 
-describe('runtime-script', () => {
+describe('smart-items/scripts', () => {
   let mockEngine: IEngine
   let addedSystems: Array<(dt: number) => void>
 

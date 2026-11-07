@@ -28,7 +28,13 @@
   },
   "overrides": [
     {
-      "files": ["packages/@dcl/ecs/**/*.ts", "packages/@dcl/sdk/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"],
+      "files": [
+        "packages/@dcl/ecs/**/*.ts",
+        "packages/@dcl/sdk/**/*.ts",
+        "packages/@dcl/sdk/**/*.tsx",
+        "scripts/**/*.ts",
+        "test/**/*.ts"
+      ],
       "rules": {
         "no-console": "off"
       }

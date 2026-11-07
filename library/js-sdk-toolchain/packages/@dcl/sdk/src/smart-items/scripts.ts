@@ -1,10 +1,8 @@
-/* eslint-disable no-console */
 import type { IEngine, Entity, EntityState } from '@dcl/ecs'
-import type { ActionRef } from '@dcl/inspector/node_modules/@dcl/asset-packs'
-import { getActionEvents } from '@dcl/inspector/node_modules/@dcl/asset-packs/dist/events'
+import type { ActionRef } from './types'
+import { getActionEvents } from './events'
 
 declare global {
-  // eslint-disable-next-line no-var
   var __DCL_SCRIPT_INSTANCES__: Map<string, { instance: any; entity: Entity; path: string }>
 }
 
@@ -156,7 +154,7 @@ function resolveScriptParams(params: Record<string, ScriptParam>): unknown[] {
  * Supports both functional-style scripts (with start/update functions) and class-based scripts.
  * Scripts are extracted at build time from composites.
  *
- * @internal This function is called automatically by the SDK entry point.
+ * This function is called automatically by the SDK entry point.
  * Users should not call this function directly.
  *
  * @param engine - The ECS engine instance
