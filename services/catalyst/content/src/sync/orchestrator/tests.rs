@@ -255,7 +255,9 @@ async fn bootstrap_callbacks_require_success_and_keep_parent_cancellation_scope(
         jobs.spawn("bootstrap-test", move |ctx| async move {
             let scope = ctx.clone();
             entered.send(ctx.cancel.clone()).unwrap();
-            run_sync_job(sync, HashSet::new(), ctx, || {
+            let (_peers_tx, peers) = tokio::sync::watch::channel(HashSet::new());
+            let retry_peers = Arc::new(tokio::sync::RwLock::new(Vec::new()));
+            run_sync_job(sync, peers, retry_peers, ctx, || {
                 observed.fetch_add(1, SeqCst);
                 registry.spawn_scoped(&scope, "after-bootstrap", |child| async move {
                     child.cancel.cancelled().await;
