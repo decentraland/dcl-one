@@ -35,8 +35,8 @@ export interface ShopNamesProps {
   onChange: (value: string) => void
   /** The field's focus, for the nametag's caret. */
   onFocusChange?: (focused: boolean) => void
-  /** The most it takes: one past the limit, so typing past it shows it. */
-  maxLength: number
+  /** The fewest letters a NAME has. */
+  minLength: number
   /** The limit the counter counts to. */
   limit: number
   /** What the field shows after the NAME while it has the focus: the account's `#` and its last four. */
@@ -62,7 +62,7 @@ export function ShopNames(props: ShopNamesProps): React.JSX.Element {
   )
 }
 
-function UniqueName({ value, onChange, onFocusChange, maxLength, limit, suffix, status, price, onClaim, onMakeOffer, onRetry }: ShopNamesProps): React.JSX.Element {
+function UniqueName({ value, onChange, onFocusChange, minLength, limit, suffix, status, price, onClaim, onMakeOffer, onRetry }: ShopNamesProps): React.JSX.Element {
   const invalid = status === 'tooLong' || status === 'taken' || status === 'banned'
   return (
     <section className={styles.hero} aria-labelledby="shop-names-title">
@@ -83,8 +83,8 @@ function UniqueName({ value, onChange, onFocusChange, maxLength, limit, suffix, 
               <input
                 className={styles.input}
                 aria-label="Your NAME"
+                // No maxLength: the page cleans what is typed or pasted first, then caps it.
                 value={value}
-                maxLength={maxLength}
                 placeholder="Write here"
                 spellCheck={false}
                 autoComplete="off"
@@ -100,7 +100,7 @@ function UniqueName({ value, onChange, onFocusChange, maxLength, limit, suffix, 
                 </span>
               )}
             </label>
-            <Feedback value={value} limit={limit} status={status} onMakeOffer={onMakeOffer} onRetry={onRetry} />
+            <Feedback value={value} minLength={minLength} limit={limit} status={status} onMakeOffer={onMakeOffer} onRetry={onRetry} />
           </div>
           <div className={styles.cta}>
             <Button
@@ -127,11 +127,12 @@ function UniqueName({ value, onChange, onFocusChange, maxLength, limit, suffix, 
 /** Under the field: its count while it is typed in, or what is wrong with the NAME. */
 function Feedback({
   value,
+  minLength,
   limit,
   status,
   onMakeOffer,
   onRetry
-}: Pick<ShopNamesProps, 'value' | 'limit' | 'status' | 'onMakeOffer' | 'onRetry'>): React.JSX.Element {
+}: Pick<ShopNamesProps, 'value' | 'minLength' | 'limit' | 'status' | 'onMakeOffer' | 'onRetry'>): React.JSX.Element {
   const count = `${value.length}/${limit}`
   return (
     <div id="shop-names-feedback" className={styles.feedback} role="status">
@@ -169,7 +170,7 @@ function Feedback({
       ) : (
         // The count shows while the field has the focus (the design's FocusedEditing), and a NAME too
         // short to register says so.
-        <span className={`${styles.count} ${status === 'short' ? '' : styles.onFocus}`.trim()}>{status === 'short' ? `${count} NAMEs need at least 2 characters` : count}</span>
+        <span className={`${styles.count} ${status === 'short' ? '' : styles.onFocus}`.trim()}>{status === 'short' ? `${count} NAMEs need at least ${minLength} characters` : count}</span>
       )}
     </div>
   )

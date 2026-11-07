@@ -35,6 +35,12 @@ type Setup = {
   path?: string;
 };
 
+/** Where the page left the URL. */
+const Where = () => {
+  const { pathname, search } = useLocation();
+  return <output data-testid="location">{pathname + search}</output>;
+};
+
 function setup(o: Setup) {
   const wallet = fakeWallet({
     account: BUYER,
@@ -60,7 +66,10 @@ function setup(o: Setup) {
   const offerSource = interimNameOffer({ client, reader: reader(1), chainId: 1 });
   render(
     <ShopHarness session={o.session} account={BUYER} provider={o.session === "web3" ? wallet : null} path={o.path ?? "/shop/names"} route="/shop/names" host={o.host}>
-      <NamesHub client={client} offerSource={offerSource} loadBanned={async () => ["banned"]} debounceMs={0} modal={{ readerFor: reader, portal: false, timing }} />
+      <>
+        <NamesHub client={client} offerSource={offerSource} loadBanned={async () => ["banned"]} debounceMs={0} modal={{ readerFor: reader, portal: false, timing }} />
+        <Where />
+      </>
     </ShopHarness>,
   );
   return { wallet, client };
@@ -123,6 +132,13 @@ describe("NAME registration search", () => {
     setup({ session: "web2", path: "/shop/names?name=Nacho" });
     expect(await screen.findByRole("dialog", { name: "Buy Nacho.dcl.eth" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Search for a NAME" })).toHaveValue("Nacho");
+  });
+
+  it("keeps the link's other parameters, and takes its NAME over a stashed top-up's", async () => {
+    sessionStorage.setItem(RESUME_NAME_KEY, "Stashed");
+    setup({ session: "web2", path: "/shop/names?name=Nacho&utm_source=bevy-web-client" });
+    expect(await screen.findByRole("dialog", { name: "Buy Nacho.dcl.eth" })).toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent("/shop/names?utm_source=bevy-web-client");
   });
 
   it("ignores a linked NAME that can't be registered", async () => {

@@ -31,6 +31,10 @@ interface Routes {
   registrarDown?: boolean
   /** The banned list answers once this settles. */
   bannedAfter?: Promise<void>
+  /** The banned list is down. */
+  bannedDown?: boolean
+  /** The credits quote is down. */
+  quoteDown?: boolean
 }
 
 /** The banned list, the credits quote and the registrar's `available` through the catalyst's read relay. */
@@ -40,9 +44,10 @@ function serve(routes: Routes = {}): ReturnType<typeof vi.fn> {
     const path = url.pathname
     if (path.endsWith('/dcl-lists/banned-names')) {
       await routes.bannedAfter
+      if (routes.bannedDown) return new Response('', { status: 503 })
       return Response.json({ data: routes.banned ?? [] })
     }
-    if (path.endsWith('/shop-api/v1/credit-quotes')) return Response.json({ items: [], amounts: [routes.credits ?? '94'] })
+    if (path.endsWith('/shop-api/v1/credit-quotes')) return routes.quoteDown ? new Response('', { status: 503 }) : Response.json({ items: [], amounts: [routes.credits ?? '94'] })
     if (path.includes('/rpc/')) {
       if (routes.registrarDown) return new Response('', { status: 503 })
       const body = JSON.parse(String(init?.body)) as { id: number; params: [{ data: string }] }
@@ -137,6 +142,37 @@ describe('the in-world Shop’s Names', () => {
     expect(field).toHaveAttribute('aria-invalid', 'true')
     expect(claim()).toBeDisabled()
     expect(nametag()).toHaveTextContent('CalabazaChoperia')
+  })
+
+  it('cleans a pasted NAME before capping it, so its letters are kept and the limit shows', async () => {
+    serve()
+    renderShop()
+    const field = await openNames()
+    await userEvent.click(field)
+    await userEvent.paste('Calabaza Chop-eria!!')
+    expect(field).toHaveValue('CalabazaChoperia')
+    expect(screen.getByText(/16\/15/)).toHaveTextContent('16/15Character Limit Reached')
+  })
+
+  it('offers a free NAME only with its Credits price, and asks again for it', async () => {
+    serve({ quoteDown: true })
+    renderShop()
+    const field = await openNames()
+    await userEvent.type(field, 'Carolo')
+    expect(await screen.findByText(/couldn’t check that NAME/)).toBeInTheDocument()
+    expect(claim()).toBeDisabled()
+    serve({ credits: '94' })
+    await userEvent.click(screen.getByRole('button', { name: 'TRY AGAIN' }))
+    await waitFor(() => expect(claim()).toBeEnabled())
+    expect(claim()).toHaveAccessibleName('Claim name for 94 Credits')
+  })
+
+  it('lets the registrar decide once the banned list fails', async () => {
+    serve({ bannedDown: true })
+    renderShop()
+    const field = await openNames()
+    await userEvent.type(field, 'Carolo')
+    await waitFor(() => expect(claim()).toBeEnabled())
   })
 
   it('counts while typed in, and shows the account’s # and last four', async () => {

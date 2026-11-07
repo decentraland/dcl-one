@@ -1,18 +1,16 @@
 // The in-world Shop's NAMEs: a typed NAME checked as the web Shop's NAMEs page checks it (its length, the
 // banned list, then the registrar on the Ethereum network the Shop registers on), and the Credits a NAME
-// costs. The registrar's answer is advisory: the purchase checks again.
+// costs. A free NAME is only available with that price: without a credits quote the web page offers it for
+// MANA alone, which it reads as taken. The registrar's answer is advisory: the purchase checks again.
 
 import { queryOptions, useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { shopClient } from '../../../shop/api/shop'
 import { creditsCeil } from '../../../shop/model/money'
 import { fetchBannedNames } from '../../../shop/names/api'
-import { checkNameAvailability, NAME_MAX_LENGTH, NAME_MIN_LENGTH, type NameAvailability } from '../../../shop/names/names'
+import { checkNameAvailability, NAME_CHECK_DEBOUNCE_MS, NAME_MAX_LENGTH, NAME_MIN_LENGTH, type NameAvailability } from '../../../shop/names/names'
 import { quoteNameCredits } from '../../../shop/names/offer'
 import type { ShopNameStatus } from './ui'
-
-/** How long the typing rests before the registrar is asked, as the web Shop's page waits. */
-export const NAME_CHECK_DEBOUNCE_MS = 400
 
 export const nameQueries = {
   banned: () =>
@@ -79,8 +77,14 @@ export function useNameCheck(name: string, enabled: boolean): NameCheck {
               ? 'checking'
               : availability.isError
                 ? 'error'
-                : availability.data === 'available'
-                  ? 'available'
-                  : 'taken'
-  return { status, price: price.data ?? null, retry: () => void availability.refetch() }
+                : availability.data !== 'available'
+                  ? 'taken'
+                  : price.isPending || (price.data == null && price.isFetching)
+                    ? 'checking'
+                    : price.data == null
+                      ? 'error'
+                      : 'available'
+  // TRY AGAIN asks again for what failed: the registrar, or the price.
+  const retry = (): void => void (availability.isError ? availability.refetch() : price.refetch())
+  return { status, price: price.data ?? null, retry }
 }

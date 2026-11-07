@@ -19,7 +19,7 @@ import { presentPayment } from "../payment/present";
 import { useLandWallet } from "../land/useLandWallet";
 import { fetchBannedNames } from "./api";
 import NameBuyModal, { type NameBuyModalProps } from "./NameBuyModal";
-import { NAME_INVALID_TEXT, NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput, validateName } from "./names";
+import { NAME_CHECK_DEBOUNCE_MS, NAME_INVALID_TEXT, NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput, validateName } from "./names";
 import { useOfferSource } from "../detail/offers";
 import { interimNameOffer, NameAlreadyRegisteredError, nameLabel, quoteNameCredits, seamNameOffer, type NameOfferSource } from "./offer";
 import { takeNameResume } from "./resume";
@@ -77,7 +77,7 @@ function useTypedPlaceholder(words: readonly string[], enabled: boolean): string
   return enabled && frames.length ? frames[i % frames.length]!.text : "";
 }
 
-export default function NamesPage({ client, offerSource, loadBanned, debounceMs = 400, modal, resaleHref = (n) => `/shop/names?section=resale&search=${encodeURIComponent(n)}` }: NamesPageProps) {
+export default function NamesPage({ client, offerSource, loadBanned, debounceMs = NAME_CHECK_DEBOUNCE_MS, modal, resaleHref = (n) => `/shop/names?section=resale&search=${encodeURIComponent(n)}` }: NamesPageProps) {
   const wallet = useLandWallet();
   const location = useLocation();
   const navigate = useNavigate();

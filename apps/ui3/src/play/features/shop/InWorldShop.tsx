@@ -15,9 +15,10 @@ import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
 import { defaultWorn, wornUrns } from '../../../shop/discovery/lib/outfit'
 import { BASE_FEMALE, BASE_MALE, type BodyShapeUrn } from '../../../shop/detail/lib/bodyShape'
 import { REMOTE_FLAG } from '../../../shop/discovery/lib/remoteFlags'
-import { NAME_MAX_LENGTH } from '../../../shop/names/names'
+import { NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput } from '../../../shop/names/names'
 import { Button, Chip, ChevronDown, ChevronLeft, EmptyState, MaskIcon, OptionMenu, Pager, ScrollThumb, SearchField, showConfirm, showToast, Spinner, Tabs, type TabItem } from '../../design'
 import { userNameColor } from '../../engine/nameColor'
+import { addressSuffix } from '../../engine/profileEdit'
 import type { PreviewFocus, Wearable } from '../../engine/protocol'
 import { registerCancelLayer } from '../../lib/cancelLayers'
 import { subscribeHudScale } from '../../lib/hudScale'
@@ -419,8 +420,9 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     setDraft('')
     patch({ ...defaultFilters(kind) })
   }
-  // The NAME field keeps letters and digits only, one past the limit at most.
-  const typeName = (value: string): void => setNameDraft(value.replace(/[^a-zA-Z0-9]/g, '').slice(0, NAME_TYPED_MAX))
+  // The NAME field keeps letters and digits only, one past the limit at most: cleaned first, so a pasted NAME
+  // loses its punctuation, not its letters.
+  const typeName = (value: string): void => setNameDraft(sanitizeNameInput(value, NAME_TYPED_MAX))
   // A NAME is registered on the web Shop, its NAMEs page opening on it; a taken one's owner takes an offer
   // on its bid page on the Marketplace, listed or not; RESALE NAME browses the NAMEs on sale there.
   const claimName = (): void => void openWebShop(webNameUrl(nameDraft))
@@ -571,9 +573,9 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                 value={nameDraft}
                 onChange={typeName}
                 onFocusChange={setNameFocused}
-                maxLength={NAME_TYPED_MAX}
+                minLength={NAME_MIN_LENGTH}
                 limit={NAME_MAX_LENGTH}
-                suffix={p?.address != null && p.address.length > 4 ? `#${p.address.slice(-4).toLowerCase()}` : null}
+                suffix={addressSuffix(p?.address ?? '') || null}
                 status={nameCheck.status}
                 price={nameCheck.price}
                 onClaim={claimName}

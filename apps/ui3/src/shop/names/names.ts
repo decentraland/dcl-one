@@ -74,9 +74,12 @@ export const NAME_INVALID_TEXT: Record<Exclude<NameInvalidReason, "empty">, stri
   "has-spaces": "NAMEs can't contain spaces.",
 };
 
-/** Keeps a typed value registrable: drops anything but letters and digits and caps the length. */
-export function sanitizeNameInput(raw: string): string {
-  return raw.replace(/[^a-zA-Z0-9]/g, "").slice(0, NAME_MAX_LENGTH);
+/** How long typing rests before a NAME is checked. */
+export const NAME_CHECK_DEBOUNCE_MS = 400;
+
+/** Keeps a typed value registrable: drops anything but letters and digits and caps the length (at `max`). */
+export function sanitizeNameInput(raw: string, max: number = NAME_MAX_LENGTH): string {
+  return raw.replace(/[^a-zA-Z0-9]/g, "").slice(0, max);
 }
 
 /** The registrar token of a NAME: `uint256(keccak256(lower(label)))`, decimal. */
