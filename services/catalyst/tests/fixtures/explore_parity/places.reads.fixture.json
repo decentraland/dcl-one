@@ -2805,16 +2805,19 @@
     "id": "places.status.shape", "area": "places", "request": {"method": "GET", "path": "/api/status"},
     "expected": {
       "status": 200, "content_type": "application/json", "body_match": "shape",
-      "shape": {"envelope": ["ok", "data"], "data_type": "object", "item_keys": ["image", "version", "timestamp"]}
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "object",
+        "item_keys": ["image", "version", "timestamp", "catalogue", "configured_mirrors", "mirrors"]
+      }
     },
     "source": {
-      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "kind": "accepted", "repo": "decentraland/places@e660fbc2",
       "refs": [
         "src/server.ts:78", "decentraland-gatsby@9.0.1 dist/entities/Route/routes/status.js:9-26",
         "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleAPI.js:8-16",
         "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:39-59"
       ]
     },
-    "notes": "status() without an extra handler answers `{ok: true, data: {image, version, timestamp}}`; image/version come from the IMAGE env (`events:<ts>` by default) and are not asserted. Open: strict three fields as here, or dcl-one's superset with `catalogue`, `mirrors`, `configured_mirrors` kept on this path (else moved to `/v1/status`). The entry asserts upstream's shape until that is settled."
+    "notes": "status() without an extra handler answers `{ok: true, data: {image, version, timestamp}}`; image/version come from the IMAGE env (`events:<ts>` by default) and are not asserted. dcl-one's accepted answer: the router's `status` handler (`explore/src/lib.rs`) adds `catalogue`, `configured_mirrors` and `mirrors`, the node's mirror state (ADR 2026-11-05, 'Supersets kept')."
   }
 ]
