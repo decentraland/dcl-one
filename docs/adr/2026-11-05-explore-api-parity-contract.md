@@ -121,7 +121,9 @@ leased job with bounded retries and retention. The job delivers each notice at l
 once. A crash after the Slack request and before the row completes sends the notice
 again, and Slack has no idempotency key that drops the copy. While the database has the
 table `explore.event_moderation_hooks`, every pass of the job first moves its pending
-rows into the outbox.
+rows into the outbox; the release `schemas/releases/explore-retired-hook-tables.sql`
+drops that table and the unused `explore.event_upcoming_hooks` once every replica
+runs this binary.
 
 ## Like rates
 
