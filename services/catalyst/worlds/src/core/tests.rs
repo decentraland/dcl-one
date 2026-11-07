@@ -5253,6 +5253,12 @@ async fn deleting_an_address_grant_requires_a_valid_world() {
 /// The whole worlds router as `serve` mounts it, over the fixture's pool and
 /// blob store.
 async fn served_app(f: &Fixture) -> Router {
+    let (worlds, blobs) = served_states(f);
+    served_app_over(f, worlds, blobs).await
+}
+
+/// The read states `served_app` mounts, for a test that seeds them first.
+fn served_states(f: &Fixture) -> (Arc<crate::WorldsState>, Arc<crate::content::ContentState>) {
     let worlds = Arc::new(crate::WorldsState::new(
         f.pool.clone(),
         f.storage.clone(),
@@ -5265,6 +5271,14 @@ async fn served_app(f: &Fixture) -> Router {
         crate::content::Settings::for_tests(),
         f.storage.clone(),
     ));
+    (worlds, blobs)
+}
+
+async fn served_app_over(
+    f: &Fixture,
+    worlds: Arc<crate::WorldsState>,
+    blobs: Arc<crate::content::ContentState>,
+) -> Router {
     let stage5 = crate::Stage5 {
         core: f.state.clone(),
         storage: Arc::new(crate::storage::StorageState::new(
@@ -5436,6 +5450,236 @@ async fn worlds_contents_sniff_and_answer_legacy_sha256_keys() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// WR-06: the prefix-only reads carry the CORS layer the worlds routes do (a
+/// cross-origin GET is answered, a preflight is a 204), as upstream's
+/// server-wide CORS answers every path.
+#[tokio::test]
+async fn worlds_prefix_reads_answer_cors_and_preflights() {
+    let Some(f) = fixture().await else { return };
+    let app = served_app(&f).await;
+    let png = bytes::Bytes::from([&PNG_MAGIC[..], Uuid::new_v4().as_bytes()].concat());
+    let png_cid = hash_bytes_v1(&png);
+    f.storage.store(&png_cid, png).await.unwrap();
+    let origin = "https://explorer.example.org";
+    for path in [
+        format!("{NEST}/status"),
+        format!("{NEST}/contents/{png_cid}"),
+        format!("{NEST}/ipfs/{png_cid}"),
+        format!("{NEST}/openapi.json"),
+        format!("{NEST}/available-content?cid={png_cid}"),
+        format!("{NEST}/health/live"),
+    ] {
+        for method in ["GET", "OPTIONS"] {
+            let (status, headers, _) =
+                served_with(&app, method, &path, &[("origin", origin)]).await;
+            let want = if method == "GET" {
+                StatusCode::OK
+            } else {
+                StatusCode::NO_CONTENT
+            };
+            assert_eq!(status, want, "{method} {path}");
+            assert_eq!(
+                headers[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+                origin,
+                "{method} {path}"
+            );
+        }
+    }
+}
+
+async fn served_with(
+    app: &Router,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+    let mut request = Request::builder().method(method).uri(path);
+    for (k, v) in headers {
+        request = request.header(*k, *v);
+    }
+    let response = app
+        .clone()
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let (status, headers) = (response.status(), response.headers().clone());
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, headers, body.to_vec())
+}
+
+/// `content-file-handler.ts`: a miss is a bare 404 (WR-03), HEAD ignores
+/// `Range` (WR-05), and `file-type`'s answers for fonts and ISO-BMFF brands
+/// (WR-04).
+#[tokio::test]
+async fn worlds_contents_answer_wcs_misses_heads_and_types() {
+    let Some(f) = fixture().await else { return };
+    let app = served_app(&f).await;
+    let missing = hash_bytes_v1(Uuid::new_v4().as_bytes());
+    for path in [
+        format!("{NEST}/contents/{missing}"),
+        format!("{NEST}/ipfs/{missing}"),
+        format!("{NEST}/contents/not-a-key"),
+    ] {
+        let (status, _, body) = served_with(&app, "GET", &path, &[]).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+        assert!(
+            body.is_empty(),
+            "{path}: {}",
+            String::from_utf8_lossy(&body)
+        );
+    }
+
+    let woff2 = [&b"wOF2\x00\x01\x00\x00"[..], Uuid::new_v4().as_bytes()].concat();
+    let woff2_cid = hash_bytes_v1(&woff2);
+    f.storage
+        .store(&woff2_cid, bytes::Bytes::from(woff2.clone()))
+        .await
+        .unwrap();
+    let path = format!("{NEST}/contents/{woff2_cid}");
+    let range = [("range", "bytes=0-3")];
+    let (status, headers, _) = served_with(&app, "HEAD", &path, &range).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_LENGTH], woff2.len().to_string());
+    assert!(headers.get(header::CONTENT_RANGE).is_none());
+    assert_eq!(headers[header::CONTENT_TYPE], "font/woff2");
+    let (status, headers, body) = served_with(&app, "GET", &path, &range).await;
+    assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(body, b"wOF2");
+    assert_eq!(headers[header::CONTENT_TYPE], "font/woff2");
+
+    let m4a = [
+        &b"\x00\x00\x00\x20ftypM4A \x00\x00\x00\x00"[..],
+        Uuid::new_v4().as_bytes(),
+    ]
+    .concat();
+    let m4a_cid = hash_bytes_v1(&m4a);
+    f.storage
+        .store(&m4a_cid, bytes::Bytes::from(m4a))
+        .await
+        .unwrap();
+    let (_, ty, _) = served(&app, "GET", &format!("{NEST}/contents/{m4a_cid}")).await;
+    assert_eq!(ty.as_deref(), Some("audio/x-m4a"));
+}
+
+/// `URLSearchParams.getAll('cid')` reads only `cid` (WR-24), and every
+/// requested cid is listed, a denylisted one as not held (WR-11).
+#[tokio::test]
+async fn available_content_reads_literal_cids_and_lists_denylisted_ones() {
+    let Some(f) = fixture().await else { return };
+    let held = bytes::Bytes::from(Uuid::new_v4().as_bytes().to_vec());
+    let held_cid = hash_bytes_v1(&held);
+    f.storage.store(&held_cid, held).await.unwrap();
+    let denied = bytes::Bytes::from(Uuid::new_v4().as_bytes().to_vec());
+    let denied_cid = hash_bytes_v1(&denied);
+    f.storage.store(&denied_cid, denied).await.unwrap();
+    let (worlds, blobs) = served_states(&f);
+    blobs.denylist.add(&denied_cid);
+    let app = served_app_over(&f, worlds, blobs).await;
+
+    let body = expect(
+        &app,
+        Case::new(
+            "get",
+            format!("{NEST}/available-content?cid%5B%5D={held_cid}&cid%5B0%5D={held_cid}"),
+        ),
+        400,
+    )
+    .await;
+    assert_eq!(
+        body,
+        json!({ "error": "Bad request", "message": "At least one cid query parameter is required." })
+    );
+    let body = expect(
+        &app,
+        Case::new(
+            "get",
+            format!(
+                "{NEST}/available-content?cid={denied_cid}&cid={held_cid}&cid%5B%5D=x&cid={denied_cid}"
+            ),
+        ),
+        200,
+    )
+    .await;
+    assert_eq!(
+        body,
+        json!([
+            { "cid": denied_cid, "available": false },
+            { "cid": held_cid, "available": true },
+        ])
+    );
+}
+
+/// `/index` (`worlds-indexer.ts`): a deny-listed world is not listed (WR-17),
+/// missing fields are `''`, left out or `Date.now()` (WR-18), and the
+/// thumbnail links the worlds `/contents` (WR-12).
+#[tokio::test]
+async fn index_leaves_out_banned_worlds_and_answers_upstream_fields() {
+    let Some(f) = fixture().await else { return };
+    let (listed, banned) = (world_name(), world_name());
+    for world in [&listed, &banned] {
+        let owner = Wallet::random();
+        f.names.set(&owner.address, world.label());
+        let d = deployment(&owner, world, "Indexed", "0,0", &["0,0"]).await;
+        post_entity(&f.app, &d, 200).await;
+    }
+    let (worlds, blobs) = served_states(&f);
+    worlds.names.seed(vec![banned.label().to_uppercase()]);
+    let app = served_app_over(&f, worlds, blobs).await;
+
+    // A page size of its own: the index memo is process-wide (other tests'
+    // worlds may share the page).
+    let body = expect(&app, Case::new("get", "/index?limit=9871"), 200).await;
+    let entry = |world: &WorldName| {
+        body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["name"] == world.key())
+            .cloned()
+    };
+    assert!(entry(&banned).is_none(), "{body}");
+    let listed = entry(&listed).expect("the allowed world is listed");
+    let scene = &listed["scenes"][0];
+    assert_eq!(scene["title"], "Indexed");
+    assert_eq!(scene["description"], "");
+    assert!(scene.get("runtimeVersion").is_none(), "{scene}");
+    assert!(scene["timestamp"].as_i64().unwrap() > 0);
+    let thumb = scene["thumbnail"].as_str().unwrap();
+    assert!(
+        thumb.starts_with("https://worlds.example.org/worlds-content-server/contents/"),
+        "{thumb}"
+    );
+}
+
+/// `getEntityForWorlds`: a pointer is looked up as sent, so surrounding
+/// whitespace finds nothing (WR-14), and `metadata.owner` is the row's owner,
+/// `null` when it has none (WR-15).
+#[tokio::test]
+async fn active_entities_look_up_pointers_as_sent_and_fold_a_null_owner() {
+    let Some(f) = fixture().await else { return };
+    let world = world_name();
+    let owner = Wallet::random();
+    f.names.set(&owner.address, world.label());
+    let d = deployment(&owner, &world, "Active", "0,0", &["0,0"]).await;
+    post_entity(&f.app, &d, 200).await;
+    let active = |pointer: String| {
+        Case::new("post", "/entities/active").json(&json!({ "pointers": [pointer] }))
+    };
+
+    let body = expect(&f.app, active(format!(" {}", world.key())), 200).await;
+    assert_eq!(body, json!([]));
+    sqlx::query("UPDATE worlds.worlds SET owner = NULL WHERE name = $1")
+        .bind(world.key())
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let body = expect(&f.app, active(world.display().to_uppercase()), 200).await;
+    assert_eq!(body[0]["id"], json!(d.entity_id));
+    assert_eq!(body[0]["metadata"]["owner"], Value::Null);
 }
 
 /// WCS's status checks answer under the worlds prefix.

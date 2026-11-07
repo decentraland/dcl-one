@@ -218,9 +218,13 @@ pub async fn list_scenes_full(
 
 /// The scenes of one page of unblocked worlds (name order), projected to
 /// what the index summary reads: timestamp, display, runtimeVersion and the
-/// one content entry the thumbnail names.
+/// one content entry the thumbnail names. `banned` holds the deny list's
+/// lowercased entries; a world whose name, lowercased with its first `.eth`
+/// and first `.dcl` removed (`names::normalize_world_name`), is one of them is
+/// left out before paging.
 pub async fn list_index_scenes(
     pool: &PgPool,
+    banned: &[String],
     limit: i64,
     offset: i64,
 ) -> AppResult<Vec<(String, WorldScene)>> {
@@ -230,6 +234,8 @@ pub async fn list_index_scenes(
              FROM worlds.world_scenes ws
              JOIN worlds.worlds w ON lower(w.name) = lower(ws.world_name)
              WHERE w.blocked_since IS NULL
+               AND regexp_replace(regexp_replace(lower(ws.world_name), '\.eth', ''), '\.dcl', '')
+                   <> ALL($3::text[])
              ORDER BY ws.world_name
              LIMIT $1 OFFSET $2
            )
@@ -250,6 +256,7 @@ pub async fn list_index_scenes(
     )
     .bind(limit)
     .bind(offset)
+    .bind(banned)
     .fetch_all(pool)
     .await?;
     Ok(rows

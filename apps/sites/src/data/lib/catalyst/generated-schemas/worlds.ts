@@ -241,12 +241,12 @@ export const FederationRefreshResponseSchema = z.object({
 
 export const IndexSceneSummarySchema = z.object({
   id: z.string(),
-  title: z.string().nullable(),
-  description: z.string().nullable(),
-  thumbnail: z.string().nullable(),
+  title: z.string(),
+  description: z.string(),
+  thumbnail: z.string().optional(),
   pointers: z.array(z.string()),
-  runtimeVersion: z.string().nullable(),
-  timestamp: z.number().nullable(),
+  runtimeVersion: z.string().optional(),
+  timestamp: z.number(),
 });
 
 export const WorldIndexEntrySchema = z.object({

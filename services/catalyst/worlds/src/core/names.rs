@@ -35,6 +35,12 @@ impl BannedNames {
         }
     }
 
+    /// The entries as [`Self::allows`] compares them (lowercased), for a SQL filter
+    /// over `lower(name)` with the first `.eth` and the first `.dcl` removed.
+    pub fn normalized(&self) -> Vec<String> {
+        self.normalized.iter().cloned().collect()
+    }
+
     pub fn banned_names(&self) -> Vec<String> {
         self.raw.iter().map(|n| strip_suffixes(n)).collect()
     }

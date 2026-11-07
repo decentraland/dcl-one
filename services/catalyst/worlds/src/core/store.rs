@@ -1137,7 +1137,8 @@ pub async fn scene_base_parcel(
 }
 
 /// `POST /entities/active`: the newest scene of each named world, with the
-/// entity id and the world owner folded into the entity as the old route did.
+/// entity id and the world owner (`null` when the row has none) folded into
+/// the entity as the old route did.
 pub async fn entities_for_worlds(
     pool: &PgPool,
     worlds: &[WorldName],
@@ -1167,8 +1168,8 @@ pub async fn entities_for_worlds(
                 let metadata = obj
                     .entry("metadata")
                     .or_insert_with(|| Value::Object(serde_json::Map::new()));
-                if let (Some(meta_obj), Some(owner)) = (metadata.as_object_mut(), owner) {
-                    meta_obj.insert("owner".into(), Value::String(owner));
+                if let Some(meta_obj) = metadata.as_object_mut() {
+                    meta_obj.insert("owner".into(), owner.map_or(Value::Null, Value::String));
                 }
             }
             entity

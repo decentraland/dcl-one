@@ -180,11 +180,12 @@ pub fn build_about(
     }
 
     let base_url = &cfg.public_url;
+    let contents_url = cfg.content_server_url();
     let scenes_urn: Vec<String> = scenes
         .iter()
         .map(|s| {
             format!(
-                "urn:decentraland:entity:{}?=&baseUrl={base_url}/contents/",
+                "urn:decentraland:entity:{}?=&baseUrl={contents_url}/contents/",
                 s.entity_id
             )
         })
@@ -220,7 +221,7 @@ pub fn build_about(
 
     let url_for_file = |filename: &Option<String>, default_image: &str| -> String {
         match filename {
-            Some(f) => format!("{base_url}/contents/{f}"),
+            Some(f) => format!("{contents_url}/contents/{f}"),
             None => default_image.to_string(),
         }
     };
@@ -256,7 +257,7 @@ pub fn build_about(
                 textures: rt
                     .skybox_textures
                     .iter()
-                    .map(|t| format!("{base_url}/contents/{t}"))
+                    .map(|t| format!("{contents_url}/contents/{t}"))
                     .collect(),
             },
             realm_name: rt.name,
@@ -586,7 +587,7 @@ mod tests {
         assert_eq!(
             v["configurations"]["scenesUrn"],
             json!([
-                "urn:decentraland:entity:bafkreientity?=&baseUrl=https://worlds.example.org/contents/"
+                "urn:decentraland:entity:bafkreientity?=&baseUrl=https://worlds.example.org/worlds-content-server/contents/"
             ])
         );
         assert_eq!(v["configurations"]["realmName"], "mirrored.dcl.eth");
@@ -600,13 +601,13 @@ mod tests {
         );
         assert_eq!(
             v["configurations"]["skybox"]["textures"],
-            json!(["https://worlds.example.org/contents/bafkreisky1"]),
+            json!(["https://worlds.example.org/worlds-content-server/contents/bafkreisky1"]),
             "a texture that names no content entry is dropped"
         );
         assert_eq!(v["configurations"]["minimap"]["enabled"], true);
         assert_eq!(
             v["configurations"]["minimap"]["dataImage"],
-            "https://worlds.example.org/contents/bafkreiminimap"
+            "https://worlds.example.org/worlds-content-server/contents/bafkreiminimap"
         );
         assert_eq!(
             v["configurations"]["minimap"]["estateImage"], "http://127.0.0.1:5162/v1/estatemap.png",
