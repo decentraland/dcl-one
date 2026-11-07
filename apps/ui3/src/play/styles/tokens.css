@@ -28,6 +28,7 @@
   --white-10: rgba(255, 255, 255, 0.1); /* DCL/White10% — dividers */
   --shop-card-hover: rgba(255, 255, 255, 0.2); /* DCL/White20% — the Shop cart's hovered card */
   --pale-black: #43404a; /* DCL/Pale Black — the Shop toast's rim */
+  --silver: #a09ba8; /* DCL/Silver — the NAME field's placeholder and suffix, an empty nametag */
   --divider-strong: rgba(255, 255, 255, 0.2); /* list section hairlines (friends) */
   --panel-translucent: rgba(0, 0, 0, 0.72); /* see-through side panel over the world */
   --panel-head: rgba(0, 0, 0, 0.55); /* header band layered on --panel-translucent */
@@ -233,6 +234,9 @@
   --type-30: 30px;
   --type-32: 32px;
   --type-36: 36px;
+  --type-60: 60px;
+  --type-shop-nametag: 32.44px; /* the Shop's NAMEs nametag over the avatar: the 18px nametag at 1.802× */
+  --h2-tracking: -0.5px; /* the design's typography/h2 (Inter Semi Bold 60) */
 
   /* Lobby cards. Translucent values are measured on screen against the parity capture, not
      copied from layout alphas (those blend in linear space). */
@@ -256,6 +260,7 @@
   --rail-arrow-pressed: rgb(13, 13, 15);
   --ease-outcubic: cubic-bezier(0.215, 0.61, 0.355, 1);
   --type-96: 96px;
+  --fw-light: 300;
   --fw-regular: 400;
   --fw-medium: 500;
   --fw-semibold: 600;

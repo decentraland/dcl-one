@@ -10,15 +10,12 @@ import { Button, ModalShell, Select, Tabs, TextInput, openPopup, type TabItem } 
 import { useSession } from '../session/SessionContext'
 import { splitName } from '../../lib/identity'
 import { NAME_MAX, isValidName } from './profileFields'
+import { addressSuffix } from '../../engine/profileEdit'
 import styles from './NameEditModal.module.css'
 
 /** Where a NAME is bought. Same destination as the communities modal's "Get a NAME". */
 const NAMES_URL = 'https://decentraland.org/marketplace/names/claim'
 
-/** What the protocol appends to a non-claimed name: the last four characters of the address (the
- *  engine builds nametags the same way — see `crates/avatar/src/lib.rs`). Derived from the address
- *  rather than read off the current name, which carries no suffix at all while a NAME is claimed. */
-const addressSuffix = (address: string): string => (address === '' ? '' : `#${address.slice(-4)}`)
 
 type Tab = 'unique' | 'custom'
 const NAME_TABS: TabItem<Tab>[] = [
@@ -32,6 +29,8 @@ export function NameEditModal({ onClose }: { onClose: () => void }): React.JSX.E
   const profile = session.profile.data
   const currentName = profile?.name ?? ''
   const { base } = splitName(currentName)
+  // Derived from the address rather than read off the current name, which carries no suffix at all
+  // while a NAME is claimed.
   const suffix = addressSuffix(profile?.address ?? '')
   const claimed = profile?.hasClaimedName === true
 

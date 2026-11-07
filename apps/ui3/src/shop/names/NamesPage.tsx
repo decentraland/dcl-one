@@ -19,7 +19,7 @@ import { presentPayment } from "../payment/present";
 import { useLandWallet } from "../land/useLandWallet";
 import { fetchBannedNames } from "./api";
 import NameBuyModal, { type NameBuyModalProps } from "./NameBuyModal";
-import { NAME_INVALID_TEXT, NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput, validateName } from "./names";
+import { NAME_CHECK_DEBOUNCE_MS, NAME_INVALID_TEXT, NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput, validateName } from "./names";
 import { useOfferSource } from "../detail/offers";
 import { interimNameOffer, NameAlreadyRegisteredError, nameLabel, quoteNameCredits, seamNameOffer, type NameOfferSource } from "./offer";
 import { takeNameResume } from "./resume";
@@ -77,7 +77,7 @@ function useTypedPlaceholder(words: readonly string[], enabled: boolean): string
   return enabled && frames.length ? frames[i % frames.length]!.text : "";
 }
 
-export default function NamesPage({ client, offerSource, loadBanned, debounceMs = 400, modal, resaleHref = (n) => `/shop/names?section=resale&search=${encodeURIComponent(n)}` }: NamesPageProps) {
+export default function NamesPage({ client, offerSource, loadBanned, debounceMs = NAME_CHECK_DEBOUNCE_MS, modal, resaleHref = (n) => `/shop/names?section=resale&search=${encodeURIComponent(n)}` }: NamesPageProps) {
   const wallet = useLandWallet();
   const location = useLocation();
   const navigate = useNavigate();
@@ -114,8 +114,15 @@ export default function NamesPage({ client, offerSource, loadBanned, debounceMs 
   }, [value, placeholder]);
 
   useEffect(() => {
-    const resume = typeof navResume === "string" && nameLabel(navResume) ? navResume : takeNameResume();
-    if (navResume) navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+    // A link may name the NAME to register (`?name=`, the in-world Shop's CLAIM NAME): taken out of the URL
+    // once read, as a navigation's resume is.
+    const params = new URLSearchParams(location.search);
+    const linked = params.get("name");
+    params.delete("name");
+    const rest = params.toString();
+    const resume =
+      typeof navResume === "string" && nameLabel(navResume) ? navResume : linked !== null && nameLabel(linked) ? linked : takeNameResume();
+    if (navResume || linked !== null) navigate(`${location.pathname}${rest ? `?${rest}` : ""}`, { replace: true, state: null });
     if (!resume) return;
     setValue(resume);
     setPendingResume(resume);
