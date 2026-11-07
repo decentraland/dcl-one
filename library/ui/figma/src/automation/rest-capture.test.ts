@@ -987,4 +987,27 @@ describe('when artwork paints outside its node box', () => {
     }
     expect(() => degenerateArtworkIds(broken)).toThrow('Inconsistent render bounds: logo "Frame 1"')
   })
+
+  describe.each([
+    ['zero width', { x: 98.5, y: 198.5, width: 0, height: 39 }],
+    ['negative height', { x: 98.5, y: 198.5, width: 39, height: -1 }]
+  ])('and visible non-degenerate artwork has %s render bounds', (_, bounds) => {
+    let broken: LiveNode
+
+    beforeEach(() => {
+      broken = { ...logo, absoluteRenderBounds: bounds }
+    })
+
+    it('should refuse export selection instead of choosing cropped bounds', () => {
+      expect(() => degenerateArtworkIds(broken)).toThrow(
+        'Inconsistent render bounds: logo "Frame 1"'
+      )
+    })
+
+    it('should refuse capture even if an artwork export is supplied', () => {
+      expect(() => captureNode(broken, new Map([['logo', svg]]))).toThrow(
+        'Inconsistent render bounds: logo "Frame 1"'
+      )
+    })
+  })
 })

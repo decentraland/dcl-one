@@ -148,7 +148,7 @@ function renderBounds(node: LiveNode) {
   const { x, y, width, height } = rendered
   const finite = (value: unknown): value is number =>
     typeof value === 'number' && Number.isFinite(value)
-  if (!finite(x) || !finite(y) || !finite(width) || !finite(height))
+  if (!finite(x) || !finite(y) || !finite(width) || !finite(height) || width <= 0 || height <= 0)
     throw new Error(`Inconsistent render bounds: ${node.id} "${node.name}"`)
   return { x, y, width, height }
 }
@@ -157,7 +157,7 @@ function needsRenderedBounds(node: LiveNode): boolean {
   // Rotated Figma lines can retain floating-point residue instead of an exact zero.
   if ([box.width, box.height].some((size) => typeof size === 'number' && size < 0.001)) return true
   const rendered = renderBounds(node)
-  if (!rendered || !(rendered.width > 0 && rendered.height > 0)) return false
+  if (!rendered) return false
   return (
     rendered.x < number(box.x) - RENDER_TOLERANCE ||
     rendered.y < number(box.y) - RENDER_TOLERANCE ||
