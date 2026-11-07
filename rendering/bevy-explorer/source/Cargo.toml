@@ -33,7 +33,7 @@ inspect = ["dcl_deno/inspect", "system_ui/inspect"]
 hot_reload = ["bevy/file_watcher", "bevy/embedded_watcher", "ipfs/hot_reload"]
 livekit = ["comms/livekit", "system_ui/livekit"]
 # Scene video and audio streams through the UUAV player (library/uuav): the out-of-process
-# FFmpeg helper whose runtime set ships next to the executable (tooling/uuav/stage-dist.py).
+# playback runtime set ships next to the executable (tooling/uuav/stage-dist.py).
 uuav = ["av/uuav"]
 social = ["social/social"]
 # The loopback console server (`--automation-token`, src/automation.rs `remote`): native only, in
