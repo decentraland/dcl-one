@@ -35,8 +35,9 @@ use crate::sanitize::ContentOrigin;
 use crate::shared::cache::{TtlCache, cache_get, cache_put};
 use crate::shared::errors::ApiError;
 use query::{
-    Bind, bind_param, build_live_user_count_order, build_order_by, build_where_from,
-    destinations_lead_prefix, destinations_ranking_prefix, like_score_recount_join, order_tail,
+    Bind, bind_param, build_active_lead, build_live_user_count_order, build_order_by,
+    build_where_from, destinations_lead_prefix, destinations_ranking_prefix,
+    like_score_recount_join, order_tail,
 };
 pub use rows::{
     ActiveRows, CategoryTarget, PlaceListFilters, PlaceOrderBy, PlaceRow, PlaceStatusRow, WorldRow,
@@ -729,7 +730,8 @@ fn page_bounds(f: &PlaceListFilters) -> (i64, i64) {
 }
 
 /// SQL for `list_page`: `binds` go first, then the search term when set, then
-/// `live_binds`, then the lowercased viewer when `f.viewer` is set, then the
+/// `live_binds` (the live counts, then the active positions), then the
+/// lowercased viewer when `f.viewer` is set, then the
 /// page's limit and offset (`page_bounds`). A `page` CTE sorts and cuts the
 /// keys; the columns are read for the page alone. `with_total` adds
 /// `total_count`: a window count over the keys, or an uncorrelated COUNT of
@@ -774,9 +776,14 @@ fn list_sql_from(
         .unwrap_or_default();
     let search_count = if f.search.is_some() { 1 } else { 0 };
     let live_start = binds.len() + search_count + 1;
-    let (live_prefix, live_binds) = build_live_user_count_order(f, live_start);
+    let (live_prefix, mut live_binds) = build_live_user_count_order(f, live_start);
+    let (active_prefix, active_binds) = build_active_lead(f, live_start + live_binds.len());
+    live_binds.extend(active_binds);
     let order_clause = build_order_by(
-        &destinations_lead_prefix(f, &live_prefix),
+        &format!(
+            "{active_prefix}{}",
+            destinations_lead_prefix(f, &live_prefix)
+        ),
         destinations_ranking_prefix(f),
         &rank_prefix,
         order,

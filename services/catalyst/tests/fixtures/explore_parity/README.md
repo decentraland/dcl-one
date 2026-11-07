@@ -6,7 +6,8 @@ pinned source: `github.com/decentraland/places@e660fbc2` and
 2026-11-04) plus the `decentraland-gatsby@9.0.1` framework they run on. The
 `GET /api/places` entries derive from
 `github.com/decentraland/discovery-server@81f0dcae` instead, the service that
-serves the route in production. The
+serves the route in production, except `order_by=most_active`, which production
+answers as the places service's own route (`getPlaceMostActiveList.ts`). The
 harness `tests/explore_parity.rs` sends every entry to the explore router over a
 seeded scratch database and compares the answer. Dated production captures
 exist for the same requests, but they stay private; nothing here comes from a

@@ -41,9 +41,11 @@ gaps; a failure there is a regression. The fixtures README documents the grammar
   empty list. Each run of letters and digits is a prefix term; the terms are joined with
   `&`.
 - `order_by` accepts `like_score`, `updated_at`, `created_at` and `most_active`; any other
-  value is `like_score`. `most_active` reads the places with players, at most 100, best
-  liked first, sorts them by headcount and pages that set; `total` is the size of the set.
-  Without a presence snapshot the mirrored headcount stands in for the live one.
+  value is `like_score`. `most_active` reads 100 places, those with players first and the
+  rest best liked first, sorts them by headcount and pages that set; `total` is its size, at
+  most 100. `order=asc` lists the least liked and the emptiest first. An `offset` past the
+  places with players answers an empty list, `total` 0. Without a presence snapshot the
+  mirrored headcount stands in for the live one.
 - `owner` matches the row's own owner, lowercased, the creator address where the row has
   no owner, or a parcel the owner holds or operates. The creator fallback is dcl-one's
   (recorded below). `sdk` matches the major or a `major.` prefix as given.
@@ -120,6 +122,10 @@ pinned callers build. Each is a known difference, not an approval.
 - dcl-one's own extras live under `/v1`: `POST /v1/destinations` takes an object body and
   answers `kind`, `live_event` and `next_event`. `/api/destinations` keeps the old places
   service's contract.
+- `GET /api/map` and `GET /api/map/places` with `order_by=most_active` answer the full
+  headcount-ordered set with its real `total`, where the old places service pages twice
+  and reports the page length as `total` (`getMapPlacesMostActive.ts:60-98`,
+  `getAllPlacesMostActiveList.ts:63-115`).
 
 ## Deployment posture kept
 

@@ -659,18 +659,37 @@
     "id": "places.get_places.order_by_most_active", "area": "places",
     "request": {"method": "GET", "path": "/api/places", "query": {"order_by": "most_active"}},
     "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": [
+          "data.length <= 100", "total <= 100", "total >= 3", "every item.world == false",
+          "every item.disabled == false", "every item.user_count == 0", "every item.like_score non-increasing"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/getPlaceList.ts:33-35",
+        "src/entities/Place/routes/getPlaceMostActiveList.ts:39-99", "src/entities/Place/model.ts:283-303",
+        "src/entities/Place/model.ts:613-634"
+      ]
+    },
+    "notes": "`most_active` is its own route: 100 rows cut by `is_most_active_place DESC, like_score <order> NULLS LAST, deployed_at DESC` (the places on a hot scene's parcels lead, the rest follow), each row's `user_count` from the hot scene at its base position, sorted by `user_count` in memory in the requested direction (stable, so the cut's order breaks ties) and paged; `total` is the size of that set, at most 100. The harness has no presence snapshot and every seeded `user_count` is 0, so the set is the default list."
+  },
+  {
+    "id": "places.get_places.most_active_offset_past_players", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"order_by": "most_active", "offset": "100"}},
+    "expected": {
       "status": 200, "content_type": "application/json", "body": {"total": 0, "ok": true, "data": []},
       "body_match": "exact"
     },
     "source": {
-      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
-      "refs": [
-        "src/controllers/handlers/get-places-handler.ts:12-34", "src/logic/places/component.ts:43-73",
-        "src/adapters/places-repository/component.ts:62-121",
-        "src/adapters/places-repository/component.ts:174-203"
-      ]
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": ["src/entities/Place/routes/getPlaceMostActiveList.ts:51-56"]
     },
-    "notes": "`most_active` reads only the base positions with players (`hotScenes.getActivePositions()`), at most 100, best liked first, sorted by `user_count` in memory; `total` is the size of that set. With no active position the WHERE is `AND FALSE`. The harness has no presence snapshot and every seeded `user_count` is 0, so the set is empty."
+    "notes": "An `offset` greater than the number of hot scenes (the places with players, at most 100) answers `[]` with `total` 0 before the set is read. The harness has no presence snapshot and every seeded `user_count` is 0, so any positive offset is past the players; 100 is past the seeded set as well."
   },
   {
     "id": "places.get_places.only_favorites_anonymous", "area": "places",
