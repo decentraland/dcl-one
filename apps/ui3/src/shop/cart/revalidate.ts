@@ -79,11 +79,18 @@ export async function revalidateCart(
 
 export type RevalidationStatus = "idle" | "checking" | "current" | "changed" | "failed";
 
+/** What a price check is for: each line, its quantity and its method. A check answers only the lines it was asked. */
+export function revalidationIdentity(lines: readonly CartLine[]): string {
+  return lines.map((l) => `${l.id}x${l.quantity}:${l.method ?? "-"}`).join(",");
+}
+
 export type CartRevalidation = {
   status: RevalidationStatus;
   offers: Record<string, PurchaseOffer | null>;
   changes: LineChange[];
   error: unknown;
+  /** The lines (and their quantities and methods) the last finished check priced, as `revalidationIdentity`. */
+  pricedFor: string | null;
   /** Re-quote every line now (after an account or network switch, or on the buyer's request). */
   revalidate(): void;
   /** The buyer saw the changes: record the new offers as seen, so the review turns current. */
@@ -102,33 +109,32 @@ export function useCartRevalidation(
   opts: { enabled?: boolean; revision?: string | number; onSeen?: (lineId: string, offer: PurchaseOffer | null) => void } = {},
 ): CartRevalidation {
   const enabled = opts.enabled ?? true;
-  const [state, setState] = useState<{ status: RevalidationStatus; result: RevalidationResult; error: unknown }>({
+  const [state, setState] = useState<{ status: RevalidationStatus; result: RevalidationResult; error: unknown; pricedFor: string | null }>({
     status: "idle",
     result: { offers: {}, changes: [] },
     error: null,
+    pricedFor: null,
   });
   const [tick, setTick] = useState(0);
   const latest = useRef({ lines, session, fetchOffers, onSeen: opts.onSeen });
   latest.current = { lines, session, fetchOffers, onSeen: opts.onSeen };
 
-  const identity = useMemo(
-    () => lines.map((l) => `${l.id}x${l.quantity}:${l.method ?? "-"}`).join(","),
-    [lines],
-  );
+  const identity = useMemo(() => revalidationIdentity(lines), [lines]);
   const sessionKey = session.kind === "signedOut" ? "out" : `${session.kind}:${session.kind === "web2" ? session.account : session.wallet}`;
 
   useEffect(() => {
     if (!enabled || latest.current.lines.length === 0) {
-      setState({ status: "idle", result: { offers: {}, changes: [] }, error: null });
+      setState({ status: "idle", result: { offers: {}, changes: [] }, error: null, pricedFor: null });
       return;
     }
     const controller = new AbortController();
     setState((s) => ({ ...s, status: "checking", error: null }));
     const { lines: current, session: who, fetchOffers: fetcher } = latest.current;
+    const asked = revalidationIdentity(current);
     revalidateCart(current, who, fetcher, controller.signal).then(
       (result) => {
         if (controller.signal.aborted) return;
-        setState({ status: result.changes.length === 0 ? "current" : "changed", result, error: null });
+        setState({ status: result.changes.length === 0 ? "current" : "changed", result, error: null, pricedFor: asked });
       },
       (error: unknown) => {
         if (controller.signal.aborted) return;
@@ -154,6 +160,7 @@ export function useCartRevalidation(
     offers: state.result.offers,
     changes: state.result.changes,
     error: state.error,
+    pricedFor: state.pricedFor,
     revalidate,
     accept,
     canConfirm: state.status === "current",
