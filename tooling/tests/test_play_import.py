@@ -114,20 +114,24 @@ class GitHubReadTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         archive = Path(temporary.name) / 'web.zip'
-        calls = []
+        command = ['gh', 'api', f'repos/{play.REPO}/actions/artifacts/9/zip']
+        # A 5xx and a stalled transfer each get a second attempt with a full 300 s.
+        for failure in (subprocess.CalledProcessError(1, command, stderr=b'gh: HTTP 503\n'),
+                        subprocess.TimeoutExpired(command, 300)):
+            calls = []
 
-        def gh(args, **kwargs):
-            calls.append((args, kwargs['timeout']))
-            kwargs['stdout'].write(b'partial' if len(calls) == 1 else b'archive')
-            if len(calls) == 1:
-                raise subprocess.CalledProcessError(1, args, stderr=b'gh: HTTP 503\n')
-            return subprocess.CompletedProcess(args, 0)
+            def gh(args, **kwargs):
+                calls.append((args, kwargs['timeout']))
+                kwargs['stdout'].write(b'partial' if len(calls) == 1 else b'archive')
+                if len(calls) == 1:
+                    raise failure
+                return subprocess.CompletedProcess(args, 0)
 
-        with patch.object(play.subprocess, 'run', side_effect=gh), patch.object(play.time, 'sleep') as sleep:
-            play.download({'id': 9}, archive)
-        self.assertEqual(archive.read_bytes(), b'archive')
-        self.assertEqual(calls, [(['gh', 'api', f'repos/{play.REPO}/actions/artifacts/9/zip'], 300)] * 2)
-        sleep.assert_called_once_with(2)
+            with patch.object(play.subprocess, 'run', side_effect=gh), patch.object(play.time, 'sleep') as sleep:
+                play.download({'id': 9}, archive)
+            self.assertEqual(archive.read_bytes(), b'archive')
+            self.assertEqual(calls, [(command, 300)] * 2)
+            sleep.assert_called_once_with(2)
         # Any other failure is reported at once.
         missing = subprocess.CalledProcessError(1, ['gh', 'api'], stderr=b'gh: HTTP 404\n')
         with patch.object(play.subprocess, 'run', side_effect=missing), patch.object(play.time, 'sleep') as sleep, \

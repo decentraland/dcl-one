@@ -40,9 +40,10 @@ UPLOAD_STEP = 'Upload the complete web app'
 MAX_BYTES = 2 * 1024**3
 
 
-def read(request, deadline=None, limit=60):
+def read(request, deadline=None, limit=60, attempts=None):
     # Retry reads within the caller's existing wait budget. Non-waiting imports
-    # and final publication checks get only four retries; no writes are repeated.
+    # and final publication checks get only four retries; `attempts` caps the
+    # tries in either mode. No writes are repeated.
     attempt = 0
     while True:
         timeout = limit if deadline is None else min(limit, deadline - time.monotonic())
@@ -54,7 +55,8 @@ def read(request, deadline=None, limit=60):
             stderr = exc.stderr.decode(errors='replace') if isinstance(exc.stderr, bytes) else (exc.stderr or '')
             # gh reports "Service Unavailable (HTTP 503)" for a JSON error and "HTTP 503" for a bare one.
             transient = isinstance(exc, subprocess.TimeoutExpired) or re.search(r'\bHTTP (?:500|502|503|504)\b', stderr)
-            exhausted = attempt >= 4 if deadline is None else time.monotonic() >= deadline
+            exhausted = (attempts is not None and attempt + 1 >= attempts) or (
+                attempt >= 4 if deadline is None else time.monotonic() >= deadline)
             if not transient or exhausted:
                 if isinstance(exc, subprocess.CalledProcessError) and stderr:
                     print(stderr, file=sys.stderr, end='')
@@ -77,13 +79,17 @@ def api(path, deadline=None):
     return read(request, deadline)
 
 
-def download(record, archive, deadline=None):
-    """Save an artifact archive; a transient failure starts the file over."""
+def download(record, archive):
+    """Save an artifact archive; one transient failure starts the file over.
+
+    The wait bounds the search for a run, not its download: each of the two
+    attempts gets 300 s, however little of the wait is left.
+    """
     def request(timeout):
         with archive.open('wb') as output:
             subprocess.run(['gh', 'api', f'repos/{REPO}/actions/artifacts/{record["id"]}/zip'],
                            stdout=output, stderr=subprocess.PIPE, check=True, timeout=timeout)
-    read(request, deadline, limit=300)
+    read(request, limit=300, attempts=2)
 
 
 def workflow_runs(deadline=None):
@@ -252,7 +258,7 @@ def download_run(run, pr=None, production=False, receipt=None, deadline=None, *,
     with tempfile.TemporaryDirectory(prefix='play-ci-') as temporary:
         tmp = Path(temporary)
         archive = tmp / 'web.zip'
-        download(record, archive, deadline)
+        download(record, archive)
         with archive.open('rb') as stream:
             if hashlib.file_digest(stream, 'sha256').hexdigest() != checksum.split(':')[1]:
                 raise ValueError('GitHub Explorer archive digest mismatch')
@@ -322,9 +328,11 @@ def fetch(wait=0, production=False, receipt=None):
                 continue
             if run['status'] == 'completed' and run['conclusion'] != 'success':
                 if match_inputs and run['head_sha'] == head:
-                    own.setdefault(run['id'], run['conclusion'])
+                    own[run['id']] = run['conclusion']
                 checked.add(attempt)
                 continue
+            # A rerun under way or succeeded replaces the attempt the hint would name.
+            own.pop(run['id'], None)
             revision = pr['merge'] if run['event'] == 'pull_request' else run['head_sha']
             if revision not in keys:
                 keys[revision] = inputs_at(revision)
