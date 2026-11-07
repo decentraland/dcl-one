@@ -166,8 +166,9 @@ export default function AssetCard({ item, mode = "shop", source = "grid", positi
   const cartFull = !!line && line.quantity >= stockCap;
   const buyable = mode === "shop" && !!input && isListingForSale(item) && price.kind !== "notForSale";
   // Nothing to buy, a view card included: as upstream's, VIEW stands where Add to cart would (revealed the same
-  // way) and the compact card shows a dark round arrow for the + button. Both only draw: a click on them falls
-  // through to the card's overlay link, which is the one announced navigation.
+  // way, with Add to cart's hover) and the compact card shows a dark round arrow for the + button. As upstream's
+  // ViewCtaLink and ViewRoundLink, both are links to the detail page above the card's overlay link, hidden from
+  // assistive tech and out of the tab order: the overlay link is the one announced navigation.
   const viewable = !buyable && !!detailPath;
   const genderIco = genderIcon(item.gender);
   const palette = rarityCardPalette(item.rarity);
@@ -311,15 +312,15 @@ export default function AssetCard({ item, mode = "shop", source = "grid", positi
                 <span>{cartFull ? t("itemDetail.inCart") : t("itemDetail.addToCart")}</span>
               </button>
             </>
-          ) : viewable ? (
+          ) : viewable && detailPath ? (
             <>
-              <span className="shop-card__addround" data-variant="view" data-testid="card-view-round" aria-hidden>
+              <Link className="shop-card__addround" data-variant="view" data-testid="card-view-round" to={detailPath} state={{ item }} aria-hidden tabIndex={-1}>
                 <Icon name="arrow-right" size={18} />
-              </span>
-              <span className="shop-card__cart" data-variant="view" data-testid="card-view" aria-hidden>
+              </Link>
+              <Link className="shop-card__cart" data-variant="view" data-testid="card-view" to={detailPath} state={{ item }} aria-hidden tabIndex={-1}>
                 <Icon name="eye" size={20} />
                 <span>{t("assetCard.view")}</span>
-              </span>
+              </Link>
             </>
           ) : null}
         </div>
