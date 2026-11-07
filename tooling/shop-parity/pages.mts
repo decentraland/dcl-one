@@ -256,8 +256,24 @@ export const PAGES: PageSpec[] = [
     ],
     discover: async (page) => {
       const shop = (h: string | null) => (h ? new URL(h, page.url()).pathname.replace(/^(?!\/shop)/, "/shop") : null);
-      const collection = shop(await page.locator("xpath=(//main//a[contains(@href,'/collection/')])[1]").getAttribute("href").catch(() => null));
-      const creator = shop(await page.locator("xpath=(//main//a[contains(@href,'/creator/')])[1]").getAttribute("href").catch(() => null));
+      const link = (contains: string) => page.locator(`xpath=(//main//a[contains(@href,'${contains}')])[1]`).getAttribute("href", { timeout: 2_000 }).catch(() => null);
+      // The pinned reference names the item's collection and creator as text, not links. Its collection is the
+      // item's contract (/shop/collection/<contract>, a page the reference serves), and its creator is the account
+      // that collection page links to as its profile (/shop/items/creator/<address>).
+      const contract = /\/shop\/item\/(0x[0-9a-fA-F]{40})\//.exec(new URL(page.url()).pathname)?.[1]?.toLowerCase() ?? null;
+      const collection = shop(await link("/collection/")) ?? (contract ? `/shop/collection/${contract}` : null);
+      let creator = shop(await link("/creator/"));
+      if (!creator && collection) {
+        const other = await page.context().newPage();
+        try {
+          await other.goto(new URL(collection, page.url()).href, { waitUntil: "load" });
+          const profile = await other.locator("xpath=(//main//a[contains(@href,'/profile/0x')])[1]").getAttribute("href", { timeout: 15_000 }).catch(() => null);
+          const address = profile ? /\/profile\/(0x[0-9a-fA-F]{40})/.exec(profile)?.[1]?.toLowerCase() : null;
+          if (address) creator = `/shop/items/creator/${address}`;
+        } finally {
+          await other.close();
+        }
+      }
       return { ...(collection ? { collection } : {}), ...(creator ? { creator } : {}) };
     },
     unrecorded: [PREVIEW_AVATAR, NEWSLETTER_EMBED],
@@ -414,7 +430,15 @@ const target = (key: string) => (t: Record<string, string>) => {
 PAGES.push(
   plain("collection", "A collection (the detail page's)", target("collection")),
   plain("creator", "A creator's items (the detail page's)", target("creator")),
-  plain("outfit", "An outfit (Buy the Look, the home's first)", target("outfit")),
+  plain("outfit", "An outfit (Buy the Look, the home's first)", target("outfit"), {
+    masks: [
+      {
+        selector: { reference: ["[data-testid=outfit-detail-preview]"], "dcl-one": ["[data-testid=outfit-detail-preview]"] },
+        why: "the outfit's 3D preview: the reference's wearable-preview iframe and ui3's own renderer draw different frames (its models are not recorded); its box is still compared structurally",
+      },
+      WEBGL,
+    ],
+  }),
   plain("credits", "Buy credits", "/shop/credits"),
   plain("not-found", "A path the Shop does not have", "/shop/no-such-page"),
 );
