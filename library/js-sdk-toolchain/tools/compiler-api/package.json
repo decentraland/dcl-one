@@ -1,0 +1,10 @@
+{
+  "name": "js-sdk-toolchain-compiler-api-tools",
+  "description": "eslint (through @dcl/eslint-config's typescript-eslint plugins) and typedoc embed the TypeScript compiler API, which typescript 7 no longer ships. They are installed here with their own typescript 6 instead of the toolchain's typescript 7; make install, make lint, make format and make docs point here.",
+  "private": true,
+  "devDependencies": {
+    "@dcl/eslint-config": "^3.1.0",
+    "typedoc": "^0.28.20",
+    "typescript": "6.0.3"
+  }
+}

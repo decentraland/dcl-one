@@ -90,6 +90,10 @@ async function internalCompile() {
     rmSync(path.resolve(apiModuleDirPath, 'index.gen.ts'))
 
     const moduleDTsPath = path.resolve(apiModuleDirPath, 'index.d.ts')
+    writeFileSync(
+      moduleDTsPath,
+      bundleDeclarations(path.resolve(apiModuleDirPath, 'out'), `modules/${api.name}/index.gen.d.ts`)
+    )
     processDeclarations(api.name, moduleDTsPath)
 
     if (api.blockComments) {
@@ -187,6 +191,32 @@ function isExportedByEcs(commonModuleName: string): boolean {
   )
   const protoFile = commonModuleName.replace(/^.*decentraland\/sdk\/components\//, '').replace(/\.gen$/, '.proto')
   return componentProtoImports.has(protoFile)
+}
+
+/**
+ * Joins the per-file declarations tsc emitted under `outDir` into the shape `outFile` (removed in
+ * TypeScript 7) produced: one `declare module "<path relative to rootDir>"` block per file, each
+ * file after the files it imports, with no `declare` modifiers inside the ambient blocks.
+ */
+function bundleDeclarations(outDir: string, entryRelativePath: string): string {
+  const blocks: string[] = []
+  const visited = new Set<string>()
+  const visit = (relativePath: string) => {
+    if (visited.has(relativePath)) return
+    visited.add(relativePath)
+    const content = readFileSync(path.resolve(outDir, relativePath)).toString()
+    for (const [, specifier] of content.matchAll(/^\s*import\b[^'"]*['"]([^'"]+)['"]/gm)) {
+      if (specifier.startsWith('.')) visit(path.join(path.dirname(relativePath), `${specifier}.d.ts`))
+    }
+    const body = content
+      .replace(/^(\s*)(export )?declare /gm, '$1$2')
+      .split('\n')
+      .map((line) => (line ? `    ${line}` : line))
+      .join('\n')
+    blocks.push(`declare module "${relativePath.replace(/\.d\.ts$/, '')}" {\n${body}}`)
+  }
+  visit(entryRelativePath)
+  return blocks.join('\n')
 }
 
 function processDeclarations(apiName: string, filePath: string) {

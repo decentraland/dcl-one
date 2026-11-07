@@ -38,7 +38,7 @@ endif
 SCENE_PROTO_FILES := $(wildcard node_modules/@dcl/protocol/proto/decentraland/kernel/apis/*.proto)
 PBS_TS = $(SCENE_PROTO_FILES:node_modules/@dcl/protocol/proto/decentraland/kernel/apis/%.proto=scripts/rpc-api-generation/src/proto/%.gen.ts)
 TSC = node_modules/.bin/tsc
-ESLINT = node_modules/.bin/eslint
+ESLINT = tools/compiler-api/node_modules/.bin/eslint
 SYNC_PACK = node_modules/.bin/syncpack
 JEST = node_modules/.bin/jest
 
@@ -50,6 +50,7 @@ install:
 	$(MAKE) -C ../protocol install
 	npm --prefix ../protocol run build
 	npm i --silent
+	npm --prefix tools/compiler-api i --silent
 ifndef SDK_PROTOC
 	test -x "$(PROTOC_DOWNLOADED)" || $(MAKE) install-protobuf
 endif
@@ -84,7 +85,7 @@ init-test-scene:
 	cd test-scene && npm i ./../packages/@dcl/sdk  && npm i ./../packages/@dcl/sdk-commands  && npm i ./../packages/@dcl/js-runtime
 
 format:
-	npx prettier --write "**/*.{js,ts,tsx,json}" --loglevel=error
+	tools/compiler-api/node_modules/.bin/prettier --write "**/*.{js,ts,tsx,json}" --loglevel=error
 
 install-protobuf:
 	curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$(PROTOBUF_VERSION)/$(PROTOBUF_ZIP)
@@ -136,6 +137,7 @@ deep-clean:
 		packages/@dcl/react-ecs/node_modules/ \
 		packages/@dcl/sdk/node_modules/ \
 		packages/@dcl/sdk-commands/node_modules \
+		tools/compiler-api/node_modules \
 	make clean
 
 update-snapshots: export UPDATE_SNAPSHOTS=true

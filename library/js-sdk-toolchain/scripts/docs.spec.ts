@@ -6,7 +6,7 @@ import { itExecutes } from './helpers'
 
 flow('build docs site', () => {
   const SDK_TOOLCHAIN_PATH = process.cwd()
-  itExecutes('./node_modules/.bin/typedoc', SDK_TOOLCHAIN_PATH)
+  itExecutes('./tools/compiler-api/node_modules/.bin/typedoc', SDK_TOOLCHAIN_PATH)
 
   it('fix html page', async () => {
     const cssPath = resolve(SDK_TOOLCHAIN_PATH, 'api-docs/assets/style.css')

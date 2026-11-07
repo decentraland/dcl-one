@@ -14,6 +14,7 @@
     "sourceMap": true,
     "types": ["node"],
     "lib": ["es2020"],
+    "rootDir": "src",
     "outDir": "./dist"
   },
   "include": ["src"],

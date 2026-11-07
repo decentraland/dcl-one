@@ -344,7 +344,9 @@ export async function bundleSingleProject(components: BundleComponents, options:
 }
 
 function runTypeChecker(components: BundleComponents, options: CompileOptions) {
-  const tsBin = require.resolve('typescript/lib/tsc')
+  // typescript 7 exports no 'typescript/lib/tsc' subpath; lib/tsc.js (a shim that execs the
+  // native compiler) is reached from the package root
+  const tsBin = path.join(path.dirname(require.resolve('typescript/package.json')), 'lib', 'tsc.js')
   const args = [
     '-p',
     'tsconfig.json',

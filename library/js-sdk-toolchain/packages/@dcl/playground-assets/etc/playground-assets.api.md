@@ -1045,7 +1045,7 @@ export function createEntityContainer(opts?: {
 
 // @public
 export function createEthereumProvider(): {
-    send(message: RPCSendableMessage, callback?: ((error: Error | null, result?: any) => void) | undefined): void;
+    send(message: RPCSendableMessage, callback?: (error: Error | null, result?: any) => void): void;
     sendAsync(message: RPCSendableMessage, callback: (error: Error | null, result?: any) => void): void;
 };
 
@@ -1368,7 +1368,7 @@ export type ExcludeUndefined<T> = {
 }[keyof T];
 
 // @public
-export const executeTask: (task: Task<unknown>) => void;
+export const executeTask: (task: Task) => void;
 
 // @public (undocumented)
 export const ExplorerConfiguration: LastWriteWinElementSetComponentDefinition<PBExplorerConfiguration>;
@@ -5219,14 +5219,16 @@ export namespace Schemas {
     const // (undocumented)
     Array: <T>(type: ISchema<T>) => ISchema<T[]>;
     const // (undocumented)
-    Map: <T extends Spec>(spec: T, defaultValue?: Partial<MapResult<T>> | undefined) => ISchema<MapResult<T>>;
+    Map: <T extends Spec>(spec: T, defaultValue?: Partial<MapResult<T>>) => ISchema<MapResult<T>>;
     const // (undocumented)
     Optional: <T>(spec: ISchema<T>) => ISchema<T | undefined>;
     const // (undocumented)
-    OneOf: <T extends Spec>(specs: T) => ISchema<{ [K in keyof T]: {
+    OneOf: <T extends Spec>(specs: T) => ISchema<{
+        [K in keyof T]: {
             readonly $case: K;
-            readonly value: ReturnType<T[K]["deserialize"]>;
-        }; }[keyof T]>;
+            readonly value: ReturnType<T[K]['deserialize']>;
+        };
+    }[keyof T]>;
     const // Warning: (tsdoc-param-tag-missing-hyphen) The @param block should be followed by a parameter name and then a hyphen
     fromJson: (json: JsonSchemaExtended) => ISchema<unknown>;
     const mutateNestedValues: (jsonSchema: JsonSchemaExtended, value: unknown, mutateFn: (value: unknown, valueType: JsonSchemaExtended) => {
