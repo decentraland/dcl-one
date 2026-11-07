@@ -30,14 +30,17 @@ export type PurchaseLauncher = (request: PurchaseRequest, navigate: (to: string)
 export function cartLauncher(cart: CartStore = shopCart, drawer: CartDrawerStore = shopCartDrawer): PurchaseLauncher {
   return ({ line, method, offer, intent = "buy" }, navigate) => {
     const id = cartLineId(line.asset, line.listing);
-    if (!cart.getSnapshot().lines.some((l) => l.id === id)) cart.add({ ...line, seen: offer ?? line.seen ?? null });
+    const before = cart.getSnapshot().lines.find((l) => l.id === id)?.quantity ?? 0;
+    if (before === 0) cart.add({ ...line, seen: offer ?? line.seen ?? null });
     else if (intent === "add") {
       cart.add(line);
       if (offer) cart.markSeen(id, offer);
     } else if (offer) cart.markSeen(id, offer);
     cart.setMethod(id, method);
-    if (intent === "add") drawer.added();
-    else navigate(`${SHOP_BASE}/cart`);
+    if (intent === "buy") navigate(`${SHOP_BASE}/cart`);
+    // The banner counts what the cart took: a token already in it, or a mint at its stock, adds nothing.
+    else if ((cart.getSnapshot().lines.find((l) => l.id === id)?.quantity ?? 0) > before) drawer.added();
+    else drawer.open();
   };
 }
 

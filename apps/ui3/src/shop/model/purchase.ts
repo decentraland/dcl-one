@@ -93,6 +93,8 @@ export type CartLine = {
   /** The last authoritative offer the buyer was shown, for revalidation diffs. */
   seen: PurchaseOffer | null;
   addedAt: number;
+  /** A mint's remaining supply when it was added (the card's or the page's): the drawer's stepper cap. */
+  available?: number | null;
 };
 
 /** idle -> authorizing -> submitted -> pending -> confirmed | failed | expired. */

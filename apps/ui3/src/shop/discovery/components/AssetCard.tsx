@@ -2,10 +2,10 @@
 //       app/src/components/CreatorBadge/CreatorBadge.tsx;
 //       shop@2d3bf62:app/src/hooks/useFavoriteCount.ts, app/src/components/CreatorName/CreatorName.tsx
 
-import { shopCartDrawer } from "../../cart/drawer";
 import { useEffect, useState, type CSSProperties, type MouseEvent } from "react";
 import { Link } from "react-router";
 
+import { shopCartDrawer } from "../../cart/drawer";
 import { cartLineId, shopCart, useCart } from "../../cart/store";
 import { fetchCatalogByIds } from "../../market/lib/catalog";
 import { favoriteKey, fetchFavoriteStats } from "../../market/lib/favorites";
@@ -170,8 +170,10 @@ export default function AssetCard({ item, mode = "shop", source = "grid", positi
     e.preventDefault();
     e.stopPropagation();
     if (!input || cartFull) return;
-    shopCart.add(input);
-    shopCartDrawer.added();
+    const before = line?.quantity ?? 0;
+    const after = shopCart.add(input).quantity;
+    if (after > before) shopCartDrawer.added();
+    else shopCartDrawer.open();
   };
 
   // Web3 sessions also see MANA (AGENTS.md), on sale cards as on the rest.

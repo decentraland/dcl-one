@@ -8,13 +8,13 @@
 // upstream Marketplace has.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import CartDrawer from "../../checkout/components/CartDrawer";
-import { shopCartDrawer } from "../../cart/drawer";
 import { Link, useLocation } from "react-router";
 
 import ChromeShell from "../../../components/ChromeShell";
 import DclTopBar from "../../../web/frames/DclTopBar";
+import { shopCartDrawer } from "../../cart/drawer";
 import { useCart } from "../../cart/store";
+import CartDrawer from "../../checkout/components/CartDrawer";
 import { SHOP_BASE } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { LAND_NETWORKS } from "../../land/contracts";
@@ -158,7 +158,8 @@ function ShopSubnav({ tabs, active, iap, signedIn, set }: { tabs: Tab[]; active:
           ) : null}
         </button>
       )}
-      {market ? null : <CartDrawer />}
+      {/* Mounted for every nav set: a card adds to the cart (and opens it) on a marketplace page too. */}
+      <CartDrawer />
     </div>
   );
 }

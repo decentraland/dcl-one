@@ -1,16 +1,16 @@
 /* from: shop@3a322cf9:app/src/components/CartPopover/CartPopover.styles.ts and app/src/styles/cta.styles.ts
-   (checkoutCtaCss), with app/src/styles/theme.ts's values inlined. Scoped to .shop-drawer. */
-@keyframes shop-drawer-fade {
+   (checkoutCtaCss), with app/src/styles/theme.ts's values inlined. Scoped to .shopDrawer. */
+@keyframes fade {
   from { opacity: 0; }
   to { opacity: 1; }
 }
-@keyframes shop-drawer-slide {
+@keyframes slide {
   from { transform: translateX(100%); }
   to { transform: none; }
 }
 
 /* Above the site nav and the mobile filter sheet (9999): a full-viewport modal. */
-.shop-drawer {
+.root {
   position: fixed;
   inset: 0;
   z-index: 10000;
@@ -18,14 +18,14 @@
   justify-content: flex-end;
 }
 
-.shop-drawer__scrim {
+.scrim {
   position: absolute;
   inset: 0;
   background: rgba(22, 21, 24, 0.5);
-  animation: shop-drawer-fade 0.16s ease;
+  animation: fade 0.16s ease;
 }
 
-.shop-drawer__panel {
+.panel {
   position: relative;
   z-index: 1;
   display: flex;
@@ -34,17 +34,17 @@
   height: 100%;
   background: #691fa9;
   box-shadow: -8px 0 32px rgba(22, 21, 24, 0.18);
-  animation: shop-drawer-slide 0.32s cubic-bezier(0.45, 0, 0.25, 1);
+  animation: slide 0.32s cubic-bezier(0.45, 0, 0.25, 1);
   font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .shop-drawer__panel {
+  .panel {
     animation: none;
   }
 }
 
-.shop-drawer__head {
+.head {
   flex: none;
   display: flex;
   align-items: center;
@@ -54,7 +54,7 @@
   border-bottom: 2px solid rgba(255, 255, 255, 0.1);
 }
 
-.shop-drawer__title {
+.title {
   margin: 0;
   font-size: 20px;
   font-weight: 500;
@@ -62,7 +62,7 @@
   color: #ecebed;
 }
 
-.shop-drawer__close {
+.close {
   flex: none;
   display: grid;
   place-items: center;
@@ -75,11 +75,11 @@
   border-radius: 8px;
 }
 
-.shop-drawer__close:hover {
+.close:hover {
   background: rgba(0, 0, 0, 0.4);
 }
 
-.shop-drawer__body {
+.body {
   flex: 1 1 auto;
   overflow-y: auto;
   display: flex;
@@ -88,7 +88,7 @@
   padding: 16px 16px 24px;
 }
 
-.shop-drawer__empty {
+.empty {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -99,25 +99,25 @@
   color: #fcfcfc;
 }
 
-.shop-drawer__empty-art {
+.emptyArt {
   width: 72px;
   height: 72px;
 }
 
-.shop-drawer__empty-title {
+.emptyTitle {
   margin: 0;
   font-size: 20px;
   font-weight: 600;
 }
 
-.shop-drawer__empty-body {
+.emptyBody {
   margin: 0;
   font-size: 14px;
   color: rgba(255, 255, 255, 0.7);
 }
 
 /* The design's translucent mint, laid over white so the purple panel does not tint it. */
-.shop-drawer__banner {
+.banner {
   display: flex;
   align-items: flex-start;
   gap: 16px;
@@ -126,7 +126,7 @@
   background: linear-gradient(rgba(193, 238, 207, 0.5), rgba(193, 238, 207, 0.5)), #ffffff;
 }
 
-.shop-drawer__banner p {
+.banner p {
   margin: 0;
   font-size: 16px;
   line-height: 1.5;
@@ -134,23 +134,23 @@
   color: #242129;
 }
 
-.shop-drawer__banner strong {
+.banner strong {
   font-weight: 600;
 }
 
-.shop-drawer__banner-check {
+.bannerCheck {
   flex: none;
   width: 20px;
   height: 20px;
 }
 
-.shop-drawer__banner-check svg {
+.bannerCheck svg {
   display: block;
   width: 100%;
   height: 100%;
 }
 
-.shop-drawer__list {
+.list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -159,7 +159,7 @@
   gap: 12px;
 }
 
-.shop-drawer__card {
+.card {
   position: relative;
   display: flex;
   gap: 12px;
@@ -169,7 +169,7 @@
   background: rgba(0, 0, 0, 0.4);
 }
 
-.shop-drawer__thumb {
+.thumb {
   position: relative;
   flex: none;
   display: grid;
@@ -183,14 +183,14 @@
   background: var(--tile-bg);
 }
 
-.shop-drawer__thumb img {
+.thumb img {
   width: 82%;
   height: 82%;
   object-fit: contain;
   filter: drop-shadow(0.6px 2.2px 2.8px rgba(0, 0, 0, 0.1));
 }
 
-.shop-drawer__info {
+.info {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
@@ -200,7 +200,7 @@
   padding: 16px 8px;
 }
 
-.shop-drawer__name {
+.name {
   font-size: 16px;
   font-weight: 600;
   line-height: 1.2;
@@ -211,21 +211,21 @@
   padding-right: 28px; /* clear the delete button */
 }
 
-.shop-drawer__by {
+.by {
   margin-top: 4px;
   gap: 6px;
   font-size: 12px;
   color: #fcfcfc;
 }
 
-.shop-drawer__by [data-avatar] {
+.by [data-avatar] {
   width: 20px;
   height: 20px;
   border: 1.43px solid rgba(255, 255, 255, 0.5);
   background: rgba(255, 255, 255, 0.1);
 }
 
-.shop-drawer__bottom {
+.bottom {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -233,7 +233,7 @@
   padding-right: 8px;
 }
 
-.shop-drawer__stepper {
+.stepper {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -242,7 +242,7 @@
   border-radius: 50px;
 }
 
-.shop-drawer__step {
+.step {
   display: grid;
   place-items: center;
   width: 16px;
@@ -254,13 +254,13 @@
   cursor: pointer;
 }
 
-.shop-drawer__step:disabled {
+.step:disabled {
   color: rgba(255, 255, 255, 0.7);
   opacity: 0.5;
   cursor: default;
 }
 
-.shop-drawer__qty {
+.qty {
   min-width: 12px;
   text-align: center;
   font-size: 14px;
@@ -269,8 +269,8 @@
   color: #fcfcfc;
 }
 
-.shop-drawer__price,
-.shop-drawer__total-val {
+.price,
+.totalVal {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -281,17 +281,17 @@
   white-space: nowrap;
 }
 
-.shop-drawer__total-val {
+.totalVal {
   gap: 8px;
 }
 
-.shop-drawer__coin {
+.coin {
   width: 22px;
   height: 22px;
   color: #fcfcfc;
 }
 
-.shop-drawer__del {
+.del {
   position: absolute;
   top: 9px;
   right: 9px;
@@ -306,11 +306,11 @@
   cursor: pointer;
 }
 
-.shop-drawer__del:hover {
+.del:hover {
   color: #ff2d55;
 }
 
-.shop-drawer__foot {
+.foot {
   flex: none;
   display: flex;
   flex-direction: column;
@@ -323,14 +323,14 @@
   box-shadow: 0 -4px 12px 2px rgba(0, 0, 0, 0.12);
 }
 
-.shop-drawer__total {
+.total {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
-.shop-drawer__total-label {
+.totalLabel {
   font-size: 24px;
   font-weight: 600;
   line-height: 1.57;
@@ -338,19 +338,19 @@
 }
 
 /* The two CTAs side by side, each taking half the row. */
-.shop-drawer__ctas {
+.ctas {
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
-.shop-drawer__ctas > * {
+.ctas > * {
   flex: 1 1 0;
   min-width: 0;
 }
 
 /* checkoutCtaCss: primary advances (the buy gradient, solid red on hover), glass dismisses. */
-.shop-drawer__cta {
+.cta {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -368,27 +368,27 @@
   cursor: pointer;
 }
 
-.shop-drawer__cta[data-variant="primary"] {
+.cta[data-variant="primary"] {
   border: 0;
   background: linear-gradient(180.93deg, #ff7439 2.82%, #ff2d55 97.47%);
   color: #ffffff;
 }
 
-.shop-drawer__cta[data-variant="glass"] {
+.cta[data-variant="glass"] {
   border: 0;
   background: rgba(255, 255, 255, 0.2);
   color: #fcfcfc;
 }
 
 @media (hover: hover) {
-  .shop-drawer__cta[data-variant="primary"]:hover {
+  .cta[data-variant="primary"]:hover {
     background-image: linear-gradient(#ff2d55, #ff2d55);
   }
-  .shop-drawer__cta[data-variant="glass"]:hover {
+  .cta[data-variant="glass"]:hover {
     background: rgba(255, 255, 255, 0.3);
   }
 }
 
-.shop-drawer__cta[data-variant="primary"]:active {
+.cta[data-variant="primary"]:active {
   background-image: linear-gradient(#ff2d55, #ff2d55);
 }

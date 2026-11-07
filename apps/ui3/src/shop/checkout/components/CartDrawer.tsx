@@ -2,29 +2,34 @@
 // The cart drawer: a right-side slide-in panel that opens (a) when an item is added to the cart, with a
 // success banner, and (b) when the cart icon in the subnav is clicked (no banner). It never starts a
 // charge: its primary CTA goes to the cart, where the buyer sees what they are buying first.
-import { useEffect, type CSSProperties } from "react";
+import { useEffect, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { Link } from "react-router";
+import { Link, useLocation } from "react-router";
 
-import Icon from "../../discovery/components/Icon";
+import { shopCartDrawer, useCartDrawer, type CartDrawerStore } from "../../cart/drawer";
+import { shopCart, useCart, type CartStore } from "../../cart/store";
+import { DetailCreator } from "../../detail/components/DetailBadges";
 import CategoryFlap from "../../discovery/components/CategoryFlap";
+import Icon from "../../discovery/components/Icon";
 import { CreditsAmount } from "../../discovery/components/PriceTag";
 import { categoryIcon } from "../../discovery/lib/itemIcons";
 import { rarityCardPalette } from "../../discovery/lib/rarity";
-import { DetailCreator } from "../../detail/components/DetailBadges";
-import { shopCart, useCart, type CartStore } from "../../cart/store";
-import { shopCartDrawer, useCartDrawer, type CartDrawerStore } from "../../cart/drawer";
 import { creditsCeil } from "../../model/money";
 import { offerQuote, type CartLine } from "../../model/purchase";
 import { SHOP_BASE } from "../../routes";
 import cartEmptyIllustration from "../assets/cart-empty.svg?url";
-import "./cartdrawer.css";
+import styles from "./CartDrawer.module.css";
 
 /** The line's price in credits per unit: what the catalog showed, else the offer the buyer saw. */
 export function drawerUnitCredits(line: CartLine): number | null {
   if (typeof line.display.priceCredits === "number") return line.display.priceCredits;
   const quote = line.seen ? offerQuote(line.seen, "credits") : null;
   return quote?.method === "credits" ? creditsCeil(quote.quoted) : null;
+}
+
+/** A mint's stock: the offer the buyer saw, else what the card or the page showed when it was added. */
+function lineStock(line: CartLine): number | null {
+  return line.seen?.available ?? line.available ?? null;
 }
 
 const Minus = () => (
@@ -52,42 +57,42 @@ const CheckCircle = () => (
 function DrawerLine({ line, cart, drawer }: { line: CartLine; cart: CartStore; drawer: CartDrawerStore }) {
   const isMint = line.asset.token.kind === "item";
   const quantity = line.quantity;
-  const available = line.seen?.available ?? null;
-  const atStockCap = typeof available === "number" && quantity >= available;
+  const stock = lineStock(line);
+  const atStockCap = typeof stock === "number" && quantity >= stock;
   const unit = drawerUnitCredits(line);
   const palette = rarityCardPalette(line.display.rarity);
   const flapItem = line.display.category ? { category: line.display.category, wearableCategory: line.display.wearableCategory, rarity: line.display.rarity ?? "" } : null;
   return (
-    <li className="shop-drawer__card" data-testid="cart-drawer-line">
-      <div className="shop-drawer__thumb" data-thumb style={{ "--tile-bg": palette.background, "--tile-stroke": palette.stroke } as CSSProperties}>
+    <li className={styles.card} data-testid="cart-drawer-line">
+      <div className={styles.thumb} data-thumb style={{ "--tile-bg": palette.background, "--tile-stroke": palette.stroke } as CSSProperties}>
         {line.display.thumbnail ? <img src={line.display.thumbnail} alt={line.display.name} /> : null}
         {flapItem && categoryIcon(flapItem) ? <CategoryFlap item={flapItem} size="sm" testId="cart-flap" /> : null}
       </div>
-      <div className="shop-drawer__info">
+      <div className={styles.info}>
         <div data-desc>
-          <div className="shop-drawer__name" title={line.display.name}>
+          <div className={styles.name} title={line.display.name}>
             {line.display.name}
           </div>
-          {line.display.creator ? <DetailCreator address={line.display.creator} size="sm" className="shop-drawer__by" /> : null}
+          {line.display.creator ? <DetailCreator address={line.display.creator} size="sm" className={styles.by} /> : null}
         </div>
-        <div className="shop-drawer__bottom">
+        <div className={styles.bottom}>
           {isMint ? (
-            <div className="shop-drawer__stepper">
-              <button type="button" className="shop-drawer__step" onClick={() => cart.decrement(line.id)} disabled={quantity <= 1} aria-label={`Decrease quantity of ${line.display.name}`}>
+            <div className={styles.stepper}>
+              <button type="button" className={styles.step} onClick={() => cart.decrement(line.id)} disabled={quantity <= 1} aria-label={`Decrease quantity of ${line.display.name}`}>
                 <Minus />
               </button>
-              <span className="shop-drawer__qty">{quantity}</span>
-              <button type="button" className="shop-drawer__step" onClick={() => cart.increment(line.id, available)} disabled={atStockCap} aria-label="Increase quantity">
+              <span className={styles.qty}>{quantity}</span>
+              <button type="button" className={styles.step} onClick={() => cart.increment(line.id, stock)} disabled={atStockCap} aria-label={`Increase quantity of ${line.display.name}`}>
                 <Plus />
               </button>
             </div>
           ) : null}
-          {unit !== null ? <CreditsAmount credits={unit * quantity} className="shop-drawer__price" coinClassName="shop-drawer__coin" /> : null}
+          {unit !== null ? <CreditsAmount credits={unit * quantity} className={styles.price} coinClassName={styles.coin} /> : null}
         </div>
       </div>
       <button
         type="button"
-        className="shop-drawer__del"
+        className={styles.del}
         onClick={() => {
           cart.remove(line.id);
           drawer.clearBanner();
@@ -101,9 +106,13 @@ function DrawerLine({ line, cart, drawer }: { line: CartLine; cart: CartStore; d
   );
 }
 
+const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 export default function CartDrawer({ cart = shopCart, drawer = shopCartDrawer }: { cart?: CartStore; drawer?: CartDrawerStore }) {
   const lines = useCart((s) => s.lines, cart);
   const { open, justAdded } = useCartDrawer(drawer);
+  const panelRef = useRef<HTMLElement>(null);
+  const { pathname } = useLocation();
 
   // Escape closes the drawer (outside-click is the scrim's). No auto-dismiss: it stays until dismissed.
   useEffect(() => {
@@ -115,41 +124,82 @@ export default function CartDrawer({ cart = shopCart, drawer = shopCartDrawer }:
     return () => document.removeEventListener("keydown", onKey);
   }, [open, drawer]);
 
+  // A modal: focus moves into it, the page behind does not scroll, and focus goes back where it was.
+  useEffect(() => {
+    if (!open) return;
+    const before = document.activeElement as HTMLElement | null;
+    panelRef.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = overflow;
+      before?.focus?.();
+    };
+  }, [open]);
+
+  // Navigating away (a link in it, the browser's back) closes it: it belongs to the page it opened over.
+  const openedOn = useRef(pathname);
+  useEffect(() => {
+    if (!open) {
+      openedOn.current = pathname;
+      return;
+    }
+    if (pathname !== openedOn.current) drawer.close();
+  }, [open, pathname, drawer]);
+
   if (!open || typeof document === "undefined") return null;
 
-  // The count is the units (Σ quantity), not the distinct lines.
+  // Tab and Shift+Tab stay inside the panel.
+  const trapTab = (e: ReactKeyboardEvent) => {
+    if (e.key !== "Tab" || !panelRef.current) return;
+    const focusable = [...panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)];
+    if (focusable.length === 0) return;
+    const first = focusable[0]!;
+    const last = focusable[focusable.length - 1]!;
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
+  // The count is the units (Σ quantity), not the distinct lines. A total with a line it cannot price would
+  // read as complete while it is not, so it is shown only when every line has a price.
   const count = lines.reduce((n, l) => n + l.quantity, 0);
-  const total = lines.reduce((sum, l) => sum + (drawerUnitCredits(l) ?? 0) * l.quantity, 0);
+  const units = lines.map((l) => drawerUnitCredits(l));
+  const total = units.every((u) => u !== null) ? lines.reduce((sum, l, i) => sum + units[i]! * l.quantity, 0) : null;
   const isEmpty = lines.length === 0;
   const close = () => drawer.close();
 
   // Portalled to <body> so it overlays the whole viewport, the fixed site nav included.
   return createPortal(
-    <div className="shop-drawer" role="dialog" aria-modal="true" aria-label="Shopping cart" data-testid="cart-drawer">
-      <div className="shop-drawer__scrim" onClick={close} />
-      <aside className="shop-drawer__panel">
-        <header className="shop-drawer__head">
-          <h2 className="shop-drawer__title">Shopping Cart ({count})</h2>
-          <button type="button" className="shop-drawer__close" onClick={close} aria-label="Close">
+    <div className={styles.root} role="dialog" aria-modal="true" aria-label="Shopping cart" data-testid="cart-drawer">
+      <div className={styles.scrim} onClick={close} />
+      <aside className={styles.panel} ref={panelRef} onKeyDown={trapTab}>
+        <header className={styles.head}>
+          <h2 className={styles.title}>Shopping Cart ({count})</h2>
+          <button type="button" className={styles.close} onClick={close} aria-label="Close">
             <Icon name="close" size={18} />
           </button>
         </header>
 
-        <div className="shop-drawer__body">
+        <div className={styles.body}>
           {isEmpty ? (
-            <div className="shop-drawer__empty" data-testid="cart-drawer-empty">
-              <img className="shop-drawer__empty-art" src={cartEmptyIllustration} alt="" aria-hidden />
-              <p className="shop-drawer__empty-title">Nothing here... yet!</p>
-              <p className="shop-drawer__empty-body">Explore the Shop and discover your next favorite item.</p>
-              <Link to={`${SHOP_BASE}/items`} className="shop-drawer__cta" data-variant="glass" onClick={close}>
+            <div className={styles.empty} data-testid="cart-drawer-empty">
+              <img className={styles.emptyArt} src={cartEmptyIllustration} alt="" aria-hidden />
+              <p className={styles.emptyTitle}>Nothing here... yet!</p>
+              <p className={styles.emptyBody}>Explore the Shop and discover your next favorite item.</p>
+              <Link to={`${SHOP_BASE}/items`} className={styles.cta} data-variant="glass" onClick={close}>
                 Start shopping
               </Link>
             </div>
           ) : null}
 
           {justAdded > 0 ? (
-            <div className="shop-drawer__banner" data-testid="cart-drawer-banner">
-              <span className="shop-drawer__banner-check">
+            <div className={styles.banner} data-testid="cart-drawer-banner">
+              <span className={styles.bannerCheck}>
                 <CheckCircle />
               </span>
               <p>
@@ -158,7 +208,7 @@ export default function CartDrawer({ cart = shopCart, drawer = shopCartDrawer }:
             </div>
           ) : null}
 
-          <ul className="shop-drawer__list">
+          <ul className={styles.list}>
             {lines.map((line) => (
               <DrawerLine key={line.id} line={line} cart={cart} drawer={drawer} />
             ))}
@@ -167,17 +217,17 @@ export default function CartDrawer({ cart = shopCart, drawer = shopCartDrawer }:
 
         {/* No total and nothing to check out on an empty cart: the empty state carries its own CTA. */}
         {isEmpty ? null : (
-          <footer className="shop-drawer__foot">
-            <div className="shop-drawer__total">
-              <span className="shop-drawer__total-label">Total: {count === 1 ? "1 item" : `${count} items`}</span>
-              <CreditsAmount credits={total} className="shop-drawer__total-val" coinClassName="shop-drawer__coin" />
+          <footer className={styles.foot}>
+            <div className={styles.total}>
+              <span className={styles.totalLabel}>Total: {count === 1 ? "1 item" : `${count} items`}</span>
+              {total !== null ? <CreditsAmount credits={total} className={styles.totalVal} coinClassName={styles.coin} testId="cart-drawer-total" /> : null}
             </div>
             {/* Dismiss on the left, advance on the right, and advancing stops at the cart. */}
-            <div className="shop-drawer__ctas">
-              <button type="button" className="shop-drawer__cta" data-variant="glass" onClick={close}>
+            <div className={styles.ctas}>
+              <button type="button" className={styles.cta} data-variant="glass" onClick={close}>
                 Continue shopping
               </button>
-              <Link to={`${SHOP_BASE}/cart`} className="shop-drawer__cta" data-variant="primary" onClick={close}>
+              <Link to={`${SHOP_BASE}/cart`} className={styles.cta} data-variant="primary" onClick={close}>
                 Go to cart
               </Link>
             </div>
