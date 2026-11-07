@@ -79,9 +79,9 @@ function __dclOneDecode(__dclOneBytes) {
 // 1. globalThis.__dclOneAuthoritative tells the chunk whether the scene has a
 //    server to trust. The auth-server @dcl/sdk line applies CRDT, state
 //    responses and room events only from the sender 'authoritative-server';
-//    without the flag the blob's overlay (scripts/blob_overlays.py,
-//    patch_sdk_peer_trust) falls back to mainline's peer trust so a
-//    serverless-multiplayer scene keeps syncing.
+//    without the flag the tree's transport (fromAuthority in
+//    library/js-sdk-toolchain/packages/@dcl/sdk/src/network/message-bus-sync.ts)
+//    falls back to peer trust so a serverless-multiplayer scene keeps syncing.
 // 2. With the flag, CommunicationsController is wrapped so inbound frames
 //    the engine stamped with the preview host's zero address (mini-comms
 //    HOST_ADDRESS) are re-labelled as 'authoritative-server': the engine

@@ -1,10 +1,10 @@
 (dcl-scene-cli golden v1 smart-item production)
-TOOLCHAIN sdk=7.29.1-34986384248.commit-bb45080 ecs=7.29.1-34986384248.commit-bb45080 bundler=rolldown-1.2.6 blob=sha256:d8ff1c6a32532743
-SCENE_COMPILED_JS_SIZE_PROD=660.3k bytes
-  ARTIFACT bin/index.js              10538 sha256=3480871ccfb03b22
+TOOLCHAIN sdk=7.31.0-dcl-one.1 ecs=7.31.0-dcl-one.1 bundler=rolldown-1.2.6 blob=sha256:150e0d5aa76cafe6
+SCENE_COMPILED_JS_SIZE_PROD=715.5k bytes
+  ARTIFACT bin/index.js              10588 sha256=9e3a6ab88d82cec4
   ARTIFACT bin/scene.js               1876 sha256=c22d2907c0387685
-  ARTIFACT bin/sdk-runtime.js       497454 sha256=9322b30b0877230b
-  ARTIFACT bin/sdk-smart-items.js   150450 sha256=9ec86f8a544a2874
+  ARTIFACT bin/sdk-runtime.js       551234 sha256=aec756f3dbb6a9a9
+  ARTIFACT bin/sdk-smart-items.js   151756 sha256=1a0b0c11d6abc529
 LOADER sdk=bin/sdk-runtime.js smart=bin/sdk-smart-items.js scene=bin/scene.js max_composite_entity=512
 ENTRYPOINT .dcl-one/entrypoint.ts main=guarded composites=0 script-utils=stub
   // BEGIN AUTO GENERATED CODE "~sdk/scene-entrypoint"
@@ -91,13 +91,13 @@ ENTITY_NAMES assets/scene/entity-names.ts
     Counter_Box = "Counter Box",
   } 
 MAIN_CRDT main.crdt 235 bytes sha256=6c587977670027c8 (native, 1 composite)
-DEPLOY entity=bafkreibg4kpzqog3jmyyun2oywrcixt5ieru2yr76vsqj54bhwvyh5wupi files=7 total=663.0k bytes
+DEPLOY entity=bafkreibwvuwe4smr6yn3nyoynoi7sg6zpw3b3acgvy6zdy5ctqgo4izq4y files=7 total=718.1k bytes
   bafkreifcxq62bje63i3khsvr45s3bkmtbvdutbhwehvfhc3yvspj6jrvda scene.json 167 bytes
   bafkreidmlb4xozyae7ejrd7tnw6qct7ppr3j6w4s4qpdrvzahvgvbsekca main.crdt 235 bytes
-  bafkreie6zbxyuvckfb2bnwkspsfe5yqnannwr3tn3bak3xci6uhyjaqsaa bin/sdk-smart-items.js 150450 bytes
-  bafybeihojtsshznnhpf2jd4t2ahrlb5sti26rxsnprt4brtczo2ba7twmu bin/sdk-runtime.js 497454 bytes
+  bafkreia2bmgbdvvlyuuyhgepljbs7d5jeqoaxkguinjh7vmol5n3gqfxke bin/sdk-smart-items.js 151756 bytes
+  bafybeigzbwwk5mxivepizkwaizsys5dmp3zl2ti7ofc5ocgltbzhhy7lfq bin/sdk-runtime.js 551234 bytes
   bafkreigcfuuqpqbyo2c3pul4xsjayjnbzgwigy6qftsnp3jidgt3vkcjtq bin/scene.js 1876 bytes
-  bafkreibuqcdrzt5qhmrl3u44aokadmh54jdhhhmauiekkujfdbo2zvjfn4 bin/index.js 10538 bytes
+  bafkreie6hjvlrdmcz3coizilkhk7m2r3iqrteg25ponc2yz6ee7g7apjse bin/index.js 10588 bytes
   bafkreidxhlr4biomfortriklj6fnne7kzhvayixkmd6ynx2dlsoswh654a assets/scene/main.composite 2230 bytes
 EVAL bin/index.js
   READFILE: bin/sdk-runtime.js

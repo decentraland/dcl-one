@@ -1,9 +1,9 @@
 (dcl-scene-cli golden v1 composite production)
-TOOLCHAIN sdk=7.29.1-34986384248.commit-bb45080 ecs=7.29.1-34986384248.commit-bb45080 bundler=rolldown-1.2.6 blob=sha256:d8ff1c6a32532743
-SCENE_COMPILED_JS_SIZE_PROD=509.1k bytes
-  ARTIFACT bin/index.js              10516 sha256=a451e394442ebf48
+TOOLCHAIN sdk=7.31.0-dcl-one.1 ecs=7.31.0-dcl-one.1 bundler=rolldown-1.2.6 blob=sha256:150e0d5aa76cafe6
+SCENE_COMPILED_JS_SIZE_PROD=562.9k bytes
+  ARTIFACT bin/index.js              10566 sha256=2df452158ab7539b
   ARTIFACT bin/scene.js               1149 sha256=0441eee7a04e15db
-  ARTIFACT bin/sdk-runtime.js       497454 sha256=9322b30b0877230b
+  ARTIFACT bin/sdk-runtime.js       551234 sha256=aec756f3dbb6a9a9
 LOADER sdk=bin/sdk-runtime.js smart=- scene=bin/scene.js max_composite_entity=513
 ENTRYPOINT .dcl-one/entrypoint.ts main=guarded composites=0 script-utils=stub
   // BEGIN AUTO GENERATED CODE "~sdk/scene-entrypoint"
@@ -70,12 +70,12 @@ ENTRYPOINT .dcl-one/entrypoint.ts main=guarded composites=0 script-utils=stub
   REQUIRE(scene): ~sdk/all-composites
   REQUIRE(scene): ~sdk/script-utils
 MAIN_CRDT main.crdt 317 bytes sha256=a12a5297f2515775 (native, 1 composite)
-DEPLOY entity=bafkreig642eiyvrlo5ibeqs276zrjv55ucxwygmquyvbcwxstdebfg5aki files=6 total=511.3k bytes
+DEPLOY entity=bafkreif3q4zytm2eq7uoxc466uyo4dyk6jyxghi3vfz6ipdfiqu27bg224 files=6 total=565.1k bytes
   bafkreibig7gpevw73nv2ygong3jlgzthtzutgbfy6u3qwpzxgzbujzc5cu scene.json 166 bytes
   bafkreifbfjjjp4srk523rnwg3ktgpy65qmvh2swj7ebkyzi5ncvkqtg4pq main.crdt 317 bytes
-  bafybeihojtsshznnhpf2jd4t2ahrlb5sti26rxsnprt4brtczo2ba7twmu bin/sdk-runtime.js 497454 bytes
+  bafybeigzbwwk5mxivepizkwaizsys5dmp3zl2ti7ofc5ocgltbzhhy7lfq bin/sdk-runtime.js 551234 bytes
   bafkreiaeihxopicocxnxz3fllaejkbklculqbkef6txrbthpivfhxjbw6q bin/scene.js 1149 bytes
-  bafkreifekhrzirbox5eaeo7wlfvrtgfbjhynprrj2fccugfkx4nnwmyrqu bin/index.js 10516 bytes
+  bafkreibn6rjblcvxkon2qratpdikpoodeaii47teqsts7rlhc552r4byee bin/index.js 10566 bytes
   bafkreiajivmg7dakw5cltgz5g6lmx7ntzxvvz2r5cf6xtznoappci2w6nu assets/scene/main.composite 1664 bytes
 EVAL bin/index.js
   READFILE: bin/sdk-runtime.js
