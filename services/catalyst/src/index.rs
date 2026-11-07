@@ -58,8 +58,9 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
         None,
     ));
     credits.spawn_usage_index(&jobs);
+    let shutdown = crate::serve::shutdown_signal();
     tracing::info!(jobs = ?jobs.report().iter().map(|j| &j.name).collect::<Vec<_>>(), "index worker started");
-    crate::serve::shutdown_signal().await;
+    shutdown.await;
     let aborted = jobs.shutdown(Duration::from_secs(30)).await;
     if !aborted.is_empty() {
         tracing::warn!(?aborted, "index jobs aborted at shutdown");
