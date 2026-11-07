@@ -21,6 +21,7 @@ gh api -X PUT "repos/$repo/actions/permissions/selected-actions" \
   -f 'patterns_allowed[]=dtolnay/rust-toolchain@*' \
   -f 'patterns_allowed[]=Swatinem/rust-cache@*' \
   -f 'patterns_allowed[]=cachix/install-nix-action@*' \
+  -f 'patterns_allowed[]=nix-community/cache-nix-action@*' \
   -f 'patterns_allowed[]=Mozilla-Actions/sccache-action@*' \
   -f 'patterns_allowed[]=docker/setup-buildx-action@*'
 # GitHub only accepts this setting for a public repository: on a private one the call is skipped,
