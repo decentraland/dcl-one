@@ -54,6 +54,20 @@ jobs:
           df -h /
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          # One Nix store snapshot per platform and shell definition: main's first attempts write
+          # it after garbage collection; every run restores the newest one for its platform.
+          primary-key: nix-store-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock', 'services/catalyst/rust-toolchain.toml', 'infra/dev/**', 'infra/packages/**') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-${{ runner.arch }}-
+          save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          gc-max-store-size: 0
+      - name: Root the development shell and the flake inputs for the store snapshot
+        run: |
+          nix build --out-link .cache/nix-roots/shell ".#devShells.$(nix config show system).default"
+          for input in $(nix flake archive --json | jq -r '.inputs | .. | .path? // empty'); do
+            nix-store --add-root ".cache/nix-roots/${input##*/}" -r "$input" > /dev/null
+          done
       - name: Test disposable release-proof database setup and cleanup
         run: nix develop --no-update-lock-file --command python3 -m unittest discover -s tooling/tests -p test_social_voice_release_ci.py -v
       - name: Restore Rust build cache

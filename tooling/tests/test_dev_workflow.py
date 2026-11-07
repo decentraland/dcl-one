@@ -44,6 +44,22 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('bash tooling/dev-smoke.sh', jobs()['smoke'])
         self.assertIn('bash tooling/dev-test.sh e2e', jobs()['smoke'])
 
+    def test_every_nix_job_restores_the_store_snapshot_before_its_first_shell(self):
+        policy = WORKFLOW.parents[2] / 'tooling/repo-actions-policy.sh'
+        self.assertIn("patterns_allowed[]=nix-community/cache-nix-action@*", policy.read_text())
+        for name in ('development.yml', 'social-voice-release.yml'):
+            steps = re.split(r'(?m)^      - ', WORKFLOW.with_name(name).read_text())
+            installs = [i for i, step in enumerate(steps) if step.startswith('uses: cachix/install-nix-action@')]
+            self.assertTrue(installs, name)
+            for i in installs:
+                snapshot, roots = steps[i + 1], steps[i + 2]
+                self.assertTrue(snapshot.startswith('uses: nix-community/cache-nix-action@'), name)
+                self.assertIn("primary-key: nix-store-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock', ", snapshot)
+                self.assertIn("save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}", snapshot)
+                self.assertIn('gc-max-store-size: 0', snapshot)
+                self.assertIn('nix build --out-link .cache/nix-roots/shell', roots)
+                self.assertIn('nix flake archive --json', roots)
+
     def test_large_pr_snapshots_are_only_same_repository_linux_tests(self):
         def allowed(job, event, ref, platform, same_repository=True, passed=True, hit=False, cache_enabled=False):
             save = re.search(r'(?ms)^      - name: Save successful[^\n]*\n(.*?)(?=^      - |\Z)',
