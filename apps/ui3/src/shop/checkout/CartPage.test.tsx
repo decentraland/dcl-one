@@ -6,7 +6,9 @@ import { partitionCart } from "../cart/partition";
 import { rarityCardPalette } from "../discovery/lib/rarity";
 import { creatorOrder, storeMint, wearableResale, parcelResale, BOOK } from "../payment/fixtures";
 import CartPage from "./CartPage";
+import { creatorTrade } from "./fakes";
 import { createDemo, DemoShell, type DemoScenario } from "./demo";
+import { RESUME_CART_KEY } from "./purchase/cart";
 
 function renderCart(s: DemoScenario, tweak?: (demo: ReturnType<typeof createDemo>) => void) {
   const demo = createDemo(s);
@@ -317,6 +319,61 @@ describe("the cart page", () => {
     expect(await screen.findByTestId("cart-balance-unknown")).toBeTruthy();
     expect(screen.queryByTestId("pay-with-credits")).toBeNull();
     expect(screen.queryByTestId("pay-with-credits-topup")).toBeNull();
+  });
+
+  it("a cart that changes under the rail's wait ends the wait: the lines are locked while it runs, and nothing is bought", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const { demo } = renderCart({ session: "web3", lines: [{ offer: (s) => creatorOrder(s), listing: { tradeId: "trade-creator-1" }, name: "Order" }] }, (d) => {
+      d.chain.manaBalances.set(`137:${BOOK.buyer.toLowerCase()}`, 10n ** 21n);
+      const fetchOffers = d.services.fetchOffers!;
+      d.services.fetchOffers = async (lines, signal) => {
+        if (lines.some((l) => l.method === "mana")) await gate;
+        return fetchOffers(lines, signal);
+      };
+    });
+    await clickWhenEnabled(() => screen.getByTestId("pay-with-mana"));
+    expect(within(screen.getByRole("article", { name: "Order" })).getByRole("button", { name: /Remove/ })).toBeDisabled();
+    // Another tab (or an account switch) changes the cart while the re-price is out.
+    const id = demo.cart.getSnapshot().lines[0]!.id;
+    await act(async () => demo.cart.setQuantity(id, 2));
+    await waitFor(() => expect(screen.queryByText("Working…")).toBeNull());
+    await act(async () => release());
+    await walletSettled();
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+  });
+
+  it("a rail pressed while a sign-in resume is armed starts one checkout, not two", async () => {
+    sessionStorage.setItem(RESUME_CART_KEY, "1");
+    let settled = 0;
+    try {
+      renderCart({
+        session: "web3",
+        lines: [{ offer: (s) => creatorOrder(s), listing: { tradeId: "trade-creator-1" }, name: "Order" }],
+        balanceCents: 30,
+        resolvers: {
+          trade: async () => {
+            settled++;
+            return creatorTrade();
+          },
+        },
+      }, (d) => d.chain.manaBalances.set(`137:${BOOK.buyer.toLowerCase()}`, 10n ** 21n));
+      await clickWhenEnabled(() => screen.getByTestId("pay-with-mana"));
+      expect(await screen.findByTestId("authorize-step-action")).toBeTruthy();
+      await walletSettled();
+      expect(settled).toBe(1);
+    } finally {
+      sessionStorage.removeItem(RESUME_CART_KEY);
+    }
+  });
+
+  it("the MANA rail on lines already on MANA pays at once: the MANA total is the one on screen", async () => {
+    renderCart({ session: "web3", lines: [{ offer: (s) => creatorOrder(s), listing: { tradeId: "trade-creator-1" }, name: "Order", method: "mana" }] }, (d) =>
+      d.chain.manaBalances.set(`137:${BOOK.buyer.toLowerCase()}`, 10n ** 21n),
+    );
+    await clickWhenEnabled(() => screen.getByTestId("pay-with-mana"));
+    expect(await screen.findByTestId("authorize-step-action")).toBeTruthy();
+    expect(screen.queryByTestId("cart-repriced")).toBeNull();
   });
 
   it("lines left on MANA with too few credits: Checkout puts them back on credits and offers the top-up, never a silent no-op", async () => {

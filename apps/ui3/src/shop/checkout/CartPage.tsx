@@ -310,7 +310,7 @@ function CartScreen() {
                       view={co.views[line.id] ?? null}
                       changes={co.changesByLine[line.id] ?? []}
                       refusal={co.refusedByLine[line.id]}
-                      disabled={co.running}
+                      disabled={co.running || rails.paying}
                       onMethod={(m) => co.setMethod(line.id, m)}
                       onQuantity={(q) => co.setQuantity(line.id, q)}
                       onRemove={() => co.remove(line.id)}
@@ -321,7 +321,7 @@ function CartScreen() {
                 </div>
 
                 <div className="shop-cart__utils">
-                  <button type="button" className="shop-cart__clear" onClick={co.clear} disabled={co.running}>
+                  <button type="button" className="shop-cart__clear" onClick={co.clear} disabled={co.running || rails.paying}>
                     Clear cart
                   </button>
                 </div>

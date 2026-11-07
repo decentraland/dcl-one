@@ -30,20 +30,23 @@ export function partitionMana(partition: CartPartition | null, chainId: number):
 
 export function useRailCheckout(co: CheckoutView, buyable: readonly CartLine[], openTopUp: () => void) {
   const [pending, setPending] = useState<Pending | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  // The notice speaks for one price check: once the cart changes or re-prices, it no longer describes the total.
+  const [notice, setNotice] = useState<{ text: string; pricedFor: string | null } | null>(null);
 
   // What a press does once the cart is priced as it will be paid. Opening the top-up charges nothing.
   const proceed = (charge: boolean) => {
     if (co.canConfirm) {
       if (charge) void co.confirm();
-      else setNotice(REPRICED_NOTICE);
+      else setNotice({ text: REPRICED_NOTICE, pricedFor: co.pricedFor });
     } else if (co.topUp && co.review.kind === "current") openTopUp();
   };
 
   // The move restarts the price check; this waits for the check that priced exactly the moved lines.
   useEffect(() => {
     if (!pending || co.running) return;
-    if (co.review.kind === "outage") {
+    // The cart changed under the wait (a line edited or removed, another account's cart): that price check will
+    // never come, and nothing the buyer pressed for is on screen any more.
+    if (co.review.kind === "outage" || revalidationIdentity(co.lines) !== pending.target) {
       setPending(null);
       return;
     }
@@ -55,6 +58,8 @@ export function useRailCheckout(co: CheckoutView, buyable: readonly CartLine[], 
 
   const move = (target: (l: CartLine) => PaymentMethod | null, shown: Pending["shown"]) => {
     setNotice(null);
+    // A press is the buyer's own checkout: a resume armed by an earlier sign-in must not run one beside it.
+    co.holdAutoConfirm();
     const moving = buyable.filter((l) => l.method !== target(l));
     if (moving.length === 0) {
       // Nothing changes: the summary on screen is what gets charged.
@@ -68,7 +73,7 @@ export function useRailCheckout(co: CheckoutView, buyable: readonly CartLine[], 
 
   return {
     paying: pending !== null,
-    notice,
+    notice: notice && notice.pricedFor === co.pricedFor && notice.pricedFor === revalidationIdentity(co.lines) ? notice.text : null,
     /** A rail's button: every line on that method (a line already on it by default stays as it is). */
     pay(rail: CartRail) {
       const method = rail.method;

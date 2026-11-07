@@ -95,6 +95,8 @@ export type CheckoutView = {
   revalidate(): void;
   acceptChanges(): void;
   confirm(): Promise<void>;
+  /** A payment the buyer started by hand: a resume armed by sign-in must not start a second one. */
+  holdAutoConfirm(): void;
   resume(): Promise<void>;
   discardCheckout(): Promise<void>;
   dismissTopUp(): void;
@@ -334,15 +336,18 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
     [qc, lines, services.cart, opts],
   );
 
+  // One checkout at a time: two callers in one effect flush both see `running` false, so the lock is a ref.
+  const confirming = useRef(false);
   const confirm = useCallback(async () => {
     if (!account) {
       stashResumeIntent({ type: "cart-checkout" });
       wallet.host?.onSignIn?.();
       return;
     }
-    if (!canConfirm || !partition) return;
+    if (!canConfirm || !partition || confirming.current) return;
     const d = deps();
     if (!d) return;
+    confirming.current = true;
     setRunning(true);
     setTopUp(null);
     try {
@@ -371,6 +376,7 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
       }
       finish(runnable, next, resolved);
     } finally {
+      confirming.current = false;
       setRunning(false);
     }
   }, [account, canConfirm, partition, deps, settle, payableGroups, services.cart, finish, wallet.host]);
@@ -482,6 +488,7 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
     revalidate: revalidation.revalidate,
     acceptChanges: revalidation.accept,
     confirm,
+    holdAutoConfirm: () => setAutoConfirm(false),
     resume,
     discardCheckout,
     dismissTopUp: () => setTopUp(null),

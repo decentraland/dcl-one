@@ -8,7 +8,7 @@ import { useId } from "react";
 
 import ManaMark from "../../../atoms/ManaMark";
 import { isEthereum } from "../../model/chain";
-import { formatMana } from "../../model/money";
+import { formatMana, type ManaWei } from "../../model/money";
 import type { CartRail } from "../lib/cart-rails";
 import styles from "./PaymentCtas.module.css";
 
@@ -19,20 +19,20 @@ export type PaymentCtasProps = {
   /** Shown when no rail covers the purchase: the credits path, opening a top-up. */
   creditsFallback: { label: string; onClick(): void } | null;
   /** Held MANA that cannot pay: the disabled MANA button. */
-  manaShortfall: { manaWei: bigint; chainId: number } | null;
+  manaShortfall: { manaWei: ManaWei; chainId: number } | null;
   busy?: boolean;
   /** A payment the buttons started is under way: every button says so to assistive tech. */
   working?: boolean;
   onPay(rail: CartRail): void;
 };
 
-function ManaAmountMark({ wei, chainId }: { wei: bigint; chainId: number }) {
+function ManaAmountMark({ wei, chainId }: { wei: ManaWei; chainId: number }) {
   return (
     <span className={styles.amount}>
       <span className={styles.manaMark}>
         <ManaMark size={24} network={isEthereum(chainId) ? "ethereum" : "polygon"} />
       </span>
-      <span>{formatMana(wei as never)}</span>
+      <span>{formatMana(wei)}</span>
     </span>
   );
 }
