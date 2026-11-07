@@ -1,19 +1,28 @@
 // In-world Shop: the main menu's Shop page. The avatar on the left is the engine's preview (the
 // Backpack's), wearing what the buyer selects or tries on, never saved to the look; the grid on the right
 // reads the web Shop's catalogue through TanStack (catalogueQuery), a page at a time, and prices each
-// row by the web Shop's own card rule. Selecting an item opens its panel beside the grid. Buying is the
-// next flow; resales and anything not sold in credits open on the web Shop.
+// row by the web Shop's own card rule. Selecting an item opens its panel beside the grid. BUY and BUY ITEM
+// buy a primary sale with Credits through the web shell, which holds the wallet and shows the purchase
+// dialog (purchaseQuery); resales, anything not sold in Credits, and buying outside the shell open on the
+// web Shop. ADD TO CART keeps such a sale in the in-world cart (cartStore), whose popover under the
+// header's cart button buys them all at once through the same dialog. Names is where a NAME is picked: the
+// typed NAME shows over the avatar in a nametag, as it will read once claimed, and CLAIM NAME registers it
+// on the web Shop.
 
-import { useQueryClient } from '@tanstack/react-query'
+import { useQueries, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
 import { defaultWorn, wornUrns } from '../../../shop/discovery/lib/outfit'
 import { BASE_FEMALE, BASE_MALE, type BodyShapeUrn } from '../../../shop/detail/lib/bodyShape'
 import { REMOTE_FLAG } from '../../../shop/discovery/lib/remoteFlags'
-import { Button, Chip, ChevronDown, ChevronLeft, EmptyState, MaskIcon, OptionMenu, Pager, ScrollThumb, SearchField, showConfirm, Spinner, Tabs, type TabItem } from '../../design'
+import { NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput } from '../../../shop/names/names'
+import { Button, Chip, ChevronDown, ChevronLeft, EmptyState, MaskIcon, OptionMenu, Pager, ScrollThumb, SearchField, showConfirm, showToast, Spinner, Tabs, type TabItem } from '../../design'
+import { userNameColor } from '../../engine/nameColor'
+import { addressSuffix } from '../../engine/profileEdit'
 import type { PreviewFocus, Wearable } from '../../engine/protocol'
 import { registerCancelLayer } from '../../lib/cancelLayers'
 import { subscribeHudScale } from '../../lib/hudScale'
+import { AvatarDragSurface } from '../engine/AvatarDragSurface'
 import { EngineViewport } from '../engine/EngineViewport'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import type { ProfileState, ShopState } from '../session/useEngineSession'
@@ -23,26 +32,38 @@ import emotesIcon from '../../assets/backpack/icon-emotes.webp'
 import filterIcon from '../../assets/backpack/icon-filter.webp'
 import emptySearchArt from '../../assets/backpack/empty-search.webp'
 import cartIcon from '../../assets/shop/cart.svg'
-import { CATALOGUE_SORTS, categoriesFor, defaultFilters, pageCount, useShopCatalogue, type CatalogueFilters, type CatalogueKind } from './catalogueQuery'
+import namesIcon from '../../assets/shop/names/names-tab.svg'
+import { cartRequestLines, cartUnits, inWorldCart, inWorldCartInputFor, useInWorldCart } from './cartStore'
+import { CATALOGUE_SORTS, categoriesFor, defaultFilters, pageCount, statusOf, useShopCatalogue, type CatalogueFilters, type CatalogueKind } from './catalogueQuery'
 import { useShopFlag } from './flagsQuery'
 import { homeQueries, useNewest, useShopOutfits, useTrending, type OutfitSummary } from './homeQuery'
-import { tryOnUrn, webShopUrl } from './itemLinks'
-import { SelectedItemPanel, ShopCard } from './ShopItems'
-import { EmoteControls, ShopFilters, ShopHome, ShopItemSkeleton } from './ui'
+import { tryOnUrn, webNameOfferUrl, webNameResaleUrl, webNameUrl, webOutfitUrl, webShopUrl } from './itemLinks'
+import { useNameCheck } from './namesQuery'
+import { useCreditsBalance, useShopCapabilities, useShopPurchase } from './purchaseQuery'
+import { categoryGlyph, CreatorName, SelectedItemPanel, ShopCard } from './ShopItems'
+import { AvatarNametag, CreditsPill, EmoteControls, PriceTag, ShopCart, ShopCartBadge, ShopCartToast, ShopFilters, ShopHome, ShopItemSkeleton, ShopNames, type PressedWith, type ShopHomeOutfitOffer } from './ui'
 import styles from './InWorldShop.module.css'
 
-type Section = 'all' | 'wearables' | 'emotes'
+type Section = 'all' | 'wearables' | 'emotes' | 'names'
 const SECTIONS: TabItem<Section>[] = [
   { id: 'all', label: 'All', icon: <MaskIcon src={allIcon} size={24} /> },
   { id: 'wearables', label: 'Wearables', icon: <MaskIcon src={upperBodyIcon} size={24} /> },
-  { id: 'emotes', label: 'Emotes', icon: <MaskIcon src={emotesIcon} size={24} /> }
+  { id: 'emotes', label: 'Emotes', icon: <MaskIcon src={emotesIcon} size={24} /> },
+  { id: 'names', label: 'Names', icon: <MaskIcon src={namesIcon} size={24} /> }
 ]
-const KIND: Record<Exclude<Section, 'all'>, CatalogueKind> = { wearables: 'wearable', emotes: 'emote' }
+/** The sections that list the catalogue; All and Names lead into the wearables one. */
+type Catalogue = 'wearables' | 'emotes'
+const KIND: Record<Catalogue, CatalogueKind> = { wearables: 'wearable', emotes: 'emote' }
+const isCatalogue = (s: Section): s is Catalogue => s === 'wearables' || s === 'emotes'
+/** The NAME field takes one letter past the limit, so typing past it shows it (the design's 16/15). */
+const NAME_TYPED_MAX = NAME_MAX_LENGTH + 1
 const SEARCH_DEBOUNCE_MS = 350
 /** The design's scroll thumb: 203px, whatever the page's length. */
 const THUMB_LENGTH = 203
 /** The stage image (assets/shop/stage.jpg) is the design's 1920×1080 frame, its top 70px under the top bar. */
 const STAGE = { width: 1920, height: 1080, top: 70 }
+/** How long "1 Item Added to Cart" stays up. */
+const TOAST_MS = 3000
 type Rect = { x: number; y: number; width: number; height: number }
 
 export interface InWorldShopProps {
@@ -61,19 +82,29 @@ export interface InWorldShopProps {
   stage: (rect: Rect | null) => void
   /** Plays an emote on the preview avatar (again on every call); null stops it. */
   emote: (urn: string | null) => void
+  /** Turns the preview avatar by these degrees (a drag over it). */
+  rotate: (degrees: number) => void
+  /** Zooms the preview avatar's camera to this many times its framing, keeping the height `anchor` of its view
+   *  in place (the wheel over it). */
+  zoom: (zoom: number, anchor: number) => void
   /** No engine draws the avatar (the UI-only mock): the stage shows whole, without the avatar's window. */
   noEngine?: boolean
-  /** Emotes tried on on the avatar (TRY ON, playing on select, STOP EMOTE). Off until the engine plays a
-   *  preview avatar's emote by URN: the message reaches the scene, the avatar doesn't animate yet. */
+  /** Emotes tried on on the avatar (TRY ON, playing on select, STOP EMOTE): on wherever an engine draws the
+   *  avatar. The engine plays the emote once, then the avatar idles; STOP EMOTE stays until pressed, as the
+   *  page doesn't hear when it ends. */
   emoteTryOn?: boolean
 }
 
 /** Asks first, then opens the item on the web Shop in the browser. */
 async function openOnWeb(item: CatalogItem): Promise<void> {
-  const url = webShopUrl(item)
+  await openWebShop(webShopUrl(item))
+}
+
+/** Opens a page of the web Shop in the browser, once the player agrees to leave (a resale is the Marketplace's). */
+async function openWebShop(url: string | null, where: 'Shop' | 'Marketplace' = 'Shop'): Promise<void> {
   if (url == null) return
   const go = await showConfirm({
-    title: 'You will be redirected to the web Shop',
+    title: `You will be redirected to the web ${where}`,
     body: (
       <>
         Continuing will open the link in your browser.
@@ -87,7 +118,7 @@ async function openOnWeb(item: CatalogItem): Promise<void> {
   if (go) window.open(url, '_blank', 'noopener')
 }
 
-export default function InWorldShop({ shop, profile, onNavigate, setEngineViewport, equipped, preview, focus, stage, emote, noEngine = false, emoteTryOn = false }: InWorldShopProps): React.JSX.Element | null {
+export default function InWorldShop({ shop, profile, onNavigate, setEngineViewport, equipped, preview, focus, stage, emote, rotate, zoom, noEngine = false, emoteTryOn = !noEngine }: InWorldShopProps): React.JSX.Element | null {
   // The Shop opens on the wearables catalogue, as the design's every frame of this flow does.
   const [section, setSection] = useState<Section>('wearables')
   const queryClient = useQueryClient()
@@ -100,24 +131,34 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   const [tryingOn, setTryingOn] = useState<string | null>(null)
   // The emote playing on the avatar (an item id), which STOP EMOTE stops.
   const [playing, setPlaying] = useState<string | null>(null)
+  const [cartOpen, setCartOpen] = useState(false)
+  // Names: the NAME typed (letters and digits) and whether its field has the focus.
+  const [nameDraft, setNameDraft] = useState('')
+  const [nameFocused, setNameFocused] = useState(false)
+  // A zoomed preview hides the nametag: it would sit over the avatar's head.
+  const [zoomed, setZoomed] = useState(false)
+  // Each ADD TO CART shows the toast again (its key restarts it).
+  const [toast, setToast] = useState(0)
+  const cartArea = useRef<HTMLDivElement>(null)
+  const cartButton = useRef<HTMLButtonElement>(null)
   const backdrop = useRef<HTMLDivElement>(null)
   const scroller = useRef<HTMLDivElement>(null)
   const homeScroller = useRef<HTMLDivElement>(null)
 
-  // Any change of what is listed starts again at its first page, at the top. From the All home, a
+  // Any change of what is listed starts again at its first page, at the top. From the All home or Names, a
   // filter or a sort is a way into the wearables catalogue.
   const patch = useCallback((next: Partial<CatalogueFilters>) => {
     setFilters((f) => ({ ...f, ...next }))
     setPage(0)
-    setSection((s) => (s === 'all' ? 'wearables' : s))
+    setSection((s) => (isCatalogue(s) ? s : 'wearables'))
   }, [])
   useEffect(() => {
     const search = draft.trim().toLowerCase()
     const t = setTimeout(() => {
-      // Only a typed search leaves the All home; the debounce's first run (an empty box) doesn't.
+      // Only a typed search leaves the All home or Names; the debounce's first run (an empty box) doesn't.
       setFilters((f) => (f.search === search ? f : { ...f, search }))
       setPage(0)
-      if (search !== '') setSection((s) => (s === 'all' ? 'wearables' : s))
+      if (search !== '') setSection((s) => (isCatalogue(s) ? s : 'wearables'))
     }, SEARCH_DEBOUNCE_MS)
     return () => clearTimeout(t)
   }, [draft])
@@ -130,15 +171,49 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   const creatorSalesFlag = useShopFlag(REMOTE_FLAG.creatorSales)
   const flagsKnown = creatorSalesFlag !== undefined
   const creatorSales = creatorSalesFlag ?? false
-  const grid = useShopCatalogue(filters, page, { creatorSales, enabled: shop.open && flagsKnown && section !== 'all' })
+  const grid = useShopCatalogue(filters, page, { creatorSales, enabled: shop.open && flagsKnown && isCatalogue(section) })
+  const nameCheck = useNameCheck(nameDraft, shop.open && section === 'names')
   const onHome = shop.open && section === 'all'
   const outfits = useShopOutfits(onHome)
+  // Each outfit's items, for its tile's price (wearing it reads the same query).
+  const outfitReads = useQueries({ queries: (onHome ? (outfits.data ?? []) : []).map((o) => homeQueries.outfitItems(o)) })
   const trending = useTrending(creatorSales, onHome && flagsKnown)
   const newest = useNewest(creatorSales, onHome && flagsKnown)
   // Escape closes the filters first, as the HUD's other popovers (OptionMenu registers its own).
   useEffect(() => (menu === 'filters' ? registerCancelLayer(() => setMenu(null)) : undefined), [menu])
   const items = grid.data?.items ?? []
   const total = grid.data?.total ?? 0
+  const capabilities = useShopCapabilities()
+  const credits = useCreditsBalance(shop.open ? (capabilities?.buyer ?? null) : null)
+  const purchase = useShopPurchase(() => onNavigate('backpack'))
+  // A guest login's cart is the signed-out one, which the account takes over once one signs in.
+  const cart = useInWorldCart(capabilities?.reason === 'guest' ? null : (capabilities?.buyer ?? null))
+  // Escape or the cart's X closes it, the focus back on the cart button; a press anywhere else closes it
+  // where the press went.
+  const closeCart = useCallback((refocus: boolean) => {
+    setCartOpen(false)
+    if (refocus) cartButton.current?.focus()
+  }, [])
+  useEffect(() => {
+    if (!cartOpen) return
+    const away = (e: PointerEvent): void => {
+      if (!cartArea.current?.contains(e.target as Node)) closeCart(false)
+    }
+    document.addEventListener('pointerdown', away, true)
+    const unregister = registerCancelLayer(() => closeCart(true))
+    return () => {
+      document.removeEventListener('pointerdown', away, true)
+      unregister()
+    }
+  }, [cartOpen, closeCart])
+  useEffect(() => {
+    if (toast === 0) return
+    const t = setTimeout(() => setToast(0), TOAST_MS)
+    return () => clearTimeout(t)
+  }, [toast])
+  // The panel shows the selected item as the listings now read it (its stock after a purchase), and its
+  // own copy only while no listing holds it.
+  const shown = selected == null ? null : ([...items, ...(trending.data ?? []), ...(newest.data ?? [])].find((i) => i.id === selected.id) ?? selected)
 
   // Only a preview this page made is undone: the Backpack shares the preview avatar.
   const previewing = useRef(false)
@@ -169,6 +244,11 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     setSelected(null)
     setTryingOn(null)
     setMenu(null)
+    setCartOpen(false)
+    setToast(0)
+    setNameDraft('')
+    setNameFocused(false)
+    setZoomed(false)
     restoreLook()
     stopEmote()
   }, [shop.open, focus, restoreLook, stopEmote])
@@ -245,6 +325,56 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     previewing.current = true
     preview([...(body != null ? [body] : []), ...wornUrns(items, defaultWorn(items, shape), shape)])
   }
+  // In the web shell the purchase dialog opens over the page; anywhere else the web Shop sells it.
+  const buy = (item: CatalogItem, input: PressedWith): void => {
+    // A purchase that couldn't open here (the shell refused it or didn't answer) is offered on the web.
+    if (purchase.available) void purchase.buy(item, input).then((opened) => (opened ? undefined : openOnWeb(item)))
+    else void openOnWeb(item)
+  }
+  // The cart is bought where purchases run (the web shell); elsewhere ADD TO CART stays off.
+  const addToCart = (item: CatalogItem): (() => void) | undefined => {
+    const input = purchase.available ? inWorldCartInputFor(item) : null
+    if (input == null || !inWorldCart.canAdd(input)) return undefined
+    return () => {
+      void inWorldCart.add(input).then((added) => {
+        if (added) setToast((n) => n + 1)
+      })
+    }
+  }
+  const checkout = (input: PressedWith): void => {
+    setCartOpen(false)
+    void purchase.checkout(cartRequestLines(cart), input).then((opened) => {
+      if (!opened) showToast("The purchase couldn't open. Try again in a moment.", { tone: 'error' })
+    })
+  }
+  // An outfit's tile counts its items and prices them when every one of them has a credits price as a single
+  // item's BUY reads it (cardPrice: sold out, a closed mint or no credits sale leave none), as the web Shop's
+  // outfit page prices one; its overview card only checks each price. BUY buys the whole outfit in one
+  // purchase where purchases run (the web shell) and it is priced so; not the cart's purchase, so what it buys
+  // stays in the cart. Anywhere else, or when the shell can't open it, BUY opens the outfit on the web Shop, as
+  // an item's BUY does.
+  const outfitOffer = (outfit: OutfitSummary): ShopHomeOutfitOffer => {
+    if (outfit.items.length === 0) return { items: 0 }
+    const read = outfitReads[outfits.data?.indexOf(outfit) ?? -1]
+    const items = read?.data
+    const inputs = (items ?? []).map((item) => inWorldCartInputFor(item))
+    const lines = inputs.flatMap((i) => (i == null ? [] : [{ contract: i.contract, itemId: i.itemId, quantity: 1 }]))
+    const priced = items != null && items.length === outfit.items.length && lines.length === items.length
+    const onWeb = (): void => void openWebShop(webOutfitUrl(outfit.id))
+    const credits = inputs.reduce((n, i) => n + (i?.credits ?? 0), 0)
+    return {
+      items: outfit.items.length,
+      price: priced ? <PriceTag price={{ kind: 'credits', credits, compareAt: null, mana: null }} /> : undefined,
+      // In the shell, BUY waits for the items: it can't tell yet whether the purchase runs here.
+      onBuy: !purchase.available
+        ? onWeb
+        : priced
+          ? (input) => void purchase.buyAll(lines, input).then((opened) => (opened ? undefined : onWeb()))
+          : read?.isPending === false
+            ? onWeb
+            : undefined
+    }
+  }
   const select = (item: CatalogItem): void => {
     // Whatever is picked now, an outfit still loading is no longer wanted.
     previewTicket.current++
@@ -263,20 +393,19 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     takeOff()
     stopEmote()
     setMenu(null)
-    // The All home's filters and sort lead into the wearables catalogue, so it keeps theirs.
-    setFilters({ ...defaultFilters(next === 'all' ? 'wearable' : KIND[next]), search: draft.trim().toLowerCase() })
+    // The All home's and Names' filters and sort lead into the wearables catalogue, so they keep theirs.
+    setFilters({ ...defaultFilters(isCatalogue(next) ? KIND[next] : 'wearable'), search: draft.trim().toLowerCase() })
     setPage(0)
   }
   // The tab already open keeps its filters, page, panel and try-on when clicked again.
   const pickSection = (next: Section): void => {
     if (next !== section) enterSection(next)
   }
-  // As on the web Shop, both rows lead to the catalogue: New keeps its order (on sale, newest first);
-  // Trending has no order of its own there, so it opens the catalogue as it stands by default.
-  const viewAll = (row: 'trending' | 'newest'): void => {
+  // As on the web Shop, both rows lead to the catalogue as it opens (its items grid, `/items`): on sale and
+  // newest first, New's own order. No status is picked for the player, so a search still widens to all.
+  const viewAll = (): void => {
     enterSection('wearables')
-    const search = draft.trim().toLowerCase()
-    setFilters(row === 'newest' ? { ...defaultFilters('wearable'), status: 'on_sale', sort: 'newest', search } : { ...defaultFilters('wearable'), search })
+    setFilters({ ...defaultFilters('wearable'), search: draft.trim().toLowerCase() })
   }
   const pickSort = (id: string): void => {
     const next = CATALOGUE_SORTS.find((s) => s.id === id)
@@ -291,13 +420,23 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     setDraft('')
     patch({ ...defaultFilters(kind) })
   }
+  // The NAME field keeps letters and digits only, one past the limit at most: cleaned first, so a pasted NAME
+  // loses its punctuation, not its letters.
+  const typeName = (value: string): void => setNameDraft(sanitizeNameInput(value, NAME_TYPED_MAX))
+  // A NAME is registered on the web Shop, its NAMEs page opening on it; a taken one's owner takes an offer
+  // on its bid page on the Marketplace, listed or not; RESALE NAME browses the NAMEs on sale there.
+  const claimName = (): void => void openWebShop(webNameUrl(nameDraft))
+  const makeNameOffer = (): void => void openWebShop(webNameOfferUrl(nameDraft), 'Marketplace')
+  const browseNameResales = (): void => void openWebShop(webNameResaleUrl(), 'Marketplace')
 
   const p = profile.data
   const sortLabel = CATALOGUE_SORTS.find((s) => s.id === filters.sort)?.label ?? CATALOGUE_SORTS[0].label
   // A new page or filter set shows the last rows, dimmed, until it answers.
   const stale = grid.isPlaceholderData
-  // Only a narrowed feed has somewhere wider to go.
-  const narrowed = JSON.stringify({ ...filters, sort: 'newest' }) !== JSON.stringify(defaultFilters(kind))
+  // Only a narrowed feed has somewhere wider to go. The status counts as it reads: "On sale" picked by hand
+  // is the default, not a narrowing (exploring would land on the same page).
+  const narrowed =
+    JSON.stringify({ ...filters, sort: 'newest', status: statusOf(filters) }) !== JSON.stringify({ ...defaultFilters(kind), status: statusOf(defaultFilters(kind)) })
   const categories = categoriesFor(kind)
   return (
     <MainMenuShell
@@ -324,7 +463,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                     <ChevronDown size={18} />
                   </Button>
                   {menu === 'filters' && (
-                    <ShopFilters className={styles.menu} filters={filters} onChange={patch} onClose={() => setMenu(null)} showDeals={creatorSales} showSmart={kind === 'wearable'} />
+                    <ShopFilters className={styles.menu} filters={{ ...filters, status: statusOf(filters) }} onChange={patch} onClose={() => setMenu(null)} showDeals={creatorSales} showSmart={kind === 'wearable'} />
                   )}
                 </div>
                 <div className={styles.menuWrap}>
@@ -340,28 +479,110 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
             <div className={styles.searchWrap}>
               <SearchField variant="light" value={draft} onChange={setDraft} placeholder="Search" />
             </div>
-            <button type="button" className={styles.cart} aria-label="Cart" disabled title="The cart is coming soon">
-              <MaskIcon src={cartIcon} size={24} />
-            </button>
+            {credits != null && <CreditsPill credits={credits} />}
+            <div ref={cartArea} className={styles.cartArea}>
+              <button
+                ref={cartButton}
+                type="button"
+                className={styles.cart}
+                aria-label={cart.length > 0 ? `Cart, ${cartUnits(cart)} ${cartUnits(cart) === 1 ? 'item' : 'items'}` : 'Cart'}
+                aria-expanded={cartOpen}
+                disabled={!purchase.available}
+                title={purchase.available ? undefined : 'The cart is in the web Explorer'}
+                onClick={() => {
+                  // The cart says what was added: the toast goes as it opens.
+                  setToast(0)
+                  setCartOpen((o) => !o)
+                }}
+              >
+                <MaskIcon src={cartIcon} size={24} />
+              </button>
+              {cart.length > 0 && <ShopCartBadge className={styles.cartBadge} count={cartUnits(cart)} />}
+              {cartOpen && (
+                <ShopCart
+                  className={styles.cartPopover}
+                  lines={cart.map((l) => ({
+                    key: `${l.contract}:${l.itemId}`,
+                    name: l.name,
+                    creator: <CreatorName address={l.creator} />,
+                    thumbnail: l.thumbnail,
+                    rarity: l.rarity,
+                    categoryIcon: categoryGlyph(l.category, 16),
+                    quantity: l.quantity,
+                    credits: l.credits,
+                    canIncrement: inWorldCart.canAdd(l)
+                  }))}
+                  total={cart.reduce((n, l) => n + l.credits * l.quantity, 0)}
+                  onClose={() => closeCart(true)}
+                  onQuantity={(key, quantity) => {
+                    const [contract, itemId] = key.split(':')
+                    void inWorldCart.setQuantity({ contract, itemId }, quantity)
+                  }}
+                  onRemove={(key) => {
+                    const [contract, itemId] = key.split(':')
+                    void inWorldCart.remove({ contract, itemId })
+                  }}
+                  onCheckout={checkout}
+                />
+              )}
+            </div>
           </div>
         </header>
+        {/* Mounted while the page is, so a screen reader announces the toast as it lands in it. */}
+        <div className={styles.toast} role="status" aria-live="polite">
+          {toast > 0 && <ShopCartToast key={toast}>1 Item Added to Cart</ShopCartToast>}
+        </div>
 
         <div className={styles.stage}>
           {/* The engine draws the avatar preview here, seen through the backdrop's hole. */}
           <div className={styles.preview}>
             <EngineViewport region="avatarPreview" report={setEngineViewport} />
+            {/* Drag to turn the avatar, the wheel to zoom: wherever an engine draws it. */}
+            {!noEngine && (
+              <AvatarDragSurface
+                onRotate={rotate}
+                onZoom={(z, anchor) => {
+                  setZoomed(z > 1)
+                  zoom(z, anchor)
+                }}
+              />
+            )}
           </div>
+          {section === 'names' && !zoomed && (
+            // The NAME being picked, over the avatar as it will read once claimed (in a claimed NAME's colour).
+            <AvatarNametag
+              className={styles.nametag}
+              name={nameDraft}
+              typing={nameFocused}
+              color={userNameColor(nameDraft, (p?.address ?? '').toLowerCase(), true)}
+            />
+          )}
           {playing != null && (
             // The design's EMOTE controls, over the avatar while an emote plays.
             <EmoteControls className={styles.emoteControls} onStop={stopEmote} />
           )}
-          {grid.isPending && section !== 'all' && (
+          {grid.isPending && isCatalogue(section) && (
             <div className={styles.avatarLoading} role="status" aria-label="Loading the avatar">
               <Spinner variant="shop" size={64} />
             </div>
           )}
-          <section className={styles.content} aria-label={section === 'all' ? 'Shop home' : section === 'emotes' ? 'Emotes' : 'Wearables'}>
-            {section === 'all' ? (
+          <section className={styles.content} aria-label={section === 'all' ? 'Shop home' : section === 'emotes' ? 'Emotes' : section === 'names' ? 'Names' : 'Wearables'}>
+            {section === 'names' ? (
+              <ShopNames
+                onResale={browseNameResales}
+                value={nameDraft}
+                onChange={typeName}
+                onFocusChange={setNameFocused}
+                minLength={NAME_MIN_LENGTH}
+                limit={NAME_MAX_LENGTH}
+                suffix={addressSuffix(p?.address ?? '') || null}
+                status={nameCheck.status}
+                price={nameCheck.price}
+                onClaim={claimName}
+                onMakeOffer={makeNameOffer}
+                onRetry={nameCheck.retry}
+              />
+            ) : section === 'all' ? (
               <div className={`${styles.body} ${styles.homeBody} ${selected != null ? styles.withPanel : ''}`.trim()}>
                 <div className={styles.scrollWrap}>
                 <div ref={homeScroller} className={styles.scroller}>
@@ -372,6 +593,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                     newest={{ items: newest.data, pending: newest.data == null && (!flagsKnown || newest.fetchStatus === 'fetching'), error: newest.isError }}
                     onRetry={(row) => void (row === 'trending' ? trending : newest).refetch()}
                     onOutfit={(o) => void wearOutfit(o)}
+                    outfitOffer={outfitOffer}
                     onViewAll={viewAll}
                     renderCard={(item: CatalogItem) => (
                       <ShopCard
@@ -382,6 +604,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                         onSelect={() => select(item)}
                         onTryOn={() => toggleTryOn(item)}
                         onOpenOnWeb={() => void openOnWeb(item)}
+                        onBuy={(input) => buy(item, input)}
                         emoteTryOn={emoteTryOn}
                       />
                     )}
@@ -389,7 +612,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                 </div>
                 <ScrollThumb target={homeScroller} length={THUMB_LENGTH} className={styles.thumb} />
                 </div>
-                {selected != null && <SelectedItemPanel key={selected.id} item={selected} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(selected)} />}
+                {shown != null && <SelectedItemPanel key={shown.id} item={shown} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(shown)} onBuy={(input) => buy(shown, input)} onAddToCart={addToCart(shown)} />}
               </div>
             ) : (
             <>
@@ -458,6 +681,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                           onSelect={() => select(item)}
                           onTryOn={() => toggleTryOn(item)}
                           onOpenOnWeb={() => void openOnWeb(item)}
+                          onBuy={(input) => buy(item, input)}
                           emoteTryOn={emoteTryOn}
                         />
                       ))}
@@ -468,7 +692,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
               </div>
               <ScrollThumb target={scroller} length={THUMB_LENGTH} className={styles.thumb} />
               </div>
-              {selected != null && <SelectedItemPanel key={selected.id} item={selected} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(selected)} />}
+              {shown != null && <SelectedItemPanel key={shown.id} item={shown} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(shown)} onBuy={(input) => buy(shown, input)} onAddToCart={addToCart(shown)} />}
             </div>
             </>
             )}

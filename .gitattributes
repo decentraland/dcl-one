@@ -84,3 +84,6 @@ library/ui/figma/review/public/dcl-ui-review/**/*.png filter=lfs diff=lfs merge=
 library/ui/figma/review/public/dcl-ui-review/**/*.svg filter=lfs diff=lfs merge=lfs -text
 library/ui/figma/review/src/generated/components/assets/*.svg filter=lfs diff=lfs merge=lfs -text
 library/ui/figma/review/src/review/promotion.json filter=lfs diff=lfs merge=lfs -text
+
+# The SDK snapshot keeps its upstream bytes (one api-extractor report is CRLF).
+library/js-sdk-toolchain/** -text

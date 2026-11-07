@@ -357,6 +357,10 @@ pub struct ShopConfig {
     /// The oldest round of a marketplace's MANA/USD feed a credit for a
     /// USD-pegged trade is sized at; the marketplace's own tolerance applies
     /// too, and the stricter wins. Past it the authorization is refused (503).
+    /// It also bounds the Shop's own rate (`shop::mana::feed_rate`): the
+    /// catalog, item, import and credit prices show the settlement chain's
+    /// feed while its last good round is younger than this, then answer
+    /// unavailable; a purchase quote is cut at the marketplace's tolerance.
     #[arg(
         long,
         env = "CREDITS_USD_PEGGED_FEED_MAX_AGE_SECS",

@@ -63,16 +63,27 @@ pub fn passthrough_executors(chain_id: ChainId) -> &'static [Address] {
     }
 }
 
+/// dcl-one's own CreditsManagerPolygon on Amoy, the one tooling/dev.py's testnet
+/// profile names in CREDITS_MANAGER_CONTRACT (`CreditsManager_DCL_ONE` in
+/// contracts.decentraland.org's `amoy` list). It is the shared manager's code on
+/// the same routes (its legacy marketplace, CollectionStore and MANA are Amoy's,
+/// as [`manager_routes`] names them), so a relayed `useCredits` to it is decoded
+/// and judged like one to the shared manager. It is not a shared upstream manager:
+/// credits are issued for it.
+pub const DCL_ONE_AMOY_MANAGER: Address = address!("0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c");
+
 /// The CreditsManagers a meta-transaction may target on a chain: the live and
-/// the deprecated one, the same pair the relay's audited-domain table names.
+/// the deprecated upstream one, and on Amoy dcl-one's own; the relay's
+/// audited-domain table names the same set.
 pub fn credits_managers(chain_id: ChainId) -> &'static [Address] {
     const POLYGON: [Address; 2] = [
         address!("0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5"),
         address!("0xe9f961e6ded4e1476bbee4faab886d63a2493eb9"),
     ];
-    const AMOY: [Address; 2] = [
+    const AMOY: [Address; 3] = [
         address!("0x8052a560e6e6ac86eeb7e711a4497f639b322fb3"),
         address!("0x037566bc90f85e76587e1b07f9184585f09c1420"),
+        DCL_ONE_AMOY_MANAGER,
     ];
     match chain_id {
         ChainId::POLYGON => &POLYGON,
@@ -963,5 +974,29 @@ mod tests {
             ),
             Lookup::Absent
         );
+    }
+
+    #[test]
+    fn dcl_ones_amoy_manager_is_a_credits_manager_on_amoy_only_and_never_a_shared_one() {
+        assert!(is_credits_manager(ChainId::AMOY, DCL_ONE_AMOY_MANAGER));
+        assert!(!is_credits_manager(ChainId::POLYGON, DCL_ONE_AMOY_MANAGER));
+        assert!(!is_credits_manager(ChainId::ETHEREUM, DCL_ONE_AMOY_MANAGER));
+        assert!(
+            !SHARED_UPSTREAM_MANAGERS.contains(&DCL_ONE_AMOY_MANAGER),
+            "credits are issued for it: it must never read as a shared upstream manager"
+        );
+        assert!(
+            !crate::credits::settlement::SHARED_MANAGERS
+                .contains(&format!("{DCL_ONE_AMOY_MANAGER:#x}").as_str())
+        );
+        // The shared Amoy pair stays a manager beside it.
+        assert!(is_credits_manager(
+            ChainId::AMOY,
+            SHARED_UPSTREAM_MANAGERS[2]
+        ));
+        assert!(is_credits_manager(
+            ChainId::AMOY,
+            SHARED_UPSTREAM_MANAGERS[3]
+        ));
     }
 }

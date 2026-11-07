@@ -31,7 +31,8 @@ Code that serves none of these deliverables is removed, not kept for reference:
 8. page-coherence scripts (`apps/sites/scripts`);
 9. one backend schema (`schemas/`);
 10. the `catalyst` binary: every backend area behind one base domain;
-11. the protocol (`library/protocol`): the `.proto` contract and the `@dcl/protocol` package.
+11. the protocol (`library/protocol`): the `.proto` contract and the `@dcl/protocol` package;
+12. the creator SDK (`library/js-sdk-toolchain`): the `@dcl/sdk` packages, built from the protocol beside it.
 
 - Docs state current behavior, verified capabilities and next work; no transition histories or internal generation labels.
 - Compare compatibility only against pinned `github.com/decentraland` repositories or dated Decentraland server captures.

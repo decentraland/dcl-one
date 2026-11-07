@@ -48,9 +48,52 @@ pub fn static_gas(listing: &Listing) -> u64 {
     }
 }
 
-/// The node's MANA/USD spot as the rule's rate: the newest price snapshot
-/// within its freshness budget, exact decimal text, never a float.
-pub async fn mana_usd_rate(pool: &sqlx::PgPool) -> Result<Option<ManaUsdRate>, sqlx::Error> {
+/// The rates a purchase offer prices its lines at.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct QuoteRates {
+    /// For showing a price: the credits quote of a line not priced in USD.
+    pub display: Option<ManaUsdRate>,
+    /// For the MANA quote of a line priced in USD, which the marketplace
+    /// converts at its feed in the block that settles it.
+    pub purchase: Option<ManaUsdRate>,
+}
+
+impl QuoteRates {
+    /// The rate `line` is quoted at: a line priced in USD is converted to MANA
+    /// at the purchase rate (its credits quote needs none); any other line
+    /// needs a rate only for its credits quote, which the display rate
+    /// gives, so the purchase cut never takes a fixed-MANA line's credits
+    /// price away.
+    pub fn for_line(&self, line: &Authoritative) -> Option<&ManaUsdRate> {
+        if crate::policy::prices_in_usd(line) {
+            self.purchase.as_ref()
+        } else {
+            self.display.as_ref()
+        }
+    }
+}
+
+/// The Shop's MANA/USD as the rule's rates, exact, never a float: the
+/// marketplace's feed where it is wired (`feed_rate::current` to show a
+/// price, `feed_rate::current_for_purchase` for a line priced in USD; no
+/// current answer is no rate, and that line says its price is unavailable),
+/// else the newest price snapshot within its freshness budget for both.
+pub async fn mana_usd_rates(pool: &sqlx::PgPool) -> Result<QuoteRates, sqlx::Error> {
+    if let Some((display, purchase)) = super::feed_rate::current_rates() {
+        return Ok(QuoteRates {
+            display: display.ok().map(|shop| shop.rate),
+            purchase: purchase.ok().map(|shop| shop.rate),
+        });
+    }
+    let spot = mana_usd_spot(pool).await?;
+    Ok(QuoteRates {
+        display: spot,
+        purchase: spot,
+    })
+}
+
+/// The newest price snapshot within its freshness budget.
+async fn mana_usd_spot(pool: &sqlx::PgPool) -> Result<Option<ManaUsdRate>, sqlx::Error> {
     let row: Option<(String, chrono::NaiveDateTime)> = sqlx::query_as(
         "SELECT mana_usd::text, taken_at FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1",
     )
@@ -160,6 +203,14 @@ async fn mana_execution(
 ) -> ManaExecution {
     let chain: &Chain = &resolved.chain;
     let caller = wallet.unwrap_or(Address::ZERO);
+    // A USD-pegged trade settles at the feed's answer in the block that takes it,
+    // which can move after this quote: its approval carries upstream's +2%.
+    let usd_pegged = crate::policy::priced_in_usd(&resolved.offer);
+    let approve = if usd_pegged {
+        super::feed_rate::usd_pegged_allowance(amount.get())
+    } else {
+        amount.get()
+    };
     let call = match &resolved.listing {
         Listing::Store { venue, price } => match (resolved.asset.token, wallet) {
             (crate::types::TokenRef::Item { item_id }, Some(buyer)) => {
@@ -169,9 +220,9 @@ async fn mana_execution(
             _ => Err("a mint names its beneficiary: sign in for the unit calldata".to_string()),
         },
         Listing::Trade { trade, venue, coupon: Some(coupon), .. } => {
-            calls::accept_with_coupon(chain, *venue, trade, coupon, caller, Some(amount.get())).map_err(|e| e.to_string())
+            calls::accept_with_coupon(chain, *venue, trade, coupon, caller, Some(approve)).map_err(|e| e.to_string())
         }
-        Listing::Trade { trade, venue, coupon: None, .. } => calls::accept(chain, *venue, trade, caller, Some(amount.get())).map_err(|e| e.to_string()),
+        Listing::Trade { trade, venue, coupon: None, .. } => calls::accept(chain, *venue, trade, caller, Some(approve)).map_err(|e| e.to_string()),
         Listing::LegacyOrder { order, .. } => match resolved.asset.token {
             crate::types::TokenRef::Token { token_id } => calls::execute_order(chain, resolved.asset.contract.address(), token_id, order.price, fingerprint).map_err(|e| e.to_string()),
             _ => Err("a legacy order sells a token".to_string()),
@@ -322,7 +373,7 @@ pub async fn quote_line(
     session: Session,
     index: usize,
     line: &super::wire::LineRequest,
-    rate: Option<&ManaUsdRate>,
+    rates: &QuoteRates,
     now_ms: i64,
 ) -> OfferAnswer {
     let resolved =
@@ -352,6 +403,7 @@ pub async fn quote_line(
         Ok(a) => a,
         Err(refusal) => return OfferAnswer::Error(refused(index, refusal)),
     };
+    let rate = rates.for_line(&authoritative);
     let elig = eligibility(&authoritative);
     let mut quotes = Vec::new();
     let mut unavailable = Vec::new();
@@ -459,8 +511,8 @@ pub async fn post_purchase_offers(
             crate::shared::signed_fetch::AUTH_METADATA_HEADER,
         ),
     );
-    let rate = match mana_usd_rate(&state.pool).await {
-        Ok(rate) => rate,
+    let rates = match mana_usd_rates(&state.pool).await {
+        Ok(rates) => rates,
         Err(e) => {
             tracing::error!(error = %e, "price_snapshots read failed");
             return super::error(
@@ -473,7 +525,7 @@ pub async fn post_purchase_offers(
     let now_ms = Utc::now().timestamp_millis();
     let mut offers = Vec::with_capacity(request.lines.len());
     for (index, line) in request.lines.iter().enumerate() {
-        offers.push(quote_line(&state, session, index, line, rate.as_ref(), now_ms).await);
+        offers.push(quote_line(&state, session, index, line, &rates, now_ms).await);
     }
     Json(json!(OffersResponse {
         quoted_at: now_ms,
@@ -649,9 +701,15 @@ mod tests {
         );
         assert_eq!(call._trades[0].signer, creator);
         assert_eq!(
-            execution.allowance.map(|a| a.amount),
-            Some(discounted),
-            "the buyer approves the discounted amount"
+            execution.allowance.as_ref().map(|a| a.amount.get()),
+            Some(super::super::feed_rate::usd_pegged_allowance(
+                discounted.get()
+            )),
+            "the buyer approves the discounted amount, plus upstream's 2% for a USD-pegged trade"
+        );
+        assert_eq!(
+            execution.allowance.as_ref().map(|a| a.amount.get()),
+            Some(U256::from(1_530_000_000_000_000_000u128))
         );
         db.drop().await;
     }

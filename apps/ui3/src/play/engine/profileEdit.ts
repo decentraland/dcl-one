@@ -4,6 +4,10 @@
 
 import type { Profile, ProfileEdit, ProfileInfo } from './protocol'
 
+/** What the protocol appends to a non-claimed name: `#` and the last four characters of the address (the
+ *  engine builds nametags the same way, `crates/avatar`); empty without an address. */
+export const addressSuffix = (address: string): string => (address === '' ? '' : `#${address.slice(-4)}`)
+
 /** A name that isn't one of the wallet's claimed NAMEs is shown with four hex digits of the
  *  address appended — the engine builds nametags the same way (`crates/avatar`) and the bridge
  *  answers with the same, so the passport must not flash a bare name in between. */
@@ -12,7 +16,7 @@ export function applyProfileEdit(profile: Profile, edit: ProfileEdit, ownedNames
   if (edit.name !== undefined) {
     const name = edit.name
     const claimed = ownedNames.some((n) => n.toLowerCase() === name.toLowerCase())
-    next.name = claimed ? name : `${name}#${profile.address.slice(-4)}`
+    next.name = claimed ? name : `${name}${addressSuffix(profile.address)}`
     next.hasClaimedName = claimed
   }
   if (edit.description !== undefined) next.description = edit.description.trim() || undefined
@@ -24,5 +28,6 @@ export function applyProfileEdit(profile: Profile, edit: ProfileEdit, ownedNames
     }
     next.info = Object.keys(info).length > 0 ? info : undefined
   }
+  if (edit.nameColor !== undefined) next.nameColor = edit.nameColor
   return next
 }

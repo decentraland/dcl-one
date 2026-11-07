@@ -711,16 +711,49 @@ pub(super) async fn set_speaker(
     target: &str,
     speaker: bool,
 ) -> Result<(), ApiError> {
-    state
-        .room_service()
+    let room = crate::rooms::community_voice_chat_room_name(&community_id);
+    let service = state.room_service();
+    let result = service
         .merge_participant_metadata_with_permission(
-            &crate::rooms::community_voice_chat_room_name(&community_id),
+            &room,
             target,
-            patch(&[("isRequestingToSpeak", serde_json::json!(false)), ("isSpeaker", serde_json::json!(speaker))]),
+            patch(&[
+                ("isRequestingToSpeak", serde_json::json!(false)),
+                ("isSpeaker", serde_json::json!(speaker)),
+            ]),
             serde_json::json!({ "canPublish": speaker, "canSubscribe": true, "canPublishData": true }),
         )
-        .await
-        .map_err(|e| ApiError::internal(format!("livekit update participant permissions: {e}")))
+        .await;
+    if let Err(error) = result {
+        if !speaker {
+            // A failed metadata read must not prevent revoking publishing. Omit
+            // metadata so an unread value is never replaced. Permission is a full
+            // replacement, so retain the authorized listener permissions. Only
+            // demotion may fall back; a failed promotion never grants publishing.
+            service
+                .update_participant(
+                    &room,
+                    target,
+                    None,
+                    Some(serde_json::json!({
+                        "canPublish": false, "canSubscribe": true, "canPublishData": true
+                    })),
+                )
+                .await
+                .map_err(|fallback| {
+                    ApiError::internal(format!(
+                        "livekit demotion incomplete: participant update: {error}; permission revocation: {fallback}"
+                    ))
+                })?;
+            return Err(ApiError::internal(format!(
+                "livekit demotion incomplete: permission revocation completed but participant update failed: {error}"
+            )));
+        }
+        return Err(ApiError::internal(format!(
+            "livekit update participant permissions: {error}"
+        )));
+    }
+    Ok(())
 }
 
 pub async fn community_promote_speaker(
@@ -1252,6 +1285,9 @@ pub async fn expire_voice_chats(state: &CommsState) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("community voice chat expiration: {e}"))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod speaker_tests;
 
 #[cfg(test)]
 mod tests {

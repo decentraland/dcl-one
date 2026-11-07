@@ -219,6 +219,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     .await
     .context("connecting to DATABASE_URL")?;
     db::bootstrap(&pool).await?;
+    worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
 
     let storage_root = Path::new(&config.node.storage_root_folder);
     let storage = Arc::new(
@@ -970,6 +971,32 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .context("the Shop's MANA settlement venues")?,
     );
     shop::mana::spawn_jobs(&mana, &jobs);
+    // The Shop prices at the settlement chain's newest marketplace's own feed
+    // (`shop::mana::feed_rate`), read in the background; without an endpoint or a
+    // marketplace on that chain it keeps the spot.
+    let settlement = mana.settings.collections_chain_id;
+    match shop::mana::feed_rate::settlement_venue(&mana.venues, settlement) {
+        Some((url, marketplace)) => shop::mana::feed_rate::install(
+            Arc::new(
+                shop::credits::feed::ChainFeed::new(
+                    Arc::new(shop::evm::chain::ChainComponent::new(
+                        http_client.clone(),
+                        &url,
+                        shop::evm::chain::DEFAULT_RPC_TIMEOUT,
+                    )),
+                    config.shop.credits_usd_pegged_feed_max_age_secs,
+                )
+                .reading_past_tolerance(),
+            ),
+            settlement,
+            marketplace,
+            config.shop.credits_usd_pegged_feed_max_age_secs,
+        ),
+        None => tracing::info!(
+            chain_id = settlement,
+            "shop MANA/USD: no endpoint or marketplace for the settlement chain; the Shop prices at the market spot"
+        ),
+    }
     let social = social_states(
         &config,
         &pool,
@@ -1382,6 +1409,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         content::create_entity::MAX_DEPLOYMENT_BYTES
             .max(worlds::core::deploy::MAX_UPLOAD_WIRE_SIZE_BYTES) as u64,
     );
+    // Upstream's router under /content/: static segments matched whatever
+    // their case, and its `Allow` list on a 405. Other paths pass untouched.
+    let app = content::routing::upstream_routing(app);
     // The old executable trimmed trailing slashes outside its router
     // (`/api/events/` is what the explorer requests), so the layer wraps the
     // finished app rather than any one router.
@@ -1684,12 +1714,13 @@ async fn worlds_states(
                     deployment_processing_timeout_ms: config
                         .worlds
                         .deployment_processing_timeout_ms,
-                    max_concurrent_uploads_per_source: config
-                        .worlds
-                        .max_concurrent_uploads_per_source,
+                    max_concurrent_uploads_per_source: u64::from(
+                        config.content.max_concurrent_uploads_per_source,
+                    ),
                     max_in_flight_upload_bytes_per_source: config
-                        .worlds
-                        .max_in_flight_upload_bytes_per_source,
+                        .content
+                        .max_in_flight_upload_bytes_per_source
+                        .unwrap_or(worlds::core::upload_limits::DEFAULT_MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE),
                 },
             )
             .and_then(|s| {
@@ -1825,7 +1856,8 @@ async fn worlds_states(
                 settings,
                 eip1654.clone(),
             )
-            .context("building the scene host")?,
+            .context("building the scene host")?
+            .with_secret_max_attempts(config.worlds.shared_secret_max_attempts_per_minute),
         );
         host.spawn_jobs(jobs);
         Some(host)
