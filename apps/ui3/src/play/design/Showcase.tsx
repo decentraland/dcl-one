@@ -508,6 +508,10 @@ export function Showcase(): React.JSX.Element {
       </Section>
       <Section title="Button (card sizes)">
         <Button size="card">Jump in</Button>
+        <Button size="cta">Claim name</Button>
+        <Button size="cta" disabled>
+          Claim name
+        </Button>
         <div style={{ width: 264 }}>
           <Button size="cardSm">Jump in</Button>
         </div>

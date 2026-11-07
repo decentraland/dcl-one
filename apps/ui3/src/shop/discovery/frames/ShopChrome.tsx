@@ -12,7 +12,9 @@ import { Link, useLocation } from "react-router";
 
 import ChromeShell from "../../../components/ChromeShell";
 import DclTopBar from "../../../web/frames/DclTopBar";
+import { shopCartDrawer } from "../../cart/drawer";
 import { useCart } from "../../cart/store";
+import CartDrawer from "../../checkout/components/CartDrawer";
 import { SHOP_BASE } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { LAND_NETWORKS } from "../../land/contracts";
@@ -139,11 +141,15 @@ function ShopSubnav({ tabs, active, iap, signedIn, set }: { tabs: Tab[]; active:
         </Link>
       ) : null}
       {market ? null : (
-        <Link
+        // As upstream's NavBar: the cart icon opens the cart drawer over the page (no banner); the
+        // drawer's Go to cart is the way to the cart page.
+        <button
+          type="button"
           className="shop-subnav__icon"
           data-kind="cart"
-          to={`${SHOP_BASE}/cart`}
+          onClick={() => shopCartDrawer.open()}
           aria-label={count > 0 ? t("nav.cartCount", { count }) : t("nav.cart")}
+          aria-haspopup="dialog"
           data-testid="subnav-cart"
         >
           <Icon name={count > 0 ? "cart-solid" : "cart"} size={28} />
@@ -152,8 +158,10 @@ function ShopSubnav({ tabs, active, iap, signedIn, set }: { tabs: Tab[]; active:
               {count}
             </span>
           ) : null}
-        </Link>
+        </button>
       )}
+      {/* Mounted for every nav set: a card adds to the cart (and opens it) on a marketplace page too. */}
+      <CartDrawer />
     </div>
   );
 }

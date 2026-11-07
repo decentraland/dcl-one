@@ -166,9 +166,9 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
   // One ready way to pay needs no chooser (upstream shows none). It stays for MANA-only lines (their reasons and
   // guidance), for a real choice, for any option with something to say, and when the line's saved method is no
   // longer offered (a MANA choice kept from a web3 session), so the buyer can pick again, or has no price to show.
-  const showChoice =
-    !!view &&
-    (view.manaOnly || view.options.length > 1 || !option || !price || view.options.some((o) => o.state.kind !== "ready" && o.state.kind !== "signInRequired"));
+  // Upstream's cart line has no chooser: the summary's rail buttons pay the whole cart. A line the rule
+  // restricts to MANA keeps it, for its reasons and wallet guidance, as does a line with no price to show.
+  const showChoice = !!view && (view.manaOnly || !option || !price);
   const choicePriced = !!view && view.options.length > 1;
   const favKey = favoriteKeyOf(line);
   // As upstream's rarityTileStyle: a line without a rarity gets the neutral tile and its grey outline.
