@@ -345,6 +345,12 @@ pub(crate) fn spawn(pool: PgPool, jobs: &crate::jobs::Jobs) {
     });
 }
 
+/// Serializes the tests that run the job against the shared scratch database:
+/// [`run_once`] and [`reroll`] read every due series in it, not only the
+/// test's own rows.
+#[cfg(test)]
+pub(super) static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -498,6 +504,7 @@ mod tests {
     /// changes nothing.
     #[tokio::test]
     async fn run_once_expands_the_truncated_local_series_again() {
+        let _guard = TEST_LOCK.lock().await;
         let Some(pool) = crate::db::scratch::pool(2).await else {
             return;
         };
@@ -591,6 +598,7 @@ mod tests {
     /// (an approval, a deletion) is never written over.
     #[tokio::test]
     async fn a_moderation_write_between_the_batch_read_and_the_reroll_wins() {
+        let _guard = TEST_LOCK.lock().await;
         let Some(pool) = crate::db::scratch::pool(2).await else {
             return;
         };
