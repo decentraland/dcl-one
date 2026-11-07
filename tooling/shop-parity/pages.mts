@@ -4,6 +4,7 @@
 // cannot be equal between two renders (3D previews, live timers) and say why; expected entries
 // are deliberate differences, each with the rule (the repository's AGENTS.md) or code behind it.
 import type { Page } from "playwright-core";
+import { collectionOfItem, creatorOfProfile } from "./lib/discover.mts";
 import type { Expectation } from "./lib/structure.mts";
 
 
@@ -260,16 +261,22 @@ export const PAGES: PageSpec[] = [
       // The pinned reference names the item's collection and creator as text, not links. Its collection is the
       // item's contract (/shop/collection/<contract>, a page the reference serves), and its creator is the account
       // that collection page links to as its profile (/shop/items/creator/<address>).
-      const contract = /\/shop\/item\/(0x[0-9a-fA-F]{40})\//.exec(new URL(page.url()).pathname)?.[1]?.toLowerCase() ?? null;
-      const collection = shop(await link("/collection/")) ?? (contract ? `/shop/collection/${contract}` : null);
+      const collection = shop(await link("/collection/")) ?? collectionOfItem(new URL(page.url()).pathname);
       let creator = shop(await link("/creator/"));
       if (!creator && collection) {
+        // Opened in the item capture's context, so its answers are recorded with the same routes and clock. That
+        // context's request log is shared too: a host only the collection page asks for is listed under item@.
+        // Best-effort: a collection page that fails leaves the creator unset and keeps the collection found above.
         const other = await page.context().newPage();
         try {
           await other.goto(new URL(collection, page.url()).href, { waitUntil: "load" });
-          const profile = await other.locator("xpath=(//main//a[contains(@href,'/profile/0x')])[1]").getAttribute("href", { timeout: 15_000 }).catch(() => null);
-          const address = profile ? /\/profile\/(0x[0-9a-fA-F]{40})/.exec(profile)?.[1]?.toLowerCase() : null;
-          if (address) creator = `/shop/items/creator/${address}`;
+          // The first profile link in <main> is the collection header's creator, which renders before the cards. A
+          // layout that put another profile link first would record that account; the creator page would then
+          // show its items, not this collection's.
+          const profile = await other.locator("xpath=(//main//a[contains(@href,'/profile/0x')])[1]").getAttribute("href", { timeout: 15_000 });
+          creator = profile ? creatorOfProfile(profile) : null;
+        } catch {
+          creator = null;
         } finally {
           await other.close();
         }
