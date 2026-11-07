@@ -698,7 +698,10 @@ async fn a_grantee_signed_world_is_taken_on_the_upstream_grant_only_when_its_own
     // The owner the upstream names holds the NAME here and lists the signer: accepted.
     let (id, _) = grantee_world(
         "granted.dcl.eth",
-        Some(permissions(&owner, &[stranger, &grantee.to_uppercase().replace("0X", "0x")])),
+        Some(permissions(
+            &owner,
+            &[stranger, &grantee.to_uppercase().replace("0X", "0x")],
+        )),
     )
     .await;
     let (status, about) = node.get("/world/granted.dcl.eth/about").await;
@@ -717,11 +720,7 @@ async fn a_grantee_signed_world_is_taken_on_the_upstream_grant_only_when_its_own
     )
     .await;
     // The signer is not on the list.
-    let (id2, _) = grantee_world(
-        "unlisted.dcl.eth",
-        Some(permissions(&owner, &[stranger])),
-    )
-    .await;
+    let (id2, _) = grantee_world("unlisted.dcl.eth", Some(permissions(&owner, &[stranger]))).await;
     // The permissions cannot be read.
     let (id3, _) = grantee_world("unreadable.dcl.eth", None).await;
     for (world, id) in [
