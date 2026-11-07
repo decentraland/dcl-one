@@ -25,7 +25,7 @@ import { fetchImportable } from "../../seller/lib/import";
 import { fetchBidsByAddress, fetchMyAssets, type Bid, type MyAsset, type MyAssetsCategory } from "../lib/api";
 import { useArchivedBids } from "../store/archivedBids";
 import AssetTile from "../components/AssetTile";
-import { EmptyPanel } from "../components/EmptyPanel";
+import { EmptyPanel } from "../../components/EmptyPanel";
 import BidRow from "../components/BidRow";
 import { EnsureQueryClient, LoadFailure, Loading } from "../components/kit";
 import MyItemsSignedOut from "./myitems/SignedOut";
@@ -129,7 +129,14 @@ function useOwned(address: string, section: Exclude<MyItemsSection, "bids">, f: 
     queryKey: ["my-assets", address, section, f.status, f.rarities, f.subCategory, f.search, f.sort],
     initialPageParam: 0,
     queryFn: async ({ pageParam }) => {
-      const base = { first: PAGE_SIZE, skip: pageParam, search: f.search || undefined, sortBy: f.sort, onlyOnSale: f.status === "on_sale" || undefined };
+      const base = {
+        first: PAGE_SIZE,
+        skip: pageParam,
+        search: f.search || undefined,
+        sortBy: f.sort,
+        onlyOnSale: f.status === "on_sale" || undefined,
+        onlyNotOnSale: f.status === "not_for_sale" || undefined,
+      };
       if (section === "land") {
         const [parcels, estates] = await Promise.all([
           fetchMyAssets(address, { ...base, category: "parcel" }),
@@ -152,11 +159,8 @@ function useOwned(address: string, section: Exclude<MyItemsSection, "bids">, f: 
       return loaded < last.total && last.items.length > 0 ? loaded : undefined;
     },
   });
-  const items = useMemo(() => {
-    const all = query.data?.pages.flatMap((p) => p.items) ?? [];
-    return f.status === "not_for_sale" ? all.filter((a) => !a.isOnSale) : all;
-  }, [query.data, f.status]);
-  const total = f.status === "not_for_sale" ? items.length : (query.data?.pages[0]?.total ?? items.length);
+  const items = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data]);
+  const total = query.data?.pages[0]?.total ?? items.length;
   return { query, items, total };
 }
 
@@ -321,12 +325,16 @@ function OwnedMain({
   const owned = useOwned(address, section, { status, rarities, subCategory: showRarity ? subCategory : null, search, sort });
   const toggleRarity = (r: string) => setRarities((rs) => (rs.includes(r) ? rs.filter((x) => x !== r) : [...rs, r]));
 
-  const clearAll = () => {
+  // The chip bar's Clear all clears the chips; the search is not one and stays. The empty panel's clears everything.
+  const clearChips = () => {
     setStatus("all");
     setRarities([]);
+    onSubCategory(null);
+  };
+  const clearAll = () => {
+    clearChips();
     setSearchInput("");
     setSearch("");
-    onSubCategory(null);
   };
   const filtered = status !== "all" || rarities.length > 0 || !!search || (showRarity && !!subCategory);
 
@@ -380,7 +388,7 @@ function OwnedMain({
         query={search}
         onOpenFilters={() => setFiltersOpen(true)}
         chips={chips}
-        onClearChips={clearAll}
+        onClearChips={clearChips}
         search={<MySearch value={searchInput} onChange={setSearchInput} />}
       />
       <OwnedGrid section={section} owned={owned} onSale={status === "on_sale"} filtered={filtered} onClear={clearAll} />
@@ -431,7 +439,10 @@ export function MyItemsView({
           subCategory={subCategory}
           onCategory={(key) => {
             const next = SECTION_OF_CATEGORY[key];
-            if (next && next !== shown) pick(next);
+            if (!next || next === shown) return;
+            // Wearables and Emotes open their sub-categories in place: the mobile drawer stays open to choose one.
+            if (CATEGORIES.some((top) => top.key === key && top.subs)) onSection(next);
+            else pick(next);
           }}
           onSub={pickSub}
           onCollections={storeOn ? undefined : () => pick("creations")}

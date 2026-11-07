@@ -1,5 +1,6 @@
 // from: shop@3a322cf9:app/src/components/EmptyState/EmptyState.tsx (the dark panel: art, title, body, one CTA)
-// The Shop's empty-state panel, shared by the pages that say "nothing here yet" (My Favorites, My Items).
+// The Shop's empty-state panel, shared by the pages that say "nothing here yet" (My Favorites, My Items); its art is
+// in ./empty-art.
 import { Link } from "react-router";
 
 import styles from "./EmptyPanel.module.css";
@@ -11,7 +12,7 @@ export function EmptyPanel({ icon, title, body, cta, testId }: { icon: string; t
     <div className={styles.panel} data-testid={testId}>
       <img className={styles.img} src={icon} alt="" aria-hidden />
       <div className={styles.text}>
-        <p className={styles.title}>{title}</p>
+        <h2 className={styles.title}>{title}</h2>
         {body ? <p className={styles.body}>{body}</p> : null}
       </div>
       {cta ? (

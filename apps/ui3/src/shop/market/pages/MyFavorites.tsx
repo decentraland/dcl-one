@@ -19,7 +19,7 @@ import { shopFavorites, useFavorites } from "../store/favorites";
 import ItemCard from "../components/ItemCard";
 import { ListEditor } from "../components/ListEditor";
 import SaveToLists from "../components/SaveToLists";
-import { EmptyPanel } from "../components/EmptyPanel";
+import { EmptyPanel } from "../../components/EmptyPanel";
 import { EnsureQueryClient, LoadFailure } from "../components/kit";
 import emptyIllustration from "./favorites-empty.svg?url";
 import "../../discovery/components/browselayout.css";

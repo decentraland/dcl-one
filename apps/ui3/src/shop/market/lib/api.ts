@@ -106,6 +106,8 @@ export type MyAssetsFilters = {
   wearableCategories?: string[];
   emoteCategories?: string[];
   onlyOnSale?: boolean;
+  /** Only what is not listed: the server filters, so every page holds a full page of them. */
+  onlyNotOnSale?: boolean;
   onlyOnRent?: boolean;
   sortBy?: MyAssetsSort;
 };
@@ -125,7 +127,7 @@ export async function fetchMyAssets(owner: string, filters: MyAssetsFilters = {}
     // which /v1/nfts would narrow to the first.
     ...catalogCategoryParams(filters.wearableCategories),
     ...catalogCategoryParams(filters.emoteCategories),
-    isOnSale: filters.onlyOnSale ? "true" : undefined,
+    isOnSale: filters.onlyOnSale ? "true" : filters.onlyNotOnSale ? "false" : undefined,
     isOnRent: filters.onlyOnRent ? "true" : undefined,
   });
   return { assets: res.data.map(toMyAsset), total: res.total };

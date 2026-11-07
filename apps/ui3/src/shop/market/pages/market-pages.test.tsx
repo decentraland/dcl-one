@@ -136,6 +136,7 @@ describe("My items", () => {
     await act(async () => void (await m.router.navigate("/shop/my-items")));
     await waitFor(() => expect(last().get("category")).toBe("wearable"));
     expect(last().getAll("wearableCategory")).toEqual([]);
+    expect(last().get("emoteCategory")).toBeNull();
     expect(screen.queryByTestId("filter-chips")).toBeNull();
     await act(async () => void (await m.router.navigate(-1)));
     await waitFor(() => expect(last().get("category")).toBe("emote"));
@@ -149,6 +150,31 @@ describe("My items", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Wearables" }));
     fireEvent.click(await screen.findByRole("button", { name: "Head" }));
     await waitFor(() => expect(m.shop.requests.some((r) => r.url.searchParams.get("category") === "wearable" && r.url.searchParams.get("isWearableHead") === "true")).toBe(true));
+  });
+
+  it("the toolbar's Clear all clears the chips and keeps the search; Not for sale is asked of the server", async () => {
+    const m = mountShop({ path: "/shop/my-items", who: "web3", routes: [nfts(), importable(0)] });
+    const last = () => m.shop.requests.filter((r) => r.url.pathname.endsWith("/v1/nfts")).at(-1)!.url.searchParams;
+    await screen.findAllByTestId("shop-asset-tile");
+    fireEvent.click(screen.getByRole("button", { name: "Not for sale" }));
+    await waitFor(() => expect(last().get("isOnSale")).toBe("false"));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search your items" }), { target: { value: "hat" } });
+    await waitFor(() => expect(last().get("search")).toBe("hat"));
+    fireEvent.click(within(screen.getByTestId("filter-chips").parentElement!).getByRole("button", { name: /Clear all/i }));
+    await waitFor(() => expect(last().get("isOnSale")).toBeNull());
+    expect(last().get("search")).toBe("hat");
+    expect(screen.getByRole("searchbox", { name: "Search your items" })).toHaveValue("hat");
+  });
+
+  it("on a phone, Wearables opened from LAND keeps the filters drawer open to choose a sub-category", async () => {
+    const m = mountShop({ path: "/shop/my-items?section=land", who: "web3", routes: [nfts(), importable(0)] });
+    fireEvent.click(await screen.findByTestId("open-filters"));
+    expect(screen.getByTestId("browse-sidebar")).toHaveAttribute("data-open", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Wearables" }));
+    await waitFor(() => expect(m.router.state.location.search).toContain("section=wearables"));
+    expect(screen.getByTestId("browse-sidebar")).toHaveAttribute("data-open", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Head" }));
+    await waitFor(() => expect(m.shop.requests.some((r) => r.url.searchParams.get("isWearableHead") === "true")).toBe(true));
   });
 
   it("an empty list says what is empty: nothing owned, nothing matching the filters, nothing on sale", async () => {
