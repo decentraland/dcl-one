@@ -278,13 +278,16 @@ fn collect_files(root: &Path) -> Result<(Vec<String>, Vec<String>)> {
 }
 
 /// The chunk files a dcl-scene-cli loader stub evaluates: every
-/// `var __dclOne…ChunkPath = '<rel>'` declaration with a non-empty path
+/// `var __dcl…ChunkPath = '<rel>'` declaration with a non-empty path
 /// (see `split::loader_stub`). Any other entry point declares none.
 fn stub_chunk_paths(entry: &str) -> Vec<String> {
     entry
         .lines()
         .filter_map(|line| {
-            let rest = line.trim_start().strip_prefix("var __dclOne")?;
+            let line = line.trim_start();
+            let rest = line
+                .strip_prefix("var __dclOne")
+                .or_else(|| line.strip_prefix("var __dclSceneCli"))?;
             let (_, rest) = rest.split_once("ChunkPath = '")?;
             let (rel, _) = rest.split_once('\'')?;
             (!rel.is_empty()).then(|| rel.to_string())
