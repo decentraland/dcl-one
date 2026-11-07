@@ -73,8 +73,8 @@ No item is P0. The P1 items:
   upstream answers `{ok:false,message,data}`; the content crate already rebuilds that body (CR-2).
 - **Absent vs `null`** (WP-03, WW-04, WW-18, WR-15, WR-18): several bodies write `null` where upstream
   leaves the key out, or the reverse.
-- **Multipart limits and texts** (WD-04..11, WW-21..23): field caps, duplicate fields, 413 vs 400 and
-  timeout texts differ on both multipart routes.
+- **Multipart limits and texts** (WD-04..11, WW-21..23): `POST /entities` answers upstream's caps,
+  duplicate-field rule, 413 and timeout texts; the settings route is WW-21..23.
 - **CORS** (WR-06, WW-37, WR-32): one router misses the layer (WR-06; the mints have it, WC-02);
   elsewhere the origin is echoed with credentials where upstream answers `*`.
 - **Undocumented intended differences**: the write switch, events not published on SNS (WD-19, WW-26,

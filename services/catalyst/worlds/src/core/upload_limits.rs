@@ -29,6 +29,21 @@ pub const PAYLOAD_TOO_LARGE_MESSAGE: &str = "The multipart request is too large.
 pub const INVALID_CONTENT_LENGTH_MESSAGE: &str = "Invalid Content-Length header.";
 pub const TOO_MANY_FIELDS_MESSAGE: &str = "The multipart request has too many fields.";
 pub const TOO_MANY_PARTS_MESSAGE: &str = "The multipart request has too many parts.";
+pub const TOO_MANY_FILES_MESSAGE: &str = "The multipart request has too many files.";
+pub const FILE_TOO_LARGE_MESSAGE: &str = "An uploaded file exceeds the maximum allowed size.";
+
+/// Upstream's `fieldsLimit` text (`src/controllers/multipart/middleware.ts`), naming the
+/// route's field cap.
+pub fn too_many_fields_message(max_fields: usize) -> String {
+    format!("{TOO_MANY_FIELDS_MESSAGE} The maximum allowed is {max_fields}.")
+}
+
+/// Upstream's text for a field value past the route's `fieldSize`.
+pub fn field_too_large_message(name: &str, max_field_bytes: usize) -> String {
+    format!(
+        "Field '{name}' is too large. The maximum allowed size per field is {max_field_bytes} bytes."
+    )
+}
 
 /// Upstream's `fieldsLimit` text (`src/controllers/multipart/middleware.ts`), naming the
 /// route's field cap.
@@ -512,6 +527,36 @@ mod tests {
         assert_eq!(
             TOO_MANY_PARTS_MESSAGE,
             "The multipart request has too many parts."
+        );
+    }
+
+    /// The 413 texts of upstream's one multipart parser (`src/controllers/multipart/middleware.ts`),
+    /// with `POST /entities`' `DEPLOYMENT_FIELD_LIMITS` (32 fields, 32 KiB per field).
+    #[test]
+    fn multipart_limit_texts_are_upstreams() {
+        assert_eq!(
+            too_many_fields_message(32),
+            "The multipart request has too many fields. The maximum allowed is 32."
+        );
+        assert_eq!(
+            field_too_large_message("entityId", 32 * 1024),
+            "Field 'entityId' is too large. The maximum allowed size per field is 32768 bytes."
+        );
+        assert_eq!(
+            TOO_MANY_FILES_MESSAGE,
+            "The multipart request has too many files."
+        );
+        assert_eq!(
+            TOO_MANY_PARTS_MESSAGE,
+            "The multipart request has too many parts."
+        );
+        assert_eq!(
+            FILE_TOO_LARGE_MESSAGE,
+            "An uploaded file exceeds the maximum allowed size."
+        );
+        assert_eq!(
+            PAYLOAD_TOO_LARGE_MESSAGE,
+            "The multipart request is too large."
         );
     }
 

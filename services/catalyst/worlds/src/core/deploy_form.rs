@@ -13,10 +13,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use bytes::BytesMut;
 
-use super::deploy::{
-    FILE_TOO_LARGE_MESSAGE, MAX_UPLOAD_SIZE_BYTES, TOO_MANY_FILES_MESSAGE, err_one,
-    payload_too_large,
-};
+use super::deploy::{MAX_UPLOAD_SIZE_BYTES, err_one, payload_too_large};
 use super::deploy_validate::{MAX_DEPLOY_FILE_BYTES, MAX_DEPLOY_FILES};
 use super::metrics::{ENTITIES_ROUTE, upload_rejected};
 use super::upload_limits;
@@ -32,19 +29,6 @@ pub(super) const MAX_DEPLOYMENT_FIELDS: usize = 2 + 3 * MAX_DEPLOYMENT_AUTH_CHAI
 pub(super) const MAX_DEPLOYMENT_FIELD_SIZE_BYTES: usize = 32 * 1024;
 /// busboy's `parts`: answered when the count reaches it, so one part fewer is the most a form has.
 const MAX_DEPLOYMENT_PARTS: usize = MAX_DEPLOY_FILES + MAX_DEPLOYMENT_FIELDS;
-
-pub(super) fn too_many_fields_message() -> String {
-    format!(
-        "{} The maximum allowed is {MAX_DEPLOYMENT_FIELDS}.",
-        upload_limits::TOO_MANY_FIELDS_MESSAGE
-    )
-}
-
-fn field_too_large_message(name: &str) -> String {
-    format!(
-        "Field '{name}' is too large. The maximum allowed size per field is {MAX_DEPLOYMENT_FIELD_SIZE_BYTES} bytes."
-    )
-}
 
 pub(super) struct DeployForm {
     pub(super) fields: BTreeMap<String, String>,
@@ -189,7 +173,7 @@ pub(super) async fn read_deploy_form(
         if is_file {
             if files.len() >= MAX_DEPLOY_FILES {
                 return Err(Box::new(
-                    payload_too_large(TOO_MANY_FILES_MESSAGE).into_response(),
+                    payload_too_large(upload_limits::TOO_MANY_FILES_MESSAGE).into_response(),
                 ));
             }
             if part_count >= MAX_DEPLOYMENT_PARTS {
@@ -231,7 +215,8 @@ pub(super) async fn read_deploy_form(
                     Ok(Some(chunk)) => {
                         if part.len().saturating_add(chunk.len()) > MAX_DEPLOY_FILE_BYTES {
                             return Err(Box::new(
-                                payload_too_large(FILE_TOO_LARGE_MESSAGE).into_response(),
+                                payload_too_large(upload_limits::FILE_TOO_LARGE_MESSAGE)
+                                    .into_response(),
                             ));
                         }
                         account_deploy_bytes(
@@ -251,7 +236,10 @@ pub(super) async fn read_deploy_form(
             field_count += 1;
             if field_count > MAX_DEPLOYMENT_FIELDS {
                 return Err(Box::new(
-                    payload_too_large(too_many_fields_message()).into_response(),
+                    payload_too_large(upload_limits::too_many_fields_message(
+                        MAX_DEPLOYMENT_FIELDS,
+                    ))
+                    .into_response(),
                 ));
             }
             if part_count >= MAX_DEPLOYMENT_PARTS {
@@ -265,7 +253,11 @@ pub(super) async fn read_deploy_form(
                     Ok(Some(chunk)) => {
                         if buf.len().saturating_add(chunk.len()) > MAX_DEPLOYMENT_FIELD_SIZE_BYTES {
                             return Err(Box::new(
-                                payload_too_large(field_too_large_message(&name)).into_response(),
+                                payload_too_large(upload_limits::field_too_large_message(
+                                    &name,
+                                    MAX_DEPLOYMENT_FIELD_SIZE_BYTES,
+                                ))
+                                .into_response(),
                             ));
                         }
                         account_deploy_bytes(
@@ -563,7 +555,7 @@ mod tests {
         );
     }
 
-    async fn read_files(count: usize) -> Result<usize, StatusCode> {
+    async fn read_files(count: usize) -> Result<usize, (StatusCode, Value)> {
         let root = std::env::temp_dir().join(format!("catalyst-form-{}", uuid::Uuid::new_v4()));
         let names: Vec<String> = (0..count).map(|i| format!("f{i}")).collect();
         let parts: Vec<(&str, Option<&str>, &str)> = names
@@ -582,9 +574,10 @@ mod tests {
             &root,
         )
         .await;
-        let out = read
-            .map(|form| form.files.len())
-            .map_err(|resp| resp.status());
+        let out = match read {
+            Ok(form) => Ok(form.files.len()),
+            Err(resp) => Err(response_json(*resp).await),
+        };
         let _ = std::fs::remove_dir_all(&root);
         out
     }
@@ -594,7 +587,10 @@ mod tests {
         assert_eq!(read_files(MAX_DEPLOY_FILES).await, Ok(MAX_DEPLOY_FILES));
         assert_eq!(
             read_files(MAX_DEPLOY_FILES + 1).await,
-            Err(StatusCode::PAYLOAD_TOO_LARGE)
+            Err((
+                StatusCode::PAYLOAD_TOO_LARGE,
+                json!({ "error": "Payload Too Large", "message": "The multipart request has too many files." })
+            ))
         );
     }
 

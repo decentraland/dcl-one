@@ -80,11 +80,11 @@ Common notes:
   answers a refusal with the middleware's status (400 shape, 401 signature/expiry, 503 catalyst)
   and the body `{"error":<verify message>,"message":"This endpoint requires a signed fetch request. See ADR-44."}`.
   dcl-one's `require_verified` with an empty key list (`comms/src/signed_fetch.rs`) has the
-  same statuses, the same scene gate and the same body (WD-02, fixed).
+  same statuses, the same scene gate and the same body (WD-02).
 - **Gateway.** `POST /worlds-content-server/entities` passes nginx's `limit_req zone=deploy`
   (5 r/s, burst 4), `limit_conn` 10 per address and `client_max_body_size 360m`, and nginx buffers the
   body before the app sees it (`infra/gateway/gateway.py`). Upstream applies no request rate limit
-  here. The gateway's own 413 and 429 answer the worlds JSON (WD-20, fixed).
+  here. The gateway's own 413 and 429 answer the worlds JSON (WD-20).
 
 ## Endpoint inventory
 
@@ -92,11 +92,11 @@ Common notes:
 |---|---|---|---|---|
 | 1 | POST | `/entities` (single request) | `/worlds-content-server/entities` → `services/catalyst/worlds/src/core/deploy.rs` (`deploy_entity`), route `core/mod.rs:618-621` | DIVERGENT (intended only) |
 | 2 | POST | `/entities` with form field `partial=true` (and optional `?partial=true`) | same handler → `core/partial.rs` (`stage`) | DIVERGENT (intended only) |
-| 3 | DELETE | `/entities/:world_name` | `/worlds-content-server/entities/{world_name}` → `core/scenes.rs` (`undeploy_world`), route `mod.rs:627` | DIVERGENT (intended only; the signed-fetch body with #383) |
-| 4 | DELETE | `/world/:world_name/scenes/:coordinate` | root and prefix → `core/scenes.rs:46` (`delete_scene`), route `mod.rs:674-677` | DIVERGENT (intended only; the signed-fetch body with #383) |
+| 3 | DELETE | `/entities/:world_name` | `/worlds-content-server/entities/{world_name}` → `core/scenes.rs` (`undeploy_world`), route `mod.rs:627` | DIVERGENT (intended only) |
+| 4 | DELETE | `/world/:world_name/scenes/:coordinate` | root and prefix → `core/scenes.rs:46` (`delete_scene`), route `mod.rs:674-677` | DIVERGENT (intended only) |
 
-Counts: 4 endpoints. MATCH 0, GAP 0, DIVERGENT 4 (all on intended differences only, the two DELETE
-routes once #383's signed-fetch bodies land), MISSING 0. Every route exists in dcl-one. What still
+Counts: 4 endpoints. MATCH 0, GAP 0, DIVERGENT 4 (on intended differences and the writes switch, WD-03),
+MISSING 0. Every route exists in dcl-one. What still
 differs is listed in `docs/worlds-compatibility.md` ("Storage and deployments", "Invalid world
 names").
 
@@ -156,27 +156,27 @@ one transaction (`store.rs`).
 
 | trigger | status | upstream body | dcl-one body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|---|
-| Success | 200 | `{"creationTimestamp":<publication time>,"message":"Your scene was deployed to World \"<name>\" at parcels: <p1, p2>!\nAccess world: https://play.decentraland.org/?realm=<enc(base/world/name)>&position=<enc(p1)>"}` | same; `creationTimestamp` is the stored row's `created_at` | `scene-deployments/component.ts:219`, `worlds-manager.ts:571,764`, `logic/utils.ts:48-56` | `deploy.rs` `deploy_entity_inner`, `publish` | MATCH (fixed, WD-01) |
+| Success | 200 | `{"creationTimestamp":<publication time>,"message":"Your scene was deployed to World \"<name>\" at parcels: <p1, p2>!\nAccess world: https://play.decentraland.org/?realm=<enc(base/world/name)>&position=<enc(p1)>"}` | same; `creationTimestamp` is the stored row's `created_at` | `scene-deployments/component.ts:219`, `worlds-manager.ts:571,764`, `logic/utils.ts:48-56` | `deploy.rs` `deploy_entity_inner`, `publish` | MATCH (WD-01) |
 | Invalid `Content-Length` | 400 | `{"error":"Bad request","message":"Invalid Content-Length header."}` | same | `middleware.ts:157-161` | `deploy.rs:150-153` | MATCH |
-| Declared > 360 MiB | 413 | `{"error":"Payload Too Large","message":"The multipart request is too large."}` | same from the app and from the gateway's `client_max_body_size` | `middleware.ts:162-167` | `deploy.rs`, `infra/gateway/gateway.py` | MATCH (fixed at the gateway, WD-20) |
+| Declared > 360 MiB | 413 | `{"error":"Payload Too Large","message":"The multipart request is too large."}` | same from the app and from the gateway's `client_max_body_size` | `middleware.ts:162-167` | `deploy.rs`, `infra/gateway/gateway.py` | MATCH (the gateway answers the same, WD-20) |
 | Source over its share | 429 + `Retry-After: 5` | `{"error":"Too Many Requests","message":"Too many uploads in progress from this client, please retry shortly."}` | same; source from `X-Real-IP` | `upload-error-handler.ts:62-68`, `source-upload-limits/errors.ts` | `upload_limits.rs:380-392` | MATCH, intended header (worlds-compatibility.md) |
-| Budget full | 503 + `Retry-After: 5` | `{"error":"Service Unavailable","message":"Server is buffering too many uploads, please retry shortly."}` | same for bytes and for the slot cap; `…too many upload files…` for files, as upstream's file charge | `multipart/errors.ts:25-29,73-77` | `upload_limits.rs`, `deploy.rs` | MATCH (fixed, WD-11); the slot and file caps are intended (worlds-compatibility.md) |
-| Temp storage failure | 503 + `Retry-After: 5` | `The server could not store the multipart upload, please retry shortly.` | same | `multipart/errors.ts:67-71` | `deploy_form.rs` `SPOOL_FAILED_MESSAGE` | MATCH (fixed, WD-11) |
-| More than 32 fields | 413 | `The multipart request has too many fields. The maximum allowed is 32.` | same at the 33rd field | `middleware.ts:313-320`, test `multipart-error-handling.spec.ts:107-135` | `deploy_form.rs` | MATCH (fixed, WD-04) |
-| Field over 32 KiB | 413 | `Field '<name>' is too large. The maximum allowed size per field is 32768 bytes.` | same | `middleware.ts:331-339`, test `:137-163` | `deploy_form.rs` | MATCH (fixed, WD-04) |
-| Too many files / parts | 413 | `The multipart request has too many files.` (10,001st file part, the entity included) / `…too many parts.` (busboy answers when the count reaches 10,032) | same | `middleware.ts:307-312`, busboy 1.6.0 `lib/types/multipart.js` | `deploy_form.rs` | MATCH (fixed, WD-04) |
+| Budget full | 503 + `Retry-After: 5` | `{"error":"Service Unavailable","message":"Server is buffering too many uploads, please retry shortly."}` | same for bytes and for the slot cap; `…too many upload files…` for files, as upstream's file charge | `multipart/errors.ts:25-29,73-77` | `upload_limits.rs`, `deploy.rs` | MATCH (WD-11); the slot and file caps are intended (worlds-compatibility.md) |
+| Temp storage failure | 503 + `Retry-After: 5` | `The server could not store the multipart upload, please retry shortly.` | same | `multipart/errors.ts:67-71` | `deploy_form.rs` `SPOOL_FAILED_MESSAGE` | MATCH (WD-11) |
+| More than 32 fields | 413 | `The multipart request has too many fields. The maximum allowed is 32.` | same at the 33rd field | `middleware.ts:313-320`, test `multipart-error-handling.spec.ts:107-135` | `deploy_form.rs` | MATCH (WD-04) |
+| Field over 32 KiB | 413 | `Field '<name>' is too large. The maximum allowed size per field is 32768 bytes.` | same | `middleware.ts:331-339`, test `:137-163` | `deploy_form.rs` | MATCH (WD-04) |
+| Too many files / parts | 413 | `The multipart request has too many files.` (10,001st file part, the entity included) / `…too many parts.` (busboy answers when the count reaches 10,032) | same | `middleware.ts:307-312`, busboy 1.6.0 `lib/types/multipart.js` | `deploy_form.rs` | MATCH (WD-04) |
 | File over 350 MiB / payload over 350 MiB | 413 | `An uploaded file exceeds the maximum allowed size.` / `The multipart request is too large.` | same | `middleware.ts:268-279,382-384` | `deploy_form.rs:144-149`, `:33-67` | MATCH |
-| Repeated form name | 400 | `Duplicate form field '<name>'` (a field once read, a file on its headers) | same | `middleware.ts:234-243` | `deploy_form.rs` | MATCH (fixed, WD-05) |
-| Not multipart / truncated body | 400 | `{"error":"Bad request","message":"Unsupported content type: application/json"}` / `"Unexpected end of form"` (also `Missing Content-Type`, `Malformed content type`, `Multipart: Boundary not found`) | same; a urlencoded body is refused (upstream parses it) and another unreadable body answers multer's text | test `multipart-error-handling.spec.ts:15-105`, busboy 1.6.0 `lib/index.js` | `deploy_form.rs` `content_type_error`, `read_failed` | MATCH (fixed, WD-09), intended rest (worlds-compatibility.md) |
-| Body not received in time | 408 | `{"error":"Request Timeout","message":"The upload did not finish within <s> s: received <n> of <m> (about <r> KiB/s). Retry on a faster connection or send smaller batches."}` | same, from the wire bytes counted | `multipart/errors.ts:32-50`, test `multipart-limiter.spec.ts:392-426` | `upload_limits.rs` `describe_upload_timeout` | MATCH (fixed, WD-10) |
-| Processing deadline | 408 | `The server could not finish processing the deployment within 300 s after receiving it. Retry the deployment; if it keeps timing out, report it.` | same | `deployment-processing.ts:21-29`, `upload-error-handler.ts:25-27` | `upload_limits.rs` `processing_timeout_message` | MATCH (fixed, WD-10) |
-| `entityId` missing | 400 | `A string was expected` | same; an empty value goes on to validation, as upstream | `logic/utils.ts:37-40`, test `multipart-error-handling.spec.ts:57-80,165-190` | `deploy.rs` `deploy_entity_inner` | MATCH (fixed, WD-07) |
-| No auth chain | 400 | `Missing auth chain` | same; a JSON `authChain` field is not read, as upstream | `extract-auth-chain.ts:19`, test `source-upload-limits.spec.ts:23-25` | `deploy_validate.rs` `extract_auth_chain_from_fields` | MATCH (fixed, WD-07) |
-| Auth chain link part missing | 400 | `A string was expected` | same | `extract-auth-chain.ts:21-27` | `deploy_validate.rs` | MATCH (fixed, WD-07) |
-| More than 10 links | 413 (field cap) | `The multipart request has too many fields. The maximum allowed is 32.` | same | test `partial-deploy.spec.ts:640-661` | `deploy_form.rs` | MATCH (fixed, WD-04, WD-07) |
-| Auth chain malformed / bad signer / bad signature | 400 | `Deployment failed: <AJV errors>` / `Deployment failed: Invalid signer: <payload>` / `Deployment failed: <@dcl/crypto message>` | same for an unknown link type, the signer and `@dcl/crypto`'s malformed-chain, signer-mismatch, missing-signature, expired-key and final-authority texts; an unrecoverable signature and the verifier's structure rules answer its own text | `deploy-entity-handler.ts:96-101`, `validations/common.ts:60-81`, `@dcl/crypto` 3.7.0 `Authenticator.js` | `deploy.rs` `authenticate`, `crypto_message` | MATCH (fixed, WD-08) for those; intended rest (worlds-compatibility.md) |
+| Repeated form name | 400 | `Duplicate form field '<name>'` (a field once read, a file on its headers) | same | `middleware.ts:234-243` | `deploy_form.rs` | MATCH (WD-05) |
+| Not multipart / truncated body | 400 | `{"error":"Bad request","message":"Unsupported content type: application/json"}` / `"Unexpected end of form"` (also `Missing Content-Type`, `Malformed content type`, `Multipart: Boundary not found`) | same; a urlencoded body is refused (upstream parses it) and another unreadable body answers multer's text | test `multipart-error-handling.spec.ts:15-105`, busboy 1.6.0 `lib/index.js` | `deploy_form.rs` `content_type_error`, `read_failed` | MATCH (WD-09), intended rest (worlds-compatibility.md) |
+| Body not received in time | 408 | `{"error":"Request Timeout","message":"The upload did not finish within <s> s: received <n> of <m> (about <r> KiB/s). Retry on a faster connection or send smaller batches."}` | same, from the wire bytes counted | `multipart/errors.ts:32-50`, test `multipart-limiter.spec.ts:392-426` | `upload_limits.rs` `describe_upload_timeout` | MATCH (WD-10) |
+| Processing deadline | 408 | `The server could not finish processing the deployment within 300 s after receiving it. Retry the deployment; if it keeps timing out, report it.` | same | `deployment-processing.ts:21-29`, `upload-error-handler.ts:25-27` | `upload_limits.rs` `processing_timeout_message` | MATCH (WD-10) |
+| `entityId` missing | 400 | `A string was expected` | same; an empty value goes on to validation, as upstream | `logic/utils.ts:37-40`, test `multipart-error-handling.spec.ts:57-80,165-190` | `deploy.rs` `deploy_entity_inner` | MATCH (WD-07) |
+| No auth chain | 400 | `Missing auth chain` | same; a JSON `authChain` field is not read, as upstream | `extract-auth-chain.ts:19`, test `source-upload-limits.spec.ts:23-25` | `deploy_validate.rs` `extract_auth_chain_from_fields` | MATCH (WD-07) |
+| Auth chain link part missing | 400 | `A string was expected` | same | `extract-auth-chain.ts:21-27` | `deploy_validate.rs` | MATCH (WD-07) |
+| More than 10 links | 413 (field cap) | `The multipart request has too many fields. The maximum allowed is 32.` | same | test `partial-deploy.spec.ts:640-661` | `deploy_form.rs` | MATCH (WD-04, WD-07) |
+| Auth chain malformed / bad signer / bad signature | 400 | `Deployment failed: <AJV errors>` / `Deployment failed: Invalid signer: <payload>` / `Deployment failed: <@dcl/crypto message>` | same for an unknown link type, the signer and `@dcl/crypto`'s malformed-chain, signer-mismatch, missing-signature, expired-key and final-authority texts; an unrecoverable signature and the verifier's structure rules answer its own text | `deploy-entity-handler.ts:96-101`, `validations/common.ts:60-81`, `@dcl/crypto` 3.7.0 `Authenticator.js` | `deploy.rs` `authenticate`, `crypto_message` | MATCH (WD-08) for those; intended rest (worlds-compatibility.md) |
 | EIP-1654 chain | 400 upstream (`validateSignature` with a null provider) | `Deployment failed: ERROR. Link type: <t>. Missing provider.` | that text without `ETH_RPC_URL`; accepted with it, 503 `The auth chain could not be verified right now: …` when it fails | `common.ts:78` | `deploy.rs` `authenticate` | intended superset (worlds-compatibility.md, WD-08) |
-| Entity file missing | 400 | `Entity file "<id>" is missing from the request.` | same; a part named `<id>` whose bytes hash elsewhere answers `Invalid entity hash: expected <h> but got <id>` | `deploy-entity-handler.ts:226`, `common.ts:11-23` | `deploy.rs` | MATCH (fixed, WD-06) |
+| Entity file missing | 400 | `Entity file "<id>" is missing from the request.` | same; a part named `<id>` whose bytes hash elsewhere answers `Invalid entity hash: expected <h> but got <id>` | `deploy-entity-handler.ts:226`, `common.ts:11-23` | `deploy.rs` | MATCH (WD-06) |
 | Entity file > 5 MiB / not JSON | 400 | `The entity file is too large. The maximum allowed size is 5242880 bytes.` / `The entity file is not valid JSON.` | same | `deploy-entity-handler.ts:44-50,133-142` | `deploy.rs:939-959`, `deploy_validate.rs:132-136` | MATCH |
 | Entity schema | 400 | `Deployment failed: <every AJV error, comma-joined>` | `Deployment failed: <first error>` | `common.ts:28-34` | `deploy_validate.rs` `entity_schema_error` | intended (worlds-compatibility.md: first failure only) |
 | Type not scene | 400 | `Deployment failed: Entity type <t> is not supported.` | same | `common.ts:166-172` | `deploy.rs:505-511` | MATCH |
@@ -195,15 +195,15 @@ one transaction (`store.rs`).
 | World disabled by an operator | — | | 403 with the disabled message | none | `deploy.rs:609-616` | dcl-one only |
 | Grantee publish, owner unresolved | 500 (`Cannot deploy scene … owner address could not be resolved.` thrown as `Error`) | | 400 with that message; 503 when the authority faults | `entity-deployer.ts:162-169` | `deploy.rs` `validate` | intended (worlds-compatibility.md, WD-14) |
 | Minimap / skybox / thumbnail | 400 | `Deployment failed: The file <f> is not present in the entity.` / `The texture file <f> …` / `Scene thumbnail '<t>' must be a relative path …` / `… must be a file included in the deployment.` | same | `scene.ts:320-402` | `deploy.rs:640-652`, `deploy_validate.rs` | MATCH |
-| Extra / missing files | 400 | `Deployment failed: Extra file detected <name>, …` + `The file <h> (<f>) is neither present in the storage or in the provided entity` | same; the extra file is named by its form name | `common.ts:89-164` | `deploy.rs` `Uploads::file_errors`, `validate` | MATCH (fixed, WD-06) |
-| Hash ≠ form name / name not CIDv1 | 400 | `The hashed file doesn't match the provided content: <name>` / `Only CIDv1 are allowed for content files: <name>` | same, with the missing files on a publish and right after the window on a batch | `common.ts:106-124` | `deploy.rs` `Uploads::file_errors` | MATCH (fixed, WD-06) |
+| Extra / missing files | 400 | `Deployment failed: Extra file detected <name>, …` + `The file <h> (<f>) is neither present in the storage or in the provided entity` | same; the extra file is named by its form name | `common.ts:89-164` | `deploy.rs` `Uploads::file_errors`, `validate` | MATCH (WD-06) |
+| Hash ≠ form name / name not CIDv1 | 400 | `The hashed file doesn't match the provided content: <name>` / `Only CIDv1 are allowed for content files: <name>` | same, with the missing files on a publish and right after the window on a batch | `common.ts:106-124` | `deploy.rs` `Uploads::file_errors` | MATCH (WD-06) |
 | Too big | 400 | `Deployment failed: The deployment is too big. The maximum total size allowed is <max> bytes for scenes. You can upload up to <max> bytes but you tried to upload <size>.` | same | `scene.ts:215-271` | `quota.rs:198-202`, `deploy.rs:704-715` | MATCH |
 | Owner of a DCL NAME world not found while sizing | 400 `Deployment failed: Could not determine owner for world <name>` | | 503 `Deployment failed: the storage allowance could not be determined right now` | `limits-manager/component.ts:66-71`, `scene.ts:265-267` | `deploy.rs` `validate` | intended (worlds-compatibility.md, WD-14) |
-| A newer scene on the parcels | 400 | `Deployment failed: a newer scene is already deployed on one or more of these parcels.` before any blob is stored | same, before any blob is stored; the publish transaction checks it again | `entity-deployer.ts:65-79`, test `partial-deploy.spec.ts:1600-1655` | `deploy.rs` `deploy_entity_inner`, `store.rs` | MATCH (fixed, WD-15) |
-| Scoped replacement raced | 409 | `{"error":"Conflict","message":"Scene replacement authorization changed while deploying to world \"<name as deployed>\". Please retry."}` | same | `types.ts:518-523`, `upload-error-handler.ts:35-37` | `store.rs` `deploy_scene_with` | MATCH (fixed, WD-16) |
+| A newer scene on the parcels | 400 | `Deployment failed: a newer scene is already deployed on one or more of these parcels.` before any blob is stored | same, before any blob is stored; the publish transaction checks it again | `entity-deployer.ts:65-79`, test `partial-deploy.spec.ts:1600-1655` | `deploy.rs` `deploy_entity_inner`, `store.rs` | MATCH (WD-15) |
+| Scoped replacement raced | 409 | `{"error":"Conflict","message":"Scene replacement authorization changed while deploying to world \"<name as deployed>\". Please retry."}` | same | `types.ts:518-523`, `upload-error-handler.ts:35-37` | `store.rs` `deploy_scene_with` | MATCH (WD-16) |
 | Same entity deployed twice | 200 | idempotent: the live publication's `creationTimestamp` | 200, the row upserted; `creationTimestamp` is the row's `created_at` | `scene-deployments/component.ts:199-218` | `store.rs` | MATCH |
 | Client disconnect | 499 `{"error":"Client Closed Request",…}` (not seen by a client) | | the request future is dropped | `upload-error-handler.ts:20-24` | — | not observable |
-| Unexpected error | 500 | `{"error":"Internal Server Error"}` | same | `error-handler.js` | `deploy.rs` `rejection` | MATCH (fixed, WD-14) |
+| Unexpected error | 500 | `{"error":"Internal Server Error"}` | same | `error-handler.js` | `deploy.rs` `rejection` | MATCH (WD-14) |
 
 Side effects upstream publishes after the commit (best effort): SNS `WorldDeploymentEvent` with the
 `isMultiplayer` attribute, `WORLD_SETTINGS_CHANGED` when the metadata refresh changed the settings,
@@ -253,23 +253,23 @@ request's arrival at the handler, which the gateway reaches only once it holds t
 | Batch incomplete | 202 | `{"missing":[<hash>…]}` | `deploy-entity-handler.ts:327`, tests `partial-deploy.spec.ts:471-567`, contract `test/contracts/partial-deployment.ts:23-30` | `partial.rs:668-677` | MATCH |
 | Batch completes / single partial with all content | 200 | `{"creationTimestamp":<publication>,"message":…}` | `:318-326`, contract `:96-104` | `partial.rs:741-758` | MATCH |
 | Lost completion replayed by its finalizer | 200 | the receipt's `creationTimestamp` | contract `:32-49` | `partial.rs:366-393` | MATCH |
-| Batch of an entity already published | 200 | the live publication's `creationTimestamp` | `:170-175`, contract `:51-75`, test `partial-deploy.spec.ts:1020-1043` | `partial.rs` `replay` | MATCH (fixed, WD-01: a single-request publish answers the same row time) |
+| Batch of an entity already published | 200 | the live publication's `creationTimestamp` | `:170-175`, contract `:51-75`, test `partial-deploy.spec.ts:1020-1043` | `partial.rs` `replay` | MATCH (WD-01: a single-request publish answers the same row time) |
 | `?partial=true` without the field | 400 | `The 'partial=true' query parameter requires the 'partial=true' form field` | `:85-87`, test `:1296-1321` | `deploy.rs:236-240` | MATCH |
 | First request without the entity file / another signer resumes without it | 400 | `The first partial request for an entity must include the entity file "<id>".` | `:296-300`, tests `:805-841,1342-1364` | `partial.rs:489-504` | MATCH |
 | Another account sends a batch with the entity file | 400 | `This upload was started by another account.` | `partial-upload-admission/errors.ts:6-11`, test `:1224-1260` | `partial.rs:837-840` | MATCH |
 | Upload expired / reclaimed mid-batch | 400 | `This upload expired. Create a new entity with a fresh timestamp.` | `pending-scenes-repository/errors.ts`, tests `:738-762,929-964` | `partial.rs:270-272`, `store.rs:593-594` | MATCH |
 | Upload gone before reserve | 400 | `Upload no longer exists; resend its manifest.` | `errors.ts:13-19` | `partial.rs:53,961` | MATCH |
-| Same file twice in a batch | 400 | `Duplicate form field '<hash>'` | contract `:77-94`, test `:1262-1294` | `deploy_form.rs` (any repeated name) | MATCH (fixed, WD-05) |
+| Same file twice in a batch | 400 | `Duplicate form field '<hash>'` | contract `:77-94`, test `:1262-1294` | `deploy_form.rs` (any repeated name) | MATCH (WD-05) |
 | Partial batch without permission | 400 | `Deployment failed: Deployment failed: Your wallet has no permission …` | test `:874-890` | `deploy.rs:585-599` | MATCH |
-| Tampered file | 400 | `Deployment failed: The hashed file doesn't match the provided content: <hash>` | test `:892-908` | `deploy.rs` `Uploads::file_errors` | MATCH (fixed, WD-06) |
-| Auth chain refusal | 400 | `Invalid auth chain.` / `Invalid auth chain: <message>` | `:90-94` | `deploy.rs` `authenticate` | MATCH (fixed, WD-08; `<message>` as in section 1) |
+| Tampered file | 400 | `Deployment failed: The hashed file doesn't match the provided content: <hash>` | test `:892-908` | `deploy.rs` `Uploads::file_errors` | MATCH (WD-06) |
+| Auth chain refusal | 400 | `Invalid auth chain.` / `Invalid auth chain: <message>` | `:90-94` | `deploy.rs` `authenticate` | MATCH (WD-08; `<message>` as in section 1) |
 | Scene over the cap while staging | 400 | `Deployment failed: The deployment is too big.` | `scene-deployments/component.ts:321` | `partial.rs:651-653` | MATCH |
 | Newer scene holds the parcels (new upload / stale finalize) | 400 | `Deployment failed: a newer scene is already deployed on one or more of these parcels.` | `:272-281`, tests `:1448-1503` | `partial.rs:541-549`, `store.rs:692` | MATCH |
 | Account / world / per-account-in-world upload caps | 429 + `Retry-After` | `{"error":"Too Many Requests","message":"Too many partial uploads in progress for this account: <n> of the <max> allowed. …"}` and the world variants | `partial-upload-admission/component.ts:85-118`, tests `:1657-1735` | `partial.rs:858-909` | MATCH |
 | Byte rate, account, world, server budgets | 400 (alone too large) / 429 + `Retry-After` | upstream texts (`formatBytes`) | `component.ts:146-221`, `partial-upload-accounting.spec.ts:326-1470` | `partial.rs:960-1160` | MATCH; the per-source budget is dcl-one only (intended) |
 | Personal world not yet published here | — | `Partial uploads to a personal world start once it is published here; …` | none | `partial.rs:526-541` | intended (worlds-compatibility.md) |
 | A stored file collected before completion | 400 upstream would fail the publish | | 202 with it in `missing` again | — | `partial.rs:719-731` | intended (worlds-compatibility.md) |
-| Field cap, field size | 413 | as section 1 | tests `:640-684` | as section 1 | MATCH (fixed, WD-04) |
+| Field cap, field size | 413 | as section 1 | tests `:640-684` | as section 1 | MATCH (WD-04) |
 
 ---
 
@@ -291,9 +291,9 @@ spawn recomputed, `store.rs:950-972,1089-1098`), quota re-check off the request.
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
-| Undeployed | 200 | the string `{}` (`content-type: text/plain; charset=utf-8`) in both | `undeploy-entity-handler.ts:34-37`, `@dcl/http-server` `logic.js:298-312`, test `undeploy-entity-handler.spec.ts:57-97` | `scenes.rs` `undeploy_world` | MATCH (fixed, WD-17) |
+| Undeployed | 200 | the string `{}` (`content-type: text/plain; charset=utf-8`) in both | `undeploy-entity-handler.ts:34-37`, `@dcl/http-server` `logic.js:298-312`, test `undeploy-entity-handler.spec.ts:57-97` | `scenes.rs` `undeploy_world` | MATCH (WD-17) |
 | Neither owner nor world-wide grantee | 400 | `{"error":"Bad request","message":"Invalid request. You must have world-wide deployment permission to undeploy the entire world."}` | `:16-29`, test `:20-37` | `scenes.rs:121-137` | MATCH |
-| Scene signer / unsigned / bad signature | 400 / 401 | `{"error":<verify message>,"message":"This endpoint requires a signed fetch request. See ADR-44."}` in both | test `:39-55` | `scenes.rs:113-120`, `comms/src/signed_fetch.rs` `map_auth_error_api` | MATCH (fixed, WD-02) |
+| Scene signer / unsigned / bad signature | 400 / 401 | `{"error":<verify message>,"message":"This endpoint requires a signed fetch request. See ADR-44."}` in both | test `:39-55` | `scenes.rs:113-120`, `comms/src/signed_fetch.rs` `map_auth_error_api` | MATCH (WD-02) |
 | Malformed world name | 400 | dcl-one `Invalid world name: …` before the signature | none | `scenes.rs` | intended (worlds-compatibility.md "Invalid world names", WD-18) |
 | Authority cannot answer | 500 upstream; dcl-one the `AuthorityNotEstablished` status (503 for a store fault) | | `dcl-name-checker.ts` | `scenes.rs` | intended (worlds-compatibility.md, WD-14) |
 
@@ -323,7 +323,7 @@ dcl-one (`scenes.rs:46-102`): world name parsed first, the strict signed fetch, 
 | Non-canonical alias (`020,024`) | 200 | removes the scene stored at `20,24`; the message echoes `020,024` | test `:622-642` | `Parcel::parse_strict` then `canonical()` (`store.rs:1063`) | MATCH |
 | Grant over part of a multi-parcel scene / no grant | 401 | `{"error":"Not Authorized","message":"Unauthorized. You do not have permission to undeploy scenes in this world."}` | `:103-125`, tests `:686-800` | `scenes.rs:68-95` | MATCH |
 | Bad coordinate | 400 | `{"error":"Bad request","message":"Invalid coordinate format: abc,def. Expected format: x,y (e.g., 0,0 or -1,2)"}` | `:9-16`, test `:803-830` | `scenes.rs:63-67` | MATCH; a coordinate outside `i32` is 400 here and 200 upstream (intended, WD-18) |
-| Unsigned / scene signer | 400 | `{"error":"Invalid Auth Chain","message":"This endpoint requires a signed fetch request. See ADR-44."}` in both | test `:833-856` | `map_auth_error_api` | MATCH (fixed, WD-02) |
+| Unsigned / scene signer | 400 | `{"error":"Invalid Auth Chain","message":"This endpoint requires a signed fetch request. See ADR-44."}` in both | test `:833-856` | `map_auth_error_api` | MATCH (WD-02) |
 | Spawn on the removed scene / elsewhere / last scene | 200 | spawn moved to the remaining bounding rectangle's centre / kept / cleared | tests `:943-1075` | `store.rs:974-1020` | MATCH |
 | Slow request | 408 | dcl-one `request timed out` after 30 s | none | `mod.rs:710-719` | intended (worlds-compatibility.md "Invalid world names", WD-18) |
 
@@ -331,36 +331,30 @@ dcl-one (`scenes.rs:46-102`): world name parsed first, the strict signed fetch, 
 
 ## Backlog (WD-)
 
-1. **WD-01 · `POST /entities` · a single-request deploy answers the request time as `creationTimestamp`.** Status: MATCH (fixed).
+1. **WD-01 · `POST /entities` · `creationTimestamp` of a single-request deploy.** Status: MATCH, no work.
    - Upstream: `{ creationTimestamp: Date.now(), ...result }`, where `result.creationTimestamp` is the
      time `deployScene` wrote into `world_scenes.created_at` under the world lock
      (`decentraland/worlds-content-server:src/logic/scene-deployments/component.ts:219`,
      `src/adapters/worlds-manager.ts:558-572,731,764`). A later partial batch of the same entity
      answers that same value (`test/integration/partial-deploy.spec.ts:1020-1043`,
      `test/contracts/partial-deployment.ts:51-75`).
-   - dcl-one: `creation_timestamp: now_ms`, taken before validation
-     (`services/catalyst/worlds/src/core/deploy.rs:852,921-935`); `publish` returns the row's
-     `created_at_ms` (`deploy.rs:732-830`, `store.rs:787-801,887-895`) and the value is dropped. The
-     replay of a later batch answers the row's time (`partial.rs:388-420`), so the two answers differ.
-   - Proposed fix: in `deploy_entity_inner`, keep `Ok(created)` from `publish` and answer it;
-     add the regular-then-partial case to `worlds/src/core/tests/partial_uploads.rs`.
-   - Fixed as proposed: the publish answers `publish`'s `created_at_ms`. Pinned by `worlds/src/core/tests/partial_uploads.rs` `a_batch_of_an_entity_published_in_one_request_answers_its_publication_time` (the row's time, and any signer's later batch answers the same body).
-   - Severity: P1 (the partial-deployment contract's "already published" case fails after a regular deploy).
+   - dcl-one: `deploy_entity_inner` answers the `created_at_ms` that `publish` returns
+     (`services/catalyst/worlds/src/core/deploy.rs:998,1125`), the row's time a later batch's
+     `replay` also answers (`partial.rs:356`). Pinned by `worlds/src/core/tests/partial_uploads.rs:345`
+     `a_batch_of_an_entity_published_in_one_request_answers_its_publication_time`.
+   - Severity: none (closed).
 
-2. **WD-02 · `DELETE /entities/:world_name`, `DELETE /world/:world_name/scenes/:coordinate` · signed-fetch refusal body.** Status: MATCH (fixed).
+2. **WD-02 · `DELETE /entities/:world_name`, `DELETE /world/:world_name/scenes/:coordinate` · signed-fetch refusal body.** Status: MATCH, no work.
    - Upstream: `{"error":<verify message>,"message":"This endpoint requires a signed fetch request. See ADR-44."}`
      with the middleware's status (`src/controllers/routes.ts:72-98`; `@dcl/crypto-middleware` 6.3.0
      `dist/index.js` `errorToResponse`); tests pin `message`
      (`test/integration/undeploy-entity-handler.spec.ts:39-55`, `scenes-handler.spec.ts:833-856`).
-   - dcl-one: `map_auth_error_api` puts the verify message in `message` and the status label in `error`
-     (`services/catalyst/comms/src/signed_fetch.rs:187-190`, `shared/src/signed_fetch.rs:76-87`,
-     `comms/src/worlds_envelope.rs:133-140`). The storage routes already answer upstream's shape
-     (`worlds/src/storage/errors.rs:14`).
-   - Proposed fix: have `map_auth_error_api` answer `{error: <message>, message: SIGNED_FETCH_MESSAGE}`
-     (move the constant to `comms::worlds_envelope`), for every worlds signed-fetch route.
-   - Fixed as proposed, with the crypto-middleware 6.3.0 texts (worlds-comms.md WC-01). Pinned by
-     `worlds/src/core/tests.rs` `signed_routes_refuse_with_the_crypto_middleware_body` (unsigned and wrong-payload requests on both routes).
-   - Severity: P1 (builder and CLI show `message`). Depends on: the permissions/settings areas, which share the mapper.
+   - dcl-one: `map_auth_error_api` (`services/catalyst/comms/src/signed_fetch.rs`) answers every
+     worlds signed route with the crypto-middleware 6.3.0 text in `error` and the ADR-44 line in
+     `message` (worlds-comms.md WC-01). Pinned by `worlds/src/core/tests.rs:7298`
+     `signed_routes_refuse_with_the_crypto_middleware_body` (unsigned and wrong-payload requests on
+     both routes).
+   - Severity: none (closed).
 
 3. **WD-03 · all routes of this area · the worlds writes switch is off by default.**
    - Upstream: no switch.
@@ -373,235 +367,230 @@ dcl-one (`scenes.rs:46-102`): world name parsed first, the strict signed fetch, 
      set it.
    - Severity: P1 (a node with the default answers 503 to every publish).
 
-4. **WD-04 · `POST /entities` · multipart field, part and file caps.** Status: MATCH (fixed).
-   - Upstream: `DEPLOYMENT_FIELD_LIMITS`: 32 fields, 32 KiB per field, 10,032 parts, 10,000 files, with
-     `The multipart request has too many fields. The maximum allowed is 32.` and
-     `Field '<name>' is too large. The maximum allowed size per field is 32768 bytes.`
-     (`src/controllers/multipart/limits.ts:5-25`, `middleware.ts:307-339`; tests
-     `multipart-error-handling.spec.ts:107-163`, `partial-deploy.spec.ts:621-684`).
-   - dcl-one: 100 fields, 1 MiB per field, 10,100 parts, a 10,002nd file; messages without the limit
-     or field name (`services/catalyst/worlds/src/core/upload_limits.rs:28-37`,
-     `deploy_form.rs:99-110,163-181`). An 11-link chain answers 400 `Auth chain is too long…`
-     (`deploy_validate.rs:81-83,126-128`) instead of the 413 field cap.
-   - Proposed fix: deploy-route constants `MAX_DEPLOYMENT_FIELDS = 32`,
-     `MAX_DEPLOYMENT_FIELD_SIZE_BYTES = 32 * 1024`, parts `10_000 + 32`, files `>= 10_000` before the push,
-     and upstream's two messages in `deploy_form.rs`; the settings route keeps 100 fields / 1 MiB.
-   - Fixed in `deploy_form.rs`: 32 fields of at most 32 KiB, 10,000 file parts (the entity included), the parts answer when the count reaches 10,032 (busboy 1.6.0 emits `partsLimit` at the limit, so the row's "10,033rd" was one off), with upstream's two texts; an 11-link chain meets the field cap. The settings route keeps its own caps. Pinned by `deploy_form.rs` tests `the_33rd_field_is_refused_with_the_cap`, `a_field_over_32_kib_is_refused_by_name`, `read_deploy_form_takes_at_most_busboys_file_count`.
-   - Severity: P2.
+4. **WD-04 · `POST /entities` · multipart field, part and file caps.** Status: MATCH, no work.
+   - Upstream: `DEPLOYMENT_FIELD_LIMITS` over busboy 1.6.0: 32 fields, 32 KiB per field, 10,032
+     parts, 10,000 files; 413 `The multipart request has too many fields. The maximum allowed is 32.`,
+     `Field '<name>' is too large. The maximum allowed size per field is 32768 bytes.`,
+     `The multipart request has too many files.`, `The multipart request has too many parts.`,
+     `An uploaded file exceeds the maximum allowed size.` and `The multipart request is too large.`
+     (`src/controllers/multipart/limits.ts:5-25`, `middleware.ts:268-339,382-384`; tests
+     `multipart-error-handling.spec.ts:107-163`, `partial-deploy.spec.ts:621-684`). The settings
+     route goes through the same parser with the default limits.
+   - dcl-one: `read_deploy_form` (`services/catalyst/worlds/src/core/deploy_form.rs:141`) caps 32
+     fields of at most 32 KiB, 10,000 file parts (the entity included), and answers the parts cap
+     when the count reaches 10,032, as busboy emits `partsLimit`; an 11-link chain meets the field
+     cap. The texts are `upload_limits.rs` `too_many_fields_message`, `field_too_large_message`
+     (`upload_limits.rs:37,42`), `TOO_MANY_FILES_MESSAGE`, `TOO_MANY_PARTS_MESSAGE`,
+     `FILE_TOO_LARGE_MESSAGE` and `PAYLOAD_TOO_LARGE_MESSAGE`, with the route's 32 and 32768.
+     Pinned by `upload_limits.rs:524` `multipart_limit_texts_are_upstreams` and `deploy_form.rs:496`
+     `the_33rd_field_is_refused_with_the_cap`, `:464` `a_field_over_32_kib_is_refused_by_name`,
+     `:586` `read_deploy_form_takes_at_most_busboys_file_count` (status and body).
+   - Severity: none (closed).
 
-5. **WD-05 · `POST /entities` (single request) · repeated form names are accepted.** Status: MATCH (fixed).
+5. **WD-05 · `POST /entities` · repeated form names.** Status: MATCH, no work.
    - Upstream: any repeated part name answers 400 `Duplicate form field '<name>'`
      (`src/controllers/multipart/middleware.ts:234-243`).
-   - dcl-one: fields are a `BTreeMap` (last value wins, `deploy_form.rs:197`); a repeated file is kept
-     once (`deploy.rs:415-432`). The partial path refuses a repeated hash (`partial.rs:439-474`, intended).
-   - Proposed fix: track part names in `read_deploy_form` and answer upstream's 400 on a repeat.
-   - Fixed: `read_deploy_form` refuses any repeated part name with upstream's 400 (a file on its headers, a field once read), which also replaces the partial path's hash check. Pinned by `deploy_form.rs` `a_repeated_form_name_is_refused` and `worlds/src/core/tests/partial_uploads.rs` `malformed_batches_are_refused`.
-   - Severity: P2.
+   - dcl-one: `read_deploy_form` refuses any repeated part name with that 400, a file on its headers
+     and a field once read (`deploy_form.rs:133`); the partial path uses the same rule. Pinned by
+     `deploy_form.rs:511` `a_repeated_form_name_is_refused` and
+     `worlds/src/core/tests/partial_uploads.rs:305` `malformed_batches_are_refused`.
+   - Severity: none (closed).
 
-6. **WD-06 · `POST /entities` · files keyed by their computed hash, not their form name.** Status: MATCH (fixed).
+6. **WD-06 · `POST /entities` · files keyed by their form name.** Status: MATCH, no work.
    - Upstream: `files` is keyed by the part name; each name must be referenced, be a CIDv1 and equal
      the hash of the bytes; the entity file must hash to `entityId`
      (`src/logic/validations/common.ts:11-23,89-124`; test `partial-deploy.spec.ts:892-908`).
-   - dcl-one: the part name is dropped and the CIDv1 of the bytes is the key
-     (`services/catalyst/worlds/src/core/upload_spool.rs:28-34,126-133`, `deploy_form.rs:161`). A tampered
-     file answers `Extra file detected <actual hash>`, a wrong entity file `Entity file "<id>" is missing
-     from the request.`, and the CIDv1 check never runs.
-   - Proposed fix: keep the part name on `SpooledFile`, key `Uploads` by it, and add upstream's three
-     checks (`Invalid entity hash: expected <h> but got <id>`, `Only CIDv1 are allowed for content files: <n>`,
-     `The hashed file doesn't match the provided content: <n>`) to `deploy.rs` `validate`, in upstream's
-     order (entity id before the signature; the files after the size inputs).
-   - Fixed without changing storage keys: `SpooledFile` keeps its part name, `Uploads` is keyed by it, and `validate` runs upstream's `validateEntityId` and `validateUploadedFiles` in upstream's places (a publish: the entity id after the window, the uploads with the missing files; a batch: the entity id before the window, the uploads after it). Blobs are still stored under the CIDv1 of their bytes, which the checks have made equal to the name. Pinned by `worlds/src/core/tests/partial_uploads.rs` `a_part_not_named_by_its_hash_is_refused` and `worlds/src/core/tests.rs` `a_publish_answers_the_first_failed_check_in_the_old_words`. Every in-tree client already names parts by hash; the test helpers now do too.
-   - Severity: P2.
+   - dcl-one: `SpooledFile` keeps its part name and `Uploads` is keyed by it (`deploy.rs:448`);
+     `validate` (`deploy.rs:658`) runs `validateEntityId` and `validateUploadedFiles`
+     (`Uploads::file_errors`, `deploy.rs:481`) in upstream's places: on a publish the entity id
+     after the window and the uploads with the missing files, on a batch the entity id before the
+     window and the uploads after it. Blobs are stored under the CIDv1 of their bytes, which the
+     checks make equal to the name. Pinned by `worlds/src/core/tests/partial_uploads.rs:371`
+     `a_part_not_named_by_its_hash_is_refused` and `worlds/src/core/tests.rs:5807`
+     `a_publish_answers_the_first_failed_check_in_the_old_words`.
+   - Severity: none (closed).
 
-7. **WD-07 · `POST /entities` · form and auth-chain extraction messages.** Status: MATCH (fixed).
+7. **WD-07 · `POST /entities` · form and auth-chain extraction messages.** Status: MATCH, no work.
    - Upstream: `requireString` answers `A string was expected` for a missing `entityId` or link part;
      no indexed field answers `Missing auth chain`; only the indexed form is read
      (`src/logic/extract-auth-chain.ts:6-30`, `src/logic/utils.ts:37-40`; tests
      `multipart-error-handling.spec.ts:57-80,165-190`, `source-upload-limits.spec.ts:23-25`).
-   - dcl-one: `Missing entityId field` (an empty value too), `No auth chain can be derived`,
-     `Missing auth chain element at index <i>`, and a JSON `authChain` field is accepted
-     (`services/catalyst/worlds/src/core/deploy.rs:842-845`, `deploy_validate.rs:86-133`).
-   - Proposed fix: upstream's three texts in `extract_auth_chain_from_fields` and `deploy_entity_inner`;
-     accept `entityId=""` as upstream does (it then fails validation); keep or drop the JSON form
-     (a superset; document it if kept).
-   - Fixed: `A string was expected` for a missing `entityId` or link part, `Missing auth chain` without indexed fields; only the indexed fields are read (the JSON `authChain` field is dropped; `dcl-scene-cli` sends both). Pinned by `deploy_validate.rs` `extract_auth_chain_refuses_in_upstreams_words` and `worlds/src/core/tests.rs` `deploy_form_and_auth_chain_refusals_answer_upstreams_texts`.
-   - Severity: P2.
+   - dcl-one: the same texts; only the indexed fields are read, so a JSON `authChain` field is
+     ignored, and an empty `entityId` goes on to validation (`deploy_validate.rs:84`
+     `extract_auth_chain_from_fields`, `deploy.rs:1001` `deploy_entity_inner`). Pinned by
+     `deploy_validate.rs:370` `extract_auth_chain_refuses_in_upstreams_words` and
+     `worlds/src/core/tests.rs:7371` `deploy_form_and_auth_chain_refusals_answer_upstreams_texts`.
+   - Severity: none (closed).
 
-8. **WD-08 · `POST /entities` · auth-chain verification messages and EIP-1654.** Status: MATCH (fixed) for the sourced texts; rest kept: intended (worlds-compatibility.md, "Publish auth chains").
+8. **WD-08 · `POST /entities` · auth-chain verification messages and EIP-1654.** Status: intended (worlds-compatibility.md).
    - Upstream: single request `Deployment failed: <AJV errors>` / `Invalid signer: <p>` / the
      `@dcl/crypto` message; partial `Invalid auth chain.` / `Invalid auth chain: <message>`; contract
      wallets are refused (null provider) (`src/controllers/handlers/deploy-entity-handler.ts:80-102`,
      `src/logic/validations/common.ts:60-81`).
-   - dcl-one: `Deployment failed: The auth chain is malformed: <serde>` / `… is invalid: <error>` on both
-     paths; EIP-1654 accepted with a validator, 503 when it cannot answer
-     (`services/catalyst/worlds/src/core/deploy.rs:437-464`).
-   - Proposed fix: in `authenticate`, take a `partial` flag and answer upstream's texts; map
-     `crate::auth::AuthError` variants to `@dcl/crypto`'s messages (needs that package's texts, not
-     vendored). Keep EIP-1654 and document it.
-   - Fixed in `deploy.rs` `authenticate` / `crypto_message`: a batch answers `Invalid auth chain.` / `Invalid auth chain: <message>`, a single request `Deployment failed: <message>`; `<message>` is `@dcl/crypto` 3.7.0's for a malformed chain, a lone SIGNER, a signer mismatch, a missing signature, an expired key, the final authority and (without `ETH_RPC_URL`) a contract wallet's `Missing provider`; an unknown link type answers AJV's `must be equal to one of the allowed values`. Pinned by `worlds/src/core/tests.rs` `deploy_form_and_auth_chain_refusals_answer_upstreams_texts` and `worlds/src/core/tests/partial_uploads.rs` `every_batch_is_authenticated_and_only_the_starter_resumes_without_the_manifest`.
-   - Left (documented): an unrecoverable signature and the shared verifier's stricter structure answer the verifier's text; the other `AuthChain` schema texts (a SIGNER with a signature) are not rebuilt; EIP-1654 is accepted with `ETH_RPC_URL`.
-   - Severity: P2.
+   - dcl-one: `authenticate` and `crypto_message` (`deploy.rs:578,512`): a batch answers
+     `Invalid auth chain.` / `Invalid auth chain: <message>`, a single request
+     `Deployment failed: <message>`; `<message>` is `@dcl/crypto` 3.7.0's for a malformed chain, a
+     lone SIGNER, a signer mismatch, a missing signature, an expired key, the final authority and
+     (without `ETH_RPC_URL`) a contract wallet's `Missing provider`; an unknown link type answers
+     AJV's `must be equal to one of the allowed values`. Listed under "Publish auth chains": an
+     unrecoverable signature and the shared verifier's stricter structure answer the verifier's
+     text, the other `AuthChain` schema texts (a SIGNER with a signature) are not rebuilt, and
+     EIP-1654 chains are accepted with `ETH_RPC_URL`. Pinned by `worlds/src/core/tests.rs:7371`
+     `deploy_form_and_auth_chain_refusals_answer_upstreams_texts` and
+     `worlds/src/core/tests/partial_uploads.rs:244`
+     `every_batch_is_authenticated_and_only_the_starter_resumes_without_the_manifest`.
+   - Severity: none (closed).
 
-9. **WD-09 · `POST /entities` · non-multipart and truncated bodies.** Status: MATCH (fixed); urlencoded kept: intended (worlds-compatibility.md, "Publish forms").
+9. **WD-09 · `POST /entities` · non-multipart and truncated bodies.** Status: intended (worlds-compatibility.md).
    - Upstream: JSON 400 `Unsupported content type: application/json`, `Unexpected end of form`
      (`test/integration/multipart-error-handling.spec.ts:15-105`).
-   - dcl-one: the `Multipart` extractor rejects a bad content type before the handler (axum's plain-text
-     400); a truncated body answers `Failed to read multipart field: <multer error>`
-     (`services/catalyst/worlds/src/core/deploy.rs:143-148`, `deploy_form.rs:88-95`).
-   - Proposed fix: take `Request` and build `Multipart` in the handler after the Content-Length and
-     source checks, mapping a missing or non-multipart type to `Unsupported content type: <type>` and an
-     incomplete stream to `Unexpected end of form`.
-   - Fixed: the handler takes the request, checks the content type in busboy's words (`Missing Content-Type`, `Malformed content type`, `Unsupported content type: <type>`, `Multipart: Boundary not found`) after the source and slot admission, and maps multer's incomplete-stream errors to `Unexpected end of form` and the body limit to the 413 payload text. Pinned by `deploy_form.rs` `the_content_type_is_refused_in_busboys_words` and `worlds/src/core/tests.rs` `deploy_form_and_auth_chain_refusals_answer_upstreams_texts`.
-   - Left (documented): a urlencoded body is refused and other parser errors answer multer's text.
-   - Severity: P2.
+   - dcl-one: the handler takes the request and checks the content type in busboy's words
+     (`Missing Content-Type`, `Malformed content type`, `Unsupported content type: <type>`,
+     `Multipart: Boundary not found`) after the source and slot admission (`deploy_form.rs:41`
+     `content_type_error`); multer's incomplete-stream errors answer `Unexpected end of form` and
+     the body limit the 413 payload text (`deploy_form.rs:69` `read_failed`). Listed under
+     "Publish forms": a urlencoded body is refused (upstream parses it) and other parser errors
+     answer multer's text. Pinned by
+     `deploy_form.rs:528` `the_content_type_is_refused_in_busboys_words` and
+     `deploy_form_and_auth_chain_refusals_answer_upstreams_texts`.
+   - Severity: none (closed).
 
-10. **WD-10 · `POST /entities` · upload and processing timeout messages.** Status: MATCH (fixed).
+10. **WD-10 · `POST /entities` · upload and processing timeout messages.** Status: MATCH, no work.
     - Upstream: `describeUploadTimeout` (seconds, bytes received of declared, KiB/s) and
       `The server could not finish processing the deployment within <s> s after receiving it. Retry the deployment; if it keeps timing out, report it.`
       (`src/controllers/multipart/errors.ts:32-50`, `src/logic/deployment-processing.ts:21-29`; test
       `multipart-limiter.spec.ts:392-426`).
-    - dcl-one: `The multipart upload timed out.` and `Deployment processing exceeded the <ms>ms deadline.`
-      (`services/catalyst/worlds/src/core/upload_limits.rs:27`, `deploy.rs:213-222,243-260`).
-    - Proposed fix: count wire bytes in `read_deploy_form` and format both messages as upstream.
-    - Fixed: the body stream counts wire bytes, and `upload_limits.rs` `describe_upload_timeout` / `processing_timeout_message` format upstream's texts (`formatBytes` moved there from `partial.rs`). Pinned by `upload_limits.rs` `timeout_texts_are_upstreams`.
-    - Severity: P2.
+    - dcl-one: the body stream counts wire bytes, and `describe_upload_timeout` /
+      `processing_timeout_message` (`upload_limits.rs:75,96`) format upstream's texts with
+      `format_bytes`. Pinned by `upload_limits.rs:553` `timeout_texts_are_upstreams`.
+    - Severity: none (closed).
 
-11. **WD-11 · `POST /entities` · in-flight budget answers.** Status: MATCH (fixed); caps kept: intended (worlds-compatibility.md, "Publish forms").
+11. **WD-11 · `POST /entities` · in-flight budget answers.** Status: intended (worlds-compatibility.md).
     - Upstream: one byte budget bounds bytes, requests (16 MiB minimum each) and files (16 KiB each);
       every shed says `Server is buffering too many uploads, please retry shortly.` or
       `…too many upload files…`; a failed temp write `The server could not store the multipart upload, please retry shortly.`
       (`src/adapters/in-flight-upload-budget/component.ts:63-140`, `multipart/errors.ts:25-77`).
     - dcl-one: separate caps (`MAX_CONCURRENT_UPLOADS` 40, lowered to three quarters of the pool;
-      40,000 files), the slot cap answering `Server is handling too many concurrent uploads, please retry shortly.`,
-      the spool failure `Server could not buffer the upload, please retry shortly.`
-      (`services/catalyst/worlds/src/core/upload_limits.rs:14-24`, `deploy.rs:173-181`, `deploy_form.rs:21-27`).
-    - Proposed fix: keep the caps (documented pool bound); answer upstream's two texts.
-    - Fixed: the slot cap answers upstream's byte-budget text and a spool failure upstream's storage text; the file budget already had upstream's file text. The settings route keeps its own slot text (#388).
-    - Severity: P2.
+      40,000 files) listed under "Publish forms"; the slot cap answers upstream's byte-budget text
+      (`deploy.rs:183`), the file budget upstream's file text and a spool failure upstream's storage
+      text (`deploy_form.rs:22` `SPOOL_FAILED_MESSAGE`). The settings route keeps its own slot text.
+    - Severity: none (closed).
 
-12. **WD-12 · `POST /entities?partial=true` · the first batch is admitted when its body has arrived.** Status: kept: intended (worlds-compatibility.md, "Publish forms").
+12. **WD-12 · `POST /entities?partial=true` · the first batch's arrival.** Status: intended (worlds-compatibility.md).
     - Upstream: `stampRequestArrival` before parsing; the upload's `created_at` and freshness anchor
       are the arrival (`src/controllers/request-arrival.ts`, `scene-deployments/component.ts:251,265`;
       test `partial-deploy.spec.ts:569-604`).
-    - dcl-one: `now_ms` after the form is read (`services/catalyst/worlds/src/core/deploy.rs:852`,
-      `partial.rs:508`); the gateway also buffers the body before the app.
-    - Proposed fix: take the time at `deploy_entity` entry and pass it down; the gateway buffering
-      remains (document).
-    - Fixed in the app: the arrival is stamped at handler entry and is the first batch's anchor. The gateway buffers the body before proxying it, so the arrival the app sees is the body's end at the gateway; documented.
-    - Severity: P2.
+    - dcl-one: the arrival is stamped at handler entry (`deploy.rs:148`) and is the first batch's
+      anchor (`partial.rs:485`). The gateway buffers the body before proxying it, so the arrival the
+      app sees is the body's end at the gateway; listed under "Publish forms".
+    - Severity: none (closed).
 
-13. **WD-13 · `POST /entities` · world name family and personal worlds.** Status: kept: intended (worlds-compatibility.md, "Publish world names").
+13. **WD-13 · `POST /entities` · world name family and personal worlds.** Status: intended (worlds-compatibility.md).
     - Upstream: any name; one that nobody owns fails the permission check with its message
       (`src/logic/validations/scene.ts:108-163`, `src/adapters/name-ownership.ts:46-60,98`).
     - dcl-one: `Only .dcl.eth world names are supported for publishing (got "<n>")` (or `.dcl.eth and .eth`
       with `ALLOW_ENS_DOMAINS`) before the deprecated-config check; a `<address>.dcl.eth` personal world
-      is deployable by its address (`services/catalyst/worlds/src/core/deploy.rs:532-548,585-599`).
-    - Proposed fix: keep (realm policy); list both in `docs/worlds-compatibility.md`.
-    - Documented as proposed.
-    - Severity: P2.
+      is deployable by its address (`services/catalyst/worlds/src/core/deploy.rs:721-726,773`). Listed
+      under "Publish world names".
+    - Severity: none (closed).
 
-14. **WD-14 · all routes · authority and internal faults.** Status: MATCH (fixed) for the 500 body; rest kept: intended (worlds-compatibility.md, "Authority faults on writes fail closed").
+14. **WD-14 · all routes · authority and internal faults.** Status: intended (worlds-compatibility.md).
     - Upstream: a failing name lookup or unresolved owner throws, answering 500
       `{"error":"Internal Server Error"}`; a DCL NAME world without an owner while sizing answers
       400 `Deployment failed: Could not determine owner for world <n>`
       (`src/adapters/entity-deployer.ts:162-169`, `limits-manager/component.ts:66-71`).
-    - dcl-one: 403 `Not authorized: could not verify deployment permissions (deploy denied)`,
-      400 `Cannot deploy scene … owner address could not be resolved.`, 503 for owner/allowance faults,
-      and 500 bodies that carry a `message` (`services/catalyst/worlds/src/core/deploy.rs:600-638,704-712,135-137`).
-    - Proposed fix: keep fail-closed; document the 403/503 in `docs/worlds-compatibility.md`; drop
-      `message` from deploy 500s (`deploy.rs` `rejection` for 500) to match the envelope rule.
-    - Fixed: `deploy.rs` `rejection` answers a 500 as `{"error":"Internal Server Error"}`; the 403/400/503 fail-closed answers are documented. Pinned by `deploy.rs` `refusals_answer_the_old_envelope_and_body_limits_413`.
-    - Severity: P2.
+    - dcl-one: a deploy 500 is `{"error":"Internal Server Error"}` (`deploy.rs:90` `rejection`,
+      pinned by `deploy.rs:1254` `refusals_answer_the_old_envelope_and_body_limits_413`). Authority
+      faults fail closed: 403 `Not authorized: could not verify deployment permissions (deploy denied)`,
+      400 `Cannot deploy scene … owner address could not be resolved.`, 503 for owner/allowance
+      faults (`deploy.rs:785,808`); listed under "Authority faults on writes fail closed".
+    - Severity: none (closed).
 
-15. **WD-15 · `POST /entities` · a newer-scene refusal stores the blobs first.** Status: MATCH (fixed).
+15. **WD-15 · `POST /entities` · a newer-scene refusal before any blob is stored.** Status: MATCH, no work.
     - Upstream: the fast-fail runs before any storage write (`src/adapters/entity-deployer.ts:65-79`;
       test `partial-deploy.spec.ts:1600-1655` checks nothing was stored).
-    - dcl-one: the same 400, from inside the publish transaction after `store_file`
-      (`services/catalyst/worlds/src/core/deploy.rs:900-905`, `store.rs:678-694`); the blobs wait for the collector.
-    - Proposed fix: call `store::newer_scene_deployed` before the store loop, as `partial.rs:541-549` does;
-      keep the transactional check.
-    - Fixed as proposed: `deploy_entity_inner` calls `store::newer_scene_deployed` before the store loop. Pinned by `worlds/src/core/tests.rs` `publishing_an_older_entity_answers_400_and_keeps_the_newer_scene` (the refused publish's file is not stored).
-    - Severity: P2 (no wire difference).
+    - dcl-one: `deploy_entity_inner` calls `store::newer_scene_deployed` before the store loop
+      (`deploy.rs:1075`); the publish transaction checks it again. Pinned by
+      `worlds/src/core/tests.rs:1392` `publishing_an_older_entity_answers_400_and_keeps_the_newer_scene`
+      (the refused publish's file is not stored).
+    - Severity: none (closed).
 
-16. **WD-16 · `POST /entities` · the 409 names the world in lowercase.** Status: MATCH (fixed).
+16. **WD-16 · `POST /entities` · the 409 names the world as deployed.** Status: MATCH, no work.
     - Upstream: `SceneReplacementConflictError(worldName)` with the name as deployed (`src/types.ts:518-523`).
-    - dcl-one: `world.key()` (`services/catalyst/worlds/src/core/store.rs:763-770`).
-    - Proposed fix: `world.display()`.
-    - Fixed as proposed. Pinned by `worlds/src/core/tests.rs` `scoped_replacement_conflicts_on_unauthorized_overlap` (a mixed-case world).
-    - Severity: P2.
+    - dcl-one: `world.display()` (`services/catalyst/worlds/src/core/store.rs:768`). Pinned by
+      `worlds/src/core/tests.rs:3696` `scoped_replacement_conflicts_on_unauthorized_overlap` (a
+      mixed-case world).
+    - Severity: none (closed).
 
-17. **WD-17 · `DELETE /entities/:world_name` · 200 content type.** Status: MATCH (fixed).
+17. **WD-17 · `DELETE /entities/:world_name` · 200 content type.** Status: MATCH, no work.
     - Upstream: `body: '{}'`, a string, so `text/plain; charset=utf-8`
       (`src/controllers/handlers/undeploy-entity-handler.ts:34-37`; `@dcl/http-server` 2.3.0 `dist/logic.js:298-312`).
-    - dcl-one: `Json(json!({}))`, `application/json` (`services/catalyst/worlds/src/core/scenes.rs:142`).
-    - Proposed fix: answer `([(CONTENT_TYPE, "text/plain; charset=utf-8")], "{}")`.
-    - Fixed as proposed. Pinned by `worlds/src/core/tests.rs` `every_route_answers_its_contract` (status, content type and body).
-    - Severity: P2.
+    - dcl-one: `undeploy_world` answers `([(CONTENT_TYPE, "text/plain; charset=utf-8")], "{}")`
+      (`services/catalyst/worlds/src/core/scenes.rs:144`). Pinned by `worlds/src/core/tests.rs:3848`
+      `every_route_answers_its_contract` (status, content type and body).
+    - Severity: none (closed).
 
-18. **WD-18 · DELETE routes · checks upstream does not have.** Status: kept: intended (worlds-compatibility.md, "Invalid world names").
+18. **WD-18 · DELETE routes · checks upstream does not have.** Status: intended (worlds-compatibility.md).
     - Upstream: the signature first, no world name check, the coordinate pattern only, no request timeout
       (`src/controllers/handlers/scenes-handler.ts:9-16,87-97`).
     - dcl-one: `parse_world` answers 400 `Invalid world name: …` before the signature
-      (`services/catalyst/worlds/src/core/scenes.rs:53,112`); a coordinate outside `i32` is 400
+      (`services/catalyst/worlds/src/core/permissions.rs:66`); a coordinate outside `i32` is 400
       (`comms/src/world_identity.rs:333-360`); the scene route answers 408 `request timed out` after 30 s
-      (`mod.rs:706-719`). `docs/worlds-compatibility.md` lists the world-name check for the permission,
-      settings and manifest routes only.
-    - Proposed fix: extend the compatibility row to these two routes; keep the rest.
-    - Documented as proposed, with the `i32` coordinate and the 30 s timeout.
-    - Severity: P2.
+      (`mod.rs:714-716`). Listed under "Invalid world names", with the `i32` coordinate and the 30 s
+      timeout.
+    - Severity: none (closed).
 
-19. **WD-19 · all routes · no deployment or undeployment events.** Status: kept: intended (worlds-compatibility.md, "No deployment events").
+19. **WD-19 · all routes · no deployment or undeployment events.** Status: intended (worlds-compatibility.md).
     - Upstream: SNS `WorldDeploymentEvent` (with `isMultiplayer`), `WORLD_SETTINGS_CHANGED` after a deploy
       that changed the settings, `WorldUndeploymentEvent`, `WorldScenesUndeploymentEvent`
       (`src/adapters/entity-deployer.ts:196-248`, `src/logic/worlds/component.ts:179-244`).
     - dcl-one: in-tree consumers only (scene identities, the forward outbox, the quota re-check)
-      (`services/catalyst/worlds/src/core/deploy.rs:815-826`, `store.rs:815-846,950-972`). The compatibility
-      page covers notices, not these events.
-    - Proposed fix: keep; add a row to `docs/worlds-compatibility.md` naming what replaces each event.
-    - Documented as proposed.
-    - Severity: P2. Depends on: the places and asset-bundle areas (the events' upstream consumers).
+      (`services/catalyst/worlds/src/core/deploy.rs` `publish`, `store.rs`). "No deployment events"
+      names what replaces each event.
+    - Severity: none (closed).
 
-20. **WD-20 · `POST /entities` · gateway limits answer before the app.** Status: MATCH (fixed) for the answers; the limits kept: intended (worlds-compatibility.md, "Publish forms").
+20. **WD-20 · `POST /entities` · gateway limits answer before the app.** Status: intended (worlds-compatibility.md).
     - Upstream: no request rate limit on this route; its own JSON 413/429.
     - dcl-one: nginx `limit_req zone=deploy` (5 r/s, burst 4), 10 connections per address and
-      `client_max_body_size 360m`, answered with nginx's HTML 413/429, the body buffered before the app
-      (`infra/gateway/gateway.py:13,22,169-191,332-335`).
-    - Proposed fix: JSON error pages for those locations in `gateway.py`
-      (`{"error":"Too Many Requests",…}` with `Retry-After`; `{"error":"Payload Too Large","message":"The multipart request is too large."}`).
-    - Fixed in `infra/gateway/gateway.py`: the worlds deploy location sends nginx's own 413 and 429 to named locations that answer `{"error":"Payload Too Large","message":"The multipart request is too large."}` and `{"error":"Too Many Requests","message":"Too many uploads in progress from this client, please retry shortly."}` with `Retry-After: 5`; the app's own errors pass through (no `proxy_intercept_errors`). Pinned by `infra/gateway/tests/test_config.py` `test_worlds_deploy_limits_answer_the_services_json`; a rendered config was also served by nginx 1.30 and answered both.
-    - Severity: P2. Depends on: the gateway (infra).
+      `client_max_body_size 360m`, the body buffered before the app (listed under "Publish forms").
+      The worlds deploy location sends nginx's own 413 and 429 to named locations that answer
+      `{"error":"Payload Too Large","message":"The multipart request is too large."}` and
+      `{"error":"Too Many Requests","message":"Too many uploads in progress from this client, please retry shortly."}`
+      with `Retry-After: 5`; the app's own errors pass through (`infra/gateway/gateway.py`). Pinned by
+      `infra/gateway/tests/test_config.py:107` `test_worlds_deploy_limits_answer_the_services_json`.
+    - Severity: none (closed).
 
 21. **WD-21 · `POST /entities` · validation texts of the scene checks.** Status: MATCH, no work.
     - Upstream: `src/logic/validations/{common,scene}.ts` (TTL, file count, type, `worldConfiguration`,
       deprecated keys, bounds, pointers, parcels cap, deny list, permission, minimap, skybox, thumbnail,
       extra/missing files, size).
-    - dcl-one: the same texts and order (`services/catalyst/worlds/src/core/deploy.rs:281-412,492-724`,
+    - dcl-one: the same texts and order (`services/catalyst/worlds/src/core/deploy.rs` `validate`,
       `deploy_validate.rs`, `quota.rs:198-202`); AJV schema texts first-failure only (intended).
     - Severity: none (closed).
 
 22. **WD-22 · `POST /entities` · success message.** Status: MATCH, no work.
     - Upstream: `buildSceneDeploymentMessage` (`src/logic/utils.ts:48-56`; test `deploy.spec.ts:203-213`).
-    - dcl-one: `deployment_message` with `encodeURIComponent` (`deploy.rs:304-326`).
+    - dcl-one: `deployment_message` with `encodeURIComponent` (`deploy.rs:344`).
     - Severity: none (closed).
 
 23. **WD-23 · `POST /entities` · Content-Length, payload and file size limits, entity file.** Status: MATCH, no work.
     - Upstream: `src/controllers/multipart/middleware.ts:157-167,268-279,382-384`,
       `deploy-entity-handler.ts:27,44-50,133-142`.
-    - dcl-one: `deploy.rs:51-58,145-161,939-959`, `deploy_form.rs:144-149`, `deploy_validate.rs:13,132-136`.
+    - dcl-one: `deploy.rs:84` `declared_length_exceeds_limit`, `deploy_form.rs:98`
+      `account_deploy_bytes`, `deploy_validate.rs` (`The entity file is too large…`).
     - Severity: none (closed).
 
 24. **WD-24 · `POST /entities` · per-source admission.** Status: MATCH, no work.
     - Upstream: `src/controllers/source-upload-admission.ts:15-50` (`cf-connecting-ip`; unattributed not limited).
-    - dcl-one: `upload_limits.rs:270-392` (`X-Real-IP`, IPv6 by /64, intended); 429, `Retry-After: 5`,
-      upstream's message.
+    - dcl-one: `upload_limits.rs` per-source admission (`X-Real-IP`, IPv6 by /64, intended); 429,
+      `Retry-After: 5`, upstream's message.
     - Severity: none (closed).
 
 25. **WD-25 · `POST /entities?partial=true` · the partial contract.** Status: MATCH, no work.
     - Upstream: `test/contracts/partial-deployment.ts`, `partial-deploy.spec.ts` (202 `{missing}`, completion,
       replay, expiry, ownership, query/field agreement, manifest required, quotas with `Retry-After`).
     - dcl-one: `services/catalyst/worlds/src/core/partial.rs`, tests in `worlds/src/core/tests/partial_uploads.rs`;
-      the intended differences are in `docs/worlds-compatibility.md` ("Partial uploads"). WD-01, WD-06
-      and WD-08 are fixed; WD-12 is documented.
+      the intended differences are in `docs/worlds-compatibility.md` ("Partial uploads").
     - Severity: none (closed).
 
 26. **WD-26 · `DELETE /world/:world_name/scenes/:coordinate` · authorization scope and spawn.** Status: MATCH, no work.
@@ -614,7 +603,7 @@ dcl-one (`scenes.rs:46-102`): world name parsed first, the strict signed fetch, 
 27. **WD-27 · `DELETE /entities/:world_name` · authorization.** Status: MATCH, no work.
     - Upstream: owner or world-wide deployment grantee, else 400 with the fixed text
       (`undeploy-entity-handler.ts:16-29`).
-    - dcl-one: `scenes.rs:121-137`.
+    - dcl-one: `scenes.rs:107` `undeploy_world`.
     - Severity: none (closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not

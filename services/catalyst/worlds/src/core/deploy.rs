@@ -72,10 +72,6 @@ pub(super) const MAX_DEPLOYMENT_FUTURE_SKEW_MS: i64 = 15 * 60 * 1000;
 /// `MAX_FILE_COUNT`'s default.
 pub const DEFAULT_MAX_FILE_COUNT: usize = 10_000;
 
-pub(super) const TOO_MANY_FILES_MESSAGE: &str = "The multipart request has too many files.";
-pub(super) const FILE_TOO_LARGE_MESSAGE: &str =
-    "An uploaded file exceeds the maximum allowed size.";
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "worlds/"))]
@@ -1267,8 +1263,8 @@ mod tests {
             upload_limits::PAYLOAD_TOO_LARGE_MESSAGE,
             upload_limits::TOO_MANY_PARTS_MESSAGE,
             upload_limits::TOO_MANY_FIELDS_MESSAGE,
-            TOO_MANY_FILES_MESSAGE,
-            FILE_TOO_LARGE_MESSAGE,
+            upload_limits::TOO_MANY_FILES_MESSAGE,
+            upload_limits::FILE_TOO_LARGE_MESSAGE,
         ] {
             assert_eq!(
                 body(payload_too_large(limit)).await,
