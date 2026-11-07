@@ -2,8 +2,9 @@
 //       app/src/components/CreatorBadge/CreatorBadge.tsx;
 //       shop@2d3bf62:app/src/hooks/useFavoriteCount.ts, app/src/components/CreatorName/CreatorName.tsx
 
+import { shopCartDrawer } from "../../cart/drawer";
 import { useEffect, useState, type CSSProperties, type MouseEvent } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link } from "react-router";
 
 import { cartLineId, shopCart, useCart } from "../../cart/store";
 import { fetchCatalogByIds } from "../../market/lib/catalog";
@@ -11,7 +12,6 @@ import { favoriteKey, fetchFavoriteStats } from "../../market/lib/favorites";
 import { shopFavorites, useFavorites } from "../../market/store/favorites";
 import { itemAsset, tokenAsset, type AssetId } from "../../model/asset";
 import { parseEvmAddress, shortAddress } from "../../model/address";
-import { SHOP_BASE } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { formatMana } from "../../model/money";
 import { cardPrice } from "../cardPrice";
@@ -71,6 +71,7 @@ export function cartInputFor(item: CatalogItem, source?: string) {
       creator: item.creator || undefined,
       urn: item.urn,
       href: detailRouteFor(item) ?? undefined,
+      ...(item.priceCredits > 0 ? { priceCredits: item.priceCredits } : {}),
     },
     provenance: source ? { source } : {},
     available: item.tokenId ? 1 : (item.available ?? null),
@@ -142,7 +143,6 @@ export function CardCreator({ address, name }: { address: string; name?: string 
 
 export default function AssetCard({ item, mode = "shop", source = "grid", position, creatorName }: AssetCardProps) {
   const { session } = useShopWallet();
-  const navigate = useNavigate();
   const lines = useCart((s) => s.lines);
   const [thumbFailures, setThumbFailures] = useState(0);
   const thumbSource = item.thumbnail ? (thumbFailures ? item.thumbnail : publicThumbnail(item.thumbnail, 320)) : undefined;
@@ -171,7 +171,7 @@ export default function AssetCard({ item, mode = "shop", source = "grid", positi
     e.stopPropagation();
     if (!input || cartFull) return;
     shopCart.add(input);
-    navigate(`${SHOP_BASE}/cart`);
+    shopCartDrawer.added();
   };
 
   // Web3 sessions also see MANA (AGENTS.md), on sale cards as on the rest.

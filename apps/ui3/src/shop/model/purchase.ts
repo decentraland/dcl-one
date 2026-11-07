@@ -72,6 +72,8 @@ export type CartLineDisplay = {
   creator?: string;
   urn?: string;
   href?: string;
+  /** The credits price per unit the catalog showed when it was added: what the cart drawer shows. Never charged. */
+  priceCredits?: number;
 };
 
 /** Upstream `AddToCartSource` (first touch wins). */

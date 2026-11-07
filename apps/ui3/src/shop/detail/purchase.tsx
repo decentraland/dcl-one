@@ -6,6 +6,7 @@
 
 import { createContext, useContext, type ReactNode } from "react";
 
+import { shopCartDrawer, type CartDrawerStore } from "../cart/drawer";
 import { cartLineId, shopCart, type CartAddInput, type CartStore } from "../cart/store";
 import type { PurchaseOffer } from "../model/purchase";
 import type { PaymentMethod } from "../model/settlement";
@@ -16,18 +17,27 @@ export type PurchaseRequest = {
   /** The buyer's choice; the presentation default when null. */
   method: PaymentMethod | null;
   offer: PurchaseOffer | null;
+  /** "add" puts the line in the cart and stays on the page; "buy" (the default) goes on to the checkout. */
+  intent?: "add" | "buy";
 };
 
 export type PurchaseLauncher = (request: PurchaseRequest, navigate: (to: string) => void) => void;
 
-/** Puts the line (and the method chosen) in the account's cart and opens the cart's checkout. */
-export function cartLauncher(cart: CartStore = shopCart): PurchaseLauncher {
-  return ({ line, method, offer }, navigate) => {
+/**
+ * Puts the line (and the method chosen) in the account's cart. Buying opens the cart's checkout; adding
+ * opens the cart drawer over the page, as upstream's add-to-cart does (shop@3a322cf9 store/cart.ts `add`).
+ */
+export function cartLauncher(cart: CartStore = shopCart, drawer: CartDrawerStore = shopCartDrawer): PurchaseLauncher {
+  return ({ line, method, offer, intent = "buy" }, navigate) => {
     const id = cartLineId(line.asset, line.listing);
     if (!cart.getSnapshot().lines.some((l) => l.id === id)) cart.add({ ...line, seen: offer ?? line.seen ?? null });
-    else if (offer) cart.markSeen(id, offer);
+    else if (intent === "add") {
+      cart.add(line);
+      if (offer) cart.markSeen(id, offer);
+    } else if (offer) cart.markSeen(id, offer);
     cart.setMethod(id, method);
-    navigate(`${SHOP_BASE}/cart`);
+    if (intent === "add") drawer.added();
+    else navigate(`${SHOP_BASE}/cart`);
   };
 }
 

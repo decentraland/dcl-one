@@ -127,6 +127,14 @@
   color: #ecebed;
   transition: background 0.12s ease, color 0.12s ease;
 }
+/* The cart icon is a button (it opens the cart drawer): the same box as the links beside it. */
+button.shop-subnav__icon {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
 .shop-subnav__icon:hover { background: rgba(255, 255, 255, 0.12); }
 .shop-subnav__icon[data-active] { color: #fff; }
 .shop-subnav__badge {

@@ -1,0 +1,394 @@
+/* from: shop@3a322cf9:app/src/components/CartPopover/CartPopover.styles.ts and app/src/styles/cta.styles.ts
+   (checkoutCtaCss), with app/src/styles/theme.ts's values inlined. Scoped to .shop-drawer. */
+@keyframes shop-drawer-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes shop-drawer-slide {
+  from { transform: translateX(100%); }
+  to { transform: none; }
+}
+
+/* Above the site nav and the mobile filter sheet (9999): a full-viewport modal. */
+.shop-drawer {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.shop-drawer__scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(22, 21, 24, 0.5);
+  animation: shop-drawer-fade 0.16s ease;
+}
+
+.shop-drawer__panel {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: min(500px, 100vw);
+  height: 100%;
+  background: #691fa9;
+  box-shadow: -8px 0 32px rgba(22, 21, 24, 0.18);
+  animation: shop-drawer-slide 0.32s cubic-bezier(0.45, 0, 0.25, 1);
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shop-drawer__panel {
+    animation: none;
+  }
+}
+
+.shop-drawer__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 16px;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.shop-drawer__title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.6;
+  color: #ecebed;
+}
+
+.shop-drawer__close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 31px;
+  height: 31px;
+  border: 0;
+  background: rgba(0, 0, 0, 0.2);
+  color: #ffffff;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.shop-drawer__close:hover {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.shop-drawer__body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 16px 16px 24px;
+}
+
+.shop-drawer__empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+  color: #fcfcfc;
+}
+
+.shop-drawer__empty-art {
+  width: 72px;
+  height: 72px;
+}
+
+.shop-drawer__empty-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.shop-drawer__empty-body {
+  margin: 0;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* The design's translucent mint, laid over white so the purple panel does not tint it. */
+.shop-drawer__banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 12px;
+  border-radius: 16px;
+  background: linear-gradient(rgba(193, 238, 207, 0.5), rgba(193, 238, 207, 0.5)), #ffffff;
+}
+
+.shop-drawer__banner p {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #242129;
+}
+
+.shop-drawer__banner strong {
+  font-weight: 600;
+}
+
+.shop-drawer__banner-check {
+  flex: none;
+  width: 20px;
+  height: 20px;
+}
+
+.shop-drawer__banner-check svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.shop-drawer__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.shop-drawer__card {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+  border-radius: 16px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.shop-drawer__thumb {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 137px;
+  min-height: 139px;
+  align-self: stretch;
+  border: 1.5px solid var(--tile-stroke, transparent);
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--tile-bg);
+}
+
+.shop-drawer__thumb img {
+  width: 82%;
+  height: 82%;
+  object-fit: contain;
+  filter: drop-shadow(0.6px 2.2px 2.8px rgba(0, 0, 0, 0.1));
+}
+
+.shop-drawer__info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 8px;
+}
+
+.shop-drawer__name {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: #fcfcfc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 28px; /* clear the delete button */
+}
+
+.shop-drawer__by {
+  margin-top: 4px;
+  gap: 6px;
+  font-size: 12px;
+  color: #fcfcfc;
+}
+
+.shop-drawer__by [data-avatar] {
+  width: 20px;
+  height: 20px;
+  border: 1.43px solid rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.shop-drawer__bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-right: 8px;
+}
+
+.shop-drawer__stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 50px;
+}
+
+.shop-drawer__step {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #fcfcfc;
+  cursor: pointer;
+}
+
+.shop-drawer__step:disabled {
+  color: rgba(255, 255, 255, 0.7);
+  opacity: 0.5;
+  cursor: default;
+}
+
+.shop-drawer__qty {
+  min-width: 12px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: #fcfcfc;
+}
+
+.shop-drawer__price,
+.shop-drawer__total-val {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1;
+  color: #fcfcfc;
+  white-space: nowrap;
+}
+
+.shop-drawer__total-val {
+  gap: 8px;
+}
+
+.shop-drawer__coin {
+  width: 22px;
+  height: 22px;
+  color: #fcfcfc;
+}
+
+.shop-drawer__del {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #fcfcfc;
+  cursor: pointer;
+}
+
+.shop-drawer__del:hover {
+  color: #ff2d55;
+}
+
+.shop-drawer__foot {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: rgba(84, 25, 135, 0.8);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-top: 2px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 -4px 12px 2px rgba(0, 0, 0, 0.12);
+}
+
+.shop-drawer__total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.shop-drawer__total-label {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.57;
+  color: #fcfcfc;
+}
+
+/* The two CTAs side by side, each taking half the row. */
+.shop-drawer__ctas {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.shop-drawer__ctas > * {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* checkoutCtaCss: primary advances (the buy gradient, solid red on hover), glass dismisses. */
+.shop-drawer__cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 46px;
+  padding: 0 12px;
+  border-radius: 12px;
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: 0.46px;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.shop-drawer__cta[data-variant="primary"] {
+  border: 0;
+  background: linear-gradient(180.93deg, #ff7439 2.82%, #ff2d55 97.47%);
+  color: #ffffff;
+}
+
+.shop-drawer__cta[data-variant="glass"] {
+  border: 0;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fcfcfc;
+}
+
+@media (hover: hover) {
+  .shop-drawer__cta[data-variant="primary"]:hover {
+    background-image: linear-gradient(#ff2d55, #ff2d55);
+  }
+  .shop-drawer__cta[data-variant="glass"]:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
+}
+
+.shop-drawer__cta[data-variant="primary"]:active {
+  background-image: linear-gradient(#ff2d55, #ff2d55);
+}
