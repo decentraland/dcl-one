@@ -183,6 +183,7 @@ pub async fn spawn(first_port: u16) -> Option<Running> {
         .build()
         .ok()?;
     let deadline = Instant::now() + READY_TIMEOUT;
+    let mut delay = READY_POLL;
     loop {
         if let Ok(Some(status)) = child.try_wait() {
             crate::ux::note_stderr(format!(
@@ -205,7 +206,8 @@ pub async fn spawn(first_port: u16) -> Option<Running> {
             kill_group();
             return None;
         }
-        tokio::time::sleep(READY_POLL).await;
+        tokio::time::sleep(delay.min(deadline.saturating_duration_since(Instant::now()))).await;
+        delay = delay.saturating_mul(2).min(Duration::from_secs(1));
     }
     Some(Running {
         bin,

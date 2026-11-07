@@ -408,8 +408,15 @@ pub struct WorldsConfig {
     pub handshake_timeout: u64,
 
     /// The wallet denylist document; unset disarms the external denylist.
+    /// `NODE_POSTURE=mirror` defaults it to Decentraland's, as upstream's
+    /// `DENYLIST_JSON_URL` defaults.
     #[arg(long, env = "DENY_LIST_URL")]
     pub deny_list_url: Option<String>,
+
+    /// Upstream worlds-content-server's name for `DENY_LIST_URL`, read when
+    /// that one is unset or empty.
+    #[arg(long, env = "DENYLIST_JSON_URL", hide = true)]
+    pub denylist_json_url: Option<String>,
 
     /// The NATS broker `serve` (comms' one link) and `catalyst pulse` meet on; unset, no island is ever delivered.
     #[arg(long, env = "NATS_URL")]
@@ -454,6 +461,14 @@ pub struct WorldsConfig {
     /// The deployment audience clients sign for /ws/v4; unset leaves the v4 control authority unavailable.
     #[arg(long, env = "ARCHIPELAGO_CONTROL_V4_AUDIENCE")]
     pub archipelago_control_v4_audience: Option<String>,
+}
+
+impl WorldsConfig {
+    /// The wallet denylist document: `DENY_LIST_URL`, else `DENYLIST_JSON_URL`.
+    pub fn deny_list(&self) -> Option<String> {
+        crate::config::Config::non_empty(&self.deny_list_url)
+            .or_else(|| crate::config::Config::non_empty(&self.denylist_json_url))
+    }
 }
 
 /// The worlds federation: the peer file and its caps.
@@ -687,7 +702,7 @@ mod tests {
             (60_000, 10_000)
         );
         assert!(
-            c.worlds.deny_list_url.is_none()
+            c.worlds.deny_list().is_none()
                 && c.worlds.nats_url.is_none()
                 && c.worlds.archipelago_control_v4_audience.is_none()
         );
