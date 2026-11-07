@@ -7256,3 +7256,77 @@ async fn a_quota_block_follows_the_live_name_holder() {
 }
 
 mod partial_uploads;
+
+/// Every signed worlds route answers a refused signed fetch as upstream's
+/// `onError` does (`undeploy-entity-handler.spec.ts:39-55`,
+/// `scenes-handler.spec.ts:833-856`, `world-settings-handler.spec.ts:849-876`,
+/// `post-permissions.spec.ts:355-365`).
+#[tokio::test]
+async fn signed_routes_refuse_with_the_crypto_middleware_body() {
+    let Some(f) = fixture().await else { return };
+    let w = world_name().display().to_string();
+    let address = Wallet::random().address.to_string();
+    let community = Uuid::new_v4();
+    let routes = [
+        ("put", format!("/world/{w}/settings")),
+        ("get", "/wallet/contribute".to_string()),
+        ("delete", format!("/world/{w}/scenes/0,0")),
+        ("delete", format!("/entities/{w}")),
+        ("post", format!("/world/{w}/permissions/access")),
+        (
+            "put",
+            format!("/world/{w}/permissions/deployment/{address}"),
+        ),
+        (
+            "delete",
+            format!("/world/{w}/permissions/deployment/{address}"),
+        ),
+        (
+            "put",
+            format!("/world/{w}/permissions/access/communities/{community}"),
+        ),
+        (
+            "delete",
+            format!("/world/{w}/permissions/access/communities/{community}"),
+        ),
+    ];
+    let wallet = Wallet::random();
+    // The settings route reads a multipart body; an empty one carries the signed fetch.
+    let case = |method: &'static str, path: &str| {
+        let case = Case::new(method, path.to_string());
+        if path.ends_with("/settings") {
+            case.body(b"--x--\r\n".to_vec(), "multipart/form-data; boundary=x")
+        } else {
+            case
+        }
+    };
+    for (method, path) in routes {
+        let body = expect(&f.app, case(method, &path), 400).await;
+        assert_eq!(
+            body,
+            json!({
+                "error": "Invalid Auth Chain",
+                "message": "This endpoint requires a signed fetch request. See ADR-44."
+            }),
+            "{method} {path}"
+        );
+        let body = expect(
+            &f.app,
+            case(method, &path)
+                .signed_over(&wallet, "/some/other/path", "{}")
+                .await,
+            401,
+        )
+        .await;
+        assert!(
+            body["error"]
+                .as_str()
+                .is_some_and(|e| e.starts_with("Invalid signature: ")),
+            "{method} {path}: {body}"
+        );
+        assert_eq!(
+            body["message"],
+            "This endpoint requires a signed fetch request. See ADR-44."
+        );
+    }
+}

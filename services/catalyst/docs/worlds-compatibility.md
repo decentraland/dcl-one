@@ -53,7 +53,16 @@ difference not listed here is a gap, not a decision.
   `{"error": "Internal Server Error"}`. The world comms mints
   (`/worlds/{name}/comms`, `/worlds/{name}/scenes/{id}/comms`) carry the
   reason in `error` for 401, 403, 404, 429 and 503, as upstream, and also in
-  `message`; `/get-comms-adapter` does so for 429 only.
+  `message`; `/get-comms-adapter` does so for 429 only. Every 503 carries
+  `Retry-After: 1` unless it names its own wait.
+- **Signed-fetch refusals** answer upstream's middleware body,
+  `{"error": <@dcl/crypto-middleware 6.3.0 message>, "message": "This
+  endpoint requires a signed fetch request. See ADR-44."}`, at its status.
+  The reason after `Invalid signature: ` is this node's verifier's, and the
+  catalyst 503 does not name the catalyst's origin. A chain whose SIGNER link
+  is not first, or whose later link has no signature, is refused at
+  extraction (400 `Invalid chain format: malformed auth link at position N`),
+  where upstream answers 401 `Invalid signature: …`.
 
 ## Comms
 
@@ -68,8 +77,26 @@ difference not listed here is a gap, not a decision.
   and client source (`X-Real-IP`, IPv6 by /64; the wallet without one) over
   a fixed 60-second window from the first attempt
   (`SHARED_SECRET_MAX_ATTEMPTS_PER_MINUTE`). Each attempt is reserved before
-  the secret is checked and the count is cleared by a right secret. If the
-  counter cannot be written the mint answers 503.
+  the secret is checked and the count is cleared by a right secret
+  (upstream also clears it when the owner joins). If the counter cannot be
+  written the mint answers 503.
+- **Scene bans in the lobby.** A wallet banned from the world's active scene
+  is refused the world lobby too (`/worlds/{name}/comms` and
+  `/get-comms-adapter`, 401 `You are banned from world "<name>".`);
+  upstream checks a scene ban only on the scene route.
+- **Access stores fail closed.** When the access setting, a listed
+  community's membership, a platform, wallet or scene ban, or the throttle
+  counter cannot be read, the mint answers 503 `World access could not be
+  decided; retry shortly.`. Upstream lets ban, deny-list and throttle faults
+  through and refuses a community fault with 401.
+- **Wallet deny list.** The mints read `DENY_LIST_URL` (or upstream's name
+  `DENYLIST_JSON_URL`); `NODE_POSTURE=mirror` defaults it to
+  `https://config.decentraland.org/denylist.json`. Unset, nobody is
+  deny-listed; upstream requires it.
+- **Token claims.** The LiveKit token's `nbf` is the mint time minus the
+  allowed clock skew (upstream `0`), and it carries the participant
+  attribute `dcl.worldAuthorization`, the re-admission proof other
+  participants can read.
 - **Kicks on access change.** Owners and holders of any world or live-scene
   grant (deployment or streaming) are never kicked. A switch to an
   allow-list keeps participants already on the new list. A participant
@@ -102,6 +129,18 @@ difference not listed here is a gap, not a decision.
 - **Capacity check fails closed.** When the live occupancy of a world cannot
   be recovered, the comms mint answers 503 instead of counting zero
   participants and admitting the user.
+- **Presence from LiveKit.** `/live-data` and
+  `/wallet/{wallet}/connected-world` read the occupancy recovered from
+  LiveKit every 30 seconds (about 5 seconds after a webhook), the same on
+  every replica. `lastUpdated` is the last complete observation
+  (`1970-01-01T00:00:00.000Z` before the first), `perWorld` is in name
+  order, the `authoritative-server` participant is not counted, and after
+  90 seconds without an observation both answer empty. A wallet's world
+  counts scene rooms and ENS worlds; in several worlds it is the one it
+  joined last, and a tie answers 503. A LiveKit room this node does not
+  resolve (no catalogue row, an upstream-format or non-canonical name) is
+  left out; while one could belong to a world, that world's mints answer
+  503.
 - **Scene room names.** A scene room is `w1:<base36 byte length of the world
   key>:<world key><scene id>`, with the scene id's case preserved. The
   prefix is fixed; there is no `SCENE_ROOM_PREFIX` or `COMMS_ROOM_PREFIX`
@@ -109,6 +148,12 @@ difference not listed here is a gap, not a decision.
 - **Room events.** Participant joins and leaves are published on the NATS
   subject `comms.room_events.v1`. No `peer.<id>.world.join|leave` subjects
   are published.
+- **LiveKit webhook.** `POST /livekit-webhook` (also under
+  `/worlds-content-server` and `/comms-gatekeeper`) is the gatekeeper's one
+  webhook: a missing or bad signature answers 401, an event it cannot read
+  (not JSON, no `id` or `createdAt`, missing participant fields) 400, and
+  every accepted event 200 with an empty body. Upstream answers 400 without
+  `Authorization`, 500 on a bad signature and echoes the body.
 - **Offline comms when the SFU is down.** `/about` advertises
   `fixed-adapter:offline:offline` while LiveKit has no credentials or the
   realm's SFU liveness probe fails, instead of always advertising the

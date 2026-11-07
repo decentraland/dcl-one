@@ -592,19 +592,32 @@ async fn baseline_world_lobby_and_scene_counts_remain_scoped() {
     server.abort();
 }
 
+/// A room this node refuses (a stray `world-` room with no catalogue row, an
+/// upstream worlds-content-server room on a shared LiveKit project, a
+/// non-canonical name) is left out of the observation: `/live-data` and
+/// `connected-world` keep serving, and only the world whose participants it
+/// could hold stays undetermined for admission (upstream counts what LiveKit
+/// lists, `comms-adapter.ts:144-176`).
 #[tokio::test]
-async fn every_typed_relevant_refusal_preserves_complete_snapshot_and_source_time() {
+async fn a_refused_room_is_left_out_and_keeps_only_its_own_world_undetermined() {
     let (mut state, source, server) = fixture().await;
-    state.presence.recover_complete(&state).await.unwrap();
-    let published = state.presence.complete();
-    let observed = state.presence.last_updated();
-    let counts = state.presence.world_counts();
-    for (room, reason) in [
-        ("scene:", RoomRefusal::Malformed),
-        ("scene-foo.dcl.eth-unknown", RoomRefusal::Unresolved),
-        ("world-foo.dcl.eth-scene", RoomRefusal::Ambiguous),
-        ("world-Foo.dcl.eth", RoomRefusal::Noncanonical),
-        ("world-foo.dcl.eth-scene", RoomRefusal::Legacy),
+    for (room, reason, holds_foo) in [
+        ("scene:", RoomRefusal::Malformed, false),
+        ("world-unknown.dcl.eth", RoomRefusal::Unresolved, false),
+        (
+            "world-scene-room-bar2.dcl.eth-bafy",
+            RoomRefusal::Unresolved,
+            false,
+        ),
+        ("scene-foo.dcl.eth-unknown", RoomRefusal::Unresolved, true),
+        (
+            "world-scene-room-foo.dcl.eth-bafy",
+            RoomRefusal::Unresolved,
+            true,
+        ),
+        ("world-foo.dcl.eth-scene", RoomRefusal::Ambiguous, true),
+        ("world-Foo.dcl.eth", RoomRefusal::Noncanonical, true),
+        ("world-foo.dcl.eth-scene", RoomRefusal::Legacy, true),
     ] {
         *source.rooms.lock() = vec![
             (
@@ -612,47 +625,105 @@ async fn every_typed_relevant_refusal_preserves_complete_snapshot_and_source_tim
                 "RM_1".into(),
                 vec![("replacement-watch".into(), "PA_new".into())],
             ),
-            (room.into(), "RM_refused".into(), vec![]),
+            (
+                "world-bar.dcl.eth".into(),
+                "RM_bar".into(),
+                vec![("bar-watch".into(), "PA_bar".into())],
+            ),
+            (
+                room.into(),
+                "RM_refused".into(),
+                vec![("refused-watch".into(), "PA_refused".into())],
+            ),
         ];
         Arc::get_mut(&mut state).unwrap().scenes = Arc::new(Catalogue {
             refusal: Some((room.into(), reason)),
             ..Default::default()
         });
-        // Relevant refusal is tested among otherwise valid occupied rooms.
-        assert!(matches!(
-            state.presence.recover_complete(&state).await,
-            Err(RecoveryFailure::Unresolved)
-        ));
-        assert!(Arc::ptr_eq(&state.presence.complete(), &published));
-        assert_eq!(state.presence.world_counts(), counts);
-        assert_eq!(state.presence.last_updated(), observed);
+        state
+            .presence
+            .recover_complete(&state)
+            .await
+            .unwrap_or_else(|e| panic!("{room}: {e}"));
+        assert_eq!(
+            state.presence.world_counts(),
+            vec![("bar.dcl.eth".into(), 1), ("foo.dcl.eth".into(), 1)],
+            "{room}"
+        );
+        assert_eq!(
+            state.presence.get_peer_world("refused-watch").unwrap(),
+            None
+        );
         assert_eq!(
             state
                 .presence
-                .get_peer_world("watch:foo")
+                .get_peer_world("replacement-watch")
                 .unwrap()
                 .as_deref(),
             Some("foo.dcl.eth")
         );
         assert_eq!(
-            state.presence.get_peer_world("replacement-watch").unwrap(),
-            None
-        );
-
-        // A dirty scope must try authority; public retained display is never
-        // substituted for a determined admission answer.
-        state.presence.invalidate_room("world-foo.dcl.eth");
-        assert!(matches!(
             state
                 .presence
-                .admission_occupancy(&state, "foo.dcl.eth", false)
-                .await,
-            Err(RecoveryFailure::Unresolved)
-        ));
-        assert!(Arc::ptr_eq(&state.presence.complete(), &published));
-        assert_eq!(state.presence.last_updated(), observed);
+                .admission_occupancy(&state, "bar.dcl.eth", false)
+                .await
+                .unwrap(),
+            1,
+            "{room} cannot hold bar's participants"
+        );
+        let foo = state
+            .presence
+            .admission_occupancy(&state, "foo.dcl.eth", false)
+            .await;
+        if holds_foo {
+            assert!(
+                matches!(foo, Err(RecoveryFailure::Unresolved)),
+                "{room} could hold foo's participants: {foo:?}"
+            );
+        } else {
+            assert_eq!(foo.unwrap(), 1, "{room}");
+        }
     }
     server.abort();
+}
+
+#[test]
+fn a_wallet_in_two_worlds_is_in_the_one_it_joined_last() {
+    let presence = Presence::new();
+    let room = |world: &str, joined_at_ms: i64| RecoveredRoom {
+        name: format!("world-{world}"),
+        sid: format!("RM_{world}"),
+        realm: world.into(),
+        is_world: true,
+        scene: None,
+        participants: vec![crate::shared::livekit::OccupancyParticipant {
+            identity: "0xAaAa".into(),
+            sid: format!("PA_{world}"),
+            joined_at_ms,
+        }],
+        observed: Observation::now(),
+        generation: 0,
+    };
+    let publish = |rooms: Vec<RecoveredRoom>| {
+        presence.state.lock().complete = Arc::new(Complete {
+            rooms,
+            refused: vec![],
+            observed: Some(Observation::now()),
+            unknown_generation: 0,
+        });
+    };
+    publish(vec![room("foo.dcl.eth", 2_000), room("bar.dcl.eth", 1_000)]);
+    assert_eq!(
+        presence.get_peer_world("0xaaaa").unwrap().as_deref(),
+        Some("foo.dcl.eth")
+    );
+    publish(vec![room("foo.dcl.eth", 2_000), room("bar.dcl.eth", 3_000)]);
+    assert_eq!(
+        presence.get_peer_world("0xAAAA").unwrap().as_deref(),
+        Some("bar.dcl.eth")
+    );
+    publish(vec![room("foo.dcl.eth", 2_000), room("bar.dcl.eth", 2_000)]);
+    assert_eq!(presence.get_peer_world("0xaaaa"), Err(AmbiguousWorld));
 }
 
 #[tokio::test]
