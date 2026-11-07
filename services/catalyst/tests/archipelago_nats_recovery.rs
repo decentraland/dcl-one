@@ -231,7 +231,17 @@ async fn reconciliation_announces_current_sessions_after_a_real_broker_restart()
     assert!(state.gatekeeper.bus.is_enabled());
     wait_for(|| bus.is_ready()).await;
     assert_eq!(next_lookup(&mut lookups).await.1, old_session.as_bytes());
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::timeout(
+        catalyst::shared::test_wait::HANG_GUARD,
+        state
+            .gatekeeper
+            .island_subscriber()
+            .upgrade()
+            .unwrap()
+            .settle(),
+    )
+    .await
+    .unwrap();
     drain(&mut lookups);
     assert_eq!(
         next_lookup(&mut lookups).await.1,
@@ -245,7 +255,17 @@ async fn reconciliation_announces_current_sessions_after_a_real_broker_restart()
         .registry
         .on_peer_disconnected(&address, &old_session, old.id);
     wait_for(|| !bus.is_ready()).await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::timeout(
+        catalyst::shared::test_wait::HANG_GUARD,
+        state
+            .gatekeeper
+            .island_subscriber()
+            .upgrade()
+            .unwrap()
+            .settle(),
+    )
+    .await
+    .unwrap();
     drain(&mut lookups);
 
     let mut expected = HashSet::new();
@@ -803,7 +823,13 @@ async fn real_pulse_departed_pending_wallet_cleans_without_socket_and_unknown_di
     world.remove(1);
     world.pass();
     wait_for(|| livekit.count() == 2).await;
-    tokio::time::sleep(Duration::from_millis(2300)).await;
+    let subscriber = state.gatekeeper.island_subscriber().upgrade().unwrap();
+    for _ in 0..2 {
+        state.gatekeeper.announce_session(&address2, &d);
+        tokio::time::timeout(catalyst::shared::test_wait::HANG_GUARD, subscriber.settle())
+            .await
+            .unwrap();
+    }
     assert_eq!(
         livekit.count(),
         2,
@@ -1071,7 +1097,13 @@ async fn real_pulse_read_only_replica_refresh_and_unknown_restart_survive_ban_li
         .place(1, &other_address, &other_session);
     world.lock().unwrap().pass();
     actual_island(&mut unrelated).await;
-    tokio::time::sleep(Duration::from_millis(1200)).await;
+    let subscriber = restarted.gatekeeper.island_subscriber().upgrade().unwrap();
+    for _ in 0..2 {
+        restarted.gatekeeper.announce_session(&address, &session_c);
+        tokio::time::timeout(catalyst::shared::test_wait::HANG_GUARD, subscriber.settle())
+            .await
+            .unwrap();
+    }
     assert_eq!(
         livekit.count(),
         1,

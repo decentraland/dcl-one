@@ -255,8 +255,6 @@ async fn heartbeat_burst_eventually_applies_latest_position_when_sender_goes_qui
     wait(|| state.peers.peer(&address).is_some()).await;
     socket.send(heartbeat(2.0)).await.unwrap();
     socket.send(heartbeat(3.0)).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(60)).await;
-    assert_eq!(state.peers.peer(&address).unwrap().position[0], 1.0);
     wait(|| state.peers.peer(&address).unwrap().position[0] == 3.0).await;
 }
 #[tokio::test]

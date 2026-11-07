@@ -247,9 +247,11 @@ async fn current_lookup_survives_lost_edges_and_broker_restart_without_reemittin
         .await
         .unwrap();
     reader.flush().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(
-        lookup(&reader, &address(1), &address(201)).await.is_none(),
+        catalyst::shared::test_wait::until(async || lookup(&reader, &address(1), &address(201))
+            .await
+            .is_none())
+        .await,
         "completed inactive recovery never authorizes mint"
     );
 
@@ -273,8 +275,12 @@ async fn a_stopped_tracker_cannot_serve_an_indefinitely_fresh_assignment() {
     let mut world = World::new(broker.url());
     world.place(0, &address(1), &address(101));
     let before = current(&client, &mut world, &address(1), &address(101)).await;
-    tokio::time::sleep(Duration::from_millis(2100)).await;
-    assert!(lookup(&client, &address(1), &address(101)).await.is_none());
+    assert!(
+        catalyst::shared::test_wait::until(async || lookup(&client, &address(1), &address(101))
+            .await
+            .is_none())
+        .await
+    );
     let after = current(&client, &mut world, &address(1), &address(101)).await;
     assert!(after.pass > before.pass);
     assert_eq!(after.source_incarnation, before.source_incarnation);

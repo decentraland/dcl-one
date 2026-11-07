@@ -997,6 +997,11 @@ async fn ranking_repair_bounds_keys_before_age_filter_and_retries_late_cold_blob
     for sweep in &mut schedule.sweeps {
         sweep.after = Uuid::from_u128(start);
     }
+    schedule.sweeps[0].cutoff = Some(
+        chrono::Utc::now().naive_utc()
+            - chrono::TimeDelta::minutes(10)
+            - chrono::TimeDelta::seconds(1),
+    );
     assert_eq!(schedule.due(Instant::now()), Some(0));
     let recent = s
         .state
@@ -1020,7 +1025,6 @@ async fn ranking_repair_bounds_keys_before_age_filter_and_retries_late_cold_blob
         .execute(s.db().pool())
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(5)).await;
     assert!(boundary_row_time < chrono::Utc::now().naive_utc() - chrono::TimeDelta::minutes(10));
     let recent = s
         .state

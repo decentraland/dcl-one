@@ -197,7 +197,7 @@ async fn wait_for_bootstrap_returns_when_the_state_already_left_bootstrapping() 
 async fn bootstrap_callbacks_require_success_and_keep_parent_cancellation_scope() {
     use crate::batch_deployer::BatchDeployerConfig;
     use crate::bloom_filter::BloomFilter;
-    use crate::jobs::{JobState, Jobs};
+    use crate::jobs::Jobs;
     use crate::sync_deployer::{LiveFailedDeploymentsStore, LiveSyncDeployer, SyncValidation};
     use std::sync::atomic::AtomicUsize;
 
@@ -247,6 +247,8 @@ async fn bootstrap_callbacks_require_success_and_keep_parent_cancellation_scope(
         let jobs = Arc::new(Jobs::new());
         let calls = Arc::new(AtomicUsize::new(0));
         let observed = calls.clone();
+        let terminated = Arc::new(AtomicUsize::new(0));
+        let ended = terminated.clone();
         let registry = jobs.clone();
         let sync = orchestrator.clone();
         let (entered, started) = tokio::sync::oneshot::channel();
@@ -257,6 +259,7 @@ async fn bootstrap_callbacks_require_success_and_keep_parent_cancellation_scope(
                 observed.fetch_add(1, SeqCst);
                 registry.spawn_scoped(&scope, "after-bootstrap", |child| async move {
                     child.cancel.cancelled().await;
+                    ended.fetch_add(1, SeqCst);
                     Ok(())
                 });
             })
@@ -286,8 +289,6 @@ async fn bootstrap_callbacks_require_success_and_keep_parent_cancellation_scope(
                 .await
             );
         }
-        jobs.shutdown(Duration::from_secs(5)).await;
-        assert_eq!(calls.load(SeqCst), expected);
         assert_eq!(
             jobs.report()
                 .iter()
@@ -295,11 +296,9 @@ async fn bootstrap_callbacks_require_success_and_keep_parent_cancellation_scope(
                 .count(),
             expected
         );
-        assert!(
-            jobs.report()
-                .iter()
-                .all(|job| job.state == JobState::Finished)
-        );
+        jobs.shutdown(Duration::from_secs(5)).await;
+        assert_eq!(calls.load(SeqCst), expected);
+        assert_eq!(terminated.load(SeqCst), expected);
         assert!(orchestrator.inner.is_stopped());
         let _ = std::fs::remove_dir_all(temp);
     }

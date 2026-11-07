@@ -1544,18 +1544,16 @@ mod tests {
     async fn batches_of_one_entity_wait_for_each_other_and_leave_no_entry() {
         let id = format!("entity-lock-{}", uuid::Uuid::new_v4().simple());
         let held = lock_entity(&id).await;
-        let waiter = tokio::spawn({
-            let id = id.clone();
-            async move {
-                let _guard = lock_entity(&id).await;
-            }
-        });
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert!(!waiter.is_finished(), "the second batch waits");
+        let waiter = lock_entity(&id);
+        tokio::pin!(waiter);
+        assert!(
+            futures::poll!(&mut waiter).is_pending(),
+            "the second batch waits"
+        );
         let other = lock_entity("another entity").await;
         drop(other);
         drop(held);
-        waiter.await.unwrap();
+        drop(waiter.await);
         assert!(!ENTITY_LOCKS.lock().contains_key(&id));
     }
 

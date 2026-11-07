@@ -265,17 +265,18 @@ async fn friends_are_newest_first_and_blocked_pairs_are_left_out() {
     let Some(pool) = scratch_pool().await else {
         return;
     };
-    let db = Db::new(pool);
+    let db = Db::new(pool.clone());
     let (a, b) = (addr("fb20"), addr("fb21"));
     let friends = [addr("fb22"), addr("fb23"), addr("fb24")];
-    for f in &friends {
+    for (index, f) in friends.iter().enumerate() {
         db.apply_friendship_action(&a, f, "accept", true, None, None)
             .await
             .unwrap();
         db.apply_friendship_action(&b, f, "accept", true, None, None)
             .await
             .unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        sqlx::query("UPDATE social.friendships SET created_at=timestamp '2020-01-01'+$2*interval '1 second' WHERE address_requester=$1 OR address_requested=$1")
+            .bind(f).bind(index as f64).execute(&pool).await.unwrap();
     }
     let newest_first: Vec<String> = friends.iter().rev().cloned().collect();
     assert_eq!(db.get_friends(&a, 10, 0).await.unwrap(), (newest_first, 3));
@@ -468,12 +469,21 @@ async fn block_and_unblock_return_the_latest_action_in_one_statement() {
     let Some(pool) = scratch_pool().await else {
         return;
     };
-    let db = Db::new(pool);
+    let db = Db::new(pool.clone());
     let (a, b) = (addr("fb12"), addr("fb13"));
-    let (first_at, last) = db.block_user_and_last(&a, &b).await.unwrap();
+    let (_, last) = db.block_user_and_last(&a, &b).await.unwrap();
     assert!(last.is_none(), "no friendship row yet");
     assert!(db.is_blocked(&a, &b).await.unwrap());
-    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let first_at = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+    sqlx::query(
+        "UPDATE social.blocks SET blocked_at=$3 WHERE blocker_address=$1 AND blocked_address=$2",
+    )
+    .bind(&a)
+    .bind(&b)
+    .bind(first_at.naive_utc())
+    .execute(&pool)
+    .await
+    .unwrap();
     let (again_at, _) = db
         .block_user_and_last(&a, &b)
         .await

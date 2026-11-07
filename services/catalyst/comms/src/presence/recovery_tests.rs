@@ -707,7 +707,7 @@ async fn unrelated_inventory_is_ignored_and_unrelated_only_or_empty_scan_replace
     assert_eq!(state.presence.comms_stats().users, 1);
     let occupied = state.presence.complete();
 
-    tokio::time::sleep(Duration::from_millis(2)).await;
+    elapse(Duration::from_millis(2)).await;
     source
         .rooms
         .lock()
@@ -725,7 +725,7 @@ async fn unrelated_inventory_is_ignored_and_unrelated_only_or_empty_scan_replace
         0
     );
 
-    tokio::time::sleep(Duration::from_millis(2)).await;
+    elapse(Duration::from_millis(2)).await;
     source.empty.store(true, Ordering::SeqCst);
     state.presence.recover_complete(&state).await.unwrap();
     let empty = state.presence.complete();

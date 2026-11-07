@@ -2800,12 +2800,16 @@ async fn a_connect_reaches_only_a_running_island_subscriber() {
     })
     .await
     .expect("the running subscriber asks Pulse");
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    tokio::time::timeout(
+        crate::shared::test_wait::HANG_GUARD,
+        state.island_subscriber().upgrade().unwrap().settle(),
+    )
+    .await
+    .unwrap();
     assert_eq!(asked.load(Ordering::SeqCst), 1);
 
     jobs.shutdown(Duration::from_secs(5)).await;
     state.announce_session(WALLET, SESSION);
-    tokio::time::sleep(Duration::from_millis(20)).await;
     assert_eq!(asked.load(Ordering::SeqCst), 1);
     assert!(bus.published().is_empty());
 }
