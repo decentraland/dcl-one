@@ -62,6 +62,9 @@ jobs:
       - name: Check report publication contracts
         working-directory: head
         run: python3 -m unittest discover -s tooling/tests -p test_scene_cli_journeys.py -v
+      - name: Check editor behavior
+        working-directory: head
+        run: nix develop --command node --test apps/dcl-scene-cli/scripts/{scene-editor,storage-ui,preview-connection}.test.mjs
       - name: Build base CLI
         id: base
         working-directory: base/services/catalyst
