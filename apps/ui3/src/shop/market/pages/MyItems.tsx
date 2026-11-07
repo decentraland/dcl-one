@@ -20,7 +20,7 @@ import { myStoreAccess, useShopCapabilities } from "../../seller/lib/featureFlag
 import { fetchImportable } from "../../seller/lib/import";
 import { fetchBidsByAddress, fetchMyAssets, type Bid, type MyAsset, type MyAssetsCategory } from "../lib/api";
 import { useArchivedBids } from "../store/archivedBids";
-import { useMarketplace } from "../access";
+import { useMarketplace, useMarketplaceAccess } from "../access";
 import AssetTile from "../components/AssetTile";
 import BidRow from "../components/BidRow";
 import { EnsureQueryClient, LoadFailure, Loading } from "../components/kit";
@@ -406,10 +406,13 @@ export function MyItemsView({
   storeOn?: boolean;
   bidId?: string | null;
 }) {
-  // LAND and Bids are the Marketplace's (market/access.tsx): without it, they show the wearables instead.
-  const marketplace = useMarketplace();
+  // LAND and Bids are the Marketplace's (market/access.tsx): without it, they show the wearables instead. While the
+  // answer is pending a link to them waits, rather than mounting the wearables (and their reads) first.
+  const access = useMarketplaceAccess();
+  const marketplace = access === "on";
   const shown = (section === "creations" && storeOn) || (!marketplace && section !== "creations" && MARKETPLACE_SECTIONS.has(section)) ? "wearables" : section;
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const waiting = access === "pending" && section !== "creations" && MARKETPLACE_SECTIONS.has(section);
   const pick = (s: MyItemsSection | "creations") => {
     setFiltersOpen(false);
     onSection(s);
@@ -437,6 +440,7 @@ export function MyItemsView({
     </div>
   );
 
+  if (waiting) return <Loading label="Loading your items…" />;
   if (shown === "creations" || shown === "bids") {
     return (
       <BrowseLayout sidebar={renderSidebar(null)} open={filtersOpen} onClose={() => setFiltersOpen(false)} testId="my-items-browse">

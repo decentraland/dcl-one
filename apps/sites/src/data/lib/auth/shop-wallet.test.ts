@@ -8,7 +8,7 @@ vi.mock("./wallet", async (actual) => ({
   walletProvider: () => facts.provider,
 }));
 
-import { playShopWallet } from "./shop-wallet";
+import { playShopWallet, sitesWalletKind } from "./shop-wallet";
 
 const ACCOUNT = "0x" + "ab".repeat(20);
 
@@ -41,5 +41,27 @@ describe("the in-world Shop's wallet in the web shell", () => {
   it("is none when nothing here can sign for the account", () => {
     expect(playShopWallet().kind(ACCOUNT)).toBeNull();
     expect(playShopWallet().provider(ACCOUNT)).toBeNull();
+  });
+});
+
+describe("the web Shop's wallet kind: how the account signed in, never whether a wallet extension is installed", () => {
+  const me = { signer: ACCOUNT };
+  const other = { address: "0x" + "cd".repeat(20), token: "t" };
+
+  it("follows the sign-in's record: a Magic or email account with MetaMask installed is managed, WalletConnect without one is web3", () => {
+    expect(sitesWalletKind(me, { inApp: null, injected: true, recorded: "managed" })).toBe("managed");
+    expect(sitesWalletKind(me, { inApp: null, injected: false, recorded: "web3" })).toBe("web3");
+  });
+
+  it("is managed while this browser holds the account's in-app session, whatever else is recorded", () => {
+    expect(sitesWalletKind(me, { inApp: { address: ACCOUNT, token: "t" }, injected: true, recorded: "web3" })).toBe("managed");
+    expect(sitesWalletKind(me, { inApp: other, injected: true, recorded: "web3" })).toBe("web3");
+  });
+
+  it("without a record (an identity signed before it existed): a Magic session is managed, else web3 only with a browser wallet", () => {
+    expect(sitesWalletKind(me, { inApp: null, injected: true, magic: true })).toBe("managed");
+    expect(sitesWalletKind(me, { inApp: null, injected: true })).toBe("web3");
+    expect(sitesWalletKind(me, { inApp: null, injected: false })).toBe("managed");
+    expect(sitesWalletKind(null, { inApp: null, injected: true, recorded: "web3" })).toBeNull();
   });
 });

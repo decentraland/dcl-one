@@ -257,6 +257,8 @@ describe("the cart page", () => {
     const blockers = await screen.findByRole("list", { name: "Why you can't confirm yet" });
     expect(blockers.textContent).toContain("Checking prices and availability…");
     expect(confirmButton()).toBeDisabled();
+    // The count is what the total prices: the waiting resale is in neither.
+    expect(screen.getByText(/^Total: 1 item$/)).toBeTruthy();
   });
 
   it("web3 without the rollout: a resale saved earlier is not priced or bought, and blocks the checkout until removed", async () => {

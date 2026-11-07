@@ -103,11 +103,14 @@ export const readsListings = (filters: CatalogueFilters, creatorSales: boolean):
 export const pageCount = (total: number): number => Math.max(1, Math.ceil(total / SHOP_PAGE_SIZE))
 
 export const shopQueries = {
-  /** `creatorSales` is the rollout the fetchers' row mapping reads (discounted prices), so it is part of the key. */
-  catalogue: (filters: CatalogueFilters, page: number, { creatorSales }: { creatorSales: boolean }) =>
+  /**
+   * `creatorSales` is the rollout the fetchers' row mapping reads (discounted prices), so it is part of the key, as is
+   * `marketplace`: without it the listings are creators' primary sales only.
+   */
+  catalogue: (filters: CatalogueFilters, page: number, { creatorSales, marketplace = false }: { creatorSales: boolean; marketplace?: boolean }) =>
     queryOptions({
       // Keyed by the status it reads, so the default and the same status picked share their pages.
-      queryKey: ['shop', 'catalogue', { ...filters, status: statusOf(filters) }, page, { creatorSales }] as const,
+      queryKey: ['shop', 'catalogue', { ...filters, status: statusOf(filters) }, page, { creatorSales, marketplace }] as const,
       queryFn: ({ signal }) => {
         const categories = filters.category === 'all' ? undefined : SUBCAT_MAP[filters.category]
         const rarities = filters.rarities.length > 0 ? filters.rarities : undefined
@@ -125,6 +128,7 @@ export const shopQueries = {
               sortBy,
               isSmart: smart,
               onSale: true,
+              listingType: marketplace ? undefined : 'primary',
               discounted: creatorSales && filters.deals ? true : undefined,
               minPriceCredits: filters.minCredits ?? undefined,
               maxPriceCredits: filters.maxCredits ?? undefined,
@@ -156,9 +160,9 @@ export const shopQueries = {
 }
 
 /** One page of the catalogue for a filter set; a new page or filter set keeps the last rows until it answers. */
-export function useShopCatalogue(filters: CatalogueFilters, page: number, { creatorSales, enabled }: { creatorSales: boolean; enabled: boolean }) {
+export function useShopCatalogue(filters: CatalogueFilters, page: number, { creatorSales, marketplace, enabled }: { creatorSales: boolean; marketplace: boolean; enabled: boolean }) {
   return useQuery({
-    ...shopQueries.catalogue(filters, page, { creatorSales }),
+    ...shopQueries.catalogue(filters, page, { creatorSales, marketplace }),
     enabled,
     // A new page or filter of the same kind shows the last rows, dimmed, until it answers; another kind
     // (wearables → emotes) has nothing in common with them, so it loads afresh.

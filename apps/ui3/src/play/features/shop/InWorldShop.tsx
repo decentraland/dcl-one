@@ -170,20 +170,21 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   // The listings wait for the creator-sales answer (or its failure): read before it, they'd come without
   // their sale prices and be read again once it lands.
   const creatorSalesFlag = useShopFlag(REMOTE_FLAG.creatorSales)
-  // NAME resales and offers are the Marketplace's: offered only while its rollout is on (a host's declaration first,
-  // as on the web) and never to a guest, who has no account to hold a wallet. The HUD knows no wallet kind, so the
-  // web Shop they open still asks for a web3 wallet session (shop/market/access.tsx).
+  // Resales, NAME resales and offers are the Marketplace's: offered only while its rollout is on (a host's declaration
+  // first, as on the web) and never to a guest, who has no account to hold a wallet. Off, the rows and the catalogue
+  // list creators' primary sales only. The HUD knows no wallet kind, so the web Shop a resale opens still asks for a
+  // web3 wallet session (shop/market/access.tsx).
   const marketplaceFlag = hostOr('marketplaceFeatures', useShopFlag(REMOTE_FLAG.marketplaceFeatures) ?? null) === true && profile.data?.isGuest !== true
   const flagsKnown = creatorSalesFlag !== undefined
   const creatorSales = creatorSalesFlag ?? false
-  const grid = useShopCatalogue(filters, page, { creatorSales, enabled: shop.open && flagsKnown && isCatalogue(section) })
+  const grid = useShopCatalogue(filters, page, { creatorSales, marketplace: marketplaceFlag, enabled: shop.open && flagsKnown && isCatalogue(section) })
   const nameCheck = useNameCheck(nameDraft, shop.open && section === 'names')
   const onHome = shop.open && section === 'all'
   const outfits = useShopOutfits(onHome)
   // Each outfit's items, for its tile's price (wearing it reads the same query).
   const outfitReads = useQueries({ queries: (onHome ? (outfits.data ?? []) : []).map((o) => homeQueries.outfitItems(o)) })
-  const trending = useTrending(creatorSales, onHome && flagsKnown)
-  const newest = useNewest(creatorSales, onHome && flagsKnown)
+  const trending = useTrending({ creatorSales, marketplace: marketplaceFlag }, onHome && flagsKnown)
+  const newest = useNewest({ creatorSales, marketplace: marketplaceFlag }, onHome && flagsKnown)
   // Escape closes the filters first, as the HUD's other popovers (OptionMenu registers its own).
   useEffect(() => (menu === 'filters' ? registerCancelLayer(() => setMenu(null)) : undefined), [menu])
   const items = grid.data?.items ?? []

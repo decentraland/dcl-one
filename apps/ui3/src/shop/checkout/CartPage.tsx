@@ -24,6 +24,7 @@ import CheckoutGroups from "./components/CheckoutGroups";
 import FlowBanner from "./components/FlowBanner";
 import { SHOP_BASE } from "../routes";
 import { EnsureQueryClient, useShopServices } from "./services";
+import { useMarketplace } from "../market/access";
 import { useCheckout, type CheckoutView } from "./useCheckout";
 import cartEmptyIllustration from "./assets/cart-empty.svg?url";
 import "./cartpage.css";
@@ -61,7 +62,13 @@ function CartUpsell({ exclude }: { exclude: string[] }) {
     personalized: personal.result?.personalized,
     rowCount: personal.result?.data?.length ?? 0,
   });
-  const generic = useShopQuery(personalHidden !== null ? ["upsell-listings"] : null, (signal) => fetchListings({ first: 40 }, { signal }), { staleMs: 60_000 });
+  // Without the Marketplace (market/access.tsx) the upsell is creators' primary sales only, never a resale.
+  const marketplace = useMarketplace();
+  const generic = useShopQuery(
+    personalHidden !== null ? ["upsell-listings", marketplace ? "all" : "primary"] : null,
+    (signal) => fetchListings({ first: 40, listingType: marketplace ? undefined : "primary" }, { signal }),
+    { staleMs: 60_000 },
+  );
   const skip = new Set(exclude);
   const upsell = (generic.data?.items ?? []).filter((i) => !(i.itemId && skip.has(`${i.contractAddress.toLowerCase()}-${i.itemId}`))).slice(0, CART_RAIL_SIZE);
   if (personalHidden === null) {
@@ -154,8 +161,9 @@ function CartScreen() {
   const lineUnitsOf = (l: (typeof co.lines)[number]) => (l.asset.token.kind === "item" ? l.quantity : 1);
   const units = co.lines.reduce((n, l) => n + lineUnitsOf(l), 0);
   const isGone = (id: string) => co.offMarket.includes(id) || (co.changesByLine[id] ?? []).some((c) => c.kind === "unavailable" || (c.kind === "insufficientStock" && c.available === 0));
-  const buyableUnits = co.lines.reduce((n, l) => n + (isGone(l.id) ? 0 : lineUnitsOf(l)), 0);
-  const allUnavailable = co.lines.length > 0 && buyableUnits === 0;
+  // The count is what the total prices: a line held back while access is pending counts in neither.
+  const buyableUnits = co.lines.reduce((n, l) => n + (isGone(l.id) || co.heldBack.includes(l.id) ? 0 : lineUnitsOf(l)), 0);
+  const allUnavailable = co.lines.length > 0 && co.lines.every((l) => isGone(l.id));
   const signedOut = co.session.kind === "signedOut";
   const reviewing = co.review.kind === "changed" && co.reviewChanges.length > 0;
   const exclude = useMemo(() => co.lines.map(lineItemKey).filter((k): k is string => !!k), [co.lines]);

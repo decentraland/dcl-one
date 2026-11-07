@@ -84,7 +84,10 @@ export default function Overview() {
   const listingType = useMarketplace() ? undefined : ("primary" as const);
 
   const listings = useShopQuery(["overview-listings"], (signal) => fetchShopItems({ first: 12, sortBy: "newest", listingType: "primary" }, { signal }));
-  const trending = useShopQuery(["overview-trending", listingType ?? "all"], (signal) => fetchTrendingItems({ first: 12, listingType }, { signal }));
+  // Widening to resales (a web3 visitor whose access resolves after hydration) keeps the primed rail until it lands.
+  const trending = useShopQuery(["overview-trending", listingType ?? "all"], (signal) => fetchTrendingItems({ first: 12, listingType }, { signal }), {
+    keepPrevious: listingType === undefined,
+  });
   const deals = useShopQuery(flags.creatorSales ? ["overview-deals"] : null, (signal) =>
     fetchShopItems({ first: 12, discounted: true, sortBy: "discount", listingType: "primary" }, { signal }),
   );

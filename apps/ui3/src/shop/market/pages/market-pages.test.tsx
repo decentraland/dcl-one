@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { decodeFunctionData, type Hex } from "viem";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, onTestFinished } from "vitest";
 
 import { CHAIN } from "../../model/chain";
 import { BOOK } from "../../payment/fixtures";
@@ -9,6 +9,7 @@ import { FIXTURE_NOW, LEGACY_BID_ROW, MADE_BIDS, MANA, nftRow, OWNED_NAMES, OWNE
 import { COLLECTION_V2_ABI, ERC20_ABI, ERC721_ABI, latestOffChainMarketplace, MARKETPLACE_ABI, manaToken } from "../lib/contracts";
 import { fakeChain, fakeWallet, type FakeRoute } from "../testing";
 import { mountShop } from "../testHarness";
+import { primeRemoteFlags } from "../../discovery/lib/remoteFlags";
 
 const MARKET = latestOffChainMarketplace(CHAIN.POLYGON).address;
 const MANA_POLYGON = manaToken(CHAIN.POLYGON).address;
@@ -69,6 +70,18 @@ const importable = (creations = 0): FakeRoute => ({
 const quotes: FakeRoute = { method: "POST", path: /^\/v1\/credit-quotes$/, reply: () => ({ body: { items: [], amounts: ["10"] } }) };
 
 describe("My items", () => {
+  it("a link to LAND waits while the Marketplace has not answered, rather than mounting the wearables", async () => {
+    primeRemoteFlags(null);
+    const real = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => (String(input).endsWith("/dapps.json") ? new Promise<Response>(() => {}) : real(input, init))));
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
+    const m = mountShop({ path: "/shop/my-items?section=land", who: "web3", routes: [nfts(), importable(0)], marketplace: null });
+    expect(await screen.findByText("Loading your items…")).toBeInTheDocument();
+    expect(m.shop.requests.some((r) => r.url.pathname.endsWith("/v1/nfts"))).toBe(false);
+  });
+
   it("signed out: the sign-in gate, no request for anyone's items", async () => {
     const m = mountShop({ path: "/shop/my-items", who: "signedOut", routes: [nfts()] });
     expect(await screen.findByTestId("shop-signin-gate")).toBeInTheDocument();

@@ -17,6 +17,7 @@ import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { creatorHubMeta } from "@/core/lib/seo/creator-hub-meta";
 
 import type { Route } from "./+types/create.names";
+import { useMarketplaceHere } from "@/data/lib/shop/marketplace-access";
 
 export const meta = () => creatorHubMeta("NAMEs");
 
@@ -129,6 +130,8 @@ function NamesView({ address, names, fallback }: LoaderData) {
 
 function NameCard({ entry, address }: { entry: OwnedNameVM; address: string }) {
   const published = entry.deployedScenes > 0;
+  // Selling a NAME is the Shop's Marketplace: offered only to a visitor who has it.
+  const marketplace = useMarketplaceHere();
   const settingsHref = `/create/world-settings?world=${encodeURIComponent(entry.worldName)}&address=${encodeURIComponent(address)}`;
   return (
     <div className="chm__card chm__card--compact">
@@ -149,7 +152,7 @@ function NameCard({ entry, address }: { entry: OwnedNameVM; address: string }) {
           <Link to={settingsHref} prefetch="intent" className="chm__settingsbtn" style={CARD_ACTION}>
             World settings
           </Link>
-          {entry.contractAddress && entry.tokenId ? (
+          {marketplace && entry.contractAddress && entry.tokenId ? (
             <Link to={`/shop/token/${entry.contractAddress.toLowerCase()}/${entry.tokenId}/sell`} prefetch="intent" className="chm__settingsbtn" style={CARD_ACTION}>
               Sell
             </Link>

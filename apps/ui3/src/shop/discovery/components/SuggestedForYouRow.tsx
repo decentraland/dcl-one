@@ -9,6 +9,7 @@ import { useMemo } from "react";
 import { Link } from "react-router";
 
 import { useCart } from "../../cart/store";
+import { useMarketplace } from "../../market/access";
 import { useShopWallet } from "../../wallet/context";
 import { fetchCatalogByIds, fetchSuggestedItems, type SuggestedItem } from "../api";
 import { t } from "../intl";
@@ -35,7 +36,14 @@ export function useSuggestedForYou(first: number, { exclude }: { exclude?: strin
   const hasSignal = !!account || seeds.length > 0;
   const key = enabled && hasSignal ? ["suggested", account ?? "-", seedsKey(seeds), first, (exclude ?? []).join(",")] : null;
   const query = useShopQuery(key, (signal) => fetchSuggestedItems({ address: account ?? undefined, seeds, exclude, first }, { signal }), { staleMs: 60_000 });
-  return { result: query.data, isLoading: query.isLoading, isError: !!query.error, enabled, hasSignal };
+  // A resale is the Marketplace's (market/access.tsx): without it the rail keeps creators' primary sales only. The
+  // suggestions route reads no listing type, so the rows are narrowed here.
+  const marketplace = useMarketplace();
+  const result = useMemo(
+    () => (query.data && !marketplace ? { ...query.data, data: query.data.data.filter((s) => !s.tokenId && s.listingType !== "secondary") } : query.data),
+    [query.data, marketplace],
+  );
+  return { result, isLoading: query.isLoading, isError: !!query.error, enabled, hasSignal };
 }
 
 export default function SuggestedForYouRow({ exclude, title, first = RAIL_SIZE }: { exclude?: string[]; title?: string; first?: number }) {

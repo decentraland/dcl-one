@@ -59,17 +59,30 @@ export const homeQueries = {
       queryFn: ({ signal }) => fetchCatalogByIds(outfit.items.map((i) => `${i.contractAddress.toLowerCase()}-${i.itemId}`), { signal }),
       staleTime: 60_000
     }),
-  /** `creatorSales` is the rollout the rows' mapping reads (discounted prices), so it is part of the key. */
-  trending: ({ creatorSales }: { creatorSales: boolean }) =>
-    queryOptions({ queryKey: ['shop', 'home', 'trending', { creatorSales }] as const, queryFn: ({ signal }) => fetchTrendingItems({ first: HOME_ROW_SIZE }, { signal }), staleTime: 60_000 }),
-  newest: ({ creatorSales }: { creatorSales: boolean }) =>
+  /**
+   * `creatorSales` is the rollout the rows' mapping reads (discounted prices), so it is part of the key. Without
+   * `marketplace` (its rollout, for a player who is not a guest) the rows are creators' primary sales only: a resale is
+   * the Marketplace's.
+   */
+  trending: ({ creatorSales, marketplace }: Rollouts) =>
     queryOptions({
-      queryKey: ['shop', 'home', 'newest', { creatorSales }] as const,
-      queryFn: async ({ signal }) => (await fetchShopItems({ sortBy: 'newest', onSale: true, first: HOME_ROW_SIZE }, { signal })).items,
+      queryKey: ['shop', 'home', 'trending', { creatorSales, marketplace }] as const,
+      queryFn: ({ signal }) => fetchTrendingItems({ first: HOME_ROW_SIZE, listingType: listingTypeFor(marketplace) }, { signal }),
+      staleTime: 60_000
+    }),
+  newest: ({ creatorSales, marketplace }: Rollouts) =>
+    queryOptions({
+      queryKey: ['shop', 'home', 'newest', { creatorSales, marketplace }] as const,
+      queryFn: async ({ signal }) => (await fetchShopItems({ sortBy: 'newest', onSale: true, first: HOME_ROW_SIZE, listingType: listingTypeFor(marketplace) }, { signal })).items,
       staleTime: 60_000
     })
 }
 
+export type Rollouts = { creatorSales: boolean; marketplace: boolean }
+
+/** The listings a player is offered: primary sales only without the Marketplace. */
+export const listingTypeFor = (marketplace: boolean): 'primary' | undefined => (marketplace ? undefined : 'primary')
+
 export const useShopOutfits = (enabled: boolean) => useQuery({ ...homeQueries.outfits(), enabled })
-export const useTrending = (creatorSales: boolean, enabled: boolean) => useQuery({ ...homeQueries.trending({ creatorSales }), enabled })
-export const useNewest = (creatorSales: boolean, enabled: boolean) => useQuery({ ...homeQueries.newest({ creatorSales }), enabled })
+export const useTrending = (rollouts: Rollouts, enabled: boolean) => useQuery({ ...homeQueries.trending(rollouts), enabled })
+export const useNewest = (rollouts: Rollouts, enabled: boolean) => useQuery({ ...homeQueries.newest(rollouts), enabled })

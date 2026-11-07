@@ -63,6 +63,8 @@ export type CheckoutView = {
   lines: CartLine[];
   /** The lines only the Marketplace sells, kept out of pricing and payment while it is off for this visitor. */
   offMarket: string[];
+  /** The same lines while access is not `on` yet: `offMarket` once it is off, still waiting while it is pending. */
+  heldBack: string[];
   offers: Record<string, PurchaseOffer | null>;
   views: Record<string, PaymentPresentation | null>;
   partition: CartPartition | null;
@@ -459,6 +461,7 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
     account,
     lines: allLines,
     offMarket,
+    heldBack,
     offers,
     views,
     partition,

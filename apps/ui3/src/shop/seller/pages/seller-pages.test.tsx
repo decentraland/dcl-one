@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vitest";
 
 import { CHAIN } from "../../model/chain";
 import { BOOK } from "../../payment/fixtures";
@@ -15,6 +15,7 @@ import { ImportListingsView } from "../components/ImportListings";
 import type { PublishableItem } from "../lib/builder";
 import type { ImportItem } from "../lib/import";
 import { setShopCapabilities } from "../lib/featureFlags";
+import { marketplaceOn } from "../../market/testing-flags";
 
 const MARKET = latestOffChainMarketplace(CHAIN.POLYGON).address;
 const originalFetch = globalThis.fetch;
@@ -282,6 +283,12 @@ describe("Discounts, issuance and the listing import", () => {
   it("the import tool lists creations for credits and shows owned resales staying in MANA, never importable", async () => {
     const creation: ImportItem = { oldTradeId: "o1", listingType: "primary", contractAddress: BOOK.collection, itemId: "7", tokenId: null, name: "Neon Jacket", thumbnail: "", rarity: "rare", category: "wearable", wearableCategory: null, manaWei: MANA(3), available: 25, network: "MATIC", chainId: 137, suggestedCredits: 15 };
     const owned: ImportItem = { ...creation, oldTradeId: "o2", listingType: "secondary", itemId: null, tokenId: "42", name: "Resold Visor", suggestedCredits: null };
+    // Without the Marketplace the resales are not shown at all; the creations are.
+    const without = await renderAlone(<ImportListingsView creations={[creation]} owned={[owned]} />);
+    expect(screen.getAllByTestId("shop-import-row")).toHaveLength(1);
+    expect(screen.queryByTestId("shop-import-owned")).toBeNull();
+    without.unmount();
+    onTestFinished(marketplaceOn());
     await renderAlone(<ImportListingsView creations={[creation]} owned={[owned]} />);
     expect(screen.getAllByTestId("shop-import-row")).toHaveLength(1);
     expect(screen.getByLabelText("Include Neon Jacket")).toBeChecked();

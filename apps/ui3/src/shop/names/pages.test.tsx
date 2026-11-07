@@ -17,6 +17,7 @@ import { RESUME_NAME_KEY } from "./resume";
 import type { EvmAddress } from "../model/address";
 import type { PurchaseOffer } from "../model/purchase";
 import { nameRegistration } from "../payment/fixtures";
+import { primeRemoteFlags } from "../discovery/lib/remoteFlags";
 
 const MANA = 10n ** 18n;
 const BUYER = "0x0000000000000000000000000000000000000b0b";
@@ -291,6 +292,25 @@ describe("the NAME buy dialog", () => {
     const mixed = await within(dialog).findByRole("radio", { name: /Credits and MANA/ });
     expect(mixed.closest("label")!.textContent).toContain("300 Credits + 40 MANA");
     expect(within(dialog).getAllByRole("radio")[0]).toBeChecked();
+  });
+});
+
+describe("a NAME resale link while the Marketplace has not answered", () => {
+  it("waits instead of mounting the claim page, and reads nothing", async () => {
+    primeRemoteFlags(null);
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
+    const client = stubClient({});
+    render(
+      <ShopHarness session="web3" path="/shop/names?section=resale" route="/shop/names">
+        <NamesHub client={client} />
+      </ShopHarness>,
+    );
+    expect(await screen.findByTestId("names-pending")).toHaveAttribute("aria-busy", "true");
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(client.requests).toHaveLength(0);
   });
 });
 

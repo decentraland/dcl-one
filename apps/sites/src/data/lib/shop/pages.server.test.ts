@@ -5,6 +5,7 @@ import { createShopClient } from "@ui/shop/api";
 import { serverShopApiMode } from "./mode";
 import { defaultShopSeo, shopMetaDescriptors } from "./pages";
 import { loadShopPage, serverShopClient } from "./pages.server";
+import { LAND_NETWORKS } from "@ui/shop/land/contracts";
 
 const C = "0xabc0000000000000000000000000000000000001";
 
@@ -149,6 +150,14 @@ describe("the other pages", () => {
       expect(res.data.seo.canonical).toBeUndefined();
     }
     expect(asked).toEqual([]);
+  });
+
+  it("a LAND token's page is the Marketplace's: never indexed, with no canonical", async () => {
+    const { client } = node([]);
+    const land = Object.values(LAND_NETWORKS)[0]!.land.toLowerCase();
+    const res = await loadShopPage("tokenDetail", { request: request(`/shop/token/${land}/1`), params: { contractAddress: land, tokenId: "1" }, client, now, env: {} });
+    expect(res.data.seo.noindex).toBe(true);
+    expect(res.data.seo.canonical).toBeUndefined();
   });
 
   it("an account page is never indexed and asks the node for nothing", async () => {

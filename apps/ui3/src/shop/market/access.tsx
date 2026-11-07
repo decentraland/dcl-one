@@ -7,23 +7,14 @@
 import type { ComponentType, ReactNode } from "react";
 import { Navigate } from "react-router";
 
-import { assetKindOf } from "../discovery/cardPrice";
 import { hostOr } from "../discovery/flags";
 import { REMOTE_FLAG, useRemoteFlagState } from "../discovery/lib/remoteFlags";
-import type { CartLine } from "../model/purchase";
-import type { Session } from "../model/settlement";
 import { shopPath } from "../routes";
 import { useShopCapabilities } from "../seller/lib/featureFlags";
 import { useShopWallet } from "../wallet/context";
+import { marketplaceAccess, type MarketplaceAccess } from "./access-rule";
 
-/** `pending` while the flag has not answered or the wallet session is still being read back: show neither. */
-export type MarketplaceAccess = "pending" | "on" | "off";
-
-export function marketplaceAccess(flag: boolean | null, wallet: { session: Session; resolving: boolean }, offered: boolean): MarketplaceAccess {
-  if (!offered || flag === false) return "off";
-  if (flag === null || wallet.resolving) return "pending";
-  return wallet.session.kind === "web3" ? "on" : "off";
-}
+export { marketplaceAccess, needsMarketplace, type MarketplaceAccess } from "./access-rule";
 
 export function useMarketplaceAccess(): MarketplaceAccess {
   // A host (the native shop, a journey) may declare the switch itself; the web3 session is still required.
@@ -54,12 +45,4 @@ export function marketplacePage<P extends object>(Page: ComponentType<P>): Compo
   );
   Gated.displayName = `Marketplace(${Page.displayName ?? Page.name ?? "Page"})`;
   return Gated;
-}
-
-/** A cart line the Marketplace sells: a resale (an existing token, LAND and NAME resale included) or a rental. A
- * collection item's mint and a NAME registration are the Shop's own. */
-export function needsMarketplace(line: CartLine): boolean {
-  if (line.listing.rentalId) return true;
-  if (line.asset.token.kind === "item") return false;
-  return !(assetKindOf(line.display.category ?? "") === "name" && !!line.listing.name);
 }

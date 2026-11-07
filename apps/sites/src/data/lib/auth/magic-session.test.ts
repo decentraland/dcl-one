@@ -13,7 +13,7 @@ vi.mock("magic-sdk", () => ({
 }));
 vi.mock("@magic-ext/oauth2", () => ({ OAuthExtension: class {} }));
 
-import { endMagicSession, markMagicSession } from "./magic-session";
+import { endMagicSession, hasMagicSession, markMagicSession } from "./magic-session";
 
 beforeEach(() => localStorage.clear());
 afterEach(() => {
@@ -44,5 +44,15 @@ describe("ending Magic's session on sign-out", () => {
     await endMagicSession();
     expect(sdk.logout).toHaveBeenCalledTimes(2);
     expect(localStorage.getItem("dcl:auth:magic-session")).toBeNull();
+  });
+});
+
+describe("the Magic marker as a reading", () => {
+  it("says a Magic session is held from its mark until it is cleared", () => {
+    expect(hasMagicSession()).toBe(false);
+    markMagicSession();
+    expect(hasMagicSession()).toBe(true);
+    localStorage.clear();
+    expect(hasMagicSession()).toBe(false);
   });
 });

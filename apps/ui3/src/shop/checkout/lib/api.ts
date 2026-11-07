@@ -64,9 +64,13 @@ export async function fetchUnifiedListingForItem(contractAddress: string, itemId
   return pickItemListing(body?.data ?? []);
 }
 
-/** The live trade of an item (primary), or null when it is not on sale. */
+/**
+ * The live trade of an item's primary sale, or null when it is not on sale. Asked for primary listings only, and a
+ * row naming a token is never taken: an item line buys a mint from its creator, never a resale in its place.
+ */
 export async function fetchTradeForItem(contractAddress: string, itemId: string, client: ShopClient = shopClient()): Promise<SignedTrade | null> {
-  const listing = await fetchUnifiedListingForItem(contractAddress, itemId, client);
+  const body = await client.catalog.unified<{ data?: UnifiedListing[] }>({ contractAddress, itemId, first: 5, listingType: "primary" });
+  const listing = pickItemListing((body?.data ?? []).filter((l) => !l.tokenId));
   return listing?.tradeId ? fetchTrade(listing.tradeId, client) : null;
 }
 

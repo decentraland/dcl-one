@@ -11,6 +11,7 @@ import { fetchEmoteClipUrl } from "../../detail/lib/emoteBase64";
 import { itemUrn } from "../../detail/lib/urn";
 import { assetKey } from "../../model/asset";
 import { SHOP_BASE } from "../../routes";
+import { useMarketplace } from "../../market/access";
 import { useShopWallet } from "../../wallet/context";
 import { fetchCatalogByIds, fetchShopItems } from "../api";
 import { cardEligibility, cardPrice } from "../cardPrice";
@@ -212,6 +213,8 @@ function OutfitRow({ row, loading }: { row: ItemRow; loading: boolean }) {
 
 function OutfitContent({ outfit }: { outfit: Outfit }) {
   const { session, account } = useShopWallet();
+  // A resale is the Marketplace's (market/access.tsx): without it the outfit adds creators' primary sales only.
+  const marketplace = useMarketplace();
   const lines = useCart((s) => s.lines);
   const keys = useMemo(() => [...new Set(outfit.items.map(outfitItemKey))].sort(), [outfit]);
   const itemsQ = useShopQuery(keys.length ? ["outfit-items", ...keys] : null, (signal) => fetchCatalogByIds(keys, { signal }), { staleMs: 60_000 });
@@ -262,7 +265,7 @@ function OutfitContent({ outfit }: { outfit: Outfit }) {
     try {
       const live = await Promise.all(
         purchasable.map(async (item) => {
-          const page = await fetchShopItems({ contractAddress: item.contractAddress, itemId: item.itemId ?? "", first: 1 });
+          const page = await fetchShopItems({ contractAddress: item.contractAddress, itemId: item.itemId ?? "", first: 1, listingType: marketplace ? undefined : "primary" });
           const fresh = page.items[0];
           return fresh && !isListingUnavailable(fresh) ? fresh : null;
         }),
