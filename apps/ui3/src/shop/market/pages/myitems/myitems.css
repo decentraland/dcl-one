@@ -7,6 +7,9 @@
   max-width: 1760px;
   margin: 0 auto;
   padding: 28px 54px 80px;
+  /* As upstream's .page: the page fills the first viewport below the nav, so the footer of a short (empty)
+     list sits below the fold. */
+  min-height: calc(100vh - var(--shop-nav-h, 92px));
   color: #fcfcfc;
   font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
