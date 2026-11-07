@@ -8,6 +8,7 @@ import { SIGNED_OUT, type Session } from "../model/settlement";
 import { ShopWalletProvider } from "../wallet/context";
 import { fixtureHost, type SessionKind } from "../discovery/fixtures";
 import { MarketplaceGate, marketplaceAccess } from "./access";
+import { marketplaceSession } from "./access-rule";
 import { marketplaceOn } from "./testing-flags";
 
 const ME = evmAddress("0x0000000000000000000000000000000000000b0b");
@@ -23,6 +24,13 @@ describe("who sees the Marketplace", () => {
     expect(marketplaceAccess(true, { session: SIGNED_OUT, resolving: false }, true)).toBe("off");
     expect(marketplaceAccess(false, { session: web3, resolving: false }, true)).toBe("off");
     expect(marketplaceAccess(true, { session: web3, resolving: false }, false)).toBe("off");
+  });
+
+  it("counts a web3 kind the host only guessed (a sign-in it never recorded) as web2", () => {
+    expect(marketplaceSession(web3, false)).toEqual({ kind: "web2", account: ME });
+    expect(marketplaceSession(web3, true)).toBe(web3);
+    expect(marketplaceSession(web2, false)).toBe(web2);
+    expect(marketplaceAccess(true, { session: marketplaceSession(web3, false), resolving: false }, true)).toBe("off");
   });
 
   it("waits while the flag has not answered or the session is being read back, never deciding early", () => {
@@ -67,6 +75,23 @@ describe("a Marketplace page", () => {
   it("is drawn for a web3 session with the rollout on", () => {
     page("web3", { "dapps-shop-marketplace-features": true });
     expect(screen.getByText("LAND PAGE")).toBeInTheDocument();
+  });
+
+  it("sends a web3 session whose sign-in the host only guessed to the overview", () => {
+    primeRemoteFlags({ "dapps-shop-marketplace-features": true });
+    const router = createMemoryRouter(
+      [
+        { path: "/shop/lands", element: <MarketplaceGate><p>LAND PAGE</p></MarketplaceGate> },
+        { path: "/shop/overview", element: <p>OVERVIEW</p> },
+      ],
+      { initialEntries: ["/shop/lands"] },
+    );
+    render(
+      <ShopWalletProvider host={{ ...fixtureHost("web3"), signInKnown: false }}>
+        <RouterProvider router={router} />
+      </ShopWalletProvider>,
+    );
+    expect(router.state.location.pathname).toBe("/shop/overview");
   });
 
   it("follows a host's declared switch over the file's answer, either way", () => {

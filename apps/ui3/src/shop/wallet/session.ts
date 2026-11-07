@@ -13,6 +13,11 @@ export type ShopWalletHost = {
   onConnectWallet?(): void;
   onSwitchAccount?(): void;
   resolving?: boolean;
+  /**
+   * Whether `walletKind` is how the account signed in (recorded at sign-in), rather than a guess from what this
+   * browser has installed. Only a known web3 sign-in opens the Marketplace (market/access.tsx). Unset means known.
+   */
+  signInKnown?: boolean;
 };
 
 export function isExpiredIdentity(identity: AuthIdentity, now: number = Date.now()): boolean {

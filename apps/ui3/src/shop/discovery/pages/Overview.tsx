@@ -22,6 +22,7 @@ import SuggestedForYouRow from "../components/SuggestedForYouRow";
 import TopCreators from "../components/TopCreators";
 import { indexUnavailable } from "../freshness";
 import { useMarketplace } from "../../market/access";
+import { listingTypeFor } from "../../market/access-rule";
 import { isIapMode, shopFlags } from "../flags";
 import { useListingsFreshness, useSeo } from "../hooks";
 import { t } from "../intl";
@@ -81,7 +82,7 @@ export default function Overview() {
   useHomeTitle();
   const flags = shopFlags();
   // Trending lists resales too only for a visitor who sees the Marketplace (market/access.tsx).
-  const listingType = useMarketplace() ? undefined : ("primary" as const);
+  const listingType = listingTypeFor(useMarketplace());
 
   const listings = useShopQuery(["overview-listings"], (signal) => fetchShopItems({ first: 12, sortBy: "newest", listingType: "primary" }, { signal }));
   // Widening to resales (a web3 visitor whose access resolves after hydration) keeps the primed rail until it lands.

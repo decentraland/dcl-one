@@ -12,7 +12,7 @@ import { REMOTE_FLAG, useRemoteFlagState } from "../discovery/lib/remoteFlags";
 import { shopPath } from "../routes";
 import { useShopCapabilities } from "../seller/lib/featureFlags";
 import { useShopWallet } from "../wallet/context";
-import { marketplaceAccess, type MarketplaceAccess } from "./access-rule";
+import { marketplaceAccess, marketplaceSession, type MarketplaceAccess } from "./access-rule";
 
 export { marketplaceAccess, needsMarketplace, type MarketplaceAccess } from "./access-rule";
 
@@ -21,7 +21,8 @@ export function useMarketplaceAccess(): MarketplaceAccess {
   const flag = hostOr("marketplaceFeatures", useRemoteFlagState(REMOTE_FLAG.marketplaceFeatures));
   const wallet = useShopWallet();
   const caps = useShopCapabilities();
-  return marketplaceAccess(flag, wallet, caps.secondarySales);
+  const session = marketplaceSession(wallet.session, wallet.host?.signInKnown !== false);
+  return marketplaceAccess(flag, { session, resolving: wallet.resolving }, caps.secondarySales);
 }
 
 /** Whether to draw a Marketplace feature now. Fails closed while the answer is pending. */

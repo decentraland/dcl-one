@@ -30,3 +30,11 @@ export function listingTypeFor(marketplace: boolean): "primary" | undefined {
 export function isResale(row: { tokenId?: string | null; listingType?: string | null }): boolean {
   return !!row.tokenId || row.listingType === "secondary";
 }
+
+/**
+ * The session the Marketplace sees: a web3 kind the host only guessed (an identity whose sign-in it never recorded,
+ * such as one shared from another site) counts as web2 here. Signing still uses the guess.
+ */
+export function marketplaceSession(session: Session, signInKnown: boolean): Session {
+  return session.kind === "web3" && !signInKnown ? { kind: "web2", account: session.wallet } : session;
+}

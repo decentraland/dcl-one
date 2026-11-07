@@ -247,7 +247,9 @@ function SettingsScreen() {
 
   const held = useQuery({
     queryKey: ["shop-held-collections", account],
-    enabled: !!account && marketplace,
+    // Read with or without the Marketplace: a selling approval granted before is the broadest this page lists, and
+    // it must stay revocable (below, under the Marketplace's own group while it is off).
+    enabled: !!account,
     queryFn: async (): Promise<Grant[]> => {
       const body = await services.client.market.nfts<{ data?: { nft?: { contractAddress?: string; chainId?: number } }[] }>({
         owner: account!,
@@ -336,7 +338,9 @@ function SettingsScreen() {
           <Group label="For buying" grants={buying} account={account} canChange={selfCustody} />
           {bidding.length > 0 ? <Group label="For bidding" grants={bidding} account={account} canChange={selfCustody} /> : null}
           {renting.length > 0 ? <Group label="For renting" grants={renting} account={account} canChange={selfCustody} /> : null}
-          {revocable.length > 0 ? <Group label="Granted to the Marketplace" grants={revocable} account={account} canChange={selfCustody} /> : null}
+          {revocable.length > 0 || (!marketplace && selling.length > 0) ? (
+            <Group label="Granted to the Marketplace" grants={marketplace ? revocable : [...revocable, ...selling]} account={account} canChange={selfCustody} />
+          ) : null}
           {marketplace && selling.length > 0 ? <Group label="For selling" grants={selling} account={account} canChange={selfCustody} /> : null}
         </div>
       </div>

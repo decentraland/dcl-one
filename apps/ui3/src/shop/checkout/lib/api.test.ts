@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { catalogClient, catalogTransport, COLLECTION, ITEM_ID, RESALE_WEARABLE } from "../../discovery/fixtures";
 import { createShopClient } from "../../api/shop";
+import { fetchShopListingForItem } from "../../detail/api";
 import { fetchTradeForItem } from "./api";
 
 describe("an item line's live trade", () => {
@@ -22,5 +23,20 @@ describe("an item line's live trade", () => {
   it("never takes a row naming a token, even if a primary read returned one", async () => {
     const client = catalogClient("ok", { "/v3/catalog/unified": { data: [RESALE_WEARABLE], total: 1 } });
     expect(await fetchTradeForItem(COLLECTION, ITEM_ID, client)).toBeNull();
+  });
+});
+
+describe("the in-world shell's item read", () => {
+  it("asks for the creator's listing only, and never takes a resale for the item", async () => {
+    const transport = catalogTransport("ok", {
+      "/v3/catalog/shop": (url: URL) => ({ data: url.searchParams.get("listingType") === "primary" ? [] : [RESALE_WEARABLE], total: 1 }),
+    });
+    const client = createShopClient({ base: "http://shop.test", mode: "canonical", transport, signer: null });
+    expect(await fetchShopListingForItem(COLLECTION, ITEM_ID, { client })).toBeNull();
+    const asked = transport.calls.map((c) => new URL(c.url, "http://shop.test")).filter((u) => u.pathname.endsWith("/v3/catalog/shop"));
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.every((u) => u.searchParams.get("listingType") === "primary")).toBe(true);
+    const leaky = catalogClient("ok", { "/v3/catalog/shop": { data: [RESALE_WEARABLE], total: 1 } });
+    expect(await fetchShopListingForItem(COLLECTION, ITEM_ID, { client: leaky })).toBeNull();
   });
 });

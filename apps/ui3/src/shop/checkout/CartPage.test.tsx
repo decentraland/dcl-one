@@ -1,11 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 
 import { newCheckout } from "../cart/machine";
 import { partitionCart } from "../cart/partition";
 import { rarityCardPalette } from "../discovery/lib/rarity";
 import { storeMint, wearableResale, creatorOrder, parcelResale, BOOK } from "../payment/fixtures";
-import { primeRemoteFlags } from "../discovery/lib/remoteFlags";
 import { marketplaceOn } from "../market/testing-flags";
 import CartPage from "./CartPage";
 import { createDemo, DemoShell, type DemoScenario } from "./demo";
@@ -243,14 +242,10 @@ describe("the cart page", () => {
     expect(within(screen.getByRole("article", { name: "Rainbow Hat" })).queryByRole("radio", { name: /MANA/ })).toBeNull();
   });
 
-  it("web3 while the rollout has not answered: a resale waits, unpriced and unpaid, and is never called removable", async () => {
-    primeRemoteFlags(null);
-    const real = globalThis.fetch;
-    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => (String(input).endsWith("/dapps.json") ? new Promise<Response>(() => {}) : real(input, init))));
-    onTestFinished(() => {
-      vi.unstubAllGlobals();
-    });
-    renderCart({ session: "web3", lines: MIXED });
+  it("web3 while access is still pending: a resale waits, unpriced and unpaid, and is never called removable", async () => {
+    // The rollout is on; the session is still being read back, so the Marketplace's access is pending.
+    onTestFinished(marketplaceOn());
+    renderCart({ session: "web3", lines: MIXED, resolving: true });
     const resale = screen.getByRole("article", { name: "Vintage Jacket" });
     expect(within(resale).getByText("Checking the price…")).toBeTruthy();
     expect(screen.queryByText(/Remove (it|them) to continue/)).toBeNull();

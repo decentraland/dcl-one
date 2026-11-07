@@ -44,6 +44,7 @@ import { useCreditsBalance, useShopCapabilities, useShopPurchase } from './purch
 import { categoryGlyph, CreatorName, SelectedItemPanel, ShopCard } from './ShopItems'
 import { AvatarNametag, CreditsPill, EmoteControls, PriceTag, ShopCart, ShopCartBadge, ShopCartToast, ShopFilters, ShopHome, ShopItemSkeleton, ShopNames, type PressedWith, type ShopHomeOutfitOffer } from './ui'
 import styles from './InWorldShop.module.css'
+import { inShell } from '../../lib/shell'
 
 type Section = 'all' | 'wearables' | 'emotes' | 'names'
 const SECTIONS: TabItem<Section>[] = [
@@ -170,11 +171,14 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   // The listings wait for the creator-sales answer (or its failure): read before it, they'd come without
   // their sale prices and be read again once it lands.
   const creatorSalesFlag = useShopFlag(REMOTE_FLAG.creatorSales)
-  // Resales, NAME resales and offers are the Marketplace's: offered only while its rollout is on (a host's declaration
-  // first, as on the web) and never to a guest, who has no account to hold a wallet, nor before the profile says which. Off, the rows and the catalogue
-  // list creators' primary sales only. The HUD knows no wallet kind, so the web Shop a resale opens still asks for a
-  // web3 wallet session (shop/market/access.tsx).
-  const marketplaceFlag = hostOr('marketplaceFeatures', useShopFlag(REMOTE_FLAG.marketplaceFeatures) ?? null) === true && profile.data != null && !profile.data.isGuest
+  // Resales, NAME resales and offers are the Marketplace's (shop/market/access.tsx): offered only while its rollout is
+  // on (a host's declaration first, as on the web) and to a web3 wallet. In the web shell that is the shell's own
+  // answer for the login (its capabilities' wallet kind); elsewhere nothing here can buy, so a signed-in player who is
+  // not a guest may browse, and the web Shop a resale opens still asks for a web3 session. Off, the rows and the
+  // catalogue list creators' primary sales only.
+  const capabilities = useShopCapabilities()
+  const web3Player = inShell ? capabilities?.wallet === 'web3' : profile.data != null && !profile.data.isGuest
+  const marketplaceFlag = hostOr('marketplaceFeatures', useShopFlag(REMOTE_FLAG.marketplaceFeatures) ?? null) === true && web3Player
   const flagsKnown = creatorSalesFlag !== undefined
   const creatorSales = creatorSalesFlag ?? false
   const grid = useShopCatalogue(filters, page, { creatorSales, marketplace: marketplaceFlag, enabled: shop.open && flagsKnown && isCatalogue(section) })
@@ -189,7 +193,6 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   useEffect(() => (menu === 'filters' ? registerCancelLayer(() => setMenu(null)) : undefined), [menu])
   const items = grid.data?.items ?? []
   const total = grid.data?.total ?? 0
-  const capabilities = useShopCapabilities()
   const credits = useCreditsBalance(shop.open ? (capabilities?.buyer ?? null) : null)
   const purchase = useShopPurchase(() => onNavigate('backpack'))
   // A guest login's cart is the signed-out one, which the account takes over once one signs in.

@@ -106,8 +106,8 @@ describe("the settings page without the Marketplace", () => {
     expect(screen.getByRole("group", { name: "For buying" })).toBeTruthy();
     for (const g of ["For bidding", "For renting", "For selling"]) expect(screen.queryByRole("group", { name: g })).toBeNull();
     expect(screen.getAllByTestId("authorization").some((r) => /Marketplace/.test(r.textContent ?? ""))).toBe(false);
-    // The held collections are scanned only for the selling approvals, which are the Marketplace's.
-    expect(scanned).toBe(0);
+    // The held collections are still read, so a selling approval granted before can be revoked.
+    await waitFor(() => expect(scanned).toBeGreaterThan(0));
   });
 
   it("still lists a Marketplace approval the account granted earlier, so it can be revoked, and only that one", async () => {
@@ -125,5 +125,18 @@ describe("the settings page without the Marketplace", () => {
     expect(rows[0]!.textContent).toContain("Polygon");
     expect(rows[0]!.textContent).toContain("Authorized");
     for (const g of ["For bidding", "For renting", "For selling"]) expect(screen.queryByRole("group", { name: g })).toBeNull();
+  });
+
+  it("lists a selling approval of a held collection granted earlier, so it can be revoked", async () => {
+    const demo = createDemo({ session: "web3", handlers: { nfts: () => ({ data: [{ nft: { contractAddress: BOOK.collection, chainId: 137 } }] }) } });
+    demo.chain.approvals.set(`137:${BOOK.collection.toLowerCase()}:${BOOK.buyer}:0xe38ef22abe871513555cba89adfe45ab4f548ada`, true);
+    render(
+      <DemoShell demo={demo} path="/shop/settings">
+        <SettingsPage />
+      </DemoShell>,
+    );
+    const group = await screen.findByRole("group", { name: "Granted to the Marketplace" });
+    await waitFor(() => expect(within(group).getAllByTestId("authorization").some((r) => (r.textContent ?? "").includes("Authorized"))).toBe(true));
+    expect(screen.queryByRole("group", { name: "For selling" })).toBeNull();
   });
 });

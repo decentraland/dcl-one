@@ -2,7 +2,8 @@
 // The Shop's rollout switches, from decentraland.org's `dapps` flags. Creator sales (`dapps-shop-creator-sales`, as
 // upstream's) is off until the file answers yes. A host (the native shop, a journey) may declare it through
 // `window.__SHOP_FLAGS__`. The Marketplace's switch (`dapps-shop-marketplace-features`, dcl-one's own) may be declared
-// there too, but only market/access.tsx reads it: it also waits for the file and needs a web3 wallet session.
+// there too, but only market/access.tsx reads it: a declared value stands at once (else it waits for the file), and
+// the Marketplace still needs a web3 wallet session.
 
 import { REMOTE_FLAG, remoteFlag } from "./lib/remoteFlags";
 

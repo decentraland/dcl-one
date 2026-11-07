@@ -17,7 +17,7 @@ import type { AuthIdentity } from "@ui/data/auth/identity";
 
 import { useAuth } from "@/data/lib/auth/index";
 import { getIdentity } from "@/data/lib/auth/session";
-import { browserProvider, currentWalletKind, inAppSessionFor, managedShopProvider } from "@/data/lib/auth/shop-wallet";
+import { browserProvider, currentWalletKind, inAppSessionFor, managedShopProvider, signInKnown } from "@/data/lib/auth/shop-wallet";
 import { openSignIn } from "@/features/components/auth/signin-store";
 
 let installed = false;
@@ -61,6 +61,7 @@ export function useSitesShopHost(): ShopWalletHost {
         void disconnect().then(signIn);
       },
       resolving: !hydrated,
+      signInKnown: typeof window === "undefined" || !identity ? true : signInKnown(identity),
     };
   }, [identity, disconnect, hydrated]);
 }

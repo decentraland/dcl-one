@@ -47,6 +47,15 @@ export function currentWalletKind(identity: Pick<AuthIdentity, "signer"> | null)
   });
 }
 
+/**
+ * Whether `identity`'s kind is known from its sign-in (recorded here, or an in-app session for the account) rather
+ * than guessed: a shared identity signed in on another site never was. Only a known web3 sign-in opens the Shop's
+ * Marketplace.
+ */
+export function signInKnown(identity: Pick<AuthIdentity, "signer">): boolean {
+  return signInKindFor(identity.signer) !== null || inAppSessionFor(identity.signer);
+}
+
 /** Whether this browser's in-app (thirdweb) session is `account`'s. */
 export function inAppSessionFor(account: string, session: ThirdwebSession | null = getThirdwebSession()): boolean {
   return session != null && session.address.toLowerCase() === account.toLowerCase();
