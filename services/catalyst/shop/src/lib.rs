@@ -30,6 +30,7 @@ pub(crate) use catalyst_config::config;
 pub(crate) use catalyst_content as content;
 #[cfg(test)]
 pub(crate) use catalyst_db as db;
+pub(crate) use catalyst_explore as explore;
 pub(crate) use catalyst_fed as fed;
 pub(crate) use catalyst_jobs as jobs;
 pub(crate) use catalyst_land_authz as land_authz;

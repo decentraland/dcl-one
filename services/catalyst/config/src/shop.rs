@@ -440,6 +440,19 @@ pub struct ShopConfig {
     )]
     pub shop_base_url: String,
 
+    /// The feature-flags service the Shop reads decentraland.org's `dapps` rollout flags from (as sites'
+    /// `FEATURE_FLAGS_URL`); empty reads only this node's local overrides (`explore_api.feature_flags_local`).
+    #[arg(long, env = "SHOP_FEATURE_FLAGS_URL", default_value = "")]
+    pub shop_feature_flags_url: String,
+
+    /// The site the flags are asked for: the service answers by Referer (as sites' `FEATURE_FLAGS_ORIGIN`).
+    /// The mirror posture asks as decentraland.org; empty asks as the origin of `SHOP_BASE_URL`.
+    #[arg(long, env = "SHOP_FEATURE_FLAGS_ORIGIN", default_value = "")]
+    pub shop_feature_flags_origin: String,
+
+    #[arg(long, env = "SHOP_FEATURE_FLAGS_REFRESH_SECS", default_value_t = 60)]
+    pub shop_feature_flags_refresh_secs: u64,
+
     /// The availability alert outbox worker's cadence.
     #[arg(long, env = "SHOP_NOTIFY_DELIVERY_INTERVAL_SECS", default_value_t = 30)]
     pub shop_notify_delivery_interval_secs: u64,
