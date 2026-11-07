@@ -64,6 +64,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     self.assertIn('restore-prefixes-first-match: ' + key + '\n', snapshot)
                     self.assertIn("save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}", snapshot)
                     self.assertIn('gc-max-store-size: 0', snapshot)
+                    self.assertIn('mkdir -p .cache/nix-roots\n', roots)
                     self.assertIn('nix develop ' + ('.#ci ' if shell == 'ci' else '') + '--profile .cache/nix-roots/env --command true', roots)
                     self.assertIn('nix flake archive --json', roots)
                     for command in re.findall(r'nix develop(?: \.#\w+)?', job):

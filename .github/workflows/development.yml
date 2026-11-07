@@ -80,6 +80,7 @@ jobs:
           gc-max-store-size: 0
       - name: Root the shell and the flake inputs
         run: |
+          mkdir -p .cache/nix-roots
           nix develop .#ci --profile .cache/nix-roots/env --command true
           nix-store --add-root .cache/nix-roots/input -r $(nix flake archive --json | jq -r '.inputs | .. | .path? // empty') > /dev/null
       - name: Verify the exact public ENet source pin
@@ -160,6 +161,7 @@ jobs:
           gc-max-store-size: 0
       - name: Root the shell and the flake inputs
         run: |
+          mkdir -p .cache/nix-roots
           nix develop --profile .cache/nix-roots/env --command true
           nix-store --add-root .cache/nix-roots/input -r $(nix flake archive --json | jq -r '.inputs | .. | .path? // empty') > /dev/null
       - name: Evaluate supported systems
@@ -258,6 +260,7 @@ jobs:
           gc-max-store-size: 0
       - name: Root the shell and the flake inputs
         run: |
+          mkdir -p .cache/nix-roots
           nix develop --profile .cache/nix-roots/env --command true
           nix-store --add-root .cache/nix-roots/input -r $(nix flake archive --json | jq -r '.inputs | .. | .path? // empty') > /dev/null
       - name: Build the development shell and locate the pnpm store
