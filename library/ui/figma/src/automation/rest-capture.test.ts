@@ -348,6 +348,7 @@ describe('when an icon contains a zero-height vector', () => {
     name: 'Icon start',
     type: 'INSTANCE',
     absoluteBoundingBox: { x: 17, y: 14, width: 20, height: 20 },
+    absoluteRenderBounds: { x: 17, y: 14, width: 20, height: 20 },
     children: [
       {
         id: 'line',
@@ -421,14 +422,19 @@ describe('when capturing a standalone horizontal stroke', () => {
       children: [{ type: 'DRAWING', w: 240, h: 1, x: 0, y: -1, absolute: true }]
     })
   })
-  it('should retain absolute-bounds exports when painted pixels overlap the layout box', () => {
-    expect(
-      degenerateArtworkIds({
-        ...line,
-        absoluteBoundingBox: { x: 0, y: 0, width: 240, height: 10 },
-        absoluteRenderBounds: { x: 0, y: -0.5, width: 240, height: 1 }
-      })
-    ).toEqual([])
+  it('should export at render bounds when painted pixels cross the layout box', () => {
+    const crossing = {
+      ...line,
+      absoluteBoundingBox: { x: 0, y: 0, width: 240, height: 10 },
+      absoluteRenderBounds: { x: 0, y: -0.5, width: 240, height: 1 }
+    }
+    expect(degenerateArtworkIds(crossing)).toEqual(['line'])
+    expect(captureNode(crossing, new Map([['line', '<svg/>']]))).toMatchObject({
+      type: 'FRAME',
+      w: 240,
+      h: 10,
+      children: [{ type: 'DRAWING', w: 240, h: 1, x: 0, y: -0.5, absolute: true }]
+    })
   })
   it('should reject a stroke with no visible bounds', () => {
     expect(() =>
@@ -845,5 +851,140 @@ describe('when a component contains a rotated rectangle', () => {
     const empty = { ...peak, absoluteRenderBounds: null, fills: [] }
     expect(artworkIds(empty)).toEqual([])
     expect(captureNode(empty, new Map())).toMatchObject({ type: 'FRAME', opacity: 0 })
+  })
+})
+
+describe('when artwork paints outside its node box', () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>'
+  const ring = { type: 'SOLID', color: { r: 0.3, g: 0.08, b: 0.49, a: 1 } }
+  // EventCard Community logo: a 36x36 frame whose ellipse has a 3px outside stroke.
+  const logo: LiveNode = {
+    id: 'logo',
+    name: 'Frame 1',
+    type: 'FRAME',
+    absoluteBoundingBox: { x: 100, y: 200, width: 36, height: 36 },
+    absoluteRenderBounds: { x: 98.5, y: 198.5, width: 39, height: 39 },
+    children: [
+      {
+        id: 'ellipse',
+        name: 'Ellipse',
+        type: 'ELLIPSE',
+        strokes: [ring],
+        strokeWeight: 3,
+        strokeAlign: 'OUTSIDE',
+        absoluteBoundingBox: { x: 100, y: 200, width: 36, height: 36 },
+        absoluteRenderBounds: { x: 98.5, y: 198.5, width: 39, height: 39 }
+      }
+    ]
+  }
+  // NotificationsPanel Media group: a 50x50 avatar whose badge overflows its top-right corner by 10px.
+  const media: LiveNode = {
+    id: 'media',
+    name: 'Media',
+    type: 'GROUP',
+    absoluteBoundingBox: { x: 0, y: 0, width: 50, height: 50 },
+    absoluteRenderBounds: { x: 0, y: -10, width: 60, height: 60 },
+    children: [
+      {
+        id: 'avatar',
+        name: 'Avatar',
+        type: 'ELLIPSE',
+        absoluteBoundingBox: { x: 0, y: 0, width: 50, height: 50 },
+        absoluteRenderBounds: { x: 0, y: 0, width: 50, height: 50 }
+      },
+      {
+        id: 'badge',
+        name: 'Badge',
+        type: 'ELLIPSE',
+        absoluteBoundingBox: { x: 40, y: -10, width: 20, height: 20 },
+        absoluteRenderBounds: { x: 40, y: -10, width: 20, height: 20 }
+      }
+    ]
+  }
+
+  it('should keep an outside stroke by exporting the render bounds around the layout box', () => {
+    expect(artworkIds(logo)).toEqual(['logo'])
+    expect(degenerateArtworkIds(logo)).toEqual(['logo'])
+    expect(captureNode(logo, new Map([['logo', svg]]))).toEqual({
+      type: 'FRAME',
+      name: 'Frame 1',
+      w: 36,
+      h: 36,
+      children: [
+        {
+          type: 'DRAWING',
+          w: 39,
+          h: 39,
+          x: -1.5,
+          y: -1.5,
+          absolute: true,
+          svg,
+          sum: expect.any(String)
+        }
+      ]
+    })
+  })
+
+  it('should keep a child that overflows its group', () => {
+    expect(degenerateArtworkIds(media)).toEqual(['media'])
+    expect(captureNode(media, new Map([['media', svg]]))).toMatchObject({
+      type: 'FRAME',
+      w: 50,
+      h: 50,
+      children: [{ type: 'DRAWING', w: 60, h: 60, x: 0, y: -10, absolute: true }]
+    })
+  })
+
+  it('should place the layout box in its parent and offset only the drawing', () => {
+    const parent: LiveNode = {
+      id: 'card',
+      name: 'Card',
+      type: 'FRAME',
+      absoluteBoundingBox: { x: 90, y: 190, width: 300, height: 120 },
+      children: [logo]
+    }
+    expect(captureNode(logo, new Map([['logo', svg]]), parent)).toMatchObject({
+      type: 'FRAME',
+      x: 10,
+      y: 10,
+      w: 36,
+      h: 36,
+      children: [{ x: -1.5, y: -1.5, w: 39, h: 39 }]
+    })
+  })
+
+  it.each([
+    ['equal to its box', { x: 100, y: 200, width: 36, height: 36 }],
+    ['inside its box', { x: 102, y: 202, width: 30, height: 30 }],
+    ['past its box by less than the tolerance', { x: 99.995, y: 200, width: 36.01, height: 36 }]
+  ])('should keep the box export when the render bounds are %s', (_, bounds) => {
+    const node = { ...logo, absoluteRenderBounds: bounds }
+    expect(degenerateArtworkIds(node)).toEqual([])
+    expect(captureNode(node, new Map([['logo', svg]]))).toMatchObject({
+      type: 'DRAWING',
+      w: 36,
+      h: 36,
+      svg
+    })
+  })
+
+  it('should refuse artwork whose render bounds are missing', () => {
+    const missing: LiveNode = { ...logo }
+    delete missing.absoluteRenderBounds
+    expect(() => degenerateArtworkIds(missing)).toThrow('Missing render bounds: logo "Frame 1"')
+    expect(() => captureNode(missing, new Map([['logo', svg]]))).toThrow('Missing render bounds')
+  })
+
+  it('should keep the box export for a mask Figma renders nothing for', () => {
+    const mask = { ...logo, isMask: true, absoluteRenderBounds: null }
+    expect(degenerateArtworkIds(mask)).toEqual([])
+  })
+
+  it('should refuse artwork whose render bounds are not numbers', () => {
+    const broken = {
+      ...logo,
+      absoluteRenderBounds: { x: 98.5, y: Number.NaN, width: 39, height: 39 }
+    }
+    expect(() => degenerateArtworkIds(broken)).toThrow('Inconsistent render bounds: logo "Frame 1"')
   })
 })

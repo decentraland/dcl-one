@@ -135,18 +135,34 @@ function isArtwork(node: LiveNode): boolean {
         (['INSTANCE', 'FRAME'].includes(node.type) && hasDrawing(node))))
   )
 }
+// Painted pixels may extend past the node box: an outside or centred stroke, a shadow, a child that
+// overflows a group. Figma's export with absolute bounds crops them, so such artwork is exported at its
+// render bounds and placed at their offset from the box, which stays the layout footprint.
+const RENDER_TOLERANCE = 0.01
+function renderBounds(node: LiveNode) {
+  if (!Object.hasOwn(node, 'absoluteRenderBounds'))
+    throw new Error(`Missing render bounds: ${node.id} "${node.name}"`)
+  // Null means Figma renders nothing for the node (handled by paintsNothing, or a mask clipping others).
+  if (node.absoluteRenderBounds === null) return undefined
+  const rendered = record(node.absoluteRenderBounds)
+  const { x, y, width, height } = rendered
+  const finite = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isFinite(value)
+  if (!finite(x) || !finite(y) || !finite(width) || !finite(height))
+    throw new Error(`Inconsistent render bounds: ${node.id} "${node.name}"`)
+  return { x, y, width, height }
+}
 function needsRenderedBounds(node: LiveNode): boolean {
   const box = record(node.absoluteBoundingBox)
-  const rendered = record(node.absoluteRenderBounds)
   // Rotated Figma lines can retain floating-point residue instead of an exact zero.
+  if ([box.width, box.height].some((size) => typeof size === 'number' && size < 0.001)) return true
+  const rendered = renderBounds(node)
+  if (!rendered || !(rendered.width > 0 && rendered.height > 0)) return false
   return (
-    [box.width, box.height].some((size) => typeof size === 'number' && size < 0.001) ||
-    (number(rendered.width) > 0 &&
-      number(rendered.height) > 0 &&
-      (number(rendered.x) + number(rendered.width) <= number(box.x) ||
-        number(rendered.y) + number(rendered.height) <= number(box.y) ||
-        number(rendered.x) >= number(box.x) + number(box.width) ||
-        number(rendered.y) >= number(box.y) + number(box.height)))
+    rendered.x < number(box.x) - RENDER_TOLERANCE ||
+    rendered.y < number(box.y) - RENDER_TOLERANCE ||
+    rendered.x + rendered.width > number(box.x) + number(box.width) + RENDER_TOLERANCE ||
+    rendered.y + rendered.height > number(box.y) + number(box.height) + RENDER_TOLERANCE
   )
 }
 const hasVisiblePaint = (paints: unknown) =>
@@ -173,6 +189,8 @@ function paintsNothing(node: LiveNode): boolean {
     )
   return true
 }
+// Artwork to export at its render bounds instead of its node box: degenerate lines and anything that
+// paints outside its box.
 function degenerateArtworkIds(node: LiveNode): string[] {
   if (node.visible === false || node.opacity === 0 || paintsNothing(node)) return []
   if (isArtwork(node)) {
@@ -283,7 +301,7 @@ function captureNode(node: LiveNode, assets: Map<string, string>, parent?: LiveN
       if (!(number(rendered.width) > 0 && number(rendered.height) > 0))
         throw new Error(`Missing visible stroke bounds: ${node.id}`)
       if (box.width >= 0.001 && box.height >= 0.001) {
-        // Keep the layout footprint when painted pixels lie outside its bounds.
+        // Keep the layout footprint; the drawing covers every painted pixel, inside or outside it.
         return {
           ...output,
           type: 'FRAME',
