@@ -31,6 +31,7 @@ SETTINGS = STATE / 'settings.json'
 # Sepolia), for trading with testnet wallets; offline: empty, for local deployments.
 PROFILES = ('mirror', 'testnet', 'offline')
 DARWIN = platform.system() == 'Darwin'
+PROGRESS_SECONDS = 30
 
 
 def run(argv, **kwargs):
@@ -453,9 +454,17 @@ def pc_argv(*args):
     return ['process-compose', '--use-uds', '--unix-socket', address, '--log-file', str(STATE / logfile), *args]
 
 
+def pc_env(env=None):
+    xdg = STATE / 'xdg'
+    (xdg / 'process-compose').mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ if env is None else env)
+    env['XDG_CONFIG_DIRS'] = f"{xdg}:{env.get('XDG_CONFIG_DIRS') or '/etc/xdg'}"
+    return env
+
+
 def pc(*args, **kwargs):
     STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
-    return subprocess.run(pc_argv(*args), cwd=STATE, **kwargs)
+    return subprocess.run(pc_argv(*args), cwd=STATE, env=pc_env(kwargs.pop('env', None)), **kwargs)
 
 
 def supervisor_running():
@@ -771,7 +780,7 @@ def supervise():
     os.chdir(STATE)
     # Task output is already in each task's log; keep it out of service.log and the journal.
     os.dup2(os.open(os.devnull, os.O_WRONLY), 1)
-    os.execvpe('process-compose', pc_argv(*args), env)
+    os.execvpe('process-compose', pc_argv(*args), pc_env(env))
 
 
 def service_name():
@@ -914,18 +923,45 @@ def up(postgres_only=False):
     return status()
 
 
+def last_line(path, limit=4096):
+    try:
+        with path.open('rb') as log:
+            log.seek(max(0, log.seek(0, os.SEEK_END) - limit))
+            return log.read().decode(errors='replace').rstrip().rsplit('\n', 1)[-1].strip()
+    except OSError:
+        return ''
+
+
+def progress(processes, elapsed):
+    running = [p['name'] for p in processes if p.get('is_running')]
+    pending = [p['name'] for p in processes if not p.get('is_running') and p.get('status') == 'Pending']
+    line = f"{int(elapsed) // 60}m{int(elapsed) % 60:02d}s running: {', '.join(running) or 'nothing'}"
+    if pending:
+        line += f"; waiting to start: {', '.join(pending)}"
+    for name in ('web-install', 'api-build'):
+        if name in running and (last := last_line(STATE / f'{name}.log')):
+            line += f'; {name}: {last[:160]}'
+    return line
+
+
 def wait_ready(timeout, postgres_only=False):
     config = settings()
     urls = [f"http://127.0.0.1:{config['port']}/about", f"http://127.0.0.1:{config['port'] + 2}/"]
-    deadline = time.monotonic() + timeout
+    started = reported = time.monotonic()
+    deadline = started + timeout
+    print(f"Waiting up to {timeout}s for {'PostgreSQL' if postgres_only else 'the API and Sites'}.", flush=True)
     while time.monotonic() < deadline:
         processes = pc('process', 'list', '--output', 'json', capture_output=True, text=True)
         if processes.returncode:
             raise RuntimeError('The development supervisor is not running. Run foundation-dev up.')
-        for process in json.loads(processes.stdout):
+        listing = json.loads(processes.stdout)
+        for process in listing:
             if process.get('exit_code', 0) != 0 and not process.get('is_running'):
                 name = process['name']
                 raise RuntimeError(f'{name} failed. Inspect foundation-dev logs {name}.')
+        if time.monotonic() - reported >= PROGRESS_SECONDS:
+            reported = time.monotonic()
+            print(progress(listing, reported - started), flush=True)
         try:
             if postgres_only:
                 sql(config, 'SELECT 1', 'postgres')

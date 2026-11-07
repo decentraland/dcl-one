@@ -684,6 +684,29 @@ class DevTest(unittest.TestCase):
                 dev.wait_ready(10)
         sleep.assert_not_called()
 
+    def test_wait_narrates_progress_with_the_building_task_output(self):
+        listing = subprocess.CompletedProcess([], 0, json.dumps([
+            {'name': 'api-build', 'status': 'Running', 'is_running': True, 'exit_code': 0},
+            {'name': 'api', 'status': 'Pending', 'is_running': False, 'exit_code': 0},
+        ]))
+        (self.state / 'api-build.log').write_text('   Compiling catalyst-db v0.1.0\n   Compiling catalyst-worlds v0.1.0\n')
+        with patch.object(dev, 'pc', return_value=listing), patch.object(dev, 'PROGRESS_SECONDS', 0), \
+                patch.object(dev.urllib.request, 'urlopen', side_effect=dev.urllib.error.URLError('starting')), \
+                patch.object(dev.time, 'sleep', side_effect=InterruptedError), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            with self.assertRaises(InterruptedError):
+                dev.wait_ready(10)
+        self.assertIn('Waiting up to 10s for the API and Sites.', out.getvalue())
+        self.assertIn('running: api-build; waiting to start: api; api-build: Compiling catalyst-worlds v0.1.0',
+                      out.getvalue())
+
+    def test_process_compose_commands_carry_a_configuration_directory(self):
+        with patch.object(dev.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
+            dev.pc('process', 'list')
+        env = run.call_args.kwargs['env']
+        self.assertTrue(env['XDG_CONFIG_DIRS'].startswith(f"{self.state / 'xdg'}:"))
+        self.assertTrue((self.state / 'xdg/process-compose').is_dir())
+
     def test_first_pass_pending_lists_configured_mirrors_without_a_complete_pass(self):
         status = {'data': {
             'configured_mirrors': {'places': 'https://p', 'worlds': 'https://p', 'events': None},
