@@ -30,15 +30,14 @@ impl Probe {
     }
 }
 
-/// `Err` when the renderer is not on Metal or its device is busy on the render thread this frame
-/// (the caller retries).
+/// `Err` when the renderer is not on Metal or its device is busy on the render thread this frame.
 pub fn probe(device: &RenderDevice, _adapter: &RenderAdapter) -> Result<Probe, String> {
     let texture = unsafe {
         device
             .wgpu_device()
             .as_hal::<wgpu::hal::api::Metal, _, _>(|hal| {
                 let hal = hal.ok_or("the renderer is not on Metal")?;
-                // the renderer holds the device lock while it submits; try again next frame
+                // the renderer holds the device lock while it submits; refused for this frame
                 let raw = hal
                     .raw_device()
                     .try_lock()

@@ -4,8 +4,7 @@ use ipfs::IpfsIo;
 /// content-server url, anything else must already be an http(s) url. The helper runs sandboxed
 /// without file access, so nothing is downloaded to disk first.
 ///
-/// Blocking (`content_url` reads the ipfs context); call from where the html backend calls it,
-/// the source observer.
+/// Blocking: `content_url` reads the ipfs context.
 pub fn resolve_source(ipfs: &IpfsIo, source: &str, hash: &str) -> Result<String, String> {
     let url = match ipfs.content_url(source, hash) {
         // content_url hands a url-shaped source that is not in the content map back normalised

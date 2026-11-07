@@ -88,7 +88,7 @@ impl Plugin for UuavPlugin {
     }
 }
 
-/// Stops the helper; for the end of the process, after the app has run.
+/// Stops the helper; nothing in this module may run afterwards.
 pub fn uuav_shutdown() {
     uuav::uuav_deinit();
 }
@@ -119,10 +119,10 @@ pub(crate) struct Target {
     pub image: AssetId<Image>,
     pub presented: AtomicU64,
     /// The size of the planes the render world presents, [`pack_size`]d, once it has read them;
-    /// the main world sizes the image to it.
+    /// 0 before.
     pub presented_size: AtomicU64,
     /// Set by the render world when the player's frames cannot be presented (a size the device
-    /// refuses); it presents nothing more for the player.
+    /// refuses).
     pub failed: AtomicBool,
 }
 
@@ -131,10 +131,9 @@ pub(crate) struct Target {
 #[derive(Default)]
 pub(crate) struct Shared {
     pub targets: Mutex<HashMap<PlayerId, Arc<Target>>>,
-    /// Closed players whose planes the render world may still be reading; it frees each once
-    /// it has dropped its textures.
+    /// Closed players whose planes the render world may still be reading, left for it to free.
     retired: Mutex<Vec<PlayerId>>,
-    /// Whether a render world presents frames: with none, a closed player is freed at once.
+    /// Whether a render world presents frames.
     render_world: AtomicBool,
     /// The render device's texture edge limit, once the render world has read it; 0 before.
     pub max_dimension: AtomicU32,
@@ -160,7 +159,7 @@ impl Shared {
     }
 }
 
-/// A source the `av` crate opened, waiting for the runtime's next look.
+/// A source [`spawn_av`] took, waiting for the runtime's next look.
 struct NewSource {
     commands: mpsc::UnboundedReceiver<AVCommand>,
     video: Option<mpsc::Sender<VideoData>>,
@@ -175,8 +174,8 @@ static NEW_SOURCES: Mutex<Vec<NewSource>> = Mutex::new(Vec::new());
 
 /// Plays `url` on a uuav player, rendering its frames into `image`, driven by `commands`,
 /// reporting its playback state on `state` and its frames on `video` (`None` for an audio
-/// stream). The player's sound goes out on `audio` for the audio sink to play; the sink hands
-/// the playing sound's handle back on `audio_handle`, which is where the volume commands land.
+/// stream). The player's sound goes out on `audio`; the playing sound's handle, awaited on
+/// `audio_handle`, is where the volume commands land.
 pub fn spawn_av(
     commands: mpsc::UnboundedReceiver<AVCommand>,
     video: Option<mpsc::Sender<VideoData>>,
@@ -456,17 +455,17 @@ struct Player {
     id: PlayerId,
     commands: mpsc::UnboundedReceiver<AVCommand>,
     video: Option<mpsc::Sender<VideoData>>,
-    /// The playback state the scene reads; the watch keeps the latest value.
+    /// The playback state; the watch keeps the latest value.
     state: watch::Sender<VideoState>,
     audio_handle: Option<oneshot::Receiver<AudioHandle>>,
     handle: Option<AudioHandle>,
     /// The last volume commanded, applied once the sound handle arrives.
     volume: Option<f32>,
-    /// Cleared on close so the kira decoder ends the sound.
+    /// Cleared on close.
     alive: Arc<AtomicBool>,
     target: Option<Arc<Target>>,
-    /// A seek went out this frame: the helper's state is read again next frame, so the scene
-    /// sees Seeking before the state the seek lands in.
+    /// A seek went out this frame: the helper's state is read again next frame, so Seeking is
+    /// sent before the state the seek lands in.
     seeking: bool,
     /// (width, height, framerate, duration); a send the channel refused leaves it as it was,
     /// so it is tried again next frame.

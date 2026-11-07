@@ -16,6 +16,5 @@ export const DEFAULT_WEB_APP = path.join(REPO_ROOT, 'apps', 'bevy-explorer', 'di
 
 export const SCENES_DIR = path.join(PACKAGE_ROOT, 'scenes')
 export const REFERENCES_DIR = path.join(PACKAGE_ROOT, 'references')
-/** Where a run writes its report: `report/` here, or `DCL_E2E_REPORT_DIR` (a second run of the
- *  same group on another transport keeps its own JUnit file and frames). */
+/** Where a run writes its report: `DCL_E2E_REPORT_DIR` when set, else `report/` here. */
 export const REPORT_DIR = process.env.DCL_E2E_REPORT_DIR ? path.resolve(process.env.DCL_E2E_REPORT_DIR) : path.join(PACKAGE_ROOT, 'report')

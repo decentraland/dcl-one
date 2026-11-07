@@ -3,7 +3,7 @@
 //! latest published slot into a client-owned NV12 presentation texture on
 //! the host's device — the same stable-pointer contract (one NV12 texture the
 //! engine casts its R8/RG8 views over, retire-grace on resolution change)
-//! the in-process plugin had, so the host poll-and-rewrap flow is untouched.
+//! the in-process plugin had.
 //!
 //! A host whose probe texture carries `D3D11_RESOURCE_MISC_SHARED_NTHANDLE`
 //! gets its presentation textures created `SHARED | SHARED_NTHANDLE` as well

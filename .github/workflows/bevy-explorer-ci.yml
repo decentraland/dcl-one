@@ -157,7 +157,7 @@ jobs:
       CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
       SCCACHE_GHA_ENABLED: 'true'
       SCCACHE_GHA_VERSION: dcl-bevy-windows-v1
-      # the lock target the test binaries spawn on this runner
+      # the lock target of this runner
       UUAV_TARGET: ${{ matrix.os == 'windows-2025' && 'windows-x86_64' || matrix.os == 'macos-15' && 'macos-universal'
         || 'linux-x86_64' }}
     steps:
@@ -168,7 +168,6 @@ jobs:
         # The set is the lock's bytes for one target (library/uuav/dist/<target>, Git LFS, 30 to
         # 105 MiB); the other targets are never read here. LFS traffic from Actions counts against
         # the organisation's bandwidth, so a miss pulls only this target and the hit skips LFS.
-        # stage-dist.py checks every staged file against the lock, whichever way it arrived.
         id: uuav-dist
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -238,7 +237,7 @@ jobs:
       - name: Test the texture decoder boundaries
         run: cargo test --manifest-path vendor/basisu/Cargo.toml --locked --lib
       - name: Stage the UUAV runtime set
-        # the test binaries spawn the video helper as a sibling (library/uuav/dist, Git LFS)
+        # the video helper and its libraries, beside the test binaries (library/uuav/dist, Git LFS)
         run: python3 "$GITHUB_WORKSPACE/tooling/uuav/stage-dist.py" host target/ci-test/deps
       - name: Run the native test suite
         env:

@@ -21,8 +21,8 @@ pub const CHANNELS: usize = 2;
 /// Frames pulled per decode call: 10 ms, the helper's own pump cadence.
 const PULL_FRAMES: usize = 480;
 
-/// kira polls the decoder in a tight loop while its buffer has room; a read that found nothing
-/// waits this long before trying again while the player plays, within the helper's 10 ms pump.
+/// A read that found nothing waits this long before trying again while the player plays, within
+/// the helper's 10 ms pump, instead of returning empty.
 const EMPTY_WAIT: Duration = Duration::from_millis(2);
 /// The wait while the player is not playing (paused, opening, ended, no runtime): nothing is
 /// expected, so the thread polls at a fraction of the rate.
@@ -31,8 +31,8 @@ const IDLE_WAIT: Duration = Duration::from_millis(20);
 /// Pulls a player's audio out of the uuav client's jitter ring for kira.
 ///
 /// The helper releases audio at the media clock and the ring pads silence when read ahead of it,
-/// so a decode that would return nothing blocks until real frames arrive: that paces kira at
-/// realtime delivery instead of letting it drain the ring into silence.
+/// so a decode that would return nothing blocks until real frames arrive: the sound is fed at
+/// realtime delivery, never the silence of a ring read ahead of its clock.
 pub struct UuavKiraDecoder {
     id: PlayerId,
     /// Cleared when the player is disposed; the next decode ends the sound.
@@ -60,7 +60,7 @@ impl kira::sound::streaming::Decoder for UuavKiraDecoder {
     }
 
     fn num_frames(&self) -> usize {
-        // open-ended: the sound is stopped explicitly when the player is disposed
+        // open-ended: `decode` ends the sound once the player is cleared
         u32::MAX as usize
     }
 

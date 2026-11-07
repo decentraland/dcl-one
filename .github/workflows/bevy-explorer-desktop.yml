@@ -41,7 +41,6 @@ jobs:
         # The set is the lock's bytes for one target (library/uuav/dist/<target>, Git LFS, 30 to
         # 105 MiB); the other targets are never read here. LFS traffic from Actions counts against
         # the organisation's bandwidth, so a miss pulls only this target and the hit skips LFS.
-        # stage-dist.py checks every staged file against the lock, whichever way it arrived.
         id: uuav-dist
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -170,7 +169,7 @@ jobs:
           cp "$cef\*.dat" package/
           cp "$cef\*.json" package/
           cp -r "$cef\locales" package/locales
-          # the video helper and its FFmpeg, spawned as siblings of the exe
+          # the video helper and its FFmpeg, beside the exe
           python ../../../tooling/uuav/stage-dist.py windows-x86_64 package
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           7z a ${{ env.PACKAGE_FILE }} ./package/*
@@ -191,7 +190,7 @@ jobs:
           cp "$cef"/*.so* "$cef"/*.bin "$cef"/*.pak "$cef"/*.dat "$cef"/*.json package/
           cp -r "$cef/locales" package/locales
           if [ -f "$cef/chrome-sandbox" ]; then cp "$cef/chrome-sandbox" package/; fi
-          # the video helper and its FFmpeg/libva, spawned as siblings of the binary
+          # the video helper and its FFmpeg/libva, beside the binary
           python3 ../../../tooling/uuav/stage-dist.py linux-x86_64 package
           # We must enter the package/ directory in order to create a flat tarball (i.e. without a directory in it).
           cd package

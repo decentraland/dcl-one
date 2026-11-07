@@ -86,8 +86,8 @@ pub struct AVSinks<T: AVPlayer> {
     pub audio: Option<AudioSink>,
     pub video: Option<VideoSink>,
     pub command_sender: tokio::sync::mpsc::UnboundedSender<AVCommand>,
-    /// The commands' receiver when no backend took it (a rejected source): kept so that every
-    /// send on `command_sender` succeeds instead of reporting a closed channel.
+    /// The commands' receiver when no backend took it (a rejected source), kept so the channel
+    /// stays open: a send on `command_sender` never fails as closed.
     pub rejected_commands: Option<tokio::sync::mpsc::UnboundedReceiver<AVCommand>>,
     /// Frame rate reported with video metadata. HTML provides dimensions but reports zero here.
     pub rate: Option<f64>,

@@ -1594,7 +1594,7 @@ pub unsafe extern "C" fn uuav_player_get_video_texture(
     )
 }
 
-/// What the host presents from, read in one call.
+/// The presentation planes, their size and their frame count, read in one call.
 ///
 /// The plane pointers of `uuav_player_get_video_texture`, the size the
 /// planes were created for and a count of the frames presented so far. The

@@ -55,7 +55,7 @@ pub const PRESENTS_FRAMES: bool = true;
 /// until the renderer has executed the conversion that reads the texture.
 pub const GATE_COPY_ON_READ: bool = true;
 
-/// How long [`upload`] waits for a copy to land before leaving the frame for the next poll.
+/// How long [`upload`] waits for a copy to land before returning `false`.
 const COPY_WAIT_MS: u32 = 4;
 
 /// The renderer's API, read once from the render device: where a presentation texture is
@@ -426,8 +426,7 @@ fn open_vulkan(
 
 /// The planes are the presentation texture itself; nothing is moved. Orders the client's copy
 /// before the renderer's read instead: signals the decode device's fence behind the copy and
-/// waits up to [`COPY_WAIT_MS`] for it. `false` when the copy has not landed yet: the frame is
-/// left for the next poll.
+/// waits up to [`COPY_WAIT_MS`] for it. `false` when the copy has not landed within that.
 pub fn upload(
     _queue: &RenderQueue,
     _planes: &PlaneTextures,

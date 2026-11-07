@@ -64,8 +64,8 @@ native-release *ARGS: _bundle-native-if-stale
     python3 ../../../tooling/uuav/stage-dist.py host target/release
     cargo run --release --bin decentra-bevy -- "$@"
 
-# stage the UUAV video runtime set (library/uuav/dist, Git LFS) next to the test binaries, which
-# spawn it: run before `cargo test`
+# stage the UUAV video runtime set (library/uuav/dist, Git LFS) beside the test binaries: run
+# before `cargo test`
 stage-uuav-tests:
     python3 ../../../tooling/uuav/stage-dist.py host target/debug/deps
 

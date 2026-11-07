@@ -64,8 +64,8 @@ if [ -f ../../target/release/decentra-bevy-cef ]; then
 fi
 
 
-# The video helper and its FFmpeg: spawned as a sibling of the main binary, the libraries
-# resolve from the helper's own directory. Signed before the app seal like the CEF helper.
+# The video helper and its FFmpeg, beside the main binary; the libraries resolve from the
+# helper's own directory. Signed before the app seal like the CEF helper.
 echo "Stage the UUAV runtime set"
 python3 ../../../../../tooling/uuav/stage-dist.py macos-universal "${APP_NAME}.app/Contents/MacOS"
 # the license texts are not code: they go with the other resources

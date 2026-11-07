@@ -1,7 +1,7 @@
 //! The render-world half: each frame, every video player's latest presented NV12 planes are
-//! converted into its target image once the main world has sized the image to the planes (it
-//! reads the size from [`super::Target`] and resizes the asset, which rebinds the materials;
-//! this side never replaces the image's texture or uploads pixels through the main world).
+//! converted into its target image once the image has the planes' size (this side publishes
+//! the size through [`super::Target`]; it never replaces the image's texture or uploads pixels
+//! through the main world).
 //! Players the main world closed are freed here, once their planes are no longer read.
 
 use std::{
@@ -29,8 +29,7 @@ use super::{Shared, ffi, ffi::PlayerId, platform};
 /// Pixels a player's planes may hold: DCI 4K and a little more. A larger stream is refused
 /// before it reaches the device.
 const MAX_PIXELS: u64 = 4096 * 4096;
-/// The smallest edge a video may have: what the `av` sink keeps its image at, so a smaller video
-/// would never match the image and never be drawn.
+/// The smallest edge a video may have; a smaller one is refused before it reaches the device.
 const MIN_EDGE: u32 = 16;
 
 /// The player table the main world maintains ([`super::UuavRuntime`]), read here.
@@ -51,8 +50,8 @@ pub fn build(render_app: &mut SubApp, shared: Arc<Shared>) {
         );
 }
 
-/// Runs once the render device exists; the main world learns the device's texture edge limit
-/// through [`Shared`] here.
+/// Runs once the render device exists; publishes the device's texture edge limit through
+/// [`Shared`].
 pub fn finish(render_app: &mut SubApp) {
     if let Some(device) = render_app.world().get_resource::<RenderDevice>() {
         let max_dimension = device.limits().max_texture_dimension_2d;
@@ -195,7 +194,8 @@ impl Nv12Pipeline {
 pub(super) struct PlaneTextures {
     pub y: wgpu::TextureView,
     pub uv: wgpu::TextureView,
-    /// Read by the Linux upload; the views hold the textures alive everywhere.
+    /// The textures behind the views, uploaded into on Linux; the views hold them alive
+    /// everywhere.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     textures: Vec<wgpu::Texture>,
 }
@@ -384,8 +384,8 @@ fn present_uuav_frames(
             height: presented.height,
             depth_or_array_layers: 1,
         };
-        // the main world sizes the image from `Target::presented_size`; a texture of another
-        // size is the one the materials are bound to and this pass must not swap it
+        // a texture of another size is the one the materials are bound to and this pass must
+        // not swap it; the planes' size went out through `Target::presented_size`
         if gpu_image.size != size
             || !gpu_image
                 .texture_descriptor
