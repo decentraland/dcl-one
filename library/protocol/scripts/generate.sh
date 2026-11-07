@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # The npm package's generated TypeScript and JavaScript (out-ts, out-js) from public/*.proto.
 set -e # stop execution on first non-zero result
 
