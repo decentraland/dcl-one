@@ -1,0 +1,109 @@
+/* from: shop@3a322cf9:app/src/components/PaymentCtas/PaymentCtas.styles.ts, with app/src/styles/theme.ts's
+   values inlined. */
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: stretch;
+  width: 100%;
+}
+
+/* Identical geometry and type for every rail, so a stack of two reads as a set. */
+.btn {
+  width: 100%;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 24px;
+  letter-spacing: 0.46px;
+  text-transform: uppercase;
+  color: #fcfcfc;
+}
+
+.btn:focus-visible {
+  outline: 2px solid #691fa9;
+  outline-offset: 2px;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* The primary rail: the buy gradient, solid red on hover (on background-image: a gradient cannot
+   interpolate to a plain colour). */
+.btn[data-variant="credits"] {
+  background: linear-gradient(180.93deg, #ff7439 2.82%, #ff2d55 97.47%);
+}
+
+@media (hover: hover) {
+  .btn[data-variant="credits"]:hover:not(:disabled) {
+    background-image: linear-gradient(#ff2d55, #ff2d55);
+  }
+}
+
+.btn[data-variant="credits"]:active:not(:disabled) {
+  background-image: linear-gradient(#ff2d55, #ff2d55);
+}
+
+/* The dark rail: soft black 2, gray 0 on hover. */
+.btn[data-variant="mana"] {
+  background: #242129;
+}
+
+.btn[data-variant="mana"]:hover:not(:disabled) {
+  background: #43404a;
+}
+
+/* The amount inside a button: mark + number at 20px, apart from the 15px label. */
+.amount {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.amount > span:last-child {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: normal;
+}
+
+/* A 30px slot with the 24px glyph centred in it, as the design's two-box geometry. */
+.manaMark {
+  position: relative;
+  display: block;
+  width: 30px;
+  height: 30px;
+  flex: none;
+}
+
+.manaMark svg {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
+  display: block;
+}
+
+.note {
+  margin: -4px 0 0;
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #716b7c;
+  text-align: center;
+}

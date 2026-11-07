@@ -30,6 +30,9 @@ import { cartOfferFetcher, useOfferSource } from "../detail/offers";
 import type { ManaWei, UsdCents } from "../model/money";
 import { creditsCeil } from "../model/money";
 
+/** The blocker of a cart the credit balance does not cover: the summary offers a top-up instead of stating it. */
+export const CREDITS_SHORT = "Your Credits balance doesn't cover the Credits part of this cart.";
+
 export type ReviewState =
   | { kind: "empty" }
   | { kind: "outage"; reason: "no-quote-route" | "failed" }
@@ -224,7 +227,7 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
     const refused = partition?.refused.filter((r) => r.code !== "quoteUnavailable" && r.code !== "offerUnavailable") ?? [];
     if (refused.some((r) => r.code === "methodNotAllowed" && r.allowed.length > 0)) out.push("Some items can't be paid the way they're set. Choose how to pay for them.");
     if (refused.some((r) => r.code !== "methodNotAllowed" || r.allowed.length === 0)) out.push("Some items can't be bought as they are. See the note on each item.");
-    if (partition?.creditsShort) out.push("Your Credits balance doesn't cover the Credits part of this cart.");
+    if (partition?.creditsShort) out.push(CREDITS_SHORT);
     if (session.kind !== "signedOut" && !provider) {
       out.push(session.kind === "web3" ? "Connect your wallet again to sign the purchase." : "Your sign-in can't confirm purchases right now. Sign in again to continue.");
     }

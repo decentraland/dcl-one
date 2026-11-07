@@ -2,7 +2,7 @@
 //       "Cart: N Items" + Fitting Room, the Purchase Summary card, the "Goes with your cart" / "You might also
 //       like" rails); supersedes v2 ui3/src/marketplace/pages/MkCheckout.tsx and the cart/checkout pages of
 //       sites (marketplace.cart.tsx, marketplace.checkout.tsx)
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 
 import Button from "../../atoms/Button";
@@ -16,15 +16,19 @@ import { useShopQuery } from "../discovery/query";
 import FittingRoom from "../detail/components/FittingRoom";
 import TopUpPanel from "../credits/components/TopUpPanel";
 import { saveReceipt, type SuccessNavState } from "../history/receipt";
+import type { ManaWei } from "../model/money";
+import { manaChainOf } from "../payment/rule";
+import { SHOP_BASE } from "../routes";
 import type { GuidanceRevalidation } from "../wallet/ManaGuidance";
 import AuthorizeStep from "./components/AuthorizeStep";
 import CartLineRow from "./components/CartLineRow";
 import CartSummary from "./components/CartSummary";
 import CheckoutGroups from "./components/CheckoutGroups";
 import FlowBanner from "./components/FlowBanner";
-import { SHOP_BASE } from "../routes";
+import PaymentCtas from "./components/PaymentCtas";
+import { cartRails, type CartRail } from "./lib/cart-rails";
 import { EnsureQueryClient, useShopServices } from "./services";
-import { useCheckout, type CheckoutView } from "./useCheckout";
+import { CREDITS_SHORT, useCheckout, type CheckoutView } from "./useCheckout";
 import cartEmptyIllustration from "./assets/cart-empty.svg?url";
 import "./cartpage.css";
 
@@ -157,6 +161,42 @@ function CartScreen() {
   const buyableUnits = co.lines.reduce((n, l) => n + (isGone(l.id) ? 0 : lineUnitsOf(l)), 0);
   const allUnavailable = co.lines.length > 0 && buyableUnits === 0;
   const signedOut = co.session.kind === "signedOut";
+  // One CTA per rail the balances support (upstream's PaymentCtas), priced off the lines' own offers.
+  const buyable = co.lines.filter((l) => !isGone(l.id));
+  const summaryRails = cartRails({
+    lines: buyable,
+    views: co.views,
+    creditsShort: co.partition?.creditsShort ?? null,
+    manaBalance: (co.manaBalance ?? null) as ManaWei | null,
+    manaChainOf: (l) => {
+      const offer = co.offers[l.id];
+      return offer ? manaChainOf(offer) : l.asset.chainId;
+    },
+  });
+  // A rail's button sets every line to that method, then checks out once the cart has re-priced on it.
+  const [paying, setPaying] = useState<CartRail["method"] | null>(null);
+  const settledOn = (method: CartRail["method"]) => buyable.every((l) => (l.method ?? co.views[l.id]?.primary) === method);
+  useEffect(() => {
+    if (!paying || co.running || !settledOn(paying)) return;
+    setPaying(null);
+    void co.confirm();
+  });
+  const pay = (method: CartRail["method"]) => {
+    const moving = buyable.filter((l) => (l.method ?? co.views[l.id]?.primary) !== method);
+    if (moving.length === 0) {
+      void co.confirm();
+      return;
+    }
+    for (const l of moving) co.setMethod(l.id, method);
+    setPaying(method);
+  };
+  // No rail covers the cart: the credits path stays, and opens the top-up (upstream's checkout modal offers it).
+  const checkoutFallback = () => {
+    if (!signedOut && co.topUp) setTopUpOpen(true);
+    else void co.confirm();
+  };
+  // Until the cart is priced, no rail is known: a button then would confirm or top up blind.
+  const pricing = !signedOut && !co.partition;
   const reviewing = co.review.kind === "changed" && co.reviewChanges.length > 0;
   const exclude = useMemo(() => co.lines.map(lineItemKey).filter((k): k is string => !!k), [co.lines]);
   const wearableKeys = co.lines.filter((l) => l.display.category === "wearable").map(lineItemKey).filter((k): k is string => !!k);
@@ -198,7 +238,8 @@ function CartScreen() {
     );
   }
 
-  const ctaLabel = co.running ? "Working…" : "Checkout";
+  const ctaLabel = co.running || paying ? "Working…" : "Checkout";
+  const shownBlockers = co.blockers.filter((b) => b !== CREDITS_SHORT);
 
   return (
     <main className="shop-cart" aria-labelledby="shop-cart-title">
@@ -307,16 +348,9 @@ function CartScreen() {
             <aside className="shop-cart__side" aria-label="Purchase summary">
               <h2 className="shop-cart__subtitle">Purchase Summary</h2>
               <div className="shop-cart__sidebody">
-                <CartSummary
-                  partition={co.partition}
-                  balance={co.balance}
-                  balanceError={co.balanceError}
-                  signedIn={!signedOut}
-                  units={buyableUnits}
-                  onTopUp={() => setTopUpOpen(true)}
-                />
-                {/* Signed out there is nothing to confirm yet: upstream shows no group until checkout. */}
-                {signedOut ? null : (
+                <CartSummary partition={co.partition} units={buyableUnits} />
+                {/* Upstream shows no group until checkout: a running or interrupted one shows its progress. */}
+                {signedOut || (!co.checkout && Object.keys(co.results).length === 0) ? null : (
                   <CheckoutGroups
                     groups={co.partition?.groups ?? []}
                     lines={co.lines}
@@ -336,20 +370,21 @@ function CartScreen() {
                     }}
                   />
                 ) : null}
-                <button
-                  type="button"
-                  className="shop-cart__confirm"
-                  onClick={() => void co.confirm()}
-                  disabled={co.running || allUnavailable || (!signedOut && !co.canConfirm)}
-                  data-testid="confirm-checkout"
-                >
-                  {ctaLabel}
-                </button>
+                <PaymentCtas
+                  rails={signedOut ? [] : summaryRails.rails}
+                  creditsLabel={summaryRails.rails.length > 1 ? (co.running || paying ? "Working…" : "Buy with Credits") : ctaLabel}
+                  creditsFallback={{ label: ctaLabel, onClick: checkoutFallback }}
+                  manaShortfall={signedOut ? null : summaryRails.manaShortfall}
+                  // dcl-one keeps its guards: a price change to accept, an outage, a gone line or a wallet on
+                  // another account holds every rail. A short balance does not: its button opens the top-up.
+                  busy={co.running || !!paying || allUnavailable || pricing || (!signedOut && shownBlockers.length > 0)}
+                  onPay={pay}
+                />
                 {allUnavailable ? <p className="shop-cart__msg">None of these items are available anymore. Remove them to keep shopping.</p> : null}
                 {signedOut ? <p className="shop-cart__msg">You'll be asked to sign in first.</p> : null}
-                {co.blockers.length > 0 && !signedOut ? (
+                {shownBlockers.length > 0 && !signedOut ? (
                   <ul className="shop-cart__blockers" aria-label="Why you can't confirm yet">
-                    {co.blockers.map((b) => (
+                    {shownBlockers.map((b) => (
                       <li key={b} className="shop-cart__msg">
                         {b}
                       </li>
