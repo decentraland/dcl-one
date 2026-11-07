@@ -163,14 +163,18 @@ export async function deliverTip(provider: Eip1193Provider, hash: string, opts: 
   }
   let delay = FORWARD_FIRST_RETRY_MS;
   for (;;) {
+    let hint = 0;
     try {
       await forward(hash);
       return "notified";
     } catch (e) {
       if (!retryable(e)) return "refused";
+      hint = e instanceof CatalystError ? (e.retryAfterSecs ?? 0) * 1000 : 0;
     }
-    if (now() + delay > deadline) return "gave-up";
-    await sleep(delay);
+    // Never sooner than the server's Retry-After, never longer than the max.
+    const wait = Math.min(Math.max(delay, hint), FORWARD_MAX_RETRY_MS);
+    if (now() + wait > deadline) return "gave-up";
+    await sleep(wait);
     delay = Math.min(delay * 2, FORWARD_MAX_RETRY_MS);
   }
 }
