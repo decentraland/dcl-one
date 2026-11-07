@@ -7,7 +7,6 @@ export const DEFAULT_CATALYST_URL = "http://127.0.0.1:5210";
 export const WORLDS_PREFIX = "/worlds-content-server";
 export const SOCIAL_PREFIX = "/social-api";
 export const NOTIFICATIONS_PREFIX = "/notifications";
-export const TELEMETRY_PREFIX = "/telemetry";
 export const MARKET_PREFIX = "/marketplace-api";
 export const BUILDER_PREFIX = "/builder-api";
 export const DEFAULT_CREATORS_DATA_URL = "/api/creator-hub";
@@ -73,12 +72,6 @@ export function communitiesUrl(env: BaseEnv = processEnv()): string {
   return trimSlash(
     envValue(env, "COMMUNITIES_URL") ?? `${catalystUrl(undefined, env)}${SOCIAL_PREFIX}`,
   );
-}
-
-/** Unset means the sink and the flag probe are no-ops (README contract). */
-export function telemetryUrl(env: BaseEnv = processEnv()): string | undefined {
-  const v = envValue(env, "TELEMETRY_URL");
-  return v ? trimSlash(v) : undefined;
 }
 
 export function creatorsDataUrl(override?: string, env: BaseEnv = processEnv()): string {

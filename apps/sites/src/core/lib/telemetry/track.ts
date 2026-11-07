@@ -12,6 +12,11 @@ export type TrackFn = <K extends TelemetryEventName>(
   ctx: TrackContext,
 ) => void;
 
+// Segment's HTTP Tracking API takes the public `writeKey` in the JSON body
+// (no Authorization header), which is what lets `navigator.sendBeacon` post to it.
+export const DEFAULT_SEGMENT_TRACK_URL = "https://api.segment.io/v1/track";
+const LIBRARY = { name: "dcl-sites-beacon", version: "1.0.0" } as const;
+
 function env(name: string): string | undefined {
   try {
     return typeof process !== "undefined" ? process.env?.[name] : undefined;
@@ -37,10 +42,27 @@ function runtimeEnv(name: string): string | undefined {
   return v && v !== "" ? v : undefined;
 }
 
-function telemetryBase(): string | undefined {
-  return typeof window === "undefined"
-    ? env("TELEMETRY_URL") ?? publicEnv("TELEMETRY_URL")
-    : runtimeEnv("TELEMETRY_URL") ?? publicEnv("TELEMETRY_URL");
+function setting(name: "SEGMENT_WRITE_KEY" | "SEGMENT_API_HOST"): string | undefined {
+  const v = typeof window === "undefined"
+    ? env(name) ?? publicEnv(name)
+    : runtimeEnv(name) ?? publicEnv(name);
+  return v && v !== "" ? v : undefined;
+}
+
+/** The public Segment write key (config, not a secret: it ships in the bundle). Unset, `track` is a no-op. */
+export function segmentWriteKey(): string | undefined {
+  return setting("SEGMENT_WRITE_KEY");
+}
+
+/**
+ * The track endpoint: Segment's own, or the first-party proxy `SEGMENT_API_HOST`
+ * names as `host/basePath` (a protocol is accepted and stripped).
+ */
+export function segmentTrackUrl(): string {
+  const host = setting("SEGMENT_API_HOST")
+    ?.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
+    .replace(/\/+$/, "");
+  return host ? `https://${host}/track` : DEFAULT_SEGMENT_TRACK_URL;
 }
 
 const isBrowser = (): boolean => typeof window !== "undefined";
@@ -53,6 +75,24 @@ export type SegmentTrackBody = {
     story?: string;
     variant?: string;
   };
+};
+
+export type SegmentContext = {
+  direct?: true;
+  page?: { url: string; path: string; search: string; referrer: string; title: string };
+  userAgent?: string;
+  locale?: string;
+  timezone?: string;
+  library: typeof LIBRARY;
+};
+
+export type SegmentTrackPayload = SegmentTrackBody & {
+  writeKey: string;
+  integrations: Record<string, never>;
+  messageId: string;
+  timestamp: string;
+  sentAt: string;
+  context: SegmentContext;
 };
 
 export function buildSegmentBody(
@@ -72,42 +112,96 @@ export function buildSegmentBody(
   };
 }
 
-function sendToCatalyst(body: SegmentTrackBody): void {
-  const base = telemetryBase();
-  if (!base) return;
+function messageId(): string {
+  let random = "";
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      random = crypto.randomUUID();
+    }
+  } catch {
+  }
+  if (!random) random = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${LIBRARY.name}-${random}`;
+}
 
-  const url = `${base.replace(/\/+$/, "")}/v1/track`;
-  const payload = JSON.stringify(body);
+function timezone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Segment stamps `context.ip` only for a request marked `direct`, so the browser sets it and SSR does not. */
+function context(): SegmentContext {
+  if (!isBrowser()) return { library: LIBRARY };
+  const tz = timezone();
+  return {
+    direct: true,
+    page: {
+      url: window.location.href,
+      path: window.location.pathname,
+      search: window.location.search,
+      referrer: typeof document !== "undefined" ? document.referrer : "",
+      title: typeof document !== "undefined" ? document.title : "",
+    },
+    userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+    locale: typeof navigator !== "undefined" ? navigator.language : "",
+    ...(tz ? { timezone: tz } : {}),
+    library: LIBRARY,
+  };
+}
+
+export function buildSegmentPayload(
+  body: SegmentTrackBody,
+  writeKey: string,
+  now: Date = new Date(),
+): SegmentTrackPayload {
+  const at = now.toISOString();
+  return {
+    writeKey,
+    ...body,
+    integrations: {},
+    messageId: messageId(),
+    timestamp: at,
+    sentAt: at,
+    context: context(),
+  };
+}
+
+function sendToSegment(body: SegmentTrackBody): void {
+  const writeKey = segmentWriteKey();
+  if (!writeKey) return;
+
+  const url = segmentTrackUrl();
+  const payload = JSON.stringify(buildSegmentPayload(body, writeKey));
 
   if (isBrowser()) {
     try {
+      // text/plain keeps the request CORS-simple; application/json would preflight,
+      // which is unsafe during unload.
       const beacon = navigator?.sendBeacon?.bind(navigator);
-      if (beacon) {
-        const ok = postTelemetry(url, payload);
-        if (!ok) beacon(url, new Blob([payload], { type: "text/plain" }));
-        return;
-      }
+      if (beacon && beacon(url, new Blob([payload], { type: "text/plain" }))) return;
     } catch {
     }
+    postTelemetry(url, payload, "text/plain");
+    return;
   }
 
-  postTelemetry(url, payload);
+  postTelemetry(url, payload, "application/json");
 }
 
-function postTelemetry(url: string, payload: string): boolean {
+function postTelemetry(url: string, payload: string, contentType: string): void {
   try {
     void fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Basic dcl-sites",
-      },
+      headers: { "Content-Type": contentType },
       body: payload,
       keepalive: true,
+      mode: "cors",
+      credentials: "omit",
     }).catch(() => {});
-    return true;
   } catch {
-    return false;
   }
 }
 
@@ -126,8 +220,7 @@ export function track<K extends TelemetryEventName>(
 ): void {
   try {
     devValidate(event, props as Record<string, unknown>);
-    sendToCatalyst(buildSegmentBody(event, props, ctx));
+    sendToSegment(buildSegmentBody(event, props, ctx));
   } catch {
   }
 }
-

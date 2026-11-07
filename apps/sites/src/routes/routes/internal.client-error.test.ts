@@ -55,7 +55,7 @@ describe("action (client-error ingest)", () => {
   });
   afterEach(() => {
     errSpy.mockRestore();
-    delete process.env.TELEMETRY_URL;
+    delete process.env.SEGMENT_WRITE_KEY;
   });
 
   it("records a valid report with a 202 and never throws to the client", async () => {
