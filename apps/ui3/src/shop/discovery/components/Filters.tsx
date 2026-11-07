@@ -58,7 +58,9 @@ export function CategoryFilter({
   const [expandedSubKey, setExpandedSubKey] = useState<string | null>(() => parentOfLeaf(subCategory));
 
   useEffect(() => {
+    // A category with sub-categories opens them; any other (another page's section, none) closes the open one.
     if (CATEGORIES.some((top) => top.key === category && top.subs)) setExpandedKey(category);
+    else setExpandedKey(null);
     const parent = parentOfLeaf(subCategory);
     if (parent) setExpandedSubKey(parent);
   }, [category, subCategory]);
@@ -82,7 +84,7 @@ export function CategoryFilter({
 
   return (
     <div className="shop-cats" data-testid="category-filter">
-      {title ? <p className="shop-cats__title">{title}</p> : null}
+      {title ? <h2 className="shop-cats__title">{title}</h2> : null}
       {CATEGORIES.filter((top) => !(hideAll && top.key === "all") && !(hideNames && top.key === "names")).map((top) => {
         const open = expandedKey === top.key && !!top.subs;
         const selected = !collections && top.key === category && !subCategory;

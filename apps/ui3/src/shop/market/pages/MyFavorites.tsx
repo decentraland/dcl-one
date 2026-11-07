@@ -19,6 +19,7 @@ import { shopFavorites, useFavorites } from "../store/favorites";
 import ItemCard from "../components/ItemCard";
 import { ListEditor } from "../components/ListEditor";
 import SaveToLists from "../components/SaveToLists";
+import { EmptyPanel } from "../components/EmptyPanel";
 import { EnsureQueryClient, LoadFailure } from "../components/kit";
 import emptyIllustration from "./favorites-empty.svg?url";
 import "../../discovery/components/browselayout.css";
@@ -30,31 +31,6 @@ const SUGGESTED_EXCLUDE_CAP = 20;
 
 const TITLE = "My Favorites";
 const SUGGESTED_TITLE = "More like what you saved";
-
-type EmptyCta = { label: string; to: string } | { label: string; onClick: () => void };
-
-export function FavoritesEmpty({ icon, title, body, cta, testId }: { icon: string; title: string; body?: string; cta?: EmptyCta; testId?: string }) {
-  return (
-    <div className="shop-fav-empty" data-testid={testId}>
-      <img className="shop-fav-empty__img" src={icon} alt="" aria-hidden />
-      <div className="shop-fav-empty__text">
-        <p className="shop-fav-empty__title">{title}</p>
-        {body ? <p className="shop-fav-empty__body">{body}</p> : null}
-      </div>
-      {cta ? (
-        "to" in cta ? (
-          <Link className="shop-fav-empty__cta" to={cta.to}>
-            {cta.label}
-          </Link>
-        ) : (
-          <button type="button" className="shop-fav-empty__cta" onClick={cta.onClick}>
-            {cta.label}
-          </button>
-        )
-      ) : null}
-    </div>
-  );
-}
 
 function CountHead({ count }: { count: number | null }) {
   return (
@@ -79,7 +55,7 @@ export function SavedItems({ head }: { head?: ReactNode }) {
       <>
         {head}
         <div className="shop-fav__emptywrap">
-          <FavoritesEmpty
+          <EmptyPanel
             testId="shop-empty"
             icon={emptyIllustration}
             title="Nothing here... yet!"
@@ -152,7 +128,7 @@ export function ListsOverview({ account }: { account: string }) {
       ) : lists.isError ? (
         <LoadFailure error={lists.error} what="Your lists" onRetry={() => void lists.refetch()} />
       ) : own.length === 0 ? (
-        <FavoritesEmpty testId="shop-empty" icon={emptyIllustration} title="No lists yet" body="Group items into lists; keep them private or share them with a link." />
+        <EmptyPanel testId="shop-empty" icon={emptyIllustration} title="No lists yet" body="Group items into lists; keep them private or share them with a link." />
       ) : (
         own.map((list: FavoriteList) => (
           <div key={list.id} className="shop-fav__listrow" data-testid="shop-list-row">

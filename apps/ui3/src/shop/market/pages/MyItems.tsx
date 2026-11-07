@@ -14,7 +14,7 @@ import { CategoryFilter, subCategoryLabel } from "../../discovery/components/Fil
 import Icon from "../../discovery/components/Icon";
 import "../../discovery/components/filters.css";
 import "../../discovery/components/filterbar.css";
-import { SUBCAT_MAP } from "../../discovery/lib/categories";
+import { CATEGORIES, SUBCAT_MAP } from "../../discovery/lib/categories";
 import { RARITIES, rarityColor } from "../../discovery/lib/rarity";
 import itemsEmptyIllustration from "../../discovery/pages/creator/items-empty.svg?url";
 import salesEmptyIllustration from "../../history/assets/sales-empty.svg?url";
@@ -25,9 +25,9 @@ import { fetchImportable } from "../../seller/lib/import";
 import { fetchBidsByAddress, fetchMyAssets, type Bid, type MyAsset, type MyAssetsCategory } from "../lib/api";
 import { useArchivedBids } from "../store/archivedBids";
 import AssetTile from "../components/AssetTile";
+import { EmptyPanel } from "../components/EmptyPanel";
 import BidRow from "../components/BidRow";
 import { EnsureQueryClient, LoadFailure, Loading } from "../components/kit";
-import { FavoritesEmpty } from "./MyFavorites";
 import MyItemsSignedOut from "./myitems/SignedOut";
 import "./myitems/myitems.css";
 
@@ -45,6 +45,13 @@ type SortKey = (typeof SORTS)[number]["key"];
 /** The sidebar's CategoryFilter keys for the sections it lists (upstream's CATEGORY_OF_SECTION). */
 const CATEGORY_OF_SECTION: Partial<Record<MyItemsSection | "creations", string>> = { wearables: "wearable", emotes: "emote", names: "names" };
 const SECTION_OF_CATEGORY: Record<string, MyItemsSection> = { wearable: "wearables", emote: "emotes", names: "names" };
+
+/** The section a sub-category (or one of its leaves) belongs to: Head is a wearable's, Dance an emote's. */
+function sectionOfSub(key: string): MyItemsSection | null {
+  for (const top of CATEGORIES)
+    for (const sub of top.subs ?? []) if (sub.key === key || sub.subs?.some((leaf) => leaf.key === key)) return SECTION_OF_CATEGORY[top.key] ?? null;
+  return null;
+}
 type Status = "all" | "on_sale" | "not_for_sale";
 const STATUS_LABEL: Record<Status, string> = { all: "All", on_sale: "On sale", not_for_sale: "Not for sale" };
 const PAGE_SIZE = 48;
@@ -163,9 +170,9 @@ function OwnedGrid({ section, owned, onSale }: { section: Exclude<MyItemsSection
     return (
       <div className="shop-myitems__empty">
         {section === "names" ? (
-          <FavoritesEmpty testId="owned-empty" icon={itemsEmptyIllustration} title="No NAMEs yet" body="Claim a unique NAME to stand out in Decentraland — it’ll appear here once it’s yours." />
+          <EmptyPanel testId="owned-empty" icon={itemsEmptyIllustration} title="No NAMEs yet" body="Claim a unique NAME to stand out in Decentraland — it’ll appear here once it’s yours." />
         ) : (
-          <FavoritesEmpty
+          <EmptyPanel
             testId="owned-empty"
             icon={onSale ? salesEmptyIllustration : itemsEmptyIllustration}
             title="Nothing here... yet!"
@@ -388,43 +395,55 @@ export function MyItemsView({
 }) {
   const shown = section === "creations" && storeOn ? "wearables" : section;
   const [filtersOpen, setFiltersOpen] = useState(false);
-  // A sub-category belongs to the section it was picked in (upstream keeps one, cleared on a section change).
-  const [subCategory, setSubCategory] = useState<string | null>(null);
+  // A sub-category is held with the section it filters, and only ever applies to that section: a section change
+  // from anywhere (the sidebar, the header's My Assets, a ?section= link) leaves it behind.
+  const [picked, setPicked] = useState<{ section: MyItemsSection; key: string } | null>(null);
+  const subCategory = picked && picked.section === shown && sectionOfSub(picked.key) === shown ? picked.key : null;
   const pick = (s: MyItemsSection | "creations") => {
     setFiltersOpen(false);
-    setSubCategory(null);
+    setPicked(null);
     onSection(s);
+  };
+  // A sub-category picked from another section's group (the group is open while LAND shows) goes there first.
+  const pickSub = (key: string | null) => {
+    if (key === null) return setPicked(null);
+    const section = sectionOfSub(key);
+    if (!section) return;
+    if (section !== shown) pick(section);
+    setPicked({ section, key });
   };
   // As upstream: the Collectibles category nav (Wearables and Emotes open to their sub-categories), with no
   // "Shop All" and with "My Creations" as its extra entry while the store dashboard is off. dcl-one's own
   // sections (LAND, Bids, My store) follow it.
   const renderSidebar = (extra: ReactNode) => (
     <div className="shop-filters" data-testid="my-items-sidebar">
-      <CategoryFilter
-        title="Items"
-        category={CATEGORY_OF_SECTION[shown] ?? ""}
-        subCategory={subCategory}
-        onCategory={(key) => {
-          const next = SECTION_OF_CATEGORY[key];
-          if (next && next !== shown) pick(next);
-        }}
-        onSub={setSubCategory}
-        onCollections={storeOn ? undefined : () => pick("creations")}
-        collections={!storeOn && shown === "creations"}
-        extraLabel="My Creations"
-        hideAll
-      />
-      <nav className="shop-cats shop-myitems__cats" aria-label="More of your items">
-        {(["land", "bids"] as const).map((s) => (
-          <button key={s} type="button" className="shop-cats__cat" data-selected={shown === s || undefined} aria-current={shown === s ? "page" : undefined} onClick={() => pick(s)}>
-            <span>{SECTION_LABEL[s]}</span>
-          </button>
-        ))}
-        {storeOn ? (
-          <Link className="shop-cats__cat" to={shopPath("myStore")}>
-            <span>My store</span>
-          </Link>
-        ) : null}
+      <nav className="shop-myitems__nav" aria-label="My items sections">
+        <CategoryFilter
+          title="Items"
+          category={CATEGORY_OF_SECTION[shown] ?? ""}
+          subCategory={subCategory}
+          onCategory={(key) => {
+            const next = SECTION_OF_CATEGORY[key];
+            if (next && next !== shown) pick(next);
+          }}
+          onSub={pickSub}
+          onCollections={storeOn ? undefined : () => pick("creations")}
+          collections={!storeOn && shown === "creations"}
+          extraLabel="My Creations"
+          hideAll
+        />
+        <div className="shop-cats shop-myitems__cats">
+          {(["land", "bids"] as const).map((s) => (
+            <button key={s} type="button" className="shop-cats__cat" data-selected={shown === s || undefined} aria-current={shown === s ? "page" : undefined} onClick={() => pick(s)}>
+              <span>{SECTION_LABEL[s]}</span>
+            </button>
+          ))}
+          {storeOn ? (
+            <Link className="shop-cats__cat" to={shopPath("myStore")}>
+              <span>My store</span>
+            </Link>
+          ) : null}
+        </div>
       </nav>
       {extra}
     </div>
@@ -461,7 +480,7 @@ export function MyItemsView({
       setFiltersOpen={setFiltersOpen}
       renderSidebar={renderSidebar}
       subCategory={subCategory}
-      onSubCategory={setSubCategory}
+      onSubCategory={pickSub}
     />
   );
 }

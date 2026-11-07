@@ -102,6 +102,12 @@
   outline-offset: 2px;
 }
 
+/* The category nav and dcl-one's own sections read as one list. */
+.shop-myitems__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 .shop-myitems__cats a.shop-cats__cat {
   text-decoration: none;
 }
@@ -193,5 +199,4 @@
     width: 110px;
     height: 110px;
   }
-
 }

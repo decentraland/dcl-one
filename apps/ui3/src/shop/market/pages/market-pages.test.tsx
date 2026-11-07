@@ -111,6 +111,24 @@ describe("My items", () => {
     expect(within(screen.getByTestId("filter-chips")).getByRole("button", { name: /Head/ })).toBeInTheDocument();
   });
 
+  it("a sub-category stays with its section: a section change from outside the sidebar leaves it behind", async () => {
+    const m = mountShop({ path: "/shop/my-items?section=emotes", who: "web3", routes: [nfts(), importable(0)] });
+    fireEvent.click(await screen.findByRole("button", { name: "Dance" }));
+    await waitFor(() => expect(m.shop.requests.some((r) => r.url.searchParams.getAll("emoteCategory").length > 0)).toBe(true));
+    // The header's My Assets tab: /shop/my-items with no section, i.e. Wearables.
+    await act(async () => void (await m.router.navigate("/shop/my-items")));
+    await waitFor(() => expect(m.shop.requests.at(-1)!.url.searchParams.get("category")).toBe("wearable"));
+    expect(m.shop.requests.at(-1)!.url.searchParams.getAll("wearableCategory")).toEqual([]);
+    expect(screen.queryByTestId("filter-chips")).toBeNull();
+  });
+
+  it("a sub-category picked while another section shows goes to its own section", async () => {
+    const m = mountShop({ path: "/shop/my-items?section=land", who: "web3", routes: [nfts(), importable(0)] });
+    fireEvent.click(await screen.findByRole("button", { name: "Wearables" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Head" }));
+    await waitFor(() => expect(m.shop.requests.some((r) => r.url.searchParams.get("category") === "wearable" && r.url.searchParams.getAll("wearableCategory").length > 0)).toBe(true));
+  });
+
   it("an index that has not caught up is an outage with its reason, not an empty page", async () => {
     mountShop({
       path: "/shop/my-items",
@@ -118,7 +136,7 @@ describe("My items", () => {
       routes: [{ method: "GET", path: /^\/v1\/nfts$/, reply: () => ({ status: 503, body: { error: "Service Unavailable", message: "no pass yet", source: "nft-indexer" } }) }, importable(0)],
     });
     expect(await screen.findByTestId("shop-outage")).toHaveTextContent("the NFT index is still catching up");
-    expect(screen.queryByTestId("shop-empty")).toBeNull();
+    expect(screen.queryByTestId("owned-empty")).toBeNull();
   });
 
   it("with the store dashboard off, creations stay reachable from My items (as upstream)", async () => {
