@@ -123,6 +123,8 @@ function renderShop(over: Partial<InWorldShopProps> = {}) {
     focus: vi.fn(),
     stage: vi.fn(),
     emote: vi.fn(),
+    rotate: vi.fn(),
+    zoom: vi.fn(),
     ...over
   }
   const view = render(
@@ -716,6 +718,26 @@ describe('in-world shop', () => {
     expect(props.emote).toHaveBeenLastCalledWith(ARMOR_URN)
     rerender({ shop: { open: false, toggle: vi.fn() } })
     expect(props.emote).toHaveBeenLastCalledWith(null)
+  })
+
+  it('turns the avatar as it is dragged and zooms it with the wheel, and has no hold on it without an engine', async () => {
+    serve({})
+    const { props, unmount } = renderShop()
+    // The surface over the engine's avatar window (the page lets the pointer through everywhere else there).
+    const surface = document.querySelector('[class*="surface"]') as HTMLElement
+    expect(surface).not.toBeNull()
+    fireEvent.pointerDown(surface, { pointerId: 1, button: 0, clientX: 100 })
+    fireEvent.pointerMove(surface, { pointerId: 1, clientX: 120 })
+    await waitFor(() => expect(props.rotate).toHaveBeenCalledWith(-10))
+    fireEvent.wheel(surface, { deltaY: -200 })
+    await waitFor(() => expect(props.zoom).toHaveBeenCalled())
+    expect((props.zoom as ReturnType<typeof vi.fn>).mock.calls.at(-1)![0]).toBeGreaterThan(1)
+    unmount()
+    // Closed, the next page to show the preview starts at its own facing and framing.
+    expect(props.zoom).toHaveBeenLastCalledWith(1, 0.5)
+    expect(props.rotate).toHaveBeenLastCalledWith(10)
+    renderShop({ noEngine: true })
+    expect(document.querySelector('[class*="surface"]')).toBeNull()
   })
 
   it('tells the engine where its stage image is drawn, and takes it back on close', () => {

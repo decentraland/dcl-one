@@ -859,8 +859,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'previewFocus') return
-    // No engine in mock mode — the Shop's stage and emote try-on have no avatar to show on.
-    if (msg.kind === 'previewStage' || msg.kind === 'previewEmote') return
+    // No engine in mock mode — the Shop's stage, emote try-on, turning and zoom have no avatar to show on.
+    if (msg.kind === 'previewStage' || msg.kind === 'previewEmote' || msg.kind === 'previewRotate' || msg.kind === 'previewZoom') return
     if (msg.kind === 'previewAvatar') {
       // No engine in mock mode — avatar preview has nothing to render.
       return
