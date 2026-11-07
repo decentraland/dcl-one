@@ -846,11 +846,6 @@ impl ContainingScene<'_, '_> {
         loop {
             let adj_position = position + offset;
 
-            results.extend(
-                self.get_parcel_position(position)
-                    .map(|parcel| (parcel, distance)),
-            );
-
             let x_dist = if ray.x < 0.0 {
                 (((adj_position.x / 16.0).floor() * 16.0) - position.x) / ray.x
             } else if ray.x > 0.0 {
@@ -867,6 +862,15 @@ impl ContainingScene<'_, '_> {
             };
 
             let step_fraction = x_dist.min(z_dist);
+
+            if let Some(scene) =
+                self.get_parcel_position(position + ray * step_fraction.min(1.0) * 0.5)
+            {
+                if !results.iter().any(|(ent, _)| *ent == scene) {
+                    results.push((scene, distance));
+                }
+            }
+
             if step_fraction > 1.0 {
                 return results;
             }
@@ -876,6 +880,96 @@ impl ContainingScene<'_, '_> {
             distance += step.length();
             ray -= step;
         }
+    }
+}
+
+#[cfg(test)]
+mod get_ray_tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    #[test]
+    fn scene_spanning_parcels_is_returned_once() {
+        let mut world = World::new();
+        let a = world.spawn_empty().id();
+        let b = world.spawn_empty().id();
+        // one row of parcels (z in -16..0): scene a on x 0..=2, scene b on x 3..=4
+        let mut pointers = ScenePointers::default();
+        let mut live = LiveScenes::default();
+        for (hash, scene, parcels) in [("a", a, 0..=2), ("b", b, 3..=4)] {
+            live.scenes.insert(hash.to_owned(), scene);
+            for x in parcels {
+                pointers.insert(
+                    IVec2::new(x, 0),
+                    PointerResult::Exists {
+                        hash: hash.to_owned(),
+                        urn: None,
+                    },
+                );
+            }
+        }
+        world.insert_resource(pointers);
+        world.insert_resource(live);
+        world.init_resource::<PortableScenes>();
+
+        let rays = world
+            .run_system_once(|containing: ContainingScene| {
+                [
+                    // within scene a, across all three of its parcels
+                    containing.get_ray(Vec3::new(1.0, 1.0, -8.0), Vec3::X * 46.0),
+                    // across all five parcels
+                    containing.get_ray(Vec3::new(1.0, 1.0, -8.0), Vec3::X * 78.0),
+                ]
+            })
+            .unwrap();
+
+        assert_eq!(rays[0], vec![(a, 0.0)]);
+        assert_eq!(rays[1], vec![(a, 0.0), (b, 47.0)]);
+    }
+
+    #[test]
+    fn ray_reports_the_parcel_it_enters_in_every_direction() {
+        let mut world = World::new();
+        let centre = world.spawn_empty().id();
+        let east = world.spawn_empty().id();
+        let south = world.spawn_empty().id();
+        // centre is parcel (0,0) (x 0..16, z -16..0), east is (1,0), south is (0,-1) (z 0..16)
+        let mut pointers = ScenePointers::default();
+        let mut live = LiveScenes::default();
+        for (hash, scene, parcel) in [
+            ("centre", centre, IVec2::new(0, 0)),
+            ("east", east, IVec2::new(1, 0)),
+            ("south", south, IVec2::new(0, -1)),
+        ] {
+            live.scenes.insert(hash.to_owned(), scene);
+            pointers.insert(
+                parcel,
+                PointerResult::Exists {
+                    hash: hash.to_owned(),
+                    urn: None,
+                },
+            );
+        }
+        world.insert_resource(pointers);
+        world.insert_resource(live);
+        world.init_resource::<PortableScenes>();
+
+        // each ray ends inside the parcel it crosses into
+        let rays = world
+            .run_system_once(|containing: ContainingScene| {
+                [
+                    containing.get_ray(Vec3::new(10.0, 1.0, -8.0), Vec3::X * 10.0),
+                    containing.get_ray(Vec3::new(20.0, 1.0, -8.0), Vec3::NEG_X * 10.0),
+                    containing.get_ray(Vec3::new(8.0, 1.0, -10.0), Vec3::Z * 20.0),
+                    containing.get_ray(Vec3::new(8.0, 1.0, 10.0), Vec3::NEG_Z * 20.0),
+                ]
+            })
+            .unwrap();
+
+        assert_eq!(rays[0], vec![(centre, 0.0), (east, 6.0)]);
+        assert_eq!(rays[1], vec![(east, 0.0), (centre, 4.0)]);
+        assert_eq!(rays[2], vec![(centre, 0.0), (south, 10.0)]);
+        assert_eq!(rays[3], vec![(south, 0.0), (centre, 10.0)]);
     }
 }
 
