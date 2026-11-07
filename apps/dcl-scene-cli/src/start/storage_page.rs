@@ -31,8 +31,7 @@ use std::sync::{Arc, OnceLock};
 
 pub(super) const SOURCE_HEADER: &str = remote::SOURCE_HEADER;
 const CONFIRM_HEADER: &str = remote::CONFIRM_HEADER;
-/// Rows a tab lists before it says "and more": one service-sized page;
-/// the CLI pages past this.
+/// One service-sized page of storage values.
 const LISTED: usize = storage::MAX_LIMIT;
 const ACTIVITY_SHOWN: usize = 40;
 const SCRIPT: &str = concat!(include_str!("page_common.js"), include_str!("storage.js"));
@@ -861,6 +860,7 @@ impl Tab {
 
 #[derive(serde::Deserialize, Default)]
 pub(super) struct PageQuery {
+    pub(super) offset: Option<usize>,
     pub(super) tab: Option<String>,
     pub(super) player: Option<String>,
 }
@@ -1090,6 +1090,17 @@ pub(super) async fn page(
             );
         }
     };
+    if !ctx.target.is_local()
+        && let Some(why) = cross_origin_refusal(&headers)
+    {
+        return message(StatusCode::FORBIDDEN, why);
+    }
+    if !ctx.target.is_local()
+        && (!local || super::page_token(&st, &headers).is_none())
+        && let Some(refused) = gate(&st, peer, &headers)
+    {
+        return refused;
+    }
     let tab = match q.tab.as_deref() {
         Some("player") => Tab::Player,
         Some("env") => Tab::Env,
@@ -1099,7 +1110,7 @@ pub(super) async fn page(
         .player
         .as_deref()
         .and_then(|p| storage::normalize_address(p).ok());
-    let view = gather(&st, &ctx, tab, player.as_deref()).await;
+    let view = gather(&st, &ctx, tab, player.as_deref(), q.offset.unwrap_or(0)).await;
     let body = render(&st, &ctx, &prefix, form_token(&st, &headers), local, &view);
     deploy_document(
         &st,
@@ -1113,6 +1124,7 @@ pub(super) async fn page(
 
 /// Everything the active tab shows.
 struct View {
+    offset: usize,
     tab: Tab,
     player: Option<String>,
     listing: Listing,
@@ -1122,13 +1134,13 @@ struct View {
     activity: Vec<Activity>,
 }
 
-async fn gather(st: &AppState, ctx: &Ctx, tab: Tab, player: Option<&str>) -> View {
+async fn gather(st: &AppState, ctx: &Ctx, tab: Tab, player: Option<&str>, offset: usize) -> View {
     if ctx.target.is_local() {
         let listing = match tab {
-            Tab::Scene => local_listing(ctx.db.list(Scope::Scene, None, LISTED, 0)),
+            Tab::Scene => local_listing(ctx.db.list(Scope::Scene, None, LISTED, offset)),
             Tab::Player => match player {
                 Some(address) => {
-                    local_listing(ctx.db.list(Scope::Player(address), None, LISTED, 0))
+                    local_listing(ctx.db.list(Scope::Player(address), None, LISTED, offset))
                 }
                 None => Listing::empty(),
             },
@@ -1137,6 +1149,8 @@ async fn gather(st: &AppState, ctx: &Ctx, tab: Tab, player: Option<&str>) -> Vie
                     total: entries.len(),
                     rows: entries
                         .iter()
+                        .skip(offset)
+                        .take(LISTED)
                         .map(|e| row_from_env(&e.key, &e.value, Some(e.source)))
                         .collect(),
                     problem: None,
@@ -1148,6 +1162,7 @@ async fn gather(st: &AppState, ctx: &Ctx, tab: Tab, player: Option<&str>) -> Vie
             },
         };
         return View {
+            offset,
             tab,
             player: player.map(str::to_owned),
             listing,
@@ -1162,7 +1177,7 @@ async fn gather(st: &AppState, ctx: &Ctx, tab: Tab, player: Option<&str>) -> Vie
             activity: ctx.db.activity(ACTIVITY_SHOWN).unwrap_or_default(),
         };
     }
-    let limit = format!("limit={LISTED}");
+    let limit = format!("limit={LISTED}&offset={offset}");
     let mut players = Vec::new();
     let listing = match tab {
         Tab::Scene => fetch_listing(st, ctx, "/values", Some(&limit)).await,
@@ -1180,15 +1195,13 @@ async fn gather(st: &AppState, ctx: &Ctx, tab: Tab, player: Option<&str>) -> Vie
                 // the service lists who has values, not how many each holds
                 let listed = fetch_listing(st, ctx, "/players", Some(&limit)).await;
                 players = listed.rows.iter().map(|r| (r.key.clone(), None)).collect();
-                Listing {
-                    problem: listed.problem,
-                    ..Listing::empty()
-                }
+                listed
             }
         },
         Tab::Env => fetch_listing(st, ctx, "/env", Some(&limit)).await,
     };
     View {
+        offset,
         tab,
         player: player.map(str::to_owned),
         listing,
@@ -1230,6 +1243,7 @@ fn render(st: &AppState, ctx: &Ctx, prefix: &str, tok: &str, local: bool, view: 
   {target}
   {tabs}
   {tab_panel}
+  {paging}
   {activity}
   {tools}
 </section></main><script>{script}</script>"#,
@@ -1242,6 +1256,7 @@ fn render(st: &AppState, ctx: &Ctx, prefix: &str, tok: &str, local: bool, view: 
             Tab::Player => player_panel(prefix, player, &view.players, &view.listing),
             Tab::Env => env_panel(&view.listing, ctx.target.is_local()),
         },
+        paging = pagination(prefix, view),
         activity = activity_drawer(&view.activity, ctx.target.is_local()),
         tools = tools_drawer(prefix, ctx.target.is_local()),
         script = SCRIPT,
@@ -1394,15 +1409,42 @@ fn rows_html(listing: &Listing, empty: &str) -> String {
         out.push_str(&row_html(row));
     }
     out.push_str("</div>");
-    if listing.total > listing.rows.len() {
-        out.push_str(&format!(
-            r#"<p class="note">Showing {} of {} keys; <code>dcl-scene-cli storage scene list --offset {}</code> pages through the rest.</p>"#,
-            listing.rows.len(),
-            listing.total,
-            listing.rows.len()
+    out
+}
+
+fn pagination(prefix: &str, view: &View) -> String {
+    let count = view.listing.rows.len();
+    if view.offset == 0 && count >= view.listing.total {
+        return String::new();
+    }
+    let mut query = format!("{prefix}/storage?tab={}", view.tab.key());
+    if let Some(player) = &view.player {
+        query.push_str(&format!(
+            "&player={}",
+            crate::deploy::encode_segment(player)
         ));
     }
-    out
+    let link = |offset: usize, label: &str| {
+        format!(
+            r#"<a class="sto__btn" href="{}">{label}</a>"#,
+            esc(&format!("{query}&offset={offset}"))
+        )
+    };
+    format!(
+        r#"<nav class="sto__players" aria-label="Storage pages">{previous}<span class="note">Showing {count} of {total} keys (offset {offset})</span>{next}</nav>"#,
+        previous = if view.offset > 0 {
+            link(view.offset.saturating_sub(LISTED), "Previous")
+        } else {
+            String::new()
+        },
+        next = if count > 0 && view.offset.saturating_add(count) < view.listing.total {
+            link(view.offset.saturating_add(count), "Next")
+        } else {
+            String::new()
+        },
+        total = view.listing.total,
+        offset = view.offset
+    )
 }
 
 fn add_form(kind: &str, placeholder: &str) -> String {
@@ -1416,6 +1458,9 @@ fn add_form(kind: &str, placeholder: &str) -> String {
         placeholder = esc(placeholder),
     )
     .replace("data-add>", &format!(r#"data-add data-kind="{kind}">"#))
+    + if kind == "json" {
+        r#"<p class="note">Values use JSON when valid: <code>true</code>, <code>null</code> and numbers keep their JSON types. Use quotes for text such as <code>"123"</code>; other text is stored as a string. The same rules apply when editing.</p>"#
+    } else { "" }
 }
 
 fn scene_panel(listing: &Listing) -> String {
@@ -1428,7 +1473,7 @@ fn scene_panel(listing: &Listing) -> String {
         problem = problem_note(listing.problem.as_deref()),
         rows = rows_html(
             listing,
-            "No scene values yet. Add one below, or let the scene write one with <code>Storage.set('key', value)</code>."
+            "No scene values yet. Add one below, or let the scene write one with <code>Storage.set('key', value)</code>.",
         ),
         add = add_form("json", "JSON value, or plain text"),
     )
@@ -1480,7 +1525,7 @@ fn player_panel(
             problem = problem_note(listing.problem.as_deref()),
             rows = rows_html(
                 listing,
-                "No values for this player yet. Add one below, or let the scene write one with <code>Storage.player.set(address, 'key', value)</code>."
+                "No values for this player yet. Add one below, or let the scene write one with <code>Storage.player.set(address, 'key', value)</code>.",
             ),
             add = add_form("json", "JSON value, or plain text"),
         ),
@@ -1523,7 +1568,7 @@ fn env_panel(listing: &Listing, local: bool) -> String {
         problem = problem_note(listing.problem.as_deref()),
         rows = rows_html(
             listing,
-            "No variables yet. Add one below, or put <code>KEY=VALUE</code> lines in the scene's <code>.env</code>."
+            "No variables yet. Add one below, or put <code>KEY=VALUE</code> lines in the scene's <code>.env</code>.",
         ),
         add = add_form("env", "value (a string)"),
     )
@@ -1581,7 +1626,8 @@ fn tools_drawer(prefix: &str, local: bool) -> String {
         r#"<details class="drawer"><summary>Import and export</summary><div class="drawer__body">
       <span class="note">A snapshot is upstream's <code>server-storage.json</code> (<code>env</code>, <code>world</code>, <code>players</code>), so it drops into an sdk-commands preview as-is.</span>
       <div class="sto__tools"><a class="bar__cta sto__export" href="{export}" download="server-storage.json">Download snapshot</a>
-      <form class="sto__tools" data-import><input class="sto__in sto__file" type="file" name="file" accept="application/json,.json" aria-label="Snapshot file"><label class="sto__merge"><input type="checkbox" name="merge"> Merge over what is here</label><button class="sto__btn" type="submit">Import</button></form></div>
+      <form class="sto__tools" data-import><input class="sto__in sto__file" type="file" name="file" accept="application/json,.json" aria-label="Snapshot file"><label class="sto__merge"><input type="checkbox" name="merge" checked> Merge with existing values</label><button class="sto__btn" type="submit">Import snapshot</button></form></div>
+      <p class="note">Merge keeps keys missing from the snapshot and overwrites matching keys. Uncheck Merge to replace all local scene, player and runtime environment values; replacement asks for confirmation.</p>
     </div></details>"#,
         export = esc(&format!("{prefix}/storage/export")),
     )

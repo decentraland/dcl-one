@@ -163,7 +163,8 @@ pub(super) fn layout_grid(parcels: &[(i64, i64)], base: (i64, i64), spawns: &[Va
             return r#"<div class="lay__cell"></div>"#.to_string();
         };
         format!(
-            r#"<div class="lay__cell lay__cell--{kind}" data-cell="{x},{y}" title="{title}"></div>"#
+            r#"<div class="lay__cell lay__cell--{kind}" data-cell="{x},{y}" role="button" tabindex="-1" aria-label="{title}" aria-pressed="{member}" title="{title}"></div>"#,
+            member = members.contains(&(x, y)),
         )
     };
     let cells: String = (y0..=y1)
@@ -189,7 +190,7 @@ pub(super) fn layout_grid(parcels: &[(i64, i64)], base: (i64, i64), spawns: &[Va
         ));
     }
     format!(
-        r#"<div class="lay__map" style="--lay-cols:{cols}"><div class="lay__ruler">{ruler}</div><div class="lay__mid"><div class="lay__nums">{nums}</div><div class="lay__grid" id="lay-grid" role="img" aria-label="parcel layout">{cells}{areas}</div></div></div>"#
+        r#"<div class="lay__map" style="--lay-cols:{cols}"><div class="lay__ruler">{ruler}</div><div class="lay__mid"><div class="lay__nums">{nums}</div><div class="lay__grid" id="lay-grid" role="group" aria-label="Parcel layout" aria-describedby="lay-hint">{cells}{areas}</div></div></div>"#
     )
 }
 
@@ -305,7 +306,7 @@ impl ServerState {
 /// minus their warning wash: a server is a choice, not a risk to players.
 pub(super) fn server_pane(state: ServerState) -> String {
     format!(
-        r#"<section class="lay__pane" data-pane="server" hidden><span class="knob__k">Multiplayer</span><div class="lay__perms"><label class="lay__perm lay__perm--plain"><input class="sw" type="checkbox" id="mp-switch"{c} disabled><span class="lay__perm-t"><span class="lay__perm-n">Authoritative server</span><span class="lay__perm-d">Run the scene a second time as its server: verified message senders, server-only writes, Storage</span></span></label></div><p class="note" id="mp-status" data-server="{key}">{says}</p></section>"#,
+        r#"<section class="lay__pane" id="lay-pane-server" role="tabpanel" aria-labelledby="lay-tab-server" data-pane="server" hidden><span class="knob__k">Multiplayer</span><div class="lay__perms"><label class="lay__perm lay__perm--plain"><input class="sw" type="checkbox" id="mp-switch"{c} disabled><span class="lay__perm-t"><span class="lay__perm-n">Authoritative server</span><span class="lay__perm-d">Run the scene a second time as its server: verified message senders, server-only writes, Storage</span></span></label></div><p class="note" id="mp-status" data-server="{key}">{says}</p></section>"#,
         c = if state == ServerState::Off {
             ""
         } else {
@@ -330,7 +331,8 @@ pub(super) fn scene_layout_card(
     let (w, h) = ((max_x - min_x + 1) * 16, (max_y - min_y + 1) * 16);
     let tab = |key: &str, label: &str, selected: bool| {
         format!(
-            r#"<button type="button" class="jn2__tab lay__tab" data-laytab="{key}" role="tab" aria-selected="{selected}" disabled>{label}</button>"#
+            r#"<button type="button" class="jn2__tab lay__tab" data-laytab="{key}" id="lay-tab-{key}" role="tab" aria-controls="lay-pane-{key}" tabindex="{tabindex}" aria-selected="{selected}" disabled>{label}</button>"#,
+            tabindex = if selected { 0 } else { -1 },
         )
     };
     let tabs = format!(
@@ -341,19 +343,21 @@ pub(super) fn scene_layout_card(
         tab("perms", "Permissions", false),
         tab("server", "Multiplayer", false)
     );
-    let info_pane = format!(r#"<section class="lay__pane" data-pane="info">{info_pane}</section>"#);
+    let info_pane = format!(
+        r#"<section class="lay__pane" id="lay-pane-info" role="tabpanel" aria-labelledby="lay-tab-info" data-pane="info">{info_pane}</section>"#
+    );
     let parcels_pane = format!(
-        r#"<section class="lay__pane" data-pane="parcels" hidden><span class="knob__k">Scene bounds</span><div class="lay__kvs"><div class="lay__kv"><span class="k">Parcels</span><code>{n}</code></div><div class="lay__kv"><span class="k">Size</span><code>{w} × {h} m</code></div><div class="lay__kv"><span class="k">Range</span><code>{min_x},{min_y} → {max_x},{max_y}</code></div><div class="lay__kv"><span class="k">Base parcel</span><form class="lay__basev" id="lay-base-form"><input class="lay__base" id="lay-base-input" name="base" value="{bx},{by}" aria-label="Move scene to base parcel x,y" spellcheck="false" autocomplete="off" disabled><button type="submit" class="deep__copy" disabled>Move</button></form></div></div><p class="note">Move preserves the scene’s shape and spawn points. Publish to apply.</p></section>"#,
+        r#"<section class="lay__pane" id="lay-pane-parcels" role="tabpanel" aria-labelledby="lay-tab-parcels" data-pane="parcels" hidden><span class="knob__k">Scene bounds</span><div class="lay__kvs"><div class="lay__kv"><span class="k">Parcels</span><code>{n}</code></div><div class="lay__kv"><span class="k">Size</span><code>{w} × {h} m</code></div><div class="lay__kv"><span class="k">Range</span><code>{min_x},{min_y} → {max_x},{max_y}</code></div><div class="lay__kv"><span class="k">Base parcel</span><form class="lay__basev" id="lay-base-form"><input class="lay__base" id="lay-base-input" name="base" value="{bx},{by}" aria-label="Move scene to base parcel x,y" spellcheck="false" autocomplete="off" disabled><button type="submit" class="deep__copy" disabled>Move</button></form></div></div><p class="note">Move preserves the scene’s shape and spawn points. Publish to apply.</p></section>"#,
         n = parcels.len(),
         bx = base.0,
         by = base.1,
     );
     let spawns_pane = format!(
-        r#"<section class="lay__pane" data-pane="spawns" hidden><span class="knob__k">Spawn areas</span><div class="lay__srows">{rows}</div><div id="lay-sed"></div></section>"#,
+        r#"<section class="lay__pane" id="lay-pane-spawns" role="tabpanel" aria-labelledby="lay-tab-spawns" data-pane="spawns" hidden><span class="knob__k">Spawn areas</span><div class="lay__srows">{rows}</div><div id="lay-sed"></div></section>"#,
         rows = spawn_rows(spawns),
     );
     let perms_pane = format!(
-        r#"<section class="lay__pane" data-pane="perms" hidden><span class="knob__k">Scene permissions</span><div class="lay__perms">{}</div><p class="note">Publishing rights come from your wallet.</p></section>"#,
+        r#"<section class="lay__pane" id="lay-pane-perms" role="tabpanel" aria-labelledby="lay-tab-perms" data-pane="perms" hidden><span class="knob__k">Scene permissions</span><div class="lay__perms">{}</div><p class="note">Publishing rights come from your wallet.</p></section>"#,
         permission_rows(scene_json),
     );
     let media_row = format!(
@@ -368,7 +372,7 @@ pub(super) fn scene_layout_card(
             .unwrap_or_default()),
     );
     format!(
-        r#"<div class="jn lay lay--info" id="scene-layout"><div class="jn2__tabs" role="tablist">{tabs}</div><div class="lay__body"><div class="lay__left"><div class="lay__legend"><span class="lay__key"><i class="lay__swatch lay__swatch--in"></i>In scene</span><span class="lay__key"><i class="lay__swatch lay__swatch--area"></i>Spawn area</span><span class="lay__size">{n} parcel{s} · {w} × {h} m</span></div>{map}<div class="note lay__hint" id="lay-hint">Click the title, description, tags or cover to edit — changes save to scene.json</div></div><div class="lay__rail">{info_pane}{parcels_pane}{spawns_pane}{perms_pane}{server_pane}</div></div>{media_row}</div>"#,
+        r#"<div class="jn lay lay--info" id="scene-layout"><div class="jn2__tabs" role="tablist" aria-label="Scene settings">{tabs}</div><div class="lay__body"><div class="lay__left"><div class="lay__legend"><span class="lay__key"><i class="lay__swatch lay__swatch--in"></i>In scene</span><span class="lay__key"><i class="lay__swatch lay__swatch--area"></i>Spawn area</span><span class="lay__size">{n} parcel{s} · {w} × {h} m</span></div>{map}<div class="note lay__hint" id="lay-hint">Click the title, description, tags or cover to edit — changes save to scene.json</div></div><div class="lay__rail">{info_pane}{parcels_pane}{spawns_pane}{perms_pane}{server_pane}</div></div>{media_row}</div>"#,
         server_pane = server_pane(server),
         n = parcels.len(),
         s = if parcels.len() == 1 { "" } else { "s" },

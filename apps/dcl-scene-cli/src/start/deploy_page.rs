@@ -2865,7 +2865,7 @@ fn target_card(
         },
         if world.is_some() {
             format!(
-                r#"{}<div class="tgt__management">{}{}</div>"#,
+                r#"{}<details class="tgt__manage"><summary>Manage placement, entrance and World replacement</summary><div class="tgt__management">{}{}</div></details>"#,
                 multiscene_pane(dest, status, prefix, tok),
                 col("Upload", &upload_panel(p, status)),
                 col(
