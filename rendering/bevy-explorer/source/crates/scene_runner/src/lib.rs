@@ -822,7 +822,7 @@ impl ContainingScene<'_, '_> {
     }
 
     // get all scenes along a ray ordered by closest point, together with distance to closest point
-    pub fn get_ray(&self, mut position: Vec3, mut ray: Vec3) -> Vec<(Entity, f32)> {
+    pub fn get_ray(&self, position: Vec3, mut ray: Vec3) -> Vec<(Entity, f32)> {
         // global scenes first
         let mut results: Vec<(Entity, f32)> = self
             .portable_scenes
@@ -841,44 +841,44 @@ impl ContainingScene<'_, '_> {
             ray = ray.normalize() * 1000.0;
         }
 
-        let offset: Vec3 = Vec3::new(ray.x.signum() * 0.01, 0.0, ray.z.signum() * 0.01);
+        let length = ray.length();
+        let dir = ray / length;
+        let mut parcel = vec3_to_parcel(position);
 
         loop {
-            let adj_position = position + offset;
-
-            let x_dist = if ray.x < 0.0 {
-                (((adj_position.x / 16.0).floor() * 16.0) - position.x) / ray.x
-            } else if ray.x > 0.0 {
-                (((adj_position.x / 16.0).ceil() * 16.0) - position.x) / ray.x
-            } else {
-                999.0
-            };
-            let z_dist = if ray.z < 0.0 {
-                (((adj_position.z / 16.0).floor() * 16.0) - position.z) / ray.z
-            } else if ray.z > 0.0 {
-                (((adj_position.z / 16.0).ceil() * 16.0) - position.z) / ray.z
-            } else {
-                999.0
-            };
-
-            let step_fraction = x_dist.min(z_dist);
-
-            if let Some(scene) =
-                self.get_parcel_position(position + ray * step_fraction.min(1.0) * 0.5)
-            {
+            if let Some(scene) = self.get_parcel_position(parcel_to_vec3(parcel)) {
                 if !results.iter().any(|(ent, _)| *ent == scene) {
                     results.push((scene, distance));
                 }
             }
 
-            if step_fraction > 1.0 {
+            // distance along the ray to the current parcel's far edge on each axis
+            let x_dist = if dir.x > 0.0 {
+                ((parcel.x + 1) as f32 * PARCEL_SIZE - position.x) / dir.x
+            } else if dir.x < 0.0 {
+                (parcel.x as f32 * PARCEL_SIZE - position.x) / dir.x
+            } else {
+                f32::INFINITY
+            };
+            // parcel y runs along world -z
+            let z_dist = if dir.z > 0.0 {
+                (-parcel.y as f32 * PARCEL_SIZE - position.z) / dir.z
+            } else if dir.z < 0.0 {
+                (-(parcel.y + 1) as f32 * PARCEL_SIZE - position.z) / dir.z
+            } else {
+                f32::INFINITY
+            };
+
+            distance = x_dist.min(z_dist);
+            if distance > length {
                 return results;
             }
 
-            let step = ray * step_fraction;
-            position += step;
-            distance += step.length();
-            ray -= step;
+            if x_dist < z_dist {
+                parcel.x += dir.x.signum() as i32;
+            } else {
+                parcel.y -= dir.z.signum() as i32;
+            }
         }
     }
 }
@@ -970,6 +970,58 @@ mod get_ray_tests {
         assert_eq!(rays[1], vec![(east, 0.0), (centre, 4.0)]);
         assert_eq!(rays[2], vec![(centre, 0.0), (south, 10.0)]);
         assert_eq!(rays[3], vec![(south, 0.0), (centre, 10.0)]);
+    }
+
+    #[test]
+    fn ray_grazing_a_parcel_edge_reports_every_parcel_at_its_entry() {
+        let mut world = World::new();
+        let centre = world.spawn_empty().id();
+        let west = world.spawn_empty().id();
+        let south = world.spawn_empty().id();
+        let south_west = world.spawn_empty().id();
+        let mut pointers = ScenePointers::default();
+        let mut live = LiveScenes::default();
+        for (hash, scene, parcel) in [
+            ("centre", centre, IVec2::new(0, 0)),
+            ("west", west, IVec2::new(-1, 0)),
+            ("south", south, IVec2::new(0, -1)),
+            ("south_west", south_west, IVec2::new(-1, -1)),
+        ] {
+            live.scenes.insert(hash.to_owned(), scene);
+            pointers.insert(
+                parcel,
+                PointerResult::Exists {
+                    hash: hash.to_owned(),
+                    urn: None,
+                },
+            );
+        }
+        world.insert_resource(pointers);
+        world.insert_resource(live);
+        world.init_resource::<PortableScenes>();
+
+        // both rays start within 1 cm of the z = 0 edge and cross it at a shallow angle
+        let rays = world
+            .run_system_once(|containing: ContainingScene| {
+                [
+                    // crosses into south after 5 m
+                    containing.get_ray(Vec3::new(1.0, 1.0, -0.005), Vec3::new(14.0, 0.0, 0.014)),
+                    // crosses into west after 8 m, then into south_west after 18 m
+                    containing.get_ray(Vec3::new(8.0, 1.0, -0.0135), Vec3::new(-40.0, 0.0, 0.03)),
+                ]
+            })
+            .unwrap();
+
+        let rounded = |hits: &[(Entity, f32)]| {
+            hits.iter()
+                .map(|(scene, distance)| (*scene, (distance * 100.0).round() / 100.0))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(rounded(&rays[0]), vec![(centre, 0.0), (south, 5.0)]);
+        assert_eq!(
+            rounded(&rays[1]),
+            vec![(centre, 0.0), (west, 8.0), (south_west, 18.0)]
+        );
     }
 }
 
