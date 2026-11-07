@@ -18,8 +18,9 @@ export async function fetchBannedNames(opts: { base?: string; fetchImpl?: typeof
   const doFetch = opts.fetchImpl ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
   const res = await doFetch(`${catalystBase(opts.base)}/dcl-lists/banned-names`, { method: "POST", headers: { accept: "application/json" }, signal: opts.signal });
   if (!res.ok) {
-    // The unread body is released, not left holding the connection.
-    await res.body?.cancel();
+    // The unread body is released, not left holding the connection; a stream that already failed can't be,
+    // and that mustn't replace the status.
+    void res.body?.cancel().catch(() => {});
     throw new Error(`The banned-names list answered ${res.status}`);
   }
   const body = (await res.json()) as { data?: unknown };

@@ -47,8 +47,9 @@ export function rpcReader(chainId: number, opts: { base?: string; fetchImpl?: ty
         signal,
       });
       if (!res.ok) {
-        // The unread body is released, not left holding the connection.
-        await res.body?.cancel();
+        // The unread body is released, not left holding the connection; a stream that already failed can't
+        // be, and that mustn't replace the status.
+        void res.body?.cancel().catch(() => {});
         throw new Error(`The chain reader answered ${res.status}`);
       }
       const body = (await res.json()) as RpcResponse;

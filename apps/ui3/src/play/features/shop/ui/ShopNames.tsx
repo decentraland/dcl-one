@@ -1,7 +1,7 @@
-// The Shop's NAMEs section on UNIQUE NAME: a NAME to register, typed in the design's hero, then the banner
-// on what a NAME brings; RESALE NAME beside it leads to the NAMEs for resale. What the typed NAME is (too
-// long, taken, available…), its price and what CLAIM NAME, MAKE OFFER and RESALE NAME do come in as props;
-// the page checks the NAME and draws the nametag over the avatar from the same value.
+// The Shop's NAMEs section: UNIQUE NAME (a NAME to register, typed in the design's hero, then the banner on
+// what a NAME brings) and RESALE NAME (the NAMEs others resell, which the page lists). What the typed NAME
+// is (too long, taken, available…), its price and what CLAIM NAME and MAKE OFFER do come in as props; the
+// page checks the NAME and draws the nametag over the avatar from the same value.
 
 import { Button, Chip, MaskIcon } from '../../../design'
 import uniqueIcon from '../../../assets/shop/names/unique-name.svg'
@@ -27,9 +27,13 @@ const WORLDS_DOCS_URL = 'https://docs.decentraland.org/creator/worlds/about/'
  */
 export type ShopNameStatus = 'idle' | 'short' | 'tooLong' | 'checking' | 'available' | 'taken' | 'banned' | 'error'
 
+export type ShopNamesTab = 'unique' | 'resale'
+
 export interface ShopNamesProps {
-  /** RESALE NAME: the NAMEs others resell. Absent while the Marketplace's rollout is off: no chip. */
-  onResale?: () => void
+  tab: ShopNamesTab
+  onTab: (tab: ShopNamesTab) => void
+  /** RESALE NAME's page: the page draws the NAMEs on resale. Absent while the Marketplace's rollout is off: no chip, and the section stays on UNIQUE NAME. */
+  resale?: React.ReactNode
   /** The typed NAME. */
   value: string
   /** The NAME as edited, already cleaned and capped. */
@@ -56,14 +60,25 @@ export interface ShopNamesProps {
 }
 
 export function ShopNames(props: ShopNamesProps): React.JSX.Element {
+  const { onTab, resale } = props
+  const offersResale = resale != null
+  const tab: ShopNamesTab = offersResale ? props.tab : 'unique'
   return (
     <div className={styles.names}>
       <div className={styles.chips} role="group" aria-label="NAMEs">
-        <Chip variant="dark" label="Unique name" icon={<MaskIcon src={uniqueIcon} size={26} />} selected />
-        {props.onResale ? <Chip variant="dark" label="Resale name" icon={<MaskIcon src={resaleIcon} size={26} />} onClick={props.onResale} /> : null}
+        <Chip variant="dark" label="Unique name" icon={<MaskIcon src={uniqueIcon} size={26} />} selected={tab === 'unique'} onClick={() => onTab('unique')} />
+        {offersResale ? (
+          <Chip variant="dark" label="Resale name" icon={<MaskIcon src={resaleIcon} size={26} />} selected={tab === 'resale'} onClick={() => onTab('resale')} />
+        ) : null}
       </div>
-      <UniqueName {...props} />
-      <NameBanner />
+      {tab === 'unique' ? (
+        <>
+          <UniqueName {...props} />
+          <NameBanner />
+        </>
+      ) : (
+        resale
+      )}
     </div>
   )
 }
