@@ -4011,7 +4011,14 @@ async fn genesis_collaboration_requires_redeployment_after_any_parcel_ownership_
     let owner_key = random_key();
     let owner = address_of(&owner_key);
     let collab = address_of(&key);
-    let pointers = vec![genesis_parcel(), genesis_parcel()];
+    let first = genesis_parcel();
+    let second = loop {
+        let parcel = genesis_parcel();
+        if parcel != first {
+            break parcel;
+        }
+    };
+    let pointers = vec![first, second];
     fixture.parcel(&pointers[0], &owner, 1).await;
     fixture.parcel(&pointers[1], &owner, 2).await;
     let old = format!("bafyCollabEpoch{}", Uuid::new_v4().simple());
