@@ -1,11 +1,6 @@
-import {
-  AuthChain,
-  AuthIdentity,
-  AuthLinkType,
-  Authenticator
-} from '../../../../packages/@dcl/sdk-commands/node_modules/@dcl/crypto'
-import { ethSign } from '../../../../packages/@dcl/sdk-commands/node_modules/@dcl/crypto/dist/crypto'
-import { hexToBytes } from '../../../../packages/@dcl/sdk-commands/node_modules/eth-connect'
+import { AuthChain, AuthIdentity, AuthLinkType, Authenticator } from '@dcl/crypto'
+import { ethSign } from '@dcl/crypto/dist/crypto'
+import { hexToBytes } from 'eth-connect'
 import { createWallet } from '../../../../packages/@dcl/sdk-commands/src/logic/account'
 import {
   buildSignedFetchPayload,
@@ -241,7 +236,7 @@ describe('when the linker dApp returns a signature of the session message', () =
 
   describe('and the wallet is a smart contract wallet', () => {
     let contractChain: AuthChain
-    let provider: import('../../../../packages/@dcl/sdk-commands/node_modules/@dcl/crypto-middleware').AuthChainProvider
+    let provider: import('@dcl/crypto-middleware').AuthChainProvider
 
     beforeEach(() => {
       contractChain = dappChain.map((link) =>

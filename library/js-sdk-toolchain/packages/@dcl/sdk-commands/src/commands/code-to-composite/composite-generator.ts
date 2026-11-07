@@ -4,11 +4,13 @@ import {
   generateEntityNamesType,
   FileSystemInterface
 } from '@dcl/inspector'
-import type { IEngine as IEngineInspector } from '@dcl/inspector/node_modules/@dcl/ecs'
 import { CliComponents } from '../../components'
 import { createFileSystemInterfaceFromFsComponent } from '../start/data-layer/fs'
 import { IEngine, Composite } from '@dcl/ecs/dist-cjs'
 import * as path from 'path'
+
+// the engine type the inspector's own @dcl/ecs build expects
+type IEngineInspector = Parameters<typeof dumpEngineToComposite>[0]
 
 async function ensureDirectoryExists({ fs }: Pick<CliComponents, 'fs'>, filePath: string): Promise<void> {
   const dir = path.dirname(filePath)

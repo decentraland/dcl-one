@@ -15,12 +15,9 @@
     "server-logs": "sdk-commands scene-insights tail"
   },
   "devDependencies": {
-    "@dcl/ecs": "file:../../../../packages/@dcl/ecs",
-    "@dcl/js-runtime": "7.0.0",
-    "@dcl/sdk": "file:../../../../packages/@dcl/sdk",
-    "@dcl/sdk-commands": "file:../../../../packages/@dcl/sdk-commands"
-  },
-  "dependencies": {
-    "@dcl/ecs-math": "2.1.0"
+    "@dcl/ecs": "workspace:*",
+    "@dcl/js-runtime": "workspace:*",
+    "@dcl/sdk": "workspace:*",
+    "@dcl/sdk-commands": "workspace:*"
   }
 }

@@ -1,7 +1,7 @@
 import { mkdtemp, realpath, writeFile } from 'fs/promises'
 import os from 'os'
 import path from 'path'
-import chokidar, { FSWatcher } from '../../../../packages/@dcl/sdk-commands/node_modules/chokidar'
+import chokidar, { FSWatcher } from 'chokidar'
 import { WsSceneMessage } from '@dcl/protocol/out-js/decentraland/sdk/development/local_development.gen'
 import { wireFileWatcherToWebSockets } from '../../../../packages/@dcl/sdk-commands/src/commands/start/server/file-watch-notifier'
 import { sceneUpdateClients } from '../../../../packages/@dcl/sdk-commands/src/commands/start/server/routes'

@@ -1,5 +1,5 @@
-import { Authenticator, AuthIdentity } from '../../../../packages/@dcl/sdk-commands/node_modules/@dcl/crypto'
-import type { AuthChainProvider } from '../../../../packages/@dcl/sdk-commands/node_modules/@dcl/crypto-middleware'
+import { Authenticator, AuthIdentity } from '@dcl/crypto'
+import type { AuthChainProvider } from '@dcl/crypto-middleware'
 import { createEphemeralIdentity } from '../../../../packages/@dcl/sdk-commands/src/commands/scene-insights/session'
 import {
   createInsightsProvider,

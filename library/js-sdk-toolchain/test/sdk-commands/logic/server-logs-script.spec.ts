@@ -2,11 +2,11 @@ import { stripVTControlCharacters } from 'util'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import esbuild from '../../../packages/@dcl/sdk-commands/node_modules/esbuild'
+import esbuild from 'esbuild'
 import { createFsComponent } from '../../../packages/@dcl/sdk-commands/src/components/fs'
 import { bundleProject, BundleComponents, CompileOptions } from '../../../packages/@dcl/sdk-commands/src/logic/bundle'
 
-jest.mock('../../../packages/@dcl/sdk-commands/node_modules/esbuild', () => ({ context: jest.fn() }))
+jest.mock('esbuild', () => ({ context: jest.fn() }))
 
 // Stop at the compiler boundary: these tests exercise the build's real JSON updates.
 describe('when a scene build configures its server logs script', () => {

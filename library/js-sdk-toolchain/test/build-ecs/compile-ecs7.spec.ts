@@ -2,14 +2,13 @@ import { resolve } from 'path'
 import { readFileSync } from 'fs'
 import { itExecutes, ensureFileExists, itDeletesFolder } from '../../scripts/helpers'
 
+const sdkCommands = resolve(__dirname, '../../packages/@dcl/sdk-commands/dist/index.js')
+
 describe('build: simple scene compilation', () => {
   const cwd = resolve(__dirname, './fixtures/ecs7-scene')
 
   itDeletesFolder('./bin', cwd)
-  itDeletesFolder('./node_modules', cwd)
-
-  itExecutes('npm i --silent --no-progress', cwd)
-  itExecutes('npm run build --silent', cwd)
+  itExecutes(`node ${sdkCommands} build`, cwd)
 
   it('ensure files exist', () => {
     const binPath = ensureFileExists('bin/game.js', cwd)
@@ -33,10 +32,7 @@ describe('build: scene with etherum', () => {
   const cwd = resolve(__dirname, './fixtures/ecs7-ui-ethereum')
 
   itDeletesFolder('./bin', cwd)
-  itDeletesFolder('./node_modules', cwd)
-
-  itExecutes('npm i --silent --no-progress', cwd)
-  itExecutes('npm run build --silent', cwd)
+  itExecutes(`node ${sdkCommands} build`, cwd)
 
   it('ensure files exist', () => {
     const binPath = ensureFileExists('bin/game.js', cwd)

@@ -5,7 +5,7 @@ import { initComponents } from '../../../../packages/@dcl/sdk-commands/src/compo
 import { parseArgs } from '../../../../packages/@dcl/sdk-commands/src/logic/args'
 import { args, main } from '../../../../packages/@dcl/sdk-commands/src/commands/scene-insights'
 
-import { Authenticator } from '../../../../packages/@dcl/sdk-commands/node_modules/@dcl/crypto'
+import { Authenticator } from '@dcl/crypto'
 import {
   createEphemeralIdentity,
   INSIGHTS_OPERATIONS

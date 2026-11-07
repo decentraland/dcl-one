@@ -1,0 +1,4 @@
+dist
+node_modules
+src/protocol/index.ts
+test/codegen/client.ts

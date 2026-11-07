@@ -1,0 +1,47 @@
+{
+  "name": "@dcl/rpc",
+  "version": "1.1.2",
+  "description": "Transport-agnostic RPC with ports, modules, streams and protobuf codegen",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/decentraland/dcl-one.git",
+    "directory": "library/rpc"
+  },
+  "homepage": "https://github.com/decentraland/dcl-one/tree/main/library/rpc#readme",
+  "bugs": "https://decentraland.org/help/",
+  "keywords": [
+    "rpc",
+    "protobuf",
+    "decentraland"
+  ],
+  "license": "Apache-2.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "prettier": {
+    "printWidth": 120,
+    "semi": false
+  },
+  "scripts": {
+    "build": "make build",
+    "test": "make test"
+  },
+  "dependencies": {
+    "mitt": "3.0.1",
+    "protobufjs": "7.2.4"
+  },
+  "devDependencies": {
+    "@dcl/ts-proto": "1.154.0",
+    "@types/jest": "30.0.0",
+    "@types/node": "26.6.6",
+    "@types/ws": "8.18.2",
+    "fp-future": "1.0.1",
+    "jest": "30.5.2",
+    "rxjs": "7.8.2",
+    "ts-jest": "29.4.15",
+    "typescript": "5.9.3",
+    "ws": "8.22.1"
+  }
+}

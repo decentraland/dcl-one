@@ -1,8 +1,8 @@
 import { createAnalyticsComponent } from '../../../packages/@dcl/sdk-commands/src/components/analytics'
 import { createFsComponent } from '../../../packages/@dcl/sdk-commands/src/components/fs'
 import { createStderrCliLogger } from '../../../packages/@dcl/sdk-commands/src/components/log'
-import { createRecordConfigComponent } from '../../../packages/@dcl/sdk-commands/node_modules/@well-known-components/env-config-provider'
-import { homedir } from 'os'
+import { createRecordConfigComponent } from '@well-known-components/env-config-provider'
+import { homedir, tmpdir } from 'os'
 import path from 'path'
 import { isCI } from '../../../packages/@dcl/sdk-commands/src/logic/config'
 import { requireStringConfig } from '../../../packages/@dcl/sdk-commands/src/components/config'
@@ -58,6 +58,8 @@ describe('Analytics Component', () => {
   })
 
   it('should track event', async () => {
+    // no @dcl/sdk is installed in the working directory
+    jest.spyOn(process, 'cwd').mockReturnValue(tmpdir())
     const fs = createFsComponent()
     const config = createRecordConfigComponent({
       DCL_ANON_ID: 'fb3f84b2-4ddc-4a7e-96bf-1e8992c294dd'

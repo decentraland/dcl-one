@@ -2,9 +2,9 @@ import { execFileSync } from 'child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
-import { AuthChain, Authenticator, AuthLinkType } from '../../../../packages/@dcl/sdk-commands/node_modules/@dcl/crypto'
-import { ethSign } from '../../../../packages/@dcl/sdk-commands/node_modules/@dcl/crypto/dist/crypto'
-import { hexToBytes } from '../../../../packages/@dcl/sdk-commands/node_modules/eth-connect'
+import { AuthChain, Authenticator, AuthLinkType } from '@dcl/crypto'
+import { ethSign } from '@dcl/crypto/dist/crypto'
+import { hexToBytes } from 'eth-connect'
 import { createFsComponent } from '../../../../packages/@dcl/sdk-commands/src/components/fs'
 import { IFileSystemComponent } from '../../../../packages/@dcl/sdk-commands/src/components/fs'
 import {
@@ -60,7 +60,7 @@ describe('when saving and loading the session', () => {
   })
 
   describe('and a contract-wallet session is saved', () => {
-    let provider: import('../../../../packages/@dcl/sdk-commands/node_modules/@dcl/crypto-middleware').AuthChainProvider
+    let provider: import('@dcl/crypto-middleware').AuthChainProvider
     beforeEach(async () => {
       delegation = delegation.map((link) =>
         link.type === AuthLinkType.ECDSA_PERSONAL_EPHEMERAL

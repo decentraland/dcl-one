@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
-import { Authenticator, AuthIdentity } from '../../../../packages/@dcl/sdk-commands/node_modules/@dcl/crypto'
+import { Authenticator, AuthIdentity } from '@dcl/crypto'
 import { initComponents } from '../../../../packages/@dcl/sdk-commands/src/components'
 import { createEphemeralIdentity } from '../../../../packages/@dcl/sdk-commands/src/commands/scene-insights/session'
 import { getSession } from '../../../../packages/@dcl/sdk-commands/src/commands/scene-insights/sign-in'
