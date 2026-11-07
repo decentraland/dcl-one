@@ -104,9 +104,27 @@ const hasText = (node: LiveNode): boolean =>
   node.type === 'TEXT' || (node.children ?? []).some(hasText)
 const hasDrawing = (node: LiveNode): boolean =>
   drawingTypes.has(node.type) || (node.children ?? []).some(hasDrawing)
+// A rotated rectangle, such as a tooltip arrow drawn as a diamond, has no axis-aligned structured form, so it
+// is exported as a drawing. A mask keeps the structured path, where a rotation still fails closed.
+function isRotatedLeafRectangle(node: LiveNode): boolean {
+  const transform = list(node.relativeTransform).map(list)
+  return (
+    node.type === 'RECTANGLE' &&
+    !node.isMask &&
+    !(node.children ?? []).length &&
+    transform.length === 2 &&
+    !(
+      (near(transform[0]?.[0], 1) || near(transform[0]?.[0], -1)) &&
+      near(transform[0]?.[1], 0) &&
+      near(transform[1]?.[0], 0) &&
+      (near(transform[1]?.[1], 1) || near(transform[1]?.[1], -1))
+    )
+  )
+}
 function isArtwork(node: LiveNode): boolean {
   return (
     drawingTypes.has(node.type) ||
+    isRotatedLeafRectangle(node) ||
     (!hasText(node) &&
       ((node.children ?? []).some((child) => child.isMask === true) ||
         list(node.fills).some((fill) =>
@@ -143,7 +161,7 @@ function paintsNothing(node: LiveNode): boolean {
   if (!Object.hasOwn(node, 'absoluteRenderBounds') || node.absoluteRenderBounds !== null)
     return false
   // A mask clips its siblings even when it paints nothing itself, so it keeps the normal export path.
-  if (!drawingTypes.has(node.type) || node.isMask) return false
+  if (!(drawingTypes.has(node.type) || isRotatedLeafRectangle(node)) || node.isMask) return false
   if (
     (node.children ?? []).length ||
     hasVisiblePaint(node.fills) ||

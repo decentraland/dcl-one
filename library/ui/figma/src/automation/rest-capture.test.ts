@@ -751,3 +751,99 @@ describe('when a scrolling label group starts with a structured fade mask', () =
     expect(() => captureNode(parent, new Map())).toThrow('Unsupported structured mask')
   })
 })
+
+describe('when a component contains a rotated rectangle', () => {
+  const diagonal = Math.SQRT1_2
+  const peak: LiveNode = {
+    id: 'peak',
+    name: 'Peak',
+    type: 'RECTANGLE',
+    relativeTransform: [
+      [diagonal, -diagonal, 0],
+      [diagonal, diagonal, 0]
+    ],
+    absoluteBoundingBox: { x: 204, y: 680, width: 36.77, height: 36.77 },
+    absoluteRenderBounds: { x: 206.6, y: 682.49, width: 31.8, height: 31.8 },
+    fills: [{ type: 'SOLID', color: { r: 0.086, g: 0.082, b: 0.094, a: 1 } }]
+  }
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="37" height="37"><path d="M0 0"/></svg>'
+
+  it('should export a rotated leaf rectangle as a drawing', () => {
+    expect(artworkIds(peak)).toEqual(['peak'])
+    expect(captureNode(peak, new Map([['peak', svg]]))).toMatchObject({
+      type: 'DRAWING',
+      name: 'Peak',
+      svg
+    })
+  })
+
+  it('should keep an axis-aligned rectangle structured', () => {
+    const square = {
+      ...peak,
+      relativeTransform: [
+        [1, 0, 0],
+        [0, 1, 0]
+      ]
+    }
+    expect(artworkIds(square)).toEqual([])
+    expect(captureNode(square, new Map())).toMatchObject({ type: 'RECTANGLE' })
+  })
+
+  it.each([
+    [
+      'a rotated frame with children',
+      {
+        type: 'FRAME',
+        children: [
+          {
+            ...peak,
+            id: 'inner',
+            relativeTransform: [
+              [1, 0, 0],
+              [0, 1, 0]
+            ]
+          }
+        ]
+      }
+    ],
+    ['a rotated mask', { isMask: true }]
+  ])('should still refuse %s', (_, change) => {
+    const node = { ...peak, ...change } as LiveNode
+    expect(artworkIds(node)).not.toContain('peak')
+    expect(() => captureNode(node, new Map([['peak', svg]]))).toThrow(
+      'Unsupported structured transform: peak'
+    )
+  })
+
+  // REST capture records every fill as a literal; variable bindings are not kept on any node.
+  it.each([
+    [
+      'a variable-bound fill',
+      { boundVariables: { color: { type: 'VARIABLE_ALIAS', id: 'VariableID:1:2' } } }
+    ],
+    ['an unbound fill', {}]
+  ])('should record %s as the same literal colour a structured rectangle gets', (_, binding) => {
+    const fill = { type: 'SOLID', color: { r: 0.086, g: 0.082, b: 0.094, a: 1 }, ...binding }
+    const square = {
+      ...peak,
+      relativeTransform: [
+        [1, 0, 0],
+        [0, 1, 0]
+      ],
+      fills: [fill]
+    }
+    const structured = captureNode(square, new Map()) as { fills: unknown[] }
+    expect(structured.fills).toEqual([{ type: 'SOLID', hex: '#161518', opacity: 1 }])
+    expect(JSON.stringify(structured)).not.toContain('VariableID')
+    const drawing = captureNode({ ...peak, fills: [fill] }, new Map([['peak', svg]]))
+    expect(drawing).toMatchObject({ type: 'DRAWING', svg })
+    expect(JSON.stringify(drawing)).not.toContain('VariableID')
+  })
+
+  it('should capture a rotated rectangle that paints nothing like a transparent node', () => {
+    const empty = { ...peak, absoluteRenderBounds: null, fills: [] }
+    expect(artworkIds(empty)).toEqual([])
+    expect(captureNode(empty, new Map())).toMatchObject({ type: 'FRAME', opacity: 0 })
+  })
+})
