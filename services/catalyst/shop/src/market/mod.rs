@@ -62,6 +62,7 @@ pub mod chain_walk;
 pub mod collections;
 pub mod contracts;
 pub mod definitions;
+pub mod features;
 pub mod federation;
 pub mod items;
 pub mod lambdas_catalog;
@@ -502,6 +503,10 @@ pub struct MarketplaceState {
     /// `/profile-images`, attached once the social states exist: the faces a
     /// response points at are warmed there.
     pub(crate) profile_images: std::sync::OnceLock<crate::social::profile_images::SharedState>,
+    /// decentraland.org's `dapps` rollout flags as this node enforces them (`features`); every flag off until read.
+    pub(crate) dapps_flags: Arc<crate::explore::api::feature_flags::Snapshot>,
+    /// Where `dapps_flags` is read from (`SHOP_FEATURE_FLAGS_*`).
+    pub(crate) flags_source: features::Source,
     /// The chain index's loopback switch: a test that flips it admits a
     /// loopback fake upstream for the shop's calls and the subgraph readers.
     #[cfg(test)]
@@ -537,6 +542,8 @@ impl MarketplaceState {
             read_through: None,
             denylist: Arc::default(),
             profile_images: std::sync::OnceLock::new(),
+            dapps_flags: Arc::new(features::initial_snapshot()),
+            flags_source: features::Source::default(),
             settings,
         }
     }
@@ -634,6 +641,7 @@ impl MarketplaceState {
     }
 
     pub fn spawn_api_jobs(self: &Arc<Self>, jobs: &Jobs) {
+        features::spawn_job(self, jobs);
         crate::coupons::spawn_job(self, jobs);
         federation::spawn_job(self, jobs);
     }

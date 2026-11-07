@@ -881,6 +881,68 @@ fn token_order_json(signer: &str, contract: &str, token_id: &str) -> String {
 }
 
 #[tokio::test]
+async fn with_the_marketplace_rollout_off_lists_bids_and_resale_orders_are_refused() {
+    let Some(state) = matic_state(None).await else {
+        return;
+    };
+    state.set_marketplace_features(false);
+    let app = || market_router(state.clone());
+
+    let (status, body) = call(
+        app(),
+        "POST",
+        "/v1/lists",
+        signed_headers("post", "/v1/lists", "{}", true).await,
+        Some(json!({ "name": format!("Off {}", &tag()[..6]), "private": true })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert!(
+        body.to_string().contains("dapps-shop-marketplace-features"),
+        "{body}"
+    );
+
+    // A resale order is the Marketplace's; a creator's own item order is the Shop's primary sale and is not refused
+    // for the rollout (it fails later, on its fake signature).
+    let meta = r#"{"signer":"dcl:marketplace","intent":"dcl:create-trade"}"#;
+    let contract = contract_of(&tag(), 6);
+    let resale: Value =
+        serde_json::from_str(&token_order_json(&sf::address(), &contract, "1")).unwrap();
+    let (status, body) = call(
+        app(),
+        "POST",
+        "/v1/trades",
+        signed_headers("post", "/v1/trades", meta, true).await,
+        Some(resale),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    let primary: Value =
+        serde_json::from_str(&item_order_json(&sf::address(), &contract, "0")).unwrap();
+    let (status, body) = call(
+        app(),
+        "POST",
+        "/v1/trades",
+        signed_headers("post", "/v1/trades", meta, true).await,
+        Some(primary),
+    )
+    .await;
+    assert_ne!(status, StatusCode::FORBIDDEN, "{body}");
+
+    // On again, the same list is written.
+    state.set_marketplace_features(true);
+    let (status, body) = call(
+        app(),
+        "POST",
+        "/v1/lists",
+        signed_headers("post", "/v1/lists", "{}", true).await,
+        Some(json!({ "name": format!("On {}", &tag()[..6]), "private": true })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+}
+
+#[tokio::test]
 async fn the_import_check_admits_a_creators_item_order_and_keeps_a_token_in_mana() {
     use alloy::signers::SignerSync;
     let Some(state) = matic_state(None).await else {

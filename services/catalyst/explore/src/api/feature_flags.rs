@@ -66,6 +66,19 @@ impl Snapshot {
         }
     }
 
+    /// A snapshot holding `doc` as received: a node's other reader of one application's flags, and tests.
+    pub fn from_document(doc: Value) -> Self {
+        Self {
+            doc: RwLock::new(Arc::new(doc)),
+        }
+    }
+
+    /// Replaces the held document (tests that switch a flag mid-run).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_document(&self, doc: Value) {
+        *self.doc.write() = Arc::new(doc);
+    }
+
     pub fn document(&self) -> Arc<Value> {
         self.doc.read().clone()
     }

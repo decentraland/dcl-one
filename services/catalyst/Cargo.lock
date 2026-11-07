@@ -1994,6 +1994,7 @@ dependencies = [
  "catalyst-config",
  "catalyst-content",
  "catalyst-db",
+ "catalyst-explore",
  "catalyst-fed",
  "catalyst-jobs",
  "catalyst-land-authz",

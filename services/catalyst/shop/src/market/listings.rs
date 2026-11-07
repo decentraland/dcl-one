@@ -1026,6 +1026,10 @@ async fn post_trade_inner(
     let recovered = require_signer(headers, "post", "/v1/trades").await?;
     let trade: TradeCreation = serde_json::from_str(body)
         .map_err(|e| ApiError::bad_request(format!("invalid trade body: {e}")))?;
+    // A resale listing and a bid are the Marketplace's; a creator's own item order is the Shop's primary sale.
+    if trade.trade_type == TRADE_TYPE_BID || trade.trade_type == TRADE_TYPE_PUBLIC_NFT_ORDER {
+        state.require_marketplace()?;
+    }
     let id = create_trade(
         &state.pool,
         Some(state),

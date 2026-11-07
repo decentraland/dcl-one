@@ -551,7 +551,12 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         )
         .with_eip1654(eip1654.clone())
         .with_read_through(read_through.clone())
-        .with_denylist(storage.denylist().clone()),
+        .with_denylist(storage.denylist().clone())
+        .with_feature_flags(shop::market::features::Source {
+            url: config.shop.shop_feature_flags_url.clone(),
+            origin: config.shop.shop_feature_flags_origin.clone(),
+            refresh: Duration::from_secs(config.shop.shop_feature_flags_refresh_secs),
+        }),
     );
     market.spawn_api_jobs(&jobs);
 
