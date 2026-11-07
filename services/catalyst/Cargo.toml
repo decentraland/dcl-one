@@ -105,6 +105,7 @@ multer = "3.1.0"
 unicode-normalization = "0.1.26"
 icu_properties = "2.3.0"
 hmac = "0.13.0"
+handlebars = { version = "6.4.4", default-features = false }
 bcrypt = "0.19.3"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp", "tiff"] }
 alloy-sol-types = "1.7.3"

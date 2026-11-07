@@ -277,14 +277,24 @@ the moderator role.
 | GET | `/notifications` | `from` (ms), `limit` 1-50 (default 20), `onlyUnread` (presence); signed | yes (signed) | `notifications-unauth` (400, the body `auth-error-production.json` pins), `-signed`, `-signed-filters`, `-expired-timestamp` (401), `-bad-signature` (401) |
 | POST | `/notifications` | API key | no: write | |
 | PUT | `/notifications/read` | signed | no: write | |
-| POST | `/notifications/email` | bearer | no: write | |
+| POST | `/notifications/email` | bearer `NOTIFICATION_SERVICE_TOKEN`; `{email, subject, content, title?, titleHighlight?}` -> 204 | no: write | |
 | GET | `/subscription` | signed | yes (signed) | `subscription-unauth`, `-signed` (the default document; `address` volatile) |
 | PUT | `/subscription`, `/set-email`, `/confirm-email` | | no: write | |
 | GET | `/subscription/opt-outs/{scope}/{scopeId}` | scope `community`; signed | yes (signed) | `opt-outs-community-unauth`, `-signed`, `opt-outs-bad-scope-signed` (400) |
 | POST | `/subscription/opt-outs`; DELETE `/subscription/opt-outs/{scope}/{scopeId}` | | no: write | |
-| GET | `/unsubscribe/{address}[/{notificationType}]` | signed URL from the e-mail | error shape only | `unsubscribe-address-no-signature` (401 "Invalid URL.") |
+| GET | `/unsubscribe/{address}[/{notificationType}]` | signed URL from the e-mail (HMAC `SIGNING_KEY` over the `NOTIFICATIONS_SERVICE_BASE_URL` origin, path and query); 200 `text/html` | error shape only | `unsubscribe-address-no-signature` (401 "Invalid URL.") |
 | OPTIONS | any | CORS preflight | yes | `preflight-notifications` |
 | GET | unknown path | | yes | `unknown-path-404` |
+
+`social/src/notifications/tests.rs`
+`the_notifications_host_answers_as_its_captures` replays `status`, the
+three `-unauth` reads and `unknown-path-404`, and re-signs the five signed
+reads with a fresh wallet. `subscription-signed` differs only in
+`details.message_type.friend_first_wear` and `.land_transfer_received`:
+Catalyst's own types, absent from upstream's `@dcl/schemas` list. Not
+replayed in process: `preflight-notifications` (200 with `*` for methods and
+headers, no `max-age` or `vary`, against 204), `-expired-timestamp` and
+`-bad-signature` (the recorded chains) and `unsubscribe-address-no-signature`.
 
 ## badges.decentraland.org (Catalyst: `/badges`)
 
@@ -390,7 +400,7 @@ and port 5461 with the environment (bounded outfits/emote sync from
 | service | passed | expected failures | divergences to look at |
 | --- | --- | --- | --- |
 | gatekeeper | 10/35 | 6 signed fixtures "Expired signature"; `scene-participants` 404 (no Pulse/archipelago room state) | unauthenticated scene routes answer `{"error":"Invalid Auth Chain"}` where production answers 400 `{"ok":false,"message":"Invalid Auth Chain"}`; `get-scene-adapter-unauth` 400 vs 401; bearer routes (`voice-chat-status`, `community-voice-chat/*`, `world ban-status`, `private-messages/token`) 503 vs 401/400 (Catalyst has no social-service token configured); `/cast/*` and `/scene-stream-access` 404 (G18 gap, unimplemented at the recorded revision); `ping` body 22 B vs `pong`; `user-bans-bad-address` 400 vs 200; preflight allow-origin reflected vs `*` |
-| notifications | 1/14 | 4 signed fixtures 401 | `/status` 404 (route unimplemented at the recorded revision); `/unsubscribe/{address}` 404 (unimplemented at the recorded revision); `?limit=5&onlyUnread&from=0` 400 (valueless `onlyUnread` rejected); opt-outs unknown scope 404 vs 400; every auth error body differs ("Unauthenticated: Expired signature" / "Invalid Auth Chain" vs the ADR-44 message pair); preflight 200 with `*` vs 204 with the requested headers |
+| notifications | 1/14 | 4 signed fixtures 401 | `/status` 404 (route unimplemented at the recorded revision); `/unsubscribe/{address}` 404 (unimplemented at the recorded revision; now served, replayed in-process by `notifications::tests::the_unsigned_unsubscribe_capture_replays`); `?limit=5&onlyUnread&from=0` 400 (valueless `onlyUnread` rejected); opt-outs unknown scope 404 vs 400; every auth error body differs ("Unauthenticated: Expired signature" / "Invalid Auth Chain" vs the ADR-44 message pair); preflight 200 with `*` vs 204 with the requested headers |
 | badges | 5/13 | user badges achieved 0 vs 3/5 (empty tables); `badge-tiers` 404 vs 200 empty | `/categories` lists 3 categories, production 5 (Explorer, Collector, Creator, Socializer, Builder); asset URLs: production `https://assets-cdn.decentraland.org/<id>/2d/normal.png`, Catalyst serves `/badges/assets/{path}` under `DEFAULT_ASSET_BASE_URL` `https://badges.decentraland.org`; preflight 200 `*` vs 204 |
 | profile-images | 1/20 | the 19 image fixtures: production is a 301 to the bucket, Catalyst renders in process and answered 404 with no profile entities synced (`SYNC_ENTITY_TYPES=outfits,emote`) | structural: an edge redirect versus a direct `image/png`; `face-bad-cid` 400 vs 301; preflight 204 with every method vs the edge's 301 |
 | camera-reel | 12/21 | `image-*` 404 (photo not in the local table) | `/api/wearables/{item}/images` 404 (camera-reel-service #62 unimplemented at the recorded revision); preflight `OPTIONS /api/users/{address}` 405 (no CORS layer under `/camera-reel-service`); `docs-openapi` 33 schema differences; `unknown-path-404` body "Not Found" vs empty; `user-images-bad-limit` message text |

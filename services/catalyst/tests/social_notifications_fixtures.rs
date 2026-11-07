@@ -255,8 +255,10 @@ async fn the_notification_fixtures_replay_against_the_mounted_router() {
             assert_eq!(shape(&body[key]), shape(value), "{key}");
         }
     }
+    // `email` is absent until confirmed, as upstream's `undefined`.
+    assert!(body.get("email").is_none(), "{body}");
     assert_eq!(
-        body.as_object().unwrap().len(),
+        body.as_object().unwrap().len() + 1,
         expected.as_object().unwrap().len(),
         "{body}"
     );
@@ -282,7 +284,10 @@ async fn the_notification_fixtures_replay_against_the_mounted_router() {
     .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     assert_shape("opt-out-created", &body);
-    assert_eq!(body, json!({ "ok": true }));
+    assert_eq!(
+        body,
+        json!({ "scope": "community", "scopeId": community, "optedOut": true })
+    );
     let path = format!("/notifications/subscription/opt-outs/community/{community}");
     let (status, body) = send(&app, "GET", &path, me.headers("get", &path).await, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
