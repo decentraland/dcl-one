@@ -146,8 +146,9 @@ CREATE INDEX place_like_score_world_updated_idx ON explore.place
     WHERE disabled IS FALSE AND world IS TRUE;
 -- `textsearch @@ to_tsquery(...)` of a searched list (query.rs build_where_from).
 CREATE INDEX place_textsearch_gin ON explore.place USING gin (textsearch);
--- `LOWER(raw->>'owner') = $1` of an owner-filtered list.
-CREATE INDEX place_owner_lower_idx ON explore.place (LOWER(raw->>'owner'));
+-- `LOWER(COALESCE(raw->>'owner', creator_address)) = $1` of an owner-filtered
+-- list: the served owner is the document's, else the deployer's.
+CREATE INDEX place_owner_idx ON explore.place (LOWER(COALESCE(raw->>'owner', creator_address)));
 
 -- The local leg: worlds this node serves itself. Plain world/world_name columns
 -- plus a CHECK, so an unnamed world is rejected at write time. Same column
@@ -211,7 +212,6 @@ CREATE INDEX place_world_local_like_score_idx ON explore.place_world_local
     (like_score_num DESC NULLS LAST, COALESCE(updated_at_ts, deployed_at) DESC, id)
     WHERE disabled IS FALSE;
 CREATE INDEX place_world_local_textsearch_gin ON explore.place_world_local USING gin (textsearch);
-CREATE INDEX place_world_local_owner_lower_idx ON explore.place_world_local (LOWER(raw->>'owner'));
 
 -- Public owner-filtered world lists probe both catalogue legs through place_indexed.
 CREATE INDEX place_world_owner_idx ON explore.place

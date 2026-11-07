@@ -102,9 +102,11 @@ enum ExploreCommand {
     /// (SELECT row_to_json(l) FROM user_likes l) TO STDOUT"` writes it. Each
     /// row becomes a like fact with `source = 'upstream'` and its voting
     /// power at vote time; a wallet that already voted on this node keeps
-    /// its local fact; the counters of the touched entities are rebuilt. One
-    /// transaction: a malformed line imports nothing. Prints the outcome as
-    /// JSON. Not behind DATA_WRITES_ENABLED: an import is operator data.
+    /// its local fact. Each entity is settled and recounted in its own
+    /// transaction, once: a later export adds nothing to a settled entity, so
+    /// export after the old service stops taking votes. A malformed line
+    /// imports nothing. Prints the outcome as JSON. Not behind
+    /// DATA_WRITES_ENABLED: an import is operator data.
     ImportLikes {
         #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
         database_url: String,

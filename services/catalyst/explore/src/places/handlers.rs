@@ -1001,6 +1001,7 @@ mod tests {
         let owned = uuid::Uuid::new_v4().to_string();
         let opted_out = uuid::Uuid::new_v4().to_string();
         let world = format!("{token}.dcl.eth");
+        let local_world = format!("local-{token}.dcl.eth");
         for (id, pointer, disabled, raw) in [
             (
                 &owned,
@@ -1024,6 +1025,12 @@ mod tests {
             sqlx::query("INSERT INTO explore.place (id, base_position, title, disabled, raw) VALUES ($1, $2, $3, $4, $5)")
                 .bind(id).bind(pointer).bind(&token).bind(disabled).bind(raw).execute(&pool).await.unwrap();
         }
+        // A world deployed here (world_scenes.rs) has no `owner` in its document;
+        // its deployer is the served owner.
+        sqlx::query("INSERT INTO explore.place (id, base_position, title, disabled, creator_address, raw) VALUES ($1, '0,0', $2, false, $3, $4)")
+            .bind(&local_world).bind(&token).bind(&owner)
+            .bind(json!({"world": true, "world_name": local_world}))
+            .execute(&pool).await.unwrap();
         let state = Arc::new(crate::ExploreState::new(
             pool.clone(),
             crate::Settings::for_tests(),
@@ -1129,13 +1136,31 @@ mod tests {
         .await;
         assert_eq!(body["total"], 0);
         let body = response(state.clone(), &format!("/api/destinations?owner={owner}")).await;
-        assert_eq!(body["data"].as_array().unwrap().len(), 4);
+        assert_eq!(
+            body["data"].as_array().unwrap().len(),
+            5,
+            "the local world too"
+        );
         // World/model.ts:115-120: `/api/worlds` names are exact ids ...
         let body = response(state.clone(), &format!("/api/worlds?names={token}")).await;
         assert_eq!(body["total"], 0, "a substring is not a world id");
         let upper = world.to_uppercase();
         let body = response(state.clone(), &format!("/api/worlds?names={upper}")).await;
         assert_eq!(body["data"][0]["id"], world, "lowercased before the match");
+        let body = response(state.clone(), &format!("/api/worlds?owner={owner}")).await;
+        let mut ids: Vec<String> = body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["id"].as_str().unwrap().to_string())
+            .collect();
+        ids.sort();
+        let mut expected = vec![world.clone(), local_world.clone()];
+        expected.sort();
+        assert_eq!(
+            ids, expected,
+            "the owner filter matches the served owner: {body}"
+        );
         // ... while `/api/destinations` names are a LIKE (`:121-130`), escaped.
         let body = response(state.clone(), &format!("/api/destinations?names={token}")).await;
         assert_eq!(body["data"][0]["id"], world);

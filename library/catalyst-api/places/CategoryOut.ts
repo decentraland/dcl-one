@@ -2,6 +2,6 @@
 import type { I18n } from "./I18n";
 
 /**
- * `{name, count, i18n: {en}}` (`Category/routes.ts:92-101`).
+ * `{name, count, i18n: {en}}` (`Category/routes.ts:29-38`).
  */
 export type CategoryOut = { name: string, count: number, i18n: I18n, };

@@ -4,11 +4,11 @@ import type { EntityType } from "./EntityType";
 /**
  * A row of the destinations feed (`Destination/model.ts:23-49`). `kind`,
  * `live_event` and `next_event` are dcl-one's: `/v1/destinations` carries
- * them, `/api/destinations` only `next_event` and only when `with=next_event`
- * (a dcl-one parameter) asked for it, so an upstream client never sees a key
- * upstream did not emit ([`Destination::as_upstream`]).
+ * them (`next_event` when `with=next_event` asked for it), `/api/destinations`
+ * never does, so an upstream client never sees a key upstream did not emit
+ * ([`Destination::as_upstream`]).
  */
-export type Destination = { id: string, kind?: EntityType, title: string | null, description: string | null, image: string | null, owner: string | null, positions: Array<string>, base_position: string, contact_name: string | null, contact_email: string | null, content_rating: string | null, disabled: boolean, disabled_at: string | null, created_at: string | null, updated_at: string | null, favorites: number, likes: number, dislikes: number, categories: Array<string>, highlighted: boolean, highlighted_image: string | null, ranking: number | null, sdk: string | null, creator_address: string | null, deployed_at: string | null, world: boolean, world_name: string | null, is_private: boolean, user_favorite: boolean, user_like: boolean, user_dislike: boolean, user_count: number | null, user_visits: number, like_rate: number | null, like_score: number | null,
+export type Destination = { id: string, kind?: EntityType, title: string | null, description: string | null, image: string | null, owner: string | null, positions: Array<string>, base_position: string, contact_name: string | null, contact_email: string | null, content_rating: string | null, disabled: boolean, disabled_at: string | null, created_at: string | null, updated_at: string | null, favorites: number, likes: number, dislikes: number, categories: Array<string>, highlighted: boolean, highlighted_image: string | null, ranking: number | null, sdk: string | null, creator_address: string | null, deployed_at: string | null, world: boolean, world_name: string | null, is_private: boolean, user_favorite: boolean, user_like: boolean, user_dislike: boolean, user_count: number | null, user_visits: number, like_rate: number | null, like_score: number | null, 
 /**
  * `ts_rank_cd` against the search, present only with `search`
  * (`Destination/model.ts:246,273,310`).

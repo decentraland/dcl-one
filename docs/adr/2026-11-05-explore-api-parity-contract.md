@@ -141,7 +141,7 @@ a wallet's later local vote replaces its imported one, so nobody counts twice.
 - Which supersets stay as explicit exceptions: case-insensitive world ids on lookups,
   `order_by=most_active` on `GET /api/worlds`,
   `pointer` without `names` narrowing destinations to places, the `/api/status` extras, the `PATCH /api/places/{id}/disable` route with a
-  free-text reason, a custom `url` kept on owner edits,
+  free-text reason, a custom `url` any signer sets on create and owner edits keep,
   poster filenames by content hash with the asset-URL guard and the profile requirement,
   and the old places service's double HTML escaping reproduced in social cards. Until
   decided, the `/api/status` extras are the two status entries in `known_gaps.json`.

@@ -135,9 +135,10 @@ pub struct EventRecord {
     pub deleted_at: Option<DateTime<Utc>>,
     pub deleted_reason: Option<String>,
     /// dcl-one's own column; the `/api` answers drop it (upstream's record
-    /// never had it), the `/v1` ones keep it.
+    /// never had it), the `/v1` ones keep it. The contract types it
+    /// `string | null` optional, as the web fixtures write it.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts", ts(optional))]
+    #[cfg_attr(feature = "ts", ts(optional = nullable))]
     pub previous_place_id: Option<String>,
     /// Always an array when `with_connected_users` was asked
     /// (`getEventList.ts:317-323`).

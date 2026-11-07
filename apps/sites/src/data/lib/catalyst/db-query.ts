@@ -50,8 +50,9 @@ export const CATEGORIES_SQL = `
 
 // The list sorts on the score it serves (the `like_score` it projects), as
 // the node's like-score order does (query.rs LIKE_SCORE_ORDER_SQL), not on
-// the mirrored value alone.
-const DEFAULT_ORDER = `like_score DESC NULLS LAST, deployed_at DESC`;
+// the mirrored value alone, with the node's `id ASC` tie-break so pages
+// never swap rows tied on score and deployment time.
+const DEFAULT_ORDER = `like_score DESC NULLS LAST, deployed_at DESC, id ASC`;
 
 function normalizeCategories(c?: string | string[]): string[] {
   if (!c) return [];

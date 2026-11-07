@@ -1014,7 +1014,8 @@ async fn earlier_event_hook_layouts_upgrade_without_losing_intents() {
         CREATE INDEX event_moderation_hooks_due_idx ON explore.event_moderation_hooks(next_attempt_at,id) WHERE completed_at IS NULL AND attempts<6;
         CREATE TABLE explore.event_moderation_hook_activation (singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton), activated_at timestamp without time zone NOT NULL);
         DELETE FROM meta.schema_steps WHERE step IN ('0018_event_hook_compatibility','0019_event_hook_admin_priority','0029_explore_parity');
-        INSERT INTO explore.event_moderation_hooks(id,event_id,kind,event) VALUES(gen_random_uuid(),'retained-submission','submitted','{\"name\":\"Retained intent\"}')")
+        INSERT INTO explore.event_moderation_hooks(id,event_id,kind,event) VALUES(gen_random_uuid(),'retained-submission','submitted','{\"name\":\"Retained intent\"}'); \
+        INSERT INTO explore.event_moderation_hooks(id,event_id,kind,event,claim,attempts,next_attempt_at) VALUES(gen_random_uuid(),'claimed-submission','submitted','{}',gen_random_uuid(),1,(now() AT TIME ZONE 'UTC') + interval '1 minute')")
         .execute(pool).await.unwrap();
     let result =
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
@@ -1054,6 +1055,25 @@ async fn earlier_event_hook_layouts_upgrade_without_losing_intents() {
             "submitted".into(),
             serde_json::json!({"name":"Retained intent"})
         )
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM explore.event_moderation_hooks")
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        1,
+        "the row an older worker claimed waits for its retry minute"
+    );
+    sqlx::query("UPDATE explore.event_moderation_hooks SET next_attempt_at = (now() AT TIME ZONE 'UTC') - interval '1 second'")
+        .execute(pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        catalyst::explore::moderation_hooks::adopt_legacy_rows(pool)
+            .await
+            .unwrap(),
+        1,
+        "due, it moves"
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM explore.event_moderation_hooks")

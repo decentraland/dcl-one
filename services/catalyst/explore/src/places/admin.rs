@@ -168,7 +168,7 @@ pub fn require_admin_token_for_curated_ranking(
 }
 
 pub fn require_admin_bearer(headers: &HeaderMap, admin: Option<&str>) -> Result<(), ApiError> {
-    match secret_matches(admin, bearer_token(headers)) {
+    match secret_matches(admin, bearer_token(headers).map(str::trim)) {
         Some(true) => Ok(()),
         None => Err(ApiError::forbidden("Admin token not configured")),
         Some(false) => Err(ApiError::forbidden("Invalid admin credentials")),
@@ -1408,6 +1408,10 @@ mod tests {
             (403, "Invalid admin credentials".into())
         );
         assert!(require_admin_bearer(&bearer("secret"), Some("secret")).is_ok());
+        assert!(
+            require_admin_bearer(&bearer("secret "), Some("secret")).is_ok(),
+            "trimmed like the other places checks (`withBearerToken.js:30`)"
+        );
         assert_eq!(
             status_message(require_admin_bearer(&bearer("  "), Some("secret")).unwrap_err()),
             (403, "Invalid admin credentials".into()),

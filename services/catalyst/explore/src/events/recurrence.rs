@@ -21,6 +21,8 @@ use super::moderation::{finish_at_of, parse_rfc3339};
 use crate::shared::errors::ApiError;
 
 const MAX_OCCURRENCES: u16 = 1_000;
+/// Ended occurrences a re-anchored window keeps, for the metrics job.
+const ENDED_OCCURRENCE_GRACE_HOURS: i64 = 24;
 
 /// `MAX_RECURRENT_PAST_ITERATIONS` (`Event/types.ts:110`).
 pub(super) const MAX_RECURRENT_PAST_ITERATIONS: f64 = 50_000.0;
@@ -181,8 +183,14 @@ pub(super) fn recompute(raw: &mut Map<String, Value>, now: DateTime<Utc>) -> Res
             // Longer than the stored window: keep the occurrences from now on
             // (`futureRecurrentDates` kept only future ones) so the series
             // does not end before it reaches the present. An occurrence under
-            // way (started less than `duration` ago) stays in the series.
-            let anchor = now - Duration::milliseconds(duration);
+            // way (started less than `duration` ago) stays in the series, and
+            // so do the occurrences of the last day: the reads project only
+            // the unfinished ones, and the community metrics job
+            // (`social/notifications/event_ended.rs`) still finds an
+            // occurrence that ended since its last pass.
+            let anchor = now
+                - Duration::milliseconds(duration)
+                - Duration::hours(ENDED_OCCURRENCE_GRACE_HOURS);
             let future = set.after(anchor.with_timezone(&rrule::Tz::UTC)).all(budget);
             if !future.dates.is_empty() {
                 result = future;
@@ -246,7 +254,9 @@ pub(crate) async fn run_once(pool: &PgPool, now: DateTime<Utc>) -> anyhow::Resul
 }
 
 /// The ids of the series [`run_once`] expands, the oldest window first; the
-/// next pass takes the rest.
+/// next pass takes the rest. Only a window holding [`MAX_OCCURRENCES`] dates
+/// is truncated: a shorter one already reaches the rule's end, so it is not
+/// read again and cannot fill the batch.
 async fn due_series(pool: &PgPool, now: DateTime<Utc>) -> anyhow::Result<Vec<String>> {
     let until = format!(
         "{}(raw->>'recurrent_until')",
@@ -258,11 +268,13 @@ async fn due_series(pool: &PgPool, now: DateTime<Utc>) -> anyhow::Result<Vec<Str
            AND (jsonb_typeof(raw->'recurrent_count') IS DISTINCT FROM 'number' OR (raw->>'recurrent_count')::float8 = 0) \
            AND finish_at < $1::timestamptz AT TIME ZONE 'UTC' AND {until} > finish_at \
            AND {until} > $3::timestamptz AT TIME ZONE 'UTC' \
+           AND jsonb_typeof(raw->'recurrent_dates') = 'array' AND jsonb_array_length(raw->'recurrent_dates') >= $4 \
          ORDER BY finish_at LIMIT $2"
     )))
     .bind(now + Duration::days(REROLL_HORIZON_DAYS))
     .bind(REROLL_BATCH)
     .bind(now)
+    .bind(i32::from(MAX_OCCURRENCES))
     .fetch_all(pool)
     .await?)
 }
@@ -353,6 +365,19 @@ mod tests {
         assert_eq!(raw["finish_at"], "2099-06-15T19:00:00.123Z");
     }
 
+    /// The re-anchored window keeps the last day of ended occurrences: the
+    /// reads project only the unfinished ones, and the community metrics job
+    /// still finds an occurrence that ended since its last pass.
+    #[test]
+    fn re_anchoring_keeps_the_last_day_of_ended_occurrences() {
+        let mut raw = hourly_year();
+        recompute(&mut raw, parse_rfc3339("2099-07-10T12:30:00Z").unwrap()).unwrap();
+        let dates = raw["recurrent_dates"].as_array().unwrap();
+        assert_eq!(dates.len(), usize::from(MAX_OCCURRENCES));
+        assert_eq!(dates[0], "2099-07-09T12:00:00.000Z");
+        assert_eq!(raw["next_start_at"], "2099-07-10T12:00:00.000Z");
+    }
+
     #[test]
     fn monthly_last_weekday_and_month_masks_use_calendar_rules() {
         let mut raw = event();
@@ -398,8 +423,8 @@ mod tests {
         recompute(&mut raw, now).unwrap();
         let dates = raw["recurrent_dates"].as_array().unwrap();
         assert_eq!(dates.len(), 1000);
-        assert!(parse_rfc3339(dates[0].as_str().unwrap()).unwrap() >= now);
-        assert_eq!(raw["next_start_at"], dates[0]);
+        assert_eq!(dates[0], "2030-05-31T18:00:00.000Z", "the last day kept");
+        assert_eq!(raw["next_start_at"], dates[1]);
         let steps = estimate_past_iterations(&raw, now);
         assert!(
             (3790.0..3810.0).contains(&steps),
@@ -427,13 +452,13 @@ mod tests {
         recompute(&mut raw, parse_rfc3339("2099-08-01T18:30:00Z").unwrap()).unwrap();
         let dates = raw["recurrent_dates"].as_array().unwrap();
         assert_eq!(dates.len(), 1000);
-        assert_eq!(dates[0], "2099-08-01T18:00:00.000Z", "under way: kept");
+        assert_eq!(dates[0], "2099-07-31T18:00:00.000Z", "the last day kept");
         assert_eq!(raw["next_start_at"], "2099-08-01T18:00:00.000Z");
         assert_eq!(raw["next_finish_at"], "2099-08-01T19:00:00.000Z");
-        assert_eq!(raw["finish_at"], "2099-09-12T10:00:00.000Z");
+        assert_eq!(raw["finish_at"], "2099-09-11T10:00:00.000Z");
         recompute(&mut raw, parse_rfc3339("2100-05-31T00:00:00Z").unwrap()).unwrap();
         let dates = raw["recurrent_dates"].as_array().unwrap();
-        assert!((43..=44).contains(&dates.len()), "{}", dates.len());
+        assert!((67..=68).contains(&dates.len()), "{}", dates.len());
         assert_eq!(dates.last().unwrap(), "2100-06-01T18:00:00.000Z");
         assert_eq!(raw["finish_at"], "2100-06-01T19:00:00.000Z");
     }
@@ -501,6 +526,14 @@ mod tests {
         count_until.insert("recurrent_until".into(), json!("2199-06-10T18:00:00Z"));
         recompute(&mut count_until, written).unwrap();
         insert(&pool, &id("count_until"), "local", &count_until).await;
+        // Complete: the last occurrence (Jul 13) ends within the horizon and
+        // before `until` (Jul 19), but the seven stored dates are the whole
+        // series, so there is nothing to expand on any pass.
+        let mut complete = json!({"start_at":"2099-06-01T18:00:00Z", "duration":3600000, "recurrent":true, "recurrent_frequency":"WEEKLY", "recurrent_until":"2099-07-19T18:00:00Z"})
+            .as_object().unwrap().clone();
+        recompute(&mut complete, written).unwrap();
+        assert_eq!(complete["recurrent_dates"].as_array().unwrap().len(), 7);
+        insert(&pool, &id("complete"), "local", &complete).await;
 
         let now = parse_rfc3339("2099-07-10T12:30:00Z").unwrap();
         let due: Vec<String> = due_series(&pool, now)
@@ -518,9 +551,9 @@ mod tests {
         assert_eq!(
             stored(&pool, &id("local")).await,
             (
-                "2099-07-10T12:00:00.000Z".to_string(),
+                "2099-07-09T12:00:00.000Z".to_string(),
                 "2099-07-10 12:00:00".to_string(),
-                "2099-08-21 04:00:00".to_string()
+                "2099-08-20 04:00:00".to_string()
             )
         );
         assert_eq!(
@@ -542,6 +575,7 @@ mod tests {
             ("short", &short),
             ("ended", &ended),
             ("count_until", &count_until),
+            ("complete", &complete),
         ] {
             let first = raw["recurrent_dates"][0].as_str().unwrap();
             assert_eq!(

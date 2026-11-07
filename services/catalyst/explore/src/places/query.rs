@@ -395,7 +395,8 @@ pub(super) fn build_where_from(
     // to the catalogue by `operated_positions_in_catalogue`; empty while the
     // index is absent).
     if let Some(owner) = &f.owner {
-        let mut owner_clause = format!("LOWER(raw->>'owner') = ${idx}");
+        // The served `owner` (rows.rs): the document's, else the deployer's.
+        let mut owner_clause = format!("LOWER(COALESCE(raw->>'owner', creator_address)) = ${idx}");
         binds.push(Bind::Text(owner.to_lowercase()));
         idx += 1;
         if !f.operated_positions.is_empty() {
@@ -1146,7 +1147,7 @@ mod tests {
         // (`operated_positions_in_catalogue`), never the owner's whole holding.
         assert!(
             where_clause
-                .contains("(LOWER(raw->>'owner') = $1 OR raw->'positions' @> ANY($2::jsonb[]))"),
+                .contains("(LOWER(COALESCE(raw->>'owner', creator_address)) = $1 OR raw->'positions' @> ANY($2::jsonb[]))"),
             "{where_clause}"
         );
         match binds.last().unwrap() {

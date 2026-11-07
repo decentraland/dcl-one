@@ -58,7 +58,7 @@ describe("db places query builders (faithful to catalyrst-places SQL)", () => {
   it("no filters: disabled-only WHERE, the served like_score order, default paging; limit clamps to 0..100 and offset floors", () => {
     const q = buildListQuery({});
     expect(q.text).toContain("WHERE disabled IS FALSE");
-    expect(q.text).toContain("ORDER BY like_score DESC NULLS LAST, deployed_at DESC LIMIT 100 OFFSET 0");
+    expect(q.text).toContain("ORDER BY like_score DESC NULLS LAST, deployed_at DESC, id ASC LIMIT 100 OFFSET 0");
     expect(q.text).not.toMatch(/ORDER BY.*raw->>'like_score'/);
     expect(q.text).toContain("LIMIT 100 OFFSET 0");
     expect(q.values).toEqual([]);

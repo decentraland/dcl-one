@@ -258,8 +258,8 @@ pub(crate) async fn run_once(
 /// with their activation instant, so an upgrade loses no notice; the cutoff
 /// moves back to cover the adopted rows even when a capture on some replica
 /// set it first. A node without that table, or with nothing pending there,
-/// moves nothing. A row an old worker holds mid-delivery may be posted twice
-/// (at least once).
+/// moves nothing. Only due rows move: a row an older worker claimed keeps
+/// its retry minute, so a notice in flight is not posted twice.
 pub async fn adopt_legacy_rows(pool: &PgPool) -> anyhow::Result<u64> {
     let mut tx = pool.begin().await?;
     let legacy: bool =
@@ -282,7 +282,7 @@ pub async fn adopt_legacy_rows(pool: &PgPool) -> anyhow::Result<u64> {
     let moved = sqlx::query(
         "WITH pending AS ( \
             DELETE FROM explore.event_moderation_hooks h WHERE h.id IN ( \
-                SELECT id FROM explore.event_moderation_hooks WHERE completed_at IS NULL AND attempts < 6 FOR UPDATE SKIP LOCKED) \
+                SELECT id FROM explore.event_moderation_hooks WHERE completed_at IS NULL AND attempts < 6 AND next_attempt_at <= (now() AT TIME ZONE 'UTC') FOR UPDATE SKIP LOCKED) \
             RETURNING h.id, COALESCE(h.subject, h.event_id) AS subject, h.kind, h.event, h.creator_address, h.edit_bucket, h.created_at, h.next_attempt_at, h.attempts) \
          INSERT INTO explore.moderation_hooks (id, channel, subject, kind, payload, creator_address, edit_bucket, created_at, next_attempt_at, attempts) \
          SELECT id, 'events', subject, kind, event, creator_address, edit_bucket, created_at, next_attempt_at, attempts FROM pending WHERE subject IS NOT NULL \
