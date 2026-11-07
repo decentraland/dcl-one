@@ -141,7 +141,7 @@ body.editing #edit-tags { cursor: pointer; }
 .bar__dot { width: 8px; height: 8px; background: var(--online); }
 .bar--offline .bar__dot { background: var(--err, #e15759); }
 #preview-connection { font-size: 12px; }
-.pgnav { display: flex; align-items: center; gap: var(--s-2); min-width: 0; }
+.pgnav { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); min-width: 0; }
 .pgnav__lnk {
   display: inline-flex; align-items: center; padding: var(--s-2) var(--s-2-5);
   color: var(--brand-ink); text-decoration: underline; text-underline-offset: 5px;
@@ -427,12 +427,17 @@ body.editing .cover-edit:hover .cover { border-color: var(--ink-45); }
 .tag--add { border-style: dashed; background: var(--fill-1); display: none; }
 body.editing .tag--add { display: inline-flex; }
 .tags-input { min-width: min(320px, 100%); }
-.toast {
+.page-feedback {
   position: fixed; left: 50%; bottom: var(--s-5); transform: translateX(-50%); z-index: 100;
-  max-width: min(80vw, 60ch); padding: var(--s-2-5) var(--s-4); background: var(--glass);
-  color: var(--text); border: 1px solid var(--line-ctl); border-radius: var(--r-control);
-  box-shadow: var(--shadow-bar);
+  width: max-content; max-width: min(90vw, 60ch); display: grid; gap: var(--s-2);
+  pointer-events: none;
 }
+.toast {
+  padding: var(--s-2-5) var(--s-4); background: var(--glass); pointer-events: auto;
+  color: var(--text); border: 1px solid var(--line-ctl); border-radius: var(--r-control);
+  box-shadow: var(--shadow-bar); overflow-wrap: anywhere; max-height: 40vh; overflow: auto;
+}
+.toast button { margin-inline-start: var(--s-3); color: inherit; font: inherit; cursor: pointer; }
 .toast--err { border-color: var(--err-line); color: var(--error); }
 .u-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); }
 

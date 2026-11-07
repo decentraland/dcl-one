@@ -782,8 +782,8 @@ async fn the_scene_card_ships_its_editors_inert_for_the_script_to_enable() {
     assert!(html.contains(r#"id="lay-sadd" aria-pressed="false" disabled"#));
     assert!(html.contains(r#"data-spawn="0" disabled"#));
     assert!(
-        html.contains(r#"data-laytab="info" role="tab" aria-selected="true" disabled"#)
-            && html.contains(r#"data-laytab="parcels" role="tab" aria-selected="false" disabled"#),
+        html.contains(r#"data-laytab="info" id="lay-tab-info" role="tab" aria-controls="lay-pane-info" tabindex="0" aria-selected="true" disabled"#)
+            && html.contains(r#"data-laytab="parcels" id="lay-tab-parcels" role="tab" aria-controls="lay-pane-parcels" tabindex="-1" aria-selected="false" disabled"#),
         "the layout tabs ship inert, Info selected: {html}"
     );
     assert!(html.contains(r#"id="lay-base-input""#));
@@ -1001,12 +1001,12 @@ fn the_layout_card_leads_with_info_and_counts_its_tabs() {
         "the scene tabs carry no counts in the harmonized design: {card}"
     );
     assert!(
-        card.contains(r#"<section class="lay__pane" data-pane="info"><article class="scene">HERO</article></section>"#),
+        card.contains(r#"<section class="lay__pane" id="lay-pane-info" role="tabpanel" aria-labelledby="lay-tab-info" data-pane="info"><article class="scene">HERO</article></section>"#),
         "the scene hero rides the Info pane: {card}"
     );
-    assert!(card.contains(r#"<section class="lay__pane" data-pane="parcels" hidden><span class="knob__k">Scene bounds</span>"#));
-    assert!(card.contains(r#"<section class="lay__pane" data-pane="spawns" hidden>"#));
-    assert!(card.contains(r#"<section class="lay__pane" data-pane="perms" hidden>"#));
+    assert!(card.contains(r#"<section class="lay__pane" id="lay-pane-parcels" role="tabpanel" aria-labelledby="lay-tab-parcels" data-pane="parcels" hidden><span class="knob__k">Scene bounds</span>"#));
+    assert!(card.contains(r#"<section class="lay__pane" id="lay-pane-spawns" role="tabpanel" aria-labelledby="lay-tab-spawns" data-pane="spawns" hidden>"#));
+    assert!(card.contains(r#"<section class="lay__pane" id="lay-pane-perms" role="tabpanel" aria-labelledby="lay-tab-perms" data-pane="perms" hidden>"#));
     assert!(
         card.contains(r#"<span class="lay__size">2 parcels · 32 × 16 m</span>"#),
         "the size label counts parcels: {card}"
@@ -1061,7 +1061,7 @@ fn the_default_knobs_launch_a_second_client_straight_in() {
 fn the_multiplayer_pane_carries_the_switch_and_says_what_the_server_is_doing() {
     let off = server_pane(ServerState::Off);
     assert!(
-        off.contains(r#"<section class="lay__pane" data-pane="server" hidden>"#)
+        off.contains(r#"<section class="lay__pane" id="lay-pane-server" role="tabpanel" aria-labelledby="lay-tab-server" data-pane="server" hidden>"#)
             && off.contains(r#"<input class="sw" type="checkbox" id="mp-switch" disabled>"#),
         "off is an unchecked, inert switch: {off}"
     );

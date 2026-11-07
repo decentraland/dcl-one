@@ -73,3 +73,42 @@ test('HTTP errors and unexpected health responses do not report connected', asyn
     assert.equal(p.offline(), true)
   }
 })
+
+test('save feedback expires while errors persist until dismissed, without losing focus', () => {
+  const timers = new Map(), regions = new Map()
+  function element() {
+    return {
+      children: [], listeners: {}, isConnected: true,
+      appendChild(child) { this.children.push(child) },
+      replaceChildren(...children) { this.children = children },
+      addEventListener(type, listener) { this.listeners[type] = listener },
+      contains(child) { return this === child || this.children.includes(child) },
+      focus() { document.activeElement = this },
+    }
+  }
+  regions.set('page-feedback', element()); regions.set('page-errors', element())
+  const origin = element()
+  const document = {
+    activeElement: origin, createElement: element,
+    getElementById: id => regions.get(id), querySelector: () => null, querySelectorAll: () => [],
+  }
+  const context = vm.createContext({ document,
+    setTimeout: fn => { const id = timers.size + 1; timers.set(id, fn); return id },
+    clearTimeout: id => timers.delete(id),
+  })
+  vm.runInContext(source, context)
+  vm.runInContext("pageToast('Save failed. Try saving again.', true)", context)
+  const errors = regions.get('page-errors'), feedback = regions.get('page-feedback')
+  assert.equal(errors.children[0].textContent, 'Save failed. Try saving again.')
+  assert.equal(timers.size, 0)
+  assert.equal(document.activeElement, origin)
+  vm.runInContext("pageToast('Saved', false)", context)
+  assert.equal(feedback.children[0].textContent, 'Saved')
+  for (const expire of timers.values()) expire()
+  assert.equal(feedback.children.length, 0)
+  assert.equal(errors.children.length, 1)
+  const dismiss = errors.children[0].children[0]
+  dismiss.focus(); dismiss.listeners.click()
+  assert.equal(errors.children.length, 0)
+  assert.equal(document.activeElement, origin)
+})

@@ -23,8 +23,7 @@ Under `--include-ignored` a missing variable fails naming it (`tests/common/test
 | `DCL1_TUNNEL_LOCAL_URL`, `DCL1_TUNNEL_TOUCH_FILE` | optional for `tunnel_live` | the local preview behind it; a served file to touch |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_HTTP_URL` (optional) | `livekit_live` | a LiveKit server (`livekit-server --dev`: `ws://127.0.0.1:7880`, `devkey`, `secret`) |
 
-`livekit_embedded` fails without a `livekit-server` unless `ALLOW_SKIPPED_INTEGRATION=1`. A new test
-that runs a script under `scripts/` must add it to the export assembler's `KEEP_RE`.
+`livekit_embedded` fails without a `livekit-server` unless `ALLOW_SKIPPED_INTEGRATION=1`.
 
 ## Escape hatch
 
@@ -45,7 +44,7 @@ such as `DCL_SCENE_CLI_LINKER_TIMEOUT_SECS` (default 600).
 
 ## Browser journeys in CI
 
-`Scene CLI journeys` builds the PR base and proposed CLI and runs the same 42
+`Scene CLI journeys` builds the PR base and proposed CLI and runs the same 45
 stages against both: launch targets, scene editor, storage scopes and transfers,
 publishing targets, wallet handoff, missing integrations, offline feedback and
 tablet layouts (768 × 1024). Local HTTP fixtures replace upstream services. Runtime credentials

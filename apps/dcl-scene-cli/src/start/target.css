@@ -143,6 +143,7 @@
 .tgt__remove p { line-height: 1.5; }
 @media(max-width:800px) { .tgt__world-layout { grid-template-columns: 1fr; } }
 
+.tgt__manage > summary { cursor: pointer; font-weight: 600; padding-block: var(--s-3); }
 .tgt__management { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: var(--s-5); align-items: start; margin-top: 20px; }
 .tgt__management .tgt__advanced-body { display: flex; flex-direction: column; gap: 14px; }
 .tgt__management .tgt__advanced-body > p { margin: 0; }
