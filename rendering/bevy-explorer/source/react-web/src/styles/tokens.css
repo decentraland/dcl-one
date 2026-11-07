@@ -28,6 +28,7 @@
   --white-10: rgba(255, 255, 255, 0.1); /* DCL/White10% — dividers */
   --shop-card-hover: rgba(255, 255, 255, 0.2); /* DCL/White20% — the Shop cart's hovered card */
   --pale-black: #43404a; /* DCL/Pale Black — the Shop toast's rim */
+  --silver: #a09ba8; /* DCL/Silver — the NAME field's placeholder and suffix, an empty nametag */
   --divider-strong: rgba(255, 255, 255, 0.2); /* list section hairlines (friends) */
   --panel-translucent: rgba(0, 0, 0, 0.72); /* see-through side panel over the world */
   --panel-head: rgba(0, 0, 0, 0.55); /* header band layered on --panel-translucent */

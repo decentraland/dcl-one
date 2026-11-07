@@ -119,6 +119,19 @@ describe("NAME registration search", () => {
     expect(onSignIn).toHaveBeenCalled();
   });
 
+  it("opens the buy dialog on the NAME a link names, as the in-world Shop's CLAIM NAME sends it", async () => {
+    setup({ session: "web2", path: "/shop/names?name=Nacho" });
+    expect(await screen.findByRole("dialog", { name: "Buy Nacho.dcl.eth" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Search for a NAME" })).toHaveValue("Nacho");
+  });
+
+  it("ignores a linked NAME that can't be registered", async () => {
+    setup({ session: "web2", path: "/shop/names?name=no%20way" });
+    await screen.findByRole("textbox", { name: "Search for a NAME" });
+    expect(screen.getByRole("textbox", { name: "Search for a NAME" })).toHaveValue("");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("re-opens the buy dialog on the NAME a top-up was started for", async () => {
     sessionStorage.setItem(RESUME_NAME_KEY, "Nacho");
     setup({ session: "web2" });

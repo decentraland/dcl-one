@@ -1,0 +1,56 @@
+/* The design's nametag at the scale the NAMEs flow draws it over the avatar (its 18px Explorer nametag at
+   1.802×): a 54px pill, 18px in on each side, the NAME at 32.44px and the 25px claimed badge 3.6px after
+   it. Centred on the point the page places it at, so a longer NAME grows it both ways. */
+.tag {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3.604px;
+  height: 54.066px;
+  padding: 0 18.022px;
+  border: 2.703px solid var(--pale-black);
+  border-radius: 180.22px;
+  background: var(--panel);
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.text,
+.placeholder {
+  font-size: 32.44px;
+  line-height: normal;
+}
+.text {
+  display: flex;
+  align-items: center;
+  font-weight: var(--fw-semibold);
+}
+/* The design's NametagDefault: Inter Light, in silver. */
+.placeholder {
+  font-weight: 300;
+  color: var(--silver);
+}
+/* The field's caret, mirrored after the NAME in its colour. */
+.caret {
+  width: 2px;
+  height: 34px;
+  margin-left: 1px;
+  background: currentColor;
+  animation: blink 1s steps(1) infinite;
+}
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .caret {
+    animation: none;
+  }
+}
+.badge {
+  flex: none;
+  width: 25.231px;
+  height: 25.231px;
+}

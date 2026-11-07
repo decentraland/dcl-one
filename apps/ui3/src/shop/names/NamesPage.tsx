@@ -114,8 +114,15 @@ export default function NamesPage({ client, offerSource, loadBanned, debounceMs 
   }, [value, placeholder]);
 
   useEffect(() => {
-    const resume = typeof navResume === "string" && nameLabel(navResume) ? navResume : takeNameResume();
-    if (navResume) navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+    // A link may name the NAME to register (`?name=`, the in-world Shop's CLAIM NAME): taken out of the URL
+    // once read, as a navigation's resume is.
+    const params = new URLSearchParams(location.search);
+    const linked = params.get("name");
+    params.delete("name");
+    const rest = params.toString();
+    const resume =
+      typeof navResume === "string" && nameLabel(navResume) ? navResume : linked !== null && nameLabel(linked) ? linked : takeNameResume();
+    if (navResume || linked !== null) navigate(`${location.pathname}${rest ? `?${rest}` : ""}`, { replace: true, state: null });
     if (!resume) return;
     setValue(resume);
     setPendingResume(resume);

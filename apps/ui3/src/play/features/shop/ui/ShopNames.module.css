@@ -1,0 +1,311 @@
+/* The design's NAMEs frames (SHOP UNIQUE NAME) at the Shop's 1920 reference: under the chips, the 1282×467
+   hero, then the 1282×353 banner, 20px apart. The glows are the design's blurred ellipses, placed where
+   it puts them (their blur's reach included in each image). */
+.names {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-height: 0;
+}
+.chips {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.hero {
+  position: relative;
+  flex: none;
+  width: 1282px;
+  height: 467px;
+  border-radius: var(--r-lg);
+  background: var(--black-40);
+  overflow: hidden;
+}
+.heroGlowLow,
+.heroGlowHigh,
+.heroGlowSpark {
+  position: absolute;
+  max-width: none;
+  pointer-events: none;
+}
+.heroGlowLow {
+  left: -300px;
+  top: 164.49px;
+  width: 763px;
+  height: 555px;
+}
+.heroGlowHigh {
+  left: 798.44px;
+  top: -253.74px;
+  width: 785.07px;
+  height: 566.77px;
+}
+/* Two, each added to what is under it (the design's plus-lighter). */
+.heroGlowSpark {
+  left: 1031px;
+  top: -57.22px;
+  width: 320px;
+  height: 264.16px;
+  mix-blend-mode: plus-lighter;
+}
+/* Titles, 48px, then the field and CLAIM NAME, centred on the hero: a two-line message under the field
+   lifts the whole block, as the design's taken NAME does. */
+.heroContent {
+  position: absolute;
+  left: calc(50% + 0.5px);
+  top: calc(50% + 0.5px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 48px;
+  transform: translate(-50%, -50%);
+}
+.titles {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.title {
+  margin: 0;
+  font-size: 60px;
+  font-weight: var(--fw-semibold);
+  line-height: 1.2;
+  letter-spacing: -0.5px;
+  white-space: nowrap;
+  color: var(--white);
+}
+.subtitle {
+  margin: 0;
+  font-size: var(--type-24);
+  font-weight: var(--fw-medium);
+  line-height: 1.334;
+  color: var(--pearl);
+}
+
+/* The design's NAME Input: the 400px field and its message, 8px, then CLAIM NAME 3px lower. */
+.claim {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 627px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 400px;
+}
+/* The field's 3px frame: its ring 3px outside it, white while typing, red when the NAME can't be had. */
+.outline {
+  position: relative;
+  display: flex;
+  height: 51px;
+  padding: 3px;
+  border-radius: 14px;
+  cursor: text;
+}
+.outline:focus-within {
+  box-shadow: 0 0 0 3px var(--ink-7);
+}
+.outline.invalid {
+  box-shadow: 0 0 0 3px var(--red);
+}
+.input {
+  flex: 1;
+  min-width: 0;
+  height: 45px;
+  padding: 0 16px;
+  border: none;
+  border-radius: var(--r-md);
+  outline: none;
+  background: var(--text);
+  color: var(--panel);
+  caret-color: var(--panel);
+  font-family: inherit;
+  font-size: var(--type-16);
+  font-weight: var(--fw-semibold);
+  line-height: normal;
+}
+.input::placeholder {
+  color: var(--silver);
+  font-weight: var(--fw-regular);
+}
+/* The account's `#` and last four, after the NAME while it is typed. */
+.suffix {
+  position: absolute;
+  right: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  visibility: hidden;
+  color: var(--silver);
+  font-size: var(--type-16);
+  line-height: normal;
+  pointer-events: none;
+}
+.outline:focus-within .suffix {
+  visibility: visible;
+}
+
+.feedback {
+  display: flex;
+  min-height: 17px;
+  font-size: var(--type-14);
+  line-height: normal;
+}
+.count {
+  color: var(--ink-7);
+}
+/* The count only while the field has the focus (its room kept, as the design's hidden one keeps it). */
+.onFocus {
+  opacity: 0;
+}
+.field:focus-within .onFocus {
+  opacity: 1;
+}
+.error {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--red);
+}
+.error img {
+  flex: none;
+}
+/* The taken NAME's two lines (Inter Medium, 1.5), the warning centred on them. */
+.taken {
+  font-weight: var(--fw-medium);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.makeOffer {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: var(--fw-semibold);
+  line-height: inherit;
+  cursor: pointer;
+}
+.makeOffer:hover {
+  text-decoration: underline;
+}
+.cta {
+  display: flex;
+  padding: 3px 0;
+}
+.claimBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 52px;
+  padding: 0 24px;
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--brand);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--type-16);
+  font-weight: var(--fw-semibold);
+  line-height: normal;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.claimBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.price {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--type-18);
+}
+
+/* The banner: its text and glows clipped to it, the art spilling past its right edge as the design's
+   does. */
+.banner {
+  position: relative;
+  flex: none;
+  width: 1282px;
+  height: 353px;
+  border-radius: var(--r-lg);
+  background: var(--outfit-banner);
+}
+.bannerClip {
+  position: absolute;
+  left: 0;
+  top: -3px;
+  width: 1274px;
+  height: 356px;
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+.bannerGlowWide,
+.bannerGlowThin,
+.bannerGlowTop {
+  position: absolute;
+  max-width: none;
+  pointer-events: none;
+}
+.bannerGlowWide {
+  left: -301px;
+  top: 143px;
+  width: 1149px;
+  height: 471px;
+}
+.bannerGlowThin {
+  left: -56.83px;
+  top: 243px;
+  width: 660.65px;
+  height: 228.17px;
+}
+.bannerGlowTop {
+  left: 676.85px;
+  top: -354.72px;
+  width: 564.33px;
+  height: 540.16px;
+  transform: rotate(-139.73deg) scaleY(-1);
+}
+.bannerTitle {
+  position: absolute;
+  left: 62px;
+  top: 119px;
+  width: 624px;
+  margin: 0;
+  transform: translateY(-50%);
+  color: var(--text);
+  font-size: var(--type-30);
+  font-weight: var(--fw-semibold);
+  line-height: normal;
+}
+.bannerBody {
+  position: absolute;
+  left: 65px;
+  top: 215px;
+  width: 633px;
+  margin: 0;
+  transform: translateY(-50%);
+  color: var(--text);
+  font-size: var(--type-16);
+  line-height: normal;
+}
+.world {
+  color: var(--brand);
+  font-weight: var(--fw-semibold);
+  text-decoration: underline;
+}
+.bannerArt {
+  position: absolute;
+  right: -28px;
+  top: -1px;
+  width: 491px;
+  height: 361px;
+  pointer-events: none;
+}

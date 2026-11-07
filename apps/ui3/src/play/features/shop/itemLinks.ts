@@ -1,5 +1,5 @@
-// Where a catalogue item leads: the URN a try-on puts on the avatar and its page on the web Shop; and an
-// outfit's page there.
+// Where a catalogue item leads: the URN a try-on puts on the avatar and its page on the web Shop; an
+// outfit's page there; and a NAME's.
 
 import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
 import { itemUrn } from '../../../shop/detail/lib/urn'
@@ -22,4 +22,15 @@ export function webShopUrl(item: CatalogItem): string | null {
 /** An outfit's page on the web Shop, where it is bought when the Shop here can't buy it. */
 export function webOutfitUrl(outfitId: string): string {
   return withUtm(siteUrl(`/shop/items/outfits/${encodeURIComponent(outfitId)}`))
+}
+
+/** The web Shop's NAMEs page on a typed NAME, where it is registered when the Shop here can't register it. */
+export function webNameUrl(name: string): string {
+  return withUtm(siteUrl(`/shop/names?name=${encodeURIComponent(name)}`))
+}
+
+/** NAMEs for resale on the web Shop, narrowed to `name` when given: where an offer is made to a NAME's owner. */
+export function webNameResaleUrl(name?: string): string {
+  const search = name != null && name !== '' ? `&search=${encodeURIComponent(name)}` : ''
+  return withUtm(siteUrl(`/shop/names?section=resale${search}`))
 }
