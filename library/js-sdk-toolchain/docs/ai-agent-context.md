@@ -20,7 +20,7 @@
 - Language: TypeScript 5.0.2
 - Build: TypeScript compiler (tsc) + esbuild (CLI bundling) + Makefile orchestration
 - Test: Jest 29.5.0 with ts-jest; snapshot/golden-file tests for QuickJS opcode regression
-- Monorepo: npm workspaces under `packages/@dcl/`
+- Monorepo: pnpm workspace under `packages/@dcl/`
 - Linting: ESLint with @dcl/eslint-config, Prettier, syncpack (cross-package dep version sync)
 - Docs: TypeDoc (API docs), ADR links (architecture decisions)
 - React: react@18.2.0 + react-reconciler@0.29.0 (custom fiber)
@@ -119,6 +119,7 @@ Uses esbuild with `platform: 'browser'`, `format: 'cjs'`, `target: 'es2020'`, an
 | `--explorer-alpha` | Use the new Alpha Explorer deeplink (default) |
 | `--web, --bevy-web` | Open the preview in Bevy Web (`https://decentraland.org/bevy-web/`) instead of the desktop Explorer. Chrome 142+ requires the Local Network Access permission ("Apps on device" in 145+) for the page to reach the localhost preview server; the CLI prints instructions |
 | `--mobile` | Print ASCII QR code for mobile preview |
+| `--no-server` | Don't spawn the Multiplayer Server. Use it when another preview of the same project already runs one, because two servers for one scene fight over the scene room |
 | `--position <x,y>` | Initial spawn position (default: from `scene.json`) |
 | `--skip-auth-screen` | Skip Explorer's authentication screen |
 | `--hub` | Enable Hub mode |
@@ -339,7 +340,7 @@ js-sdk-toolchain/
 ├── docs/                        # Architecture notes and ADR summaries
 ├── scripts/                     # Build scripts, code generation, RPC proto compilation
 ├── Makefile                     # Build orchestration (install / build / test / lint)
-└── package.json                 # npm workspaces root
+└── package.json                 # workspace root (members in pnpm-workspace.yaml)
 ```
 
 **Configuration:**
@@ -348,7 +349,7 @@ The monorepo is built and tested via `make`:
 
 | Command | Purpose |
 | --- | --- |
-| `make install` | `npm install` + install protobuf binary |
+| `make install` | `pnpm install` + install protobuf binary |
 | `make build` | Full build: tsc all packages, generate types from protocol buffers, run build spec |
 | `make test` | Jest test suite including snapshot/golden tests |
 | `make lint-fix` | ESLint + Prettier auto-fix |

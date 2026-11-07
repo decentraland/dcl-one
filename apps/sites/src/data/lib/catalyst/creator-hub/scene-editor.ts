@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { catalystBase, worldsBase } from "../client";
 import { track } from "@/core/lib/telemetry/track";
+import { renameLegacySmartItemComponents } from "@ui/editor/smart-item-components";
 import editorDefaults from "./scene-editor-defaults.data.json";
 
 const Vector3Schema = z.object({
@@ -338,7 +339,7 @@ function deriveHierarchy(comps: CompMap, sceneTitle: string): HierarchyNode[] {
 
 function placeholderSrcs(comps: CompMap): string[] {
   const out: string[] = [];
-  const data = comps.get("asset-packs::Placeholder");
+  const data = comps.get("smart-items::Placeholder");
   if (!data) return out;
   for (const raw of Object.values(data)) {
     const p = SrcV.safeParse(unwrap(raw));
@@ -506,7 +507,7 @@ export function seedFromCompositeJSON(
     if (!parsed.success) return baseSeed;
 
     const comps: CompMap = new Map();
-    for (const c of parsed.data.components) comps.set(c.name, c.data);
+    for (const c of renameLegacySmartItemComponents(parsed.data.components)) comps.set(c.name, c.data);
 
     const hierarchy = deriveHierarchy(comps, baseSeed.scene.title);
     const glbPaths = dedupe([...placeholderSrcs(comps), ...contentGlbs]).slice(

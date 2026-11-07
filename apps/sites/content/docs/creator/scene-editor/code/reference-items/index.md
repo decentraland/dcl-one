@@ -159,8 +159,8 @@ For example, if a scene has a button with the following generic **On Click** eve
 
 ```ts
 import { engine } from '@dcl/sdk/ecs'
-import { getTriggerEvents, getActionEvents } from '@dcl/asset-packs/dist/events'
-import { TriggerType } from '@dcl/asset-packs'
+import { getTriggerEvents, getActionEvents } from '@dcl/sdk/smart-items/events'
+import { TriggerType } from '@dcl/sdk/smart-items'
 import { EntityNames } from '../assets/scene/entity-names'
 
 function main() {
@@ -188,8 +188,8 @@ For example, if a scene has a door with the following default **Open** action, y
 
 ```ts
 import { engine } from '@dcl/sdk/ecs'
-import { getTriggerEvents, getActionEvents } from '@dcl/asset-packs/dist/events'
-import { TriggerType } from '@dcl/asset-packs'
+import { getTriggerEvents, getActionEvents } from '@dcl/sdk/smart-items/events'
+import { TriggerType } from '@dcl/sdk/smart-items'
 import { EntityNames } from '../assets/scene/entity-names'
 
 function main() {
@@ -216,8 +216,8 @@ You can also emit action events from your code, this allows you to take advantag
 
 ```ts
 import { engine } from '@dcl/sdk/ecs'
-import { getTriggerEvents, getActionEvents } from '@dcl/asset-packs/dist/events'
-import { TriggerType } from '@dcl/asset-packs'
+import { getTriggerEvents, getActionEvents } from '@dcl/sdk/smart-items/events'
+import { TriggerType } from '@dcl/sdk/smart-items'
 import { EntityNames } from '../assets/scene/entity-names'
 
 function main() {
@@ -244,16 +244,15 @@ function main() {
 
 ## Other smart item components
 
-Smart items can include special components that are part of the asset-packs library, like `States` or `Counter`. These components are not part of the Decentraland SDK, but they can be fetched via the `getComponents()` function from the library. You can then read or write values to these components from your scene's code, to have an even tighter integration between smart item behavior and code.
+Smart items can include special components like `States` or `Counter`. These components belong to the SDK's smart-item runtime, `@dcl/sdk/smart-items`, and can be fetched via its `getComponents()` function. You can then read or write values to these components from your scene's code, to have an even tighter integration between smart item behavior and code.
 
 The example below reads and logs the value of a State component of a chest smart item, whenever the chest's actions are triggered.
 
 ```ts
 
 import { engine } from '@dcl/sdk/ecs'
-import { getComponents } from '@dcl/asset-packs'
-import { getTriggerEvents } from '@dcl/asset-packs/dist/events'
-import { TriggerType } from '@dcl/asset-packs'
+import { getComponents, TriggerType } from '@dcl/sdk/smart-items'
+import { getTriggerEvents } from '@dcl/sdk/smart-items/events'
 import { EntityNames } from '../assets/scene/entity-names'
 
 

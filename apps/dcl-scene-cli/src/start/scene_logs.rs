@@ -425,7 +425,7 @@ mod tests {
     use super::*;
 
     const SAMPLE: &str = "latestSeq=11 returned=2\n\
-#10 [03:29:05] [Error] SceneError: [asset-packs] No SDK composite provider registered stackTrace:     at initAssetPacks (dcl-one:///bin/sdk-runtime.js:51002:16)\n\
+#10 [03:29:05] [Error] SceneError: [smart-items] No SDK composite provider registered stackTrace:     at initSmartItems (dcl-one:///bin/sdk-runtime.js:51002:16)\n\
     at eval (dcl-one:///bin/scene.js:3676:59)\n\
 #11 [03:29:37] [Log] Starting loading http://127.0.0.1:8000/content/contents/b64-xyz\n";
 
@@ -484,7 +484,7 @@ mod tests {
         let (_, entries) = parse(SAMPLE);
         assert_eq!(
             entries[0].scene_js_message(),
-            Some("[asset-packs] No SDK composite provider registered")
+            Some("[smart-items] No SDK composite provider registered")
         );
         assert_eq!(entries[1].scene_js_message(), None);
     }

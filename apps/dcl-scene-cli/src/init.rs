@@ -476,15 +476,15 @@ mod tests {
         );
     }
 
-    /// Both scaffold pins must name the blob's @dcl line (a manifest naming an
-    /// older one would have the next npm install downgrade it), and the blob's
+    /// Both scaffold pins must name the blob's @dcl version (the SDK built from
+    /// library/js-sdk-toolchain is stamped with it), and the blob's
     /// @dcl/ecs must carry the fixes the line brought: the byteLength-scoped
     /// DataView (upstream #1460), the renderer-reserved entity-id guard (#1544)
     /// and the eight-byte network delete body the bevy engine's strict framing
     /// needs (#1595 — an overlay of ours on 7.27.0, upstream's own code on the
     /// auth-server line). The runtime chunk must also carry the peer-trust gate
-    /// (`patch_sdk_peer_trust()` in scripts/blob_overlays.py), or every
-    /// unflagged serverless-multiplayer scene stops syncing.
+    /// (`fromAuthority()` in library/js-sdk-toolchain's `@dcl/sdk/src/network`),
+    /// or every unflagged serverless-multiplayer scene stops syncing.
     #[test]
     fn blob_tracks_the_scaffold_pin_and_carries_the_ecs_fixes() {
         use std::io::Read;

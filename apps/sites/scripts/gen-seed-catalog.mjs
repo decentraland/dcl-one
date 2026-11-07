@@ -51,10 +51,13 @@ function hueOf(id) {
   return (h >>> 0) % 360;
 }
 
+// A smart item is an asset whose composite carries Actions, Triggers or States. The
+// catalog names them under its own namespace or the SDK's; the seed records only the
+// `smart` flag, never the component names.
 function isSmart(asset) {
   const components = asset.composite?.components;
   if (!Array.isArray(components)) return false;
-  return components.some((c) => /^asset-packs::(Actions|Triggers|States)$/.test(c?.name ?? ""));
+  return components.some((c) => /^(?:smart-items|asset-packs)::(Actions|Triggers|States)$/.test(c?.name ?? ""));
 }
 
 function glbOf(asset) {

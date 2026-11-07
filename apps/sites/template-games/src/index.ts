@@ -1,12 +1,12 @@
 import '@dcl/sdk'
 import { engine } from '@dcl/sdk/ecs'
-import { initAssetPacks } from '@dcl/asset-packs/dist/scene-entrypoint'
+import { initSmartItems } from '@dcl/sdk/smart-items'
 import { getSceneInformation } from '~system/Runtime'
 
 import { GAMES } from './games'
 import { setGameDebugMode, startGame, type GameDef, type RunningGame } from './harness'
 
-initAssetPacks(engine)
+initSmartItems(engine)
 
 const POLL_INTERVAL_S = 0.4
 

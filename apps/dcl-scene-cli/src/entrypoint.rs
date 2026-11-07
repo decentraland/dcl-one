@@ -1,6 +1,7 @@
 use crate::scene::Project;
 use crate::ux::{TrySteps, UserError, write_error};
 use anyhow::Result;
+use dcl_scene_authoring::composite_norm::smart_item_name;
 use std::path::{Path, PathBuf};
 
 pub struct Generated {
@@ -76,7 +77,7 @@ fn entrypoint_code(safe_entry: &str, editor_scene: bool, split: bool) -> String 
         ""
     };
     let editor_block = if editor_scene {
-        "\nimport { syncEntity } from '@dcl/sdk/network'\nimport players from '@dcl/sdk/players'\nimport { setCompositeProvider } from '@dcl/sdk/ecs'\nimport { initAssetPacks } from '@dcl/asset-packs/dist/scene-entrypoint'\nsetCompositeProvider(engine, compositeProvider)\ninitAssetPacks(engine, { syncEntity }, players)\n"
+        "\nimport { syncEntity } from '@dcl/sdk/network'\nimport players from '@dcl/sdk/players'\nimport { setCompositeProvider } from '@dcl/sdk/ecs'\nimport { initSmartItems } from '@dcl/sdk/smart-items'\nsetCompositeProvider(engine, compositeProvider)\ninitSmartItems(engine, { syncEntity }, players)\n"
             .to_string()
     } else {
         "false".to_string()
@@ -90,14 +91,14 @@ import {{ compositeProvider }} from '@dcl/sdk/composite-provider'
 import {{ compositeFromLoader }} from '~sdk/all-composites'
 import {{ _initializeScripts }} from '~sdk/script-utils'
 // Registers the composite provider, and must be imported BEFORE the scene.
-// A scene that calls initAssetPacks() at module scope -- as the Creator Hub
+// A scene that calls initSmartItems() at module scope -- as the Creator Hub
 // templates do -- reads that provider while its own module body runs, and until
 // this existed the only thing registering it was `@dcl/sdk`'s body, which the
-// bundler emits at the END of the chunk. So the editor logged "[asset-packs] No
-// SDK composite provider registered; SPAWN_ENTITY cannot resolve composites"
-// and placing a smart item resolved nothing. Upstream sdk-commands has the same
-// ordering (logic/bundle.ts) and gets away with it only because upstream scenes
-// never call initAssetPacks themselves.
+// bundler emits at the END of the chunk. So the editor logged "No SDK composite
+// provider registered; SPAWN_ENTITY cannot resolve composites" and placing a
+// smart item resolved nothing. Upstream's bundler has the same ordering
+// (logic/bundle.ts) and gets away with it only because upstream scenes never
+// call initSmartItems themselves.
 //
 // A separate module because neither cheaper fix works: statements here run after
 // every import including the scene's, and the bundler does not honour moving
@@ -218,23 +219,13 @@ pub fn scan_max_composite_entity(root: &Path) -> u32 {
 /// Same export surface as upstream's `generateScriptStubModuleContent`.
 pub const SCRIPT_UTILS_STUB: &str = "export function _initializeScripts(_engine) {}\nexport function getScriptInstance(_entity, _scriptPath) { return null }\nexport function getScriptInstancesByPath(_scriptPath) { return [] }\nexport function getAllScriptInstances(_entity) { return [] }\nexport function callScriptMethod(entity, scriptPath, methodName, ..._args) {\n  console.error(`Method ${methodName} not found on script ${scriptPath} for entity ${entity}`)\n  return undefined\n}\n";
 
-/// The real `~sdk/script-utils`: `@dcl/sdk-commands`' compiled smart-item script
-/// runtime, de-CommonJS'd so rolldown can bundle it as an ES module. `None`
-/// unless both packages are on disk (the npm flow; the vendored blob ships this
-/// output prebuilt via `prebuilt::build_chunks`).
-pub fn script_utils_source(project: &Project) -> Option<String> {
-    let code = project
-        .node_module("@dcl/asset-packs")
-        .and_then(|_| project.node_module("@dcl/sdk-commands/dist/logic/runtime-script.js"))
-        .and_then(|p| std::fs::read_to_string(p).ok())?;
-    let runtime = rewrite_requires(&strip_cjs(&code.replace(
-        "@dcl/inspector/node_modules/@dcl/asset-packs",
-        "@dcl/asset-packs",
-    )));
-    Some(format!(
-        "{runtime}\n\nexport function _initializeScripts(engine) {{\n  const scriptsArray = []\n  return runScripts(engine, scriptsArray)\n}}\n\nexport {{ getScriptInstance, getScriptInstancesByPath, getAllScriptInstances, callScriptMethod }}\n"
-    ))
-}
+/// The real `~sdk/script-utils`: the script runtime of
+/// `@dcl/sdk/smart-items/scripts` behind the stub's export surface, with the
+/// scene's `_initializeScripts` in front of it. The prebuilt smart chunk
+/// bundles this module (`prebuilt::build_chunks`), so a split build gets it
+/// from that chunk's registry; the source-path SDK chunk bundles the generated
+/// file.
+pub const SCRIPT_UTILS_SOURCE: &str = "import { runScripts, getScriptInstance, getScriptInstancesByPath, getAllScriptInstances, callScriptMethod } from '@dcl/sdk/smart-items/scripts'\n\nexport function _initializeScripts(engine) {\n  const scriptsArray = []\n  return runScripts(engine, scriptsArray)\n}\n\nexport { getScriptInstance, getScriptInstancesByPath, getAllScriptInstances, callScriptMethod }\n";
 
 /// Upstream skips the embedded script runtime for scenes that author no scripts
 /// and are not editor scenes.
@@ -243,13 +234,17 @@ pub fn script_utils_content(project: &Project, ignore_composite: bool) -> String
     if !has_scripts && !project.is_editor_scene() {
         return SCRIPT_UTILS_STUB.to_string();
     }
-    script_utils_source(project).unwrap_or_else(|| SCRIPT_UTILS_STUB.to_string())
+    SCRIPT_UTILS_SOURCE.to_string()
 }
 
+/// The component a composite lists its smart-item scripts in.
+const SCRIPT_COMPONENT: &str = "smart-items::Script";
+
 /// Does any composite author a smart-item script? The Rust side of upstream's
-/// `compositeData.scripts.size > 0`: any entry in an `asset-packs::Script`
-/// component's `value` array flips the gate. Composites that would fail to
-/// instance contribute nothing, matching upstream's per-composite try/catch.
+/// `compositeData.scripts.size > 0`: any entry in a [`SCRIPT_COMPONENT`]'s
+/// `value` array flips the gate, under either spelling of the prefix
+/// (`composite_norm::smart_item_name`). Composites that would fail to instance
+/// contribute nothing, matching upstream's per-composite try/catch.
 pub fn composites_have_scripts(root: &Path) -> bool {
     let (has_scripts, skipped) = composites_script_scan(root);
     for message in skipped {
@@ -281,7 +276,9 @@ fn composites_script_scan(root: &Path) -> (bool, Vec<String>) {
                 comps
                     .iter()
                     .filter(|c| {
-                        c.get("name").and_then(|n| n.as_str()) == Some("asset-packs::Script")
+                        c.get("name")
+                            .and_then(|n| n.as_str())
+                            .is_some_and(|n| smart_item_name(n) == SCRIPT_COMPONENT)
                     })
                     .any(script_component_has_instances)
             })
@@ -303,109 +300,23 @@ fn script_component_has_instances(comp: &serde_json::Value) -> bool {
         })
 }
 
-fn strip_cjs(code: &str) -> String {
-    let mut out = String::with_capacity(code.len());
-    for line in code.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("\"use strict\"")
-            || trimmed.starts_with("Object.defineProperty(exports,")
-            || trimmed.starts_with("import ")
-            || trimmed.starts_with("//# sourceMappingURL")
-        {
-            continue;
-        }
-        let mut l = line.to_string();
-        if let Some(rest) = trimmed.strip_prefix("export ") {
-            let indent_len = line.len() - trimmed.len();
-            l = format!("{}{}", &line[..indent_len], rest);
-        }
-        while let Some(idx) = l.find("exports.") {
-            let after = &l[idx + 8..];
-            if let Some(eq) = after.find('=') {
-                let ident = &after[..eq];
-                if ident
-                    .trim()
-                    .chars()
-                    .all(|c| c.is_alphanumeric() || c == '_' || c == ' ')
-                {
-                    let rhs = after[eq + 1..].trim_start();
-                    if rhs.starts_with("void 0") {
-                        l = format!("{}{}", &l[..idx], strip_void_stmt(&after[eq + 1..]));
-                        continue;
-                    }
-                    l = format!("{}{}", &l[..idx], after[eq + 1..].trim_start());
-                    continue;
-                }
-            }
-            break;
-        }
-        out.push_str(&l);
-        out.push('\n');
-    }
-    out.trim().to_string()
-}
-
-fn strip_void_stmt(rest: &str) -> String {
-    rest.trim_start()
-        .strip_prefix("void 0")
-        .map(|r| r.trim_start_matches(';').trim_start().to_string())
-        .unwrap_or_default()
-}
-
-fn rewrite_requires(code: &str) -> String {
-    let mut out = String::with_capacity(code.len());
-    for line in code.lines() {
-        match top_level_require(line) {
-            Some((name, spec)) => {
-                let spec = if spec == "@dcl/ecs/dist-cjs" || spec.starts_with("@dcl/ecs/dist-cjs/")
-                {
-                    "@dcl/ecs"
-                } else {
-                    spec
-                };
-                out.push_str(&format!("import * as {name} from \"{spec}\"\n"));
-            }
-            None => {
-                out.push_str(line);
-                out.push('\n');
-            }
-        }
-    }
-    out.trim().to_string()
-}
-
-fn top_level_require(line: &str) -> Option<(&str, &str)> {
-    let rest = ["const ", "var ", "let "]
-        .iter()
-        .find_map(|kw| line.strip_prefix(kw))?;
-    let (name, rest) = rest.split_once('=')?;
-    let name = name.trim();
-    if name.is_empty()
-        || !name
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
-    {
-        return None;
-    }
-    let rest = rest.trim().strip_prefix("require(\"")?;
-    let (spec, tail) = rest.split_once('"')?;
-    let tail = tail.trim_start().strip_prefix(')')?;
-    if !tail.trim_end_matches(';').trim().is_empty() {
-        return None;
-    }
-    Some((name, spec))
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        SCRIPT_UTILS_STUB, composites_have_scripts, composites_script_scan, rewrite_requires,
-        scan_max_composite_entity, script_utils_content, strip_cjs,
+        SCRIPT_UTILS_SOURCE, SCRIPT_UTILS_STUB, composites_have_scripts, composites_script_scan,
+        scan_max_composite_entity, script_utils_content, write_all_composites,
     };
     use crate::scene::{Project, Tmp};
 
     const MAIN: &str = "assets/scene/main.composite";
-    const UNINSTANCEABLE: &str = r#"{"version":1,"components":[{"name":"core::NotAThing","data":{}},{"name":"asset-packs::Script","jsonSchema":{"type":"object"},"data":{"512":{"json":{"value":[{"path":"src/counter.ts"}]}}}}]}"#;
+    const UNINSTANCEABLE: &str = r#"{"version":1,"components":[{"name":"core::NotAThing","data":{}},{"name":"smart-items::Script","jsonSchema":{"type":"object"},"data":{"512":{"json":{"value":[{"path":"src/counter.ts"}]}}}}]}"#;
+
+    fn project(t: &Tmp) -> Project {
+        Project {
+            root: t.0.clone(),
+            scene_json: serde_json::json!({"main": "bin/index.js"}),
+        }
+    }
 
     #[test]
     fn composites_have_scripts_requires_script_instances() {
@@ -414,9 +325,19 @@ mod tests {
         assert!(!composites_have_scripts(&t.0));
         t.write(
             MAIN,
-            r#"{"version":1,"components":[{"name":"asset-packs::Script","jsonSchema":{"type":"object"},"data":{"512":{"json":{"value":[]}}}},{"name":"asset-packs::Actions","jsonSchema":{"type":"object"},"data":{"512":{"json":{}}}}]}"#,
+            r#"{"version":1,"components":[{"name":"smart-items::Script","jsonSchema":{"type":"object"},"data":{"512":{"json":{"value":[]}}}},{"name":"smart-items::Actions","jsonSchema":{"type":"object"},"data":{"512":{"json":{}}}}]}"#,
         );
         assert!(!composites_have_scripts(&t.0));
+        t.write(
+            MAIN,
+            r#"{"version":1,"components":[{"name":"smart-items::Script","jsonSchema":{"type":"object"},"data":{"512":{"json":{"value":[{"path":"src/counter.ts","priority":0}]}}}}]}"#,
+        );
+        assert!(composites_have_scripts(&t.0));
+    }
+
+    #[test]
+    fn a_legacy_script_component_flips_the_gate() {
+        let t = Tmp::new("legacyscripts");
         t.write(
             MAIN,
             r#"{"version":1,"components":[{"name":"asset-packs::Script","jsonSchema":{"type":"object"},"data":{"512":{"json":{"value":[{"path":"src/counter.ts","priority":0}]}}}}]}"#,
@@ -429,7 +350,7 @@ mod tests {
         let t = Tmp::new("binscripts");
         t.write(
             MAIN,
-            r#"{"version":1,"components":[{"name":"asset-packs::Script","jsonSchema":{"type":"object"},"data":{"512":{"binary":"AQID"}}}]}"#,
+            r#"{"version":1,"components":[{"name":"smart-items::Script","jsonSchema":{"type":"object"},"data":{"512":{"binary":"AQID"}}}]}"#,
         );
         assert!(composites_have_scripts(&t.0));
     }
@@ -441,7 +362,7 @@ mod tests {
         assert!(!composites_have_scripts(&t.0));
         t.write(
             "assets/scene/other.composite",
-            r#"{"version":1,"components":[{"name":"asset-packs::Script","data":{"512":{"json":{"value":[{"path":"src/counter.ts"}]}}}}]}"#,
+            r#"{"version":1,"components":[{"name":"smart-items::Script","data":{"512":{"json":{"value":[{"path":"src/counter.ts"}]}}}}]}"#,
         );
         assert!(!composites_have_scripts(&t.0));
     }
@@ -458,28 +379,31 @@ mod tests {
     }
 
     #[test]
-    fn script_utils_stub_for_scriptless_scenes_even_with_the_runtime_installed() {
+    fn script_utils_is_the_runtime_only_for_scenes_with_scripts() {
         let t = Tmp::new("scriptgate");
-        std::fs::create_dir_all(t.0.join("node_modules/@dcl/asset-packs")).unwrap();
-        t.write(
-            "node_modules/@dcl/sdk-commands/dist/logic/runtime-script.js",
-            "\"use strict\";\nexports.runScripts = runScripts;\nfunction runScripts(engine, scripts) {}\n",
-        );
-        let project = Project {
-            root: t.0.clone(),
-            scene_json: serde_json::json!({"main": "bin/index.js"}),
-        };
+        let project = project(&t);
         assert_eq!(script_utils_content(&project, false), SCRIPT_UTILS_STUB);
         t.write(
             MAIN,
-            r#"{"version":1,"components":[{"name":"asset-packs::Script","jsonSchema":{"type":"object"},"data":{"0":{"json":{"value":[{"path":"src/counter.ts"}]}}}}]}"#,
+            r#"{"version":1,"components":[{"name":"smart-items::Script","jsonSchema":{"type":"object"},"data":{"0":{"json":{"value":[{"path":"src/counter.ts"}]}}}}]}"#,
         );
-        assert!(script_utils_content(&project, false).contains("runScripts"));
+        assert_eq!(script_utils_content(&project, false), SCRIPT_UTILS_SOURCE);
         assert_eq!(script_utils_content(&project, true), SCRIPT_UTILS_STUB);
     }
 
     #[test]
-    fn stub_matches_upstreams_export_surface() {
+    fn an_editor_scene_links_the_runtime_without_scripts() {
+        let t = Tmp::new("editorutils");
+        let project = project(&t);
+        t.write(
+            MAIN,
+            r#"{"version":1,"components":[{"name":"asset-packs::Actions","jsonSchema":{"type":"object"},"data":{"512":{"json":{"value":[]}}}}]}"#,
+        );
+        assert_eq!(script_utils_content(&project, false), SCRIPT_UTILS_SOURCE);
+    }
+
+    #[test]
+    fn stub_and_runtime_share_upstreams_export_surface() {
         for export in [
             "_initializeScripts",
             "getScriptInstance",
@@ -488,8 +412,26 @@ mod tests {
             "callScriptMethod",
         ] {
             assert!(SCRIPT_UTILS_STUB.contains(&format!("export function {export}")));
+            assert!(SCRIPT_UTILS_SOURCE.contains(export), "{export}");
         }
         assert!(SCRIPT_UTILS_STUB.contains("not found on script"));
+        assert!(SCRIPT_UTILS_SOURCE.contains("from '@dcl/sdk/smart-items/scripts'"));
+        assert!(SCRIPT_UTILS_SOURCE.contains("export function _initializeScripts(engine)"));
+    }
+
+    #[test]
+    fn inlined_composites_carry_the_runtime_namespace() {
+        let t = Tmp::new("inlinelegacy");
+        t.write(
+            "main.composite",
+            r#"{"version":1,"components":[{"name":"asset-packs::Actions","jsonSchema":{"type":"object"},"data":{"512":{"json":{"value":[]}}}}]}"#,
+        );
+        let out = t.0.join("generated");
+        std::fs::create_dir_all(&out).unwrap();
+        write_all_composites(&project(&t), &out, false).unwrap();
+        let js = std::fs::read_to_string(out.join("all-composites.js")).unwrap();
+        assert!(js.contains(r#""name":"smart-items::Actions""#), "{js}");
+        assert!(!js.contains("asset-packs::"), "{js}");
     }
 
     #[test]
@@ -506,46 +448,5 @@ mod tests {
         );
         t.write("sub/broken.composite", "not json");
         assert_eq!(scan_max_composite_entity(&t.0), 5170);
-    }
-
-    #[test]
-    fn rewrites_dist_cjs_barrel_require_to_esm_barrel_import() {
-        let out = rewrite_requires("const entity_1 = require(\"@dcl/ecs/dist-cjs\");");
-        assert_eq!(out, "import * as entity_1 from \"@dcl/ecs\"");
-    }
-
-    #[test]
-    fn rewrites_dist_cjs_leaf_require_to_esm_barrel_import() {
-        let out =
-            rewrite_requires("const entity_1 = require(\"@dcl/ecs/dist-cjs/engine/entity\");");
-        assert_eq!(out, "import * as entity_1 from \"@dcl/ecs\"");
-    }
-
-    #[test]
-    fn rewrites_other_requires_keeping_the_spec() {
-        let out = rewrite_requires("const asset_packs_1 = require(\"@dcl/asset-packs\");");
-        assert_eq!(out, "import * as asset_packs_1 from \"@dcl/asset-packs\"");
-    }
-
-    #[test]
-    fn leaves_indented_and_non_require_lines_alone() {
-        let src = "function lazy() {\n  const x = require(\"fs\");\n  return x\n}\nconst n = 1;";
-        assert_eq!(rewrite_requires(src), src);
-    }
-
-    #[test]
-    fn leaves_multi_statement_lines_alone() {
-        let src = "const a = require(\"x\"); const b = 2;";
-        assert_eq!(rewrite_requires(src), src);
-    }
-
-    #[test]
-    fn full_pipeline_on_compiled_runtime_script_header() {
-        let compiled = "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.runScripts = runScripts;\nconst entity_1 = require(\"@dcl/ecs/dist-cjs\");\nconst asset_packs_1 = require(\"@dcl/asset-packs\");\nfunction entityIsRemoved(engine, entity) {\n    return engine.getEntityState(entity) === entity_1.EntityState.Removed;\n}\n";
-        let out = rewrite_requires(&strip_cjs(compiled));
-        assert!(out.contains("import * as entity_1 from \"@dcl/ecs\""));
-        assert!(out.contains("import * as asset_packs_1 from \"@dcl/asset-packs\""));
-        assert!(!out.contains("require("));
-        assert!(out.contains("entity_1.EntityState.Removed"));
     }
 }

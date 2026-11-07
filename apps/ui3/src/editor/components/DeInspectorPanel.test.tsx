@@ -115,7 +115,7 @@ describe("DeInspectorPanel add-component menu", () => {
     expect(model.textContent).toContain("Show a .glb / .gltf model");
     const search = menu.getByLabelText("Search components");
     fireEvent.change(search, { target: { value: "sound" } });
-    expect(menu.getAllByRole("button").map(b => b.title)).toEqual(["AudioSource", "asset-packs::Actions"]);
+    expect(menu.getAllByRole("button").map(b => b.title)).toEqual(["AudioSource", "smart-items::Actions"]);
     expect(menu.queryByText("3D Content")).toBeNull();
     fireEvent.change(search, { target: { value: "zzz" } });
     expect(menu.getByText(/No component matches/)).toBeTruthy();
@@ -127,12 +127,12 @@ describe("DeInspectorPanel add-component menu", () => {
     const search = screen.getByLabelText("Search components");
     fireEvent.change(search, { target: { value: "trigger" } });
     fireEvent.keyDown(search, { key: "Enter" });
-    expect(authored).toEqual(["asset-packs::Triggers"]);
+    expect(authored).toEqual(["smart-items::Triggers"]);
   });
 
   it("matches on label, technical name and description, label and name matches first", () => {
     expect(filterAddComponents("face the player").map(c => c.name)).toEqual(["Billboard"]);
-    expect(filterAddComponents("trigger").map(c => c.name)).toEqual(["asset-packs::Triggers", "asset-packs::States"]);
+    expect(filterAddComponents("trigger").map(c => c.name)).toEqual(["smart-items::Triggers", "smart-items::States"]);
     expect(filterAddComponents("nftshape").map(c => c.name)).toEqual(["NftShape"]);
     expect(filterAddComponents("every player").map(c => c.name)).toEqual(["core-schema::Sync-Components"]);
     expect(filterAddComponents("  ")).toHaveLength(ADD_COMPONENTS.length);

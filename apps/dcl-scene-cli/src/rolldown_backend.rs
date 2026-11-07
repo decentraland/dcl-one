@@ -9,7 +9,10 @@ use rolldown_common::{
 };
 use rolldown_utils::indexmap::FxIndexMap;
 use rolldown_utils::pattern_filter::StringOrRegex;
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::Arc;
 
 pub async fn run(project: &Project, opts: &EsbuildOptions) -> Result<()> {
     let mut bundler = Bundler::new(bundler_options(project, opts)?).map_err(|e| {
@@ -67,7 +70,7 @@ fn bundler_options(project: &Project, opts: &EsbuildOptions) -> Result<BundlerOp
         code_splitting: Some(CodeSplittingMode::Bool(false)),
         format: Some(OutputFormat::Cjs),
         platform: Some(Platform::Browser),
-        external: Some(externals(&opts.externals)?),
+        external: Some(externals(&opts.externals, &opts.bundled)?),
         define: Some(defines(opts.production)),
         resolve: Some(ResolveOptions {
             alias: Some(aliases(&opts.aliases)),
@@ -99,13 +102,38 @@ fn aliases(list: &[(String, PathBuf)]) -> Vec<(String, Vec<Option<String>>)> {
         .collect()
 }
 
-fn externals(extra: &[String]) -> Result<IsExternal> {
-    ["~system/*", "@dcl/inspector", "@dcl/inspector/*"]
+/// The fixed head plus the caller's patterns; a `bundled` match wins over both,
+/// which is how the smart-item chunk keeps `@dcl/sdk/*` external and still
+/// bundles its own `@dcl/sdk/smart-items`.
+fn externals(extra: &[String], bundled: &[String]) -> Result<IsExternal> {
+    let external = ["~system/*", "@dcl/inspector", "@dcl/inspector/*"]
         .into_iter()
         .chain(extra.iter().map(String::as_str))
         .map(external_pattern)
-        .collect::<Result<Vec<_>>>()
-        .map(IsExternal::StringOrRegex)
+        .collect::<Result<Vec<_>>>()?;
+    if bundled.is_empty() {
+        return Ok(IsExternal::StringOrRegex(external));
+    }
+    let bundled = bundled
+        .iter()
+        .map(|p| external_pattern(p))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(IsExternal::Fn(Some(Arc::new(
+        move |specifier: &str, _importer: Option<&str>, _is_resolved: bool| {
+            let is_external =
+                !matches_any(&bundled, specifier) && matches_any(&external, specifier);
+            let done: Pin<Box<dyn Future<Output = anyhow::Result<bool>> + Send + 'static>> =
+                Box::pin(std::future::ready(Ok(is_external)));
+            done
+        },
+    ))))
+}
+
+fn matches_any(patterns: &[StringOrRegex], specifier: &str) -> bool {
+    patterns.iter().any(|p| match p {
+        StringOrRegex::String(s) => s == specifier,
+        StringOrRegex::Regex(r) => r.matches(specifier),
+    })
 }
 
 fn external_pattern(pattern: &str) -> Result<StringOrRegex> {

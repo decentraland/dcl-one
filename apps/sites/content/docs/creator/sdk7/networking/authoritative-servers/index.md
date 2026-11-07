@@ -185,8 +185,8 @@ You can also validate based on _who_ is sending the change. Every incoming value
 ```typescript
 import { engine, VideoPlayer } from "@dcl/sdk/ecs"
 import { isServer } from "@dcl/sdk/network"
-import { isPreview } from "@dcl/asset-packs/dist/admin-toolkit-ui/fetch-utils"
-import { getSceneAdmins } from "@dcl/asset-packs/dist/admin-toolkit-ui/ModerationControl/api"
+import { isPreview } from "@dcl/sdk/smart-items/admin-toolkit-ui/fetch-utils"
+import { getSceneAdmins } from "@dcl/sdk/smart-items/admin-toolkit-ui/ModerationControl/api"
 
 // Cache of admin wallet addresses, refreshed from the scene admin list
 let adminAddresses = new Set<string>()

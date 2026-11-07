@@ -15,6 +15,11 @@ module.exports = {
     ]
   },
   transformIgnorePatterns: ['node_modules/(?!(@dcl/(ecs-math|quests-client))/)'],
+  // the root node_modules holds a registry @dcl/sdk (a transitive of @dcl/inspector); tests use this tree's sources
+  moduleNameMapper: {
+    '^@dcl/sdk$': '<rootDir>/packages/@dcl/sdk/src/index.ts',
+    '^@dcl/sdk/(?!package\\.json$)(.*)$': '<rootDir>/packages/@dcl/sdk/src/$1'
+  },
   coverageDirectory: 'coverage',
   coverageThreshold: {
     global: {

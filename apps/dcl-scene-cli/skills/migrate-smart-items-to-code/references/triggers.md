@@ -1,8 +1,7 @@
 # Smart-Item Triggers → SDK7
 
-All 19 `TriggerType` values and all 9 `TriggerConditionType` values from
-`@dcl/asset-packs` (verified — `dist/trigger-enums.d.ts` in `@dcl/asset-packs` 2.17.2
-declares exactly 19 and 9), with the SDK7 they compile down to. Verified against
+All 19 `TriggerType` values and all 9 `TriggerConditionType` values
+`@dcl/sdk/smart-items` exports, with the SDK7 they compile down to. Verified against
 `@dcl/sdk` 7.25.
 
 A trigger in the palette is `event → conditions → actions`. In code it is a callback with

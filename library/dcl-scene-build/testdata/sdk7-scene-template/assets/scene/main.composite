@@ -434,7 +434,7 @@
       }
     },
     {
-      "name": "asset-packs::ActionTypes",
+      "name": "smart-items::ActionTypes",
       "jsonSchema": {
         "type": "object",
         "properties": {
@@ -649,7 +649,7 @@
       }
     },
     {
-      "name": "asset-packs::Counter",
+      "name": "smart-items::Counter",
       "jsonSchema": {
         "type": "object",
         "properties": {

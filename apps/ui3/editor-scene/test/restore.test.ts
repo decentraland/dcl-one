@@ -210,3 +210,23 @@ test('restore accepts an already removed extra only after a fresh engine snapsho
   await assert.rejects(restoreComposite(composite({})), /Scene restore failed/)
   assert.ok(state.snapshot['520'])
 })
+
+test('restoration reads a composite saved under the legacy smart-item namespace as the current components', async () => {
+  state.status = 'ready'
+  state.scene = undefined
+  state.frozen = true
+  state.componentNames = ['Transform']
+  state.snapshot = { '512': { [NAME_COMPONENT]: { value: 'door' }, Transform: {} } }
+  const raw: Array<[string, number]> = []
+  cmd.setComponent = async () => 'ok'
+  cmd.setComponentRaw = async (id, component) => { raw.push([id, component]); return 'ok' }
+  cmd.deleteComponent = async () => 'ok'
+  await restoreComposite(JSON.stringify({ version: 1, components: [
+    { name: NAME_COMPONENT, data: { '512': { json: { value: 'door' } } } },
+    { name: 'core::Transform', data: { '512': { json: { position: { x: 1, y: 2, z: 3 }, parent: 0 } } } },
+    { name: 'asset-packs::Counter', data: { '512': { json: { id: 512, value: 3 } } } }
+  ] }))
+  assert.ok(raw.some(([id, component]) => id === '512' && component === customComponentId('smart-items::Counter')))
+  assert.deepEqual(state.snapshot['512']['smart-items::Counter'], { id: 512, value: 3 })
+  assert.equal(state.snapshot['512']['asset-packs::Counter'], undefined)
+})

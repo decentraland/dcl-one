@@ -6,7 +6,6 @@ import child_process from 'child_process'
 import esbuild from 'esbuild'
 import { future } from './future'
 import { globSync } from 'fs'
-import fs from 'fs'
 import path from 'path'
 import { pathToFileURL } from 'url'
 import i18next from 'i18next'
@@ -76,9 +75,9 @@ import { engine, NetworkEntity } from '@dcl/sdk/ecs'
 import * as sdk from '@dcl/sdk'
 import { compositeProvider } from '@dcl/sdk/composite-provider'
 import { compositeFromLoader } from '~sdk/all-composites'
-import { _initializeScripts, _initializeAssetPacks } from '~sdk/script-utils'
+import { _initializeScripts, _initializeSmartItems } from '~sdk/script-utils'
 
-_initializeAssetPacks()
+_initializeSmartItems()
 
 if ((entrypoint as any).main !== undefined) {
   function _INTERNAL_startup_system() {
@@ -103,6 +102,42 @@ export * from '@dcl/sdk'
 export * from ${safeEntrypointPath}
 export * from '~sdk/script-utils'
 `
+}
+
+/**
+ * Ensures a key exists in a JSON file. Supports dot-separated paths (e.g. "scripts.server-logs").
+ * Preserves existing values unless they match the supplied previous default.
+ */
+async function ensureJsonKey(
+  components: BundleComponents,
+  filePath: string,
+  keyPath: string,
+  value: unknown,
+  previousDefault?: string
+): Promise<void> {
+  try {
+    const raw = await components.fs.readFile(filePath, 'utf-8')
+    const parsed = JSON.parse(raw)
+
+    const keys = keyPath.split('.')
+    const lastKey = keys.pop()!
+    let target = parsed
+    for (const key of keys) {
+      target[key] = target[key] || {}
+      target = target[key]
+    }
+    const existing = target[lastKey]
+    if (existing !== undefined && (previousDefault === undefined || existing !== previousDefault)) return
+
+    target[lastKey] = value
+    await components.fs.writeFile(filePath, JSON.stringify(parsed, null, 2))
+    printProgressInfo(
+      components.logger,
+      `${existing === undefined ? 'Added' : 'Updated'} ${colors.bold(`${keyPath}: ${JSON.stringify(value)}`)} in ${path.basename(filePath)}`
+    )
+  } catch (_) {
+    // read/write failed — skip silently
+  }
 }
 
 export async function bundleProject(components: BundleComponents, options: CompileOptions, sceneJson: Scene) {
@@ -139,6 +174,19 @@ export async function bundleProject(components: BundleComponents, options: Compi
   const inputs: { entrypoint: string; outputFile: string }[] = options.single
     ? entrypoints.map((entrypoint) => ({ entrypoint, outputFile: entrypoint.replace(/\.ts$/, '.js') }))
     : [{ entrypoint: entrypoints[0], outputFile: sceneJson.main }]
+
+  // Auto-add build-time defaults for Multiplayer Auth Server scene builds
+  if (!options.single) {
+    const dir = options.workingDirectory
+    await ensureJsonKey(components, path.join(dir, 'scene.json'), 'authoritativeMultiplayer', true)
+    await ensureJsonKey(
+      components,
+      path.join(dir, 'package.json'),
+      'scripts.server-logs',
+      'sdk-commands scene-insights tail',
+      'sdk-commands sdk-server-logs'
+    )
+  }
 
   for (const input of inputs) {
     await bundleSingleProject(components, {
@@ -226,34 +274,6 @@ export async function bundleSingleProject(components: BundleComponents, options:
             // Last resort: try resolving from current directory
             return path.dirname(require.resolve('@dcl/ecs/package.json', { paths: [__dirname] }))
           }
-        }
-      })(),
-      // Resolve asset-packs from the scene's own node_modules (if the user explicitly installed it),
-      // otherwise fall back to the version bundled inside @dcl/inspector.
-      // NOTE: We use a direct path check (fs.existsSync) instead of require.resolve here because
-      // require.resolve walks UP the directory tree from workingDirectory, which would incorrectly
-      // pick up @dcl/asset-packs installed next to the scene (e.g. at a monorepo root) rather
-      // than the one the user intentionally installed inside the scene.
-      '@dcl/asset-packs': (() => {
-        const sceneOwnAssetPacks = path.join(
-          options.workingDirectory,
-          'node_modules',
-          '@dcl',
-          'asset-packs',
-          'package.json'
-        )
-        if (fs.existsSync(sceneOwnAssetPacks)) {
-          return path.dirname(sceneOwnAssetPacks)
-        }
-        try {
-          // Fallback: resolve from @dcl/inspector's node_modules
-          const inspectorPath = require.resolve('@dcl/inspector/package.json', { paths: [__dirname] })
-          return path.dirname(
-            require.resolve('@dcl/asset-packs/package.json', { paths: [path.dirname(inspectorPath)] })
-          )
-        } catch {
-          // Last resort: try resolving from current directory
-          return path.dirname(require.resolve('@dcl/asset-packs/package.json', { paths: [__dirname] }))
         }
       })()
     },
@@ -561,17 +581,6 @@ function collectScriptData(
 }
 
 /**
- * Reads the runtime script TypeScript source for inlining as ESM
- */
-async function prepareRuntimeCode(fs: BundleComponents['fs']): Promise<string> {
-  const runtimeCodePath = path.join(__dirname, 'runtime-script.ts')
-  const runtimeCode = await fs.readFile(runtimeCodePath, 'utf-8')
-
-  // fix nested asset-packs path (importing from @dcl/inspector is banned in scene bundles, @dcl/asset-packs is not)
-  return runtimeCode.replace(/@dcl\/inspector\/node_modules\/@dcl\/asset-packs/g, '@dcl/asset-packs')
-}
-
-/**
  * Generates the TypeScript declaration for the ~sdk/script-utils module
  */
 async function generateScriptModuleDeclaration(
@@ -617,12 +626,12 @@ async function updateSdkTypeDeclarations(
 
 /**
  * Minimal '~sdk/script-utils' for scenes with no scripts: same export surface,
- * empty-registry semantics, no embedded script runtime (skips the
- * @dcl/asset-packs payload and its glue).
+ * empty-registry semantics, no script runtime (skips @dcl/sdk/smart-items/scripts
+ * and its glue).
  */
 function generateScriptStubModuleContent(): string {
   return `
-${ASSET_PACKS_NOOP}
+${SMART_ITEMS_NOOP}
 export function _initializeScripts(_engine) {}
 
 export function getScriptInstance(_entity, _scriptPath) {
@@ -644,32 +653,27 @@ export function callScriptMethod(entity, scriptPath, methodName, ..._args) {
 `
 }
 
-const ASSET_PACKS_BOOT = `
+const SMART_ITEMS_BOOT = `
 import { engine } from '@dcl/sdk/ecs'
 import { syncEntity } from '@dcl/sdk/network'
 import players from '@dcl/sdk/players'
-import { initAssetPacks } from '@dcl/asset-packs/dist/scene-entrypoint'
-export function _initializeAssetPacks() {
-  initAssetPacks(engine, { syncEntity }, players)
+import { initSmartItems } from '@dcl/sdk/smart-items'
+export function _initializeSmartItems() {
+  initSmartItems(engine, { syncEntity }, players)
 }
 `
 
-const ASSET_PACKS_NOOP = 'export function _initializeAssetPacks() {}'
+const SMART_ITEMS_NOOP = 'export function _initializeSmartItems() {}'
 
 /**
  * Generates the virtual module content with script initialization and helper functions
  */
-function generateVirtualModuleContent(
-  runtimeImports: string,
-  runtimeCode: string,
-  scriptsArray: string,
-  editorScene: boolean
-): string {
+function generateVirtualModuleContent(runtimeImports: string, scriptsArray: string, editorScene: boolean): string {
   return `
-${editorScene ? ASSET_PACKS_BOOT : ASSET_PACKS_NOOP}
+${editorScene ? SMART_ITEMS_BOOT : SMART_ITEMS_NOOP}
+import { runScripts } from '@dcl/sdk/smart-items/scripts'
+export { getScriptInstance, getScriptInstancesByPath, getAllScriptInstances, callScriptMethod } from '@dcl/sdk/smart-items/scripts'
 ${runtimeImports}
-
-${runtimeCode}
 
 export function _initializeScripts(engine) {
   const scriptsArray = ${scriptsArray}
@@ -694,12 +698,10 @@ export async function generateInitializeScriptsModule(
     }
   }
 
-  const runtimeCode = await prepareRuntimeCode(components.fs)
-
   // default empty implementation if no scripts
   if (!hasScripts) {
     return {
-      contents: generateVirtualModuleContent('', runtimeCode, '[]', !!opts?.editorScene),
+      contents: generateVirtualModuleContent('', '[]', !!opts?.editorScene),
       watchFiles: []
     }
   }
@@ -717,12 +719,7 @@ export async function generateInitializeScriptsModule(
   )
 
   // Step 3: Generate virtual module content
-  const contents = generateVirtualModuleContent(
-    scriptData.runtimeImports,
-    runtimeCode,
-    scriptData.scriptsArray,
-    !!opts?.editorScene
-  )
+  const contents = generateVirtualModuleContent(scriptData.runtimeImports, scriptData.scriptsArray, !!opts?.editorScene)
 
   return { contents, watchFiles: scriptData.watchFiles }
 }

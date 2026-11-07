@@ -20,7 +20,7 @@ export async function addComponent(entityId: string, name: string): Promise<void
   let json = '{}'
   if (isCustomComponent(name)) {
     const value = createCustomDefault(name) ?? {}
-    if (['asset-packs::Actions', 'asset-packs::States', 'asset-packs::Counter'].includes(name)) {
+    if (['smart-items::Actions', 'smart-items::States', 'smart-items::Counter'].includes(name)) {
       ;(value as Record<string, unknown>).id = Number(entityId)
     }
     json = JSON.stringify(value)

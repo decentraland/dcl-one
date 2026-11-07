@@ -46,16 +46,20 @@ JEST = node_modules/.bin/jest
 # stream as the production ones. Look for it's usage on the analytics component
 export DEVELOPER_MODE=true
 
+# The link: dependencies are built first: @dcl/protocol, @dcl/ecs-math (the SDK's math) and
+# @dcl/rpc (sdk-commands' data layer). rpc generates its wire protocol with the same protoc.
 install:
-	$(MAKE) -C ../protocol install
-	npm --prefix ../protocol run build
-	npm i --silent
+	$(MAKE) -C ../protocol install build
+	$(MAKE) -C ../ecs-math install build
+	$(MAKE) -C ../rpc install
+	pnpm install --frozen-lockfile
 ifndef SDK_PROTOC
 	test -x "$(PROTOC_DOWNLOADED)" || $(MAKE) install-protobuf
 endif
+	$(MAKE) -C ../rpc build PROTOC=$(abspath $(SDK_PROTOC_BIN))
 
 lint:
-	npx tsx scripts/lint-packages.ts
+	pnpm exec tsx scripts/lint-packages.ts
 
 sync-deps:
 	$(SYNC_PACK) format --config .syncpackrc.json --source "packages/*/package.json" --source "package.json"
@@ -66,7 +70,7 @@ lint-packages:
 	$(SYNC_PACK) format --config .syncpackrc.json  --source "packages/*/package.json" --source "package.json"
 
 lint-fix: sync-deps
-	npx tsx scripts/lint-packages.ts --fix
+	pnpm exec tsx scripts/lint-packages.ts --fix
 
 test:
 	node_modules/.bin/jest --detectOpenHandles --forceExit --colors test/
@@ -74,17 +78,17 @@ test:
 test-cli:
 	@rm -rf tmp
 	@mkdir -p tmp/scene
-	cd tmp/scene; $(PWD)/packages/@dcl/sdk-commands/dist/index.js init
+	cd tmp/scene; $(CURDIR)/packages/@dcl/sdk-commands/dist/index.js init
 
 test-file:
 	node_modules/.bin/jest --detectOpenHandles --colors --runTestsByPath $(FILE)
 
 init-test-scene:
 	git clone https://github.com/decentraland/sdk7-scene-template test-scene
-	cd test-scene && npm i ./../packages/@dcl/sdk  && npm i ./../packages/@dcl/sdk-commands  && npm i ./../packages/@dcl/js-runtime
+	cd test-scene && pnpm add ./../packages/@dcl/sdk && pnpm add ./../packages/@dcl/sdk-commands && pnpm add ./../packages/@dcl/js-runtime
 
 format:
-	npx prettier --write "**/*.{js,ts,tsx,json}" --loglevel=error
+	pnpm exec prettier --write "**/*.{js,ts,tsx,json}" --loglevel=error
 
 install-protobuf:
 	curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$(PROTOBUF_VERSION)/$(PROTOBUF_ZIP)
@@ -113,10 +117,10 @@ scripts/rpc-api-generation/src/proto/%.gen.ts: node_modules/@dcl/protocol/proto/
 			--dcl_ts_proto_opt=esModuleInterop=true,returnObservable=false,outputServices=generic-definitions \
 			--dcl_ts_proto_opt=fileSuffix=.gen \
 			--dcl_ts_proto_opt=onlyTypes=true \
-			--dcl_ts_proto_out="$(PWD)/scripts/rpc-api-generation/src/proto" \
-			-I="$(PWD)/scripts/rpc-api-generation/src/proto" \
-			-I="$(PWD)/node_modules/@dcl/protocol/proto/" \
-			"$(PWD)/node_modules/@dcl/protocol/proto/decentraland/kernel/apis/$*.proto";
+			--dcl_ts_proto_out="$(CURDIR)/scripts/rpc-api-generation/src/proto" \
+			-I="$(CURDIR)/scripts/rpc-api-generation/src/proto" \
+			-I="$(CURDIR)/node_modules/@dcl/protocol/proto/" \
+			"$(CURDIR)/node_modules/@dcl/protocol/proto/decentraland/kernel/apis/$*.proto";
 
 compile_apis: ${PBS_TS}
 
@@ -131,10 +135,9 @@ deep-clean-and-snapshot:
 
 deep-clean:
 	rm -rf node_modules/ \
-		packages/@dcl/ecs/node_modules/ \
-		packages/@dcl/react-ecs/node_modules/ \
-		packages/@dcl/sdk/node_modules/ \
-		packages/@dcl/sdk-commands/node_modules \
+		packages/@dcl/*/node_modules/ \
+		test/snapshots/node_modules/ \
+		test/build-ecs/fixtures/*/node_modules/
 	make clean
 
 update-snapshots: export UPDATE_SNAPSHOTS=true
@@ -149,7 +152,7 @@ clean:
 	@rm -rf packages/@dcl/ecs/src/components/generated/ packages/@dcl/ecs/temp/
 	@rm -rf packages/@dcl/js-runtime/apis.d.ts
 	@rm -rf packages/@dcl/react-ecs/dist/ packages/@dcl/react-ecs/src/generated/ packages/@dcl/react-ecs/temp/
-	@rm -rf packages/@dcl/sdk/package-lock.json packages/@dcl/sdk/types/env/ packages/@dcl/sdk/types/rpc-modules/
+	@rm -rf packages/@dcl/sdk/types/env/ packages/@dcl/sdk/types/rpc-modules/
 	@rm -rf scripts/rpc-api-generation/src/modules/ scripts/rpc-api-generation/src/proto/
 	@rm -rf test/build-ecs/fixtures/dcl-test-lib-integration/bin/ test/build-ecs/fixtures/dcl-test-lib-integration/node_modules/
 	@rm -rf test/build-ecs/fixtures/ecs7-scene/bin/ test/build-ecs/fixtures/ecs7-scene/node_modules/

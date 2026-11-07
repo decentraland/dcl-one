@@ -11,11 +11,12 @@
     "start": "sdk-commands start",
     "build": "sdk-commands build",
     "build-prod": "sdk-commands build --production",
-    "watch": "sdk-commands build --watch"
+    "watch": "sdk-commands build --watch",
+    "server-logs": "sdk-commands scene-insights tail"
   },
   "devDependencies": {
-    "@dcl/js-runtime": "file:../../../../packages/@dcl/js-runtime",
-    "@dcl/sdk-commands": "file:../../../../packages/@dcl/sdk-commands",
-    "@dcl/sdk": "file:../../../../packages/@dcl/sdk"
+    "@dcl/js-runtime": "workspace:*",
+    "@dcl/sdk-commands": "workspace:*",
+    "@dcl/sdk": "workspace:*"
   }
 }

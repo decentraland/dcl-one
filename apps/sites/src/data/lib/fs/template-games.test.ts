@@ -61,15 +61,13 @@ describe("template games \u{2014} name/registry/artifact sync", () => {
     expect(TEMPLATE_COMPOSITE_IDS.filter((id) => !js.includes(id))).toEqual([]);
   });
 
-  it("boots @dcl/sdk before asset-packs so its provider wrapper is registered last", () => {
+  it("boots @dcl/sdk before the smart-item runtime so its provider wrapper is registered last", () => {
     const entry = readFileSync(join(GAMES_DIR, "../index.ts"), "utf8");
     expect(entry.trimStart()).toMatch(/^import\s+['"]@dcl\/sdk['"]/);
     expect(entry).not.toContain("setCompositeProvider");
-    expect(entry).toContain("initAssetPacks(engine)");
-    const js = readFileSync(BUNDLE, "utf8");
-    const sdkBoot = js.indexOf(".addTransport(");
-    const packsBoot = js.indexOf("Ensure @dcl/sdk boots before initAssetPacks");
-    expect(sdkBoot).toBeGreaterThan(-1);
-    expect(packsBoot).toBeGreaterThan(sdkBoot);
+    expect(entry).not.toContain("@dcl/asset-packs");
+    const runtimeImport = entry.indexOf("from '@dcl/sdk/smart-items'");
+    expect(runtimeImport).toBeGreaterThan(entry.indexOf("import '@dcl/sdk'"));
+    expect(entry.indexOf("initSmartItems(engine)")).toBeGreaterThan(runtimeImport);
   });
 });

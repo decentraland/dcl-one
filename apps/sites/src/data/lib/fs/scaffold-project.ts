@@ -111,7 +111,7 @@ export function buildScaffoldFiles(opts: BuildScaffoldOptions = {}): ScaffoldFil
       build: "sdk-commands build",
       upgrade: "npm install @dcl/sdk@latest",
     },
-    devDependencies: { "@dcl/sdk": "latest", "@dcl/asset-packs": "latest" },
+    devDependencies: { "@dcl/sdk": "latest" },
   };
 
   const tsconfig = {
@@ -132,13 +132,13 @@ export function buildScaffoldFiles(opts: BuildScaffoldOptions = {}): ScaffoldFil
     templateIndexTs(template, name) ??
     `import { engine, Transform } from '@dcl/sdk/ecs'\n` +
       `import { Vector3 } from '@dcl/sdk/math'\n` +
-      `import { initAssetPacks } from '@dcl/asset-packs/dist/scene-entrypoint'\n\n` +
+      `import { initSmartItems } from '@dcl/sdk/smart-items'\n\n` +
       `// ${name} \u{2014} scaffolded by the Decentraland Creator Hub.\n` +
-      `// initAssetPacks runs the no-code Actions/Triggers (smart items) authored in the\n` +
-      `// editor; without it they decode but never execute. (sdk-commands only auto-injects\n` +
-      `// it for the assets/scene/main.composite layout, and this project keeps the\n` +
-      `// composite at the root.)\n` +
-      `initAssetPacks(engine)\n\n` +
+      `// initSmartItems runs the no-code Actions/Triggers (smart items) authored in the\n` +
+      `// editor; without it they decode but never execute. The scene build injects it\n` +
+      `// only for the assets/scene/main.composite layout, and this project keeps the\n` +
+      `// composite at the root.\n` +
+      `initSmartItems(engine)\n\n` +
       `export function main() {\n` +
       `  const root = engine.addEntity()\n` +
       `  Transform.create(root, { position: Vector3.create(8, 0, 8) })\n` +

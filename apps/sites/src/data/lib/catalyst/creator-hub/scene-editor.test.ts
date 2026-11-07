@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { loadSceneEditorSeed } from "./scene-editor";
+import { emptySeed, loadSceneEditorSeed, seedFromCompositeJSON } from "./scene-editor";
 
 function entity(base: string, title: string) {
   return {
@@ -40,5 +40,23 @@ describe("published scene loading", () => {
     expect(fetchImpl.mock.calls[0][0]).toBe("https://catalyst.test/content/entities/active");
     expect(fetchImpl.mock.calls[1][0]).toBe("https://catalyst.test/content/contents/composite-hash");
     expect(seed.scene).toMatchObject({ pointer: "2,3", live: true });
+  });
+});
+
+describe("composite seeds", () => {
+  it("lists the models of a composite saved under the legacy smart-item namespace", () => {
+    const seed = seedFromCompositeJSON(
+      {
+        version: 1,
+        components: [
+          { name: "core::Transform", data: { "512": { json: { parent: 0 } } } },
+          { name: "core-schema::Name", data: { "512": { json: { value: "Door" } } } },
+          { name: "asset-packs::Placeholder", data: { "512": { json: { src: "assets/asset-packs/door/door.glb" } } } },
+        ],
+      },
+      emptySeed("0,0"),
+    );
+    const door = seed.assetCatalog.models.find((m) => m.src === "assets/asset-packs/door/door.glb");
+    expect(door).toMatchObject({ pack: "Smart Items" });
   });
 });

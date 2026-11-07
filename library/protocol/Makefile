@@ -32,9 +32,12 @@ test: buf-lint
 all: buf-lint buf-build test
 
 install:
-	npm i
+	pnpm install --frozen-lockfile
 	rm -rf proto/google || true
 	cp -r node_modules/protobufjs/google proto/google
+
+build:
+	pnpm run build
 
 list-components-ids:
 	@bash scripts/list-components-ids.sh

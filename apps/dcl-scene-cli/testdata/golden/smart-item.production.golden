@@ -1,12 +1,12 @@
 (dcl-scene-cli golden v1 smart-item production)
-TOOLCHAIN sdk=7.29.1-34986384248.commit-bb45080 ecs=7.29.1-34986384248.commit-bb45080 bundler=rolldown-1.2.6 blob=sha256:d8ff1c6a32532743
-SCENE_COMPILED_JS_SIZE_PROD=660.3k bytes
-  ARTIFACT bin/index.js              10538 sha256=3480871ccfb03b22
-  ARTIFACT bin/scene.js               1876 sha256=c22d2907c0387685
-  ARTIFACT bin/sdk-runtime.js       497454 sha256=9322b30b0877230b
-  ARTIFACT bin/sdk-smart-items.js   150450 sha256=9ec86f8a544a2874
+TOOLCHAIN sdk=7.31.0-dcl-one.1 ecs=7.31.0-dcl-one.1 bundler=rolldown-1.2.6 blob=sha256:d39a70f327213d0d
+SCENE_COMPILED_JS_SIZE_PROD=717.7k bytes
+  ARTIFACT bin/index.js              10588 sha256=9e3a6ab88d82cec4
+  ARTIFACT bin/scene.js               1858 sha256=ecafd3d34937a5b3
+  ARTIFACT bin/sdk-runtime.js       551956 sha256=0b7fff078b99796f
+  ARTIFACT bin/sdk-smart-items.js   153341 sha256=c3d18620e91ff360
 LOADER sdk=bin/sdk-runtime.js smart=bin/sdk-smart-items.js scene=bin/scene.js max_composite_entity=512
-ENTRYPOINT .dcl-one/entrypoint.ts main=guarded composites=0 script-utils=stub
+ENTRYPOINT .dcl-one/entrypoint.ts main=guarded composites=0 script-utils=runtime
   // BEGIN AUTO GENERATED CODE "~sdk/scene-entrypoint"
   "use strict";
   import { engine, NetworkEntity } from '@dcl/sdk/ecs'
@@ -15,14 +15,14 @@ ENTRYPOINT .dcl-one/entrypoint.ts main=guarded composites=0 script-utils=stub
   import { compositeFromLoader } from '~sdk/all-composites'
   import { _initializeScripts } from '~sdk/script-utils'
   // Registers the composite provider, and must be imported BEFORE the scene.
-  // A scene that calls initAssetPacks() at module scope -- as the Creator Hub
+  // A scene that calls initSmartItems() at module scope -- as the Creator Hub
   // templates do -- reads that provider while its own module body runs, and until
   // this existed the only thing registering it was `@dcl/sdk`'s body, which the
-  // bundler emits at the END of the chunk. So the editor logged "[asset-packs] No
-  // SDK composite provider registered; SPAWN_ENTITY cannot resolve composites"
-  // and placing a smart item resolved nothing. Upstream sdk-commands has the same
-  // ordering (logic/bundle.ts) and gets away with it only because upstream scenes
-  // never call initAssetPacks themselves.
+  // bundler emits at the END of the chunk. So the editor logged "No SDK composite
+  // provider registered; SPAWN_ENTITY cannot resolve composites" and placing a
+  // smart item resolved nothing. Upstream's bundler has the same ordering
+  // (logic/bundle.ts) and gets away with it only because upstream scenes never
+  // call initSmartItems themselves.
   //
   // A separate module because neither cheaper fix works: statements here run after
   // every import including the scene's, and the bundler does not honour moving
@@ -38,9 +38,9 @@ ENTRYPOINT .dcl-one/entrypoint.ts main=guarded composites=0 script-utils=stub
   import { syncEntity } from '@dcl/sdk/network'
   import players from '@dcl/sdk/players'
   import { setCompositeProvider } from '@dcl/sdk/ecs'
-  import { initAssetPacks } from '@dcl/asset-packs/dist/scene-entrypoint'
+  import { initSmartItems } from '@dcl/sdk/smart-items'
   setCompositeProvider(engine, compositeProvider)
-  initAssetPacks(engine, { syncEntity }, players)
+  initSmartItems(engine, { syncEntity }, players)
 
 
   // `console.error(e)` drops the frames, and the host captures its own stack at
@@ -71,13 +71,13 @@ ENTRYPOINT .dcl-one/entrypoint.ts main=guarded composites=0 script-utils=stub
   export * from '@dcl/sdk'
   export * from "<SCENE>/src/index.ts"
   export * from '~sdk/script-utils'
-  REQUIRE(scene): @dcl/asset-packs/dist/scene-entrypoint
   REQUIRE(scene): @dcl/sdk
   REQUIRE(scene): @dcl/sdk/composite-provider
   REQUIRE(scene): @dcl/sdk/ecs
   REQUIRE(scene): @dcl/sdk/math
   REQUIRE(scene): @dcl/sdk/network
   REQUIRE(scene): @dcl/sdk/players
+  REQUIRE(scene): @dcl/sdk/smart-items
   REQUIRE(scene): ~sdk/all-composites
   REQUIRE(scene): ~sdk/script-utils
 ENTITY_NAMES assets/scene/entity-names.ts
@@ -90,15 +90,15 @@ ENTITY_NAMES assets/scene/entity-names.ts
   export enum EntityNames {
     Counter_Box = "Counter Box",
   } 
-MAIN_CRDT main.crdt 235 bytes sha256=6c587977670027c8 (native, 1 composite)
-DEPLOY entity=bafkreibg4kpzqog3jmyyun2oywrcixt5ieru2yr76vsqj54bhwvyh5wupi files=7 total=663.0k bytes
+MAIN_CRDT main.crdt 235 bytes sha256=d32715519a4f9ceb (native, 1 composite)
+DEPLOY entity=bafkreiafsiy75ubuzvtnppiyd24ej7hnhpfhu4nqcucw4ryqkepayz2uwi files=7 total=720.4k bytes
   bafkreifcxq62bje63i3khsvr45s3bkmtbvdutbhwehvfhc3yvspj6jrvda scene.json 167 bytes
-  bafkreidmlb4xozyae7ejrd7tnw6qct7ppr3j6w4s4qpdrvzahvgvbsekca main.crdt 235 bytes
-  bafkreie6zbxyuvckfb2bnwkspsfe5yqnannwr3tn3bak3xci6uhyjaqsaa bin/sdk-smart-items.js 150450 bytes
-  bafybeihojtsshznnhpf2jd4t2ahrlb5sti26rxsnprt4brtczo2ba7twmu bin/sdk-runtime.js 497454 bytes
-  bafkreigcfuuqpqbyo2c3pul4xsjayjnbzgwigy6qftsnp3jidgt3vkcjtq bin/scene.js 1876 bytes
-  bafkreibuqcdrzt5qhmrl3u44aokadmh54jdhhhmauiekkujfdbo2zvjfn4 bin/index.js 10538 bytes
-  bafkreidxhlr4biomfortriklj6fnne7kzhvayixkmd6ynx2dlsoswh654a assets/scene/main.composite 2230 bytes
+  bafkreigte4kvdgspttvrt4zulovtd7wykxfkqiebjdcqdhtpciat2a3f2e main.crdt 235 bytes
+  bafkreigd2gdcb2i76nqma3gjxyxyjz6iwdstr32lo5taerln2crtmp6gs4 bin/sdk-smart-items.js 153341 bytes
+  bafybeigb6b7rebnmqryfyoaygsm6cuwvkcbshm3f5bpcljd4ekxrqvv7sq bin/sdk-runtime.js 551956 bytes
+  bafkreihmv7j5gsjxuwzstxgp7eetvaxk23r4z65csafm7quwfxba4yjoju bin/scene.js 1858 bytes
+  bafkreie6hjvlrdmcz3coizilkhk7m2r3iqrteg25ponc2yz6ee7g7apjse bin/index.js 10588 bytes
+  bafkreiecfdzprju2egcz5ew2aafy7zy3emcvv4kn4cu4yfnj2xtzlpbnuu assets/scene/main.composite 2230 bytes
 EVAL bin/index.js
   READFILE: bin/sdk-runtime.js
   READFILE: bin/scene.js
@@ -115,8 +115,8 @@ CALL onStart()
   main.crdt: PUT_COMPONENT e=0x200 c=1 t=0 data={"position":{"x":8,"y":1,"z":8},"rotation":{"x":0,"y":0,"z":0,"w":1},"scale":{"x":1,"y":1,"z":1},"parent":0}
   main.crdt: PUT_COMPONENT e=0x200 c=1018 t=0 data={"mesh":{"$case":"box","box":{"uvs":[]}}}
   main.crdt: PUT_COMPONENT e=0x200 c=3864921337 t=0 data={"value":"Counter Box"}
-  main.crdt: PUT_COMPONENT e=0x200 c=3981387903 t=0 data=null
-  main.crdt: PUT_COMPONENT e=0x200 c=4149214247 t=0 data=null
+  main.crdt: PUT_COMPONENT e=0x200 c=1129581981 t=0 data=null
+  main.crdt: PUT_COMPONENT e=0x200 c=1498732997 t=0 data=null
 CALL onUpdate(0)
   Scene: PUT_COMPONENT e=0x200 c=1 t=1 data={"position":{"x":9,"y":1,"z":9},"rotation":{"x":0,"y":0,"z":0,"w":1},"scale":{"x":1,"y":1,"z":1},"parent":0}
 CALL onUpdate(0.1)

@@ -1,8 +1,29 @@
 use crate::jsjson::{self, JsValue, array_index, ordered_entries};
 use anyhow::{Result, bail};
 use base64::Engine;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::OnceLock;
+
+/// The composite namespace of the smart-item components `@dcl/sdk/smart-items`
+/// defines (`smart-items::Actions`, `smart-items::Triggers`, ...).
+pub const SMART_ITEMS_PREFIX: &str = "smart-items::";
+
+/// The namespace composites carried while the smart-item runtime was the
+/// registry package `@dcl/asset-packs`. Scenes saved by the Creator Hub before
+/// the move still name their components this way, so every reader renames the
+/// prefix on load; the runtime defines only [`SMART_ITEMS_PREFIX`] names, and
+/// a component's number is hashed from its name.
+pub const LEGACY_PREFIX: &str = "asset-packs::";
+
+/// A composite component name as the runtime defines it: a [`LEGACY_PREFIX`]
+/// name moved under [`SMART_ITEMS_PREFIX`], every other name unchanged.
+pub fn smart_item_name(name: &str) -> Cow<'_, str> {
+    match name.strip_prefix(LEGACY_PREFIX) {
+        Some(rest) => Cow::Owned(format!("{SMART_ITEMS_PREFIX}{rest}")),
+        None => Cow::Borrowed(name),
+    }
+}
 
 fn get_set<'a>(value: &'a JsValue, key: &str) -> Option<&'a JsValue> {
     value.get(key).filter(|v| !matches!(v, JsValue::Null))
@@ -246,6 +267,7 @@ fn normalize_component(component: &JsValue) -> Result<JsValue> {
         bail!("component is null");
     }
     let name = get_set(component, "name").map_or_else(String::new, js_string);
+    let name = smart_item_name(&name).into_owned();
     let pairs: Vec<(String, &JsValue)> = match component.get("data") {
         Some(JsValue::Object(entries)) => entries.iter().map(|(k, v)| (k.clone(), v)).collect(),
         Some(JsValue::Array(items)) => items
@@ -304,7 +326,9 @@ fn static_core_table() -> &'static HashSet<String> {
 }
 
 /// Normalizes composites the way `@dcl/ecs` `Composite.toJson` does, tracking
-/// which component names earlier composites have already defined.
+/// which component names earlier composites have already defined. Smart-item
+/// components come out under [`SMART_ITEMS_PREFIX`] whichever prefix the file
+/// carries ([`smart_item_name`]).
 pub struct CompositeNormalizer {
     defined: HashSet<String>,
 }
@@ -473,6 +497,46 @@ mod tests {
             n.normalize(r#"{"components":[{"name":"core::Transform","data":{"512":null}}]}"#)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn legacy_smart_item_names_normalize_to_the_runtime_namespace() {
+        assert_eq!(
+            smart_item_name("asset-packs::Actions"),
+            "smart-items::Actions"
+        );
+        assert_eq!(
+            smart_item_name("smart-items::Actions"),
+            "smart-items::Actions"
+        );
+        assert_eq!(smart_item_name("core::Transform"), "core::Transform");
+        let mut n = CompositeNormalizer::new();
+        let raw = r#"{"version":1,"components":[{"name":"asset-packs::Actions","jsonSchema":{"type":"object"},"data":{"512":{"json":{"value":[]}}}}]}"#;
+        let out = n.normalize(raw).unwrap();
+        assert!(out.contains(r#""name":"smart-items::Actions""#), "{out}");
+        assert!(
+            !out.contains(&format!("\"name\":\"{LEGACY_PREFIX}")),
+            "{out}"
+        );
+        // The first definition registered the renamed name, so a later composite
+        // may use either spelling without carrying the schema again.
+        let later = r#"{"version":1,"components":[{"name":"asset-packs::Actions","data":{}}]}"#;
+        assert!(n.normalize(later).is_ok());
+    }
+
+    /// A Creator Hub capture from before the move: every component it inlines
+    /// for the runtime has to come out under the namespace the runtime defines.
+    /// Values are not touched — its `inspector::Config` data names the
+    /// components its fields edit, and that stays as written.
+    #[test]
+    fn creator_hub_capture_normalizes_without_a_legacy_component_name_left() {
+        let raw = include_str!("../testdata/gather-main.composite");
+        assert!(raw.contains("\"asset-packs::Actions\""));
+        let out = CompositeNormalizer::new().normalize(raw).unwrap();
+        assert!(out.contains(r#""name":"smart-items::Actions""#));
+        assert!(out.contains(r#""name":"smart-items::Script""#));
+        assert!(!out.contains(&format!("\"name\":\"{LEGACY_PREFIX}")));
+        assert!(out.contains(r#""type":"asset-packs::AdminTools""#));
     }
 
     #[test]

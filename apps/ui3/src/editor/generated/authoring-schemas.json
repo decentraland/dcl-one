@@ -9820,7 +9820,7 @@
       "defaults": {},
       "componentId": 1081
     },
-    "asset-packs::ActionTypes": {
+    "smart-items::ActionTypes": {
       "schema": {
         "type": "object",
         "properties": {
@@ -9848,9 +9848,9 @@
       "defaults": {
         "value": []
       },
-      "componentId": 1429051521
+      "componentId": 4214668643
     },
-    "asset-packs::Actions": {
+    "smart-items::Actions": {
       "schema": {
         "type": "object",
         "properties": {
@@ -9899,9 +9899,9 @@
         "id": 0,
         "value": []
       },
-      "componentId": 2193198513
+      "componentId": 748857427
     },
-    "asset-packs::Counter": {
+    "smart-items::Counter": {
       "schema": {
         "type": "object",
         "properties": {
@@ -9920,9 +9920,9 @@
         "id": 0,
         "value": 0
       },
-      "componentId": 3981387903
+      "componentId": 1129581981
     },
-    "asset-packs::Triggers": {
+    "smart-items::Triggers": {
       "schema": {
         "type": "object",
         "properties": {
@@ -10069,9 +10069,9 @@
       "defaults": {
         "value": []
       },
-      "componentId": 585272453
+      "componentId": 2365172071
     },
-    "asset-packs::States": {
+    "smart-items::States": {
       "schema": {
         "type": "object",
         "properties": {
@@ -10106,9 +10106,9 @@
         "id": 0,
         "value": []
       },
-      "componentId": 2709697014
+      "componentId": 261723156
     },
-    "asset-packs::CounterBar": {
+    "smart-items::CounterBar": {
       "schema": {
         "type": "object",
         "properties": {
@@ -10128,9 +10128,9 @@
         "serializationType": "map"
       },
       "defaults": {},
-      "componentId": 574670431
+      "componentId": 2354815933
     },
-    "asset-packs::AdminTools": {
+    "smart-items::AdminTools": {
       "schema": {
         "type": "object",
         "properties": {
@@ -10366,9 +10366,9 @@
           "isEnabled": false
         }
       },
-      "componentId": 99929642
+      "componentId": 2884627400
     },
-    "asset-packs::Rewards": {
+    "smart-items::Rewards": {
       "schema": {
         "type": "object",
         "properties": {
@@ -10392,9 +10392,9 @@
         "dispenserKey": "",
         "testMode": false
       },
-      "componentId": 993215415
+      "componentId": 2502436437
     },
-    "asset-packs::TextAnnouncements": {
+    "smart-items::TextAnnouncements": {
       "schema": {
         "type": "object",
         "properties": {
@@ -10417,9 +10417,9 @@
         "text": "",
         "id": ""
       },
-      "componentId": 760563130
+      "componentId": 2202935384
     },
-    "asset-packs::VideoControlState": {
+    "smart-items::VideoControlState": {
       "schema": {
         "type": "object",
         "properties": {
@@ -10435,9 +10435,9 @@
         "serializationType": "map"
       },
       "defaults": {},
-      "componentId": 2092194694
+      "componentId": 3534716516
     },
-    "asset-packs::VideoScreen": {
+    "smart-items::VideoScreen": {
       "schema": {
         "type": "object",
         "properties": {
@@ -10472,9 +10472,9 @@
         "defaultMediaSource": 0,
         "defaultURL": ""
       },
-      "componentId": 2597742855
+      "componentId": 885869797
     },
-    "asset-packs::Script": {
+    "smart-items::Script": {
       "schema": {
         "type": "object",
         "properties": {
@@ -10506,9 +10506,9 @@
       "defaults": {
         "value": []
       },
-      "componentId": 4149214247
+      "componentId": 1498732997
     },
-    "asset-packs::Placeholder": {
+    "smart-items::Placeholder": {
       "schema": {
         "type": "object",
         "properties": {
@@ -10522,7 +10522,7 @@
       "defaults": {
         "src": ""
       },
-      "componentId": 3776766571
+      "componentId": 1325926281
     }
   },
   "versions": {

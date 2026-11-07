@@ -9,8 +9,8 @@
     "pack": "dcl-scene-cli pack"
   },
   "devDependencies": {
-    "@dcl/js-runtime": "7.29.1-34986384248.commit-bb45080",
-    "@dcl/sdk": "7.29.1-34986384248.commit-bb45080",
+    "@dcl/js-runtime": "7.31.0-dcl-one.1",
+    "@dcl/sdk": "7.31.0-dcl-one.1",
     "typescript": "6.0.3"
   },
   "engines": {

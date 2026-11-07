@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+VERSION=${1:-latest}
+CRATE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+HOST=${DCL_SCENE_CLI_INSPECTOR_HOST:-$HOME/.cache/dcl-scene-cli/inspector-host}
+ECS_PIN=$(node -p "require('$CRATE/src/templates/init/scene/package.json').devDependencies['@dcl/sdk']")
+
+rm -rf "$HOST"
+mkdir -p "$HOST"
+printf '{"name":"inspector-host","private":true}\n' > "$HOST/package.json"
+pnpm_add() { (cd "$HOST" && pnpm add --ignore-scripts --save-exact --config.node-linker=hoisted --config.auto-install-peers=false "$@"); }
+
+pnpm_add "@dcl/inspector@$VERSION"
+INSP=$HOST/node_modules/@dcl/inspector
+pinned() { node -p "const d=require('$INSP/package.json').devDependencies||{}; d['$1'] ? '$1@'+d['$1'] : '$1'"; }
+pnpm_add "@dcl/ecs@$ECS_PIN" \
+  "$(pinned @dcl/ecs-math)" "$(pinned @babylonjs/core)" "$(pinned node-fetch)" \
+  "$(pinned ignore)" "$(pinned fp-future)" "$(pinned @well-known-components/pushable-channel)" \
+  "$(pinned mitt)" "$(pinned ts-deepmerge)" "$(pinned long)" "$(pinned protobufjs)" \
+  @protobufjs/utf8 "$(pinned ajv)" esbuild
+
+ESBUILD=$HOST/node_modules/.bin/esbuild
+bundle_in_place() {
+  "$ESBUILD" "$1" --bundle --platform=node --format=cjs --target=node20 \
+    --define:INSPECTOR_DEV_PARSER=false --log-level=warning --outfile="$1.bundled"
+  mv "$1.bundled" "$1"
+}
+bundle_in_place "$INSP/dist/tooling-entrypoint.js"
+ASSET_PACKS=$(node -p "require.resolve('@dcl/asset-packs/package.json', { paths: ['$INSP'] })")
+ASSET_PACKS=$(dirname "$ASSET_PACKS")
+bundle_in_place "$ASSET_PACKS/dist/definitions.js"
+
+node -e "
+const insp = require('$INSP'), ap = require('$ASSET_PACKS')
+for (const [n, v] of [['createEngineContext', insp.createEngineContext], ['dumpEngineToComposite', insp.dumpEngineToComposite], ['SceneAgeRating', insp.SceneAgeRating], ['asset-packs initComponents', ap.initComponents]])
+  if (v === undefined) { console.error('install-inspector-host: missing ' + n); process.exit(1) }
+console.log('install-inspector-host: @dcl/inspector ' + require('$INSP/package.json').version + ', @dcl/asset-packs ' + require('$ASSET_PACKS/package.json').version + ', @dcl/ecs ' + require('$HOST/node_modules/@dcl/ecs/package.json').version + ' at $HOST')
+"

@@ -8,7 +8,7 @@ import {
   generateInitializeScriptsModule
 } from '../../../../packages/@dcl/sdk-commands/src/logic/bundle'
 import { createFsComponent } from '../../../../packages/@dcl/sdk-commands/src/components/fs'
-import esbuild from '../../../../packages/@dcl/sdk-commands/node_modules/esbuild'
+import esbuild from 'esbuild'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
@@ -143,7 +143,7 @@ describe('bundle script utilities', () => {
       expect(result.contents).toContain('export function getAllScriptInstances(')
       expect(result.contents).toContain('export function callScriptMethod(')
       expect(result.contents).not.toContain('runScripts(')
-      expect(result.contents).not.toContain('@dcl/asset-packs')
+      expect(result.contents).not.toContain('@dcl/sdk/smart-items')
       expect(result.contents).not.toContain('require(')
       expect(result.watchFiles).toEqual([])
     })
@@ -164,7 +164,7 @@ describe('bundle script utilities', () => {
       expect(result.contents).toContain('export function getAllScriptInstances(')
       expect(result.contents).toContain('export function callScriptMethod(')
       expect(result.contents).not.toContain('runScripts(')
-      expect(result.contents).not.toContain('@dcl/asset-packs')
+      expect(result.contents).not.toContain('@dcl/sdk/smart-items')
       expect(result.contents).not.toContain('require(')
       expect(result.watchFiles).toEqual([])
     })
@@ -181,14 +181,13 @@ describe('bundle script utilities', () => {
         editorScene: true
       })
 
-      expect(result.contents).toContain('function runScripts(')
+      expect(result.contents).toContain("import { runScripts } from '@dcl/sdk/smart-items/scripts'")
       expect(result.contents).toContain('export function _initializeScripts(engine)')
       expect(result.contents).toContain('const scriptsArray = []')
       expect(result.contents).toContain('return runScripts(engine, scriptsArray)')
-      expect(result.contents).toContain('export function getScriptInstance(')
-      expect(result.contents).toContain('export function getScriptInstancesByPath(')
-      expect(result.contents).toContain('export function getAllScriptInstances(')
-      expect(result.contents).toContain('export function callScriptMethod(')
+      expect(result.contents).toContain(
+        "export { getScriptInstance, getScriptInstancesByPath, getAllScriptInstances, callScriptMethod } from '@dcl/sdk/smart-items/scripts'"
+      )
       expect(result.watchFiles).toEqual([])
     })
 
@@ -243,7 +242,7 @@ describe('bundle script utilities', () => {
       ])
     })
 
-    it('should include runtime script code in the generated module', async () => {
+    it('should import the script runtime in the generated module', async () => {
       const compositeData = {
         scripts: new Map([['src/scripts/test.ts', [{ entity: 512, path: 'src/scripts/test.ts', priority: 0 }]]]),
         compositeLines: [],
@@ -253,7 +252,7 @@ describe('bundle script utilities', () => {
 
       const result = await generateInitializeScriptsModule(mockComponents, '/test/project', compositeData)
 
-      expect(result.contents).toContain('function runScripts(')
+      expect(result.contents).toContain("import { runScripts } from '@dcl/sdk/smart-items/scripts'")
       expect(result.contents).toContain('export function _initializeScripts(engine)')
     })
 
@@ -293,21 +292,21 @@ describe('bundle script utilities', () => {
       expect(result.watchFiles).toEqual(['/test/project/src/scripts/movePlayer.ts'])
     })
 
-    it('should boot asset-packs in editor scenes', async () => {
+    it('should boot smart items in editor scenes', async () => {
       const compositeData = { scripts: new Map(), compositeLines: [], watchFiles: [], withErrors: false }
 
       const result = await generateInitializeScriptsModule(mockComponents, '/test/project', compositeData, {
         editorScene: true
       })
 
-      expect(result.contents).toContain("import { initAssetPacks } from '@dcl/asset-packs/dist/scene-entrypoint'")
+      expect(result.contents).toContain("import { initSmartItems } from '@dcl/sdk/smart-items'")
       expect(result.contents).toMatch(
-        /export function _initializeAssetPacks\(\) \{\s*initAssetPacks\(engine, \{ syncEntity \}, players\)\s*\}/
+        /export function _initializeSmartItems\(\) \{\s*initSmartItems\(engine, \{ syncEntity \}, players\)\s*\}/
       )
-      expect(result.contents).not.toMatch(/^initAssetPacks\(/m)
+      expect(result.contents).not.toMatch(/^initSmartItems\(/m)
     })
 
-    it('should export a no-op asset-packs boot in scenes that are not editor scenes', async () => {
+    it('should export a no-op smart-items boot in scenes that are not editor scenes', async () => {
       const compositeData = {
         scripts: new Map([['src/scripts/test.ts', [{ entity: 512, path: 'src/scripts/test.ts', priority: 0 }]]]),
         compositeLines: [],
@@ -318,11 +317,11 @@ describe('bundle script utilities', () => {
       const withScripts = await generateInitializeScriptsModule(mockComponents, '/test/project', compositeData)
       const stub = await generateInitializeScriptsModule(mockComponents, '/test/project', null)
 
-      expect(withScripts.contents).toContain('export function _initializeAssetPacks() {}')
-      expect(stub.contents).toContain('export function _initializeAssetPacks() {}')
+      expect(withScripts.contents).toContain('export function _initializeSmartItems() {}')
+      expect(stub.contents).toContain('export function _initializeSmartItems() {}')
     })
 
-    it('should not boot asset-packs in scenes with scripts that are not editor scenes', async () => {
+    it('should not boot smart items in scenes with scripts that are not editor scenes', async () => {
       const compositeData = {
         scripts: new Map([['src/scripts/test.ts', [{ entity: 512, path: 'src/scripts/test.ts', priority: 0 }]]]),
         compositeLines: [],
@@ -332,7 +331,7 @@ describe('bundle script utilities', () => {
 
       const result = await generateInitializeScriptsModule(mockComponents, '/test/project', compositeData)
 
-      expect(result.contents).not.toContain('initAssetPacks(')
+      expect(result.contents).not.toContain('initSmartItems(')
     })
   })
 
@@ -361,7 +360,7 @@ describe('bundle script utilities', () => {
       fs.rmSync(workingDirectory, { recursive: true, force: true })
     })
 
-    it('should boot asset-packs once a running scene becomes an editor scene', async () => {
+    it('should boot smart items once a running scene becomes an editor scene', async () => {
       const components = {
         fs: createFsComponent(),
         logger: { log: jest.fn(), info: jest.fn(), error: jest.fn(), debug: jest.fn(), warn: jest.fn() }
@@ -377,7 +376,7 @@ describe('bundle script utilities', () => {
         plugins: [compositeLoader(components as any, { workingDirectory, ignoreComposite: false } as any)],
         stdin: {
           contents:
-            "import { _initializeScripts, _initializeAssetPacks } from '~sdk/script-utils'\n_initializeAssetPacks()\n_initializeScripts(undefined)",
+            "import { _initializeScripts, _initializeSmartItems } from '~sdk/script-utils'\n_initializeSmartItems()\n_initializeScripts(undefined)",
           resolveDir: workingDirectory,
           loader: 'ts'
         }
@@ -385,11 +384,15 @@ describe('bundle script utilities', () => {
 
       try {
         const before = await context.rebuild()
-        writeMainComposite(['core::Transform', 'asset-packs::Actions'])
+        writeMainComposite(['core::Transform', 'smart-items::Actions'])
         const after = await context.rebuild()
 
-        expect(before.outputFiles![0].text).not.toContain('initAssetPacks(')
-        expect(after.outputFiles![0].text).toContain('initAssetPacks(')
+        writeMainComposite(['core::Transform', 'asset-packs::Actions'])
+        const legacy = await context.rebuild()
+
+        expect(before.outputFiles![0].text).not.toContain('initSmartItems(')
+        expect(after.outputFiles![0].text).toContain('initSmartItems(')
+        expect(legacy.outputFiles![0].text).toContain('initSmartItems(')
       } finally {
         await context.dispose()
       }

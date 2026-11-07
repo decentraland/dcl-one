@@ -7,11 +7,10 @@
 //!
 //! Two chunks, not one: **core** (always installed; the registry of
 //! [`crate::split::core_registry_keys`]) and **smart** (installed only when the
-//! scene uses smart items; `@dcl/asset-packs`, its scene entrypoint and the
+//! scene uses smart items; `@dcl/sdk/smart-items`, its script runtime and the
 //! real `~sdk/script-utils`, resolving everything else through core's
-//! registry). `write_script_utils` inlines the smart-item runtime whenever
-//! `@dcl/asset-packs` merely *resolves*, +30% on every bundle; the split makes
-//! only smart-item scenes pay it.
+//! registry). The smart-item runtime is +30% on a bundle; the split makes only
+//! smart-item scenes pay it.
 //!
 //! The chunks live inside the vendored `@dcl/sdk` (`node_modules/@dcl/sdk/
 //! prebuilt/`) on purpose: they are valid only for the `@dcl/sdk` they were
@@ -48,13 +47,13 @@ pub fn locate(project: &Project) -> Option<Prebuilt> {
     })
 }
 
-/// An editor scene's entrypoint calls `initAssetPacks`; a scene can also import
-/// `@dcl/asset-packs/dist/scene-entrypoint` from its own source with no
-/// composite at all (`0,0-cube-spawner` in sdk7-test-scenes), and since the
-/// package is an external of the scene chunk the specifier survives into the
-/// emitted bundle exactly when something reaches it.
+/// An editor scene's entrypoint calls `initSmartItems`; a scene can also import
+/// `@dcl/sdk/smart-items` from its own source with no composite at all
+/// (`0,0-cube-spawner` in sdk7-test-scenes), and since `@dcl/sdk/*` is an
+/// external of the scene chunk the specifier survives into the emitted bundle
+/// exactly when something reaches it.
 pub fn scene_needs_smart_chunk(project: &Project, scene_chunk: &Path) -> bool {
-    project.is_editor_scene() || chunk_requires(scene_chunk, "@dcl/asset-packs")
+    project.is_editor_scene() || chunk_requires(scene_chunk, split::SMART_ITEMS)
 }
 
 fn chunk_requires(chunk: &Path, package: &str) -> bool {
@@ -92,16 +91,17 @@ pub fn remove_stale_smart_chunk(root: &Path, smart_rel: &str) {
     let _ = std::fs::remove_file(root.join(smart_rel));
 }
 
-/// Build both chunks from a scene whose `node_modules` is the full install tree
-/// (what `scripts/build-base-blob.py` calls through the hidden `vendor-chunks`
-/// subcommand). The passes differ in entry and externals: core aliases
-/// `~sdk/script-utils` to the no-op stub with nothing external; smart makes
-/// everything core owns external and aliases `~sdk/script-utils` to the *real*
-/// `@dcl/sdk-commands` runtime, so exactly one copy is bundled and the registry
-/// entry and asset-packs' own import land on the same module instance. Both are
-/// then checked for requires the loader could not serve — `@dcl/sdk/platform`
-/// and `@dcl/sdk/text-codec` were invisible while asset-packs shared the SDK's
-/// chunk, and would have thrown "not in the sdk runtime registry" at scene start.
+/// Build both chunks from a scene whose `node_modules` holds the vendored
+/// `@dcl/sdk` (what `scripts/build-base-blob.py` calls through the hidden
+/// `vendor-chunks` subcommand). The passes differ in entry and externals: core
+/// aliases `~sdk/script-utils` to the no-op stub with nothing external; smart
+/// makes everything core owns external, bundles `@dcl/sdk/smart-items` and its
+/// subpaths out of that same `@dcl/sdk` ([`split::smart_bundled`]), and aliases
+/// `~sdk/script-utils` to the *real* runtime module, so exactly one copy is
+/// bundled and the registry entry and the runtime's own import land on the same
+/// module instance. Both are then checked for requires the loader could not
+/// serve — `@dcl/sdk/platform` and `@dcl/sdk/text-codec` would otherwise throw
+/// "not in the sdk runtime registry" at scene start.
 pub async fn build_chunks(dir: &Path, out_core: &Path, out_smart: &Path) -> Result<()> {
     let project = Project::load(dir)?;
     let tsconfig = project.tsconfig()?;
@@ -132,32 +132,20 @@ pub async fn build_chunks(dir: &Path, out_core: &Path, out_smart: &Path) -> Resu
         &tsconfig,
         core_aliases,
         vec![],
+        vec![],
     )
     .await?;
 
-    let script_utils = entrypoint::script_utils_source(&project).ok_or_else(|| {
-        anyhow::Error::from(UserError::new(
-            "cannot build the smart-item chunk: the real ~sdk/script-utils runtime is missing",
-            TrySteps::one(
-                "install @dcl/asset-packs and @dcl/sdk-commands in the blob work tree before building the chunks",
-            ),
-        )
-        .why("@dcl/sdk-commands/dist/logic/runtime-script.js did not resolve"))
-    })?;
-    let real_utils = write("script-utils.js", &script_utils)?;
+    let real_utils = write("script-utils.js", entrypoint::SCRIPT_UTILS_SOURCE)?;
     let smart_entry = write("smart-registry.js", &split::registry_module(smart_keys))?;
-    let mut smart_aliases = Vec::new();
-    if let Some(ap) = project.node_module("@dcl/asset-packs") {
-        smart_aliases.push(("@dcl/asset-packs".to_string(), ap));
-    }
-    smart_aliases.push(("~sdk/script-utils".to_string(), real_utils));
     bundle_chunk(
         &project,
         smart_entry,
         out_smart,
         &tsconfig,
-        smart_aliases,
+        vec![("~sdk/script-utils".to_string(), real_utils)],
         split::smart_externals(),
+        split::smart_bundled(),
     )
     .await?;
 
@@ -181,6 +169,7 @@ async fn bundle_chunk(
     tsconfig: &Path,
     aliases: Vec<(String, PathBuf)>,
     externals: Vec<String>,
+    bundled: Vec<String>,
 ) -> Result<()> {
     crate::esbuild::bundle(
         project,
@@ -191,6 +180,7 @@ async fn bundle_chunk(
             tsconfig: tsconfig.to_path_buf(),
             aliases,
             externals,
+            bundled,
         },
     )
     .await
@@ -283,13 +273,13 @@ mod tests {
         let chunk = t.0.join("scene.js");
         t.write(
             "scene.js",
-            "var x = 1 // @dcl/asset-packs is only a comment\n",
+            "var x = 1 // @dcl/sdk/smart-items is only a comment\n",
         );
-        assert!(!chunk_requires(&chunk, "@dcl/asset-packs"));
+        assert!(!chunk_requires(&chunk, split::SMART_ITEMS));
         t.write(
             "scene.js",
-            r#"var e=require("@dcl/asset-packs/dist/scene-entrypoint");"#,
+            r#"var e=require("@dcl/sdk/smart-items/scripts");"#,
         );
-        assert!(chunk_requires(&chunk, "@dcl/asset-packs"));
+        assert!(chunk_requires(&chunk, split::SMART_ITEMS));
     }
 }

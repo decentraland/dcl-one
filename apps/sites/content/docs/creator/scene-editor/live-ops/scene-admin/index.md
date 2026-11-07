@@ -63,7 +63,7 @@ Whenever an admin player is in the scene, they will see a special UI on the top-
 It is also possible to know if a Player is an Admin of a scene using code. This allows for other behaviors to be available (or not) for a Player, for example, allowing interactions with a specific Entity of the scene.
 
 ```ts
-import { isAdmin } from "@dcl/asset-packs/dist/admin";
+import { isAdmin } from "@dcl/sdk/smart-items/admin";
 
 async function onPlayerSpawn() {
   const isAdminUser = await isAdmin();

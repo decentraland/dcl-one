@@ -15,6 +15,8 @@ The one exception is `ui/apps/<app>/`, which holds UI used by a single app
 | `catalyst-api/` | TypeScript DTOs, OpenAPI documents | sites, ui3, catalyst |
 | `protocol/` | The `.proto` contract, the npm package `@dcl/protocol` | Explorer (`dcl_component`), comms, social, scene CLI, scene authoring, the SDK |
 | `js-sdk-toolchain/` | The creator SDK: `@dcl/sdk`, `ecs`, `react-ecs`, `js-runtime`, `sdk-commands`, `playground-assets` (npm, own lockfiles) | scenes; reads `protocol/` |
+| `ecs-math/` | ECS math primitives, the npm package `@dcl/ecs-math` (vectors, quaternions, matrices, planes, colours; own lockfile) | the SDK (`@dcl/sdk`) |
+| `rpc/` | Transport-agnostic RPC, the npm package `@dcl/rpc` (ports, modules, back-pressured streams, memory/WebSocket/WebWorker transports, `@dcl/ts-proto` codegen; own lockfile) | the SDK (`sdk-commands`) |
 | `ui/` | Shared UI foundations, components, app-specific UI (`apps/<app>/`) and Figma tooling ([standard](../docs/ui-standards.md#shared-ui-libraryui)); only the component template exists today | None yet; planned: web apps under `apps/`, the Explorer React HUD |
 | `vendor/rusty_enet/` | Pinned ENet-CSharp transport source, MIT license and reviewed local patches | Catalyst Pulse, native Bevy Pulse client |
 | `uuav/` | Native video player: the client crate the Explorer links, the sandboxed `uuav-helper` (FFmpeg 8.1, hardware decode with software fallback) and the locked runtime set under `dist/` ([ADR](../docs/adr/2026-11-03-uuav-native-video.md)) | Explorer (integration to follow) |

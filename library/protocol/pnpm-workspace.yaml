@@ -1,0 +1,5 @@
+nodeLinker: hoisted
+ignoreScripts: true
+saveExact: true
+allowBuilds:
+  protobufjs: false

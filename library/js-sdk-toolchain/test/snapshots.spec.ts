@@ -14,6 +14,7 @@ import { readFile } from 'fs/promises'
 
 const ENV: Record<string, string> = { ...process.env } as any
 const writeToFile = process.env.UPDATE_SNAPSHOTS
+const SDK_COMMANDS = path.resolve('packages/@dcl/sdk-commands/dist/index.js')
 
 // snapshot file zies will fail if sourcemaps include different absolute paths
 function removeSourceMaps(source: string): string {
@@ -22,20 +23,18 @@ function removeSourceMaps(source: string): string {
 }
 
 describe('Runs the snapshots', () => {
-  itExecutes(`npm install --silent`, path.resolve('test/snapshots'), ENV)
-
   itExecutes(
-    `npm run build -- --production --customEntryPoint --ignoreComposite  "--single=production-bundles/*.ts"`,
+    `node ${SDK_COMMANDS} build --production --customEntryPoint --ignoreComposite  "--single=production-bundles/*.ts"`,
     path.resolve('test/snapshots'),
     ENV
   )
   itExecutes(
-    `npm run build -- --production --ignoreComposite "--single=production-bundles/with-main-function.ts"`,
+    `node ${SDK_COMMANDS} build --production --ignoreComposite "--single=production-bundles/with-main-function.ts"`,
     path.resolve('test/snapshots'),
     ENV
   )
   itExecutes(
-    `npm run build -- --customEntryPoint --ignoreComposite  "--single=development-bundles/*.ts"`,
+    `node ${SDK_COMMANDS} build --customEntryPoint --ignoreComposite  "--single=development-bundles/*.ts"`,
     path.resolve('test/snapshots'),
     ENV
   )

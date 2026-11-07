@@ -20,6 +20,16 @@ import time
 import unittest
 from unittest.mock import patch
 
+
+def flake_postgres():
+    """PATH carries the flake's PostgreSQL 18 (nix develop). A host's own PostgreSQL may be another
+    major or, on NixOS, an initdb whose share directory is not installed."""
+    postgres = shutil.which('postgres')
+    if not (postgres and shutil.which('initdb') and shutil.which('psql')):
+        return False
+    version = subprocess.run([postgres, '--version'], capture_output=True, text=True).stdout
+    return version.startswith('postgres (PostgreSQL) 18.')
+
 SPEC = importlib.util.spec_from_file_location('foundation_dev', Path(__file__).parents[1] / 'dev.py')
 dev = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(dev)
@@ -148,7 +158,7 @@ class DevTest(unittest.TestCase):
                           'cargo:test --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --lib',
                           'make:catalyst-test', 'down'])
 
-    @unittest.skipUnless(shutil.which('process-compose') and shutil.which('initdb') and shutil.which('psql')
+    @unittest.skipUnless(shutil.which('process-compose') and flake_postgres()
                          and os.getuid() != 0, 'requires PostgreSQL and process-compose')
     def test_postgres_only_cli_preserves_rows_and_supplies_scratch_database_collation(self):
         checkout = self.state / 'checkout'
@@ -865,8 +875,8 @@ class DevTest(unittest.TestCase):
                         'up', '--config', str(path), '--disable-dotenv', '--dry-run'],
                        check=True, capture_output=True)
 
-    @unittest.skipUnless(shutil.which('initdb') and shutil.which('psql') and os.getuid() != 0,
-                         'requires PostgreSQL and a non-root user (provided by nix develop)')
+    @unittest.skipUnless(flake_postgres() and os.getuid() != 0,
+                         "requires the flake's PostgreSQL 18 and a non-root user (nix develop)")
     def test_postgres_restart_preserves_rows_and_rejects_wrong_password(self):
         script = Path(dev.__file__)
         launch = ('import importlib.util, pathlib; '

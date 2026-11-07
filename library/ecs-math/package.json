@@ -1,0 +1,32 @@
+{
+  "name": "@dcl/ecs-math",
+  "version": "2.1.0",
+  "description": "Decentraland ECS math: vectors, quaternions, matrices, planes and colours",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/decentraland/dcl-one.git",
+    "directory": "library/ecs-math"
+  },
+  "homepage": "https://github.com/decentraland/dcl-one/tree/main/library/ecs-math#readme",
+  "bugs": "https://decentraland.org/help/",
+  "keywords": [
+    "math",
+    "decentraland-ecs"
+  ],
+  "license": "Apache-2.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "jest --detectOpenHandles --colors --runInBand"
+  },
+  "devDependencies": {
+    "@types/jest": "30.0.0",
+    "jest": "30.5.2",
+    "ts-jest": "29.4.15",
+    "typescript": "5.9.3"
+  }
+}

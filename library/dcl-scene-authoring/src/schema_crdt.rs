@@ -1,6 +1,6 @@
 //! The @dcl/ecs `ISchema` encoder: core components are protobuf (see
 //! crdt_gen); everything else (`core-schema::*`, `inspector::*`,
-//! `asset-packs::*`, user names) is a tagless, positional, little-endian
+//! `smart-items::*`, user names) is a tagless, positional, little-endian
 //! format driven entirely by the `jsonSchema` the composite carries.
 //!
 //! Verified against the auth-server @dcl/ecs 7.29.1 line (`schemas/`,
@@ -600,7 +600,7 @@ mod tests {
             ("core-schema::Sync-Components", 2241712969),
             ("core-schema::Tags", 4148173090),
             ("inspector::Nodes", 2032030903),
-            ("asset-packs::AdminTools", 99929642),
+            ("smart-items::AdminTools", 2884627400),
         ] {
             assert_eq!(component_number_from_name(name), id, "{name}");
         }

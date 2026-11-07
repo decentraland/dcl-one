@@ -1,4 +1,6 @@
 
+import { renameLegacySmartItemComponents } from "@ui/editor/smart-item-components";
+
 type CompositeEnvelope = { json: unknown };
 
 export type CompositeComponentBlock = {
@@ -70,7 +72,7 @@ export function parseComposite(input: unknown): SceneComposite {
   const version = typeof input.version === "number" ? input.version : 1;
   const rawComponents = Array.isArray(input.components) ? input.components : [];
   const components: CompositeComponentBlock[] = [];
-  for (const raw of rawComponents) {
+  for (const raw of renameLegacySmartItemComponents(rawComponents)) {
     if (!isObj(raw) || typeof raw.name !== "string") continue;
     const data: Record<string, CompositeEnvelope> = {};
     if (isObj(raw.data)) {

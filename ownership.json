@@ -138,6 +138,28 @@
       ]
     },
     {
+      "id": "ecs-math",
+      "description": "The ECS math primitives (@dcl/ecs-math): vectors, quaternions, matrices, planes and colours",
+      "owners": [
+        "@decentraland/client",
+        "@decentraland/apis"
+      ],
+      "paths": [
+        "/library/ecs-math/"
+      ]
+    },
+    {
+      "id": "rpc",
+      "description": "The transport-agnostic RPC library (@dcl/rpc): ports, modules, streams and protobuf codegen",
+      "owners": [
+        "@decentraland/client",
+        "@decentraland/apis"
+      ],
+      "paths": [
+        "/library/rpc/"
+      ]
+    },
+    {
       "id": "sdk",
       "description": "The creator SDK packages (@dcl/sdk, ecs, react-ecs, js-runtime, sdk-commands, playground-assets)",
       "owners": [],

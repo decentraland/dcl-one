@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 # Keep a single compatibility definition. The legacy proto-compatibility-tool

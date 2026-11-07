@@ -3,8 +3,8 @@
 One Rust binary that scaffolds, builds, previews and publishes Decentraland SDK7 scenes, replacing
 `@dcl/sdk-commands` 7.27.0 ([js-sdk-toolchain](https://github.com/decentraland/js-sdk-toolchain)) with
 the same commands and flags. rolldown, the TypeScript toolchain, abgen and `livekit-server` are in the
-binary; nothing to `npm install`. The vendored runtime pins `@dcl/sdk` 7.29.1-34986384248.commit-bb45080
-(src/vendor/README.md).
+binary; nothing to install. The vendored runtime is the SDK built from `library/js-sdk-toolchain`
+and `library/protocol` in this tree, stamped with the scaffold's pin (src/vendor/README.md).
 
 ## Start a scene
 
@@ -14,7 +14,7 @@ dcl-scene-cli get-context-files [--dir D] [--offline]
 ```
 
 `init` writes embedded templates and `node_modules` offline. The `/inspector/*` UI needs
-`npm install --save-dev @dcl/inspector` or `DCL_ONE_INSPECTOR_DIR`. `get-context-files` writes the
+`pnpm add -D @dcl/inspector` or `DCL_ONE_INSPECTOR_DIR`. `get-context-files` writes the
 `migrate-smart-items-to-code` skill and downloads `ai-sdk-context` into `dclcontext/`.
 
 ## Build it
@@ -52,7 +52,11 @@ Serves a local realm on 8000 and reloads the client on save. `http://127.0.0.1:8
 page (deep-link knobs, web **Player** via `?where=web&player=<url>`). abgen on 5147 serves
 `{realm}/optimized-assets`. Scene errors print via the client's MCP port (default 8123, range
 1024-65535). `/content/contents/{hash}` resolves by path: a stale digest gets the current bytes.
-`--data-layer` serves the Creator Hub protocol at `/data-layer` and `/inspector/`.
+`--data-layer` serves the Creator Hub protocol at `/data-layer` and `/inspector/`. Its bundled
+host defines the smart-item components as `smart-items::*` (a composite saved under the former
+`asset-packs::*` names loads as the same) and seeds them on the root entity; the registry
+`@dcl/inspector` UI, when installed, addresses those components by numbers it computes from its
+own names, so it edits core components only.
 
 ### Play
 

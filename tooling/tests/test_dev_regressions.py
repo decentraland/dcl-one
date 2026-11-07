@@ -263,6 +263,9 @@ class DevScriptTests(unittest.TestCase):
             bash = str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe")
         if not bash or not Path(bash).exists():
             self.skipTest("bash unavailable")
+        # The resolved path keeps the fixture PATH to bash's own directory (a Nix store path holds
+        # nothing else), so the stubs below are the only cargo, make, python3 and nats-server.
+        bash = str(Path(bash).resolve())
         with tempfile.TemporaryDirectory(prefix="dev-regression-") as tmp:
             root = Path(tmp)
             tools = root / "bin"
@@ -270,7 +273,7 @@ class DevScriptTests(unittest.TestCase):
             log = root / "calls"
             def executable(name, body):
                 path = tools / name
-                path.write_text("#!/bin/bash\nset -eu\n" + body + "\n", newline="\n")
+                path.write_text("#!/usr/bin/env bash\nset -eu\n" + body + "\n", newline="\n")
                 path.chmod(0o755)
             executable("foundation-dev", r'''echo "foundation:$*" >> "$CALLS"
 if [ "$1" = env ]; then
@@ -301,7 +304,7 @@ echo verified-exports >> "$CALLS"''')
             else:
                 environment["GITHUB_ACTIONS"] = ci
             # Git Bash converts Windows paths passed through PATH differently; set it in bash.
-            command = 'export PATH="$1:/usr/bin:/bin"; bash "$2" rust'
+            command = 'export PATH="$1:${BASH%/*}:/usr/bin:/bin"; "$BASH" "$2" rust'
             if os.name == "nt":
                 command = 'export PATH="$(cygpath -u "$1"):/usr/bin:/bin"; bash "$2" rust'
             result = subprocess.run([bash, "-c", command, "fixture", tools.as_posix(),
