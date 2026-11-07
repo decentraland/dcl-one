@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getIdentity, setIdentity } from "@/data/lib/auth/session";
 
 import LoginPage from "./LoginPage";
+import { signInKindFor } from "@/data/lib/auth/signin-kind";
 
 vi.hoisted(() => {
   Object.assign(window, { __vite_plugin_react_preamble_installed__: true });
@@ -208,6 +209,8 @@ describe("the sign-in page", () => {
 
     await act(async () => approve(`0x${"11".repeat(65)}`));
     expect(getIdentity()?.signer).toBe(SIGNER);
+    // Recorded as a web3 sign-in: the Shop's Marketplace follows how the account signed in.
+    expect(signInKindFor(SIGNER)).toBe("web3");
     expect(assign).toHaveBeenCalledWith("/shop/items?sortBy=newest");
   });
 

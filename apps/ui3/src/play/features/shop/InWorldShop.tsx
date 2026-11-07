@@ -9,7 +9,7 @@
 // typed NAME shows over the avatar in a nametag, as it will read once claimed, and CLAIM NAME registers it
 // on the web Shop.
 
-import { useQueries, useQueryClient } from '@tanstack/react-query'
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
 import { defaultWorn, wornUrns } from '../../../shop/discovery/lib/outfit'
@@ -40,7 +40,7 @@ import { useShopFlag } from './flagsQuery'
 import { homeQueries, useNewest, useShopOutfits, useTrending, type OutfitSummary } from './homeQuery'
 import { tryOnUrn, webNameOfferUrl, webNameResaleUrl, webNameUrl, webOutfitUrl, webShopUrl } from './itemLinks'
 import { useNameCheck } from './namesQuery'
-import { useCreditsBalance, useShopCapabilities, useShopPurchase } from './purchaseQuery'
+import { purchaseQueries, useCreditsBalance, useShopPurchase } from './purchaseQuery'
 import { categoryGlyph, CreatorName, SelectedItemPanel, ShopCard } from './ShopItems'
 import { AvatarNametag, CreditsPill, EmoteControls, PriceTag, ShopCart, ShopCartBadge, ShopCartToast, ShopFilters, ShopHome, ShopItemSkeleton, ShopNames, type PressedWith, type ShopHomeOutfitOffer } from './ui'
 import styles from './InWorldShop.module.css'
@@ -173,13 +173,17 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   const creatorSalesFlag = useShopFlag(REMOTE_FLAG.creatorSales)
   // Resales, NAME resales and offers are the Marketplace's (shop/market/access.tsx): offered only while its rollout is
   // on (a host's declaration first, as on the web) and to a web3 wallet. In the web shell that is the shell's own
-  // answer for the login (its capabilities' wallet kind); elsewhere nothing here can buy, so a signed-in player who is
-  // not a guest may browse, and the web Shop a resale opens still asks for a web3 session. Off, the rows and the
+  // answer for the login (its capabilities' `marketplace`: a web3 sign-in it recorded, with a wallet here to sign), and
+  // the listings wait for it. Elsewhere (the desktop and native HUDs) nothing here can buy: a signed-in player who is
+  // not a guest may browse them, and the web Shop a resale opens decides again (AGENTS.md). Off, the rows and the
   // catalogue list creators' primary sales only.
-  const capabilities = useShopCapabilities()
-  const web3Player = inShell ? capabilities?.wallet === 'web3' : profile.data != null && !profile.data.isGuest
+  const capabilitiesQuery = useQuery(purchaseQueries.capabilities())
+  const capabilities = capabilitiesQuery.data
+  const web3Player = inShell ? capabilities?.marketplace === true : profile.data != null && !profile.data.isGuest
+  // Settled once the shell answers, or fails to (then without the Marketplace), so the listings never wait forever.
+  const accessKnown = !inShell || capabilities !== undefined || capabilitiesQuery.isError
   const marketplaceFlag = hostOr('marketplaceFeatures', useShopFlag(REMOTE_FLAG.marketplaceFeatures) ?? null) === true && web3Player
-  const flagsKnown = creatorSalesFlag !== undefined
+  const flagsKnown = creatorSalesFlag !== undefined && accessKnown
   const creatorSales = creatorSalesFlag ?? false
   const grid = useShopCatalogue(filters, page, { creatorSales, marketplace: marketplaceFlag, enabled: shop.open && flagsKnown && isCatalogue(section) })
   const nameCheck = useNameCheck(nameDraft, shop.open && section === 'names')

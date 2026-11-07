@@ -32,9 +32,10 @@ export function isResale(row: { tokenId?: string | null; listingType?: string | 
 }
 
 /**
- * The session the Marketplace sees: a web3 kind the host only guessed (an identity whose sign-in it never recorded,
- * such as one shared from another site) counts as web2 here. Signing still uses the guess.
+ * The session the Marketplace sees: a web3 kind it may not use counts as web2 here. That is one the host only guessed
+ * (a sign-in it never recorded, such as one shared from another site), or one with no wallet here to sign as it.
+ * Signing elsewhere still uses the host's kind.
  */
-export function marketplaceSession(session: Session, signInKnown: boolean): Session {
-  return session.kind === "web3" && !signInKnown ? { kind: "web2", account: session.wallet } : session;
+export function marketplaceSession(session: Session, web3Usable: boolean): Session {
+  return session.kind === "web3" && !web3Usable ? { kind: "web2", account: session.wallet } : session;
 }

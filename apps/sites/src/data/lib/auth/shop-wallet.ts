@@ -8,7 +8,6 @@ import type { AuthIdentity } from "@ui/data/auth/identity";
 import type { ShellShopWallet } from "@ui/play/shell/shop/purchase";
 import type { WalletKind } from "@ui/shop/wallet/session";
 
-import { hasMagicSession } from "./magic-session";
 import { signInKindFor, type SignInKind } from "./signin-kind";
 import { getThirdwebSession, type ThirdwebSession } from "./thirdweb/session";
 import { signTypedData } from "./typed-data";
@@ -17,8 +16,9 @@ import { hasWallet, walletProvider, WalletError, type Eip1193Provider } from "./
 /**
  * How the signed identity was made, as the sign-in recorded it (`signin-kind.ts`): a browser wallet or
  * WalletConnect is web3, an in-app (thirdweb) or Magic account managed. An in-app session for the same
- * account is managed whatever the record says. An identity signed before the record existed is managed
- * when a Magic session is held, and otherwise web3 only while a browser wallet is present.
+ * account is managed whatever the record says. An identity this site never recorded (signed before the
+ * record existed, or shared from another site) is guessed as before: web3 while a browser wallet is
+ * present. The guess serves signing only; the Marketplace needs `web3Usable`.
  *
  * With neither here, the web Shop still takes the identity for managed, as it always has: its pages
  * browse, quote and send the buyer to sign in again when the in-app signer has no session. The /play
@@ -27,33 +27,27 @@ import { hasWallet, walletProvider, WalletError, type Eip1193Provider } from "./
  */
 export function sitesWalletKind(
   identity: Pick<AuthIdentity, "signer"> | null,
-  facts: { inApp: ThirdwebSession | null; injected: boolean; recorded?: SignInKind | null; magic?: boolean },
+  facts: { inApp: ThirdwebSession | null; injected: boolean; recorded?: SignInKind | null },
 ): WalletKind | null {
   if (!identity) return null;
   if (inAppSessionFor(identity.signer, facts.inApp)) return "managed";
   if (facts.recorded) return facts.recorded;
-  if (facts.magic) return "managed";
   return facts.injected ? "web3" : "managed";
 }
 
-/** `identity`'s kind from this browser's facts: its sign-in record, its in-app session, a Magic session, a wallet. */
+/** `identity`'s kind from this browser's facts: its in-app session, its sign-in record, a browser wallet. */
 export function currentWalletKind(identity: Pick<AuthIdentity, "signer"> | null): WalletKind | null {
   if (!identity) return null;
-  return sitesWalletKind(identity, {
-    inApp: getThirdwebSession(),
-    injected: hasWallet(),
-    recorded: signInKindFor(identity.signer),
-    magic: hasMagicSession(),
-  });
+  return sitesWalletKind(identity, { inApp: getThirdwebSession(), injected: hasWallet(), recorded: signInKindFor(identity.signer) });
 }
 
 /**
- * Whether `identity`'s kind is known from its sign-in (recorded here, or an in-app session for the account) rather
- * than guessed: a shared identity signed in on another site never was. Only a known web3 sign-in opens the Shop's
- * Marketplace.
+ * Whether `identity` may use the Shop's Marketplace as web3: this site recorded a web3 sign-in for it (not a guess)
+ * and a browser wallet is here to sign as it. A WalletConnect sign-in keeps no session to sign with afterwards, so
+ * it waits for one.
  */
-export function signInKnown(identity: Pick<AuthIdentity, "signer">): boolean {
-  return signInKindFor(identity.signer) !== null || inAppSessionFor(identity.signer);
+export function web3Usable(identity: Pick<AuthIdentity, "signer">): boolean {
+  return !inAppSessionFor(identity.signer) && signInKindFor(identity.signer) === "web3" && hasWallet();
 }
 
 /** Whether this browser's in-app (thirdweb) session is `account`'s. */
@@ -108,6 +102,7 @@ export function playShopWallet(): ShellShopWallet {
   };
   return {
     kind,
+    marketplace: (account) => kind(account) === "web3" && web3Usable({ signer: account }),
     provider(account) {
       const k = kind(account);
       if (k === "managed") return managedShopProvider(account);

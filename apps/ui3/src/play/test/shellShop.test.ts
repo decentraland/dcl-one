@@ -1030,7 +1030,13 @@ describe('the shell purchase', () => {
   })
 
   it('tells the HUD what the session can pay with', async () => {
-    expect(await setup().shop.request('shop.capabilities', undefined)).toEqual({ v: 1, buyer: BUYER, wallet: 'managed', credits: true })
+    expect(await setup().shop.request('shop.capabilities', undefined)).toEqual({ v: 1, buyer: BUYER, wallet: 'managed', credits: true, marketplace: false })
+    // The Marketplace: only a web3 wallet the page vouches for (its recorded sign-in, here to sign).
+    const signer = { request: vi.fn() }
+    const web3 = (marketplace: boolean) => setup({ wallet: { kind: () => 'web3', provider: () => signer, marketplace: () => marketplace } })
+    expect(await web3(true).shop.request('shop.capabilities', undefined)).toMatchObject({ wallet: 'web3', marketplace: true })
+    expect(await web3(false).shop.request('shop.capabilities', undefined)).toMatchObject({ wallet: 'web3', marketplace: false })
+    expect(await setup({ wallet: { kind: () => 'web3', provider: () => signer } }).shop.request('shop.capabilities', undefined)).toMatchObject({ marketplace: false })
     expect(await setup({ login: () => null }).shop.request('shop.capabilities', undefined)).toMatchObject({ buyer: null, credits: false, reason: 'signedOut' })
     expect(await setup({ login: () => login(BUYER, { guest: true }) }).shop.request('shop.capabilities', undefined)).toMatchObject({ credits: false, reason: 'guest' })
     expect(await setup({ wallet: null }).shop.request('shop.capabilities', undefined)).toMatchObject({ credits: false, reason: 'noWallet' })

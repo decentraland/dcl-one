@@ -10,7 +10,7 @@ const facts = vi.hoisted(() => ({
   known: true,
 }));
 vi.mock("../auth/index", () => ({ useAuth: () => ({ identity: facts.identity }) }));
-vi.mock("../auth/shop-wallet", () => ({ currentWalletKind: () => facts.kind, signInKnown: () => facts.known }));
+vi.mock("../auth/shop-wallet", () => ({ currentWalletKind: () => facts.kind, web3Usable: () => facts.known }));
 const primed = vi.hoisted(() => ({ calls: 0 }));
 vi.mock("../feature-flags.browser", () => ({ primeDappsFlags: async () => void primed.calls++ }));
 

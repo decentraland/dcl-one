@@ -46,6 +46,8 @@ export default function CreateNames({ loaderData }: Route.ComponentProps) {
 
 function NamesView({ address, names, fallback }: LoaderData) {
   const { rescoping, needsConnect } = useManageScope(address);
+  // Selling a NAME is the Shop's Marketplace: offered only to a visitor who has it. Read once for every card.
+  const marketplace = useMarketplaceHere();
   const revalidator = useRevalidator();
   const navigate = useNavigate();
 
@@ -112,7 +114,7 @@ function NamesView({ address, names, fallback }: LoaderData) {
                   ) : (
                     <div className="chm__list">
                       {names.map((entry) => (
-                        <NameCard key={entry.worldName} entry={entry} address={address} />
+                        <NameCard key={entry.worldName} entry={entry} address={address} marketplace={marketplace} />
                       ))}
                     </div>
                   )}
@@ -128,10 +130,8 @@ function NamesView({ address, names, fallback }: LoaderData) {
 
 
 
-function NameCard({ entry, address }: { entry: OwnedNameVM; address: string }) {
+function NameCard({ entry, address, marketplace }: { entry: OwnedNameVM; address: string; marketplace: boolean }) {
   const published = entry.deployedScenes > 0;
-  // Selling a NAME is the Shop's Marketplace: offered only to a visitor who has it.
-  const marketplace = useMarketplaceHere();
   const settingsHref = `/create/world-settings?world=${encodeURIComponent(entry.worldName)}&address=${encodeURIComponent(address)}`;
   return (
     <div className="chm__card chm__card--compact">

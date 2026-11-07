@@ -5,7 +5,6 @@ const facts = vi.hoisted(() => ({
   injected: false,
   provider: null as unknown,
   recorded: null as "web3" | "managed" | null,
-  magic: false,
 }));
 vi.mock("./thirdweb/session", () => ({ getThirdwebSession: () => facts.inApp }));
 vi.mock("./wallet", async (actual) => ({
@@ -15,9 +14,8 @@ vi.mock("./wallet", async (actual) => ({
 }));
 
 vi.mock("./signin-kind", () => ({ signInKindFor: () => facts.recorded }));
-vi.mock("./magic-session", () => ({ hasMagicSession: () => facts.magic }));
 
-import { currentWalletKind, playShopWallet, sitesWalletKind } from "./shop-wallet";
+import { currentWalletKind, playShopWallet, sitesWalletKind, web3Usable } from "./shop-wallet";
 
 const ACCOUNT = "0x" + "ab".repeat(20);
 
@@ -26,7 +24,6 @@ afterEach(() => {
   facts.injected = false;
   facts.provider = null;
   facts.recorded = null;
-  facts.magic = false;
 });
 
 describe("the in-world Shop's wallet in the web shell", () => {
@@ -69,8 +66,7 @@ describe("the web Shop's wallet kind: how the account signed in, never whether a
     expect(sitesWalletKind(me, { inApp: other, injected: true, recorded: "web3" })).toBe("web3");
   });
 
-  it("without a record (an identity signed before it existed): a Magic session is managed, else web3 only with a browser wallet", () => {
-    expect(sitesWalletKind(me, { inApp: null, injected: true, magic: true })).toBe("managed");
+  it("without a record (signed before it existed, or shared from another site) it guesses, for signing: web3 only with a browser wallet", () => {
     expect(sitesWalletKind(me, { inApp: null, injected: true })).toBe("web3");
     expect(sitesWalletKind(me, { inApp: null, injected: false })).toBe("managed");
     expect(sitesWalletKind(null, { inApp: null, injected: true, recorded: "web3" })).toBeNull();
@@ -80,18 +76,33 @@ describe("the web Shop's wallet kind: how the account signed in, never whether a
 describe("the identity's kind from this browser's facts", () => {
   const me = { signer: ACCOUNT };
 
-  it("reads the sign-in's record and the Magic marker, not only the wallet extension", () => {
+  it("reads the sign-in's record over the wallet extension", () => {
     facts.injected = true;
     facts.recorded = "managed";
     expect(currentWalletKind(me)).toBe("managed");
     facts.recorded = null;
-    facts.magic = true;
-    expect(currentWalletKind(me)).toBe("managed");
-    facts.magic = false;
     expect(currentWalletKind(me)).toBe("web3");
     facts.injected = false;
     facts.recorded = "web3";
     expect(currentWalletKind(me)).toBe("web3");
     expect(currentWalletKind(null)).toBeNull();
+  });
+
+  it("opens the Marketplace only to a recorded web3 sign-in with a wallet here: never a guess, a Magic account or WalletConnect gone", () => {
+    facts.injected = true;
+    facts.recorded = "web3";
+    expect(web3Usable(me)).toBe(true);
+    expect(playShopWallet().marketplace?.(ACCOUNT)).toBe(true);
+    // A Magic or shared sign-in with MetaMask installed: managed by record, or only guessed.
+    facts.recorded = "managed";
+    expect(web3Usable(me)).toBe(false);
+    facts.recorded = null;
+    expect(web3Usable(me)).toBe(false);
+    expect(playShopWallet().marketplace?.(ACCOUNT)).toBe(false);
+    // WalletConnect: web3 by record, but nothing here to sign with.
+    facts.injected = false;
+    facts.recorded = "web3";
+    expect(web3Usable(me)).toBe(false);
+    expect(playShopWallet().marketplace?.(ACCOUNT)).toBe(false);
   });
 });

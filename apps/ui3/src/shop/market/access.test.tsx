@@ -87,7 +87,7 @@ describe("a Marketplace page", () => {
       { initialEntries: ["/shop/lands"] },
     );
     render(
-      <ShopWalletProvider host={{ ...fixtureHost("web3"), signInKnown: false }}>
+      <ShopWalletProvider host={{ ...fixtureHost("web3"), web3Usable: false }}>
         <RouterProvider router={router} />
       </ShopWalletProvider>,
     );

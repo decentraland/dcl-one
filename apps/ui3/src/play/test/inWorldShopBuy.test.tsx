@@ -85,7 +85,7 @@ function serveCatalogue(flags: Record<string, boolean> = {}): ReturnType<typeof 
 let balance = 700
 function answerShell(wallet: 'managed' | 'web3' = 'managed'): void {
   shell.request.mockImplementation(async (method: string) => {
-    if (method === 'shop.capabilities') return { v: 1, buyer: BUYER, wallet, credits: true }
+    if (method === 'shop.capabilities') return { v: 1, buyer: BUYER, wallet, credits: true, marketplace: wallet === 'web3' }
     if (method === 'shop.balance') return { v: 1, credits: balance }
     if (method === 'shop.buy') return { v: 1, operation: 'op', state: 'reviewing', items: [{ contract: CONTRACT, itemId: '1', quantity: 1 }] }
     if (method === 'shop.status') return []

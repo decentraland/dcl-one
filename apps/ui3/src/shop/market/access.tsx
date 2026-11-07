@@ -21,7 +21,7 @@ export function useMarketplaceAccess(): MarketplaceAccess {
   const flag = hostOr("marketplaceFeatures", useRemoteFlagState(REMOTE_FLAG.marketplaceFeatures));
   const wallet = useShopWallet();
   const caps = useShopCapabilities();
-  const session = marketplaceSession(wallet.session, wallet.host?.signInKnown !== false);
+  const session = marketplaceSession(wallet.session, wallet.host?.web3Usable !== false);
   return marketplaceAccess(flag, { session, resolving: wallet.resolving }, caps.secondarySales);
 }
 

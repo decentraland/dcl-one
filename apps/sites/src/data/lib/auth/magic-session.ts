@@ -30,15 +30,6 @@ export async function magicClient(apiKey: string): Promise<MagicClient> {
   return new Magic(apiKey, { extensions: [new OAuthExtension()] }) as unknown as MagicClient;
 }
 
-/** Whether this browser's session came through Magic (its marker stays until Magic confirms a logout). */
-export function hasMagicSession(): boolean {
-  try {
-    return localStorage.getItem(MARKER) === "1";
-  } catch {
-    return false;
-  }
-}
-
 /** Notes that this browser's session came through Magic. */
 export function markMagicSession(): void {
   try {

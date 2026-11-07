@@ -12,7 +12,7 @@ import { shopSession } from "@ui/shop/wallet/session";
 
 import { useAuth } from "../auth/index";
 import { primeDappsFlags } from "../feature-flags.browser";
-import { currentWalletKind, signInKnown } from "../auth/shop-wallet";
+import { currentWalletKind, web3Usable } from "../auth/shop-wallet";
 
 const noSubscription = () => () => {};
 
@@ -29,6 +29,6 @@ export function useMarketplaceHere(): boolean {
   const hydrated = useSyncExternalStore(noSubscription, () => true, () => false);
   const kind = hydrated && identity ? currentWalletKind(identity) : null;
   // The Shop's own session rule (an expired identity is signed out), then its Marketplace rule: a guessed web3 is web2.
-  const session = kind && identity ? marketplaceSession(shopSession({ identity, walletKind: kind }), signInKnown(identity)) : SIGNED_OUT;
+  const session = kind && identity ? marketplaceSession(shopSession({ identity, walletKind: kind }), web3Usable(identity)) : SIGNED_OUT;
   return marketplaceAccess(flag, { session, resolving: !hydrated }, caps.secondarySales) === "on";
 }
