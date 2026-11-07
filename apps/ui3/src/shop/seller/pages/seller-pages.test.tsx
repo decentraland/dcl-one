@@ -167,6 +167,14 @@ describe("My store", () => {
     expect(await screen.findByTestId("shop-order-from-link")).toHaveTextContent("The listing from your link is no longer open");
   });
 
+  it("without the Marketplace an old cancel link opens nothing and says why, and the public store is not linked", async () => {
+    const { PENDING } = await import("../../market/testing");
+    const view = mountShop({ path: "/shop/my-store?order=o-12", who: "web3", marketplace: false, routes: [{ method: "GET", path: /./, reply: PENDING }] });
+    expect(await screen.findByTestId("shop-order-from-link")).toHaveTextContent("Resale listings can't be managed in the Shop right now.");
+    expect(view.shop.requests.some((r) => r.url.pathname.endsWith("/v1/orders"))).toBe(false);
+    expect(screen.queryByText("View your public store")).toBeNull();
+  });
+
   it("signed out: the gate; a store dashboard narrowed to other addresses sends the visitor to the overview", async () => {
     const view = mountShop({ path: "/shop/my-store", who: "signedOut" });
     expect(await screen.findByTestId("shop-signin-gate")).toHaveTextContent("Sign in to view your store");

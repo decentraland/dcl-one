@@ -27,6 +27,7 @@ import type { RailContext } from "./purchase/rail";
 import { createSpendGuard } from "./purchase/spend-guard";
 import { useShopServices } from "./services";
 import { cartOfferFetcher, useOfferSource } from "../detail/offers";
+import { needsMarketplace, useMarketplace } from "../market/access";
 import type { ManaWei, UsdCents } from "../model/money";
 import { creditsCeil } from "../model/money";
 
@@ -60,6 +61,8 @@ export type CheckoutView = {
   session: Session;
   account: string | null;
   lines: CartLine[];
+  /** The lines only the Marketplace sells, kept out of pricing and payment while it is off for this visitor. */
+  offMarket: string[];
   offers: Record<string, PurchaseOffer | null>;
   views: Record<string, PaymentPresentation | null>;
   partition: CartPartition | null;
@@ -98,6 +101,7 @@ export type CheckoutView = {
 const NO_OFFERS: OfferFetcher = async () => ({});
 
 const IN_FLIGHT = "A purchase from this cart is still being confirmed.";
+export const OFF_MARKET = "Resales can't be bought in the Shop right now. Remove them to continue.";
 const RUNNING = "Purchase in progress…";
 
 export function lineRule(line: CartLine, session: Session): Eligibility {
@@ -116,8 +120,13 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
   const qc = useQueryClient();
   const { session, account } = wallet;
   const snapshot = useCart((s) => s, services.cart);
-  const lines = snapshot.lines;
+  const allLines = snapshot.lines;
   const checkout = snapshot.checkout;
+  // A resale or a rental saved before is the Marketplace's: without it (market/access.tsx) it is neither priced nor
+  // bought, and it blocks the checkout until removed. Everything below prices and pays `lines`.
+  const marketplace = useMarketplace();
+  const offMarket = useMemo(() => (marketplace ? [] : allLines.filter(needsMarketplace).map((l) => l.id)), [allLines, marketplace]);
+  const lines = useMemo(() => (offMarket.length ? allLines.filter((l) => !offMarket.includes(l.id)) : allLines), [allLines, offMarket]);
 
   const balanceQuery = useBalance(account);
   const manaQuery = useManaBalance(session.kind === "web3" ? account : null, settlementChainId());
@@ -167,7 +176,8 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
   const refusedByLine = useMemo(() => Object.fromEntries((partition?.refused ?? []).map((r) => [r.lineId, r])), [partition]);
 
   const review: ReviewState = useMemo(() => {
-    if (lines.length === 0) return { kind: "empty" };
+    if (allLines.length === 0) return { kind: "empty" };
+    if (lines.length === 0) return { kind: "current" };
     if (!fetchOffers) return { kind: "outage", reason: "no-quote-route" };
     switch (revalidation.status) {
       case "idle":
@@ -180,7 +190,7 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
       case "current":
         return { kind: "current" };
     }
-  }, [lines.length, fetchOffers, revalidation.status, revalidation.changes]);
+  }, [allLines.length, lines.length, fetchOffers, revalidation.status, revalidation.changes]);
 
   const reviewChanges = useMemo(() => revalidation.changes.filter((c) => c.kind !== "quoteUnavailable"), [revalidation.changes]);
   const quoteOutage = useMemo(() => {
@@ -213,8 +223,9 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
 
   const blockers = useMemo(() => {
     const out: string[] = [];
-    if (lines.length === 0) return out;
+    if (allLines.length === 0) return out;
     if (session.kind === "signedOut") out.push("Sign in to check out.");
+    if (offMarket.length > 0) out.push(OFF_MARKET);
     if (wallet.accountMismatch) out.push("Your wallet switched to another account. Sign in again with it, or switch your wallet back.");
     if (review.kind === "outage") out.push("Prices can't be checked right now, so nothing can be bought. Try again in a moment.");
     if (review.kind === "checking") out.push("Checking prices and availability…");
@@ -233,7 +244,7 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
     }
     if (running) out.push(RUNNING);
     return out;
-  }, [lines.length, session.kind, wallet.accountMismatch, review.kind, reviewChanges, quoteOutage, partition, provider, checkout, running]);
+  }, [allLines.length, offMarket.length, session.kind, wallet.accountMismatch, review.kind, reviewChanges, quoteOutage, partition, provider, checkout, running]);
 
   const payableGroups = useMemo(() => (partition?.groups ?? []).filter((g) => !walletNeededKeys.includes(g.keyId)), [partition, walletNeededKeys]);
   const canConfirm = blockers.length === 0 && payableGroups.length > 0;
@@ -442,7 +453,8 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
     wallet,
     session,
     account,
-    lines,
+    lines: allLines,
+    offMarket,
     offers,
     views,
     partition,

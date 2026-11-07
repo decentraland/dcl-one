@@ -89,6 +89,55 @@ describe("the item route (a collection item, sold by its creator)", () => {
     expect(within(resales).getByText("View").getAttribute("href")).toBe(`/shop/token/${COLLECTION}/${TOKEN_ID}`);
   });
 
+  it("an item whose only listing is a resale is not for sale here without the Marketplace, and never asks for it", async () => {
+    const asked: (string | null)[] = [];
+    const resaleOnly: CatalogAnswers = {
+      "/v3/catalog/unified": (url: URL) => {
+        const listingType = url.searchParams.get("listingType");
+        asked.push(listingType);
+        const rows = listingType && listingType !== "secondary" ? [] : [RESALE_WEARABLE];
+        return { data: rows, total: rows.length };
+      },
+    };
+    for (const session of ["web2", "web3"] as const) {
+      asked.length = 0;
+      invalidateShopQueries();
+      const view = itemPage({ session, overrides: resaleOnly, offers: { kind: "resale" } });
+      expect(await screen.findByText("Not for sale")).toBeTruthy();
+      expect(screen.queryByTestId("price-mana")).toBeNull();
+      expect(asked.length).toBeGreaterThan(0);
+      expect(asked.every((t) => t === "primary")).toBe(true);
+      view.unmount();
+    }
+
+    // A web3 session with the rollout on sees the resale as the item's offer.
+    onTestFinished(marketplaceOn());
+    invalidateShopQueries();
+    itemPage({ session: "web3", overrides: resaleOnly, offers: { kind: "resale" } });
+    expect(await screen.findByTestId("price-mana")).toBeTruthy();
+    expect(screen.queryByText("Not for sale")).toBeNull();
+  });
+
+  it("the related rail asks for primary sales only without the Marketplace", async () => {
+    const asked: (string | null)[] = [];
+    const related: CatalogAnswers = {
+      "/v3/catalog/related": (url: URL) => {
+        asked.push(url.searchParams.get("listingType"));
+        return { data: [] };
+      },
+    };
+    const view = itemPage({ session: "web2", overrides: related, offers: { kind: "storeMint" } });
+    await waitFor(() => expect(asked.length).toBeGreaterThan(0));
+    expect(asked.every((t) => t === "primary")).toBe(true);
+    view.unmount();
+
+    onTestFinished(marketplaceOn());
+    asked.length = 0;
+    invalidateShopQueries();
+    itemPage({ session: "web3", overrides: related, offers: { kind: "storeMint" } });
+    await waitFor(() => expect(asked).toContain(null));
+  });
+
   it("web2: credits only", async () => {
     itemPage({ session: "web2", offers: { kind: "storeMint" } });
     expect(await screen.findByTestId("cta-buy")).toHaveTextContent("Buy with Credits");

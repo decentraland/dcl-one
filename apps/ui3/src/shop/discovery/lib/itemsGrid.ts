@@ -87,7 +87,9 @@ export function itemsGrid(filterState: ItemsFilterState, q: string, { contracts,
   const { subCategory, rarities, priceMin, priceMax, smart, sort } = filterState;
   const defaultStatus = defaultStatusFor(!!q);
   const bodyShape = ["male", "female", "unisex"].includes(filterState.bodyShape) ? filterState.bodyShape : "all";
-  const listingType = filterState.listingType === "primary" || filterState.listingType === "secondary" ? filterState.listingType : undefined;
+  // Without the Marketplace there is no listing-type choice: a `?listingType=` in the URL selects nothing, and the
+  // reads ask for primary sales only.
+  const listingType = marketplace && (filterState.listingType === "primary" || filterState.listingType === "secondary") ? filterState.listingType : undefined;
   const deals = flags.creatorSales && filterState.deals;
   const offered = CATEGORIES.map((c) => c.key).filter((key) => !(hideNames && key === "names"));
   const category = offered.includes(filterState.category) ? filterState.category : "all";

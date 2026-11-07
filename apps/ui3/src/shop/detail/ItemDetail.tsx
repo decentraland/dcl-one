@@ -56,7 +56,9 @@ import {
   fetchOwnedItemCount,
   fetchOwnedToken,
   fetchTokenById,
+  fetchPrimaryListingForItem,
   fetchUnifiedListingForItem,
+  itemListingKey,
 } from "./api";
 import type { LegacyOrderRef } from "./api";
 import { fetchItemVideoUrl, fetchSmartWearableRequiredPermissions } from "./builder";
@@ -278,7 +280,13 @@ export default function ItemDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const listingQ = useShopQuery(!isTokenRoute && validContract && pageItemId ? ["shop-item", contractAddress, pageItemId] : null, (signal) => fetchUnifiedListingForItem(contractAddress, pageItemId!, { signal }), { staleMs: 0 });
+  // Without the Marketplace the item's price is its creator's primary sale only: never a resale in its place.
+  const listingScope = marketplace ? "all" : "primary";
+  const listingQ = useShopQuery(
+    !isTokenRoute && validContract && pageItemId ? itemListingKey(contractAddress, pageItemId, listingScope) : null,
+    (signal) => (marketplace ? fetchUnifiedListingForItem : fetchPrimaryListingForItem)(contractAddress, pageItemId!, { signal }),
+    { staleMs: 0 },
+  );
   const metaQ = useShopQuery(validContract && pageItemId ? ["item-meta", contractAddress, pageItemId] : null, (signal) => fetchItemMeta(contractAddress, pageItemId!, { signal }), { staleMs: 5 * 60_000 });
   const tokenQ = useShopQuery(isTokenRoute && validContract ? ["token", contractAddress, routeTokenId] : null, (signal) => fetchTokenById(contractAddress, routeTokenId!, { signal }), { staleMs: 0 });
   const ownedQ = useShopQuery(isTokenRoute && validContract && account ? ["owned-token", contractAddress, routeTokenId, account] : null, (signal) => fetchOwnedToken(account!, contractAddress, routeTokenId!, { signal }), { staleMs: 0 });
@@ -422,8 +430,9 @@ export default function ItemDetail() {
     [collectionItemsQ.data, creatorItemsQ.data, railAnchor],
   );
   const relatedQ = useShopQuery(
-    needsPadding && creatorSettled && withCreatorCount < SUGGESTIONS_TARGET && validContract && pageItemId ? ["rail-related", contractAddress, pageItemId, SUGGESTIONS_TARGET] : null,
-    (signal) => fetchRelatedItems(contractAddress, pageItemId!, { first: SUGGESTIONS_TARGET }, { signal }),
+    needsPadding && creatorSettled && withCreatorCount < SUGGESTIONS_TARGET && validContract && pageItemId ? ["rail-related", contractAddress, pageItemId, SUGGESTIONS_TARGET, listingScope] : null,
+    // A resale card is the Marketplace's: without it the rail suggests primary sales only.
+    (signal) => fetchRelatedItems(contractAddress, pageItemId!, { first: SUGGESTIONS_TARGET, listingType: marketplace ? undefined : "primary" }, { signal }),
     { staleMs: 60_000 },
   );
   const rail = useMemo(

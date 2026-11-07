@@ -38,6 +38,12 @@ export async function fetchUnifiedListingForItem(contractAddress: string, itemId
   return pickItemListing(items);
 }
 
+/** The item page's listing query: `primary` (the creator's sale only) unless the Marketplace is on for the visitor.
+ * The sites loader primes the `primary` key, the one a first render reads while the Marketplace is still pending. */
+export function itemListingKey(contractAddress: string, itemId: string, scope: "all" | "primary") {
+  return ["shop-item", contractAddress, itemId, scope] as const;
+}
+
 export async function fetchPrimaryListingForItem(contractAddress: string, itemId: string, opts?: Opts): Promise<UnifiedListing | null> {
   const { items } = await fetchUnified({ contractAddress, itemId, first: 5, listingType: "primary" }, opts);
   return items.find((l) => !l.tokenId) ?? null;

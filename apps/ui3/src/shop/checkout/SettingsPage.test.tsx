@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
+import { marketplaceOn } from "../market/testing-flags";
 import { BOOK } from "../payment/fixtures";
 import { createDemo, DemoShell, type DemoScenario } from "./demo";
 import SettingsPage from "./SettingsPage";
@@ -23,6 +24,8 @@ const rowOf = (name: RegExp, chain: string) =>
   screen.getAllByTestId("authorization").find((r) => name.test(r.textContent ?? "") && (r.textContent ?? "").includes(`on ${chain}`))!;
 
 describe("the settings page (authorizations)", () => {
+  beforeEach(() => marketplaceOn());
+
   it("signed out: draws the Marketplace's Get Started sign-in page", () => {
     renderSettings({ session: "signedOut" });
     expect(screen.getByTestId("settings-signed-out")).toBeTruthy();
@@ -85,5 +88,25 @@ describe("the settings page (authorizations)", () => {
     expect(screen.getByText("Handled for you")).toBeTruthy();
     await waitFor(() => expect(screen.getAllByRole("switch").length).toBeGreaterThan(0));
     expect(screen.getAllByRole("switch").every((b) => (b as HTMLButtonElement).disabled)).toBe(true);
+  });
+});
+
+describe("the settings page without the Marketplace", () => {
+  it("is open, and lists only the Shop's own approvals: no marketplaces, bids, rentals or selling", async () => {
+    let scanned = 0;
+    renderSettings({
+      handlers: {
+        nfts: () => {
+          scanned += 1;
+          return { data: [{ nft: { contractAddress: BOOK.collection, chainId: 137 } }] };
+        },
+      },
+    });
+    await waitFor(() => expect(rowOf(/CollectionStore/, "Polygon").textContent).toContain("Not authorized"));
+    expect(screen.getByRole("group", { name: "For buying" })).toBeTruthy();
+    for (const g of ["For bidding", "For renting", "For selling"]) expect(screen.queryByRole("group", { name: g })).toBeNull();
+    expect(screen.getAllByTestId("authorization").some((r) => /Marketplace/.test(r.textContent ?? ""))).toBe(false);
+    // The held collections are scanned only for the selling approvals, which are the Marketplace's.
+    expect(scanned).toBe(0);
   });
 });

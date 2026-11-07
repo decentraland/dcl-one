@@ -153,7 +153,7 @@ function CartScreen() {
   const broadcasting = !!co.checkout?.groups.some((g) => g.status === "submitted" || g.status === "pending");
   const lineUnitsOf = (l: (typeof co.lines)[number]) => (l.asset.token.kind === "item" ? l.quantity : 1);
   const units = co.lines.reduce((n, l) => n + lineUnitsOf(l), 0);
-  const isGone = (id: string) => (co.changesByLine[id] ?? []).some((c) => c.kind === "unavailable" || (c.kind === "insufficientStock" && c.available === 0));
+  const isGone = (id: string) => co.offMarket.includes(id) || (co.changesByLine[id] ?? []).some((c) => c.kind === "unavailable" || (c.kind === "insufficientStock" && c.available === 0));
   const buyableUnits = co.lines.reduce((n, l) => n + (isGone(l.id) ? 0 : lineUnitsOf(l)), 0);
   const allUnavailable = co.lines.length > 0 && buyableUnits === 0;
   const signedOut = co.session.kind === "signedOut";

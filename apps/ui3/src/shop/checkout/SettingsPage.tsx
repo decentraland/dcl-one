@@ -14,6 +14,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Spinner from "../../atoms/Spinner";
 import { shortAddress } from "../model/address";
 import { CHAIN, chainLabel, type ChainId } from "../model/chain";
+import { useMarketplace } from "../market/access";
 import { MarketSignIn } from "../seller/pages/SellerSignIn";
 import { useShopWallet } from "../wallet/context";
 import { ethereumChainId, settlementChainId } from "./chain/config";
@@ -58,14 +59,18 @@ function mana(chainId: ChainId, spender: string, spenderName: string, section: s
   };
 }
 
-function buyingGrants(eth: ChainId, pol: ChainId): Grant[] {
+/** The MANA approvals for buying. The marketplaces (resales, LAND orders) are listed only with the Marketplace on;
+ * the Shop's own (the collection store, the credits manager) always. */
+function buyingGrants(eth: ChainId, pol: ChainId, marketplace: boolean): Grant[] {
   const e = chainContracts(eth);
   const p = chainContracts(pol);
   const out: Grant[] = [];
-  if (e?.legacyMarketplace) out.push(mana(eth, e.legacyMarketplace.address, e.legacyMarketplace.label, "buying"));
-  if (p?.legacyMarketplace) out.push(mana(pol, p.legacyMarketplace.address, p.legacyMarketplace.label, "buying"));
-  for (const m of e?.offChainMarketplaces ?? []) out.push(mana(eth, m.address, m.label, "buying"));
-  for (const m of p?.offChainMarketplaces ?? []) out.push(mana(pol, m.address, m.label, "buying"));
+  if (marketplace) {
+    if (e?.legacyMarketplace) out.push(mana(eth, e.legacyMarketplace.address, e.legacyMarketplace.label, "buying"));
+    if (p?.legacyMarketplace) out.push(mana(pol, p.legacyMarketplace.address, p.legacyMarketplace.label, "buying"));
+    for (const m of e?.offChainMarketplaces ?? []) out.push(mana(eth, m.address, m.label, "buying"));
+    for (const m of p?.offChainMarketplaces ?? []) out.push(mana(pol, m.address, m.label, "buying"));
+  }
   if (p?.collectionStore) out.push(mana(pol, p.collectionStore.address, p.collectionStore.label, "buying"));
   if (p?.creditsManager) out.push(mana(pol, p.creditsManager.address, p.creditsManager.label, "buying"));
   // The registry manager a build replaced: listed so an approval made to it can still be revoked.
@@ -214,20 +219,22 @@ function SettingsScreen() {
   const eth = ethereumChainId();
   const pol = settlementChainId();
   const [copied, markCopied] = useCopied(1200);
+  // Bidding, renting, selling and the marketplaces' buying approvals are the Marketplace's (market/access.tsx).
+  const marketplace = useMarketplace();
 
-  const buying = useMemo(() => buyingGrants(eth, pol), [eth, pol]);
+  const buying = useMemo(() => buyingGrants(eth, pol, marketplace), [eth, pol, marketplace]);
   const bidding = useMemo(
-    () => [
-      ...(BIDS[eth] ? [mana(eth, BIDS[eth]!, "Bids", "bidding")] : []),
-      ...(BIDS[pol] ? [mana(pol, BIDS[pol]!, "Bids", "bidding")] : []),
-    ],
-    [eth, pol],
+    () =>
+      marketplace
+        ? [...(BIDS[eth] ? [mana(eth, BIDS[eth]!, "Bids", "bidding")] : []), ...(BIDS[pol] ? [mana(pol, BIDS[pol]!, "Bids", "bidding")] : [])]
+        : [],
+    [eth, pol, marketplace],
   );
-  const renting = useMemo(() => (RENTALS[eth] ? [mana(eth, RENTALS[eth]!, "Rentals", "renting")] : []), [eth]);
+  const renting = useMemo(() => (marketplace && RENTALS[eth] ? [mana(eth, RENTALS[eth]!, "Rentals", "renting")] : []), [eth, marketplace]);
 
   const held = useQuery({
     queryKey: ["shop-held-collections", account],
-    enabled: !!account,
+    enabled: !!account && marketplace,
     queryFn: async (): Promise<Grant[]> => {
       const body = await services.client.market.nfts<{ data?: { nft?: { contractAddress?: string; chainId?: number } }[] }>({
         owner: account!,
@@ -314,9 +321,9 @@ function SettingsScreen() {
             </FlowBanner>
           ) : null}
           <Group label="For buying" grants={buying} account={account} canChange={selfCustody} />
-          <Group label="For bidding" grants={bidding} account={account} canChange={selfCustody} />
-          <Group label="For renting" grants={renting} account={account} canChange={selfCustody} />
-          {selling.length > 0 ? <Group label="For selling" grants={selling} account={account} canChange={selfCustody} /> : null}
+          {bidding.length > 0 ? <Group label="For bidding" grants={bidding} account={account} canChange={selfCustody} /> : null}
+          {renting.length > 0 ? <Group label="For renting" grants={renting} account={account} canChange={selfCustody} /> : null}
+          {marketplace && selling.length > 0 ? <Group label="For selling" grants={selling} account={account} canChange={selfCustody} /> : null}
         </div>
       </div>
     </main>

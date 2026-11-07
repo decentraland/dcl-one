@@ -18,6 +18,8 @@ const ADDRESS = '0x00000000000000000000000000000000000ab47f'
 const ME: Profile = { address: ADDRESS, name: 'Mojito', hasClaimedName: true, isGuest: false }
 /** DCLRegistrar on mainnet, the network a build that names none registers on. */
 const MAINNET_REGISTRAR = '0x2a187453064356c898cae034eaed119e1663acb8'
+/** The Marketplace's rollout, which NAME resales and offers to an owner need. */
+const MARKETPLACE_ON = { 'dapps-shop-marketplace-features': true }
 const TRUE_WORD = `0x${'0'.repeat(63)}1`
 const FALSE_WORD = `0x${'0'.repeat(64)}`
 
@@ -35,6 +37,8 @@ interface Routes {
   bannedDown?: boolean
   /** The credits quote is down. */
   quoteDown?: boolean
+  /** decentraland.org's `dapps` rollout flags. */
+  flags?: Record<string, boolean>
 }
 
 /** The banned list, the credits quote and the registrar's `available` through the catalyst's read relay. */
@@ -42,6 +46,7 @@ function serve(routes: Routes = {}): ReturnType<typeof vi.fn> {
   const f = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input instanceof Request ? input.url : input), location.href)
     const path = url.pathname
+    if (path.endsWith('/dapps.json')) return Response.json({ flags: routes.flags ?? {}, variants: {} })
     if (path.endsWith('/dcl-lists/banned-names')) {
       await routes.bannedAfter
       if (routes.bannedDown) return new Response('', { status: 503 })
@@ -199,7 +204,7 @@ describe('the in-world Shop’s Names', () => {
   })
 
   it('says a taken NAME is taken, and MAKE OFFER opens its bid page on the web Marketplace, listed or not', async () => {
-    serve({ taken: ['mojito'] })
+    serve({ taken: ['mojito'], flags: MARKETPLACE_ON })
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
     renderShop()
     const field = await openNames()
@@ -215,6 +220,16 @@ describe('the in-world Shop’s Names', () => {
     const url = new URL(open.mock.calls[0]![0] as string)
     expect(url.pathname).toBe(`/shop/token/${MAINNET_REGISTRAR}/${token}/bid`)
     expect(url.searchParams.has('section')).toBe(false)
+  })
+
+  it('without the Marketplace’s rollout a taken NAME is only taken: no MAKE OFFER and no RESALE NAME', async () => {
+    serve({ taken: ['mojito'] })
+    renderShop()
+    const field = await openNames()
+    await userEvent.type(field, 'Mojito')
+    expect(await screen.findByText('This NAME Is Taken. Choose Another NAME.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'MAKE OFFER' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Resale name' })).toBeNull()
   })
 
   it('offers no NAME until the banned list answers', async () => {
@@ -253,7 +268,7 @@ describe('the in-world Shop’s Names', () => {
   })
 
   it('RESALE NAME opens the NAMEs for resale on the web Marketplace', async () => {
-    serve()
+    serve({ flags: MARKETPLACE_ON })
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
     renderShop()
     await openNames()

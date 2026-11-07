@@ -169,6 +169,9 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   // The listings wait for the creator-sales answer (or its failure): read before it, they'd come without
   // their sale prices and be read again once it lands.
   const creatorSalesFlag = useShopFlag(REMOTE_FLAG.creatorSales)
+  // NAME resales and offers are the Marketplace's: offered only while its rollout is on. The web Shop they open
+  // still asks for a web3 wallet session (shop/market/access.tsx).
+  const marketplaceFlag = useShopFlag(REMOTE_FLAG.marketplaceFeatures) === true
   const flagsKnown = creatorSalesFlag !== undefined
   const creatorSales = creatorSalesFlag ?? false
   const grid = useShopCatalogue(filters, page, { creatorSales, enabled: shop.open && flagsKnown && isCatalogue(section) })
@@ -569,7 +572,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
           <section className={styles.content} aria-label={section === 'all' ? 'Shop home' : section === 'emotes' ? 'Emotes' : section === 'names' ? 'Names' : 'Wearables'}>
             {section === 'names' ? (
               <ShopNames
-                onResale={browseNameResales}
+                onResale={marketplaceFlag ? browseNameResales : undefined}
                 value={nameDraft}
                 onChange={typeName}
                 onFocusChange={setNameFocused}
@@ -579,7 +582,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                 status={nameCheck.status}
                 price={nameCheck.price}
                 onClaim={claimName}
-                onMakeOffer={makeNameOffer}
+                onMakeOffer={marketplaceFlag ? makeNameOffer : undefined}
                 onRetry={nameCheck.retry}
               />
             ) : section === 'all' ? (

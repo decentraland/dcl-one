@@ -1,13 +1,16 @@
 // Who sees the Marketplace inside the Shop: resales, bids, LAND, NAME resale, listing and selling, an item's owners
 // and sales, favorites lists. Only a web3 wallet session (MetaMask and the like) while the `shop-marketplace-features`
 // rollout is on, and only on a node that offers resales at all (the host's `secondarySales` capability). A web2
-// (managed) session never sees them: those features pay in MANA and need a wallet the buyer holds. The node's shop
-// service enforces the same flag; this only decides what is drawn.
+// (managed) session never sees them: those features pay in MANA and need a wallet the buyer holds. This only decides
+// what is drawn: the APIs behind it are public, and the lock is the node's shop service refusing those calls under the
+// same flag, so the flag is turned on only where the node does.
 import type { ComponentType, ReactNode } from "react";
 import { Navigate } from "react-router";
 
+import { assetKindOf } from "../discovery/cardPrice";
 import { hostShopFlags } from "../discovery/flags";
 import { REMOTE_FLAG, useRemoteFlagState } from "../discovery/lib/remoteFlags";
+import type { CartLine } from "../model/purchase";
 import type { Session } from "../model/settlement";
 import { shopPath } from "../routes";
 import { useShopCapabilities } from "../seller/lib/featureFlags";
@@ -53,4 +56,12 @@ export function marketplacePage<P extends object>(Page: ComponentType<P>): Compo
   );
   Gated.displayName = `Marketplace(${Page.displayName ?? Page.name ?? "Page"})`;
   return Gated;
+}
+
+/** A cart line the Marketplace sells: a resale (an existing token, LAND and NAME resale included) or a rental. A
+ * collection item's mint and a NAME registration are the Shop's own. */
+export function needsMarketplace(line: CartLine): boolean {
+  if (line.listing.rentalId) return true;
+  if (line.asset.token.kind === "item") return false;
+  return !(assetKindOf(line.display.category ?? "") === "name" && !!line.listing.name);
 }

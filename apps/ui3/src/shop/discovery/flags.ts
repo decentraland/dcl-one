@@ -1,25 +1,32 @@
 // from: shop@94584a5c:app/src/hooks/useCreatorSalesEnabled.ts, app/src/lib/iap.ts
-// The Shop's rollout switches, from decentraland.org's `dapps` flags: creator sales (`dapps-shop-creator-sales`), as
-// upstream's, and the Marketplace features (`dapps-shop-marketplace-features`, dcl-one's own). Each is off until the
-// file answers yes. A host (the native shop, a journey) may set either through `window.__SHOP_FLAGS__`. Whether a
-// visitor sees the Marketplace also needs a web3 wallet session: market/access.tsx decides that.
+// The Shop's rollout switches, from decentraland.org's `dapps` flags. Creator sales (`dapps-shop-creator-sales`, as
+// upstream's) is off until the file answers yes. A host (the native shop, a journey) may declare it through
+// `window.__SHOP_FLAGS__`. The Marketplace's switch (`dapps-shop-marketplace-features`, dcl-one's own) may be declared
+// there too, but only market/access.tsx reads it: it also waits for the file and needs a web3 wallet session.
 
 import { REMOTE_FLAG, remoteFlag } from "./lib/remoteFlags";
 
 export type ShopFlags = {
   creatorSales: boolean;
-  marketplaceFeatures: boolean;
 };
 
-type FlagWindow = Window & typeof globalThis & { __SHOP_FLAGS__?: Partial<ShopFlags> };
+/** What a host may declare in `window.__SHOP_FLAGS__`. */
+export type HostShopFlags = Partial<ShopFlags> & { marketplaceFeatures?: boolean };
+
+declare global {
+  interface Window {
+    __SHOP_FLAGS__?: HostShopFlags;
+  }
+}
 
 /** A host's declared switches, if it declared any. */
-export function hostShopFlags(): Partial<ShopFlags> {
-  return (typeof window !== "undefined" ? (window as FlagWindow).__SHOP_FLAGS__ : undefined) ?? {};
+export function hostShopFlags(): HostShopFlags {
+  return (typeof window !== "undefined" ? window.__SHOP_FLAGS__ : undefined) ?? {};
 }
 
 export function shopFlags(): ShopFlags {
-  return { creatorSales: remoteFlag(REMOTE_FLAG.creatorSales), marketplaceFeatures: remoteFlag(REMOTE_FLAG.marketplaceFeatures), ...hostShopFlags() };
+  const declared = hostShopFlags().creatorSales;
+  return { creatorSales: typeof declared === "boolean" ? declared : remoteFlag(REMOTE_FLAG.creatorSales) };
 }
 
 export function isIapMode(): boolean {

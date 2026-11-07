@@ -24,8 +24,9 @@ export const REMOTE_FLAG = {
   creatorSales: "shop-creator-sales",
   /**
    * The Marketplace inside the Shop: resales, bids, LAND, NAME resale, listing and selling, an item's owners and
-   * sales, favorites lists. Shown only with this on AND a web3 wallet session (market/access.tsx); the node's
-   * shop service reads the same key and refuses those calls while it is off.
+   * sales, favorites lists. Shown only with this on AND a web3 wallet session (market/access.tsx). That only decides
+   * what is drawn: the lock is the node's shop service reading the same key and refusing those calls while it is
+   * off, so the flag is turned on only where the node does.
    */
   marketplaceFeatures: "shop-marketplace-features",
 } as const;
