@@ -64,7 +64,7 @@ build test prepare`). Its `.github`, agent files and editor configuration were l
    `sdk/<version>` releases) and stop publishing from `decentraland/js-sdk-toolchain`; the PR-build
    tooling (S3 tarballs, the "Test this pull request" comment, the e2e realm, the playground).
    The first release notes carry the narrowed types above.
-2. The `auth-server` branch as a dcl-one branch published through a manual `publish-tag` run.
+2. The `auth-server` line is merged here ([ADR](2026-11-07-scene-cli-sdk-from-tree.md)); publishing it is part of 1.
 3. Fold the rest of the SDK's `experimental-bevy` layer (react-ecs scroll and render-to-texture,
    drag events, `setGltfMesh`, …) into `main` here.
 4. `make lint-packages` (inherited) checks only the root manifest: its `packages/*/package.json`

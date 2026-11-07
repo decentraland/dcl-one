@@ -105,6 +105,35 @@ jobs:
         with:
           path: *scene-cli-cache
           key: ${{ steps.cache.outputs.cache-primary-key }}
+  blob:
+    # the vendored node_modules.zip is derived from library/js-sdk-toolchain and library/protocol;
+    # the builder's --check rebuilds it in memory and fails on any difference (apps/dcl-scene-cli/src/vendor/README.md)
+    if: inputs.run_id == ''
+    runs-on: ubuntu-26.04
+    timeout-minutes: 50
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.cache/scene-cli-target
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: *scene-cli-cache
+          key: scene-cli-${{ runner.os }}-${{ hashFiles('flake.lock', 'services/catalyst/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: scene-cli-${{ runner.os }}-${{ hashFiles('flake.lock', 'services/catalyst/Cargo.lock') }}-
+      - name: Build the SDK from the tree
+        env:
+          SDK_PROTOC: protoc
+        run: nix develop --command make -C library/js-sdk-toolchain install build
+      - name: Build the CLI that bundles the chunks
+        working-directory: services/catalyst
+        run: nix develop "$GITHUB_WORKSPACE" --command cargo build --locked -p dcl-scene-cli
+      - name: The vendored node_modules.zip matches the tree
+        run: nix develop --command python3 apps/dcl-scene-cli/scripts/build-base-blob.py --check
   report:
     needs: journeys
     if: >-
