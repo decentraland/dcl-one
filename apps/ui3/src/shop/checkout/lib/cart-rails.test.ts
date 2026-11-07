@@ -80,6 +80,12 @@ describe("the cart's payment rails, as upstream's summaryRails", () => {
     expect(rails([line("a"), line("b")], { a: view([credits(), mana(MANA)]), b: view([credits()]) }, { manaBalance: 10n * MANA }).rails).toEqual([{ method: "credits" }]);
   });
 
+  it("an empty cart has no rail, and a credits sum past what cents can hold is no credits rail", () => {
+    expect(rails([], {})).toEqual({ rails: [], manaShortfall: null });
+    const huge: PaymentOptionView = { method: "credits", quote: { method: "credits", quoted: Number.MAX_SAFE_INTEGER as UsdCents }, charge: Number.MAX_SAFE_INTEGER as UsdCents, state: ready, mixed: null };
+    expect(rails([line("a", 3)], { a: view([huge]) }, { creditsCents: Number.MAX_SAFE_INTEGER }).rails).toEqual([]);
+  });
+
   it("MANA paid on another chain than the wallet's MANA was read on is no MANA rail, and an unpriced line is no rail at all", () => {
     const views = { a: view([credits(), mana(MANA)]), b: view([credits(), mana(MANA)]) };
     const chain = (l: CartLine) => (l.id === "a" ? CHAIN.POLYGON : CHAIN.ETHEREUM);

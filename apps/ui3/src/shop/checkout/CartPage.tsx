@@ -2,7 +2,7 @@
 //       "Cart: N Items" + Fitting Room, the Purchase Summary card, the "Goes with your cart" / "You might also
 //       like" rails); supersedes v2 ui3/src/marketplace/pages/MkCheckout.tsx and the cart/checkout pages of
 //       sites (marketplace.cart.tsx, marketplace.checkout.tsx)
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 
 import Button from "../../atoms/Button";
@@ -17,7 +17,6 @@ import FittingRoom from "../detail/components/FittingRoom";
 import TopUpPanel from "../credits/components/TopUpPanel";
 import { saveReceipt, type SuccessNavState } from "../history/receipt";
 import type { ManaWei } from "../model/money";
-import type { PaymentMethod } from "../model/settlement";
 import { manaChainOf } from "../payment/rule";
 import { SHOP_BASE } from "../routes";
 import type { GuidanceRevalidation } from "../wallet/ManaGuidance";
@@ -28,9 +27,10 @@ import CartSummary from "./components/CartSummary";
 import CheckoutGroups from "./components/CheckoutGroups";
 import FlowBanner from "./components/FlowBanner";
 import PaymentCtas from "./components/PaymentCtas";
-import { cartRails, type CartRail } from "./lib/cart-rails";
+import { cartRails } from "./lib/cart-rails";
 import { EnsureQueryClient, useShopServices } from "./services";
 import { CREDITS_SHORT, useCheckout, type CheckoutView } from "./useCheckout";
+import { useRailCheckout } from "./useRailCheckout";
 import cartEmptyIllustration from "./assets/cart-empty.svg?url";
 import "./cartpage.css";
 
@@ -176,43 +176,7 @@ function CartScreen() {
       return offer ? manaChainOf(offer) : l.asset.chainId;
     },
   });
-  // What a click does once the cart is priced as it will be paid: check out, or open the top-up when the
-  // credits fall short. Anything else that holds the checkout (a price change to accept) stays on screen.
-  const proceed = () => {
-    if (co.canConfirm) void co.confirm();
-    else if (co.topUp && co.review.kind === "current") setTopUpOpen(true);
-  };
-  // A rail's button moves every line to its method (the fallback puts each back on its default) and checks
-  // out only after the cart has re-priced on that: the move restarts the price check, so `repricing` waits
-  // to see it run before it trusts `canConfirm`.
-  const [paying, setPaying] = useState<{ repricing: boolean } | null>(null);
-  useEffect(() => {
-    if (!paying || co.running) return;
-    if (co.review.kind === "checking") {
-      if (!paying.repricing) setPaying({ repricing: true });
-      return;
-    }
-    if (co.review.kind === "outage") {
-      setPaying(null);
-      return;
-    }
-    if (!paying.repricing) return;
-    setPaying(null);
-    proceed();
-  });
-  const settle = (target: (l: (typeof buyable)[number]) => PaymentMethod | null) => {
-    const moving = buyable.filter((l) => l.method !== target(l));
-    if (moving.length === 0) {
-      proceed();
-      return;
-    }
-    for (const l of moving) co.setMethod(l.id, target(l));
-    setPaying({ repricing: false });
-  };
-  const pay = (method: CartRail["method"]) => settle((l) => (l.method === null && co.views[l.id]?.primary === method ? null : method));
-  // No rail covers the cart: the credits path stays (upstream's checkout modal offers the top-up from it), each
-  // line on its default way to pay. Signed out, it asks for sign-in first.
-  const checkoutFallback = () => (signedOut ? void co.confirm() : settle(() => null));
+  const rails = useRailCheckout(co, buyable, () => setTopUpOpen(true));
   const reviewing = co.review.kind === "changed" && co.reviewChanges.length > 0;
   const exclude = useMemo(() => co.lines.map(lineItemKey).filter((k): k is string => !!k), [co.lines]);
   const wearableKeys = co.lines.filter((l) => l.display.category === "wearable").map(lineItemKey).filter((k): k is string => !!k);
@@ -254,7 +218,10 @@ function CartScreen() {
     );
   }
 
-  const ctaLabel = co.running || paying ? "Working…" : "Checkout";
+  const working = co.running || rails.paying;
+  const ctaLabel = working ? "Working…" : "Checkout";
+  // A balance that could not be read prices no credits rail; the fallback would only guess, so it waits.
+  const balanceUnknown = !signedOut && co.balanceError;
   const shownBlockers = co.blockers.filter((b) => b !== CREDITS_SHORT);
 
   return (
@@ -389,14 +356,26 @@ function CartScreen() {
                 ) : null}
                 <PaymentCtas
                   rails={signedOut ? [] : summaryRails.rails}
-                  creditsLabel={summaryRails.rails.length > 1 ? (co.running || paying ? "Working…" : "Buy with Credits") : ctaLabel}
-                  creditsFallback={{ label: ctaLabel, onClick: checkoutFallback }}
+                  creditsLabel={summaryRails.rails.length > 1 ? (working ? "Working…" : "Buy with Credits") : ctaLabel}
+                  // Signed out it asks for sign-in first; otherwise each line goes back on its default way to pay.
+                  creditsFallback={balanceUnknown ? null : { label: ctaLabel, onClick: () => (signedOut ? void co.confirm() : rails.fallback()) }}
                   manaShortfall={signedOut ? null : summaryRails.manaShortfall}
                   // dcl-one keeps its guards: a price change to accept, an outage, a gone line or a wallet on
                   // another account holds every rail. A short balance does not: its button opens the top-up.
-                  busy={co.running || !!paying || allUnavailable || (!signedOut && shownBlockers.length > 0)}
-                  onPay={pay}
+                  busy={working || allUnavailable || (!signedOut && shownBlockers.length > 0)}
+                  working={working}
+                  onPay={rails.pay}
                 />
+                {rails.notice ? (
+                  <p className="shop-cart__msg" role="status" data-testid="cart-repriced">
+                    {rails.notice}
+                  </p>
+                ) : null}
+                {balanceUnknown ? (
+                  <p className="shop-cart__msg" role="status" data-testid="cart-balance-unknown">
+                    Your Credits balance can't be loaded right now. Try again in a moment.
+                  </p>
+                ) : null}
                 {allUnavailable ? <p className="shop-cart__msg">None of these items are available anymore. Remove them to keep shopping.</p> : null}
                 {signedOut ? <p className="shop-cart__msg">You'll be asked to sign in first.</p> : null}
                 {shownBlockers.length > 0 && !signedOut ? (

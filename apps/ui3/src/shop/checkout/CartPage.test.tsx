@@ -255,6 +255,70 @@ describe("the cart page", () => {
     expect(demo.shop.log.some((r) => r.name === "authorizeCreditBatch")).toBe(false);
   });
 
+  it("the Credits rail on lines left on MANA re-prices them and stops: the buyer sees the Credits total before paying", async () => {
+    const order = { offer: (s: Parameters<typeof creatorOrder>[0]) => creatorOrder(s), listing: { tradeId: "trade-creator-1" }, name: "Order", method: "mana" as const };
+    const { demo } = renderCart({ session: "web3", lines: [order] }, (d) => d.chain.manaBalances.set(`137:${BOOK.buyer.toLowerCase()}`, 10n ** 21n));
+    await waitFor(() => expect(screen.getByTestId("pay-with-credits")).toBeEnabled());
+    await clickWhenEnabled(() => screen.getByTestId("pay-with-credits"));
+    expect(demo.cart.getSnapshot().lines[0]!.method).toBe("credits");
+    expect(await screen.findByTestId("cart-repriced")).toBeTruthy();
+    expect(demo.shop.log.some((r) => r.name === "authorizeCreditBatch")).toBe(false);
+    // The second press pays what is now on screen.
+    await clickWhenEnabled(() => screen.getByTestId("pay-with-credits"));
+    await waitFor(() => expect(demo.shop.log.some((r) => r.name === "authorizeCreditBatch")).toBe(true));
+  });
+
+  it("a MANA price that moved during the rail's re-price stops the checkout on the change, with nothing authorized", async () => {
+    const { demo } = renderCart({ session: "web3", lines: [{ offer: (s) => creatorOrder(s), listing: { tradeId: "trade-creator-1" }, name: "Order" }] }, (d) => {
+      d.chain.manaBalances.set(`137:${BOOK.buyer.toLowerCase()}`, 10n ** 21n);
+      const fetchOffers = d.services.fetchOffers!;
+      d.services.fetchOffers = async (lines, signal) => {
+        const out = await fetchOffers(lines, signal);
+        if (!lines.some((l) => l.method === "mana")) return out;
+        return Object.fromEntries(
+          Object.entries(out).map(([id, o]) => [id, o && { ...o, quotes: o.quotes.map((q) => (q.method === "mana" ? { ...q, amount: (q.amount + 10n ** 17n) as typeof q.amount } : q)) }]),
+        );
+      };
+    });
+    await clickWhenEnabled(() => screen.getByTestId("pay-with-mana"));
+    expect(await screen.findByRole("button", { name: "Accept the changes" })).toBeTruthy();
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    expect(demo.wallet.requests.some((r) => r.method === "eth_sendTransaction")).toBe(false);
+  });
+
+  it("an outage during the rail's re-price ends the wait: the outage is said and nothing is bought", async () => {
+    const { demo } = renderCart({ session: "web3", lines: [{ offer: (s) => creatorOrder(s), listing: { tradeId: "trade-creator-1" }, name: "Order" }] }, (d) => {
+      d.chain.manaBalances.set(`137:${BOOK.buyer.toLowerCase()}`, 10n ** 21n);
+      const fetchOffers = d.services.fetchOffers!;
+      d.services.fetchOffers = async (lines, signal) => {
+        if (lines.some((l) => l.method === "mana")) throw new Error("quote route unavailable");
+        return fetchOffers(lines, signal);
+      };
+    });
+    await clickWhenEnabled(() => screen.getByTestId("pay-with-mana"));
+    await screen.findByRole("button", { name: "Try again" });
+    // The wait is over: no button still says it is working.
+    await waitFor(() => expect(screen.queryByText("Working…")).toBeNull());
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    expect(demo.shop.log.some((r) => r.name === "authorizeCreditBatch")).toBe(false);
+  });
+
+  it("MANA the wallet holds but too little of: a disabled MANA button with its reason attached", async () => {
+    renderCart({ session: "web3", lines: [{ offer: (s) => creatorOrder(s), listing: { tradeId: "trade-creator-1" }, name: "Order" }] }, (d) => d.chain.manaBalances.set(`137:${BOOK.buyer.toLowerCase()}`, 1n));
+    const disabled = await screen.findByTestId("pay-with-mana-disabled");
+    expect(disabled).toBeDisabled();
+    const note = screen.getByTestId("mana-shortfall-note");
+    expect(note.textContent).toBe("Not enough MANA");
+    expect(disabled.getAttribute("aria-describedby")).toBe(note.id);
+  });
+
+  it("a balance that cannot be read says so and offers no credits fallback to guess with", async () => {
+    renderCart({ session: "web3", lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat" }], handlers: { userCredits: () => ({ status: 500, body: { error: "down" } }) } });
+    expect(await screen.findByTestId("cart-balance-unknown")).toBeTruthy();
+    expect(screen.queryByTestId("pay-with-credits")).toBeNull();
+    expect(screen.queryByTestId("pay-with-credits-topup")).toBeNull();
+  });
+
   it("lines left on MANA with too few credits: Checkout puts them back on credits and offers the top-up, never a silent no-op", async () => {
     const { demo } = renderCart({ session: "web3", lines: [{ offer: (s) => creatorOrder(s), listing: { tradeId: "trade-creator-1" }, name: "Order", method: "mana" }], balanceCents: 30 });
     // Neither balance pays: no credits rail (whatever the line is set to), no MANA held, so the fallback stays.
@@ -279,7 +343,7 @@ describe("the cart page", () => {
     // As upstream: no inline shortfall; Checkout stays enabled and opens the top-up.
     await waitFor(() => expect(screen.getByTestId("pay-with-credits-topup")).toBeEnabled());
     expect(screen.queryByText(/You need 57 more Credits/)).toBeNull();
-    fireEvent.click(screen.getByTestId("pay-with-credits-topup"));
+    await clickWhenEnabled(() => screen.getByTestId("pay-with-credits-topup"));
     const panel = await screen.findByTestId("topup-panel");
     expect(panel.textContent).toContain("You need 57 more Credits");
     expect(within(panel).getAllByTestId("credit-pack").map((b) => b.getAttribute("aria-label"))).toEqual([
@@ -294,8 +358,7 @@ describe("the cart page", () => {
 
   it("a balance a few cents short says the whole Credits the buyer must add, rounded up", async () => {
     renderCart({ session: "web3", lines: [{ offer: (s) => storeMint(s), name: "Rainbow Hat" }], balanceCents: 115 });
-    await waitFor(() => expect(screen.getByTestId("pay-with-credits-topup")).toBeEnabled());
-    fireEvent.click(screen.getByTestId("pay-with-credits-topup"));
+    await clickWhenEnabled(() => screen.getByTestId("pay-with-credits-topup"));
     expect((await screen.findByTestId("topup-panel")).textContent).toContain("You need 1 more Credits");
   });
 

@@ -68,6 +68,8 @@ export type CheckoutView = {
   partition: CartPartition | null;
   refusedByLine: Record<string, LineRefusal>;
   review: ReviewState;
+  /** The lines (with their quantities and methods) the last finished price check priced (`revalidationIdentity`). */
+  pricedFor: string | null;
   changesByLine: Record<string, LineChange[]>;
   balance: UsdBalance | undefined;
   balanceError: boolean;
@@ -457,6 +459,7 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
     quoteOutage,
     balance,
     balanceError: balanceQuery.isError,
+    pricedFor: revalidation.pricedFor,
     manaBalance,
     checkout,
     summary: checkout ? checkoutSummary(checkout) : null,

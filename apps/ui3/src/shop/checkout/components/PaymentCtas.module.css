@@ -44,17 +44,17 @@
 /* The primary rail: the buy gradient, solid red on hover (on background-image: a gradient cannot
    interpolate to a plain colour). */
 .btn[data-variant="credits"] {
-  background: linear-gradient(180.93deg, #ff7439 2.82%, #ff2d55 97.47%);
+  background: var(--shop-buy-btn, linear-gradient(180.93deg, #ff7439 2.82%, #ff2d55 97.47%));
 }
 
 @media (hover: hover) {
   .btn[data-variant="credits"]:hover:not(:disabled) {
-    background-image: linear-gradient(#ff2d55, #ff2d55);
+    background-image: linear-gradient(var(--shop-dcl-red, #ff2d55), var(--shop-dcl-red, #ff2d55));
   }
 }
 
 .btn[data-variant="credits"]:active:not(:disabled) {
-  background-image: linear-gradient(#ff2d55, #ff2d55);
+  background-image: linear-gradient(var(--shop-dcl-red, #ff2d55), var(--shop-dcl-red, #ff2d55));
 }
 
 /* The dark rail: soft black 2, gray 0 on hover. */
