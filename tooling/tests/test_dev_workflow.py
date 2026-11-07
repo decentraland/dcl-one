@@ -113,7 +113,8 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         source = CLEANUP.read_text()
         self.assertIn("cron: '17 * * * *'", source)
         script = textwrap.dedent(source.split("python3 - <<'PY'\n", 1)[1].rsplit('\n          PY', 1)[0])
-        prefix = 'foundation-dev-v2-tests-decentraland/dcl-one-Linux-X64-'
+        prefix = 'foundation-dev-v2-smoke-decentraland/dcl-one-Linux-X64-'
+        deps = 'v0-rust-foundation-dev-tests-0123abcd-rust-'
         caches = [
             {'id': 1, 'ref': 'refs/heads/main', 'key': prefix + 'old'},
             {'id': 2, 'ref': 'refs/heads/main', 'key': prefix + 'new'},
@@ -126,6 +127,9 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             {'id': 9, 'ref': 'refs/pull/10/head', 'key': prefix + 'ignored'},
             {'id': 10, 'ref': 'refs/heads/other', 'key': prefix + 'ignored'},
             {'id': 11, 'ref': 'refs/heads/main', 'key': 'bevy-cache'},
+            {'id': 12, 'ref': 'refs/heads/main', 'key': deps + 'Linux-x64-old'},
+            {'id': 13, 'ref': 'refs/heads/main', 'key': deps + 'Linux-x64-new'},
+            {'id': 14, 'ref': 'refs/heads/main', 'key': deps + 'Darwin-arm64-only'},
         ]
         def api(args, **kwargs):
             if any(arg.endswith('/actions/caches') for arg in args):
@@ -145,6 +149,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             'repos/decentraland/dcl-one/actions/caches/4',
             'repos/decentraland/dcl-one/actions/caches/5',
             'repos/decentraland/dcl-one/actions/caches/6',
+            'repos/decentraland/dcl-one/actions/caches/12',
         ])
         self.assertEqual(listing.call_count, 3, 'one state lookup per PR, regardless of cache count')
 

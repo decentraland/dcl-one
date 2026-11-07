@@ -76,15 +76,22 @@ jobs:
         run: nix develop --command python3 tooling/enet-provenance.py
       - name: Put the Nix Rust toolchain on PATH for the cache action
         run: |
-          toolchain=$(dirname "$(nix develop --command which cargo)")
+          toolchain=$(dirname "$(nix develop --command bash -c 'command -v cargo')")
           test -x "$toolchain/rustc"
           echo "$toolchain" >> "$GITHUB_PATH"
       - name: Restore the Rust dependency cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        env:
+          # The key hashes every toolchain rustup lists, so the runner image's own would
+          # miss the cache on each image update. An unusable home makes rustup fail, and
+          # only the Nix rustc counts.
+          RUSTUP_HOME: /dev/null
         with:
-          # Dependencies only: before saving, the action removes the workspace crates' output
-          # (every test binary) and the extracted registry sources, so the entry stays near
-          # one gigabyte instead of accumulating a full artifact set per Cargo.lock change.
+          # Dependencies only: before saving, the action removes the output of the crates
+          # under services/catalyst (every test binary of theirs) and the extracted registry
+          # sources, so the entry stays near one gigabyte instead of accumulating a full
+          # artifact set per Cargo.lock change. The library members outside that directory
+          # stay in the entry; their output is tens of megabytes.
           # flake.lock joins the key because the action cannot see the Nix-provided libraries.
           workspaces: services/catalyst
           key: foundation-dev-tests-${{ hashFiles('flake.lock') }}
