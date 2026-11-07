@@ -73,7 +73,8 @@
       "tsconfig_required": "Esta escena no tiene el archivo requerido {{tsconfig}}",
       "no_input_files": "No hay archivos de entrada para construir: {{entrypointSource}}",
       "rebuild_failed": "No se pudo reconstruir el bundle: {{error}}",
-      "type_checker_failed": "El typechecker salió con código {{code}}."
+      "type_checker_failed": "El typechecker salió con código {{code}}.",
+      "tsconfig_base_url": "La opción de TypeScript \"baseUrl\" fue eliminada en TypeScript 7: bórrala de {{tsconfig}} y empieza cada entrada de \"paths\" con ./ (se resuelven relativas a tsconfig.json)."
     },
     "code_to_composite": {
       "build_failed": "Error al construir la escena: {{error}}",

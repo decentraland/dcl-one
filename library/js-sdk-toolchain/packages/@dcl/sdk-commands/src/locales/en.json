@@ -73,7 +73,8 @@
       "tsconfig_required": "This scene does not have the required file {{tsconfig}}",
       "no_input_files": "There are no input files to build: {{entrypointSource}}",
       "rebuild_failed": "Could not rebuild bundle: {{error}}",
-      "type_checker_failed": "Typechecker exited with code {{code}}."
+      "type_checker_failed": "Typechecker exited with code {{code}}.",
+      "tsconfig_base_url": "The TypeScript option \"baseUrl\" was removed in TypeScript 7: delete it from {{tsconfig}} and start each \"paths\" entry with ./ (they resolve relative to tsconfig.json)."
     },
     "code_to_composite": {
       "build_failed": "Failed to build the scene: {{error}}",

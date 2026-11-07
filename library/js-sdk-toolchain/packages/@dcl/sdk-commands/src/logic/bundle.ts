@@ -343,7 +343,13 @@ export async function bundleSingleProject(components: BundleComponents, options:
   await runTypeChecker(components, options)
 }
 
-function runTypeChecker(components: BundleComponents, options: CompileOptions) {
+async function runTypeChecker(components: BundleComponents, options: CompileOptions) {
+  const tsconfig = path.join(options.workingDirectory, 'tsconfig.json')
+  /* istanbul ignore if */
+  if (/"baseUrl"\s*:/.test(await components.fs.readFile(tsconfig, 'utf-8'))) {
+    throw new CliError('BUNDLE_TSCONFIG_BASE_URL', i18next.t('errors.bundle.tsconfig_base_url', { tsconfig }))
+  }
+
   // typescript 7 exports no 'typescript/lib/tsc' subpath; lib/tsc.js (a shim that execs the
   // native compiler) is reached from the package root
   const tsBin = path.join(path.dirname(require.resolve('typescript/package.json')), 'lib', 'tsc.js')
