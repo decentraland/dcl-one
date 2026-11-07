@@ -85,7 +85,8 @@ export type CheckoutView = {
   canConfirm: boolean;
   canResume: boolean;
   walletNeededKeys: string[];
-  setMethod(lineId: string, method: PaymentMethod): void;
+  /** Null puts the line back on its default way to pay (credits where the rule allows them). */
+  setMethod(lineId: string, method: PaymentMethod | null): void;
   setQuantity(lineId: string, quantity: number): void;
   remove(lineId: string): void;
   clear(): void;

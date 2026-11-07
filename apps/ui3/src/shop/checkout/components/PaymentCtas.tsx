@@ -5,6 +5,7 @@
 // buy more credits never depends on the MANA balance. MANA the buyer holds that cannot pay is shown on a
 // disabled button with its reason, never hidden.
 import ManaMark from "../../../atoms/ManaMark";
+import { isEthereum } from "../../model/chain";
 import { formatMana } from "../../model/money";
 import type { CartRail } from "../lib/cart-rails";
 import styles from "./PaymentCtas.module.css";
@@ -16,16 +17,16 @@ export type PaymentCtasProps = {
   /** Shown when no rail covers the purchase: the credits path, opening a top-up. */
   creditsFallback: { label: string; onClick(): void } | null;
   /** Held MANA that cannot pay: the disabled MANA button. */
-  manaShortfall: { manaWei: bigint } | null;
+  manaShortfall: { manaWei: bigint; chainId: number } | null;
   busy?: boolean;
   onPay(method: CartRail["method"]): void;
 };
 
-function ManaAmountMark({ wei }: { wei: bigint }) {
+function ManaAmountMark({ wei, chainId }: { wei: bigint; chainId: number }) {
   return (
     <span className={styles.amount}>
       <span className={styles.manaMark}>
-        <ManaMark size={24} network="polygon" />
+        <ManaMark size={24} network={isEthereum(chainId) ? "ethereum" : "polygon"} />
       </span>
       <span>{formatMana(wei as never)}</span>
     </span>
@@ -49,7 +50,7 @@ export default function PaymentCtas({ rails, creditsLabel, creditsFallback, mana
         ) : (
           <button key="mana" type="button" className={styles.btn} data-variant="mana" data-testid="pay-with-mana" onClick={() => onPay("mana")} disabled={busy}>
             <span>Buy with MANA</span>
-            <ManaAmountMark wei={rail.manaWei} />
+            <ManaAmountMark wei={rail.manaWei} chainId={rail.chainId} />
           </button>
         ),
       )}
@@ -57,7 +58,7 @@ export default function PaymentCtas({ rails, creditsLabel, creditsFallback, mana
         <>
           <button type="button" className={styles.btn} data-variant="mana" data-testid="pay-with-mana-disabled" disabled>
             <span>Buy with MANA</span>
-            <ManaAmountMark wei={manaShortfall.manaWei} />
+            <ManaAmountMark wei={manaShortfall.manaWei} chainId={manaShortfall.chainId} />
           </button>
           <p className={styles.note} data-testid="mana-shortfall-note">
             Not enough MANA

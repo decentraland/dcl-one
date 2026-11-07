@@ -17,9 +17,11 @@ import FittingRoom from "../detail/components/FittingRoom";
 import TopUpPanel from "../credits/components/TopUpPanel";
 import { saveReceipt, type SuccessNavState } from "../history/receipt";
 import type { ManaWei } from "../model/money";
+import type { PaymentMethod } from "../model/settlement";
 import { manaChainOf } from "../payment/rule";
 import { SHOP_BASE } from "../routes";
 import type { GuidanceRevalidation } from "../wallet/ManaGuidance";
+import { settlementChainId } from "./chain/config";
 import AuthorizeStep from "./components/AuthorizeStep";
 import CartLineRow from "./components/CartLineRow";
 import CartSummary from "./components/CartSummary";
@@ -166,37 +168,51 @@ function CartScreen() {
   const summaryRails = cartRails({
     lines: buyable,
     views: co.views,
-    creditsShort: co.partition?.creditsShort ?? null,
+    creditsBalance: co.balance?.balanceCents ?? null,
     manaBalance: (co.manaBalance ?? null) as ManaWei | null,
+    manaChain: settlementChainId(),
     manaChainOf: (l) => {
       const offer = co.offers[l.id];
       return offer ? manaChainOf(offer) : l.asset.chainId;
     },
   });
-  // A rail's button sets every line to that method, then checks out once the cart has re-priced on it.
-  const [paying, setPaying] = useState<CartRail["method"] | null>(null);
-  const settledOn = (method: CartRail["method"]) => buyable.every((l) => (l.method ?? co.views[l.id]?.primary) === method);
+  // What a click does once the cart is priced as it will be paid: check out, or open the top-up when the
+  // credits fall short. Anything else that holds the checkout (a price change to accept) stays on screen.
+  const proceed = () => {
+    if (co.canConfirm) void co.confirm();
+    else if (co.topUp && co.review.kind === "current") setTopUpOpen(true);
+  };
+  // A rail's button moves every line to its method (the fallback puts each back on its default) and checks
+  // out only after the cart has re-priced on that: the move restarts the price check, so `repricing` waits
+  // to see it run before it trusts `canConfirm`.
+  const [paying, setPaying] = useState<{ repricing: boolean } | null>(null);
   useEffect(() => {
-    if (!paying || co.running || !settledOn(paying)) return;
-    setPaying(null);
-    void co.confirm();
-  });
-  const pay = (method: CartRail["method"]) => {
-    const moving = buyable.filter((l) => (l.method ?? co.views[l.id]?.primary) !== method);
-    if (moving.length === 0) {
-      void co.confirm();
+    if (!paying || co.running) return;
+    if (co.review.kind === "checking") {
+      if (!paying.repricing) setPaying({ repricing: true });
       return;
     }
-    for (const l of moving) co.setMethod(l.id, method);
-    setPaying(method);
+    if (co.review.kind === "outage") {
+      setPaying(null);
+      return;
+    }
+    if (!paying.repricing) return;
+    setPaying(null);
+    proceed();
+  });
+  const settle = (target: (l: (typeof buyable)[number]) => PaymentMethod | null) => {
+    const moving = buyable.filter((l) => l.method !== target(l));
+    if (moving.length === 0) {
+      proceed();
+      return;
+    }
+    for (const l of moving) co.setMethod(l.id, target(l));
+    setPaying({ repricing: false });
   };
-  // No rail covers the cart: the credits path stays, and opens the top-up (upstream's checkout modal offers it).
-  const checkoutFallback = () => {
-    if (!signedOut && co.topUp) setTopUpOpen(true);
-    else void co.confirm();
-  };
-  // Until the cart is priced, no rail is known: a button then would confirm or top up blind.
-  const pricing = !signedOut && !co.partition;
+  const pay = (method: CartRail["method"]) => settle((l) => (l.method === null && co.views[l.id]?.primary === method ? null : method));
+  // No rail covers the cart: the credits path stays (upstream's checkout modal offers the top-up from it), each
+  // line on its default way to pay. Signed out, it asks for sign-in first.
+  const checkoutFallback = () => (signedOut ? void co.confirm() : settle(() => null));
   const reviewing = co.review.kind === "changed" && co.reviewChanges.length > 0;
   const exclude = useMemo(() => co.lines.map(lineItemKey).filter((k): k is string => !!k), [co.lines]);
   const wearableKeys = co.lines.filter((l) => l.display.category === "wearable").map(lineItemKey).filter((k): k is string => !!k);
@@ -349,8 +365,9 @@ function CartScreen() {
               <h2 className="shop-cart__subtitle">Purchase Summary</h2>
               <div className="shop-cart__sidebody">
                 <CartSummary partition={co.partition} units={buyableUnits} />
-                {/* Upstream shows no group until checkout: a running or interrupted one shows its progress. */}
-                {signedOut || (!co.checkout && Object.keys(co.results).length === 0) ? null : (
+                {/* Upstream shows no group until checkout: a running or interrupted one shows its progress, and a
+                    group this session cannot pay (MANA without a web3 wallet) says so before. */}
+                {signedOut || (!co.checkout && Object.keys(co.results).length === 0 && co.walletNeededKeys.length === 0) ? null : (
                   <CheckoutGroups
                     groups={co.partition?.groups ?? []}
                     lines={co.lines}
@@ -377,7 +394,7 @@ function CartScreen() {
                   manaShortfall={signedOut ? null : summaryRails.manaShortfall}
                   // dcl-one keeps its guards: a price change to accept, an outage, a gone line or a wallet on
                   // another account holds every rail. A short balance does not: its button opens the top-up.
-                  busy={co.running || !!paying || allUnavailable || pricing || (!signedOut && shownBlockers.length > 0)}
+                  busy={co.running || !!paying || allUnavailable || (!signedOut && shownBlockers.length > 0)}
                   onPay={pay}
                 />
                 {allUnavailable ? <p className="shop-cart__msg">None of these items are available anymore. Remove them to keep shopping.</p> : null}

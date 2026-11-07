@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { newCheckout } from "../cart/machine";
 import { partitionCart } from "../cart/partition";
 import { rarityCardPalette } from "../discovery/lib/rarity";
-import { storeMint, wearableResale, parcelResale, BOOK } from "../payment/fixtures";
+import { creatorOrder, storeMint, wearableResale, parcelResale, BOOK } from "../payment/fixtures";
 import CartPage from "./CartPage";
 import { createDemo, DemoShell, type DemoScenario } from "./demo";
 
@@ -228,6 +228,42 @@ describe("the cart page", () => {
     expect(within(screen.getByRole("article", { name: "Rainbow Hat" })).queryByRole("radio", { name: /MANA/ })).toBeNull();
     expect(screen.queryByTestId("pay-with-mana")).toBeNull();
     await waitFor(() => expect(confirmButton()).toBeEnabled());
+    // Before any checkout, the one group this session cannot pay still says why.
+    expect(screen.getAllByTestId("checkout-group")[1]!.textContent).toContain("Needs a web3 wallet with MANA");
+  });
+
+  it("the MANA rail moves the cart to MANA and checks out only once the cart has re-priced on it", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const { demo } = renderCart({ session: "web3", lines: [{ offer: (s) => creatorOrder(s), listing: { tradeId: "trade-creator-1" }, name: "Order" }] }, (d) => {
+      d.chain.manaBalances.set(`137:${BOOK.buyer.toLowerCase()}`, 10n ** 21n);
+      const fetchOffers = d.services.fetchOffers!;
+      // The MANA re-price waits on the test, so a checkout that does not wait for it would start first.
+      d.services.fetchOffers = async (lines, signal) => {
+        if (lines.some((l) => l.method === "mana")) await gate;
+        return fetchOffers(lines, signal);
+      };
+    });
+    await waitFor(() => expect(screen.getByTestId("pay-with-mana")).toBeEnabled());
+    expect(screen.getByTestId("pay-with-credits").textContent).toBe("Buy with Credits");
+    await clickWhenEnabled(() => screen.getByTestId("pay-with-mana"));
+    expect(demo.cart.getSnapshot().lines[0]!.method).toBe("mana");
+    expect(screen.queryByTestId("authorize-step-action")).toBeNull();
+    expect(screen.getByTestId("pay-with-mana")).toBeDisabled();
+    await act(async () => release());
+    expect(await screen.findByTestId("authorize-step-action")).toBeTruthy();
+    expect(demo.shop.log.some((r) => r.name === "authorizeCreditBatch")).toBe(false);
+  });
+
+  it("lines left on MANA with too few credits: Checkout puts them back on credits and offers the top-up, never a silent no-op", async () => {
+    const { demo } = renderCart({ session: "web3", lines: [{ offer: (s) => creatorOrder(s), listing: { tradeId: "trade-creator-1" }, name: "Order", method: "mana" }], balanceCents: 30 });
+    // Neither balance pays: no credits rail (whatever the line is set to), no MANA held, so the fallback stays.
+    await waitFor(() => expect(screen.getByTestId("pay-with-credits-topup")).toBeEnabled());
+    expect(screen.queryByTestId("pay-with-credits")).toBeNull();
+    expect(screen.queryByTestId("pay-with-mana")).toBeNull();
+    await clickWhenEnabled(() => screen.getByTestId("pay-with-credits-topup"));
+    expect(await screen.findByTestId("topup-panel")).toBeTruthy();
+    expect(demo.cart.getSnapshot().lines[0]!.method).toBeNull();
   });
 
   it("web2 with nothing to sign: the blocker asks to sign in again, never for a web3 wallet", async () => {
