@@ -340,6 +340,24 @@ pub mod scratch {
         )
     }
 
+    /// A fresh database for a test that reads or rewrites whole tables.
+    /// It follows the shared database's process-based cleanup lifecycle.
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn isolated_pool(max_connections: u32) -> Option<PgPool> {
+        let url = create().await?;
+        Some(
+            connect_pool(
+                &url,
+                &PoolSettings {
+                    max_connections,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("connecting to the isolated test database"),
+        )
+    }
+
     async fn create() -> Option<String> {
         let base = std::env::var("CATALYST_TEST_DATABASE_URL").ok()?;
         let opts: PgConnectOptions = base
@@ -442,6 +460,27 @@ pub mod scratch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn isolated_pools_do_not_share_facts() {
+        let Some(first) = scratch::isolated_pool(1).await else {
+            return;
+        };
+        let second = scratch::isolated_pool(1).await.unwrap();
+        sqlx::query("INSERT INTO content.system_properties(key,value) VALUES ('scratch_isolation_probe','first')")
+            .execute(&first)
+            .await
+            .unwrap();
+        let value: Option<String> = sqlx::query_scalar(
+            "SELECT value FROM content.system_properties WHERE key='scratch_isolation_probe'",
+        )
+        .fetch_optional(&second)
+        .await
+        .unwrap();
+        assert_eq!(value, None);
+        first.close().await;
+        second.close().await;
+    }
 
     #[cfg(unix)]
     #[test]

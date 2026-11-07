@@ -854,7 +854,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_bloom_seed_streams_every_deployed_entity_id() {
-        let Some(pool) = test_pool(2).await else {
+        let Some((admin, pool, name)) = repair_database().await else {
             return;
         };
         let repo = LiveDeploymentRepository::new(pool.clone(), Arc::new(SyncStatus::default()));
@@ -879,11 +879,8 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert!(seeded >= ids.len() as u64, "seeded {seeded} ids");
-        assert!(
-            seeded <= in_table as u64,
-            "seeded {seeded} ids, table holds {in_table}"
-        );
+        assert_eq!(seeded, ids.len() as u64);
+        assert_eq!(seeded, in_table as u64);
         for id in &ids {
             assert!(
                 bloom.maybe_contains(id),
@@ -892,11 +889,7 @@ mod tests {
         }
         assert!(!bloom.maybe_contains(&format!("bafk-seed-{tag}-missing")));
 
-        sqlx::query("DELETE FROM content.deployments WHERE entity_id LIKE $1")
-            .bind(format!("bafk-seed-{tag}-%"))
-            .execute(&pool)
-            .await
-            .unwrap();
+        drop_repair_database(admin, pool, &name).await;
     }
 
     #[tokio::test]

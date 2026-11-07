@@ -448,6 +448,8 @@ mod tests {
         assert_eq!(canonical_position("-9;-9", "|"), Some("-9|-9".into()));
         assert_eq!(canonical_position("20,-20", "."), Some("20.-20".into()));
         assert_eq!(canonical_position("0,0", ","), Some("0,0".into()));
+        assert_eq!(canonical_position("119,-0", "."), Some("119.0".into()));
+        assert_eq!(canonical_position("-0,-0", ","), Some("0,0".into()));
         for bad in [
             "-9/-9", "", "0.1,2;3", "abc,de", "10000,1", "1", "1,2,3", "0,151", "-151,0",
             "164,100", "1e-1,2",
@@ -590,10 +592,16 @@ mod tests {
     /// a world by name, and the generic card for an unknown or malformed one.
     #[tokio::test]
     async fn the_cards_describe_the_catalogue_row() {
+        for (x, y) in [(119, 0), (119, -1)] {
+            check_catalogue_card(x, y).await;
+        }
+    }
+
+    async fn check_catalogue_card(x: i32, y: i32) {
         use axum::body::Body;
         use axum::http::{Request, StatusCode};
         use tower::ServiceExt;
-        let Some(pool) = crate::db::scratch::pool(2).await else {
+        let Some(pool) = crate::db::scratch::isolated_pool(2).await else {
             return;
         };
         let place = uuid::Uuid::new_v4().to_string();
@@ -602,8 +610,7 @@ mod tests {
             &uuid::Uuid::new_v4().simple().to_string()[..8]
         );
         let cased = format!("Card{}", &world[4..]);
-        let (x, y) = (rand::random::<u16>() % 150, rand::random::<u16>() % 149 + 1);
-        let position = format!("{x},-{y}");
+        let position = format!("{x},{y}");
         sqlx::query("INSERT INTO explore.place (id, base_position, title, description, raw) VALUES ($1, $2, 'Plaza <b>', 'First\n\nsecond', $3)")
             .bind(&place)
             .bind(&position)
@@ -643,12 +650,12 @@ mod tests {
                 (link, String::from_utf8(bytes.to_vec()).unwrap())
             }
         };
-        let canonical = format!("https://places.example.org/places/place/?position={x}.-{y}");
+        let canonical = format!("https://places.example.org/places/place/?position={x}.{y}");
         for uri in [
             format!("/places/place?id={place}"),
             format!("/places/place?position={position}"),
-            format!("/places/place?id=nope&position={x}|-{y}"),
-            format!("/places/place?position={x};-{y}"),
+            format!("/places/place?id=nope&position={x}|{y}"),
+            format!("/places/place?position={x};{y}"),
         ] {
             let (link, html) = get(uri.clone()).await;
             assert!(
