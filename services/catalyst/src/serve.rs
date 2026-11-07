@@ -419,9 +419,19 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .map(|a| a.trim().to_lowercase())
             .filter(|a| !a.is_empty())
             .collect(),
+        places_base_url: config.explore.places_base_url.trim().to_string(),
+        places_moderation_webhook: config.explore.places_moderation_webhook.clone(),
+        snapshot_score_url: Some(config.explore.snapshot_score_url.trim().to_string())
+            .filter(|u| !u.is_empty()),
         events_base_url: config
             .explore
             .events_base_url
+            .trim_end_matches('/')
+            .to_string(),
+        jump_in_site_url: config
+            .explore
+            .jump_in_site_url
+            .trim()
             .trim_end_matches('/')
             .to_string(),
         events_asset_base_url: explore::Settings::events_asset_base_for(&config.node.own_url()),
@@ -434,9 +444,13 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .unwrap_or("main")
             .to_string(),
     };
+    let explore_cors = explore::cors::Policy::upstream_with(&config.explore.explore_cors_origins)
+        .map_err(|e| anyhow::anyhow!("EXPLORE_CORS_ORIGINS: {e}"))?;
     let explore = Arc::new(
         explore::ExploreState::new(pool.clone(), explore_settings, eip1654.clone())
-            .with_storage(storage.clone()),
+            .with_storage(storage.clone())
+            .with_outbound(http_client.clone())
+            .with_cors(explore_cors),
     );
     explore.spawn_jobs(&jobs, http_client.clone());
 
@@ -2405,6 +2419,14 @@ fn social_states(
             admin_token: non_empty(&config.social.catalyrst_notifications_admin_token),
             events_base_url: public_url.clone(),
             events_asset_base_url: explore.settings.events_asset_base_url.clone(),
+            jump_in_site_url: explore.settings.jump_in_site_url.clone(),
+            event_slack_notices: explore.settings.events_upcoming_summaries_enabled
+                && explore.settings.operator_writes_enabled
+                && explore
+                    .settings
+                    .events_slack_webhook
+                    .as_deref()
+                    .is_some_and(|endpoint| !endpoint.trim().is_empty()),
             email: notifications::EmailConfig {
                 sendgrid_api_key: non_empty(&config.social.sendgrid_api_key),
                 from_email: non_empty(&config.social.sendgrid_from_email),
