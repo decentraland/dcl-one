@@ -85,7 +85,7 @@ init-test-scene:
 	cd test-scene && pnpm add ../packages/@dcl/sdk ../packages/@dcl/sdk-commands ../packages/@dcl/js-runtime
 
 format:
-	pnpm exec prettier --write "**/*.{js,ts,tsx,json}" --loglevel=error
+	pnpm exec prettier --write "**/*.{js,ts,tsx,json}" --log-level=error
 
 install-protobuf:
 	curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$(PROTOBUF_VERSION)/$(PROTOBUF_ZIP)

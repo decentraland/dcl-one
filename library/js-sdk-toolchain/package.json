@@ -25,7 +25,9 @@
     "@dcl/eslint-config": "^3.1.0",
     "@eslint/eslintrc": "3.3.6",
     "@types/node": "^24.10.1",
+    "eslint": "9.39.5",
     "npm-package-arg": "^12.0.2",
+    "prettier": "3.9.5",
     "syncpack": "^13.0.4",
     "tsx": "4.23.15",
     "typedoc": "^0.23.28"

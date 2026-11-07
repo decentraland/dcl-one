@@ -73,9 +73,15 @@ importers:
       '@types/node':
         specifier: ^24.10.1
         version: 24.13.3
+      eslint:
+        specifier: 9.39.5
+        version: 9.39.5(supports-color@8.1.1)
       npm-package-arg:
         specifier: ^12.0.2
         version: 12.0.2
+      prettier:
+        specifier: 3.9.5
+        version: 3.9.5
       syncpack:
         specifier: ^13.0.4
         version: 13.0.4(typescript@5.0.4)
