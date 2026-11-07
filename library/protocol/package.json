@@ -21,14 +21,15 @@
   },
   "devDependencies": {
     "@protobuf-ts/protoc": "^2.8.1",
+    "@types/node": "^24.10.1",
     "typescript": "7.0.2"
   },
   "config": {
     "protocVersion": "22.2"
   },
   "dependencies": {
-    "@dcl/ts-proto": "1.154.0",
-    "protobufjs": "7.2.4"
+    "protobufjs": "7.2.4",
+    "ts-proto": "1.181.2"
   },
   "files": [
     "proto/decentraland",
