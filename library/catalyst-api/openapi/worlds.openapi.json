@@ -5139,11 +5139,9 @@
         ],
         "properties": {
           "fixedHour": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "format": "double"
+            "type": "number",
+            "format": "double",
+            "description": "Absent when no time is fixed; the number as stored or deployed (an integer stays an integer)."
           },
           "textures": {
             "type": "array",

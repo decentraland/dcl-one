@@ -362,6 +362,18 @@ difference not listed here is a gap, not a decision.
   `Deployment processing exceeded the <n>ms deadline.`); upstream has
   neither on this route. The per-source admission runs after the signed
   fetch (upstream: before it).
+- **Scene queries.** `POST /world/{name}/scenes` checks the Content-Type
+  before it reads the body and reads at most 2 MiB; a larger body answers
+  413 `Payload Too Large` (plain text, `Connection: close`, as
+  `@dcl/http-server` answers a body over its `maxBodySize`). Upstream sets
+  no body limit on this route.
+- **Deny list in world listings (shared with upstream).** `GET /worlds`
+  filters the deny list as upstream's `getBannedNames` does: each entry
+  loses its first `.eth` and `.dcl` and is compared case-sensitively with
+  the stored name, so only a bare name equal to a stripped entry is hidden.
+  A deny-listed `<name>.dcl.eth` stays listed, with its title, description
+  and thumbnail, while `/about` and the manifest answer 404 for it. This is
+  a moderation gap both services have, kept for parity.
 - **World listings.** In `GET /worlds`, `blocked_since` is set only for a
   storage-quota block of a DCL NAME or ENS world published here (upstream:
   any block of the stored owner), and `owner` is `null` for a world with no
