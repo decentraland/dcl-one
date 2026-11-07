@@ -42,7 +42,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 pub use audio::AudioHandle;
 pub use source::resolve_source;
 
-use crate::{AVCommand, VideoData, VideoFrame, VideoInfo};
+use crate::{AVCommand, VideoData, VideoInfo};
 use audio::UuavKiraDecoder;
 use ffi::PlayerId;
 
@@ -88,7 +88,7 @@ impl Plugin for UuavPlugin {
     }
 }
 
-/// Stops the helper; nothing in this module may run afterwards.
+/// Stops the helper `UuavRuntime::initialize` started; nothing in this module may run afterwards.
 pub fn uuav_shutdown() {
     uuav::uuav_deinit();
 }
@@ -550,7 +550,7 @@ impl Player {
                         .is_none_or(|at| at.elapsed() >= CLOCK_INTERVAL);
                 if presented != self.last_presented || clock_due {
                     let time = ffi::current_time(self.id).unwrap_or(0.0);
-                    if send(self.video.as_ref(), VideoData::Frame(VideoFrame {}, time)) {
+                    if send(self.video.as_ref(), VideoData::Frame(time)) {
                         self.last_presented = presented;
                         self.last_clock = Some(Instant::now());
                     }

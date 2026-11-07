@@ -166,7 +166,7 @@ mod tests {
     fn a_video_without_a_reported_frame_rate_can_still_have_a_texture() {
         let mut images = Assets::<Image>::default();
         let image = images.add(Image::default());
-        let mut sinks = crate::video_stream::noop_sinks::<VideoPlayer>(String::new(), Some(image));
+        let mut sinks = crate::AVSinks::<VideoPlayer>::for_empty_source(Some(image));
         sinks.rate = Some(0.0); // HTML media provides dimensions but no frame rate.
         let mut row = json!({});
         add_sink(&mut row, Some(&sinks), &images);

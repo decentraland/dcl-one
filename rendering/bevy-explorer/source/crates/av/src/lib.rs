@@ -6,7 +6,7 @@ pub mod test;
 #[cfg(feature = "uuav")]
 pub mod audio_sink;
 #[cfg(any(feature = "uuav", feature = "html"))]
-pub mod video_stream;
+pub mod sinks;
 
 // audio source (non-streaming audio)
 #[cfg(feature = "html")]
@@ -42,7 +42,7 @@ use tokio::sync::watch;
 #[cfg(feature = "uuav")]
 use crate::audio_sink::AudioSink;
 #[cfg(any(feature = "uuav", feature = "html"))]
-use crate::video_stream::VideoSink;
+use crate::sinks::VideoSink;
 
 const LIVEKIT_VIDEO_STREAM: &str = "livekit-video://current-stream";
 
@@ -85,10 +85,8 @@ pub struct AVSinks<T: AVPlayer> {
     #[cfg(feature = "uuav")]
     pub audio: Option<AudioSink>,
     pub video: Option<VideoSink>,
+    /// Sent through [`AVSinks::command`].
     pub command_sender: tokio::sync::mpsc::UnboundedSender<AVCommand>,
-    /// The commands' receiver when no backend took it (a rejected source), kept so the channel
-    /// stays open: a send on `command_sender` never fails as closed.
-    pub rejected_commands: Option<tokio::sync::mpsc::UnboundedReceiver<AVCommand>>,
     /// Frame rate reported with video metadata. HTML provides dimensions but reports zero here.
     pub rate: Option<f64>,
     pub state: watch::Receiver<VideoState>,

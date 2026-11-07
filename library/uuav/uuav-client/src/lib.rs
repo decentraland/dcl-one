@@ -7,11 +7,11 @@
 //! plain functions.
 //!
 //! Helper crashes self-heal here, with no involvement from the host: every
-//! command keeps a per-player *desired state* current, and the
+//! command keeps a per-player *intended playback* current, and the
 //! recovery worker respawns the helper (with backoff) and rebuilds every
 //! player from its mirror — reopening the URL, seeking back to where the
 //! clock was, resuming playback. While the helper is down, players read as
-//! OPENING and commands are absorbed into desired state.
+//! OPENING and commands are absorbed into intended playback.
 
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 #![deny(
@@ -71,7 +71,7 @@ compile_error!("uuav supports Windows (D3D11), macOS (Metal) and Linux (shared m
 
 use arc_swap::{ArcSwap, ArcSwapOption};
 use connection::{Connection, EventSinks, Lifecycle, LifecycleCell};
-use registry::{Desired, PlayerMirror, Registry};
+use registry::{IntendedPlayback, PlayerMirror, Registry};
 use spawn::HelperChild;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
@@ -536,7 +536,7 @@ fn spawn_mach_receiver(
 
 /// Watches the helper process; on unexpected death, drives the automatic
 /// resurrection: retire the connection, freeze the mirrors, respawn with
-/// backoff, rebuild every player from its desired state. Parks in `Failed`
+/// backoff, rebuild every player from its intended playback. Parks in `Failed`
 /// after the attempts cap; an open/play re-arms it through `Client::rearm`.
 fn spawn_recovery_worker(client: &Arc<Client>, rearm: crossbeam_channel::Receiver<()>) {
     let weak = Arc::downgrade(client);
@@ -601,10 +601,8 @@ fn freeze_mirrors(client: &Client) {
             .load()
             .as_ref()
             .and_then(|c| c.media_time_now());
-        if let Some(time) = now
-            && let Ok(mut desired) = mirror.desired.lock()
-        {
-            desired.resume_time = Some(time);
+        if let Some(time) = now {
+            mirror.intended.lock().resume_time = Some(time);
         }
         mirror.awaiting_snapshot.store(true, Ordering::Release);
         if let Ok(mut video) = mirror.video.lock() {
@@ -684,7 +682,7 @@ fn sleep_unless_shutdown(client: &Client, delay: Duration) -> bool {
     client.lifecycle.get() != Lifecycle::ShutDown
 }
 
-/// Rebuilds every mirrored player on the fresh helper from desired state:
+/// Rebuilds every mirrored player on the fresh helper from intended playback:
 /// bind, reopen, resume playback and seek back to where the clock was. Every
 /// command queues on the helper while the media opens, so all of them are
 /// sent back-to-back.
@@ -705,23 +703,16 @@ fn restore_players(client: &Arc<Client>) {
         let Some(helper) = mirror.helper_id() else {
             continue;
         };
-        let desired = match mirror.desired.lock() {
-            Ok(desired) => desired.clone(),
-            Err(_) => continue,
-        };
-        if let Some(url) = desired.url {
+        let intended = mirror.intended.lock().clone();
+        if let Some(url) = intended.url {
             _ = conn.send(ToServer::OpenMedia { id: helper, url });
-            if desired.want_playing {
+            if intended.want_playing {
                 _ = conn.send(ToServer::Play { id: helper });
             }
             // the seek queues like play/looping/rate and becomes the start
             // position once the media is open; taken so the frozen-time
             // getters fall back to live snapshots from here on
-            let resume = mirror
-                .desired
-                .lock()
-                .ok()
-                .and_then(|mut desired| desired.resume_time.take());
+            let resume = mirror.intended.lock().resume_time.take();
             if let Some(time) = resume {
                 _ = conn.send(ToServer::Seek { id: helper, time });
             }
@@ -730,7 +721,7 @@ fn restore_players(client: &Arc<Client>) {
 }
 
 /// Creates the helper-side player behind a public mirror and primes it with
-/// the desired looping/rate (both queue as pending controls even while a
+/// the intended looping/rate (both queue as pending controls even while a
 /// later open is still in flight). Serialized per mirror via `binding`.
 fn bind_helper_player(
     client: &Client,
@@ -757,12 +748,10 @@ fn bind_helper_player(
     }
     client.registry.bind_helper(public, mirror, helper);
 
-    let (looping, rate) = mirror
-        .desired
-        .lock()
-        .map_or((false, DEFAULT_PLAYBACK_RATE), |desired| {
-            (desired.looping, desired.rate)
-        });
+    let (looping, rate) = {
+        let intended = mirror.intended.lock();
+        (intended.looping, intended.rate)
+    };
     if looping {
         _ = conn.send(ToServer::SetLooping {
             id: helper,
@@ -1062,7 +1051,7 @@ pub extern "C" fn uuav_player_free(player_id: PlayerId) {
 /// How a command behaves while the runtime is parked in `Failed`.
 #[derive(Clone, Copy)]
 enum DownPolicy {
-    /// Absorb into desired state and report success (per-frame noise like
+    /// Absorb into intended playback and report success (per-frame noise like
     /// the master clock; erroring every frame would spam the console).
     Absorb,
     /// Absorb, and wake the parked recovery worker — reserved for commands
@@ -1072,14 +1061,14 @@ enum DownPolicy {
     Reject,
 }
 
-/// Shared prologue of every per-player command. The desired state is
+/// Shared prologue of every per-player command. The intended playback is
 /// updated first — that is what makes the helper resurrectable — then the
 /// message is forwarded while the helper runs, or absorbed while it is
-/// being resurrected (the recovery worker replays desired state).
+/// being resurrected (the recovery worker replays intended playback).
 fn with_player(
     public: PlayerId,
     down_policy: DownPolicy,
-    desire: impl FnOnce(&mut Desired),
+    intend: impl FnOnce(&mut IntendedPlayback),
     build: impl FnOnce(PlayerId) -> ToServer,
 ) -> Result<(), String> {
     let state = CLIENT.load();
@@ -1090,9 +1079,7 @@ fn with_player(
         return Err(ERR_NO_PLAYER.to_owned());
     };
 
-    if let Ok(mut desired) = mirror.desired.lock() {
-        desire(&mut desired);
-    }
+    intend(&mut mirror.intended.lock());
 
     match client.lifecycle.get() {
         Lifecycle::Running => {
@@ -1102,7 +1089,7 @@ fn with_player(
             match outcome {
                 Ok(()) => Ok(()),
                 // helper died mid-call: the command is already absorbed in
-                // desired state and the recovery worker replays it
+                // intended playback and the recovery worker replays it
                 Err(_) if client.lifecycle.get() != Lifecycle::Running => Ok(()),
                 Err(e) => Err(e),
             }
@@ -1132,7 +1119,7 @@ pub extern "C" fn uuav_player_play(player_id: PlayerId) -> ResultFFI {
     command_result(with_player(
         player_id,
         DownPolicy::Rearm,
-        |desired| desired.want_playing = true,
+        |intended| intended.want_playing = true,
         |id| ToServer::Play { id },
     ))
 }
@@ -1142,7 +1129,7 @@ pub extern "C" fn uuav_player_pause(player_id: PlayerId) -> ResultFFI {
     command_result(with_player(
         player_id,
         DownPolicy::Reject,
-        |desired| desired.want_playing = false,
+        |intended| intended.want_playing = false,
         |id| ToServer::Pause { id },
     ))
 }
@@ -1178,9 +1165,9 @@ pub unsafe extern "C" fn uuav_player_open_media_async(
     command_result(with_player(
         player_id,
         DownPolicy::Rearm,
-        move |desired| {
-            desired.url = Some(desired_url);
-            desired.resume_time = None;
+        move |intended| {
+            intended.url = Some(desired_url);
+            intended.resume_time = None;
         },
         move |id| ToServer::OpenMedia { id, url },
     ))
@@ -1194,10 +1181,10 @@ pub extern "C" fn uuav_player_close_media(player_id: PlayerId) -> ResultFFI {
     command_result(with_player(
         player_id,
         DownPolicy::Reject,
-        |desired| {
-            desired.url = None;
-            desired.want_playing = false;
-            desired.resume_time = None;
+        |intended| {
+            intended.url = None;
+            intended.want_playing = false;
+            intended.resume_time = None;
         },
         |id| ToServer::CloseMedia { id },
     ))
@@ -1215,11 +1202,7 @@ pub extern "C" fn uuav_player_state(player_id: PlayerId) -> UUAVState {
         return UUAVState::UUAV_UNKNOWN;
     };
 
-    let has_media = mirror
-        .desired
-        .lock()
-        .ok()
-        .is_some_and(|desired| desired.url.is_some());
+    let has_media = mirror.intended.lock().url.is_some();
 
     match client.lifecycle.get() {
         // resurrection in flight: a buffering-like blip, per owner decision
@@ -1442,7 +1425,7 @@ pub extern "C" fn uuav_player_seek_async(player_id: PlayerId, time: f64) -> Resu
     command_result(with_player(
         player_id,
         DownPolicy::Reject,
-        |desired| desired.resume_time = Some(time),
+        |intended| intended.resume_time = Some(time),
         |id| ToServer::Seek { id, time },
     ))
 }
@@ -1463,7 +1446,7 @@ pub extern "C" fn uuav_player_set_looping(player_id: PlayerId, looping: u8) -> R
     command_result(with_player(
         player_id,
         DownPolicy::Reject,
-        |desired| desired.looping = looping != 0,
+        |intended| intended.looping = looping != 0,
         |id| ToServer::SetLooping {
             id,
             looping: looping != 0,
@@ -1494,7 +1477,7 @@ pub extern "C" fn uuav_player_set_rate(player_id: PlayerId, rate: f64) -> Result
     command_result(with_player(
         player_id,
         DownPolicy::Reject,
-        |desired| desired.rate = rate,
+        |intended| intended.rate = rate,
         |id| ToServer::SetRate { id, rate },
     ))
 }
@@ -1535,12 +1518,12 @@ extern "C" fn uuav_render_event(event_id: i32) {
         let Ok(mut video) = mirror.video.lock() else {
             return;
         };
-        let frames_before = video.frames();
+        let frames_before = video.frames_copied_into_presentation_planes();
         match video.present(&client.unity) {
             Ok(ack) => {
                 // only a frame that presented ends the failure: a render event with nothing
                 // new to show returns Ok as well
-                if video.frames() != frames_before {
+                if video.frames_copied_into_presentation_planes() != frames_before {
                     mirror.present_failed.store(false, Ordering::Release);
                 }
                 ack
@@ -1633,7 +1616,7 @@ pub unsafe extern "C" fn uuav_player_get_presented_video(
                 plane1: video.texture_ptr(1)?,
                 width,
                 height,
-                frames: video.frames(),
+                frames: video.frames_copied_into_presentation_planes(),
             })
         }),
     )

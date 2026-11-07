@@ -11,7 +11,6 @@ use bevy::{
 use common::{
     debug_panic,
     structs::{AudioSettings, PrimaryUser},
-    util::ReportErr,
 };
 use ipfs::IpfsResource;
 use livestream_manager::{ReceiverImage, ReceiverVolume};
@@ -24,10 +23,8 @@ use scene_runner::{
 };
 
 use crate::{
-    plugin::push_state_to_crdt,
-    video_stream::{av_sinks, noop_sinks},
-    AVPlayer, AVPlayerConfig, AVSinks, AudioStream, ShouldBePlaying, Stream, VideoPlayer,
-    LIVEKIT_VIDEO_STREAM,
+    plugin::push_state_to_crdt, AVPlayer, AVPlayerConfig, AVSinks, AudioStream, ShouldBePlaying,
+    Stream, VideoPlayer, LIVEKIT_VIDEO_STREAM,
 };
 
 pub struct VideoPlayerPlugin;
@@ -93,12 +90,12 @@ fn new_audio_stream_source(
     };
 
     if let Some(sinks) = maybe_sinks {
-        sinks.command_sender.send(AVCommand::Dispose).report();
+        sinks.command(AVCommand::Dispose);
     }
 
     let sinks = match &(**source) {
-        "" => noop_sinks::<AudioStream>((**source).to_owned(), None),
-        other => av_sinks::<AudioStream>(
+        "" => AVSinks::<AudioStream>::for_empty_source(None),
+        other => AVSinks::<AudioStream>::new(
             (*ipfs).clone(),
             other.to_owned(),
             context.hash.to_string(),
@@ -145,7 +142,7 @@ fn new_video_player_source(
     };
 
     if let Some(sinks) = maybe_sinks {
-        sinks.command_sender.send(AVCommand::Dispose).report();
+        sinks.command(AVCommand::Dispose);
     }
 
     let livestream = &**source == LIVEKIT_VIDEO_STREAM;
@@ -190,8 +187,8 @@ fn new_video_player_source(
         _ => create_image_handle(),
     };
     let sinks = match &(**source) {
-        "" => noop_sinks::<VideoPlayer>((**source).to_owned(), Some(image.clone())),
-        other => av_sinks::<VideoPlayer>(
+        "" => AVSinks::<VideoPlayer>::for_empty_source(Some(image.clone())),
+        other => AVSinks::<VideoPlayer>::new(
             (*ipfs).clone(),
             other.to_owned(),
             context.hash.to_string(),
@@ -232,7 +229,7 @@ fn player_source_replaced<T: AVPlayer>(
     commands.entity(entity).try_remove::<AVSinks<T>>();
 
     if let Some(sinks) = maybe_sinks {
-        sinks.command_sender.send(AVCommand::Dispose).report();
+        sinks.command(AVCommand::Dispose);
     }
 }
 
@@ -269,16 +266,12 @@ fn player_config_added<T: AVPlayer>(
         return;
     };
 
-    let command_sender = &sinks.command_sender;
-
     if config.playing() && has_should_be_playing {
-        command_sender.send(AVCommand::Play).report();
+        sinks.command(AVCommand::Play);
     } else {
-        command_sender.send(AVCommand::Pause).report();
+        sinks.command(AVCommand::Pause);
     }
-    command_sender
-        .send(AVCommand::Repeat(config.r#loop()))
-        .report();
+    sinks.command(AVCommand::Repeat(config.r#loop()));
 }
 
 /// Where a player's volume is decided: its config, the user's scene-audio setting, and silence
@@ -296,33 +289,14 @@ fn update_av_volume<T: AVPlayer>(
         .unwrap_or_default();
 
     for (scene, config, mut sinks) in av_players.iter_mut() {
-        let AVSinks {
-            #[cfg(feature = "uuav")]
-                audio: _,
-            video: _,
-            command_sender,
-            rejected_commands,
-            rate: _,
-            state: _,
-            sent_event: _,
-            sent_volume,
-            sent_state: _,
-            _phantom,
-        } = sinks.as_mut();
-
-        // a rejected source's commands go nowhere; the queue is emptied here so it stays small
-        if let Some(rejected) = rejected_commands {
-            while rejected.try_recv().is_ok() {}
-        }
-
         let volume = if containing_scenes.contains(&scene.root) {
             config.volume() * audio_settings.scene()
         } else {
             0.0
         };
-        if sent_volume != &Some(volume) {
-            *sent_volume = Some(volume);
-            command_sender.send(AVCommand::Volume(volume)).report();
+        if sinks.sent_volume != Some(volume) {
+            sinks.sent_volume = Some(volume);
+            sinks.command(AVCommand::Volume(volume));
         }
     }
 }
@@ -354,10 +328,7 @@ fn player_position_added<T: AVPlayer>(
         disqualified::ShortName::of::<T::Source>(),
         (**position)
     );
-    sinks
-        .command_sender
-        .send(AVCommand::Seek((**position) as f64))
-        .report();
+    sinks.command(AVCommand::Seek((**position) as f64));
 }
 
 fn av_sinks_on_remove<T: AVPlayer>(trigger: Trigger<OnRemove, AVSinks<T>>, mut commands: Commands) {
@@ -374,7 +345,7 @@ fn av_player_should_be_playing_on_add<T: AVPlayer>(
         return;
     };
 
-    sinks.command_sender.send(AVCommand::Play).report();
+    sinks.command(AVCommand::Play);
 }
 
 /// Sends [`AVCommand::Pause`] to [`AVPlayer`]
@@ -388,7 +359,7 @@ fn av_player_should_be_playing_on_remove<T: AVPlayer>(
         return;
     };
 
-    sinks.command_sender.send(AVCommand::Pause).report();
+    sinks.command(AVCommand::Pause);
 }
 
 fn play_videos(
@@ -408,7 +379,6 @@ fn play_videos(
                 audio: _,
             video: Some(video),
             command_sender: _,
-            rejected_commands: _,
             rate: sink_rate,
             state: _,
             sent_event: _,
@@ -420,7 +390,7 @@ fn play_videos(
             continue;
         };
 
-        let mut last_frame_received = None;
+        let mut frame_received = false;
         loop {
             match video.video_receiver.try_recv() {
                 Ok(VideoData::Info(VideoInfo {
@@ -446,26 +416,19 @@ fn play_videos(
                     video.length = Some(length);
                     *sink_rate = Some(rate);
                 }
-                Ok(VideoData::Frame(frame, time)) => {
-                    last_frame_received = Some(frame);
+                Ok(VideoData::Frame(time)) => {
+                    frame_received = true;
                     video.current_time = time;
                 }
                 Err(_) => break,
             }
         }
 
-        if let Some(frame) = last_frame_received {
-            trace!("set frame on {:?}", video.image);
-
-            // no pixels: the render world copied the frame into the gpu image itself
-            if let Some(pixels) = frame.data() {
-                let image = images.get_mut(&video.image).unwrap();
-                image.data = Some(pixels.to_owned());
-            }
-            if video.resized {
-                video.resized = false;
-                output.set_changed();
-            }
+        // the render world wrote the frame into the image; a resized image rebinds its materials
+        if frame_received && video.resized {
+            trace!("first frame at the new size on {:?}", video.image);
+            video.resized = false;
+            output.set_changed();
         }
     }
 }
@@ -484,7 +447,6 @@ fn publish_av_player_state<T: AVPlayer>(
                 audio: _,
             video,
             command_sender: _,
-            rejected_commands: _,
             rate: _,
             state,
             sent_event,
@@ -546,7 +508,7 @@ mod snapshot_tests {
     fn playback_config_preserves_the_frame_rate_from_video_metadata() {
         let mut app = App::new();
         app.add_observer(player_config_added::<VideoPlayer>);
-        let mut sinks = noop_sinks::<VideoPlayer>(String::new(), Some(Handle::default()));
+        let mut sinks = AVSinks::<VideoPlayer>::for_empty_source(Some(Handle::default()));
         sinks.rate = Some(24.0);
         let player = app.world_mut().spawn(sinks).id();
         app.world_mut()
@@ -593,7 +555,7 @@ mod snapshot_tests {
             AVSinks::<VideoPlayer> {
                 #[cfg(feature = "uuav")]
                 audio: None,
-                video: Some(crate::video_stream::VideoSink {
+                video: Some(crate::sinks::VideoSink {
                     source: "fixture.mp4".to_owned(),
                     video_receiver: receiver,
                     image: image.clone(),
@@ -602,7 +564,6 @@ mod snapshot_tests {
                     resized: false,
                 }),
                 command_sender: commands,
-                rejected_commands: None,
                 rate: None,
                 state: state_receiver,
                 sent_event: 0.,

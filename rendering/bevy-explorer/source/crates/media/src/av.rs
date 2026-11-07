@@ -23,16 +23,7 @@ pub struct VideoInfo {
 
 pub enum VideoData {
     Info(VideoInfo),
-    Frame(VideoFrame, f64),
-}
-
-/// A decoded frame. The backend wrote it into the target image from the render world, so only
-/// the arrival is reported.
-pub struct VideoFrame {}
-
-impl VideoFrame {
-    /// The frame's rgba pixels, if they come through the engine. No backend sends any.
-    pub fn data(&self) -> Option<&[u8]> {
-        None
-    }
+    /// A decoded frame, at this media time. The backend wrote it into the target image from the
+    /// render world, so only the arrival is reported.
+    Frame(f64),
 }

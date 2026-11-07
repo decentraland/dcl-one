@@ -27,7 +27,7 @@ pub enum Lifecycle {
     /// Helper alive: commands flow, callbacks reach the host.
     Running = 0,
     /// Helper died and the recovery worker is resurrecting it: commands are
-    /// absorbed into desired state, players read as OPENING.
+    /// absorbed into intended playback, players read as OPENING.
     Recovering = 1,
     /// Respawn attempts capped out: commands degrade, players read as
     /// ERROR, until an open/play re-arms the worker.

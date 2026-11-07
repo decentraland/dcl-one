@@ -1,6 +1,6 @@
 //! Client-side player mirrors: the latest state snapshot per player (from
 //! which every per-frame getter is served without touching the channel)
-//! plus the *desired* state that makes the helper resurrectable — after a
+//! plus the *intended playback* that makes the helper resurrectable — after a
 //! helper crash the recovery worker rebuilds every player from its mirror,
 //! with no involvement from the host.
 //!
@@ -43,7 +43,7 @@ impl CachedState {
 /// helper. Command paths keep this current; while the helper is down,
 /// commands are absorbed here instead of failing.
 #[derive(Clone)]
-pub struct Desired {
+pub struct IntendedPlayback {
     pub url: Option<String>,
     pub want_playing: bool,
     pub looping: bool,
@@ -53,7 +53,7 @@ pub struct Desired {
     pub resume_time: Option<f64>,
 }
 
-impl Default for Desired {
+impl Default for IntendedPlayback {
     fn default() -> Self {
         Self {
             url: None,
@@ -87,10 +87,10 @@ pub struct PlayerMirror {
     /// resume time until the first snapshot from the resurrected helper.
     pub awaiting_snapshot: AtomicBool,
     /// Set when the render event could not present (a generation this side
-    /// refused, a failed wrap or copy): the player reads ERROR until a
-    /// present succeeds or new media is opened.
+    /// refused, a failed wrap or copy); cleared by the next presented frame
+    /// and by new media.
     pub present_failed: AtomicBool,
-    pub desired: Mutex<Desired>,
+    pub intended: parking_lot::Mutex<IntendedPlayback>,
 }
 
 impl PlayerMirror {
@@ -106,7 +106,7 @@ impl PlayerMirror {
             binding: Mutex::new(()),
             awaiting_snapshot: AtomicBool::new(false),
             present_failed: AtomicBool::new(false),
-            desired: Mutex::default(),
+            intended: parking_lot::Mutex::default(),
         }
     }
 
@@ -118,11 +118,11 @@ impl PlayerMirror {
     }
 
     /// The frozen position getters serve while the helper is down: the
-    /// desired resume point, falling back to the last snapshot's
+    /// intended resume point, falling back to the last snapshot's
     /// (unextrapolated) media time.
     pub fn frozen_time(&self) -> Option<f64> {
-        let desired = self.desired.lock().ok().and_then(|d| d.resume_time);
-        desired.or_else(|| self.state.load().as_ref().and_then(|c| c.update.media_time))
+        let intended = self.intended.lock().resume_time;
+        intended.or_else(|| self.state.load().as_ref().and_then(|c| c.update.media_time))
     }
 }
 
@@ -196,7 +196,7 @@ impl Registry {
     }
 
     /// Severs every helper binding after the helper died; the mirrors (and
-    /// their desired state) survive for the resurrection.
+    /// their intended playback) survive for the resurrection.
     pub fn unbind_all(&self) {
         self.by_helper.clear();
         for mirror in &self.players {

@@ -84,8 +84,7 @@ pub struct PlayerVideo {
     presented: Option<(u32, u8)>,
     /// Ack the render event owes the helper after opening a generation.
     ack_due: Option<u32>,
-    /// Frames copied into the presentation texture.
-    frames: u64,
+    frames_copied_into_presentation_planes: u64,
 }
 
 // D3D11 interfaces are free-threaded; everything here is accessed behind
@@ -187,7 +186,8 @@ impl PlayerVideo {
 
         if copy_slot(unity, source, &presentation.texture)? {
             self.presented = Some((generation, slot));
-            self.frames = self.frames.wrapping_add(1);
+            self.frames_copied_into_presentation_planes =
+                self.frames_copied_into_presentation_planes.wrapping_add(1);
         }
         // busy mutex: the helper is mid-write; keep the previous frame and
         // retry on the next render event
@@ -203,10 +203,8 @@ impl PlayerVideo {
             .map(|sized| (sized.width, sized.height))
     }
 
-    /// Frames copied into the presentation texture so far; unchanged while
-    /// nothing new was published.
-    pub const fn frames(&self) -> u64 {
-        self.frames
+    pub const fn frames_copied_into_presentation_planes(&self) -> u64 {
+        self.frames_copied_into_presentation_planes
     }
 
     fn ensure_presentation(&mut self, unity: &UnityDevice, width: u32, height: u32) -> Result<()> {

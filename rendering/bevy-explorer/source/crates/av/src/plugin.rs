@@ -28,7 +28,7 @@ use crate::{
     ShouldBePlaying, Stream, VideoPlayer, LIVEKIT_VIDEO_STREAM,
 };
 #[cfg(any(feature = "uuav", feature = "html"))]
-use crate::{video_player::VideoPlayerPlugin, video_stream::VideoSink, AVPlayerSinks, AVSinks};
+use crate::{sinks::VideoSink, video_player::VideoPlayerPlugin, AVPlayerSinks, AVSinks};
 
 #[cfg(any(feature = "uuav", feature = "html"))]
 type AVPlayerQuery<'w, 's, T> =
