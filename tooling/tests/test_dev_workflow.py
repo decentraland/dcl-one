@@ -47,29 +47,27 @@ class DevelopmentWorkflowTest(unittest.TestCase):
     def test_every_nix_job_restores_the_store_snapshot_before_its_first_shell(self):
         policy = WORKFLOW.parents[2] / 'tooling/repo-actions-policy.sh'
         self.assertIn("patterns_allowed[]=nix-community/cache-nix-action@*", policy.read_text())
+        installs = 0
         for name in ('development.yml', 'social-voice-release.yml'):
-            steps = re.split(r'(?m)^      - ', WORKFLOW.with_name(name).read_text())
-            installs = [i for i, step in enumerate(steps) if step.startswith('uses: cachix/install-nix-action@')]
-            self.assertTrue(installs, name)
-            for i in installs:
-                snapshot, roots = steps[i + 1], steps[i + 2]
-                job = ''
-                for step in steps[i + 1:]:
-                    head, *rest = re.split(r'\n  (?=\w)', step, 1)
-                    job += head
-                    if rest:
-                        break
-                # The Rust suites use the ci shell; the stack and web jobs the default one.
-                shell = 'ci' if 'dev-test.sh rust' in job or 'social-voice-release-test.sh' in job else 'default'
-                self.assertTrue(snapshot.startswith('uses: nix-community/cache-nix-action@'), name)
-                self.assertIn("primary-key: nix-store-${{ runner.os }}-${{ runner.arch }}-" + shell + "-${{ hashFiles('flake.nix', 'flake.lock', ", snapshot)
-                self.assertIn("restore-prefixes-first-match: nix-store-${{ runner.os }}-${{ runner.arch }}-" + shell + "-\n", snapshot)
-                self.assertIn("save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}", snapshot)
-                self.assertIn('gc-max-store-size: 0', snapshot)
-                self.assertIn(f'nix build --out-link .cache/nix-roots/shell ".#devShells.$(nix config show system).{shell}"', roots)
-                self.assertIn('nix flake archive --json', roots)
-                for command in re.findall(r'nix develop(?: \.#\w+)?', job):
-                    self.assertEqual(command, 'nix develop .#ci' if shell == 'ci' else 'nix develop', name)
+            for job in re.split(r'(?m)^  (?=\w+:\n)', WORKFLOW.with_name(name).read_text()):
+                steps = re.split(r'(?m)^      - ', job)
+                for i, step in enumerate(steps):
+                    if not step.startswith('uses: cachix/install-nix-action@'):
+                        continue
+                    installs += 1
+                    snapshot, roots = steps[i + 1], steps[i + 2]
+                    shell = 'ci' if 'dev-test.sh rust' in job or 'social-voice-release-test.sh' in job else 'default'
+                    key = 'nix-store-${{ runner.os }}-${{ runner.arch }}-' + shell + '-'
+                    self.assertTrue(snapshot.startswith('uses: nix-community/cache-nix-action@'), name)
+                    self.assertIn('primary-key: ' + key + "${{ hashFiles('flake.nix', 'flake.lock', ", snapshot)
+                    self.assertIn('restore-prefixes-first-match: ' + key + '\n', snapshot)
+                    self.assertIn("save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}", snapshot)
+                    self.assertIn('gc-max-store-size: 0', snapshot)
+                    self.assertIn(f'nix build --out-link .cache/nix-roots/shell ".#devShells.$(nix config show system).{shell}"', roots)
+                    self.assertIn('nix flake archive --json', roots)
+                    for command in re.findall(r'nix develop(?: \.#\w+)?', job):
+                        self.assertEqual(command, 'nix develop .#ci' if shell == 'ci' else 'nix develop', name)
+        self.assertEqual(installs, 4)
 
     def test_large_pr_snapshots_are_only_same_repository_linux_tests(self):
         def allowed(job, event, ref, platform, same_repository=True, passed=True, hit=False, cache_enabled=False):

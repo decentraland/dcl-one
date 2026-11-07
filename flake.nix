@@ -56,8 +56,6 @@
             ];
             LOCALE_ARCHIVE = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "${pkgs.glibcLocales}/lib/locale/locale-archive";
           });
-          # The CI shell of the Rust suites: the toolchain without rust-docs, the services the tests
-          # start, the build tools the crates need, two locales, and no web or media tools.
           toolchain = (builtins.fromTOML (builtins.readFile ./services/catalyst/rust-toolchain.toml)).toolchain;
           ci = pkgs.mkShell (environment // {
             packages = with pkgs; [
