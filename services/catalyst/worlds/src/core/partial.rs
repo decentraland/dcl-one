@@ -621,17 +621,14 @@ async fn stage_batch(
             source: client_source(headers),
         },
     )
-    .await
+    .await?
     {
-        Ok(upload) => upload,
-        Err(resp) => {
-            if pending.is_some()
-                && resp.status() == StatusCode::BAD_REQUEST
-                && let Some(answer) = replay(state, entity_id, signer).await.map_err(db_error)?
-            {
-                return Ok(answer);
-            }
-            return Err(resp);
+        Upsert::Row(upload, created) => (upload, created),
+        Upsert::Vanished => {
+            return replay(state, entity_id, signer)
+                .await
+                .map_err(db_error)?
+                .ok_or_else(expired);
         }
     };
     if let Err(resp) = reserve(
@@ -827,11 +824,16 @@ async fn vanished(
 
 /// Creates or resumes the upload under the per-account and per-world upload caps; whether
 /// this call created it.
+enum Upsert {
+    Row(PendingRow, bool),
+    Vanished,
+}
+
 async fn upsert(
     state: &CoreState,
     limits: &PartialUploadLimits,
     input: UpsertInput<'_>,
-) -> Result<(PendingRow, bool), Response> {
+) -> Result<Upsert, Response> {
     let mut tx = state.pool.begin().await.map_err(db_error)?;
     let deployer = input.deployer;
     lock_key(&mut tx, &format!("worlds-partial-deployer:{deployer}"))
@@ -852,9 +854,12 @@ async fn upsert(
         if existing.deployer != deployer {
             return Err(err_one(OWNERSHIP_MESSAGE));
         }
-        return Ok((existing, false));
+        return Ok(Upsert::Row(existing, false));
     }
-    if input.resumes || now_ms() >= input.admitted_ms + limits.ttl_ms() {
+    if input.resumes {
+        return Ok(Upsert::Vanished);
+    }
+    if now_ms() >= input.admitted_ms + limits.ttl_ms() {
         return Err(expired());
     }
     let (count, oldest): (i64, Option<NaiveDateTime>) = sqlx::query_as(
@@ -933,7 +938,7 @@ async fn upsert(
     .await
     .map_err(db_error)?;
     tx.commit().await.map_err(db_error)?;
-    Ok((row, true))
+    Ok(Upsert::Row(row, true))
 }
 
 #[derive(sqlx::FromRow)]
