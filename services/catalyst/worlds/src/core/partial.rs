@@ -607,7 +607,7 @@ async fn stage_batch(
         return Err(failed(TOO_BIG_MESSAGE).into_response());
     }
 
-    let (upload, created) = upsert(
+    let (upload, created) = match upsert(
         state,
         &limits,
         UpsertInput {
@@ -621,7 +621,19 @@ async fn stage_batch(
             source: client_source(headers),
         },
     )
-    .await?;
+    .await
+    {
+        Ok(upload) => upload,
+        Err(resp) => {
+            if pending.is_some()
+                && resp.status() == StatusCode::BAD_REQUEST
+                && let Some(answer) = replay(state, entity_id, signer).await.map_err(db_error)?
+            {
+                return Ok(answer);
+            }
+            return Err(resp);
+        }
+    };
     if let Err(resp) = reserve(
         state,
         &limits,
