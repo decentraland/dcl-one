@@ -672,6 +672,31 @@ CREATE INDEX notifications_unread_idx
 CREATE UNIQUE INDEX notifications_broadcast_uidx
     ON social.notifications (address, broadcast_key) WHERE broadcast_key IS NOT NULL;
 
+-- A producer's address-less notification, stored once and listed in every
+-- wallet's inbox (no subscription needed). id = v5 (namespace
+-- 3f8a52d4-9c1e-4b07-a62d-71e05c9318bb) over the JSON `["<type>",null,"<eventKey>"]`;
+-- a repeat updates metadata/occurred_at. Few rows (announcements), read on each
+-- poll; listed and kept only within NOTIFICATIONS_BROADCAST_HORIZON_DAYS.
+CREATE TABLE social.broadcast_notifications (
+    id uuid NOT NULL,
+    type text NOT NULL,
+    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+    occurred_at timestamp(3) without time zone NOT NULL,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT broadcast_notifications_pkey PRIMARY KEY (id)
+);
+-- The poll's `occurred_at >= $from ORDER BY occurred_at DESC, id DESC LIMIT n`.
+CREATE INDEX broadcast_notifications_time_idx
+    ON social.broadcast_notifications (occurred_at DESC, id DESC);
+
+-- Per-wallet read state of a broadcast; absent = unread.
+CREATE TABLE social.broadcast_reads (
+    broadcast_id uuid NOT NULL REFERENCES social.broadcast_notifications (id) ON DELETE CASCADE,
+    address text NOT NULL,
+    read_at timestamp(3) without time zone NOT NULL,
+    CONSTRAINT broadcast_reads_pkey PRIMARY KEY (broadcast_id, address)
+);
+
 -- Social owns event delivery intents and progress. Explore inserts transitions
 -- in its authoring transaction; Social inserts occurrence notices. No FK: the event
 -- mirror may remove a catalogue row while an already-committed host notice

@@ -433,7 +433,8 @@ class DevTest(unittest.TestCase):
                     'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED', 'CREDITS_USAGE_INDEX_ENABLED'):
             self.assertEqual(env[key], 'false', key)
         # The Shop's catalogue follows the public subgraphs and chain, as `posture show mirror` does.
-        for key in ('MARKETPLACE_MIRRORS_ENABLED', 'MARKETPLACE_NFT_INDEX_ENABLED', 'LAND_AUTHZ_INDEX_ENABLED'):
+        for key in ('MARKETPLACE_MIRRORS_ENABLED', 'MARKETPLACE_NFT_INDEX_ENABLED', 'LAND_AUTHZ_INDEX_ENABLED',
+                    'SHOP_RENTALS_INDEX_ENABLED'):
             self.assertEqual(env[key], 'true', key)
         self.assertTrue(env['MATIC_COLLECTIONS_SUBGRAPH_URL'].startswith('https://'))
         self.assertIn('index', dev.project({**self.config, 'profile': 'mirror'})['processes'])
@@ -474,6 +475,7 @@ class DevTest(unittest.TestCase):
         # The NFT index knows mainnet's contracts only, so it does not walk the testnets.
         self.assertEqual(env['MARKETPLACE_NFT_INDEX_ENABLED'], 'false')
         self.assertEqual(mirror['MARKETPLACE_NFT_INDEX_ENABLED'], 'true')
+        self.assertEqual((env['SHOP_RENTALS_INDEX_ENABLED'], mirror['SHOP_RENTALS_INDEX_ENABLED']), ('false', 'true'))
         self.assertIn('decentraland.zone', env['TRADES_SYNC_UPSTREAM_URL'])
         self.assertIn('decentraland.zone', env['TRANSACTIONS_UPSTREAM_URL'])
         self.assertTrue(env['RPC_ENDPOINT_POLYGON'].endswith('/amoy'))

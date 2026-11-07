@@ -686,7 +686,7 @@ impl MarketplaceState {
 
 /// Refuses to walk an endpoint that serves another chain than `expected`:
 /// the walk would read another network's logs into this one's rows.
-async fn ensure_chain(
+pub(crate) async fn ensure_chain(
     rpc: &crate::land_authz::indexer::Rpc<'_>,
     expected: i64,
 ) -> anyhow::Result<()> {

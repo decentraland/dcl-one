@@ -265,7 +265,7 @@ def runtime_env(config):
         'MARKETPLACE_MIRRORS_ENABLED': 'false', 'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED': 'false', 'MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED': 'false',
         'LAND_AUTHZ_INDEX_ENABLED': 'false', 'CREDITS_USAGE_INDEX_ENABLED': 'false',
-        'PRICE_POLL_ENABLED': 'false',
+        'SHOP_RENTALS_INDEX_ENABLED': 'false', 'PRICE_POLL_ENABLED': 'false',
         'COMMUNITIES_MIRROR_UPSTREAM': 'false', 'SCENE_HOST_ENABLED': 'false',
         'PRESENCE_COLLECTOR_ENABLED': 'false', 'JOBS_FIRST_PASS_NOW': 'true',
         'CONTENT_FORWARD_UPSTREAM_URL': '', 'WORLDS_FORWARD_UPSTREAM_URL': '',
@@ -327,6 +327,7 @@ def runtime_env(config):
             'MARKETPLACE_SUBGRAPH_URL': 'https://subgraph.decentraland.org/marketplace',
             'LAND_SUBGRAPH_URL': 'https://subgraph.decentraland.org/land-manager',
             'MARKETPLACE_NFT_INDEX_ENABLED': 'true', 'LAND_AUTHZ_INDEX_ENABLED': 'true',
+            'SHOP_RENTALS_INDEX_ENABLED': 'true',
             'ETH_RPC_URL': 'https://rpc.decentraland.org/mainnet',
             'BUILDER_CONTENT_BUCKET_URL': 'https://builder-items.decentraland.org',
             # Scene-template models (Qm... CIDs) live in the asset-packs bucket, which this
@@ -383,6 +384,8 @@ def testnet_env():
         # The NFT index walks chains 1/137 only, with no chain-id check: Matic has no endpoint here, and Ethereum
         # would read Sepolia through ETH_RPC_URL and store its logs as mainnet rows.
         'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
+        # The Rentals contract is mainnet's; there is no chain-1 endpoint here.
+        'SHOP_RENTALS_INDEX_ENABLED': 'false',
         'VITE_SHOP_CHAIN_ID': '80002',
         # Credits settle through Amoy's CreditsManager (contracts.decentraland.org, `amoy`). The usage index
         # reads its CreditUsed events over RPC_ENDPOINT_POLYGON on COLLECTIONS_CHAIN_ID; POST /credits/authorize

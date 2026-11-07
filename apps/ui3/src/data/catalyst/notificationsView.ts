@@ -179,6 +179,8 @@ const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 
 export function actorAddress(n: Notification | null | undefined): string | null {
   const recipient = (n?.address ?? "").toLowerCase();
+  // A broadcast has no recipient, and no broadcast type names an actor.
+  if (!recipient) return null;
   let found: string | null = null;
   const scan = (v: unknown, depth: number): void => {
     if (found) return;

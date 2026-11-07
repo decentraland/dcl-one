@@ -585,6 +585,14 @@ pub struct SocialConfig {
     #[arg(long, env = "NOTIFICATION_SERVICE_TOKEN", hide_env_values = true)]
     pub notification_service_token: Option<String>,
 
+    /// Governance's bearer of POST /notifications/notifications (`governance_*` types only); unset disables it.
+    #[arg(long, env = "NOTIFICATIONS_GOVERNANCE_TOKEN", hide_env_values = true)]
+    pub notifications_governance_token: Option<String>,
+
+    /// The rewards app's bearer of POST /notifications/notifications (`reward_*` types only); unset disables it.
+    #[arg(long, env = "NOTIFICATIONS_REWARDS_TOKEN", hide_env_values = true)]
+    pub notifications_rewards_token: Option<String>,
+
     /// Cloudflare Turnstile secret for confirm-email; unset turns the check off.
     #[arg(long, env = "TURNSTILE_SECRET_KEY", hide_env_values = true)]
     pub turnstile_secret_key: Option<String>,
@@ -615,6 +623,13 @@ pub struct SocialConfig {
     )]
     pub notification_delivery_interval_secs: u64,
 
+    /// Days a producer broadcast stays in every inbox before it is hidden and pruned.
+    #[arg(
+        long,
+        env = "NOTIFICATIONS_BROADCAST_HORIZON_DAYS",
+        default_value_t = 90
+    )]
+    pub notifications_broadcast_horizon_days: u64,
     /// Pending notification emails idle this long end skipped as expired (default 7 days;
     /// `0` never expires, other values below an hour are raised to an hour).
     #[arg(

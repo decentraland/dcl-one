@@ -469,6 +469,11 @@ pub struct ShopConfig {
     /// Index no further (a development bound; an index held short is never published).
     #[arg(long, env = "CREDITS_USAGE_STOP_BLOCK")]
     pub credits_usage_stop_block: Option<u64>,
+
+    /// Walk the Rentals contract's logs on Ethereum (shop.rental_event, over TRADE_RPC_URLS 1=
+    /// or, on mainnet, ETH_RPC_URL): listing status sync and the rental notifications.
+    #[arg(long, env = "SHOP_RENTALS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub shop_rentals_index_enabled: bool,
 }
 
 #[cfg(test)]
@@ -679,6 +684,10 @@ mod tests {
         assert!(
             c.shop.credits_checkout_success_url.is_empty()
                 && c.shop.credits_checkout_cancel_url.is_empty()
+        );
+        assert!(
+            !c.shop.shop_rentals_index_enabled,
+            "the rentals index is opt-in"
         );
         assert!(
             !c.shop.credits_usage_index_enabled

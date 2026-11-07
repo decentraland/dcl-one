@@ -1,14 +1,14 @@
 //! Notifications: the signed-fetch reader/marker surface of
 //! notifications.decentraland.org (`GET /notifications`, `PUT
 //! /notifications/read`, the subscription, email confirmation and opt-out
-//! routes), the bearer-gated broadcast, the `email` outbox worker
+//! routes), the bearer-gated broadcast, the producers' ingest (`ingest`), the `email` outbox worker
 //! (`delivery`), the `friend_first_wear` producer (`first_wear`), the
 //! `land_transfer_received` producer over the land_authz index
 //! (`land_transfers`) and the community events' rows (`community`), all
 //! over the ONE pool and the ONE outbound client.
 //! Tables: `social.notifications`, `notification_deliveries`,
 //! `subscriptions`, `unconfirmed_emails`, `subscription_opt_outs`,
-//! `notification_reader_seen`, `worn_history`, `first_wear_baseline`,
+//! `notification_reader_seen`, `broadcast_notifications`, `broadcast_reads`, `worn_history`, `first_wear_baseline`,
 //! `first_wear_cursor`, `land_transfer_cursor`.
 //!
 //! Mounted by `serve` as `.nest("/notifications", router(state))` (the old
@@ -26,6 +26,7 @@ mod event_ended;
 pub mod events;
 pub mod first_wear;
 pub mod handlers;
+pub mod ingest;
 pub mod land_transfers;
 pub(crate) mod moderation;
 pub mod seen;
@@ -68,6 +69,10 @@ pub struct Settings {
     pub service_base_url: String,
     /// `NOTIFICATION_SERVICE_TOKEN`: bearer of `POST /notifications/email`; unset refuses it.
     pub notification_service_token: Option<String>,
+    /// `NOTIFICATIONS_GOVERNANCE_TOKEN`: bearer of `POST /notifications/notifications` for `governance_*` types; unset disables it.
+    pub governance_token: Option<String>,
+    /// `NOTIFICATIONS_REWARDS_TOKEN`: the same for `reward_*` types.
+    pub rewards_token: Option<String>,
     /// `FIRST_WEAR_ENABLED`: run the friend_first_wear producer (the old
     /// binary ran it when its three extra database DSNs were set).
     pub first_wear_enabled: bool,
@@ -75,6 +80,8 @@ pub struct Settings {
     pub first_wear: FirstWearSettings,
     /// `NOTIFICATION_DELIVERY_INTERVAL_SECS` (default 15; floored to 1).
     pub delivery_interval: Duration,
+    /// `NOTIFICATIONS_BROADCAST_HORIZON_DAYS` (default 90): broadcasts older are hidden and pruned.
+    pub broadcast_horizon: Duration,
     /// `NOTIFICATION_DELIVERY_MAX_AGE_SECS` (default 7 days, `None` = never):
     /// pending emails older end `expired`; see [`delivery::max_age_from_secs`].
     pub delivery_max_age: Option<Duration>,
@@ -100,9 +107,12 @@ impl Default for Settings {
             signing_key: None,
             service_base_url: "https://notifications.decentraland.org".into(),
             notification_service_token: None,
+            governance_token: None,
+            rewards_token: None,
             first_wear_enabled: false,
             first_wear: FirstWearSettings::default(),
             delivery_interval: Duration::from_secs(15),
+            broadcast_horizon: store::DEFAULT_BROADCAST_HORIZON,
             delivery_max_age: Some(delivery::DEFAULT_MAX_AGE),
             events_base_url: "https://decentraland.org".into(),
             events_asset_base_url: "http://localhost/events".into(),
@@ -139,7 +149,7 @@ impl State {
         market: Option<Arc<ChainIndex>>,
     ) -> Self {
         Self {
-            store: NotificationsStore::new(pool),
+            store: NotificationsStore::new(pool).with_broadcast_horizon(settings.broadcast_horizon),
             email: email::EmailSender::new(settings.email.clone(), http.clone())
                 .with_unsubscribe(settings.signing_key.as_deref(), &settings.service_base_url),
             settings,
@@ -164,7 +174,7 @@ impl State {
         }
     }
 
-    /// The outbox worker always; the first-wear producer when enabled.
+    /// The outbox worker and broadcast retention always; the first-wear producer when enabled.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         let state = self.clone();
         let max_age = self.settings.delivery_max_age;
@@ -205,6 +215,23 @@ impl State {
                 }
             },
         );
+        let store = self.store.clone();
+        jobs.spawn_periodic_leased(
+            "notification-broadcast-retention",
+            PeriodicCfg::every(Duration::from_secs(3600)).with_jitter(Duration::from_secs(60)),
+            move |_ctx| {
+                let store = store.clone();
+                async move {
+                    let pruned = store
+                        .prune_broadcasts(crate::shared::now_utc(), 100)
+                        .await?;
+                    if pruned > 0 {
+                        tracing::info!(pruned, "expired broadcasts pruned");
+                    }
+                    Ok(())
+                }
+            },
+        );
         land_transfers::spawn(self.store.pool().clone(), jobs);
         events::spawn(
             self.store.pool().clone(),
@@ -238,12 +265,16 @@ impl admin::AdminSecretSource for SharedState {
 }
 
 /// The routes, unprefixed: nest under `/notifications`. Bodies are capped
-/// at 256 KiB as before; CORS is permissive as the old bundle's was; bodies
+/// at 256 KiB as before (the producer ingest reads up to
+/// [`ingest::MAX_BODY_BYTES`] itself, after its bearer); CORS is permissive as the old bundle's was; bodies
 /// and refusals keep upstream's JSON wire ([`errors::json_wire`]).
 pub fn router(state: SharedState) -> Router {
     Router::new()
         .route("/status", get(handlers::get_status))
-        .route("/notifications", get(handlers::get_notifications))
+        .route(
+            "/notifications",
+            get(handlers::get_notifications).post(ingest::post_notifications),
+        )
         .route("/notifications/read", put(handlers::put_read))
         .route(
             "/subscription",

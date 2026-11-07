@@ -28,7 +28,7 @@ export const MarkReadResponseSchema = z.object({
 export const NotificationItemSchema = z.object({
   id: z.string(),
   type: z.string(),
-  address: z.string(),
+  address: z.string().nullable(),
   timestamp: z.string(),
   read: z.boolean(),
   created_at: z.string(),
