@@ -178,6 +178,12 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   // not a guest may browse them, and the web Shop a resale opens decides again (AGENTS.md). Off, the rows and the
   // catalogue list creators' primary sales only.
   const capabilitiesQuery = useQuery(purchaseQueries.capabilities())
+  // The answer is the login's: another login (a logout, then another account) asks again, so neither its buyer nor
+  // its Marketplace answer outlives the account it was for.
+  const loginAddress = profile.data?.address?.toLowerCase() ?? null
+  useEffect(() => {
+    void queryClient.invalidateQueries({ queryKey: ['shop', 'purchase'] })
+  }, [loginAddress, queryClient])
   const capabilities = capabilitiesQuery.data
   const web3Player = inShell ? capabilities?.marketplace === true : profile.data != null && !profile.data.isGuest
   // Settled once the shell answers, or fails to (then without the Marketplace), so the listings never wait forever.

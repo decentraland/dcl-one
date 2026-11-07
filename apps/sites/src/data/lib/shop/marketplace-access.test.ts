@@ -7,10 +7,10 @@ import { primeRemoteFlags } from "@ui/shop/discovery/lib/remoteFlags";
 const facts = vi.hoisted(() => ({
   identity: null as { signer: string; expiration: string } | null,
   kind: null as "web3" | "managed" | null,
-  known: true,
+  usable: true,
 }));
 vi.mock("../auth/index", () => ({ useAuth: () => ({ identity: facts.identity }) }));
-vi.mock("../auth/shop-wallet", () => ({ currentWalletKind: () => facts.kind, web3Usable: () => facts.known }));
+vi.mock("../auth/shop-wallet", () => ({ currentWalletKind: () => facts.kind, web3Usable: () => facts.usable }));
 const primed = vi.hoisted(() => ({ calls: 0 }));
 vi.mock("../feature-flags.browser", () => ({ primeDappsFlags: async () => void primed.calls++ }));
 
@@ -23,7 +23,7 @@ const LATER = new Date(Date.now() + 86_400_000).toISOString();
 afterEach(() => {
   facts.identity = null;
   facts.kind = null;
-  facts.known = true;
+  facts.usable = true;
   primeRemoteFlags(null);
 });
 
@@ -47,9 +47,9 @@ describe("the Marketplace on sites' own pages", () => {
     primeRemoteFlags(ON);
     facts.kind = "web3";
     facts.identity = { signer: ACCOUNT, expiration: LATER };
-    facts.known = false;
+    facts.usable = false;
     expect(renderHook(() => useMarketplaceHere()).result.current).toBe(false);
-    facts.known = true;
+    facts.usable = true;
     facts.identity = { signer: ACCOUNT, expiration: new Date(Date.now() - 1000).toISOString() };
     expect(renderHook(() => useMarketplaceHere()).result.current).toBe(false);
   });
