@@ -17,6 +17,7 @@ import { Button, Chip, ChevronDown, ChevronLeft, EmptyState, MaskIcon, OptionMen
 import type { PreviewFocus, Wearable } from '../../engine/protocol'
 import { registerCancelLayer } from '../../lib/cancelLayers'
 import { subscribeHudScale } from '../../lib/hudScale'
+import { AvatarDragSurface } from '../engine/AvatarDragSurface'
 import { EngineViewport } from '../engine/EngineViewport'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import type { ProfileState, ShopState } from '../session/useEngineSession'
@@ -68,6 +69,11 @@ export interface InWorldShopProps {
   stage: (rect: Rect | null) => void
   /** Plays an emote on the preview avatar (again on every call); null stops it. */
   emote: (urn: string | null) => void
+  /** Turns the preview avatar by these degrees (a drag over it). */
+  rotate: (degrees: number) => void
+  /** Zooms the preview avatar's camera to this many times its framing, keeping the height `anchor` of its view
+   *  in place (the wheel over it). */
+  zoom: (zoom: number, anchor: number) => void
   /** No engine draws the avatar (the UI-only mock): the stage shows whole, without the avatar's window. */
   noEngine?: boolean
   /** Emotes tried on on the avatar (TRY ON, playing on select, STOP EMOTE): on wherever an engine draws the
@@ -99,7 +105,7 @@ async function openWebShop(url: string | null): Promise<void> {
   if (go) window.open(url, '_blank', 'noopener')
 }
 
-export default function InWorldShop({ shop, profile, onNavigate, setEngineViewport, equipped, preview, focus, stage, emote, noEngine = false, emoteTryOn = !noEngine }: InWorldShopProps): React.JSX.Element | null {
+export default function InWorldShop({ shop, profile, onNavigate, setEngineViewport, equipped, preview, focus, stage, emote, rotate, zoom, noEngine = false, emoteTryOn = !noEngine }: InWorldShopProps): React.JSX.Element | null {
   // The Shop opens on the wearables catalogue, as the design's every frame of this flow does.
   const [section, setSection] = useState<Section>('wearables')
   const queryClient = useQueryClient()
@@ -501,6 +507,8 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
           {/* The engine draws the avatar preview here, seen through the backdrop's hole. */}
           <div className={styles.preview}>
             <EngineViewport region="avatarPreview" report={setEngineViewport} />
+            {/* Drag to turn the avatar, the wheel to zoom: wherever an engine draws it. */}
+            {!noEngine && <AvatarDragSurface onRotate={rotate} onZoom={zoom} />}
           </div>
           {playing != null && (
             // The design's EMOTE controls, over the avatar while an emote plays.
