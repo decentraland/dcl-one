@@ -11,7 +11,7 @@
     "record": "node record.mts",
     "capture": "node capture.mts",
     "gate": "node gate.mts",
-    "test": "node --test lib/*.test.mts",
+    "test": "node --test lib/*.test.mts test/*.test.mts",
     "typecheck": "tsc -p ."
   },
   "dependencies": {

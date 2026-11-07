@@ -9,18 +9,9 @@
 // give the same session on every run, and the captures do not change with it.
 import type { BrowserContext } from "playwright-core";
 import { keccak256, toHex, type Hex } from "viem";
+
+export { runnable, walletKey, WALLET_KEY_ENV } from "./wallet-key.mts";
 import { privateKeyToAccount } from "viem/accounts";
-
-export const WALLET_KEY_ENV = "SHOP_PARITY_WALLET_KEY";
-
-/** The test wallet's key, or a refusal naming the variable: a signed-in page never runs signed out. */
-export function walletKey(env: NodeJS.ProcessEnv = process.env): Hex {
-  const key = env[WALLET_KEY_ENV]?.trim();
-  if (!key || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
-    throw new Error(`${WALLET_KEY_ENV} must hold the test wallet's 0x-prefixed private key for the signed-in pages`);
-  }
-  return key as Hex;
-}
 
 export type SharedIdentity = {
   ephemeralIdentity: { address: string; publicKey: string; privateKey: string };
@@ -79,7 +70,19 @@ export async function signIn(context: BrowserContext, key: Hex, now: number, rpc
             case "wallet_switchEthereumChain":
             case "wallet_addEthereumChain":
               return null;
+            case "personal_sign":
+            case "eth_sign":
+            case "eth_signTypedData":
+            case "eth_signTypedData_v3":
+            case "eth_signTypedData_v4":
+            case "eth_sendTransaction":
+            case "eth_sendRawTransaction":
+              // A capture never signs or sends: the wallet declines, as a buyer would (EIP-1193 4001).
+              throw Object.assign(new Error("User rejected the request."), { code: 4001 });
             default: {
+              if (!/^(eth_(call|getBalance|blockNumber|chainId|getBlockBy(Number|Hash)|getCode|getLogs|getTransaction(Count|Receipt|ByHash)|estimateGas|gasPrice|feeHistory|maxPriorityFeePerGas|getStorageAt)|net_version)$/.test(method)) {
+                throw Object.assign(new Error(`The test wallet does not support ${method}.`), { code: 4200 });
+              }
               const res = await fetch(rpcUrl, {
                 method: "POST",
                 headers: { "content-type": "application/json" },

@@ -137,8 +137,8 @@ export async function captureSide(
   opts: CaptureOptions,
 ): Promise<SideCapture> {
   const context = await sideContext(browser, vp, { now: opts.now, seed: opts.seed });
-  if (spec.signedIn) await signIn(context, walletKey(), opts.now);
   try {
+    if (spec.signedIn) await signIn(context, walletKey(), opts.now);
     return await captureIn(context, spec, vp, side, opts);
   } finally {
     await context.close();

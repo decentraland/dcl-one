@@ -350,6 +350,51 @@ describe("fillMisses", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+  it("never sends a signed write while recording, and a signed read goes out signed again as the test wallet", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "parity-"));
+    const realFetch = globalThis.fetch;
+    const sent: { url: string; headers: Record<string, string> }[] = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      sent.push({ url: String(url), headers: (init?.headers ?? {}) as Record<string, string> });
+      return new Response('{"ok":true}', { headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    try {
+      const signer = async (method: string, path: string, metadata: string) => ({ "x-identity-auth-chain-0": `${method} ${path}`, "x-identity-metadata": metadata });
+      const live = new Recording(dir, { live: true, signer });
+      const signedBy = { "x-identity-auth-chain-0": "page", "x-identity-metadata": '{"signer":"dcl:marketplace"}' };
+      const write = await live.answer({ method: "POST", service: "marketplace", path: "/v1/favorites", search: "", body: Buffer.from("{}"), headers: signedBy, side: "t" });
+      assert.equal(write.status, 403);
+      assert.equal(sent.length, 0, "nothing went out");
+      assert.match(live.failures.join("\n"), /POST marketplace \/v1\/favorites: a signed write, never sent/);
+      const read = await live.answer({ method: "GET", service: "marketplace", path: "/v1/activity", search: "", headers: signedBy, side: "t" });
+      assert.equal(read.status, 200);
+      assert.equal(sent[0]!.headers["x-identity-auth-chain-0"], "GET /v1/activity");
+      assert.equal(sent[0]!.headers["x-identity-metadata"], '{"signer":"dcl:marketplace"}', "the page's metadata, kept");
+    } finally {
+      globalThis.fetch = realFetch;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it("a fill without the test wallet's key fails a miss the page signed instead of sending it unsigned", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "parity-"));
+    const realFetch = globalThis.fetch;
+    let asked = 0;
+    globalThis.fetch = (async () => {
+      asked++;
+      return new Response("{}", { headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    try {
+      const replay = new Recording(dir);
+      await replay.answer({ method: "GET", service: "credits", path: "/users/0xabc/credits", search: "", headers: { "x-identity-auth-chain-0": "page" }, side: "t" });
+      const { filled, failed } = await fillMisses(replay, new Recording(dir, { live: true, retryDelays: [0, 0] }), () => {});
+      assert.equal(asked, 0);
+      assert.equal(filled, 0);
+      assert.deepEqual(failed, ["GET credits /users/0xabc/credits: signed by the page, and no test wallet key to sign it again"]);
+    } finally {
+      globalThis.fetch = realFetch;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   it("asks a server error again, keeps none, and lists it as not filled, an rpc one too", async () => {
     const dir = mkdtempSync(join(tmpdir(), "parity-"));
     const realFetch = globalThis.fetch;

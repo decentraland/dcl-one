@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { recoverMessageAddress } from "viem";
-import { sessionFor, signedHeaders, walletKey, WALLET_KEY_ENV } from "./session.mts";
+import { sessionFor, signedHeaders } from "../lib/session.mts";
 
+// The session signs with viem: these run with `pnpm test` after `pnpm install` (README), not in the
+// no-install structure check, which runs lib/*.test.mts.
 // An obviously fake key: the tests never touch a real wallet.
 const KEY = `0x${"11".repeat(32)}` as const;
 const NOW = Date.parse("2026-11-06T12:00:00Z");
@@ -35,11 +37,5 @@ describe("the signed-in session", () => {
     const { identity } = await sessionFor(KEY, NOW);
     const recovered = await recoverMessageAddress({ message: entity.payload, signature: entity.signature });
     assert.equal(recovered, identity.ephemeralIdentity.address);
-  });
-
-  it("refuses to run a signed-in page without the test wallet's key", () => {
-    assert.throws(() => walletKey({}), new RegExp(WALLET_KEY_ENV));
-    assert.throws(() => walletKey({ [WALLET_KEY_ENV]: "0x1234" }), new RegExp(WALLET_KEY_ENV));
-    assert.equal(walletKey({ [WALLET_KEY_ENV]: ` ${KEY} ` }), KEY);
   });
 });

@@ -48,8 +48,12 @@ const both1 = (s: string): PerSide<string[]> => ({ reference: [s], "dcl-one": [s
 const UP = "translate(normalize-space(),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ')";
 /** An element by its visible words, case-insensitively (the same words on both sides). */
 const byText = (tag: string, text: string, scope = "//main") => `xpath=${scope}//${tag}[${UP}='${text.toUpperCase()}']`;
-/** An element anywhere on the page whose visible words start with `text`, case-insensitively. */
-const startsWith = (tag: string, text: string) => `xpath=//${tag}[starts-with(${UP},'${text.toUpperCase()}') and not(./${tag}[starts-with(${UP},'${text.toUpperCase()}')])]`;
+/**
+ * The innermost element in the cart drawer (a dialog both sides portal to the body, outside <main>) whose
+ * visible words start with `text`, case-insensitively.
+ */
+const inDrawer = (tag: string, text: string) =>
+  `xpath=//*[@role='dialog']//${tag}[starts-with(${UP},'${text.toUpperCase()}') and not(.//${tag}[starts-with(${UP},'${text.toUpperCase()}')])]`;
 /** Adds the detail page's item (or the second card's) through the page itself, as a buyer does. */
 async function addToCart(page: Page, path?: string) {
   if (path) await page.goto(new URL(path, page.url()).href, { waitUntil: "load" });
@@ -200,7 +204,7 @@ export const PAGES: PageSpec[] = [
     discover: async (page) => {
       const href = await page.locator("[data-testid=grid] [data-testid=card] a[data-testid=card-link]").first().getAttribute("href");
       if (!href) throw new Error("no card in the reference items grid to take as the detail page");
-      const second = await page.locator("[data-testid=grid] [data-testid=card] a[data-testid=card-link]").nth(1).getAttribute("href");
+      const second = await page.locator("[data-testid=grid] [data-testid=card] a[data-testid=card-link]").nth(1).getAttribute("href", { timeout: 5_000 }).catch(() => null);
       const shop = (h: string) => new URL(h, page.url()).pathname.replace(/^(?!\/shop)/, "/shop");
       return { item: shop(href), ...(second ? { item2: shop(second) } : {}) };
     },
@@ -302,11 +306,11 @@ export const PAGES: PageSpec[] = [
     maxHeight: 800,
     keys: [
       ...FRAME_KEYS,
-      { name: "drawer.title", selector: both(startsWith("*", "Shopping Cart")) },
-      { name: "drawer.added", selector: both(startsWith("*", "1 Item successfully added")) },
-      { name: "drawer.total", selector: both(startsWith("*", "Total:")) },
-      { name: "drawer.continue", selector: both(startsWith("button", "Continue shopping")) },
-      { name: "drawer.go-to-cart", selector: both(startsWith("button", "Go to cart")) },
+      { name: "drawer.title", selector: both(inDrawer("*", "Shopping Cart")) },
+      { name: "drawer.added", selector: both(inDrawer("*", "1 Item successfully added")) },
+      { name: "drawer.total", selector: both(inDrawer("*", "Total:")) },
+      { name: "drawer.continue", selector: both(inDrawer("button", "Continue shopping")) },
+      { name: "drawer.go-to-cart", selector: both(inDrawer("button", "Go to cart")) },
       { name: "subnav.cart", selector: both("[data-testid=subnav-cart]") },
     ],
     masks: [
@@ -363,8 +367,11 @@ export const PAGES: PageSpec[] = [
  * path, interactions, masks and rules; only the sign-in key, which a session replaces, is dropped.
  */
 function signedIn(spec: PageSpec, title: string): PageSpec {
+  // Discovery stays with the signed-out page: a second pass would rewrite targets already recorded under
+  // them (the reference reshuffles Buy the Look on every visit).
+  const { discover: _discover, ...rest } = spec;
   return {
-    ...spec,
+    ...rest,
     id: `${spec.id}-signed-in`,
     title,
     signedIn: true,
@@ -398,12 +405,16 @@ function plain(id: string, title: string, path: PageSpec["path"], extra: Partial
   };
 }
 
-const target = (key: string, fallback: string) => (t: Record<string, string>) => t[key] ?? fallback;
+/** A page discovered while recording: none recorded is a refusal, never another page under this id. */
+const target = (key: string) => (t: Record<string, string>) => {
+  if (!t[key]) throw new Error(`the recording has no ${key} target (record a new set: discovery reads it)`);
+  return t[key];
+};
 
 PAGES.push(
-  plain("collection", "A collection (the detail page's)", target("collection", "/shop/items")),
-  plain("creator", "A creator's items (the detail page's)", target("creator", "/shop/items")),
-  plain("outfit", "An outfit (Buy the Look, the home's first)", target("outfit", "/shop/overview")),
+  plain("collection", "A collection (the detail page's)", target("collection")),
+  plain("creator", "A creator's items (the detail page's)", target("creator")),
+  plain("outfit", "An outfit (Buy the Look, the home's first)", target("outfit")),
   plain("credits", "Buy credits", "/shop/credits"),
   plain("not-found", "A path the Shop does not have", "/shop/no-such-page"),
 );

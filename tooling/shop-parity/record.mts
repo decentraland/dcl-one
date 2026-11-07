@@ -4,7 +4,7 @@
 //
 //   node record.mts --set <name> [--pages overview,items] [--viewports desktop,mobile]
 //   node record.mts --set <name> --fill     # replay; read what the replay could not answer, once
-import { signedHeaders, walletKey, WALLET_KEY_ENV } from "./lib/session.mts";
+import { runnable, signedHeaders, walletKey, WALLET_KEY_ENV } from "./lib/session.mts";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { PAGES, type PageSpec } from "./pages.mts";
@@ -29,7 +29,7 @@ const set = arg("--set");
 if (!set || !/^[a-z0-9-]+$/.test(set)) throw new Error("--set <name> (lowercase, digits, dashes) is required");
 const dir = join(RECORDINGS, set);
 const wanted = arg("--pages")?.split(",");
-const specs = wanted ? PAGES.filter((p) => wanted.includes(p.id)) : PAGES;
+const specs = runnable(wanted ? PAGES.filter((p) => wanted.includes(p.id)) : PAGES);
 
 if (process.argv.includes("--fill")) {
   // Replay the recording, then read each request it could not answer once from production.

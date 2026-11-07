@@ -148,6 +148,11 @@ export class Recording {
    */
   private readonly signer?: (method: string, path: string, metadata: string) => Promise<Record<string, string>>;
 
+  /** Whether a request a page signed can go out signed (a live recording with the test wallet's signer). */
+  get canSign(): boolean {
+    return !!this.signer;
+  }
+
   constructor(dir: string, opts: { live?: boolean; retryDelays?: number[]; signer?: (method: string, path: string, metadata: string) => Promise<Record<string, string>> } = {}) {
     this.dir = dir;
     this.live = !!opts.live;
@@ -332,6 +337,12 @@ export class Recording {
       const res = await this.synthesize({ method, service: req.service, path: req.path, query, request });
       if (res) entry = this.store({ key, method, service: req.service, path: req.path, query, ...(request === undefined ? {} : { request }), status: res.status, contentType: res.contentType }, res.body);
     }
+    // Recording reads production: a request a page signed goes out (signed again) only when it reads. A
+    // signed write would change the test wallet's state, so it is never sent; it is listed and missed.
+    if (!entry && this.live && req.headers?.["x-identity-auth-chain-0"] && method !== "GET" && method !== "HEAD") {
+      this.failures.push(`${method} ${req.service} ${req.path}: a signed write, never sent while recording`);
+      return { status: 403, contentType: "application/json", body: Buffer.from(JSON.stringify({ ok: false, error: "a signed write is never sent while recording" })) };
+    }
     if (!entry && this.live && req.service !== "offers" && req.service !== "node") {
       const res = await this.fetchLive(method, req.service, req.path, query, req.body, req.headers);
       if (/^image\//.test(res.contentType)) {
@@ -416,7 +427,12 @@ export async function fillMisses(replay: Recording, live: Recording, log: (line:
       }
       try {
         const before = live.failures.length;
-        // A request the page signed goes out signed again (the live recording's signer, at the real time).
+        // A request the page signed goes out signed again (the live recording's signer, at the real time),
+        // or not at all: sent unsigned, its refusal would be kept as the answer.
+        if (m.signed !== undefined && !live.canSign) {
+          failed.push(`${m.method} ${m.service} ${m.path}: signed by the page, and no test wallet key to sign it again`);
+          continue;
+        }
         const signedBy: Record<string, string> = m.signed === undefined ? {} : { "x-identity-auth-chain-0": "page", "x-identity-metadata": m.signed };
         const answer = await live.answer({ method: m.method, service: m.service, path: m.path, search: m.query, body: sent?.body, headers: { "content-type": sent?.contentType ?? "application/json", accept: "application/json", ...signedBy }, side: "fill" });
         // A server error (an rpc one is answered 200 with a JSON-RPC error) was not kept.
