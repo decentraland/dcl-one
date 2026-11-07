@@ -49,6 +49,14 @@
     animation: none;
   }
 }
+/* An unclaimed name's #last-four, in silver after it. */
+.suffix {
+  margin-left: -3.604px;
+  color: var(--silver);
+  font-size: var(--type-shop-nametag);
+  font-weight: var(--fw-light);
+  line-height: normal;
+}
 .badge {
   flex: none;
   width: 25.231px;

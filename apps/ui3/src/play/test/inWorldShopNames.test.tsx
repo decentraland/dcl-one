@@ -1,13 +1,13 @@
 // The in-world Shop's Names: a NAME typed in UNIQUE NAME shows over the avatar in its nametag, is checked as
 // the web Shop checks it (length, banned list, the registrar), priced in Credits, and registered or offered
-// for on the web.
+// for on the web; RESALE NAME lists the NAMEs on resale, each bought on the web Marketplace.
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { keccak256, stringToHex } from 'viem'
 import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop'
-import { webNameResaleUrl, webNameUrl } from '../features/shop/itemLinks'
+import { webNameTokenUrl, webNameUrl } from '../features/shop/itemLinks'
 import { NAMETAG_PLACEHOLDER } from '../features/shop/ui'
 import { userNameColor } from '../engine/nameColor'
 import { nameQueries } from '../features/shop/namesQuery'
@@ -38,7 +38,19 @@ interface Routes {
   bannedDown?: boolean
   /** The credits quote is down. */
   quoteDown?: boolean
+  /** The NAMEs on resale (/shop-api/v1/nfts?category=ens): their labels and MANA prices, or down; or the
+   *  answer for each page, by how many it skips. */
+  resales?: { names: { name: string; priceWei: string }[]; total?: number } | 'down' | ((skip: number) => { names: { name: string; priceWei: string }[]; total: number })
 }
+
+const REGISTRAR = '0x2a187453064356c898cae034eaed119e1663acb8'
+
+/** A NAME on resale as the resale feed answers it. */
+const resaleRow = (name: string, priceWei: string, tokenId: string): Record<string, unknown> => ({
+  nft: { category: 'ens', chainId: 1, contractAddress: REGISTRAR, data: { ens: { subdomain: name } }, id: `${REGISTRAR}-${tokenId}`, name, network: 'ETHEREUM', tokenId, owner: '0x0000000000000000000000000000000000000001' },
+  order: { id: `o-${tokenId}`, contractAddress: REGISTRAR, tokenId, price: priceWei, status: 'open' },
+  rental: null
+})
 
 /** The banned list, the credits quote and the registrar's `available` through the catalyst's read relay. */
 function serve(routes: Routes = {}): ReturnType<typeof vi.fn> {
@@ -49,6 +61,12 @@ function serve(routes: Routes = {}): ReturnType<typeof vi.fn> {
       await routes.bannedAfter
       if (routes.bannedDown) return new Response('', { status: 503 })
       return Response.json({ data: routes.banned ?? [] })
+    }
+    if (path.endsWith('/shop-api/v1/nfts')) {
+      if (routes.resales === 'down') return new Response('', { status: 503 })
+      const page = typeof routes.resales === 'function' ? routes.resales(Number(url.searchParams.get('skip') ?? 0)) : routes.resales
+      const names = page?.names ?? []
+      return Response.json({ data: names.map((n, i) => resaleRow(n.name, n.priceWei, String(i + 1))), total: page?.total ?? names.length })
     }
     if (path.endsWith('/shop-api/v1/credit-quotes')) return routes.quoteDown ? new Response('', { status: 503 }) : Response.json({ items: [], amounts: [routes.credits ?? '94'] })
     if (path.includes('/rpc/')) {
@@ -290,16 +308,88 @@ describe('the in-world Shop’s Names', () => {
     await waitFor(() => expect(claim()).toBeEnabled())
   })
 
-  it('RESALE NAME opens the NAMEs for resale on the web Marketplace', async () => {
-    serve()
+  it('RESALE NAME lists the NAMEs on resale with their MANA price, each bought on the web Marketplace', async () => {
+    serve({ resales: { names: [{ name: 'Mojito', priceWei: '500000000000000000000' }, { name: 'Cattie', priceWei: '12500000000000000000' }] } })
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
     renderShop()
     await openNames()
     await userEvent.click(screen.getByRole('button', { name: 'Resale name' }))
+    expect(screen.getByRole('button', { name: 'Resale name' })).toHaveAttribute('aria-pressed', 'true')
+    const card = (await screen.findByRole('button', { name: 'Mojito.dcl.eth' })).parentElement!
+    expect(within(card).getByText('Decentraland Name')).toBeInTheDocument()
+    expect(within(card).getByTitle('500 MANA')).toHaveTextContent('500')
+    expect(screen.getByRole('button', { name: 'Cattie.dcl.eth' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Mojito.dcl.eth' }))
     await continueTo('You will be redirected to the web Marketplace')
-    expect(open).toHaveBeenCalledWith(webNameResaleUrl(), '_blank', 'noopener')
-    // UNIQUE NAME stays open here.
-    expect(screen.getByRole('button', { name: 'Unique name' })).toHaveAttribute('aria-pressed', 'true')
+    expect(open).toHaveBeenCalledWith(webNameTokenUrl(REGISTRAR, '1'), '_blank', 'noopener')
+    expect(new URL(open.mock.calls[0]![0] as string).pathname).toBe(`/shop/token/${REGISTRAR}/1`)
+  })
+
+  it('says when no NAME is on resale, and offers to try again when the list can’t be read', async () => {
+    serve({ resales: 'down' })
+    renderShop()
+    await openNames()
+    await userEvent.click(screen.getByRole('button', { name: 'Resale name' }))
+    expect(await screen.findByText('Couldn\'t load the NAMEs on resale')).toBeInTheDocument()
+    serve({ resales: { names: [] } })
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('No NAMEs on resale right now')).toBeInTheDocument()
+  })
+
+  it('pages RESALE NAME through the list, newest listings first', async () => {
+    const f = serve({ resales: { names: [{ name: 'Mojito', priceWei: '1000000000000000000' }], total: 30 } })
+    renderShop()
+    await openNames()
+    await userEvent.click(screen.getByRole('button', { name: 'Resale name' }))
+    await screen.findByRole('button', { name: 'Mojito.dcl.eth' })
+    const asked = (): URL[] => f.mock.calls.map(([input]) => new URL(String(input), location.href)).filter((u) => u.pathname.endsWith('/shop-api/v1/nfts'))
+    expect(asked().at(-1)!.searchParams.get('sortBy')).toBe('recently_listed')
+    expect(asked().at(-1)!.searchParams.get('isOnSale')).toBe('true')
+    await userEvent.click(screen.getByRole('button', { name: '2' }))
+    await waitFor(() => expect(asked().at(-1)!.searchParams.get('skip')).toBe('24'))
+  })
+
+  it('goes back to the last page there is when the one shown empties', async () => {
+    // Page 2 held one NAME, sold before it was read: 24 are left, all on page 1.
+    const firstPage = Array.from({ length: 24 }, (_, i) => ({ name: i === 0 ? 'Mojito' : `Name${i}`, priceWei: '1000000000000000000' }))
+    let sold = false
+    serve({ resales: (skip) => (skip === 0 ? { names: firstPage, total: sold ? 24 : 25 } : { names: [], total: 24 }) })
+    renderShop()
+    await openNames()
+    await userEvent.click(screen.getByRole('button', { name: 'Resale name' }))
+    await screen.findByRole('button', { name: 'Mojito.dcl.eth' })
+    // Whatever shows on the way: "none on resale" never does, with 24 left. Each added node keeps its text
+    // after it is gone, so even a state shown for one commit is seen.
+    const seen: string[] = []
+    const watch = new MutationObserver((records) => {
+      for (const record of records) for (const node of record.addedNodes) seen.push(node.textContent ?? '')
+    })
+    watch.observe(document.body, { childList: true, subtree: true, characterData: true })
+    sold = true
+    await userEvent.click(screen.getByRole('button', { name: '2' }))
+    expect(await screen.findByRole('button', { name: 'Mojito.dcl.eth' })).toBeInTheDocument()
+    // The first page is read again for what's left, so the pager no longer offers the page that emptied.
+    await waitFor(() => expect(screen.queryByRole('button', { name: '2' })).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Mojito.dcl.eth' })).toBeInTheDocument()
+    watch.disconnect()
+    expect(seen.some((text) => text.includes('No NAMEs on resale right now'))).toBe(false)
+  })
+
+  it('shows the player’s own name over the avatar on RESALE NAME: claimed with its badge, unclaimed with its suffix', async () => {
+    serve({ resales: { names: [] } })
+    const { rerender, props } = renderShop()
+    await openNames()
+    await userEvent.click(screen.getByRole('button', { name: 'Resale name' }))
+    expect(nametag()).toHaveTextContent('Mojito')
+    expect(nametag()!.querySelector('img')).not.toBeNull()
+    // The engine names an unclaimed name with # and the last four of the address (ADDRESS ends in b47f).
+    rerender({ profile: { ...props.profile, data: { ...ME, name: 'Guest#b47f', hasClaimedName: false } } })
+    expect(nametag()).toHaveTextContent(/^Guest#b47f$/)
+    expect(nametag()!.querySelector('img')).toBeNull()
+    // A name that comes without them takes them from the address.
+    rerender({ profile: { ...props.profile, data: { ...ME, name: 'Guest', hasClaimedName: false } } })
+    expect(nametag()).toHaveTextContent(/^Guest#b47f$/)
+    expect(nametag()!.querySelector('img')).toBeNull()
   })
 
   it('hides the nametag while the avatar is zoomed, and shows it once back out', async () => {

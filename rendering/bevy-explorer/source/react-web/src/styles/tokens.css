@@ -50,6 +50,8 @@
   --shop-modal: #4c147c; /* the New Shop's dialogs (Buy Item, Purchase successful…) */
   --brand-purple: #691fa9; /* Brand/Purple: a card's thumbnail base, the skeleton's band */
   --brand-purple-dark: #4c147c; /* Brand/Purple Dark: the skeleton's base */
+  --name-card-base: #604cb0; /* the Shop's NAME card art, under its glows */
+  --name-card-shine: #d3d3d3; /* the Shop's NAME card art's shine border */
 
   /* status */
   --online: #57df41;
@@ -236,6 +238,8 @@
   --type-36: 36px;
   --type-60: 60px;
   --type-shop-nametag: 32.44px; /* the Shop's NAMEs nametag over the avatar: the 18px nametag at 1.802× */
+  --type-name-card-label: 24.36px; /* the NAME card art's "Name" */
+  --type-name-card-domain: 16.24px; /* the NAME card art's "DCL.ETH" */
   --h2-tracking: -0.5px; /* the design's typography/h2 (Inter Semi Bold 60) */
 
   /* Lobby cards. Translucent values are measured on screen against the parity capture, not
