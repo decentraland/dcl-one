@@ -25,9 +25,14 @@ jobs:
           # buf breaking compares against origin/main's proto tree (git archive, no LFS)
           fetch-depth: 0
           lfs: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 12.9.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+          cache: pnpm
+          cache-dependency-path: library/protocol/pnpm-lock.yaml
       - name: Install dependencies and the google well-known types
         run: make install
       - name: Lint

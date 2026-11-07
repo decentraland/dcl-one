@@ -15,12 +15,12 @@
   "license": "Apache-2.0",
   "main": "index.js",
   "scripts": {
-    "build": "./scripts/generate.sh",
-    "test": "./scripts/check-proto-compabitility.sh",
+    "build": "bash scripts/generate.sh",
+    "test": "bash scripts/check-proto-compabitility.sh",
     "gen:test": "node protoc-gen-bitwise/test/generator.test.js"
   },
   "devDependencies": {
-    "@protobuf-ts/protoc": "^2.8.1",
+    "@protobuf-ts/protoc": "2.11.1",
     "typescript": "^5.0.4"
   },
   "config": {
@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@dcl/ts-proto": "1.154.0",
+    "long": "5.3.2",
     "protobufjs": "7.2.4"
   },
   "files": [

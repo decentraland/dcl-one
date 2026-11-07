@@ -1,0 +1,41 @@
+packages:
+  - packages/@dcl/*
+  - test/snapshots
+  - test/build-ecs/fixtures/*
+
+# Supply-chain hardening (pnpm 12 reads its settings here, not from .npmrc):
+# - No dependency runs code at install time: every one that declares an install
+#   script is listed below and refused. esbuild's and unrs-resolver's only check
+#   for a binary that ships as a platform optionalDependency; the others print
+#   notices. A new one makes pnpm warn, which is the moment to decide on it.
+# - New deps get saved with exact versions; ranges make every lockfile
+#   regeneration a chance to pull a freshly-compromised patch release.
+# - A release has to be a week old before it resolves.
+saveExact: true
+minimumReleaseAge: 10080
+allowBuilds:
+  '@dcl/protocol': false
+  '@dcl/sdk': false
+  '@dcl/sdk-commands': false
+  '@dcl/ts-proto': false
+  esbuild: false
+  eslint-import-context: false
+  eslint-import-resolver-typescript: false
+  ipfs-unixfs: false
+  ipld-dag-pb: false
+  jest-resolve: false
+  protobufjs: false
+  ts-proto: false
+  ts-proto-descriptors: false
+  unrs-resolver: false
+
+# Pins npm carried as `overrides`; pnpm reads them from here.
+overrides:
+  protobufjs: ^7.6.3
+  'semver@<7.5.2': ^7.5.4
+  'minimatch@<3.1.4': ^3.1.4
+  'zod@<=3.22.2': ^3.23.8
+  'ajv@<6.14.0': ^6.14.0
+  'minimatch@>=9.0.0 <9.0.7': ^9.0.7
+  test-exclude: ^7.0.1
+  'glob@10': ^13.0.6

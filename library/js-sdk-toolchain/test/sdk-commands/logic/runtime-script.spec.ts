@@ -1,5 +1,5 @@
 jest.mock(
-  '@dcl/inspector/node_modules/@dcl/asset-packs/dist/events',
+  '@dcl/asset-packs/dist/events',
   () => ({
     getActionEvents: jest.fn((entity) => ({
       emit: jest.fn()
@@ -8,7 +8,7 @@ jest.mock(
   { virtual: true }
 )
 
-import { getActionEvents } from '@dcl/inspector/node_modules/@dcl/asset-packs/dist/events'
+import { getActionEvents } from '@dcl/asset-packs/dist/events'
 import { runScripts } from '../../../packages/@dcl/sdk-commands/src/logic/runtime-script'
 import { IEngine, Entity, EntityState } from '../../../packages/@dcl/ecs/dist'
 

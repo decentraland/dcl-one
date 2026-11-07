@@ -31,7 +31,11 @@
     "displayName": "ECS",
     "tsconfig": "./tsconfig.json"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@protobufjs/utf8": "1.1.2",
+    "long": "5.3.2",
+    "protobufjs": "7.6.5"
+  },
   "types": "./dist/index.d.ts",
   "typings": "./dist/index.d.ts"
 }

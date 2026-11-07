@@ -4,11 +4,11 @@
   "version": "7.0.0",
   "author": "Decentraland",
   "dependencies": {
-    "@dcl/ecs": "file:../ecs",
+    "@dcl/ecs": "workspace:*",
     "@dcl/ecs-math": "2.1.0",
-    "@dcl/js-runtime": "file:../js-runtime",
-    "@dcl/react-ecs": "file:../react-ecs",
-    "@dcl/sdk-commands": "file:../sdk-commands"
+    "@dcl/js-runtime": "workspace:*",
+    "@dcl/react-ecs": "workspace:*",
+    "@dcl/sdk-commands": "workspace:*"
   },
   "keywords": [],
   "license": "Apache-2.0",
@@ -20,7 +20,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "npm run build && tsc -p tsconfig.json --watch"
+    "start": "pnpm run build && tsc -p tsconfig.json --watch"
   },
   "tsdoc": {
     "tsdocFlavor": "AEDoc"
