@@ -6,11 +6,16 @@
 The explore crate answers `/api` for the Explorer, the old places website and the old
 events website. The reference is the pinned source of the services it replaces,
 `decentraland/places@e660fbc2` and `decentraland/events@b60d5bbd`, with dated production
-captures where the source leaves behaviour to data. `GET /api/places` is the exception:
-its reference is `decentraland/discovery-server@81f0dcae`, the service that serves the
-route in production. Parity is strict: a request shaped as those clients send it gets the
-answer the pinned source gives, status, envelope, field set and date format included.
-dcl-one answers more only where this document records it.
+captures where the source leaves behaviour to data. Production served exactly those two
+commits on 2026-11-07 (`/api/status` of each service names its image). `GET /api/places`
+is the exception: its query parsing follows `decentraland/discovery-server@81f0dcae`, the
+merged rewrite of the route, which is not deployed; the inputs on which the two parsers
+differ (`limit=abc`, `offset=-1`, `order_by=user_visits`, `only_highlighted=1`,
+`search=a,b`) are sent by none of the pinned callers below. Parity is strict: a request
+shaped as those clients send it gets the answer the pinned source gives, status, envelope,
+field set and date format included. dcl-one answers more only where this document records
+it. `/v1` is dcl-one's own surface, outside this contract: its gate is the OpenAPI
+contract in `library/catalyst-api` and the sites tests.
 
 ## The gate
 
@@ -39,8 +44,9 @@ gaps; a failure there is a regression. The fixtures README documents the grammar
   value is `like_score`. `most_active` reads the places with players, at most 100, best
   liked first, sorts them by headcount and pages that set; `total` is the size of the set.
   Without a presence snapshot the mirrored headcount stands in for the live one.
-- `owner` matches the row's own owner, lowercased, or a parcel the owner holds or
-  operates. `sdk` matches the major or a `major.` prefix as given.
+- `owner` matches the row's own owner, lowercased, the creator address where the row has
+  no owner, or a parcel the owner holds or operates. The creator fallback is dcl-one's
+  (recorded below). `sdk` matches the major or a `major.` prefix as given.
 
 Known differences: the row keeps the fields the pinned places source adds
 (`connected_addresses`, `deployment_id`, `exclude_from_ranking`, `live`, `live_event_name`,
@@ -49,6 +55,24 @@ Known differences: the row keeps the fields the pinned places source adds
 where the discovery server's columns are not; the 400 for too many values carries dcl-one's
 error envelope (`error` holds the message and `code` is `bad_request`; the discovery
 server's `error` holds the class name).
+
+## Recorded differences on production data
+
+Measured on 2026-11-07 against the mirrored production catalogue with the queries the
+pinned callers build. Each is a known difference, not an approval.
+
+- `owner`: 93 places have a creator and no owner (23 121 have neither; none has an owner
+  that differs from its creator). The node answers them for `?owner=<creator>`
+  (`places/query.rs`), serves `owner` as the creator (`places/rows.rs`) and
+  `creator_address` lowercased; the old places service answers none, serves `owner` null
+  and `creator_address` as stored. `?owner=` with the zero address answers 54 rows here
+  and none there.
+- `GET /api/destinations` with several `categories`: the totals differ (906 against 847
+  for `art` and `music`); each category alone, and `GET /api/places` with both, agree.
+- `previous_place_id`: the old events service serves it on `/api` lists; the node omits it
+  (`events/handlers.rs`; the fixtures list the key as optional).
+- An event the old service deleted stays readable as approved until the mirror's grace
+  sweep marks it (`events/mirror.rs`).
 
 ## Contract as the pinned source gives it
 
@@ -63,7 +87,9 @@ server's `error` holds the class name).
   whose keys are a subset of `actor`, `approved`, `rejected` and `reason` is a state
   change (`events Event/routes/admin.ts:63`, `:253-257`, `:274-286`), any other body a
   content edit of the editable attributes; `action` and `rejection_reason` are
-  unsupported admin event fields (400).
+  unsupported admin event fields (400). The admin bearer's audit actor (`approved_by`,
+  `rejected_by`, `deleted_by`) is `admin`; the old events service recorded the name of
+  its internal bot.
 - POST, PUT and PATCH on the events routes answer 201
   (`decentraland-gatsby@9.0.1 dist/entities/Route/handle/utils.js:4-15`), PUT and POST
   on the places routes too (`dist/entities/Route/wkc/routes/utils.js:13-24`). A router
@@ -100,7 +126,13 @@ server's `error` holds the class name).
 - `DATA_WRITES_ENABLED` and `OPS_WRITES_ENABLED` answer 503 with `Retry-After` when off.
   Before a mirror's first complete pass the routes answer from the database, a static copy
   that has not landed yet answers 503 with `Retry-After`, and owner edits of a mirrored
-  event answer 409 while the node mirrors.
+  event answer 409 while the node mirrors. The 409 follows the row's `origin`
+  (`events/writes.rs`), not the configuration: a row the mirror wrote keeps `upstream`
+  after `EVENTS_MIRROR_UPSTREAM` is turned off, and only rows an older binary created
+  locally are reclaimed (`events/mirror.rs`). Cut-over is decided as configuration: when
+  the mirror is off, the rows it wrote become local and their owners edit them, and the
+  read gate is open. That reclassification is next work, with a fixture that proves an
+  owner edit succeeds on a formerly mirrored event once the mirror is off.
 - Browser origins are the old services' per-router allow-lists rather than the reflecting
   CORS the shared crate offers. `EXPLORE_CORS_ORIGINS` appends a deployment's own origins
   to every list.
@@ -111,6 +143,9 @@ server's `error` holds the class name).
 - The `:runner:` upcoming-event Slack notice is off by default; `EVENTS_UPCOMING_SUMMARIES_ENABLED=true`
   queues one per reminded occurrence through the outbox. The old events service posted it
   whenever a webhook was configured.
+- `POST /api/events` without a blob store answers 503 in dcl-one's words
+  (`known_gaps.json`, `events.create.image_bucket_unconfigured`): the old events service
+  named its bucket variable, dcl-one has no bucket.
 
 ## Moderation outbox
 
@@ -119,7 +154,8 @@ Slack-compatible notices of the events routes (`SLACK_WEBHOOK`) and of the place
 table, `explore.moderation_hooks`, told apart by a `channel` column, and posted by one
 leased job with bounded retries and retention. The job delivers each notice at least
 once. A crash after the Slack request and before the row completes sends the notice
-again, and Slack has no idempotency key that drops the copy. While the database has the
+again, and Slack has no idempotency key that drops the copy. Places notices go to the one
+`PLACES_MODERATION_WEBHOOK`; the old places service posted to two channels. While the database has the
 table `explore.event_moderation_hooks`, every pass of the job first moves its pending
 rows into the outbox; the release `schemas/releases/explore-retired-hook-tables.sql`
 drops that table and the unused `explore.event_upcoming_hooks` once every replica
@@ -136,21 +172,33 @@ ground truth: an entity with imported rows takes its rates from the fact table a
 a wallet's later local vote replaces its imported one, so nobody counts twice.
 [Places](../../services/catalyst/docs/places.md) describes the import.
 
-## Open
+## Supersets kept
 
-- Which supersets stay as explicit exceptions: case-insensitive world ids on lookups,
-  `order_by=most_active` on `GET /api/worlds`,
-  `pointer` without `names` narrowing destinations to places, the `/api/status` extras, the `PATCH /api/places/{id}/disable` route with a
-  free-text reason, a custom `url` any signer sets on create and owner edits keep,
-  poster filenames by content hash with the asset-URL guard and the profile requirement,
-  and the old places service's double HTML escaping reproduced in social cards. Until
-  decided, the `/api/status` extras are the two status entries in `known_gaps.json`.
-- The create-event 503 wording when no blob store is configured: the old events service
-  names its bucket variable, dcl-one has no bucket.
-- Whether places moderation posts to two Slack channels as the old places service does.
-- The admin bearer's default audit actor (`approved_by`, `rejected_by`, `deleted_by`) is
-  `admin`; the old events service recorded the name of its internal bot.
-- The 409 on owner edits of mirrored events and the read gate after a cut-over from
-  mirroring.
-- The old websites' front-end code is not in the pinned repositories, so the caller
-  dimension of parity stays unproven until their repositories and commits are pinned.
+dcl-one answers more than the pinned source in these places; each stays as a recorded
+exception:
+
+- world ids are matched case-insensitively on lookups;
+- `order_by=most_active` on `GET /api/worlds`;
+- `pointer` without `names` narrows destinations to places;
+- `GET /api/status` adds `catalogue`, `configured_mirrors` and `mirrors` to the three
+  upstream keys (today the two status entries in `known_gaps.json`; they become accepted
+  entries next);
+- `PATCH /api/places/{id}/disable` with a free-text reason;
+- a custom `url` any signer sets on create and owner edits keep;
+- poster filenames by content hash, with the asset-URL guard and the profile requirement;
+- the old places service's double HTML escaping is reproduced in social cards.
+
+## Callers
+
+The caller dimension is pinned to the clients production serves:
+`decentraland/unity-explorer@707055ad` (`DecentralandUrlsSource.cs`, `PlacesAPIClient.cs`,
+`HttpEventsApiService.cs`) and `decentraland/sites@17b3535`. Both resolve `/api/places`,
+`/api/worlds`, `/api/destinations`, `/api/map` and `/api/events` on the places and events
+hosts, or `/places/api/…` and `/events/api/…` through the gateway; neither requests `/v1`.
+Unity sends integers, `true` flags, repeated `categories`, `positions` and `names`,
+`order_by` with `order`, `owner`, `only_sdk7`, `with_live_events`, `with_connected_users`,
+and on events `list=live` or `highlight`, `positions[]`, `places_ids[]`, `community_id`,
+`from` and `to`, and `POST /api/events/search`. The sites send `only_highlighted=true`,
+`order_by=most_active`, `search` of three or more characters, `owner`,
+`with_realms_detail` and repeated `categories`. Twenty-three of their queries replayed
+against production and this node on 2026-11-07 agree, apart from the recorded differences.

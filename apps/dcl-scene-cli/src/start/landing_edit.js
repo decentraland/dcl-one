@@ -771,7 +771,15 @@
       );
       refresh();
       // the rebuild that attaches or drops the server lands after the save
-      setTimeout(refresh, 2500);
+      try {
+        await pageWaitForDocument((doc) => {
+          const server = doc.getElementById('mp-status')?.dataset.server;
+          return on ? server === 'running' || server === 'skipped' : server === 'off';
+        });
+        await refresh();
+      } catch (error) {
+        toast(error.message, true);
+      }
       return;
     }
     if (t.classList && t.classList.contains('sw') && t.dataset.perm) {

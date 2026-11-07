@@ -911,8 +911,8 @@ pub fn router(state: SharedState) -> Router {
 }
 
 /// `POST /livekit-webhook` alone, with the gatekeeper router's body cap and
-/// guards; `serve` also nests it under `/worlds-content-server`, where WCS
-/// received the same webhook.
+/// guards; `serve` mounts it at the root and under `/worlds-content-server`,
+/// where WCS received the same webhook.
 pub fn webhook_router(state: SharedState) -> Router {
     Router::new()
         .route("/livekit-webhook", post(webhook::livekit_webhook))
