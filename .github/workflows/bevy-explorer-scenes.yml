@@ -83,7 +83,7 @@ jobs:
         run: python ../../../apps/bevy-explorer/prepare-native-cache.py
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           # A graphical assertion must not force the next run to rebuild every dependency.
           cache-on-failure: true
           workspaces: rendering/bevy-explorer/source -> target
