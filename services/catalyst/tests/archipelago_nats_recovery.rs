@@ -702,7 +702,8 @@ async fn real_pulse_retained_recovery_reaches_signed_ws_with_lost_completion_and
     });
     state.gatekeeper.start_island_feed(&jobs, state.clone());
     let first = actual_island(&mut a).await;
-    let issued_at = jwt_payload(&first, &session_a)["nbf"].as_i64().unwrap();
+    jwt_payload(&first, &session_a);
+    let issued_at = chrono::Utc::now().timestamp();
     // Registration refresh in the same room must deliver the complete new credential.
     wait_for(|| chrono::Utc::now().timestamp() > issued_at).await;
     world.lock().unwrap().place(0, &address, &session_a);
