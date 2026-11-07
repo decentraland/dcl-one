@@ -12,15 +12,17 @@ packages the archive ships or bundles).
 
 ## What the blob is
 
-The SDK is this tree's own build of `library/js-sdk-toolchain`, whose components and scene APIs
-are generated from `library/protocol`. `scripts/build-base-blob.py` packs `@dcl/sdk`, `@dcl/ecs`,
-`@dcl/js-runtime`, `@dcl/react-ecs` and `@dcl/sdk-commands` the way npm would publish them
-(`pnpm pack`), stamps them with the scaffold's `@dcl/sdk` pin and rewrites their `file:` links to
-that pin. Everything else comes from the registry through `registry/pnpm-lock.yaml`: `typescript`
-(the scaffold's pin), `protobufjs` 7.2.4 (`library/protocol`'s pin; both are checked),
-`@dcl/asset-packs`, `@dcl/ecs-math`, `react`, `react-reconciler`, `@dcl/rpc`, `ws`, `mitt`, `long`
-and `@protobufjs/utf8`. `scripts/blob_collect.py` prunes that install tree to what is reachable;
-its pruning removes files and never edits one. `scripts/blob_overlays.py` holds the rewrites:
+Every `@dcl/*` package is this tree's own build. The SDK (`@dcl/sdk` with the smart-item runtime
+at `@dcl/sdk/smart-items`, `@dcl/ecs`, `@dcl/js-runtime`, `@dcl/react-ecs`) comes from
+`library/js-sdk-toolchain`, whose components and scene APIs are generated from `library/protocol`;
+`@dcl/ecs-math` comes from `library/ecs-math` and `@dcl/rpc` from `library/rpc`.
+`scripts/build-base-blob.py` packs each the way npm would publish it (`pnpm pack`), stamps the SDK
+packages with the scaffold's `@dcl/sdk` pin, keeps the other two at their manifest's version and
+rewrites the dependencies between them to the shipped versions. Everything else comes from the
+registry through `registry/pnpm-lock.yaml`: `typescript` (the scaffold's pin), `protobufjs` 7.2.4
+(`library/protocol`'s pin; both are checked), `react`, `react-reconciler`, `ws`, `mitt`, `long` and
+`@protobufjs/utf8`. `scripts/blob_collect.py` prunes that install tree to what is reachable; its
+pruning removes files and never edits one. `scripts/blob_overlays.py` holds the rewrites:
 
 | Function | What the blob carries that the install tree did not |
 | --- | --- |
@@ -76,7 +78,7 @@ Keep the license files the build script retains.
 | `host.js` | The data-layer host: 4 live RPC methods, 18 inert stubs |
 | `component-schemas.json` | 59 component schemas, a pinned snapshot of a real inspector |
 | `minimal-composite.json` | The composite written at boot when a scene has none |
-| `root-components.json` | The `asset-packs` entries seeded on entity 0 after every load |
+| `root-components.json` | The `smart-items` entries seeded on entity 0 after every load |
 
 - The live methods are `crdtStream`, `save`, `getInspectorPreferences` and
   `setInspectorPreferences`. That is enough for a live editing session: the editor connects,
@@ -97,9 +99,11 @@ Keep the license files the build script retains.
 ### Refresh the pinned snapshots
 
 `component-schemas.json`, `minimal-composite.json` and `root-components.json` come from an
-installed `@dcl/inspector` (currently 7.43.2 with `@dcl/asset-packs` 2.20.0). They cannot be derived
-from the blob. Re-run `scripts/dump-inspector-tables.cjs` on every inspector bump, against the
-install that `scripts/install-inspector-host.sh` produces (`~/.cache/dcl-scene-cli/inspector-host`).
+installed `@dcl/inspector` (currently 7.43.2). They cannot be derived from the blob. Re-run
+`scripts/dump-inspector-tables.cjs` on every inspector bump, against the install that
+`scripts/install-inspector-host.sh` produces (`~/.cache/dcl-scene-cli/inspector-host`); the dump
+renames the smart-item components the registry inspector still calls `asset-packs::*` to the
+`smart-items::` namespace and recomputes their component numbers.
 
 A stale table is a data-loss bug. The `@dcl/ecs` receive loop only re-broadcasts a component it
 does not know, so an edit to an undefined component is accepted, echoed and then dropped on the
@@ -126,9 +130,11 @@ order:
 1. **Install.** `pnpm install --frozen-lockfile` of `registry/` (hoisted, no scripts, no peer
    auto-install) into the work tree, after checking its `typescript` pin against the scaffold's
    and its `protobufjs` pin against `library/protocol`'s.
-2. **Pack the tree.** `pnpm pack` of the five SDK packages from `library/js-sdk-toolchain`, each
-   extracted over the install tree, stamped with the scaffold pin and its `file:` links rewritten.
-   The script refuses to run on an unbuilt toolchain.
+2. **Pack the tree.** `pnpm pack` of the four SDK packages from `library/js-sdk-toolchain` and of
+   `library/ecs-math` and `library/rpc`, each extracted into the install tree; the SDK packages
+   are stamped with the scaffold pin, the other two keep their version, and the dependencies
+   between them are rewritten to the shipped versions. The script refuses to run on an unbuilt
+   tree.
 3. **Prune by code reachability.** `reachable()` in `scripts/blob_collect.py` walks the bare
    specifiers of the `.js` and `.d.ts` files that will ship, from `ENTRY_PACKAGES`.
    Declarations count, because `build --production` type-checks.
@@ -158,14 +164,22 @@ To bump the `@dcl/sdk` or `typescript` pin, edit `src/templates/init/*/package.j
 `typescript` bump also goes into `registry/package.json`, followed by `pnpm install` there to
 refresh the lock. To change a registry extra, edit `registry/package.json` the same way.
 
-## Smart items (`@dcl/asset-packs`)
+## Smart items (`@dcl/sdk/smart-items`)
 
-`@dcl/asset-packs/dist/scene-entrypoint` resolves offline, and no bytes of the package ship.
+`@dcl/sdk/smart-items` resolves offline, and no file of it ships.
 
-- The runtime is inside `prebuilt/smart.js`. `build.rs` installs that chunk only for a scene
-  that is an editor scene or whose bundle names the package.
+- The runtime is inside `prebuilt/smart.js`, bundled out of the packed `@dcl/sdk` with the rest
+  of `@dcl/sdk/*` external (`split::smart_bundled`). `build.rs` installs that chunk only for a
+  scene that is an editor scene or whose bundle names the module. The chunk publishes
+  `@dcl/sdk/smart-items`, `@dcl/sdk/smart-items/scripts` and the deep paths the creator docs
+  import (`SMART_REGISTRY_KEYS` in `src/split.rs`).
 - The declarations are inside the ambient rollup at `@dcl/js-runtime/index.d.ts`
-  (`ROLLUP_PKGS` and `ROLLUP_FULL_SUBPATH_PKGS` in `scripts/build-base-blob.py`).
-- Do not add the package's `.d.ts` files to the blob. A `node_modules/@dcl/asset-packs` whose
-  `typings` resolve makes tsc prefer the on-disk tree over the rollup, and it drags in
-  declarations nothing public re-exports.
+  (`ROLLUP_FULL_SUBPATH_PKGS` in `scripts/build-base-blob.py` walks every `.d.ts` of
+  `@dcl/sdk`).
+- Composites written before the rename carry `asset-packs::` component names. Every reader
+  renames that prefix to `smart-items::` on load: `dcl_scene_authoring::composite_norm` for the
+  CLI and `library/dcl-scene-build`, `inspector-shim/host.js` for the data-layer host and
+  `templates/data-layer-host.mjs` for the crdt dumper.
+- Do not add `@dcl/sdk`'s `.d.ts` files to the blob. A `node_modules/@dcl/sdk` whose `types`
+  resolve makes tsc prefer the on-disk tree over the rollup, and it drags in declarations nothing
+  public re-exports.

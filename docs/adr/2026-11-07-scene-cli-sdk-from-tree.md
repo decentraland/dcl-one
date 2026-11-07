@@ -19,16 +19,20 @@ upstream publish and a pin bump, and the patched behaviour was not SDK source an
 
 The archive is built from this tree, by `apps/dcl-scene-cli/scripts/build-base-blob.py`:
 
-- `@dcl/sdk`, `@dcl/ecs`, `@dcl/js-runtime`, `@dcl/react-ecs` and `@dcl/sdk-commands` are the
-  output of `make -C library/js-sdk-toolchain install build`, whose generated components and
-  scene APIs come from `library/protocol`. Each is packed as npm would publish it (`pnpm pack`),
-  stamped with the scaffold's `@dcl/sdk` pin (`src/templates/init/scene/package.json`) and its
-  `file:` links between the five rewritten to that pin. The builder refuses an unbuilt toolchain.
+- Every `@dcl/*` package in the archive is the output of this tree's builds (`TREE_PACKAGES` in
+  the builder): `@dcl/sdk`, `@dcl/ecs`, `@dcl/js-runtime` and `@dcl/react-ecs` from
+  `make -C library/js-sdk-toolchain install build`, whose generated components and scene APIs
+  come from `library/protocol`, and `@dcl/ecs-math` and `@dcl/rpc` from `library/ecs-math` and
+  `library/rpc` (ADR 2026-11-07, pnpm, first-party `@dcl/*` packages and smart items in the
+  SDK). Each is packed as npm would publish it (`pnpm pack`); the SDK packages are stamped with
+  the scaffold's `@dcl/sdk` pin (`src/templates/init/scene/package.json`), the other two keep
+  their manifest's version, and every dependency between tree packages is rewritten to the
+  shipped version. The builder refuses an unbuilt toolchain.
 - Everything else the archive ships or bundles comes from the registry through
   `src/vendor/registry/{package.json,pnpm-lock.yaml}`, installed with
   `pnpm install --frozen-lockfile` (hoisted, no scripts, no peer auto-install). Two of those pins
   are owned elsewhere and only checked: `typescript` against the scaffold, `protobufjs` against
-  `library/protocol`. `@dcl/asset-packs` is pinned (2.26.0) instead of resolved at build time.
+  `library/protocol`. No `@dcl/*` package comes from the registry.
 - The `auth-server` line of `decentraland/js-sdk-toolchain` is merged into
   `library/js-sdk-toolchain` (its delta over the 2026-10-23 snapshot: server-side scenes,
   `@dcl/sdk/server`, authoritative component writes, `CreatedBy`, the state-request retry, the
@@ -59,8 +63,8 @@ The archive is built from this tree, by `apps/dcl-scene-cli/scripts/build-base-b
   resolves it; until then the pin states where the packages come from.
 - `library/js-sdk-toolchain` is the auth-server line, not upstream `main`: catching up with
   upstream (SDK ADR follow-up 6) means merging into that line.
-- The `@dcl/inspector` stand-in's component tables are still a snapshot of a registry inspector
-  (7.43.2 with `@dcl/asset-packs` 2.20.0) while the smart-item chunk bundles `@dcl/asset-packs`
-  2.26.0; `scripts/dump-inspector-tables.cjs` refreshes them from an installed inspector.
+- The `@dcl/inspector` stand-in's component tables are a snapshot of a registry inspector
+  (7.43.2) with the smart-item components renamed to the `smart-items::` namespace;
+  `scripts/dump-inspector-tables.cjs` refreshes them from an installed inspector.
 - Regenerating the archive needs the Nix shell (`node`, `pnpm`, `protoc`, `cargo`); the steps are
   in `apps/dcl-scene-cli/src/vendor/README.md`.

@@ -1,8 +1,8 @@
 """What of the install tree ships, and where the built pieces land.
 
-Imported by `build-base-blob.py`, never run. The install tree is the SDK
-built from `library/js-sdk-toolchain` plus the registry extras pinned in
-`src/vendor/registry`; the evidence for every prune is in that script's
+Imported by `build-base-blob.py`, never run. The install tree is the tree's
+own `@dcl/*` packages (`library/js-sdk-toolchain`, `library/ecs-math`,
+`library/rpc`) plus the registry extras pinned in `src/vendor/registry`; the evidence for every prune is in that script's
 module docstring, and this module is the policy it describes - the entry
 points, the per-package allowlists, the drop lists - and the reachability
 walk (`reachable()` -> `collect()`) that turns them into the file set, plus
@@ -69,7 +69,7 @@ FILE_ALLOWLIST = {
 }
 
 DROP_PACKAGES = {
-    '@dcl/react-ecs', '@dcl/ecs-math', '@dcl/asset-packs',
+    '@dcl/react-ecs', '@dcl/ecs-math',
     'react', 'react-reconciler', 'scheduler',
     'loose-envify', 'js-tokens',
 }

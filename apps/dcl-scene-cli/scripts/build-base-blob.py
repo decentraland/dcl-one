@@ -7,23 +7,26 @@ binaries - so one blob serves linux, macOS and Windows.
 
 Where everything in it comes from:
 
-* The SDK - `@dcl/sdk`, `@dcl/ecs`, `@dcl/js-runtime`, `@dcl/react-ecs` and
-  `@dcl/sdk-commands` - is this tree's own build of `library/js-sdk-toolchain`
-  (`make -C library/js-sdk-toolchain install build`), whose components and
-  scene APIs are generated from `library/protocol`. Each package is packed the
-  way npm would publish it (`pnpm pack`, so `files` and ignore rules apply),
-  stamped with the scaffold's `@dcl/sdk` pin
-  (`src/templates/init/scene/package.json`, the one place the version is
-  written), and its `file:` links between the five are rewritten to that pin.
-  `pack_tree_packages()`.
+* Every `@dcl/*` package is this tree's own build (`TREE_PACKAGES`). The SDK
+  - `@dcl/sdk` (with the smart-item runtime at `@dcl/sdk/smart-items`),
+  `@dcl/ecs`, `@dcl/js-runtime` and `@dcl/react-ecs` - comes from
+  `library/js-sdk-toolchain` (`make -C library/js-sdk-toolchain install
+  build`), whose components and scene APIs are generated from
+  `library/protocol`; `@dcl/ecs-math` comes from `library/ecs-math` and
+  `@dcl/rpc` from `library/rpc`, which that build compiles first. Each package
+  is packed the way npm would publish it (`pnpm pack`, so `files` and ignore
+  rules apply). The SDK packages are stamped with the scaffold's `@dcl/sdk`
+  pin (`src/templates/init/scene/package.json`, the one place the version is
+  written), `@dcl/ecs-math` and `@dcl/rpc` keep the version their manifest
+  carries, and every `workspace:`/`link:` dependency between tree packages is
+  rewritten to the version the blob ships. `pack_tree_packages()`.
 * Everything else the blob ships or bundles comes from the registry, pinned
   by `src/vendor/registry/{package.json,pnpm-lock.yaml}` and installed with
   `pnpm install --frozen-lockfile` (hoisted, no scripts, no peer
   auto-install): `typescript` (must equal the scaffold's pin), `protobufjs`
-  (must equal `library/protocol`'s pin), `@dcl/asset-packs`, `@dcl/ecs-math`,
-  `react`, `react-reconciler`, `@dcl/rpc`, `ws`, `mitt`, `long` and
-  `@protobufjs/utf8`. `install_registry()` checks the two pins that have
-  another owner.
+  (must equal `library/protocol`'s pin), `react`, `react-reconciler`, `ws`,
+  `mitt`, `long` and `@protobufjs/utf8`. `install_registry()` checks the two
+  pins that have another owner. No `@dcl/*` package comes from the registry.
 
 The blob does NOT ship the SDK as source. It ships the *build products* that
 source was only ever used to derive:
@@ -41,28 +44,27 @@ build. It is built here once instead, by `dcl-scene-cli vendor-chunks` (a
 hidden subcommand over `src/prebuilt.rs`), which is the only place either
 chunk is ever produced.
 
-The split into *two* chunks is what makes `@dcl/asset-packs` affordable in this
-blob at all. `entrypoint.rs` inlines the smart-item script runtime whenever
-`@dcl/asset-packs` merely *resolves*, which grows a single chunk by ~30% -
-reproducibly, even for a scene with no composite and no smart item anywhere.
-Split, the smart-item runtime is its own chunk, and `src/build.rs` installs it
-only when `Project::is_editor_scene()` is true or the built scene chunk
-actually names `@dcl/asset-packs` (`0,0-cube-spawner` in
-decentraland/sdk7-test-scenes imports `@dcl/asset-packs/dist/scene-entrypoint`
-from its own source with no composite at all, so the composite test alone is
-not enough).
+The split into *two* chunks keeps the smart-item runtime
+(`@dcl/sdk/smart-items`, about 30% of the SDK's runtime bytes) out of every
+scene that has no smart item. The smart chunk is its own file, and
+`src/build.rs` installs it only when `Project::is_editor_scene()` is true or
+the built scene chunk actually names `@dcl/sdk/smart-items` (a scene can boot
+the runtime from its own source with no composite at all, so the composite
+test alone is not enough).
 
 Two registry keys exist for the split: `@dcl/sdk/platform` and
-`@dcl/sdk/text-codec`. `@dcl/asset-packs` requires both, and once it lives in
-its own chunk those requires cross a chunk boundary. `verify_requires()` in
-`src/prebuilt.rs` confirms the smart chunk's complete external require set is
-`@dcl/ecs`, `@dcl/ecs-math`, `@dcl/ecs/dist/components`, `@dcl/react-ecs`,
-`@dcl/sdk/{ecs,math,message-bus,platform,text-codec}` and six `~system/*`.
+`@dcl/sdk/text-codec`. The smart-item runtime requires both, and because it
+lives in its own chunk those requires cross a chunk boundary.
+`verify_requires()` in `src/prebuilt.rs` confirms every external require of
+the smart chunk is a key the core chunk publishes (`@dcl/ecs`,
+`@dcl/ecs-math`, `@dcl/ecs/dist/components`, `@dcl/react-ecs`,
+`@dcl/sdk/{ecs,math,message-bus,platform,text-codec}`) or `~system/*`.
 
 **Why the rolled-up types.** `build --production` type-checks the scene, so the
 declarations have to be there even though the implementations do not. Rolling
-`@dcl/{sdk,ecs,react-ecs,ecs-math,js-runtime,asset-packs}` plus the
-`protobufjs`/`long`/`mitt` declarations they reach into ONE ambient `.d.ts`
+`@dcl/{sdk,ecs,react-ecs,ecs-math,js-runtime}` (smart items are a subpath of
+`@dcl/sdk`) plus the `protobufjs`/`long`/`mitt` declarations they reach into
+ONE ambient `.d.ts`
 replaces those `.d.ts` trees and, more to the point, lets the `.js` beside them
 go. See `build_types_rollup()` for the six transforms this forces and why each
 is mandatory. Verified: all 60 sdk7-test-scenes type-check to **byte-identical
@@ -74,8 +76,8 @@ An ambient `declare module "X"` wins over a real `node_modules/X` whose `types`
 entry does not resolve - which is what lets `@dcl/ecs` stay on disk as a
 runtime-only `dist-cjs` tree (the node-side crdt dumper needs it) while its
 types come from the rollup. Checked directly: a scene importing `@dcl/ecs`,
-`@dcl/sdk`, `@dcl/sdk/math` and `@dcl/asset-packs/dist/scene-entrypoint`
-type-checks clean against exactly that tree.
+`@dcl/sdk`, `@dcl/sdk/math` and `@dcl/sdk/smart-items` type-checks clean
+against exactly that tree.
 
 What gets dropped, and the evidence for each:
 
@@ -91,13 +93,10 @@ What gets dropped, and the evidence for each:
   `@dcl/ecs/dist-cjs/serialization/ByteBuffer` - the CRDT wire codec, in node,
   outside any chunk. That is also why `protobufjs/minimal`, `long` and
   `@protobufjs/utf8` stay: `dist-cjs` imports them.
-* `@dcl/sdk-commands` entirely (`NEVER` in `blob_collect.py`): the Rust CLI is
-  its replacement. Its `dist/logic/runtime-script.js` is bundled into the
-  smart chunk as the real `~sdk/script-utils`, which is the only reason the
-  package is in the install tree.
-* `@dcl/asset-packs` entirely (34 MB installed). Its runtime is in the smart
-  chunk and its declarations are in the rollup, so nothing reads the package
-  itself.
+* `@dcl/sdk-commands` and `@dcl/explorer`, should either ever reach the
+  install tree (`NEVER` in `blob_collect.py`): the Rust CLI is the former's
+  replacement, and `~sdk/script-utils` is generated per scene over
+  `@dcl/sdk/smart-items/scripts`, which the smart chunk carries.
 * The `.d.ts` of `protobufjs` and `long`. They were only kept because
   `@dcl/ecs/dist/*.gen.d.ts` imported `protobufjs/minimal` and tsc followed;
   with `@dcl/ecs/dist` gone nothing type-references them, and the 60-scene
@@ -106,8 +105,8 @@ What gets dropped, and the evidence for each:
   builds, `dist/mitt.js` and `dist/mitt.mjs`. See `RPC_RUNTIME` in
   `blob_collect.py` for the walk. `mitt` is there because `@dcl/rpc` requires
   it in node, outside every chunk, and its ESM build stays because the blob
-  overwrites a scene's own install, whose `@dcl/asset-packs` imports it as
-  ESM - the rollup keeps owning its types.
+  overwrites a scene's own install, where a package of the scene's may import
+  it as ESM - the rollup keeps owning its types.
 
 **Why `@dcl/rpc` is in the blob at all.** The visual editor talks to a
 *data-layer host* over a WebSocket: a 22-method RPC service carrying the
@@ -120,7 +119,8 @@ other 18 inert but well-formed. It is a FALLBACK, not a takeover: `req()` in
 so an installed `@dcl/inspector` still wins.
 
 What that needed, and only that: `@dcl/rpc` (the wire protocol - port
-multiplexing, framing, bidirectional streams; vendored, not reimplemented),
+multiplexing, framing, bidirectional streams; `library/rpc`, not
+reimplemented),
 `mitt`, and the generated service descriptor (`build_service_descriptor()`).
 The expensive half was already here: `@dcl/ecs`'s live engine and CRDT
 reconciliation ship in `dist-cjs` for the crdt dumper, and `protobufjs/minimal`
@@ -262,7 +262,6 @@ from blob_overlays import (
 
 CRATE = os.path.dirname(HERE)
 REPO = os.path.dirname(os.path.dirname(CRATE))
-SDK_DIR = os.path.join(REPO, 'library/js-sdk-toolchain')
 PROTOCOL_MANIFEST = os.path.join(REPO, 'library/protocol/package.json')
 REGISTRY = os.path.join(CRATE, 'src/vendor/registry')
 SCAFFOLD = os.path.join(CRATE, 'src/templates/init/scene/package.json')
@@ -279,14 +278,23 @@ which would make this blob platform-specific. 6.x is the ceiling until that is
 addressed."""
 
 TREE_BUILD = 'make -C library/js-sdk-toolchain install build'
+SDK_PACKAGES_DIR = 'library/js-sdk-toolchain/packages'
 
+# package -> (directory under the repository root, the file its build emits last)
 TREE_PACKAGES = {
-    '@dcl/sdk': 'index.js',
-    '@dcl/ecs': 'dist-cjs/index.js',
-    '@dcl/js-runtime': 'apis.d.ts',
-    '@dcl/react-ecs': 'dist/index.js',
-    '@dcl/sdk-commands': 'dist/logic/runtime-script.js',
+    '@dcl/sdk': (f'{SDK_PACKAGES_DIR}/@dcl/sdk', 'index.js'),
+    '@dcl/ecs': (f'{SDK_PACKAGES_DIR}/@dcl/ecs', 'dist-cjs/index.js'),
+    '@dcl/js-runtime': (f'{SDK_PACKAGES_DIR}/@dcl/js-runtime', 'apis.d.ts'),
+    '@dcl/react-ecs': (f'{SDK_PACKAGES_DIR}/@dcl/react-ecs', 'dist/index.js'),
+    '@dcl/ecs-math': ('library/ecs-math', 'dist/index.js'),
+    '@dcl/rpc': ('library/rpc', 'dist/index.js'),
 }
+
+# The SDK packages share one version, the scaffold pin; `@dcl/sdk-commands` is
+# stamped where a manifest names it although it never ships.
+SDK_VERSION_PACKAGES = frozenset({
+    '@dcl/sdk', '@dcl/ecs', '@dcl/js-runtime', '@dcl/react-ecs', '@dcl/sdk-commands',
+})
 
 PNPM_INSTALL = [
     'install', '--frozen-lockfile', '--ignore-scripts', '--ignore-workspace',
@@ -298,7 +306,6 @@ ROLLUP_PKGS = [
     ('@dcl/ecs', 'dist', 'dist/index'),
     ('@dcl/react-ecs', 'dist', 'dist/index'),
     ('@dcl/ecs-math', 'dist', 'dist/index'),
-    ('@dcl/asset-packs', 'dist', 'dist/definitions'),
     ('mitt', '', 'index'),
     ('protobufjs', '', 'index'),
     ('long', '', 'index'),
@@ -311,7 +318,7 @@ ROLLUP_PKGS = [
     ('@protobufjs/utf8', '', 'index'),
 ]
 
-ROLLUP_FULL_SUBPATH_PKGS = ('@dcl/sdk', '@dcl/asset-packs')
+ROLLUP_FULL_SUBPATH_PKGS = ('@dcl/sdk',)
 
 ROLLUP_SPEC_RE = re.compile(
     r"""(?P<pre>\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*)"""
@@ -348,7 +355,7 @@ def scaffold_pins() -> tuple[str, str]:
     if pins.get('@dcl/js-runtime') != sdk:
         raise SystemExit(
             f'{SCAFFOLD}: @dcl/js-runtime is pinned to {pins.get("@dcl/js-runtime")} '
-            f'but @dcl/sdk to {sdk}; the five tree packages share one version')
+            f'but @dcl/sdk to {sdk}; the SDK packages share one version')
     if not re.fullmatch(r'\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?', sdk):
         raise SystemExit(f'{SCAFFOLD}: @dcl/sdk pin {sdk!r} is not a version')
     log(f'scaffold pins: @dcl/sdk {sdk}, typescript {pins["typescript"]}')
@@ -375,13 +382,27 @@ def find_cli_bin(explicit: str | None) -> str:
     return max(found, key=os.path.getmtime)
 
 def check_tree_built() -> None:
-    """Every tree package must carry the file `make build` emits last for it."""
-    missing = [f'{pkg}/{marker}' for pkg, marker in TREE_PACKAGES.items()
-               if not os.path.isfile(os.path.join(SDK_DIR, 'packages', pkg, marker))]
+    """Every tree package must carry the file its build emits last."""
+    missing = [f'{d}/{marker}' for d, marker in TREE_PACKAGES.values()
+               if not os.path.isfile(os.path.join(REPO, d, marker))]
     if missing:
         raise SystemExit(
-            f'library/js-sdk-toolchain is not built ({", ".join(missing)} missing). '
-            f'Run `{TREE_BUILD}` first (SDK_PROTOC=protoc inside the Nix shell).')
+            f'the tree packages are not built ({", ".join(missing)} missing). '
+            f'Run `{TREE_BUILD}` first (SDK_PROTOC=protoc inside the Nix shell; it '
+            'builds library/ecs-math and library/rpc before the SDK).')
+
+def shipped_versions(sdk_version: str) -> dict[str, str]:
+    """The version each tree package ships as.
+
+    The SDK packages share the scaffold pin; `@dcl/ecs-math` and `@dcl/rpc`
+    ship as their own manifest says, so a dependency on either is rewritten to
+    a version that exists on the registry too.
+    """
+    out = {pkg: sdk_version for pkg in SDK_VERSION_PACKAGES}
+    for pkg, (d, _marker) in TREE_PACKAGES.items():
+        if pkg not in out:
+            out[pkg] = read_json(os.path.join(REPO, d, 'package.json'))['version']
+    return out
 
 def install_registry(work: str, ts_pin: str) -> None:
     """`pnpm install --frozen-lockfile` of `src/vendor/registry` into `work`.
@@ -391,9 +412,8 @@ def install_registry(work: str, ts_pin: str) -> None:
     typescript or `library/protocol`'s protobufjs fails here, naming the
     manifest to update (then `pnpm install` in `src/vendor/registry` to
     refresh the lock). Hoisted so the tree is flat like an npm install, no
-    scripts so nothing from the registry runs, and no peer auto-install so
-    `@dcl/asset-packs`'s `@dcl/ecs` peer is the tree's copy, never a registry
-    one.
+    scripts so nothing from the registry runs, and no peer auto-install so a
+    peer is only ever served by a package the lockfile pins or the tree packs.
     """
     deps = read_json(os.path.join(REGISTRY, 'package.json'))['dependencies']
     protobufjs = read_json(PROTOCOL_MANIFEST)['dependencies']['protobufjs']
@@ -410,22 +430,22 @@ def install_registry(work: str, ts_pin: str) -> None:
     if r.returncode != 0 and 'ERR_PNPM_IGNORED_BUILDS' not in (r.stdout + r.stderr):
         raise SystemExit(f'registry install failed:\n{r.stdout}\n{r.stderr}')
 
-def pack_tree_packages(work: str, version: str) -> None:
-    """Put the tree's build of the five SDK packages into `work/node_modules`.
+def pack_tree_packages(work: str, versions: dict[str, str]) -> None:
+    """Put the tree's build of every `@dcl/*` package into `work/node_modules`.
 
     `pnpm pack` in each package directory gives exactly what npm would publish
     (`files`, `.gitignore`, no `node_modules`), which is what a scene's own
-    install would have resolved; the tarball is extracted over whatever the
-    registry install left under that name. Then the manifest is stamped: its
-    `version` becomes the scaffold pin, and every dependency on one of the
-    five (`file:../ecs` in the tree) names that pin too, so the shipped
-    `@dcl/sdk/package.json` reads like a published one.
+    install would have resolved; the tarball is extracted into the install
+    tree. Then the manifest is stamped: its `version` becomes the shipped one
+    (`shipped_versions()`), and every dependency on another tree package
+    (`workspace:*` and `link:` in the tree) names that package's shipped
+    version, so the shipped `@dcl/sdk/package.json` reads like a published one.
     """
     nm = os.path.join(work, 'node_modules')
     packed = os.path.join(work, 'packed')
     shutil.rmtree(packed, ignore_errors=True)
-    for pkg in TREE_PACKAGES:
-        src = os.path.join(SDK_DIR, 'packages', pkg)
+    for pkg, (d, _marker) in TREE_PACKAGES.items():
+        src = os.path.join(REPO, d)
         dest = os.path.join(packed, pkg.replace('/', '__'))
         os.makedirs(dest)
         run([PNPM, 'pack', '--pack-destination', dest], src, f'pnpm pack {pkg}')
@@ -446,16 +466,16 @@ def pack_tree_packages(work: str, version: str) -> None:
                 tar.extractall(target, members=members)
         manifest = os.path.join(target, 'package.json')
         data = read_json(manifest)
-        data['version'] = version
+        data['version'] = versions[pkg]
         for field in ('dependencies', 'devDependencies', 'peerDependencies'):
             for dep in data.get(field, {}):
-                if dep in TREE_PACKAGES:
-                    data[field][dep] = version
+                if dep in versions:
+                    data[field][dep] = versions[dep]
         with open(manifest, 'w', encoding='utf-8') as fh:
             json.dump(data, fh, indent=2)
             fh.write('\n')
         n = sum(len(f) for _, _, f in os.walk(target))
-        log(f'    {pkg} <- library/js-sdk-toolchain ({n} files), stamped {version}')
+        log(f'    {pkg} <- {d} ({n} files), stamped {versions[pkg]}')
 
 def build_types_rollup(nm: str) -> bytes:
     """Roll the scene-facing `.d.ts` of the SDK packages into ONE ambient file.
@@ -600,8 +620,8 @@ def build_types_rollup(nm: str) -> bytes:
 
     out = [
         '// GENERATED by scripts/build-base-blob.py -- do not edit.',
-        '// Ambient declaration bundle: @dcl/sdk, @dcl/ecs, @dcl/react-ecs,',
-        '// @dcl/ecs-math, @dcl/asset-packs, @dcl/js-runtime + the mitt,',
+        '// Ambient declaration bundle: @dcl/sdk (smart items included), @dcl/ecs,',
+        '// @dcl/react-ecs, @dcl/ecs-math, @dcl/js-runtime + the mitt,',
         '// protobufjs and long declarations their .d.ts reach. Replaces those',
         '// packages\' .d.ts trees entirely; the implementations live in',
         f'// {CORE_CHUNK} and {SMART_CHUNK}.',
@@ -691,18 +711,19 @@ def build_chunks(work: str, cli_bin: str, files: dict[str, bytes],
     drift. This function only stages a throwaway scene against the *unpruned*
     install tree and shells out.
 
-    That tree has to be unpruned for two reasons the pruned one cannot satisfy:
-    the core chunk bundles all of `@dcl/{sdk,ecs,react-ecs,ecs-math}` + react,
-    and the smart chunk bundles `@dcl/asset-packs` *and*
-    `@dcl/sdk-commands/dist/logic/runtime-script.js` - the real
-    `~sdk/script-utils` runtime, from a package `NEVER` keeps.
+    That tree has to be unpruned: the core chunk bundles all of
+    `@dcl/{sdk,ecs,react-ecs,ecs-math}` + react, and the smart chunk bundles
+    `@dcl/sdk/smart-items` (with `@dcl/sdk/smart-items/scripts`, the runtime
+    behind every scene's generated `~sdk/script-utils`), none of which ship
+    as files.
 
     `vendor-chunks` verifies both chunks before returning: every `require()`
     either chunk emits must be `~system/*` or a key the loader's registry will
-    hold when that chunk is evaluated. That check is what caught
-    `@dcl/sdk/platform` and `@dcl/sdk/text-codec` - required by asset-packs,
-    invisible while it shared a chunk with the SDK, and a hard
-    "not in the sdk runtime registry" throw at scene start once it did not.
+    hold when that chunk is evaluated. `@dcl/sdk/platform` and
+    `@dcl/sdk/text-codec` are registry keys for exactly this: the smart-item
+    runtime requires both across the chunk boundary, and a key the core chunk
+    does not publish is a hard "not in the sdk runtime registry" throw at
+    scene start.
     """
     scene = os.path.join(work, 'chunk-scene')
     shutil.rmtree(scene, ignore_errors=True)
@@ -858,6 +879,7 @@ def main() -> int:
     check_readme_allowlist()
     version, ts_pin = scaffold_pins()
     check_tree_built()
+    versions = shipped_versions(version)
     cli_bin = find_cli_bin(args.cli_bin)
 
     nm = os.path.join(args.work, 'node_modules')
@@ -865,7 +887,7 @@ def main() -> int:
         shutil.rmtree(args.work, ignore_errors=True)
         os.makedirs(args.work)
         install_registry(args.work, ts_pin)
-        pack_tree_packages(args.work, version)
+        pack_tree_packages(args.work, versions)
 
     present = set(list_packages(nm))
     keep, why = reachable(nm, present)
@@ -900,10 +922,13 @@ def main() -> int:
     log(f'\nresolver check: all {len(specs)} static imports resolve')
     check_chunk_registry(files)
 
-    for pkg in ('@dcl/sdk', '@dcl/ecs', '@dcl/js-runtime'):
-        shipped = json.loads(files[f'node_modules/{pkg}/package.json'])['version']
-        if shipped != version:
-            raise SystemExit(f'{pkg} ships version {shipped}, scaffold pins {version}')
+    for pkg, want in sorted(versions.items()):
+        manifest = files.get(f'node_modules/{pkg}/package.json')
+        if manifest is None:
+            continue
+        shipped = json.loads(manifest)['version']
+        if shipped != want:
+            raise SystemExit(f'{pkg} ships version {shipped}, the tree says {want}')
 
     built = zip_bytes(files)
     raw = sum(len(v) for v in files.values())

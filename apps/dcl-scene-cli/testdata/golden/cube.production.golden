@@ -1,9 +1,9 @@
 (dcl-scene-cli golden v1 cube production)
-TOOLCHAIN sdk=7.31.0-dcl-one.1 ecs=7.31.0-dcl-one.1 bundler=rolldown-1.2.6 blob=sha256:150e0d5aa76cafe6
+TOOLCHAIN sdk=7.31.0-dcl-one.1 ecs=7.31.0-dcl-one.1 bundler=rolldown-1.2.6 blob=sha256:afaf76d8c93b10c5
 SCENE_COMPILED_JS_SIZE_PROD=562.9k bytes
   ARTIFACT bin/index.js              10564 sha256=fa99ace30078e115
   ARTIFACT bin/scene.js               1122 sha256=f3eace6e70bdb3a2
-  ARTIFACT bin/sdk-runtime.js       551234 sha256=aec756f3dbb6a9a9
+  ARTIFACT bin/sdk-runtime.js       551234 sha256=5e1f7013c811e63b
 LOADER sdk=bin/sdk-runtime.js smart=- scene=bin/scene.js max_composite_entity=0
 ENTRYPOINT .dcl-one/entrypoint.ts main=guarded composites=0 script-utils=stub
   // BEGIN AUTO GENERATED CODE "~sdk/scene-entrypoint"
@@ -14,14 +14,14 @@ ENTRYPOINT .dcl-one/entrypoint.ts main=guarded composites=0 script-utils=stub
   import { compositeFromLoader } from '~sdk/all-composites'
   import { _initializeScripts } from '~sdk/script-utils'
   // Registers the composite provider, and must be imported BEFORE the scene.
-  // A scene that calls initAssetPacks() at module scope -- as the Creator Hub
+  // A scene that calls initSmartItems() at module scope -- as the Creator Hub
   // templates do -- reads that provider while its own module body runs, and until
   // this existed the only thing registering it was `@dcl/sdk`'s body, which the
-  // bundler emits at the END of the chunk. So the editor logged "[asset-packs] No
-  // SDK composite provider registered; SPAWN_ENTITY cannot resolve composites"
-  // and placing a smart item resolved nothing. Upstream sdk-commands has the same
-  // ordering (logic/bundle.ts) and gets away with it only because upstream scenes
-  // never call initAssetPacks themselves.
+  // bundler emits at the END of the chunk. So the editor logged "No SDK composite
+  // provider registered; SPAWN_ENTITY cannot resolve composites" and placing a
+  // smart item resolved nothing. Upstream's bundler has the same ordering
+  // (logic/bundle.ts) and gets away with it only because upstream scenes never
+  // call initSmartItems themselves.
   //
   // A separate module because neither cheaper fix works: statements here run after
   // every import including the scene's, and the bundler does not honour moving
@@ -70,9 +70,9 @@ ENTRYPOINT .dcl-one/entrypoint.ts main=guarded composites=0 script-utils=stub
   REQUIRE(scene): ~sdk/all-composites
   REQUIRE(scene): ~sdk/script-utils
 MAIN_CRDT none (no composite)
-DEPLOY entity=bafkreib3wpbcpfnfxni26u74tzk6razt6yns6issu6mevhuux6xi4syyx4 files=4 total=563.1k bytes
+DEPLOY entity=bafkreicxe7jg75ptwm3ax7gjkccbs62btfayvysjtprjgpsjpjzlunn7ie files=4 total=563.1k bytes
   bafkreibwh3lvwt4mqqcxqtym6oyof5n7ouktmgcgqo3wmwttd6256i64je scene.json 161 bytes
-  bafybeigzbwwk5mxivepizkwaizsys5dmp3zl2ti7ofc5ocgltbzhhy7lfq bin/sdk-runtime.js 551234 bytes
+  bafybeiaug33j7oomwylikemrynhqm4zxhz5nugaou34xsztlywardgfaqm bin/sdk-runtime.js 551234 bytes
   bafkreiht5lhg44f5wore5lzivnbjm572pqjtwlmg5ark5gg55idheuxm6a bin/scene.js 1122 bytes
   bafkreih2tgwogady4ek34277pzd2apaohkzyreyeu7yfhnbkwijohqqlsm bin/index.js 10564 bytes
 EVAL bin/index.js
