@@ -843,6 +843,9 @@ impl ContainingScene<'_, '_> {
 
         let length = ray.length();
         let dir = ray / length;
+        if !length.is_finite() || length <= 0.0 || !position.is_finite() {
+            return results;
+        }
         let mut parcel = vec3_to_parcel(position);
 
         loop {
@@ -1000,7 +1003,7 @@ mod get_ray_tests {
         world.insert_resource(live);
         world.init_resource::<PortableScenes>();
 
-        // both rays start within 1 cm of the z = 0 edge and cross it at a shallow angle
+        // both rays run within 1.5 cm of the z = 0 edge and cross it at a shallow angle
         let rays = world
             .run_system_once(|containing: ContainingScene| {
                 [
@@ -1022,6 +1025,44 @@ mod get_ray_tests {
             rounded(&rays[1]),
             vec![(centre, 0.0), (west, 8.0), (south_west, 18.0)]
         );
+    }
+
+    #[test]
+    fn unusable_ray_returns_no_scenes() {
+        let mut world = World::new();
+        let centre = world.spawn_empty().id();
+        let mut pointers = ScenePointers::default();
+        let mut live = LiveScenes::default();
+        live.scenes.insert("centre".to_owned(), centre);
+        pointers.insert(
+            IVec2::new(0, 0),
+            PointerResult::Exists {
+                hash: "centre".to_owned(),
+                urn: None,
+            },
+        );
+        world.insert_resource(pointers);
+        world.insert_resource(live);
+        world.init_resource::<PortableScenes>();
+
+        let origin = Vec3::new(8.0, 1.0, -8.0);
+        let rays = world
+            .run_system_once(move |containing: ContainingScene| {
+                [
+                    // a zero direction, normalized
+                    containing.get_ray(origin, Vec3::ZERO.normalize() * 10.0),
+                    // an infinite max distance
+                    containing.get_ray(origin, Vec3::X * f32::INFINITY),
+                    // a ray whose length overflows
+                    containing.get_ray(origin, Vec3::splat(1e30)),
+                    containing.get_ray(Vec3::NAN, Vec3::X * 10.0),
+                ]
+            })
+            .unwrap();
+
+        for hits in rays {
+            assert_eq!(hits, vec![]);
+        }
     }
 }
 
