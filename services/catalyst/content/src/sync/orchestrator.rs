@@ -300,6 +300,7 @@ pub async fn run_sync_job(
     mut peers: tokio::sync::watch::Receiver<HashSet<String>>,
     retry_peers: Arc<tokio::sync::RwLock<Vec<String>>>,
     ctx: JobContext,
+    on_bootstrap: impl FnOnce(),
 ) -> anyhow::Result<()> {
     let initial = peers.borrow_and_update().clone();
     info!(peers = ?initial, "Sync orchestrator starting...");
@@ -318,11 +319,15 @@ pub async fn run_sync_job(
     let mut bootstrapped = false;
     let mut bootstrap_running = true;
     let mut peers_open = true;
+    let mut on_bootstrap = Some(on_bootstrap);
     loop {
         tokio::select! {
             _ = ctx.cancel.cancelled() => break,
             _ = signal.wait(), if !bootstrapped => {
                 bootstrapped = true;
+                if !ctx.cancel.is_cancelled() {
+                    on_bootstrap.take().unwrap()();
+                }
                 info!("Bootstrap complete, sync is now in steady state");
                 ctx.progress(format!("bootstrapped; {}", status.state_name()));
             }

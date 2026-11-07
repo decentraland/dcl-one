@@ -38,8 +38,6 @@ pub struct RetryFailedConfig {
     pub max_retries: u32,
     /// Due entities re-attempted at once (`SYNC_RETRY_CONCURRENCY`).
     pub retry_concurrency: usize,
-    /// The old binary slept this long before its first cycle so startup sync got a head start.
-    pub initial_delay_ms: u64,
     /// Due records per page of a cycle. A cycle keeps paging until the due set it started with
     /// is drained, so this bounds memory and statement size, not the work a cycle does.
     pub retry_batch_size: usize,
@@ -51,7 +49,6 @@ impl Default for RetryFailedConfig {
             retry_delay_ms: 900_000,
             max_retries: DEFAULT_MAX_RETRIES,
             retry_concurrency: DEFAULT_RETRY_CONCURRENCY,
-            initial_delay_ms: 60_000,
             retry_batch_size: DEFAULT_RETRY_BATCH_SIZE,
         }
     }
@@ -396,7 +393,7 @@ impl RetryFailedDeployments {
             "Starting retry-failed-deployments loop"
         );
 
-        let mut delay = std::time::Duration::from_millis(self.config.initial_delay_ms);
+        let mut delay = std::time::Duration::ZERO;
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => {

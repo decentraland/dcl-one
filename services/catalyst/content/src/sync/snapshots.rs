@@ -313,7 +313,10 @@ pub async fn fetch_snapshots(
         }
 
         if attempt + 1 < max_retries {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(
+                500u64.saturating_mul(1u64 << attempt.min(6)),
+            ))
+            .await;
         }
     }
 
@@ -1010,7 +1013,12 @@ async fn download_snapshot_file(
         }
 
         if retry + 1 < max_retries {
-            tokio::time::sleep(std::time::Duration::from_millis(retry_wait_ms)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(
+                retry_wait_ms
+                    .saturating_mul(1u64 << retry.min(6))
+                    .min(30_000),
+            ))
+            .await;
         }
     }
 

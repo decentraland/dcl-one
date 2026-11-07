@@ -47,7 +47,7 @@ pub const DEFAULT_DISCOVERY_INTERVAL_MS: u64 = 10_000;
 /// Long enough that a broker restart is not hammered, short enough that a recovered one is picked
 /// up inside two clustering passes. Only ever waited on before a connection has been built at all:
 /// once one exists, reconnection is the client's own job.
-const RECONNECT_BACKOFF: Duration = Duration::from_secs(5);
+const RECONNECT_BACKOFF: Duration = Duration::from_millis(250);
 const LOOKUP_CAPACITY: usize = 128;
 
 #[derive(Debug, Clone)]
@@ -267,12 +267,14 @@ fn connect_options(
 /// a rotation into an operator-visible outage.
 async fn supervise(shared: Arc<Shared>, options: NatsFeedOptions) {
     let ever_connected = Arc::new(AtomicBool::new(false));
+    let mut delay = RECONNECT_BACKOFF;
     loop {
         match connect_options(&options, ever_connected.clone())
             .connect(&options.url)
             .await
         {
             Ok(client) => {
+                delay = RECONNECT_BACKOFF;
                 shared.pending.notify_one();
                 tracing::info!("cluster feed connected");
                 tokio::select! {
@@ -288,7 +290,8 @@ async fn supervise(shared: Arc<Shared>, options: NatsFeedOptions) {
                 tracing::warn!("cluster feed connect failed");
             }
         }
-        tokio::time::sleep(RECONNECT_BACKOFF).await;
+        tokio::time::sleep(delay + Duration::from_millis(rand::random::<u64>() % 251)).await;
+        delay = delay.saturating_mul(2).min(Duration::from_secs(30));
     }
 }
 

@@ -406,8 +406,10 @@ impl State {
         jobs.spawn("social-event-fanout", move |job| async move {
             let _subscription = subscription;
             let initial_readiness = async {
+                let mut delay = std::time::Duration::from_millis(10);
                 while !bus.is_ready() {
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    tokio::time::sleep(delay).await;
+                    delay = delay.saturating_mul(2).min(std::time::Duration::from_secs(1));
                 }
                 first_ready.store(true, std::sync::atomic::Ordering::Release);
                 // A later outage retains the source's transient pub/sub behavior.

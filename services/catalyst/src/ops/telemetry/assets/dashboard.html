@@ -662,7 +662,7 @@ function refreshAll(){
   if(state.surface==='health'){showPanel();return loadHealth().catch(e=>$('#panel').textContent='error: '+e.message);}
   if(state.surface==='metrics'&&state.tab==='funnel'){showPanel();loadStats().catch(()=>{});return loadFunnel().catch(e=>$('#panel').textContent='error: '+e.message);}
   if(state.surface==='metrics'&&state.tab==='breakdown'){showPanel();loadStats().catch(()=>{});return loadBreakdown().catch(e=>$('#panel').textContent='error: '+e.message);}
-  showTable(); loadStats().catch(()=>{}); loadList(true).catch(()=>{});
+  showTable(); return Promise.all([loadStats().catch(()=>{}),loadList(true).catch(()=>{})]);
 }
 async function loadHealth(){
   const h=await jget('/dash/health?hours='+state.hours);
@@ -791,9 +791,9 @@ function schedule(){if(timer)clearInterval(timer);if(state.live)timer=setInterva
 },15000);}
 // Restore the full view from the current path + query (the inverse of pathFor).
 // Replayed under `restoring` so setSurface/setTab don't refetch mid-restore.
-function bootFromPath(){
+async function bootFromPath(){
   const r=parsePath(), p=r.query;
-  if(r.surface==='session'){ state.surface='session'; state.sessionId=r.sessionId; lastEventId=p.get('event')||null; refreshAll(); if(lastEventId) setTimeout(()=>openDetail(lastEventId),400); return; }
+  if(r.surface==='session'){ state.surface='session'; state.sessionId=r.sessionId; lastEventId=p.get('event')||null; const ev=lastEventId; await refreshAll(); if(ev) await openDetail(ev); return; }
   restoring=true;
   setSurface(r.surface);
   if(r.tab&&r.tab!=='issues') setTab(r.tab);
@@ -804,11 +804,11 @@ function bootFromPath(){
   $('#search').value=state.q||'';
   ['level','kind','env','release','status'].forEach(k=>{const el=$('#f-'+k);if(el)el.value=state[k]||'';});
   restoring=false;
-  if(state.fingerprint) drillIn(state.fingerprint); else { if(!ev)closeDrawer(); refreshAll(); }
-  if(ev) setTimeout(()=>openDetail(ev),400); else { lastEventId=null; }
+  if(state.fingerprint) await drillIn(state.fingerprint); else { if(!ev)closeDrawer(); await refreshAll(); }
+  if(ev) await openDetail(ev); else { lastEventId=null; }
 }
 // Back/forward: re-render from the new URL without writing history (navLock).
-window.addEventListener('popstate',()=>{ navLock=true; bootFromPath(); setTimeout(()=>{navLock=false;},700); });
+window.addEventListener('popstate',async()=>{ navLock=true; try { await bootFromPath(); } finally { navLock=false; } });
 schedule();
 bootFromPath();
 </script>

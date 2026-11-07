@@ -509,25 +509,29 @@ impl Leader {
             spawn_dao_refresh(&self.jobs, &ctx, dao.clone(), self.client.clone(), peers_tx);
         }
         let retry_peers = Arc::new(RwLock::new(initial));
-        spawn_failed_deployment_jobs(
-            &self.jobs,
-            &ctx,
-            &FailedDeploymentSettings {
-                retry_failed_enabled: settings.retry_failed_enabled,
-                max_retries: settings.max_retries,
-                retry_concurrency: settings.retry_concurrency,
-                prune_ttl_days: settings.prune_ttl_days,
-            },
-            FailedDeploymentDeps {
-                pool: self.pool.clone(),
-                storage: self.storage.clone(),
-                client: self.client.clone(),
-                deployer,
-                failed,
-                peers: retry_peers.clone(),
-            },
-        );
-        run_sync_job(orchestrator, peers, retry_peers, ctx).await
+        let after_bootstrap_peers = retry_peers.clone();
+        let job = ctx.clone();
+        run_sync_job(orchestrator, peers, retry_peers, ctx, || {
+            spawn_failed_deployment_jobs(
+                &self.jobs,
+                &job,
+                &FailedDeploymentSettings {
+                    retry_failed_enabled: settings.retry_failed_enabled,
+                    max_retries: settings.max_retries,
+                    retry_concurrency: settings.retry_concurrency,
+                    prune_ttl_days: settings.prune_ttl_days,
+                },
+                FailedDeploymentDeps {
+                    pool: self.pool.clone(),
+                    storage: self.storage.clone(),
+                    client: self.client.clone(),
+                    deployer,
+                    failed,
+                    peers: after_bootstrap_peers,
+                },
+            );
+        })
+        .await
     }
 }
 
