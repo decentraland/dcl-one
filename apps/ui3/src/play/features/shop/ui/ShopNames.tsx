@@ -32,7 +32,12 @@ export interface ShopNamesProps {
   onResale: () => void
   /** The typed NAME. */
   value: string
+  /** The NAME as edited, already cleaned and capped. */
   onChange: (value: string) => void
+  /** Keeps what a NAME may hold of what was typed or pasted (letters and digits). */
+  clean: (raw: string) => string
+  /** The most the field holds: one past the limit, so typing past it shows it. */
+  maxLength: number
   /** The field's focus, for the nametag's caret. */
   onFocusChange?: (focused: boolean) => void
   /** The fewest letters a NAME has. */
@@ -62,8 +67,21 @@ export function ShopNames(props: ShopNamesProps): React.JSX.Element {
   )
 }
 
-function UniqueName({ value, onChange, onFocusChange, minLength, limit, suffix, status, price, onClaim, onMakeOffer, onRetry }: ShopNamesProps): React.JSX.Element {
+function UniqueName({ value, onChange, clean, maxLength, onFocusChange, minLength, limit, suffix, status, price, onClaim, onMakeOffer, onRetry }: ShopNamesProps): React.JSX.Element {
   const invalid = status === 'tooLong' || status === 'taken' || status === 'banned'
+  // An edit is cleaned on each side of the caret and capped where it was made, as a maxLength field caps it:
+  // a paste loses its punctuation, not its letters, and typing into a full field takes nothing and leaves
+  // the caret where it was. The caret goes back once the field shows the result (after React's own write).
+  const edit = (input: HTMLInputElement): void => {
+    const raw = input.value
+    const at = input.selectionStart ?? raw.length
+    const tail = clean(raw.slice(at))
+    const head = clean(raw.slice(0, at)).slice(0, Math.max(0, maxLength - tail.length))
+    onChange(head + tail)
+    queueMicrotask(() => {
+      if (document.activeElement === input) input.setSelectionRange(head.length, head.length)
+    })
+  }
   return (
     <section className={styles.hero} aria-labelledby="shop-names-title">
       <img className={styles.heroGlowLow} src={heroGlowLow} alt="" />
@@ -83,14 +101,14 @@ function UniqueName({ value, onChange, onFocusChange, minLength, limit, suffix, 
               <input
                 className={styles.input}
                 aria-label="Your NAME"
-                // No maxLength: the page cleans what is typed or pasted first, then caps it.
+                // No maxLength attribute: it would cap the raw text before its punctuation is cleaned out.
                 value={value}
                 placeholder="Write here"
                 spellCheck={false}
                 autoComplete="off"
                 aria-invalid={invalid || undefined}
                 aria-describedby="shop-names-feedback"
-                onChange={(e) => onChange(e.target.value)}
+                onChange={(e) => edit(e.currentTarget)}
                 onFocus={() => onFocusChange?.(true)}
                 onBlur={() => onFocusChange?.(false)}
               />
@@ -124,7 +142,8 @@ function UniqueName({ value, onChange, onFocusChange, minLength, limit, suffix, 
   )
 }
 
-/** Under the field: its count while it is typed in, or what is wrong with the NAME. */
+/** Under the field: its count while it is typed in, or what is wrong with the NAME. Only the message is a
+ *  live region: the count would be announced on every keystroke. */
 function Feedback({
   value,
   minLength,
@@ -134,44 +153,50 @@ function Feedback({
   onRetry
 }: Pick<ShopNamesProps, 'value' | 'minLength' | 'limit' | 'status' | 'onMakeOffer' | 'onRetry'>): React.JSX.Element {
   const count = `${value.length}/${limit}`
-  return (
-    <div id="shop-names-feedback" className={styles.feedback} role="status">
-      {status === 'tooLong' ? (
-        <span className={styles.error}>
-          {count}
-          <img src={warningIcon} alt="" width={15} height={15} />
-          Character Limit Reached
-        </span>
-      ) : status === 'taken' ? (
-        <span className={`${styles.error} ${styles.taken}`}>
-          <img src={warningIcon} alt="" width={15} height={15} />
-          <span>
-            {/* Broken where the design breaks it. */}
-            This NAME Is Taken. Choose Another NAME Or Make
-            <br />
-            An Offer To The Owner.{' '}
-            <button type="button" className={styles.makeOffer} onClick={onMakeOffer}>
-              MAKE OFFER
-            </button>
-          </span>
-        </span>
-      ) : status === 'banned' ? (
-        <span className={`${styles.error} ${styles.taken}`}>
-          <img src={warningIcon} alt="" width={15} height={15} />
-          This NAME Is Not Available.
-        </span>
-      ) : status === 'error' ? (
-        <span className={styles.count}>
-          We couldn’t check that NAME right now.{' '}
-          <button type="button" className={styles.makeOffer} onClick={onRetry}>
-            TRY AGAIN
+  const message =
+    status === 'tooLong' ? (
+      <>
+        {count}
+        <img src={warningIcon} alt="" width={15} height={15} />
+        Character Limit Reached
+      </>
+    ) : status === 'taken' ? (
+      <>
+        <img src={warningIcon} alt="" width={15} height={15} />
+        <span>
+          {/* Broken where the design breaks it. */}
+          This NAME Is Taken. Choose Another NAME Or Make
+          <br />
+          An Offer To The Owner.{' '}
+          <button type="button" className={styles.makeOffer} onClick={onMakeOffer}>
+            MAKE OFFER
           </button>
         </span>
-      ) : (
-        // The count shows while the field has the focus (the design's FocusedEditing), and a NAME too
-        // short to register says so.
-        <span className={`${styles.count} ${status === 'short' ? '' : styles.onFocus}`.trim()}>{status === 'short' ? `${count} NAMEs need at least ${minLength} characters` : count}</span>
-      )}
+      </>
+    ) : status === 'banned' ? (
+      <>
+        <img src={warningIcon} alt="" width={15} height={15} />
+        This NAME Is Not Available.
+      </>
+    ) : status === 'error' ? (
+      <>
+        We couldn’t check that NAME right now.{' '}
+        <button type="button" className={styles.makeOffer} onClick={onRetry}>
+          TRY AGAIN
+        </button>
+      </>
+    ) : status === 'short' ? (
+      `${count} NAMEs need at least ${minLength} characters`
+    ) : null
+  const tone = status === 'tooLong' ? styles.error : status === 'taken' || status === 'banned' ? `${styles.error} ${styles.taken}` : styles.count
+  return (
+    <div id="shop-names-feedback" className={styles.feedback}>
+      {/* Always in place, so a message arriving in it is announced; empty, it takes no room. */}
+      <span role="status" className={message == null ? undefined : tone}>
+        {message}
+      </span>
+      {/* The count shows while the field has the focus (the design's FocusedEditing). */}
+      {message == null && <span className={`${styles.count} ${styles.onFocus}`}>{count}</span>}
     </div>
   )
 }
