@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import platform
 import plistlib
+import re
 import secrets
 import shlex
 import shutil
@@ -32,6 +33,7 @@ SETTINGS = STATE / 'settings.json'
 PROFILES = ('mirror', 'testnet', 'offline')
 DARWIN = platform.system() == 'Darwin'
 PROGRESS_SECONDS = 30
+ANSI = re.compile(r'\x1b\[[0-9;?]*[ -/]*[@-~]')
 
 
 def run(argv, **kwargs):
@@ -458,7 +460,7 @@ def pc_env(env=None):
     xdg = STATE / 'xdg'
     (xdg / 'process-compose').mkdir(parents=True, exist_ok=True)
     env = dict(os.environ if env is None else env)
-    env['XDG_CONFIG_DIRS'] = f"{xdg}:{env.get('XDG_CONFIG_DIRS') or '/etc/xdg'}"
+    env['XDG_CONFIG_DIRS'] = f"{env.get('XDG_CONFIG_DIRS') or '/etc/xdg'}:{xdg}"
     return env
 
 
@@ -927,7 +929,8 @@ def last_line(path, limit=4096):
     try:
         with path.open('rb') as log:
             log.seek(max(0, log.seek(0, os.SEEK_END) - limit))
-            return log.read().decode(errors='replace').rstrip().rsplit('\n', 1)[-1].strip()
+            tail = ANSI.sub('', log.read().decode(errors='replace')).rstrip()
+            return re.split(r'[\r\n]', tail)[-1].strip()
     except OSError:
         return ''
 

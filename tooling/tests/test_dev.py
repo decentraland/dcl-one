@@ -689,7 +689,8 @@ class DevTest(unittest.TestCase):
             {'name': 'api-build', 'status': 'Running', 'is_running': True, 'exit_code': 0},
             {'name': 'api', 'status': 'Pending', 'is_running': False, 'exit_code': 0},
         ]))
-        (self.state / 'api-build.log').write_text('   Compiling catalyst-db v0.1.0\n   Compiling catalyst-worlds v0.1.0\n')
+        (self.state / 'api-build.log').write_text(
+            '   Compiling catalyst-db v0.1.0\r\n\x1b[1m   Compiling\x1b[0m catalyst-worlds v0.1.0\n')
         with patch.object(dev, 'pc', return_value=listing), patch.object(dev, 'PROGRESS_SECONDS', 0), \
                 patch.object(dev.urllib.request, 'urlopen', side_effect=dev.urllib.error.URLError('starting')), \
                 patch.object(dev.time, 'sleep', side_effect=InterruptedError), \
@@ -704,7 +705,7 @@ class DevTest(unittest.TestCase):
         with patch.object(dev.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
             dev.pc('process', 'list')
         env = run.call_args.kwargs['env']
-        self.assertTrue(env['XDG_CONFIG_DIRS'].startswith(f"{self.state / 'xdg'}:"))
+        self.assertTrue(env['XDG_CONFIG_DIRS'].endswith(f":{self.state / 'xdg'}"))
         self.assertTrue((self.state / 'xdg/process-compose').is_dir())
 
     def test_first_pass_pending_lists_configured_mirrors_without_a_complete_pass(self):
