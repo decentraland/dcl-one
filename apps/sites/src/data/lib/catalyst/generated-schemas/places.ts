@@ -52,7 +52,6 @@ export const I18nSchema = z.object({
 
 export const CategoryOutSchema = z.object({
   name: z.string(),
-  active: z.boolean(),
   count: z.number(),
   i18n: I18nSchema,
 });
@@ -61,7 +60,7 @@ export const EntityTypeSchema = z.enum(["place", "world"]);
 
 export const DestinationSchema = z.object({
   id: z.string(),
-  kind: EntityTypeSchema,
+  kind: EntityTypeSchema.optional(),
   title: z.string().nullable(),
   description: z.string().nullable(),
   image: z.string().nullable(),
@@ -95,6 +94,7 @@ export const DestinationSchema = z.object({
   user_visits: z.number(),
   like_rate: z.number().nullable(),
   like_score: z.number().nullable(),
+  rank: z.number().optional(),
   live: z.boolean().optional(),
   live_event: z.boolean().optional(),
   live_event_name: z.string().nullable().optional(),
@@ -194,6 +194,8 @@ export const PlaceRowSchema = z.object({
   user_visits: z.number(),
   like_rate: z.number().nullable(),
   like_score: z.number().nullable(),
+  textsearch: z.string().nullable(),
+  rank: z.number().optional(),
   live: z.boolean().optional(),
   live_event_name: z.string().nullable().optional(),
   connected_addresses: z.array(z.string()).nullable().optional(),
@@ -265,6 +267,7 @@ export const WorldRowSchema = z.object({
   user_favorite: z.boolean(),
   user_count: z.number().nullable(),
   user_visits: z.number(),
+  rank: z.number().optional(),
 });
 
 type AssignableTo<Sub, Sup> = Sub extends Sup ? true : false;
