@@ -72,8 +72,19 @@ jobs:
           df -h /
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ runner.arch }}-ci-${{ hashFiles('flake.nix', 'flake.lock', 'services/catalyst/rust-toolchain.toml', 'infra/dev/**', 'infra/packages/**') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-${{ runner.arch }}-ci-
+          save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          gc-max-store-size: 0
+      - name: Root the shell and the flake inputs
+        run: |
+          mkdir -p .cache/nix-roots
+          nix develop .#ci --profile .cache/nix-roots/env --command true
+          nix-store --add-root .cache/nix-roots/input -r $(nix flake archive --json | jq -r '.inputs | .. | .path? // empty') > /dev/null
       - name: Verify the exact public ENet source pin
-        run: nix develop --command python3 tooling/enet-provenance.py
+        run: nix develop .#ci --command python3 tooling/enet-provenance.py
       - name: Identify Rust build inputs
         id: rust-inputs
         shell: bash
@@ -97,7 +108,7 @@ jobs:
             foundation-dev-nodebug-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}
             foundation-dev-nodebug-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-
       - name: Run backend tests with PostgreSQL and isolated NATS
-        run: nix develop --command bash tooling/dev-test.sh rust
+        run: nix develop .#ci --command bash tooling/dev-test.sh rust
       - name: Preserve database logs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -142,6 +153,17 @@ jobs:
           df -h /
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ runner.arch }}-default-${{ hashFiles('flake.nix', 'flake.lock', 'services/catalyst/rust-toolchain.toml', 'infra/dev/**', 'infra/packages/**') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-${{ runner.arch }}-default-
+          save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          gc-max-store-size: 0
+      - name: Root the shell and the flake inputs
+        run: |
+          mkdir -p .cache/nix-roots
+          nix develop --profile .cache/nix-roots/env --command true
+          nix-store --add-root .cache/nix-roots/input -r $(nix flake archive --json | jq -r '.inputs | .. | .path? // empty') > /dev/null
       - name: Evaluate supported systems
         run: nix flake show --all-systems
       - name: Build the development shell and locate the pnpm store
@@ -230,6 +252,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ runner.arch }}-default-${{ hashFiles('flake.nix', 'flake.lock', 'services/catalyst/rust-toolchain.toml', 'infra/dev/**', 'infra/packages/**') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-${{ runner.arch }}-default-
+          save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          gc-max-store-size: 0
+      - name: Root the shell and the flake inputs
+        run: |
+          mkdir -p .cache/nix-roots
+          nix develop --profile .cache/nix-roots/env --command true
+          nix-store --add-root .cache/nix-roots/input -r $(nix flake archive --json | jq -r '.inputs | .. | .path? // empty') > /dev/null
       - name: Build the development shell and locate the pnpm store
         run: echo "PNPM_STORE=$(nix develop --command pnpm store path)" >> "$GITHUB_ENV"
       - name: Restore the pnpm store
