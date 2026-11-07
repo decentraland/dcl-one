@@ -50,6 +50,9 @@ const ROLES_ABI = parseAbi(["function hasRole(bytes32, address) view returns (bo
 // Creator sales follow decentraland.org's `dapps-shop-creator-sales` rollout flag (apps/ui3 discovery/flags.ts),
 // which is off; the primary loop turns them on the way a host does, through window.__SHOP_FLAGS__.
 const CREATOR_SALES_ON = "window.__SHOP_FLAGS__ = { ...(window.__SHOP_FLAGS__ || {}), creatorSales: true };";
+// Resales, bids and listing are the Marketplace's (`dapps-shop-marketplace-features`, apps/ui3 market/access.tsx),
+// shown to a web3 session only while that rollout is on: both loops' wallets are web3 and turn it on the same way.
+const MARKETPLACE_ON = "window.__SHOP_FLAGS__ = { ...(window.__SHOP_FLAGS__ || {}), marketplaceFeatures: true };";
 
 const env = journeyEnv();
 const preflightOnly = process.argv.includes("--preflight");
@@ -700,7 +703,7 @@ async function main(): Promise<void> {
   const tradeTo = [...AMOY_TRADE_CONTRACTS, ...(token ? [token.contract] : [])];
   const sellerTo = primaryLoop ? [AMOY_COUPON_MANAGER] : tradeTo;
   const buyerTo = primaryLoop ? [...AMOY_TRADE_CONTRACTS, AMOY_CREDITS_MANAGER] : tradeTo;
-  const flags = primaryLoop ? CREATOR_SALES_ON : undefined;
+  const flags = primaryLoop ? `${CREATOR_SALES_ON}\n${MARKETPLACE_ON}` : MARKETPLACE_ON;
   const browser = await launch();
   try {
     const seller = await actor(browser, "seller", sellerKey, sellerTo, flags);

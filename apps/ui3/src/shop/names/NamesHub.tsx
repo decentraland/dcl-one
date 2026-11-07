@@ -6,6 +6,7 @@ import { useSearchParams } from "react-router";
 
 import type { ShopClient } from "../api/shop";
 import { useSeo } from "../discovery/hooks";
+import { useMarketplace } from "../market/access";
 import NamesBrowse from "./NamesBrowse";
 import NamesPage, { type NamesPageProps } from "./NamesPage";
 import "./names.css";
@@ -19,7 +20,9 @@ export type NamesHubProps = NamesPageProps & { client?: ShopClient };
 
 export default function NamesHub(props: NamesHubProps) {
   const [params] = useSearchParams();
-  const resale = params.get("section") === "resale";
+  // NAME resale is the Marketplace's (market/access.tsx): without it, the claim page answers every NAMEs link.
+  const marketplace = useMarketplace();
+  const resale = marketplace && params.get("section") === "resale";
   const iapMode = props.modal?.iapMode ?? params.get("view") === "mobile-iap";
   useSeo(resale ? {} : CLAIM_SEO);
   return (

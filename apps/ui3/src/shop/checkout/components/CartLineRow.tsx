@@ -3,6 +3,7 @@
 //       availability, favourite + remove) and Cart.styles.ts (Card, Thumb, Info, Desc, Foot, Stepper, Price)
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 
+import { useMarketplace } from "../../market/access";
 import Icon from "../../discovery/components/Icon";
 import CategoryFlap from "../../discovery/components/CategoryFlap";
 import { CreditsAmount } from "../../discovery/components/PriceTag";
@@ -137,6 +138,8 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
   const quantity = lineUnits(line);
   const isMint = line.asset.token.kind === "item";
   const max = offer?.available ?? null;
+  // The Creator tag tells a creator's sale from a resale: only drawn where resales show (market/access.tsx).
+  const marketplace = useMarketplace();
   const manaChain = offer ? manaChainOf(offer) : line.asset.chainId;
   const manaQuote = view?.options.find((o) => o.method === "mana")?.quote;
   const required = manaQuote?.method === "mana" ? mulMana(manaQuote.amount, quantity) : null;
@@ -201,7 +204,7 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
             </span>
           )}
           {line.display.creator ? <DetailCreator address={line.display.creator} size="sm" className="shop-cartline__creator" /> : null}
-          {isMint && offer?.sale === "primaryMint" ? (
+          {marketplace && isMint && offer?.sale === "primaryMint" ? (
             <span className="shop-cartline__tag" data-testid="cart-creator-tag">
               <CreatorLeaf />
               Creator

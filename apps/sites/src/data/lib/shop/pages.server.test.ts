@@ -102,7 +102,7 @@ describe("the other pages", () => {
       { path: "/shop-api/v1/collections", body: { data: [{ contractAddress: C, name: "dcl://halloween_2019", creator: "0x1" }] } },
     ]);
     const overview = await loadShopPage("overview", { request: request("/shop/overview"), params: {}, client, now, env: {} });
-    expect(overview.data.queries.map(([key]) => key)).toEqual([["overview-listings"], ["overview-trending", "all"]]);
+    expect(overview.data.queries.map(([key]) => key)).toEqual([["overview-listings"], ["overview-trending", "primary"]]);
     const collection = await loadShopPage("collection", { request: request(`/shop/collection/${C}`), params: { contractAddress: C }, client, now, env: {} });
     expect(collection.data.seo.title).toBe("Halloween 2019");
   });
@@ -114,13 +114,13 @@ describe("the other pages", () => {
     ]);
     const flags = { "dapps-shop-creator-sales": true, "dapps-shop-suggested-for-you": false };
     const overview = await loadShopPage("overview", { request: request("/shop/overview"), params: {}, client, now, env: {}, flags });
-    expect(overview.data.queries.map(([key]) => key)).toEqual([["overview-listings"], ["overview-trending", "all"], ["overview-deals"]]);
+    expect(overview.data.queries.map(([key]) => key)).toEqual([["overview-listings"], ["overview-trending", "primary"], ["overview-deals"]]);
     expect(asked.some((u) => u.includes("discounted=true"))).toBe(true);
     // The browser primes the same answer before it hydrates.
     expect(overview.data.featureFlags).toEqual(flags);
 
     const off = await loadShopPage("overview", { request: request("/shop/overview"), params: {}, client, now, env: {}, flags: {} });
-    expect(off.data.queries.map(([key]) => key)).toEqual([["overview-listings"], ["overview-trending", "all"]]);
+    expect(off.data.queries.map(([key]) => key)).toEqual([["overview-listings"], ["overview-trending", "primary"]]);
   });
 
   it("the collectibles and LAND grids prime their first page under the keys the pages ask for", async () => {

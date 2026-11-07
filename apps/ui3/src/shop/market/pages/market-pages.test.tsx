@@ -76,7 +76,7 @@ describe("My items", () => {
   });
 
   it("lists owned wearables with their MANA listing price, never a credit price, and the manage actions", async () => {
-    const m = mountShop({ path: "/shop/my-items", who: "web2", routes: [nfts(), importable(0)] });
+    const m = mountShop({ path: "/shop/my-items", who: "web3", routes: [nfts(), importable(0)] });
     const tiles = await screen.findAllByTestId("shop-asset-tile");
     expect(tiles).toHaveLength(3);
     const listed = within(tiles[0]!);
@@ -87,6 +87,17 @@ describe("My items", () => {
     expect(listed.getByRole("link", { name: "Remove from sale" })).toHaveAttribute("href", `/shop/token/${BOOK.collection}/105312/cancel`);
     fireEvent.click(screen.getByRole("button", { name: "On sale" }));
     await waitFor(() => expect(m.shop.requests.some((r) => r.url.searchParams.get("isOnSale") === "true")).toBe(true));
+  });
+
+  it("without the Marketplace (a web2 session, or the rollout off), owned items carry no manage actions and no LAND or Bids", async () => {
+    const web2 = mountShop({ path: "/shop/my-items?section=land", who: "web2", routes: [nfts(), importable(0)] });
+    const tiles = await screen.findAllByTestId("shop-asset-tile");
+    expect(within(tiles[0]!).queryByRole("link", { name: "Update price" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "LAND" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Bids" })).toBeNull();
+    web2.unmount();
+    mountShop({ path: "/shop/my-items", who: "web3", marketplace: false, routes: [nfts(), importable(0)] });
+    expect(within((await screen.findAllByTestId("shop-asset-tile"))[0]!).queryByRole("link", { name: "Transfer" })).toBeNull();
   });
 
   it("the old Marketplace section names land on their Shop section; empty, error and outage each explain themselves", async () => {
@@ -220,10 +231,10 @@ describe("Transfer", () => {
     expect(screen.getByRole("button", { name: "Transfer" })).toBeDisabled();
   });
 
-  it("signed out: the sign-in page, as upstream's protected route redirects there", async () => {
+  it("signed out, the transfer page is not drawn: the visitor goes to the overview, with no read made", async () => {
     const m = mountShop({ path: `/shop/token/${BOOK.collection}/105312/transfer`, who: "signedOut", routes: [nfts([owned(BOOK.reseller)])] });
-    expect(await screen.findByTestId("land-sign-in")).toHaveTextContent("Get Started");
-    expect(m.shop.requests).toHaveLength(0);
+    await waitFor(() => expect(m.router.state.location.pathname).toBe("/shop/overview"));
+    expect(m.shop.requests.some((r) => r.url.pathname === "/v1/nfts")).toBe(false);
   });
 
   it("a wallet moved to another account never signs for the session: the switch is explicit", async () => {
@@ -234,34 +245,26 @@ describe("Transfer", () => {
     expect(screen.queryByPlaceholderText("0x...")).toBeNull();
   });
 
-  it("a web2 session owning the token is told to connect a web3 wallet", async () => {
+  it("a web2 session owning the token never reaches the transfer page: transfers are the Marketplace's", async () => {
     const wallet = fakeWallet();
-    mountShop({ path: `/shop/token/${BOOK.collection}/105312/transfer`, who: "web2", wallet, routes: [nfts([owned(wallet.address)])] });
-    expect(await screen.findByTestId("shop-wallet-required")).toBeInTheDocument();
+    const m = mountShop({ path: `/shop/token/${BOOK.collection}/105312/transfer`, who: "web2", wallet, routes: [nfts([owned(wallet.address)])] });
+    await waitFor(() => expect(m.router.state.location.pathname).toBe("/shop/overview"));
   });
 });
 
 describe("Place a bid: MANA only", () => {
   const listed = nftRow({ tokenId: "77", itemId: "7", name: "Glow Visor", owner: BOOK.reseller });
 
-  it("signed out, a token or an item bid: the sign-in page, never a credit option", async () => {
-    const m = mountShop({ path: `/shop/token/${BOOK.collection}/77/bid`, who: "signedOut", routes: [nfts([listed])] });
-    expect(await screen.findByTestId("land-sign-in")).toHaveTextContent("Get Started");
-    expect(m.shop.requests).toHaveLength(0);
-    m.unmount();
-    mountShop({ path: `/shop/item/${BOOK.collection}/7/bid`, who: "signedOut", routes: [] });
-    expect(await screen.findByTestId("land-sign-in")).toBeInTheDocument();
-    expect(document.body.textContent).not.toMatch(/credit/i);
-  });
-
-  it("web2: the wallet/network/funding guidance, keeping the item, and never credits", async () => {
-    mountShop({ path: `/shop/token/${BOOK.collection}/77/bid`, who: "web2", routes: [nfts([listed])] });
-    const guidance = await screen.findByRole("heading", { name: "This purchase is paid in MANA" });
-    const section = guidance.closest("section")!;
-    expect(section).toHaveTextContent("Polygon");
-    expect(section).toHaveTextContent("The MANA you offer, held on Polygon.");
-    expect(within(section).getByRole("link", { name: "Glow Visor" })).toHaveAttribute("href", `/shop/token/${BOOK.collection}/77`);
-    expect(document.body.textContent).not.toMatch(/credit/i);
+  it("bids are a web3 session's: signed out or web2, a token or an item bid goes to the overview", async () => {
+    for (const [who, path] of [
+      ["signedOut", `/shop/token/${BOOK.collection}/77/bid`],
+      ["signedOut", `/shop/item/${BOOK.collection}/7/bid`],
+      ["web2", `/shop/token/${BOOK.collection}/77/bid`],
+    ] as const) {
+      const m = mountShop({ path, who, routes: [nfts([listed])] });
+      await waitFor(() => expect(m.router.state.location.pathname).toBe("/shop/overview"));
+      m.unmount();
+    }
   });
 
   it("web3: places a bid (MANA approval relayed, trade signed and posted) with the phases shown", async () => {
@@ -328,7 +331,7 @@ describe("Accept a bid", () => {
 
   it("a visitor sees the bids but no Review", async () => {
     const token = nftRow({ tokenId: "105312", itemId: "7", name: "Neon Jacket", owner: BOOK.reseller });
-    mountShop({ path: `/shop/token/${BOOK.collection}/105312/bids`, who: "signedOut", routes: [nfts([token]), { method: "GET", path: /^\/v1\/bids$/, reply: () => ({ body: { ok: true, data: { results: RECEIVED_BIDS, total: 2 } } }) }] });
+    mountShop({ path: `/shop/token/${BOOK.collection}/105312/bids`, who: "web3", routes: [nfts([token]), { method: "GET", path: /^\/v1\/bids$/, reply: () => ({ body: { ok: true, data: { results: RECEIVED_BIDS, total: 2 } } }) }] });
     expect(await screen.findAllByTestId("shop-token-bid")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Accept" })).toBeNull();
   });

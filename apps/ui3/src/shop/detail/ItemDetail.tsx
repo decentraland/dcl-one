@@ -26,6 +26,7 @@ import { shopClient } from "../api/shop";
 import { fetchCatalogItems, fetchCollection, fetchCollectionItems, fetchRelatedItems, type UnifiedListing } from "../discovery/api";
 import { cardEligibility } from "../discovery/cardPrice";
 import { cartInputFor } from "../discovery/components/AssetCard";
+import { useMarketplace } from "../market/access";
 import { BadgeSkeleton, DetailCollection, DetailCreator } from "./components/DetailBadges";
 import Icon from "../discovery/components/Icon";
 import IndexNotice from "../discovery/components/IndexNotice";
@@ -35,7 +36,6 @@ import { OfferStock, SaleTimer } from "../discovery/components/SaleTimer";
 import SuggestedForYouRow, { useSuggestedForYou } from "../discovery/components/SuggestedForYouRow";
 import { suggestedHiddenReason } from "../discovery/lib/suggestionEvents";
 import { indexUnavailable } from "../discovery/freshness";
-import { shopFlags } from "../discovery/flags";
 import { useSaleActive, useSeo } from "../discovery/hooks";
 import { t } from "../discovery/intl";
 import type { CatalogItem } from "../discovery/lib/catalogItem";
@@ -260,7 +260,9 @@ export default function ItemDetail() {
   const wallet = useShopWallet();
   const { session, account } = wallet;
   const launch = usePurchaseLauncher();
-  const flags = shopFlags();
+  // Resales, bids, owner actions, LAND, owners and sales are the Marketplace: on only for a web3 wallet session
+  // while the rollout is on (market/access.tsx). Off, the page is the old shop's: the item and its primary sale.
+  const marketplace = useMarketplace();
 
   const contractAddress = (routeSegment(params.contractAddress) ?? "").toLowerCase();
   const routeItemId = routeSegment(params.itemId) ?? null;
@@ -282,8 +284,8 @@ export default function ItemDetail() {
   const ownedQ = useShopQuery(isTokenRoute && validContract && account ? ["owned-token", contractAddress, routeTokenId, account] : null, (signal) => fetchOwnedToken(account!, contractAddress, routeTokenId!, { signal }), { staleMs: 0 });
   const descQ = useShopQuery(validContract && pageItemId ? ["item-desc", contractAddress, pageItemId] : null, (signal) => fetchItemDescription(contractAddress, pageItemId!, { signal }), { staleMs: 5 * 60_000 });
   const collectionQ = useShopQuery(validContract ? ["collection-meta", contractAddress] : null, (signal) => fetchCollection(contractAddress, { signal }), { staleMs: 5 * 60_000 });
-  const resalesQ = useShopQuery(flags.secondarySales && validContract && pageItemId ? ["item-resales", contractAddress, pageItemId] : null, (signal) => fetchItemResales(contractAddress, pageItemId!, { signal }), { staleMs: 0 });
-  const classicQ = useShopQuery(flags.secondarySales && validContract && pageItemId ? ["classic-orders", contractAddress, pageItemId] : null, (signal) => fetchClassicItemOrders(contractAddress, pageItemId!, { signal }), { staleMs: 0 });
+  const resalesQ = useShopQuery(marketplace && validContract && pageItemId ? ["item-resales", contractAddress, pageItemId] : null, (signal) => fetchItemResales(contractAddress, pageItemId!, { signal }), { staleMs: 0 });
+  const classicQ = useShopQuery(marketplace && validContract && pageItemId ? ["classic-orders", contractAddress, pageItemId] : null, (signal) => fetchClassicItemOrders(contractAddress, pageItemId!, { signal }), { staleMs: 0 });
   const ownedCountQ = useShopQuery(!isTokenRoute && validContract && account && routeItemId ? ["owned-count", contractAddress, routeItemId, account] : null, (signal) => fetchOwnedItemCount(account!, contractAddress, routeItemId!, { signal }), { staleMs: 30_000 });
 
   const listing = isTokenRoute ? null : (listingQ.data ?? null);
@@ -382,7 +384,8 @@ export default function ItemDetail() {
     }),
     [current.tradeId, current.acquisition, legacyOrder],
   );
-  const forSale = isTokenRoute ? !!current.onSale : isListingForSale(current);
+  // A token's sale is always a resale (or a LAND order): the Marketplace's, so without it the token is not for sale here.
+  const forSale = isTokenRoute ? marketplace && !!current.onSale : isListingForSale(current);
   const queries: OfferQuery[] = useMemo(
     () => (asset && forSale ? [{ key: offerQueryKey(asset, listingRef), asset, listing: listingRef }] : []),
     [asset, forSale, listingRef],
@@ -540,7 +543,7 @@ export default function ItemDetail() {
   const favItemId = pageItemId && current.name && !["parcel", "estate"].includes(current.category) ? pageItemId : null;
   const hasResales = resales.length > 0 || (classicQ.data?.length ?? 0) > 0;
   const isLand = current.category === "parcel" || current.category === "estate";
-  const canBuyResale = flags.secondarySales && !!pageItemId && !isLand;
+  const canBuyResale = marketplace && !!pageItemId && !isLand;
   const showResales = canBuyResale && ((hasResales && !isTokenRoute) || resaleListOpen);
   const bidHref = isTokenRoute ? shopPath("tokenBid", params2) : shopPath("itemBid", { contractAddress, itemId: pageItemId ?? "" });
   const stock = supply !== null && maxSupply ? { supply, max: maxSupply } : null;
@@ -730,18 +733,20 @@ export default function ItemDetail() {
               {owns ? (
                 <div className="shop-detail__manage" data-testid="manage-actions">
                   <p>{t("itemDetail.ownToken")}</p>
-                  <div className="shop-detail__manage-links">
-                    {ownedQ.data?.isOnSale ? (
-                      <Link data-variant="scrim" to={shopPath("tokenCancel", params2)}>{t("itemDetail.manageCancel")}</Link>
-                    ) : (
-                      <Link data-variant="dark" to={shopPath("tokenSell", params2)}>{t("itemDetail.manageSell")}</Link>
-                    )}
-                    <Link data-variant="scrim" to={shopPath("tokenTransfer", params2)}>{t("itemDetail.manageTransfer")}</Link>
-                    <div className="shop-detail__manage-more">
-                      <Link to={shopPath("tokenBids", params2)}>{t("itemDetail.bids")}</Link>
-                      <Link to={shopPath("tokenManage", params2)}>{t("itemDetail.manage")}</Link>
+                  {marketplace ? (
+                    <div className="shop-detail__manage-links">
+                      {ownedQ.data?.isOnSale ? (
+                        <Link data-variant="scrim" to={shopPath("tokenCancel", params2)}>{t("itemDetail.manageCancel")}</Link>
+                      ) : (
+                        <Link data-variant="dark" to={shopPath("tokenSell", params2)}>{t("itemDetail.manageSell")}</Link>
+                      )}
+                      <Link data-variant="scrim" to={shopPath("tokenTransfer", params2)}>{t("itemDetail.manageTransfer")}</Link>
+                      <div className="shop-detail__manage-more">
+                        <Link to={shopPath("tokenBids", params2)}>{t("itemDetail.bids")}</Link>
+                        <Link to={shopPath("tokenManage", params2)}>{t("itemDetail.manage")}</Link>
+                      </div>
                     </div>
-                  </div>
+                  ) : null}
                 </div>
               ) : forSale && !outOfStock ? (
                 <PaymentPanel
@@ -821,7 +826,7 @@ export default function ItemDetail() {
                 </>
               )}
 
-              {!owns && isLand ? (
+              {!owns && isLand && marketplace ? (
                 <p className="shop-detail__offer">
                   <Link className="shop-pdp__textlink" to={bidHref} data-testid="make-offer">
                     {t("itemDetail.placeBid")}
@@ -839,7 +844,7 @@ export default function ItemDetail() {
         </div>
       </div>
 
-      {isTokenRoute && (current.category === "parcel" || current.category === "estate") ? (
+      {marketplace && isTokenRoute && (current.category === "parcel" || current.category === "estate") ? (
         <LandBranch contractAddress={contractAddress} tokenId={routeTokenId!} viewer={account} />
       ) : null}
 
@@ -849,8 +854,8 @@ export default function ItemDetail() {
 
       {/* A token route waits for its token: until then the category is the placeholder's, and LAND has its
           own sales table. */}
-      {validContract && !isTokenRoute && !isLand && pageItemId ? <ItemOwners contractAddress={contractAddress} itemId={pageItemId} /> : null}
-      {validContract && !isLand && (isTokenRoute ? routeTokenId && token : pageItemId) ? (
+      {marketplace && validContract && !isTokenRoute && !isLand && pageItemId ? <ItemOwners contractAddress={contractAddress} itemId={pageItemId} /> : null}
+      {marketplace && validContract && !isLand && (isTokenRoute ? routeTokenId && token : pageItemId) ? (
         <LatestSales contractAddress={contractAddress} tokenId={isTokenRoute ? routeTokenId! : undefined} itemId={isTokenRoute ? undefined : pageItemId!} />
       ) : null}
 

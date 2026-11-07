@@ -26,9 +26,17 @@ export function testIdentity(signer: string, ms = 3_600_000): AuthIdentity {
 
 export type Who = "signedOut" | "web2" | "web3";
 
-export type Mounted = { shop: FakeShop; wallet: FakeWallet; host: ShopWalletHost; client: QueryClient };
+export type Mounted = { shop: FakeShop; wallet: FakeWallet; host: ShopWalletHost; client: QueryClient; router: ReturnType<typeof createMemoryRouter> };
 
-export function mountShop(opts: { path: string; who: Who; routes?: FakeRoute[]; wallet?: FakeWallet; host?: Partial<ShopWalletHost> }): Mounted & ReturnType<typeof render> {
+export function mountShop(opts: { path: string; who: Who; routes?: FakeRoute[]; wallet?: FakeWallet; host?: Partial<ShopWalletHost>; marketplace?: boolean }): Mounted & ReturnType<typeof render> {
+  // These are the Marketplace's pages: its rollout is on unless a test says otherwise (market/access.tsx still
+  // asks for a web3 session).
+  const flagWindow = window as Window & { __SHOP_FLAGS__?: Record<string, boolean> };
+  const declared = flagWindow.__SHOP_FLAGS__;
+  flagWindow.__SHOP_FLAGS__ = { ...declared, marketplaceFeatures: opts.marketplace ?? true };
+  onTestFinished(() => {
+    flagWindow.__SHOP_FLAGS__ = declared;
+  });
   const wallet = opts.wallet ?? fakeWallet();
   const shop = fakeShop(opts.routes ?? [], { signer: opts.who === "signedOut" ? null : wallet.address });
   setShopClient(shop.client);
@@ -50,7 +58,7 @@ export function mountShop(opts: { path: string; who: Who; routes?: FakeRoute[]; 
       </ShopWalletProvider>
     </QueryClientProvider>,
   );
-  return { ...view, shop, wallet, host, client };
+  return { ...view, shop, wallet, host, client, router };
 }
 
 /** For stories: the same providers around a single element, with a fixed session. */

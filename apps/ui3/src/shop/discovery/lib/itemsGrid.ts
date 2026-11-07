@@ -13,6 +13,8 @@ export type ItemsGridScope = {
   contracts?: string[];
   hideNames?: boolean;
   lockStatus?: FilterStatus;
+  /** Whether resales may show (market/access.tsx); off, the grid lists primary sales only, as the old shop. */
+  marketplace?: boolean;
 };
 
 export const defaultStatusFor = (searching: boolean): FilterStatus => (searching ? "all" : "on_sale");
@@ -80,7 +82,7 @@ export type ItemsFilterState = ReturnType<typeof itemsFilterDefaults>;
 
 export const dealsRequestedIn = (searchParams: URLSearchParams): boolean => shopFlags().creatorSales && searchParams.get("deals") === "true";
 
-export function itemsGrid(filterState: ItemsFilterState, q: string, { contracts, hideNames = false, lockStatus }: ItemsGridScope = {}) {
+export function itemsGrid(filterState: ItemsFilterState, q: string, { contracts, hideNames = false, lockStatus, marketplace = false }: ItemsGridScope = {}) {
   const flags = shopFlags();
   const { subCategory, rarities, priceMin, priceMax, smart, sort } = filterState;
   const defaultStatus = defaultStatusFor(!!q);
@@ -116,7 +118,7 @@ export function itemsGrid(filterState: ItemsFilterState, q: string, { contracts,
     isSmart: smart || undefined,
     onSale: true,
     discounted: deals || undefined,
-    listingType: (flags.secondarySales ? listingType : "primary") as "primary" | "secondary" | undefined,
+    listingType: (marketplace ? listingType : "primary") as "primary" | "secondary" | undefined,
     contractAddresses: selectedContracts?.length ? selectedContracts : undefined,
     creators: creators.length ? creators : undefined,
     ...emote,

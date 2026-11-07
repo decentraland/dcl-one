@@ -160,7 +160,8 @@ async function collectionPage(request: Request, params: ShopLoadInput["params"],
 async function overviewPage(ctx: ReadCtx, client: ShopClient, env: BaseEnv): Promise<Collected> {
   const seo = defaultShopSeo("overview", canonicalFor(ctx.request, "/shop/overview", env));
   const flags = shopFlags();
-  const listingType = flags.secondarySales ? undefined : ("primary" as const);
+  // The server reads for no one, and the Marketplace is a web3 session's (market/access.tsx): primary sales only.
+  const listingType = "primary" as const;
   const [listings, trending, deals] = await Promise.all([
     settle(publicRead(ctx, "overview-listings", (signal) => fetchShopItems({ first: 12, sortBy: "newest", listingType: "primary" }, { client, signal }))),
     settle(publicRead(ctx, `overview-trending|${listingType ?? "all"}`, (signal) => fetchTrendingItems({ first: 12, listingType }, { client, signal }))),

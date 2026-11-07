@@ -21,6 +21,7 @@ import Rail from "../components/Rail";
 import SuggestedForYouRow from "../components/SuggestedForYouRow";
 import TopCreators from "../components/TopCreators";
 import { indexUnavailable } from "../freshness";
+import { useMarketplace } from "../../market/access";
 import { isIapMode, shopFlags } from "../flags";
 import { useListingsFreshness, useSeo } from "../hooks";
 import { t } from "../intl";
@@ -79,7 +80,8 @@ export default function Overview() {
   useSeo({ title: null });
   useHomeTitle();
   const flags = shopFlags();
-  const listingType = flags.secondarySales ? undefined : ("primary" as const);
+  // Trending lists resales too only for a visitor who sees the Marketplace (market/access.tsx).
+  const listingType = useMarketplace() ? undefined : ("primary" as const);
 
   const listings = useShopQuery(["overview-listings"], (signal) => fetchShopItems({ first: 12, sortBy: "newest", listingType: "primary" }, { signal }));
   const trending = useShopQuery(["overview-trending", listingType ?? "all"], (signal) => fetchTrendingItems({ first: 12, listingType }, { signal }));
