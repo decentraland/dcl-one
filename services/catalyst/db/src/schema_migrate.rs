@@ -1274,10 +1274,10 @@ pub async fn status(
     if let Err(e) = lint_steps(&steps) {
         out.refused_step = Some(e.to_string());
     }
-    if out.stamp.is_some() {
+    if let Some(stamp) = &out.stamp {
         let recorded = recorded_steps(&mut conn).await?;
         for step in &steps {
-            let version = out.stamp.as_ref().expect("stamp exists").1;
+            let version = stamp.1;
             let retired = match step_retired(step, version) {
                 Ok(retired) => retired,
                 Err(error) => {
@@ -1309,7 +1309,10 @@ fn hash_named_prefix(name: &str) -> Option<&str> {
 }
 
 /// Functions in the database named like a hash-named function of the layout
-/// (same schema and prefix, another hash) that the layout does not declare.
+/// (same schema and prefix, another hash) that the layout does not declare
+/// and no column default, generated column or index still calls
+/// (`pg_depend`: a step replaced such a function's body in place, and
+/// dropping it would take the column or the index with it).
 async fn superseded_functions(
     conn: &mut sqlx::PgConnection,
     plan: &[Planned],
@@ -1338,6 +1341,10 @@ async fn superseded_functions(
             "SELECT p.proname::text, format('%I.%I(%s)', n.nspname, p.proname, pg_get_function_identity_arguments(p.oid))
              FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
              WHERE n.nspname = $1 AND starts_with(p.proname, $2 || '_')
+               AND NOT EXISTS (
+                 SELECT 1 FROM pg_catalog.pg_depend d
+                 WHERE d.refclassid = 'pg_catalog.pg_proc'::regclass AND d.refobjid = p.oid
+                   AND d.classid IN ('pg_catalog.pg_attrdef'::regclass, 'pg_catalog.pg_class'::regclass))
              ORDER BY 2",
         )
         .bind(&schema)
@@ -1867,6 +1874,49 @@ mod tests {
         assert_eq!(
             found,
             vec![format!("{schema}.unpublish_scene_aaaaaaaaaaaa(text)")]
+        );
+        drop(conn);
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    /// A hash-named function the layout no longer declares stays off the list
+    /// while a generated column, a column default or an index calls it: a step
+    /// replaced its body in place, and dropping it would drop the column.
+    #[tokio::test]
+    async fn status_keeps_hash_named_functions_a_generated_column_or_index_calls() {
+        let Some(pool) = crate::scratch::pool(2).await else {
+            return;
+        };
+        let schema = format!("fns_{}", uuid::Uuid::new_v4().simple());
+        let body = "RETURNS int LANGUAGE sql IMMUTABLE AS $f$ SELECT length($1); $f$";
+        let layout = format!(
+            "CREATE SCHEMA {schema};\nCREATE FUNCTION {schema}.live_until_bbbbbbbbbbbb(text) {body};"
+        );
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "{layout}\n\
+             CREATE FUNCTION {schema}.live_until_aaaaaaaaaaaa(text) {body};\n\
+             CREATE FUNCTION {schema}.live_until_cccccccccccc(text) {body};\n\
+             CREATE FUNCTION {schema}.live_until_dddddddddddd(text) {body};\n\
+             CREATE FUNCTION {schema}.live_until_eeeeeeeeeeee(text) {body};\n\
+             CREATE TABLE {schema}.event (\
+               raw text, \
+               live_until int GENERATED ALWAYS AS ({schema}.live_until_aaaaaaaaaaaa(raw)) STORED, \
+               size int DEFAULT {schema}.live_until_cccccccccccc('default'));\n\
+             CREATE INDEX event_live_until_idx ON {schema}.event (({schema}.live_until_dddddddddddd(raw)));"
+        )))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let found = superseded_functions(&mut conn, &plan(&layout).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            found,
+            vec![format!("{schema}.live_until_eeeeeeeeeeee(text)")]
         );
         drop(conn);
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
