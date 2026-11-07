@@ -522,6 +522,10 @@ pub async fn place_bid(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    // A bid or a resale order is the Marketplace's: refused while its rollout is off (`features`). Cancels stay open.
+    if let Err(error) = state.require_marketplace() {
+        return error.into_response();
+    }
     let (signed, signer) =
         match preflight::<BidPlace>(&state, &headers, "/v1/federation/bid", &body).await {
             Ok(x) => x,
@@ -584,6 +588,10 @@ pub async fn accept_bid(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    // A bid or a resale order is the Marketplace's: refused while its rollout is off (`features`). Cancels stay open.
+    if let Err(error) = state.require_marketplace() {
+        return error.into_response();
+    }
     let (signed, signer) =
         match preflight::<BidAccept>(&state, &headers, "/v1/federation/bid/accept", &body).await {
             Ok(x) => x,
@@ -621,6 +629,10 @@ pub async fn create_order(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    // A bid or a resale order is the Marketplace's: refused while its rollout is off (`features`). Cancels stay open.
+    if let Err(error) = state.require_marketplace() {
+        return error.into_response();
+    }
     let (signed, signer) =
         match preflight::<OrderCreate>(&state, &headers, "/v1/federation/order", &body).await {
             Ok(x) => x,

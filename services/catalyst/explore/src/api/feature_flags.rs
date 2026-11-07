@@ -201,9 +201,6 @@ pub async fn store(pool: &PgPool, app: &str, doc: &Value, etag: Option<&str>) ->
     Ok(())
 }
 
-/// Refresh a separate application's document through the same outbound client,
-/// bounded body reader and persisted flag store as Explorer. A failed fetch or
-/// validation leaves both the persisted and process snapshots unchanged.
 /// One application's document as the service answers it for `referer` (the service picks flags by Referer),
 /// validated. `target` has already passed the caller's SSRF guard.
 pub async fn fetch_document(
@@ -230,6 +227,9 @@ pub async fn fetch_document(
     Ok(doc)
 }
 
+/// Refresh a separate application's document through the same outbound client,
+/// bounded body reader and persisted flag store as Explorer. A failed fetch or
+/// validation leaves both the persisted and process snapshots unchanged.
 pub async fn refresh_app(
     state: &Shared,
     snapshot: &Snapshot,

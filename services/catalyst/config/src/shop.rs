@@ -441,7 +441,7 @@ pub struct ShopConfig {
     pub shop_base_url: String,
 
     /// The feature-flags service the Shop reads decentraland.org's `dapps` rollout flags from (as sites'
-    /// `FEATURE_FLAGS_URL`); empty reads only the stored document and its local overrides.
+    /// `FEATURE_FLAGS_URL`); empty reads only this node's local overrides (`explore_api.feature_flags_local`).
     #[arg(long, env = "SHOP_FEATURE_FLAGS_URL", default_value = "")]
     pub shop_feature_flags_url: String,
 
