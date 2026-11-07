@@ -1347,15 +1347,20 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .nest("/archipelago-ea-stats", archipelago.stats)
         .merge(explore::api::router(explorer_api))
         // The gatekeeper's mounts, where `social::router` held them: the Pulse
-        // room authority and the world comms mints at the root, the mints
-        // under `/worlds-content-server`, and the gatekeeper's routes with
-        // social's MLS routes under `/comms-gatekeeper` behind the social
-        // writes switch.
+        // room authority, the world comms mints and the LiveKit webhook (the
+        // worlds content server's root path) at the root, the mints and the
+        // webhook under `/worlds-content-server`, and the gatekeeper's routes
+        // with social's MLS routes under `/comms-gatekeeper` behind the
+        // social writes switch.
         .merge(comms::gatekeeper::room_authority_router(
             &comms_stage.gatekeeper,
         ))
         .merge(comms::gatekeeper::admission::world_mint::router(
             comms_stage.gatekeeper.clone(),
+        ))
+        .merge(social::writes::guard(
+            comms::gatekeeper::webhook_router(comms_stage.gatekeeper.clone()),
+            config.writes.social_writes_enabled,
         ))
         .nest(
             "/worlds-content-server",
@@ -1944,7 +1949,7 @@ async fn comms_states(
         archipelago::config::RawSettings {
             max_sockets: config.worlds.ws_max_sockets,
             handshake_timeout_ms: config.worlds.handshake_timeout,
-            deny_list_url: non_empty(&config.worlds.deny_list_url),
+            deny_list_url: config.worlds.deny_list(),
             island_changed_dedup_ms: config.worlds.island_changed_dedup_ms,
             commit_hash: config.node.commit_hash.clone(),
         },
@@ -1965,7 +1970,7 @@ async fn comms_states(
     )
     .with_ban_status(ban_status.clone())
     .with_name_owner_reader(market.clone())
-    .with_deny_list_url(non_empty(&config.worlds.deny_list_url))
+    .with_deny_list_url(config.worlds.deny_list())
     .with_cluster(comms::gatekeeper::admission::cluster::ClusterConfig {
         nats_url: non_empty(&config.worlds.nats_url),
         takeover_retry_delay_ms: config.worlds.cluster_takeover_retry_delay_ms,

@@ -105,7 +105,7 @@ Common notes:
 
   `post_permissions` passes `PERMISSIONS_METADATA_KEYS`, which holds the same six keys
   (`services/catalyst/worlds/src/core/auth.rs:23-24`). Every other permission route passes `&[]`
-  (`services/catalyst/worlds/src/core/permissions.rs:163`). The statuses match. The bodies differ (WP-01).
+  (`services/catalyst/worlds/src/core/permissions.rs:163`). The statuses and bodies match (WP-01, fixed).
 - **Owner check.** Upstream `checkOwnership` asks `namePermissionChecker.checkPermission(signer, world)`, which is
   `nameOwnership.findOwners` (`src/adapters/dcl-name-checker.ts:9-17`). A refusal is
   `401 Your wallet does not own "<world>", you can not set access control lists for it.`
@@ -141,8 +141,7 @@ Common notes:
 
 Counts: 10 endpoints. MATCH 0, GAP 0, DIVERGENT 10, MISSING 0. Every route exists in dcl-one at the same method
 and path, on both mounts. On the success path, each route answers the upstream status and body shape.
-No route is MATCH, because the eight signed routes share the signed-fetch error bodies (WP-01) and the two
-unsigned ones differ on an error body (WP-02, WP-08).
+No route is MATCH: each keeps at least one open item below (the signed-fetch bodies, WP-01, are fixed).
 
 ---
 
@@ -207,11 +206,11 @@ The metadata is the signed `x-identity-metadata` header; there is no body.
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
 | Success (any of the three) | 204 | empty | `:167-169` | `:297` | MATCH |
-| Not signed | 400 | upstream `{"error":"Invalid Auth Chain","message":"This endpoint requires a signed fetch request. See ADR-44."}`; dcl-one `{"error":"Bad request","message":"Invalid Auth Chain"}` | crypto-middleware `extractAuthChain`, `onError` | `map_auth_error_api` (`comms/src/signed_fetch.rs:187-190`) | DIVERGENT (WP-01) |
+| Not signed | 400 | `{"error":"Invalid Auth Chain","message":"This endpoint requires a signed fetch request. See ADR-44."}` in both | crypto-middleware `extractAuthChain`, `onError` | `map_auth_error_api` (`comms/src/signed_fetch.rs`) | MATCH (fixed, WP-01) |
 | Folded payload, canonical keys (creator-hub: `{type:"shared-secret",secret:"MyPassWord123"}`, `{type:"allow-list",wallets:[],communities:["B7B1E0D2-…"]}`) | 204 | | `routes.ts:158-165`; legacy spec | `PERMISSIONS_METADATA_KEYS` | MATCH on status. The upper-case community id is stored and returned in lower case here (WP-05). |
-| Folded payload, re-cased declared key (`Secret`, `Type`, `Wallets`, `Communities`) | 400 | upstream `error` contains `Invalid chain metadata: expected "<k>", got "<K>"`; dcl-one `message` `Invalid Auth Chain: non-canonical metadata key: expected "<k>"` | `assertLegacyMetadataKeys` | `first_respelled_key` (`comms/src/signed_fetch.rs:62-92,165-170`) | DIVERGENT body (WP-01) |
-| Scene signer, or `Signer` re-cased (folded or 6.x) | 400 | upstream `error` contains `Invalid metadata content`; dcl-one `message` `Invalid Auth Chain: invalid metadata content: "…"` | `rejectIfSigner` | `is_refused_signer` | MATCH on status, DIVERGENT body (WP-01) |
-| Folded payload on `PUT .../:permission_name/:address` | 401 | upstream `error` matches `/^Invalid signature:/`; dcl-one `{"error":"Not Authorized","message":"Unauthenticated: Invalid signature"}` | strict instance | keys `&[]` | MATCH on status, DIVERGENT body (WP-01) |
+| Folded payload, re-cased declared key (`Secret`, `Type`, `Wallets`, `Communities`) | 400 | `error` `Invalid chain metadata: expected "<k>", got "<K>"` in both | `assertLegacyMetadataKeys` | `first_respelled_key` (`comms/src/signed_fetch.rs`) | MATCH (fixed, WP-01) |
+| Scene signer, or `Signer` re-cased (folded or 6.x) | 400 | `error` `Invalid metadata content: <metadata JSON>` in both | `rejectIfSigner` | `is_refused_signer` | MATCH (fixed, WP-01) |
+| Folded payload on `PUT .../:permission_name/:address` | 401 | `error` matching `/^Invalid signature:/` in both | strict instance | keys `&[]` | MATCH (fixed, WP-01) |
 | Not the owner | 401 | `{"error":"Not Authorized","message":"Your wallet does not own \"<w>\", you can not set access control lists for it."}` | `:41-48,123` | `:135-154,231` | MATCH |
 | Unknown permission name | 400 | `Invalid permission name: <p>.` (after the owner check) | `:151-153` | `:291-295` | MATCH |
 | `deployment`, type not `allow-list` | 400 | `Invalid payload received. Deployment permission needs to be 'allow-list'.` | `permissions/component.ts:230-234` | `:237-241` | MATCH |
@@ -414,7 +413,7 @@ dcl-one: `permissions.rs:417-462`. Stage order:
 | Invalid address | 400 `Invalid address: anything.` | | `:190-192` | `:424` | MATCH (padded or `0X` addresses: WP-10) |
 | Invalid permission name | 400 `Invalid permission name: <p>.` | | `:194-196` | `:425-429` | MATCH |
 | Not owner | 401, the upstream text | | | | MATCH |
-| Folded payload | 401 | | strict instance | keys `&[]` | MATCH on status (WP-01 body) |
+| Folded payload | 401 | | strict instance | keys `&[]` | MATCH (WP-01 fixed) |
 | Unsigned request with a bad address or permission | upstream 400 `Invalid Auth Chain`; dcl-one the path error | | | | DIVERGENT (WP-07) |
 | Notification | Upstream sends `WORLDS_PERMISSION_GRANTED` only to an address that was actually inserted, via SNS. dcl-one sends the same notice through its inbox. | | | `:451` | intended (Notifications) |
 
@@ -459,12 +458,12 @@ dcl-one: `permissions.rs:465-516`. `store::world_is_valid` (`store.rs:427-446`) 
   6.x payload. An upper-case community id comes back lower-cased on the next `GET` (WP-05); its membership check
   passes when the community exists in this node's `social` schema.
 - **Builder / CLI** use the 6.x payload on every route. Their error toasts read `message`, which on the
-  signed-fetch refusals carries the ADR-44 line upstream and the detail here (WP-01).
+  signed-fetch refusals carries the ADR-44 line in both trees (WP-01, fixed).
 - **Explorers** do not call these routes. They see the kicks (comms area).
 
 ## Backlog (WP-)
 
-1. **WP-01 · all eight signed routes · signed-fetch refusal bodies.** Status: open.
+1. **WP-01 · all eight signed routes · signed-fetch refusal bodies.** Status: MATCH (fixed).
    - Upstream: `{"error": <middleware message>, "message": "This endpoint requires a signed fetch request. See ADR-44."}`.
      The middleware messages are `Invalid Auth Chain`, `Invalid signature: <detail>`,
      `Expired signature: signature timestamp: …`, `Invalid metadata content: {…}` and
@@ -477,7 +476,11 @@ dcl-one: `permissions.rs:465-516`. `store::world_is_valid` (`store.rs:427-446`) 
      "Unauthenticated: Invalid signature" | "Unauthenticated: Expired signature" | "Invalid Auth Chain: invalid
      metadata content: …" | "Invalid Auth Chain: non-canonical metadata key: expected \"<k>\""}`
      (`services/catalyst/comms/src/signed_fetch.rs:187-190`, `services/catalyst/shared/src/signed_fetch.rs:76-87`).
-   - Left: the statuses match. The texts and the field they sit in differ.
+   - Fixed: `map_auth_error_api` answers `{error: <crypto-middleware 6.3.0 text>, message: <ADR-44 line>}`
+     (worlds-comms.md WC-01). Pinned by `worlds/src/core/auth.rs` tests (the key guard's
+     `expected "<k>", got "<K>"`, the scene gate) and `worlds/src/core/tests.rs` `signed_routes_refuse_with_the_crypto_middleware_body` (unsigned and
+     wrong-payload requests on the signed permission routes). Left, intended: the reason after
+     `Invalid signature: ` is this node's verifier's (worlds-compatibility.md "Signed-fetch refusals").
    - Proposed fix: give `map_auth_error_api` the worlds `onError` shape: `error` = the crypto-middleware message
      (port the strings, with `got "<K>"` in the key guard), `message` = the ADR-44 line. Do it in
      `comms/src/signed_fetch.rs` so the comms mints answer the same way. Pin it in `worlds/src/core/auth.rs`

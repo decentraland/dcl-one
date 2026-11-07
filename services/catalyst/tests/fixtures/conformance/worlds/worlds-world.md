@@ -68,9 +68,7 @@ Common notes:
   `{"error":<detail>,"message":"This endpoint requires a signed fetch request. See ADR-44."}` with the
   detail's status (400 `Invalid Auth Chain`, 401 `Invalid signature…` / `Expired signature…`).
   dcl-one calls `require_verified(…, &[], …)` (no legacy fallback, the scene gate included,
-  `comms/src/signed_fetch.rs:131-185`), so acceptance matches, but failures answer the worlds envelope
-  `{"error":"Bad request"|"Not Authorized","message":"Invalid Auth Chain"|"Unauthenticated: …"}`
-  (`shared/src/signed_fetch.rs:76-87`, WW-24). The signed-fetch verifier itself belongs to the auth area.
+  `comms/src/signed_fetch.rs`), so acceptance matches, and failures answer the same body (WW-24, fixed). The signed-fetch verifier itself belongs to the auth area.
 - **Pagination.** `getPaginationParams` 2.0.0: limit 1..100 else 100, offset `parseInt` ≥ 0 else 0, no
   offset cap (the 100,000 cap arrived in 2.0.1, not the locked version). dcl-one `pagination_of`
   (`worlds/src/core/http.rs:27-41`) is the same, except that an offset beyond `i64` saturates (upstream
@@ -304,7 +302,7 @@ MATCH on the decision.
 
 | trigger | status | upstream body | dcl-one body | verdict |
 |---|---|---|---|---|
-| Unsigned / malformed chain | 400 | `{"error":"Invalid Auth Chain","message":"This endpoint requires a signed fetch request. See ADR-44."}` (`world-settings-handler.spec.ts:849-876`) | `{"error":"Bad request","message":"Invalid Auth Chain"}` | DIVERGENT (WW-24) |
+| Unsigned / malformed chain | 400 | `{"error":"Invalid Auth Chain","message":"This endpoint requires a signed fetch request. See ADR-44."}` (`world-settings-handler.spec.ts:849-876`) | the same, for a multipart request; a request that is not `multipart/form-data` is refused first by the multipart extractor (400, axum's text) | MATCH (fixed, WW-24); the extractor order is open (WW-24) |
 | Validation failure (fields above) | 400 | `{"error":"<message>"}` | `{"error":"Bad request","message":"<message>"}` (`core/tests.rs:5014-5025` asserts `message`) | DIVERGENT (WW-19) |
 | Not owner, no world-wide grant | 403 | `{"error":"Unauthorized. You do not have permission to update settings for this world."}` | `{"error":"You are not authorized to update the settings of this world.","message":<same>}` | DIVERGENT (WW-20) |
 | Body too large (declared `Content-Length` over the wire cap, payload over 2 MiB, a file over 2 MiB, a field over 1 MiB, too many parts or fields) | 413 | `{"error":"Payload Too Large","message":…}` (`multipart/middleware.ts:159-200`, `upload-error-handler.ts:49-51`); the spec pins 413 `An uploaded file exceeds the maximum allowed size.` (`world-settings-handler.spec.ts:1045-1080`) | 400 `{"error":"Bad request","message":…}` (`settings.rs:105-117,203-205,271-274,313-318`) | DIVERGENT (WW-21) |
@@ -410,7 +408,7 @@ NAMEs the wallet holds now, drops mirrored, personal and bare-name worlds, and c
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
-| Signed-fetch failure | 400/401 | crypto-middleware shape | `routes.ts:252` | `wallet.rs:48-56` | DIVERGENT (WW-24) |
+| Signed-fetch failure | 400/401 | crypto-middleware shape | `routes.ts:252` | `wallet.rs:48-56` | MATCH (fixed, WW-24) |
 | Success | 200 | `{"domains":[{"name","user_permissions":[…],"size":"<n>","owner","parcelCount":<n>}],"count":<n>}` | `contributor-handler.ts:5-16`, `worlds-manager.ts:893-939` | `wallet.rs:42-91` | MATCH except `owner` (WW-36) |
 
 Both select the worlds where the signer holds a grant, with `user_permissions` sorted distinct,
@@ -582,12 +580,18 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
     - Fix: reuse the upstream timeout message; drop the slot and the processing deadline from this route or record them.
     - Severity: P2.
 
-24. **WW-24 · `PUT /settings`, `/wallet/contribute` · signed-fetch failure bodies.** Status: open.
+24. **WW-24 · `PUT /settings`, `/wallet/contribute` · signed-fetch failure bodies.** Status: open, bodies fixed.
     - Upstream: `{"error":<detail>,"message":"This endpoint requires a signed fetch request. See ADR-44."}`, detail
       e.g. `Invalid Auth Chain` (`src/controllers/routes.ts:89-92`, spec `world-settings-handler.spec.ts:849-876`).
     - dcl-one: `map_auth_error_api` → worlds envelope `{"error":"Bad request","message":"Invalid Auth Chain"}`
       (`services/catalyst/comms/src/signed_fetch.rs:187-190`, `shared/src/signed_fetch.rs:76-87`).
     - Fix: one change in `map_auth_error_api` for every strict worlds route; owned by the auth/permissions area.
+    - Fixed: the bodies, `{error: <crypto-middleware 6.3.0 text>, message: <ADR-44 line>}` (worlds-comms.md
+      WC-01), pinned by `worlds/src/core/tests.rs` `signed_routes_refuse_with_the_crypto_middleware_body`.
+    - Left: `PUT /settings` takes its `Multipart` extractor before the signed fetch, so an unsigned request that is
+      not `multipart/form-data` answers axum's 400 text (``Invalid `boundary` for `multipart/form-data` request``)
+      where upstream answers the ADR-44 body. Moving the check ahead of the extractor is the settings
+      handler's change (world area).
     - Severity: P2. Depends on: auth (signed fetch).
 
 25. **WW-25 · `PUT /settings` · `spawn_coordinates` parsing.** Status: open.

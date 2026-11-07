@@ -77,8 +77,8 @@ Common notes:
   fallback, `rejectIfSigner('decentraland-kernel-scene')`, `src/controllers/routes.ts:72-98`)
   answers a refusal with the middleware's status (400 shape, 401 signature/expiry, 503 catalyst)
   and the body `{"error":<verify message>,"message":"This endpoint requires a signed fetch request. See ADR-44."}`.
-  dcl-one's `require_verified` with an empty key list (`comms/src/signed_fetch.rs:131-185`) has the
-  same statuses and the same scene gate, but a different body (WD-02).
+  dcl-one's `require_verified` with an empty key list (`comms/src/signed_fetch.rs`) has the
+  same statuses, the same scene gate and the same body (WD-02, fixed).
 - **Gateway.** `POST /worlds-content-server/entities` passes nginx's `limit_req zone=deploy`
   (5 r/s, burst 4), `limit_conn` 10 per address and `client_max_body_size 360m`, and nginx buffers the
   body before the app sees it (`infra/gateway/gateway.py:13,22,169-191,332-335`). Upstream applies no
@@ -287,7 +287,7 @@ spawn recomputed, `store.rs:950-972,1089-1098`), quota re-check off the request.
 |---|---|---|---|---|---|
 | Undeployed | 200 | upstream: the string `{}` (`content-type: text/plain; charset=utf-8`); dcl-one: JSON `{}` (`application/json`) | `undeploy-entity-handler.ts:34-37`, `@dcl/http-server` `logic.js:298-312`, test `undeploy-entity-handler.spec.ts:57-97` | `scenes.rs:142` | DIVERGENT (WD-17) |
 | Neither owner nor world-wide grantee | 400 | `{"error":"Bad request","message":"Invalid request. You must have world-wide deployment permission to undeploy the entire world."}` | `:16-29`, test `:20-37` | `scenes.rs:121-137` | MATCH |
-| Scene signer / unsigned / bad signature | 400 / 401 | upstream `{"error":<verify message>,"message":"This endpoint requires a signed fetch request. See ADR-44."}`; dcl-one `{"error":"Bad request"|"Not Authorized","message":"Invalid Auth Chain: …"|"Unauthenticated: …"}` | test `:39-55` | `scenes.rs:113-120`, `shared/src/signed_fetch.rs:76-87` | DIVERGENT (WD-02) |
+| Scene signer / unsigned / bad signature | 400 / 401 | `{"error":<verify message>,"message":"This endpoint requires a signed fetch request. See ADR-44."}` in both | test `:39-55` | `scenes.rs:113-120`, `comms/src/signed_fetch.rs` `map_auth_error_api` | MATCH (fixed, WD-02) |
 | Malformed world name | 400 | dcl-one `Invalid world name: …` before the signature | none | `scenes.rs:112` | DIVERGENT (WD-18) |
 | Authority cannot answer | 500 upstream; dcl-one the `AuthorityNotEstablished` status (503 for a store fault) | | `dcl-name-checker.ts` | `scenes.rs:131` | DIVERGENT (WD-14) |
 
@@ -317,7 +317,7 @@ dcl-one (`scenes.rs:46-102`): world name parsed first, the strict signed fetch, 
 | Non-canonical alias (`020,024`) | 200 | removes the scene stored at `20,24`; the message echoes `020,024` | test `:622-642` | `Parcel::parse_strict` then `canonical()` (`store.rs:1063`) | MATCH |
 | Grant over part of a multi-parcel scene / no grant | 401 | `{"error":"Not Authorized","message":"Unauthorized. You do not have permission to undeploy scenes in this world."}` | `:103-125`, tests `:686-800` | `scenes.rs:68-95` | MATCH |
 | Bad coordinate | 400 | `{"error":"Bad request","message":"Invalid coordinate format: abc,def. Expected format: x,y (e.g., 0,0 or -1,2)"}` | `:9-16`, test `:803-830` | `scenes.rs:63-67` | MATCH; a coordinate outside `i32` is 400 here and 200 upstream (WD-18) |
-| Unsigned / scene signer | 400 | upstream `{"error":"Invalid Auth Chain","message":"This endpoint requires a signed fetch request. See ADR-44."}` | test `:833-856` | `{"error":"Bad request","message":"Invalid Auth Chain"}` | DIVERGENT (WD-02) |
+| Unsigned / scene signer | 400 | `{"error":"Invalid Auth Chain","message":"This endpoint requires a signed fetch request. See ADR-44."}` in both | test `:833-856` | `map_auth_error_api` | MATCH (fixed, WD-02) |
 | Spawn on the removed scene / elsewhere / last scene | 200 | spawn moved to the remaining bounding rectangle's centre / kept / cleared | tests `:943-1075` | `store.rs:974-1020` | MATCH |
 | Slow request | 408 | dcl-one `request timed out` after 30 s | none | `mod.rs:710-719` | DIVERGENT (WD-18) |
 
@@ -340,7 +340,7 @@ dcl-one (`scenes.rs:46-102`): world name parsed first, the strict signed fetch, 
      add the regular-then-partial case to `worlds/src/core/tests/partial_uploads.rs`.
    - Severity: P1 (the partial-deployment contract's "already published" case fails after a regular deploy).
 
-2. **WD-02 · `DELETE /entities/:world_name`, `DELETE /world/:world_name/scenes/:coordinate` · signed-fetch refusal body.**
+2. **WD-02 · `DELETE /entities/:world_name`, `DELETE /world/:world_name/scenes/:coordinate` · signed-fetch refusal body.** Status: MATCH (fixed).
    - Upstream: `{"error":<verify message>,"message":"This endpoint requires a signed fetch request. See ADR-44."}`
      with the middleware's status (`src/controllers/routes.ts:72-98`; `@dcl/crypto-middleware` 6.3.0
      `dist/index.js` `errorToResponse`); tests pin `message`
@@ -351,6 +351,8 @@ dcl-one (`scenes.rs:46-102`): world name parsed first, the strict signed fetch, 
      (`worlds/src/storage/errors.rs:14`).
    - Proposed fix: have `map_auth_error_api` answer `{error: <message>, message: SIGNED_FETCH_MESSAGE}`
      (move the constant to `comms::worlds_envelope`), for every worlds signed-fetch route.
+   - Fixed as proposed, with the crypto-middleware 6.3.0 texts (worlds-comms.md WC-01). Pinned by
+     `worlds/src/core/tests.rs` `signed_routes_refuse_with_the_crypto_middleware_body` (unsigned and wrong-payload requests on both routes).
    - Severity: P1 (builder and CLI show `message`). Depends on: the permissions/settings areas, which share the mapper.
 
 3. **WD-03 · all routes of this area · the worlds writes switch is off by default.**

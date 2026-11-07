@@ -162,6 +162,13 @@ fn prune_unless_content_writes(lookup: &Lookup) -> Option<String> {
     Some((!writes).to_string())
 }
 
+fn denylist_or_decentraland(lookup: &Lookup) -> Option<String> {
+    Some(
+        set(lookup, "DENYLIST_JSON_URL")
+            .unwrap_or_else(|| "https://config.decentraland.org/denylist.json".to_string()),
+    )
+}
+
 const ROWS: &[Row] = &[
     mirrored("sync", "SYNC_ENABLED"),
     row(
@@ -242,6 +249,18 @@ const ROWS: &[Row] = &[
         "mirrors",
         "EXPLORER_DENYLIST_SOURCE_URL",
         "https://config.decentraland.org/denylist.json",
+    ),
+    // The comms mints' wallet denylist, upstream worlds-content-server's
+    // DENYLIST_JSON_URL default; that name, when set, wins over the default.
+    row(
+        "mirrors",
+        "DENY_LIST_URL",
+        From(
+            "DENYLIST_JSON_URL, else https://config.decentraland.org/denylist.json",
+            denylist_or_decentraland,
+        ),
+        Is(""),
+        Is(""),
     ),
     upstream(
         "mirrors",
