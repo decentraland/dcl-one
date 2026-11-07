@@ -1918,12 +1918,13 @@ async fn place_world_and_event_moderation_record_the_operator_and_survive_the_mi
         None,
     ));
     let tag = uuid::Uuid::new_v4().simple().to_string();
+    let world_name = format!("console{}.dcl.eth", &tag[..10]);
+    // A world catalogue row is keyed by its name (`World/model.ts:333`).
     let (place, world, event) = (
         format!("console-place-{tag}"),
-        format!("console-world-{tag}"),
+        world_name.clone(),
         format!("console-event-{tag}"),
     );
-    let world_name = format!("console{}.dcl.eth", &tag[..10]);
     let mirrored = |id: &str, raw: Value| crate::explore::places::mirror::MirrorRow {
         id: id.to_string(),
         base_position: "3,4".into(),
@@ -1996,6 +1997,18 @@ async fn place_world_and_event_moderation_record_the_operator_and_survive_the_mi
     let (status, body) = post(
         &app,
         &cookie,
+        "/admin/api/places/place-rating",
+        json!({ "place_id": place, "rating": "A" }),
+    )
+    .await;
+    assert_eq!(
+        (status, body["body"]["data"]["content_rating"].as_str()),
+        (StatusCode::OK, Some("A")),
+        "{body}"
+    );
+    let (status, body) = post(
+        &app,
+        &cookie,
         "/admin/api/places/place-disable",
         json!({ "place_id": place, "reason": "spam" }),
     )
@@ -2009,13 +2022,13 @@ async fn place_world_and_event_moderation_record_the_operator_and_survive_the_mi
         &app,
         &cookie,
         "/admin/api/places/place-rating",
-        json!({ "place_id": place, "rating": "A" }),
+        json!({ "place_id": place, "rating": "T" }),
     )
     .await;
     assert_eq!(
         (status, body["body"]["data"]["content_rating"].as_str()),
         (StatusCode::OK, Some("A")),
-        "{body}"
+        "a disabled place takes no rating, as the old update matched none: {body}"
     );
     let (status, body) = post(
         &app,
@@ -2167,6 +2180,7 @@ async fn place_world_and_event_moderation_record_the_operator_and_survive_the_mi
             ("places.world.highlight", "ok"),
             ("places.place.rating", "ok"),
             ("places.place.disable", "ok"),
+            ("places.place.rating", "ok"),
         ]
     );
     for sql in [

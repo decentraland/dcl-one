@@ -69,6 +69,14 @@ pub struct Settings {
     pub events_base_url: String,
     /// Backend event asset origin and mount, distinct from notice links.
     pub events_asset_base_url: String,
+    /// `JUMP_IN_SITE_URL`: the jump-in site the reminder, start and approval
+    /// notices link to (the old events service's `Notifications/index.ts:18`).
+    pub jump_in_site_url: String,
+    /// `EVENTS_UPCOMING_SUMMARIES_ENABLED` with explore's Slack moderation outbox
+    /// active (`OPS_WRITES_ENABLED` and `SLACK_WEBHOOK`): the reminder job then
+    /// queues the old `:runner:` upcoming-event notice through it, one per
+    /// occurrence; off, it queues none.
+    pub event_slack_notices: bool,
 }
 
 impl Default for Settings {
@@ -85,6 +93,8 @@ impl Default for Settings {
             delivery_interval: Duration::from_secs(15),
             events_base_url: "https://decentraland.org".into(),
             events_asset_base_url: "http://localhost/events".into(),
+            jump_in_site_url: "https://decentraland.org/jump".into(),
+            event_slack_notices: false,
         }
     }
 }
@@ -152,8 +162,12 @@ impl State {
         land_transfers::spawn(self.store.pool().clone(), jobs);
         events::spawn(
             self.store.pool().clone(),
-            self.settings.events_base_url.clone(),
-            self.settings.events_asset_base_url.clone(),
+            events::Links {
+                base: self.settings.events_base_url.clone(),
+                asset_base: self.settings.events_asset_base_url.clone(),
+                jump_in_site_url: self.settings.jump_in_site_url.clone(),
+                slack_notices: self.settings.event_slack_notices,
+            },
             jobs,
         );
         if self.settings.first_wear_enabled {
