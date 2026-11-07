@@ -122,6 +122,10 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_mana_transfers_index_enabled: bool,
 
+    /// Walk the store's primary mints and the ERC721BidV2 bids on Polygon.
+    #[arg(long, env = "MARKETPLACE_SALES_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub marketplace_sales_index_enabled: bool,
+
     #[arg(long, env = "MARKETPLACE_INDEX_INTERVAL_SECS", default_value_t = 5)]
     pub marketplace_index_interval_secs: u64,
 
@@ -586,7 +590,8 @@ mod tests {
         );
         assert!(
             !c.marketplace.marketplace_nft_index_enabled
-                && !c.marketplace.marketplace_trade_events_index_enabled,
+                && !c.marketplace.marketplace_trade_events_index_enabled
+                && !c.marketplace.marketplace_sales_index_enabled,
             "the chain indexes are opt-in"
         );
         assert_eq!(

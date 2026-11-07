@@ -344,6 +344,7 @@ const ROWS: &[Row] = &[
     ),
     mirrored("indexes", "MARKETPLACE_NFT_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED"),
+    mirrored("indexes", "MARKETPLACE_SALES_INDEX_ENABLED"),
     // The MANA transfer walk stays an operator's opt-in under every posture.
     same(
         "indexes",
