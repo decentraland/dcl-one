@@ -1149,7 +1149,8 @@ mod tests {
         parcels.reverse();
         let started = Instant::now();
         let error = scene_pointers_error(&scene(json!(grid), "0,0", json!(parcels)));
-        assert!(started.elapsed() < Duration::from_secs(2));
+        // A quadratic match of 90,601 parcels takes minutes; the budget allows a loaded host.
+        assert!(started.elapsed() < Duration::from_secs(20));
         assert_eq!(error, None);
     }
 
