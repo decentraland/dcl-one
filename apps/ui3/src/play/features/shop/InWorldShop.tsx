@@ -14,6 +14,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
 import { defaultWorn, wornUrns } from '../../../shop/discovery/lib/outfit'
 import { BASE_FEMALE, BASE_MALE, type BodyShapeUrn } from '../../../shop/detail/lib/bodyShape'
+import { hostOr } from '../../../shop/discovery/flags'
 import { REMOTE_FLAG } from '../../../shop/discovery/lib/remoteFlags'
 import { NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput } from '../../../shop/names/names'
 import { Button, Chip, ChevronDown, ChevronLeft, EmptyState, MaskIcon, OptionMenu, Pager, ScrollThumb, SearchField, showConfirm, showToast, Spinner, Tabs, type TabItem } from '../../design'
@@ -169,9 +170,10 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   // The listings wait for the creator-sales answer (or its failure): read before it, they'd come without
   // their sale prices and be read again once it lands.
   const creatorSalesFlag = useShopFlag(REMOTE_FLAG.creatorSales)
-  // NAME resales and offers are the Marketplace's: offered only while its rollout is on. The web Shop they open
-  // still asks for a web3 wallet session (shop/market/access.tsx).
-  const marketplaceFlag = useShopFlag(REMOTE_FLAG.marketplaceFeatures) === true
+  // NAME resales and offers are the Marketplace's: offered only while its rollout is on (a host's declaration first,
+  // as on the web) and never to a guest, who has no account to hold a wallet. The HUD knows no wallet kind, so the
+  // web Shop they open still asks for a web3 wallet session (shop/market/access.tsx).
+  const marketplaceFlag = hostOr('marketplaceFeatures', useShopFlag(REMOTE_FLAG.marketplaceFeatures) ?? null) === true && profile.data?.isGuest !== true
   const flagsKnown = creatorSalesFlag !== undefined
   const creatorSales = creatorSalesFlag ?? false
   const grid = useShopCatalogue(filters, page, { creatorSales, enabled: shop.open && flagsKnown && isCatalogue(section) })

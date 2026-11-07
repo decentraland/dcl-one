@@ -1,10 +1,11 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { newCheckout } from "../cart/machine";
 import { partitionCart } from "../cart/partition";
 import { rarityCardPalette } from "../discovery/lib/rarity";
 import { storeMint, wearableResale, creatorOrder, parcelResale, BOOK } from "../payment/fixtures";
+import { primeRemoteFlags } from "../discovery/lib/remoteFlags";
 import { marketplaceOn } from "../market/testing-flags";
 import CartPage from "./CartPage";
 import { createDemo, DemoShell, type DemoScenario } from "./demo";
@@ -240,6 +241,22 @@ describe("the cart page", () => {
     fireEvent.click(within(resale).getByRole("button", { name: "Remove Vintage Jacket" }));
     await waitFor(() => expect(confirmButton()).toBeEnabled());
     expect(within(screen.getByRole("article", { name: "Rainbow Hat" })).queryByRole("radio", { name: /MANA/ })).toBeNull();
+  });
+
+  it("web3 while the rollout has not answered: a resale waits, unpriced and unpaid, and is never called removable", async () => {
+    primeRemoteFlags(null);
+    const real = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => (String(input).endsWith("/dapps.json") ? new Promise<Response>(() => {}) : real(input, init))));
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
+    renderCart({ session: "web3", lines: MIXED });
+    const resale = screen.getByRole("article", { name: "Vintage Jacket" });
+    expect(within(resale).getByText("Checking the price…")).toBeTruthy();
+    expect(screen.queryByText(/Remove (it|them) to continue/)).toBeNull();
+    const blockers = await screen.findByRole("list", { name: "Why you can't confirm yet" });
+    expect(blockers.textContent).toContain("Checking prices and availability…");
+    expect(confirmButton()).toBeDisabled();
   });
 
   it("web3 without the rollout: a resale saved earlier is not priced or bought, and blocks the checkout until removed", async () => {

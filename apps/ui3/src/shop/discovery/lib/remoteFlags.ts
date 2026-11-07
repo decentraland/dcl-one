@@ -58,10 +58,14 @@ function service(): string {
 /** Bumped whenever the answer changes or a read gives up, so a gate waiting for an answer re-renders either way. */
 let version = 0;
 
-function publish(next: Snapshot | null): void {
-  snapshot = next;
+function notify(): void {
   version++;
   for (const l of listeners) l();
+}
+
+function publish(next: Snapshot | null): void {
+  snapshot = next;
+  notify();
 }
 
 export async function fetchRemoteFlags(signal?: AbortSignal): Promise<Record<string, boolean>> {
@@ -98,9 +102,9 @@ export function refreshRemoteFlags(now = Date.now()): Promise<void> {
       }
     }
     if (generation === started) {
+      // The answer stays as it was, but a gate waiting for one moves on: an unread flag is off.
       failedAt = stamp();
-      version++;
-      for (const l of listeners) l();
+      notify();
     }
   })().finally(() => {
     if (inflight === read) inflight = null;

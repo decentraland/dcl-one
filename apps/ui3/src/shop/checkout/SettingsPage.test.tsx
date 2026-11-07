@@ -109,4 +109,21 @@ describe("the settings page without the Marketplace", () => {
     // The held collections are scanned only for the selling approvals, which are the Marketplace's.
     expect(scanned).toBe(0);
   });
+
+  it("still lists a Marketplace approval the account granted earlier, so it can be revoked, and only that one", async () => {
+    const demo = createDemo({ session: "web3" });
+    demo.chain.allowances.set(`137:${BOOK.buyer}:0xe38ef22abe871513555cba89adfe45ab4f548ada`, 10n ** 30n);
+    render(
+      <DemoShell demo={demo} path="/shop/settings">
+        <SettingsPage />
+      </DemoShell>,
+    );
+    const group = await screen.findByRole("group", { name: "Granted to the Marketplace" });
+    const rows = within(group).getAllByTestId("authorization");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.textContent).toMatch(/OffChainMarketplaceV3/);
+    expect(rows[0]!.textContent).toContain("Polygon");
+    expect(rows[0]!.textContent).toContain("Authorized");
+    for (const g of ["For bidding", "For renting", "For selling"]) expect(screen.queryByRole("group", { name: g })).toBeNull();
+  });
 });

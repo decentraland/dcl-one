@@ -8,7 +8,7 @@ import type { ComponentType, ReactNode } from "react";
 import { Navigate } from "react-router";
 
 import { assetKindOf } from "../discovery/cardPrice";
-import { hostShopFlags } from "../discovery/flags";
+import { hostOr } from "../discovery/flags";
 import { REMOTE_FLAG, useRemoteFlagState } from "../discovery/lib/remoteFlags";
 import type { CartLine } from "../model/purchase";
 import type { Session } from "../model/settlement";
@@ -26,10 +26,8 @@ export function marketplaceAccess(flag: boolean | null, wallet: { session: Sessi
 }
 
 export function useMarketplaceAccess(): MarketplaceAccess {
-  const remote = useRemoteFlagState(REMOTE_FLAG.marketplaceFeatures);
   // A host (the native shop, a journey) may declare the switch itself; the web3 session is still required.
-  const declared = hostShopFlags().marketplaceFeatures;
-  const flag = typeof declared === "boolean" ? declared : remote;
+  const flag = hostOr("marketplaceFeatures", useRemoteFlagState(REMOTE_FLAG.marketplaceFeatures));
   const wallet = useShopWallet();
   const caps = useShopCapabilities();
   return marketplaceAccess(flag, wallet, caps.secondarySales);

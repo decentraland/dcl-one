@@ -48,6 +48,7 @@ const RENTALS: Partial<Record<number, string>> = {
 };
 
 const HELD_COLLECTIBLES_TO_SCAN = 1000;
+const NO_GRANTS: Grant[] = [];
 
 function mana(chainId: ChainId, spender: string, spenderName: string, section: string): Grant {
   return {
@@ -223,14 +224,26 @@ function SettingsScreen() {
   const marketplace = useMarketplace();
 
   const buying = useMemo(() => buyingGrants(eth, pol, marketplace), [eth, pol, marketplace]);
-  const bidding = useMemo(
-    () =>
-      marketplace
-        ? [...(BIDS[eth] ? [mana(eth, BIDS[eth]!, "Bids", "bidding")] : []), ...(BIDS[pol] ? [mana(pol, BIDS[pol]!, "Bids", "bidding")] : [])]
-        : [],
-    [eth, pol, marketplace],
-  );
-  const renting = useMemo(() => (marketplace && RENTALS[eth] ? [mana(eth, RENTALS[eth]!, "Rentals", "renting")] : []), [eth, marketplace]);
+  const allBidding = useMemo(() => [...(BIDS[eth] ? [mana(eth, BIDS[eth]!, "Bids", "bidding")] : []), ...(BIDS[pol] ? [mana(pol, BIDS[pol]!, "Bids", "bidding")] : [])], [eth, pol]);
+  const allRenting = useMemo(() => (RENTALS[eth] ? [mana(eth, RENTALS[eth]!, "Rentals", "renting")] : []), [eth]);
+  const bidding = marketplace ? allBidding : NO_GRANTS;
+  const renting = marketplace ? allRenting : NO_GRANTS;
+  // Without the Marketplace its approvals are not offered, but one already granted is listed so it can be revoked (as
+  // the replaced credits manager is): only those whose allowance the chain still holds.
+  const dormant = useMemo(() => {
+    if (marketplace) return NO_GRANTS;
+    const shops = new Set(buyingGrants(eth, pol, false).map((g) => g.id));
+    return [...buyingGrants(eth, pol, true).filter((g) => !shops.has(g.id)), ...allBidding, ...allRenting];
+  }, [marketplace, eth, pol, allBidding, allRenting]);
+  const dormantStatus = useQueries({
+    queries: dormant.map((g) => ({
+      queryKey: statusKey(g, account ?? ""),
+      queryFn: () => getAuthorizationStatus(g, account!, undefined, services.reader),
+      staleTime: 30_000,
+      enabled: !!account,
+    })),
+  });
+  const revocable = dormant.filter((_, i) => dormantStatus[i]?.data === true);
 
   const held = useQuery({
     queryKey: ["shop-held-collections", account],
@@ -323,6 +336,7 @@ function SettingsScreen() {
           <Group label="For buying" grants={buying} account={account} canChange={selfCustody} />
           {bidding.length > 0 ? <Group label="For bidding" grants={bidding} account={account} canChange={selfCustody} /> : null}
           {renting.length > 0 ? <Group label="For renting" grants={renting} account={account} canChange={selfCustody} /> : null}
+          {revocable.length > 0 ? <Group label="Granted to the Marketplace" grants={revocable} account={account} canChange={selfCustody} /> : null}
           {marketplace && selling.length > 0 ? <Group label="For selling" grants={selling} account={account} canChange={selfCustody} /> : null}
         </div>
       </div>

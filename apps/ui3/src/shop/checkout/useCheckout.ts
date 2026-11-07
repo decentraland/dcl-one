@@ -27,7 +27,7 @@ import type { RailContext } from "./purchase/rail";
 import { createSpendGuard } from "./purchase/spend-guard";
 import { useShopServices } from "./services";
 import { cartOfferFetcher, useOfferSource } from "../detail/offers";
-import { needsMarketplace, useMarketplace } from "../market/access";
+import { needsMarketplace, useMarketplaceAccess } from "../market/access";
 import type { ManaWei, UsdCents } from "../model/money";
 import { creditsCeil } from "../model/money";
 
@@ -102,6 +102,8 @@ const NO_OFFERS: OfferFetcher = async () => ({});
 
 const IN_FLIGHT = "A purchase from this cart is still being confirmed.";
 export const OFF_MARKET = "Resales can't be bought in the Shop right now. Remove them to continue.";
+const CHECKING = "Checking prices and availability…";
+const NONE: string[] = [];
 const RUNNING = "Purchase in progress…";
 
 export function lineRule(line: CartLine, session: Session): Eligibility {
@@ -122,11 +124,13 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
   const snapshot = useCart((s) => s, services.cart);
   const allLines = snapshot.lines;
   const checkout = snapshot.checkout;
-  // A resale or a rental saved before is the Marketplace's: without it (market/access.tsx) it is neither priced nor
-  // bought, and it blocks the checkout until removed. Everything below prices and pays `lines`.
-  const marketplace = useMarketplace();
-  const offMarket = useMemo(() => (marketplace ? [] : allLines.filter(needsMarketplace).map((l) => l.id)), [allLines, marketplace]);
-  const lines = useMemo(() => (offMarket.length ? allLines.filter((l) => !offMarket.includes(l.id)) : allLines), [allLines, offMarket]);
+  // A resale or a rental saved before is the Marketplace's (market/access.tsx): until it is on for this visitor the
+  // line is neither priced nor bought. Off, it blocks the checkout until removed; pending, the cart is still checking.
+  // Everything below prices and pays `lines`.
+  const access = useMarketplaceAccess();
+  const heldBack = useMemo(() => (access === "on" ? [] : allLines.filter(needsMarketplace).map((l) => l.id)), [allLines, access]);
+  const offMarket = access === "off" ? heldBack : NONE;
+  const lines = useMemo(() => (heldBack.length ? allLines.filter((l) => !heldBack.includes(l.id)) : allLines), [allLines, heldBack]);
 
   const balanceQuery = useBalance(account);
   const manaQuery = useManaBalance(session.kind === "web3" ? account : null, settlementChainId());
@@ -228,7 +232,7 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
     if (offMarket.length > 0) out.push(OFF_MARKET);
     if (wallet.accountMismatch) out.push("Your wallet switched to another account. Sign in again with it, or switch your wallet back.");
     if (review.kind === "outage") out.push("Prices can't be checked right now, so nothing can be bought. Try again in a moment.");
-    if (review.kind === "checking") out.push("Checking prices and availability…");
+    if (review.kind === "checking" || heldBack.length > offMarket.length) out.push(CHECKING);
     if (reviewChanges.some((c) => c.kind === "priceChanged")) out.push("Prices changed since you added these items. Accept the new prices to continue.");
     if (reviewChanges.some((c) => c.kind !== "priceChanged")) out.push("Some items changed since you added them. See the note on each item.");
     for (const method of quoteOutage) out.push(outageText(method, null));
@@ -244,7 +248,7 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
     }
     if (running) out.push(RUNNING);
     return out;
-  }, [allLines.length, offMarket.length, session.kind, wallet.accountMismatch, review.kind, reviewChanges, quoteOutage, partition, provider, checkout, running]);
+  }, [allLines.length, offMarket.length, heldBack.length, session.kind, wallet.accountMismatch, review.kind, reviewChanges, quoteOutage, partition, provider, checkout, running]);
 
   const payableGroups = useMemo(() => (partition?.groups ?? []).filter((g) => !walletNeededKeys.includes(g.keyId)), [partition, walletNeededKeys]);
   const canConfirm = blockers.length === 0 && payableGroups.length > 0;

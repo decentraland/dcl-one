@@ -3,7 +3,7 @@
 //       availability, favourite + remove) and Cart.styles.ts (Card, Thumb, Info, Desc, Foot, Stepper, Price)
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 
-import { needsMarketplace, useMarketplace } from "../../market/access";
+import { needsMarketplace, useMarketplaceAccess } from "../../market/access";
 import Icon from "../../discovery/components/Icon";
 import CategoryFlap from "../../discovery/components/CategoryFlap";
 import { CreditsAmount } from "../../discovery/components/PriceTag";
@@ -139,9 +139,11 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
   const isMint = line.asset.token.kind === "item";
   const max = offer?.available ?? null;
   // The Creator tag tells a creator's sale from a resale: only drawn where resales show (market/access.tsx).
-  const marketplace = useMarketplace();
+  const access = useMarketplaceAccess();
+  const marketplace = access === "on";
   // A resale saved before, while the Marketplace is off for this visitor: never priced, only removable (useCheckout).
-  const offMarket = !marketplace && needsMarketplace(line);
+  // While access is pending the line waits, as "Checking the price…".
+  const offMarket = access === "off" && needsMarketplace(line);
   const manaChain = offer ? manaChainOf(offer) : line.asset.chainId;
   const manaQuote = view?.options.find((o) => o.method === "mana")?.quote;
   const required = manaQuote?.method === "mana" ? mulMana(manaQuote.amount, quantity) : null;

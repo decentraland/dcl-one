@@ -29,7 +29,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function itemPage(opts: { session?: SessionKind; scenario?: CatalogScenario; overrides?: CatalogAnswers; offers?: OfferScenario; itemId?: string; host?: ReturnType<typeof fixtureHost> } = {}) {
+function itemPage(opts: { session?: SessionKind; scenario?: CatalogScenario; overrides?: CatalogAnswers; offers?: OfferScenario; itemId?: string; host?: ReturnType<typeof fixtureHost>; remoteFlags?: Record<string, boolean> | null } = {}) {
   return render(
     <ShopHarness
       path="/shop/item/:contractAddress/:itemId"
@@ -39,6 +39,7 @@ function itemPage(opts: { session?: SessionKind; scenario?: CatalogScenario; ove
       overrides={opts.overrides}
       offers={opts.offers ? fixtureOfferSource(opts.offers) : undefined}
       host={opts.host}
+      remoteFlags={opts.remoteFlags}
     >
       <ItemDetailRoute />
     </ShopHarness>,
@@ -116,6 +117,34 @@ describe("the item route (a collection item, sold by its creator)", () => {
     itemPage({ session: "web3", overrides: resaleOnly, offers: { kind: "resale" } });
     expect(await screen.findByTestId("price-mana")).toBeTruthy();
     expect(screen.queryByText("Not for sale")).toBeNull();
+  });
+
+  it("a web3 visitor keeps the creator's price on screen while the rollout answers and the wider read lands", async () => {
+    let answerFlags = (_on: boolean): void => undefined;
+    const flags = new Promise<Response>((resolve) => (answerFlags = (on) => resolve(Response.json({ flags: { "dapps-shop-marketplace-features": on }, variants: {} }))));
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => (String(input).endsWith("/dapps.json") ? flags : Promise.resolve(new Response("[]", { status: 200 })))));
+    let release = (): void => undefined;
+    const held = new Promise<void>((r) => (release = r));
+    const wider: (string | null)[] = [];
+    const answers = defaultAnswers();
+    const listing: CatalogAnswers = {
+      "/v3/catalog/unified": async (url: URL) => {
+        if (url.searchParams.get("itemId") && !url.searchParams.get("listingType")) {
+          wider.push(url.searchParams.get("itemId"));
+          await held;
+        }
+        return answers["/v3/catalog/unified"]!(url);
+      },
+    };
+    itemPage({ session: "web3", overrides: listing, offers: { kind: "storeMint" }, remoteFlags: null });
+    expect(await screen.findByTestId("detail-stock")).toHaveTextContent("Stock 10/1,000");
+    await act(async () => answerFlags(true));
+    await waitFor(() => expect(wider.length).toBeGreaterThan(0));
+    // The wider read is still out: the primary answer stays, never "Not for sale".
+    expect(screen.queryByText("Not for sale")).toBeNull();
+    expect(screen.getByTestId("detail-stock")).toHaveTextContent("Stock 10/1,000");
+    await act(async () => release());
+    expect(await screen.findByTestId("resale-offers")).toBeTruthy();
   });
 
   it("the related rail asks for primary sales only without the Marketplace", async () => {

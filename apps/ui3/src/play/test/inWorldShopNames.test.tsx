@@ -232,6 +232,16 @@ describe('the in-world Shop’s Names', () => {
     expect(screen.queryByRole('button', { name: 'Resale name' })).toBeNull()
   })
 
+  it('a guest gets no MAKE OFFER and no RESALE NAME even with the rollout on: there is no account to hold a wallet', async () => {
+    serve({ taken: ['mojito'], flags: MARKETPLACE_ON })
+    renderShop({ profile: fakeProfileState({ data: { ...ME, isGuest: true, hasClaimedName: false } }) })
+    const field = await openNames()
+    await userEvent.type(field, 'Mojito')
+    expect(await screen.findByText('This NAME Is Taken. Choose Another NAME.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'MAKE OFFER' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Resale name' })).toBeNull()
+  })
+
   it('offers no NAME until the banned list answers', async () => {
     let answer = (): void => undefined
     const f = serve({ banned: ['badname'], bannedAfter: new Promise<void>((r) => (answer = r)) })

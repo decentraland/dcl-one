@@ -285,7 +285,9 @@ export default function ItemDetail() {
   const listingQ = useShopQuery(
     !isTokenRoute && validContract && pageItemId ? itemListingKey(contractAddress, pageItemId, listingScope) : null,
     (signal) => (marketplace ? fetchUnifiedListingForItem : fetchPrimaryListingForItem)(contractAddress, pageItemId!, { signal }),
-    { staleMs: 0 },
+    // Pending to on (every web3 visitor with the rollout on): the primary answer stays on screen until the wider one
+    // lands. Never the other way: a resale read under the Marketplace is dropped the moment it is off.
+    { staleMs: 0, keepPrevious: marketplace },
   );
   const metaQ = useShopQuery(validContract && pageItemId ? ["item-meta", contractAddress, pageItemId] : null, (signal) => fetchItemMeta(contractAddress, pageItemId!, { signal }), { staleMs: 5 * 60_000 });
   const tokenQ = useShopQuery(isTokenRoute && validContract ? ["token", contractAddress, routeTokenId] : null, (signal) => fetchTokenById(contractAddress, routeTokenId!, { signal }), { staleMs: 0 });

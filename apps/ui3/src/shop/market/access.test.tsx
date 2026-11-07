@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { primeRemoteFlags, remoteFlagState, REMOTE_FLAG } from "../discovery/lib/remoteFlags";
 import { evmAddress } from "../model/address";
@@ -70,16 +70,14 @@ describe("a Marketplace page", () => {
   });
 
   it("follows a host's declared switch over the file's answer, either way", () => {
-    const restore = marketplaceOn(false);
+    onTestFinished(marketplaceOn(false));
     const off = page("web3", { "dapps-shop-marketplace-features": true });
     expect(off.router.state.location.pathname).toBe("/shop/overview");
     off.router.dispose();
     off.unmount();
-    restore();
-    const undo = marketplaceOn(true);
+    onTestFinished(marketplaceOn(true));
     page("web3", {});
     expect(screen.getByText("LAND PAGE")).toBeInTheDocument();
-    undo();
   });
 
   it("sends a web2 or signed-out visitor, or anyone while the rollout is off, to the overview", () => {
@@ -94,6 +92,13 @@ describe("a Marketplace page", () => {
       router.dispose();
       unmount();
     }
+  });
+
+  it("a flags read that gives up counts as off: the page goes to the overview instead of staying blank", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("flags down"))));
+    const { router } = page("web3", null);
+    await waitFor(() => expect(router.state.location.pathname).toBe("/shop/overview"));
+    expect(screen.queryByText("LAND PAGE")).toBeNull();
   });
 
   it("draws nothing while the flag has not answered, rather than sending a web3 visitor away", () => {

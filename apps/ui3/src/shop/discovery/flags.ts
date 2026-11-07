@@ -24,9 +24,14 @@ export function hostShopFlags(): HostShopFlags {
   return (typeof window !== "undefined" ? window.__SHOP_FLAGS__ : undefined) ?? {};
 }
 
+/** A switch as a host's declaration says, else as the file answered (`null` while it has not). */
+export function hostOr(key: keyof HostShopFlags, remote: boolean | null): boolean | null {
+  const declared = hostShopFlags()[key];
+  return typeof declared === "boolean" ? declared : remote;
+}
+
 export function shopFlags(): ShopFlags {
-  const declared = hostShopFlags().creatorSales;
-  return { creatorSales: typeof declared === "boolean" ? declared : remoteFlag(REMOTE_FLAG.creatorSales) };
+  return { creatorSales: hostOr("creatorSales", remoteFlag(REMOTE_FLAG.creatorSales)) === true };
 }
 
 export function isIapMode(): boolean {
