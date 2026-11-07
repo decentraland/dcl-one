@@ -368,6 +368,9 @@ describe('the in-world Shop’s Names', () => {
     sold = true
     await userEvent.click(screen.getByRole('button', { name: '2' }))
     expect(await screen.findByRole('button', { name: 'Mojito.dcl.eth' })).toBeInTheDocument()
+    // The first page is read again for what's left, so the pager no longer offers the page that emptied.
+    await waitFor(() => expect(screen.queryByRole('button', { name: '2' })).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Mojito.dcl.eth' })).toBeInTheDocument()
     watch.disconnect()
     expect(seen.some((text) => text.includes('No NAMEs on resale right now'))).toBe(false)
   })
@@ -379,8 +382,13 @@ describe('the in-world Shop’s Names', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Resale name' }))
     expect(nametag()).toHaveTextContent('Mojito')
     expect(nametag()!.querySelector('img')).not.toBeNull()
-    rerender({ profile: { ...props.profile, data: { ...ME, name: 'Guest#ab47f', hasClaimedName: false } } })
-    expect(nametag()).toHaveTextContent('Guest#ab47f')
+    // The engine names an unclaimed name with # and the last four of the address (ADDRESS ends in b47f).
+    rerender({ profile: { ...props.profile, data: { ...ME, name: 'Guest#b47f', hasClaimedName: false } } })
+    expect(nametag()).toHaveTextContent(/^Guest#b47f$/)
+    expect(nametag()!.querySelector('img')).toBeNull()
+    // A name that comes without them takes them from the address.
+    rerender({ profile: { ...props.profile, data: { ...ME, name: 'Guest', hasClaimedName: false } } })
+    expect(nametag()).toHaveTextContent(/^Guest#b47f$/)
     expect(nametag()!.querySelector('img')).toBeNull()
   })
 

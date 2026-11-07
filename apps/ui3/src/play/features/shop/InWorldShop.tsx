@@ -21,6 +21,7 @@ import { resolveNameColor, userNameColor } from '../../engine/nameColor'
 import { addressSuffix } from '../../engine/profileEdit'
 import type { PreviewFocus, Wearable } from '../../engine/protocol'
 import { registerCancelLayer } from '../../lib/cancelLayers'
+import { splitName } from '../../lib/identity'
 import { subscribeHudScale } from '../../lib/hudScale'
 import { AvatarDragSurface } from '../engine/AvatarDragSurface'
 import { EngineViewport } from '../engine/EngineViewport'
@@ -37,9 +38,8 @@ import { cartRequestLines, cartUnits, inWorldCart, inWorldCartInputFor, useInWor
 import { CATALOGUE_SORTS, categoriesFor, defaultFilters, pageCount, statusOf, useShopCatalogue, type CatalogueFilters, type CatalogueKind } from './catalogueQuery'
 import { useShopFlag } from './flagsQuery'
 import { homeQueries, useNewest, useShopOutfits, useTrending, type OutfitSummary } from './homeQuery'
-import { splitName } from '../../lib/identity'
 import { tryOnUrn, webNameOfferUrl, webNameTokenUrl, webNameUrl, webOutfitUrl, webShopUrl } from './itemLinks'
-import { resalePageCount, useNameCheck, useNameResales, type NameResale } from './namesQuery'
+import { NAME_RESALES_KEY, resalePageCount, useNameCheck, useNameResales, type NameResale } from './namesQuery'
 import { useCreditsBalance, useShopCapabilities, useShopPurchase } from './purchaseQuery'
 import { categoryGlyph, CreatorName, SelectedItemPanel, ShopCard } from './ShopItems'
 import { AvatarNametag, CreditsPill, EmoteControls, PriceTag, ShopCart, ShopCartBadge, ShopCartToast, ShopFilters, ShopHome, ShopItemSkeleton, ShopNameCard, ShopNames, type PressedWith, type ShopHomeOutfitOffer, type ShopNamesTab } from './ui'
@@ -182,11 +182,17 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     if (resaleScroller.current) resaleScroller.current.scrollTop = 0
   }, [resalePage])
   // A page past the end (its last NAMEs sold since the pager was drawn) goes back to the last one there is,
-  // once an answer says how many are left: before it paints, so an emptied page never shows.
+  // once an answer says how many are left: before it paints, so an emptied page never shows. The other
+  // pages' cached answers still count the sold NAMEs, so they're read again. Kept, the page it goes back to
+  // would offer the emptied page again, and send the player back from it, until that cache went stale.
   const resaleTotal = resales.data?.total
   useLayoutEffect(() => {
-    if (resaleTotal != null) setResalePage((page) => Math.min(page, resalePageCount(resaleTotal) - 1))
-  }, [resaleTotal])
+    if (resaleTotal == null) return
+    const last = resalePageCount(resaleTotal) - 1
+    if (resalePage <= last) return
+    void queryClient.invalidateQueries({ queryKey: NAME_RESALES_KEY, refetchType: 'none' })
+    setResalePage(last)
+  }, [resaleTotal, resalePage, queryClient])
   const onHome = shop.open && section === 'all'
   const outfits = useShopOutfits(onHome)
   // Each outfit's items, for its tile's price (wearing it reads the same query).

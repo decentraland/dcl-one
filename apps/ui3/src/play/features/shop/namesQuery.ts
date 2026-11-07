@@ -48,10 +48,13 @@ export interface NameResale {
   priceWei: ManaWei | null
 }
 
+/** The key every page of RESALE NAME is cached under. */
+export const NAME_RESALES_KEY = ['shop', 'names', 'resales'] as const
+
 /** A page of RESALE NAME: the NAMEs on sale, most recently listed first. */
 export const nameResalesQuery = (page: number) =>
   queryOptions({
-    queryKey: ['shop', 'names', 'resales', page] as const,
+    queryKey: [...NAME_RESALES_KEY, page] as const,
     queryFn: async ({ signal }): Promise<{ items: NameResale[]; total: number }> => {
       const { results, total } = await fetchNameResales({ search: '', sort: 'recently_listed', onlyOnSale: true, minPrice: '', maxPrice: '', page: page + 1 }, { signal })
       const items = results.map((result) => ({
