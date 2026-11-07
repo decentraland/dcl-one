@@ -3,9 +3,10 @@
 // costs, and the NAMEs on resale (the web Shop's resale browse, newest listings first). A free NAME is only available with that price: without a credits quote the web page offers it for
 // MANA alone, which it reads as taken. The registrar's answer is advisory: the purchase checks again.
 
-import { keepPreviousData, queryOptions, useQuery } from '@tanstack/react-query'
+import { queryOptions, useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { shopClient } from '../../../shop/api/shop'
+import { pageCount } from './catalogueQuery'
 import type { ChainId } from '../../../shop/model/chain'
 import { creditsCeil, parseManaWei, type ManaWei } from '../../../shop/model/money'
 import { fetchBannedNames, fetchNameResales, nameOf, NAMES_PAGE_SIZE } from '../../../shop/names/api'
@@ -66,11 +67,13 @@ export const nameResalesQuery = (page: number) =>
       return { items, total }
     },
     staleTime: 30_000,
-    placeholderData: keepPreviousData
+    // The page shown stays while the next one loads, unless it's empty: a page that emptied (its NAMEs sold
+    // since the pager was drawn) gives way to the loading cards, not to a dimmed empty grid.
+    placeholderData: (previous) => (previous != null && previous.items.length > 0 ? previous : undefined)
   })
 
 /** How many pages RESALE NAME has, of `total` NAMEs. */
-export const resalePageCount = (total: number): number => Math.max(1, Math.ceil(total / NAMES_PAGE_SIZE))
+export const resalePageCount = (total: number): number => pageCount(total, NAMES_PAGE_SIZE)
 
 export function useNameResales(page: number, enabled: boolean) {
   return useQuery({ ...nameResalesQuery(page), enabled })
