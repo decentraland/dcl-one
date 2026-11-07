@@ -101,7 +101,7 @@ jobs:
         if: runner.os == 'linux'
       - name: Install clang for webrtc-sys
         if: runner.os == 'linux'
-        run: ../../../apps/bevy-explorer/install-clang.sh
+        uses: ./.github/actions/bevy-explorer-clang
       - name: install ffmpeg deps (macOs)
         if: runner.os == 'macos'
         run: |-
