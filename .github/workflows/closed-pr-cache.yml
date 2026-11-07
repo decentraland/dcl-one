@@ -81,9 +81,10 @@ jobs:
               if family:
                   prefix = re.sub(r'[0-9a-f]{64}', '*', family.group())
                   snapshots.setdefault((cache_ref, prefix), []).append(cache)
-          # Keep the newest entry per prefix, platform and ref: creation order is push order,
-          # as only first attempts save. Image and other caches are outside this namespace
-          # and are never pruned.
+          # Keep the newest entry per prefix, platform and ref. Only first attempts save, and
+          # the workflows with a per-ref concurrency group run main in push order; elsewhere
+          # an older run that saves later costs one miss until the next main save. Image and
+          # other caches are outside this namespace and are never pruned.
           for entries in snapshots.values():
               entries.sort(key=lambda cache: (cache.get('created_at', ''), cache['id']), reverse=True)
               cache_ids.update(cache['id'] for cache in entries[1:])

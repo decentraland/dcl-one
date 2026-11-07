@@ -164,7 +164,7 @@ jobs:
           >> "$GITHUB_STEP_SUMMARY"
   # The scenes' CLI, built where the Rust toolchain, the MSVC linker and bash are: a hosted
   # Windows runner. The GPU image gets the executable. A pull request's run restores the cache
-  # and saves none: only main's code writes it.
+  # and saves none: only a first attempt that built main's head writes it.
   scene-cli:
     name: dcl-scene-cli (Windows)
     needs: inputs
@@ -193,7 +193,7 @@ jobs:
         with:
           workspaces: services/catalyst -> target
           key: e2e-scene-cli
-          save-if: ${{ needs.inputs.outputs.pr == '' && github.run_attempt == '1' }}
+          save-if: ${{ needs.inputs.outputs.pr == '' && needs.inputs.outputs.sha == github.sha && github.run_attempt == '1' }}
       - name: Build dcl-scene-cli
         working-directory: services/catalyst
         run: cargo build --release --locked -p dcl-scene-cli

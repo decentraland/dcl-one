@@ -159,7 +159,7 @@ sys.exit(29)
         self.assertIn("          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}\n", workflow)
         self.assertIn('          cache-on-failure: true\n', workflow)
         self.assertIn('          RUSTUP_HOME: /dev/null\n', workflow)
-        for family in ('foundation-dev-', 'dev-tests', 'social-voice-release-nodebug'):
+        for family in ('foundation-dev-', 'shared-key: dev-tests', 'social-voice-release-nodebug'):
             self.assertNotIn(family, workflow, 'no sharing with another cache family')
         reserve = workflow.index('      - name: Reserve disk space')
         self.assertLess(reserve, workflow.index('uses: cachix/install-nix-action@'))
