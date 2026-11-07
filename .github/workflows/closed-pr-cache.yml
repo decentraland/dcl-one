@@ -1,6 +1,6 @@
 name: Remove closed PR caches
 on:
-  pull_request_target:
+  pull_request:
     types: [closed]
   schedule:
     - cron: '17 * * * *'
@@ -13,6 +13,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   cleanup:
+    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
@@ -34,11 +35,11 @@ jobs:
           import subprocess
 
           number = os.environ.get('PR_NUMBER', '')
-          event = os.environ.get('GITHUB_EVENT_NAME', 'pull_request_target')
-          targeted = event == 'pull_request_target'
+          event = os.environ.get('GITHUB_EVENT_NAME', 'pull_request')
+          targeted = event == 'pull_request'
           if targeted and not re.fullmatch(r'[1-9][0-9]*', number):
               raise ValueError('Invalid pull request number')
-          if event not in ('pull_request_target', 'schedule', 'workflow_dispatch'):
+          if event not in ('pull_request', 'schedule', 'workflow_dispatch'):
               raise ValueError('Unsupported cleanup event')
           ref = f'refs/pull/{number}/merge' if targeted else None
           repository = os.environ['GITHUB_REPOSITORY']
