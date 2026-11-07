@@ -5064,6 +5064,85 @@ async fn an_unsigned_settings_put_is_refused_by_the_signed_fetch_before_the_body
     );
 }
 
+/// A declared `Content-Length` over the wire cap is refused before the body
+/// is read (`multipart/middleware.ts:159-166`).
+#[tokio::test]
+async fn a_settings_put_declaring_too_many_bytes_answers_413() {
+    let Some(f) = fixture().await else { return };
+    let owner = Wallet::random();
+    let world = owned_world(&f, &owner).await;
+    let body = expect(
+        &f.app,
+        Case::new("put", format!("/world/{}/settings", world.display()))
+            .signed(&owner)
+            .await
+            .header(
+                "content-length",
+                &(super::settings::MAX_SETTINGS_UPLOAD_WIRE_BYTES + 1).to_string(),
+            )
+            .body(Vec::new(), "multipart/form-data; boundary=x"),
+        413,
+    )
+    .await;
+    assert_eq!(
+        body,
+        json!({ "error": "Payload Too Large", "message": "The multipart request is too large." })
+    );
+}
+
+/// A body that stops arriving answers 408 with `describeUploadTimeout`'s
+/// text over the bytes received and the declared length.
+#[tokio::test]
+async fn a_stalled_settings_upload_answers_the_upstream_timeout_text() {
+    let Some(f) = fixture().await else { return };
+    let owner = Wallet::random();
+    let world = owned_world(&f, &owner).await;
+    let mut settings = Settings::for_tests(Some(ADMIN_TOKEN));
+    settings.upload_limits.multipart_upload_timeout_ms = 200;
+    let policy = Policy::new(
+        f.pool.clone(),
+        PersonalWorldsPolicy::disabled(),
+        Some(f.market.clone()),
+    );
+    let app = router(Arc::new(CoreState::new(
+        f.pool.clone(),
+        f.storage.clone(),
+        Arc::new(policy),
+        settings,
+        None,
+    )));
+    let path = format!("/world/{}/settings", world.display());
+    let first: &[u8] = b"--x\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nSlow";
+    use futures::StreamExt;
+    let stalled =
+        futures::stream::iter([Ok::<_, std::io::Error>(bytes::Bytes::from_static(first))])
+            .chain(futures::stream::pending());
+    let mut builder = Request::builder().method("PUT").uri(&path);
+    for (k, v) in signed_headers(&owner, "put", &path, "{}").await.iter() {
+        builder = builder.header(k, v);
+    }
+    let request = builder
+        .header(header::CONTENT_TYPE, "multipart/form-data; boundary=x")
+        .header(header::CONTENT_LENGTH, "4096")
+        .body(Body::from_stream(stalled))
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+    let body: Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        body,
+        json!({
+            "error": "Request Timeout",
+            "message": super::settings::describe_upload_timeout(200, first.len() as u64, Some(4096)),
+        })
+    );
+}
+
 #[tokio::test]
 async fn settings_empty_values_follow_the_upstream_handler() {
     let Some(f) = fixture().await else { return };
@@ -5896,6 +5975,24 @@ async fn world_scenes_page_filter_and_count_like_the_old_listing() {
         json!(0),
         "a coordinate past i32 matches no scene"
     );
+    // The Content-Type is checked before the body is read; a body over the
+    // cap answers `@dcl/http-server`'s own 413.
+    let over = vec![b' '; crate::scenes::MAX_SCENES_QUERY_BODY_BYTES + 1];
+    assert_eq!(
+        expect(
+            &app,
+            Case::new("post", format!("/world/{w}/scenes")).body(over.clone(), "text/plain"),
+            415,
+        )
+        .await,
+        json!({ "ok": false, "message": "Content-Type must be application/json" })
+    );
+    let (status, body) = hit(
+        &app,
+        Case::new("post", format!("/world/{w}/scenes")).body(over, "application/json"),
+    )
+    .await;
+    assert_eq!((status.as_u16(), body), (413, json!("Payload Too Large")));
 }
 
 #[tokio::test]

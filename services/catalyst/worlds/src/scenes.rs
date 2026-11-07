@@ -4,10 +4,9 @@
 //! in the worlds error envelope.
 
 use axum::Json;
-use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::extract::{Path, Query, Request, State};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use bytes::Bytes;
 use chrono::SecondsFormat;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -15,8 +14,7 @@ use serde_json::{Value, json};
 use super::SharedState;
 use super::queries::{self, SceneFilters};
 use crate::comms::world_identity::Parcel;
-use crate::core::http::{ApiError, QueryPairs, pagination, query_param};
-use crate::shared::identity::Address;
+use crate::core::http::{ApiError, QueryPairs, authorized_deployer, pagination, query_param};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,6 +45,10 @@ pub struct SceneListResponse {
 
 const MAX_COORDINATES_PER_REQUEST: usize = 500;
 
+/// The largest `POST /world/{world_name}/scenes` body read (axum's default
+/// body limit).
+pub const MAX_SCENES_QUERY_BODY_BYTES: usize = 2 * 1024 * 1024;
+
 /// GET /world/{world_name}/scenes
 pub async fn list_scenes(
     State(state): State<SharedState>,
@@ -58,19 +60,30 @@ pub async fn list_scenes(
 
 /// POST /world/{world_name}/scenes: `{coordinates: [1..500 unique "x,y"]}`,
 /// refused as `@dcl/schema-validator-component` 1.0.1 refuses a body.
+///
+/// The Content-Type is checked before the body is read. A body over
+/// [`MAX_SCENES_QUERY_BODY_BYTES`] answers `@dcl/http-server`'s own 413
+/// (`Payload Too Large`, `Connection: close`); upstream sets no cap here.
 pub async fn post_list_scenes(
     State(state): State<SharedState>,
     Path(world_name): Path<String>,
     Query(q): Query<QueryPairs>,
-    headers: HeaderMap,
-    body: Bytes,
+    request: Request,
 ) -> Response {
-    if !is_json_content_type(headers.get(header::CONTENT_TYPE)) {
+    let content_type = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok());
+    if !crate::content::validation::is_json_content_type(content_type) {
         return validator_refusal(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             &json!({ "ok": false, "message": "Content-Type must be application/json" }),
         );
     }
+    let Ok(body) = axum::body::to_bytes(request.into_body(), MAX_SCENES_QUERY_BODY_BYTES).await
+    else {
+        return payload_too_large();
+    };
     let parsed: Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
         Err(e) => {
@@ -108,26 +121,14 @@ fn validator_refusal(status: StatusCode, body: &Value) -> Response {
         .into_response()
 }
 
-/// The validator's `isJsonContentType`: `application/json` or an RFC 6839
-/// `type/subtype+json`, parameters ignored.
-fn is_json_content_type(value: Option<&HeaderValue>) -> bool {
-    let Some(raw) = value.and_then(|v| v.to_str().ok()) else {
-        return false;
-    };
-    let media = raw
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
-    media == "application/json"
-        || media.split_once('/').is_some_and(|(kind, sub)| {
-            !kind.is_empty()
-                && sub.len() > "+json".len()
-                && sub.ends_with("+json")
-                && !sub.contains('/')
-                && !media.contains(char::is_whitespace)
-        })
+/// `@dcl/http-server`'s `payloadTooLargeResponse()`.
+fn payload_too_large() -> Response {
+    (
+        StatusCode::PAYLOAD_TOO_LARGE,
+        [(header::CONNECTION, HeaderValue::from_static("close"))],
+        "Payload Too Large",
+    )
+        .into_response()
 }
 
 const COORDINATE_PATTERN: &str = r"^-?\d+,-?\d+$";
@@ -313,20 +314,7 @@ fn is_cid_v1(id: &str) -> bool {
 
 fn filters(q: &QueryPairs, coordinates: Vec<String>) -> Result<SceneFilters, ApiError> {
     let bounding_box = bounding_box(q)?;
-    let authorized_deployer = match query_param(q, "authorized_deployer") {
-        Some(d) if !d.is_empty() => {
-            let address = Some(d)
-                .filter(|d| d.starts_with("0x"))
-                .and_then(|d| Address::parse_untrimmed(d).ok())
-                .ok_or_else(|| {
-                    ApiError::bad_request(format!(
-                        "Invalid authorized_deployer address: {d}. Must be a valid Ethereum address."
-                    ))
-                })?;
-            Some(address.into_string())
-        }
-        _ => None,
-    };
+    let authorized_deployer = authorized_deployer(q)?;
     let entity_id = match query_param(q, "entity_id") {
         Some(id) if !is_cid_v1(id) => {
             return Err(ApiError::bad_request(format!(
@@ -553,18 +541,5 @@ mod tests {
             "maxItems",
             "the item count before the items"
         );
-    }
-
-    #[test]
-    fn json_content_types_follow_the_validator() {
-        let ct = |v: &str| is_json_content_type(Some(&HeaderValue::from_str(v).unwrap()));
-        assert!(ct("application/json"));
-        assert!(ct("Application/JSON; charset=utf-8"));
-        assert!(ct("application/vnd.api+json"));
-        assert!(ct("text/x+json"));
-        assert!(!ct("application/+json"));
-        assert!(!ct("text/plain"));
-        assert!(!ct("application/json-patch"));
-        assert!(!is_json_content_type(None));
     }
 }
