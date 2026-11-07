@@ -179,7 +179,7 @@ export default function CartDrawer({ cart = shopCart, drawer = shopCartDrawer }:
       <div className={styles.scrim} onClick={close} />
       <aside className={styles.panel} ref={panelRef} onKeyDown={trapTab}>
         <header className={styles.head}>
-          <h2 className={styles.title}>Shopping Cart ({count})</h2>
+          <h2 className={styles.title}>{`Shopping Cart (${count})`}</h2>
           <button type="button" className={styles.close} onClick={close} aria-label="Close">
             <Icon name="close" size={18} />
           </button>
