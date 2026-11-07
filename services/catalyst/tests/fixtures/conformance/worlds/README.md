@@ -37,11 +37,11 @@ share a section where they share a handler).
 | file | area | endpoints | MATCH | GAP | DIVERGENT | MISSING | backlog |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [worlds-deploy.md](worlds-deploy.md) | `POST /entities` (single and `partial=true`), `DELETE /entities/:world_name`, `DELETE /world/:world_name/scenes/:coordinate` | 4 | 0 | 0 | 4 | 0 | WD-01..27 |
-| [worlds-reads.md](worlds-reads.md) | `/contents/:hashId`, `/ipfs/:hashId` (GET/HEAD), `/available-content`, `POST /entities/active`, `/index`, `/status`, `/reprocess-ab`, `/gc`; mounts, 404/405, CORS | 10 | 0 | 0 | 9 | 1 | WR-01..34 |
-| [worlds-world.md](worlds-world.md) | `/world/:n/{about,scenes,settings,manifest,limits}`, `/worlds`, `/wallet/:w/stats`, `/wallet/contribute` | 10 | 1 | 0 | 9 | 0 | WW-01..38 |
+| [worlds-reads.md](worlds-reads.md) | `/contents/:hashId`, `/ipfs/:hashId` (GET/HEAD), `/available-content`, `POST /entities/active`, `/index`, `/status`, `/reprocess-ab`, `/gc`; mounts, 404/405, CORS | 10 | 0 | 1 | 8 | 1 | WR-01..34 |
+| [worlds-world.md](worlds-world.md) | `/world/:n/{about,scenes,settings,manifest,limits}`, `/worlds`, `/wallet/:w/stats`, `/wallet/contribute` | 10 | 2 | 0 | 8 | 0 | WW-01..38 |
 | [worlds-permissions.md](worlds-permissions.md) | the ten `/world/:n/permissions*` routes | 10 | 0 | 0 | 10 | 0 | WP-01..19 |
 | [worlds-comms.md](worlds-comms.md) | `/worlds/:w/comms`, `/worlds/:w/scenes/:id/comms`, `/get-comms-adapter/:roomId`, `/livekit-webhook`, `/live-data`, `/wallet/:w/connected-world` | 6 | 0 | 0 | 6 | 0 | WC-01..27 |
-| **total** | | **40** | **1** | **0** | **38** | **1** | **145** |
+| **total** | | **40** | **2** | **1** | **36** | **1** | **145** |
 
 Every upstream route has a route at the same method and path in this tree except `POST /reprocess-ab`
 (WR-22). `POST /entities` and `DELETE /entities/:world_name` answer only under `/worlds-content-server`
@@ -54,11 +54,12 @@ No item is P0. The P1 items:
 
 | id | endpoint | what differs |
 | --- | --- | --- |
-| WD-03, WW-27 | every write route | `WORLDS_WRITES_ENABLED` is off by default, so publish, undeploy, settings and permission edits answer 503 with `Retry-After: 3600`; the switch is not in `docs/worlds-compatibility.md`. |
 | WD-01 | `POST /entities` | A single-request deploy answers the request time as `creationTimestamp`, not the stored publication time. |
-| WR-22 | `POST /reprocess-ab` | Missing: no in-tree hand-off re-converts a world scene (abgen exposes no world-reprocess call). |
-| WW-01 | `GET /world/:n/about` | `scenesUrn` lists every deployed scene; upstream lists the newest. |
-| WW-19 | `PUT /world/:n/settings` | A 400 answers `{error:"Bad request",message}`; upstream answers `{error:<message>}`. |
+| WR-06 | `/worlds-content-server/{status,contents,ipfs,openapi.json}` | Added after the CORS layer: no CORS headers, a preflight answers 405. |
+| WR-12 | `/about`, `/index` links | Content links point at the root `/contents`, the catalyst handler (no content-type sniffing, no sha256 keys, the content GET quota). |
+| WR-17 | `GET /index` | The name deny list is not applied. |
+| WR-18 | `GET /index` | `null` where upstream answers `''`, leaves the key out or answers `Date.now()`. |
+| WR-22 | `POST /reprocess-ab` | Missing. |
 | WP-11 | `DELETE /world/:n/permissions/:p/:address` | A world with no deployed scene answers 404; upstream answers 204. |
 
 ## Themes that cut across files
@@ -72,7 +73,7 @@ No item is P0. The P1 items:
   leaves the key out, or the reverse.
 - **Multipart limits and texts** (WD-04..11, WW-21..23): field caps, duplicate fields, 413 vs 400 and
   timeout texts differ on both multipart routes.
-- **CORS** (WR-06, WW-37, WR-32): every worlds router carries the layer (WR-06; the mints, WC-02);
-  the origin is echoed with credentials where upstream answers `*`.
+- **CORS** (WR-06, WW-37, WR-32): one router misses the layer (WR-06; the mints have it, WC-02);
+  elsewhere the origin is echoed with credentials where upstream answers `*`.
 - **Undocumented intended differences**: the write switch, events not published on SNS (WD-19, WW-26,
   WP-13) and root mount collisions (WR-23) need lines in `docs/worlds-compatibility.md`.

@@ -4,14 +4,14 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::shared::identity::Address;
 
 use super::SharedState;
-use super::http::{ApiError, pagination_of};
+use super::http::{ApiError, QueryPairs, pagination, query_param};
 use super::permissions::parse_world;
+use super::settings_policy::text_len;
 use super::store::{
     self, OrderDirection, WorldInfoRow, WorldsListFilters, WorldsListOptions, WorldsOrderBy,
 };
@@ -48,40 +48,30 @@ pub async fn get_world_manifest(
 
 const MAX_SEARCH_TERM_LENGTH: usize = 64;
 
-#[derive(Debug, Deserialize)]
-pub struct WorldsQuery {
-    #[serde(default)]
-    pub limit: Option<String>,
-    #[serde(default)]
-    pub offset: Option<String>,
-    #[serde(default)]
-    pub authorized_deployer: Option<String>,
-    #[serde(default)]
-    pub search: Option<String>,
-    #[serde(default)]
-    pub has_deployed_scenes: Option<String>,
-    #[serde(default)]
-    pub sort: Option<String>,
-    #[serde(default)]
-    pub order: Option<String>,
-}
-
+/// GET /worlds. Each parameter is read as `URLSearchParams.get` reads it
+/// (the first of a repeated key); deny-listed bare names are left out.
 pub async fn get_worlds(
     State(state): State<SharedState>,
-    Query(q): Query<WorldsQuery>,
+    Query(q): Query<QueryPairs>,
 ) -> Result<Json<Value>, ApiError> {
-    let (limit, offset) = pagination_of(q.limit.as_deref(), q.offset.as_deref());
+    let (limit, offset) = pagination(&q);
 
-    let deployer = match q.authorized_deployer.as_deref() {
+    // `EthAddress.validate`: `0x` and 40 hex digits, untrimmed.
+    let deployer = match query_param(&q, "authorized_deployer") {
         Some(d) if !d.is_empty() => Some(
-            Address::parse(d)
-                .map_err(|_| ApiError::bad_request(format!("Invalid authorized_deployer address: {d}. Must be a valid Ethereum address.")))?
+            Some(d)
+                .filter(|d| d.starts_with("0x"))
+                .and_then(|d| Address::parse_untrimmed(d).ok())
+                .ok_or_else(|| ApiError::bad_request(format!("Invalid authorized_deployer address: {d}. Must be a valid Ethereum address.")))?
                 .into_string(),
         ),
         _ => None,
     };
-    let search = match q.search.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        Some(s) if s.len() > MAX_SEARCH_TERM_LENGTH => {
+    let search = match query_param(&q, "search")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(s) if text_len(s) > MAX_SEARCH_TERM_LENGTH => {
             return Err(ApiError::bad_request(format!(
                 "Invalid search parameter: must be at most {MAX_SEARCH_TERM_LENGTH} characters."
             )));
@@ -89,8 +79,8 @@ pub async fn get_worlds(
         Some(s) => Some(s.to_string()),
         None => None,
     };
-    let has_deployed_scenes = q.has_deployed_scenes.as_deref().map(|v| v == "true");
-    let order_by = match q.sort.as_deref().unwrap_or("name") {
+    let has_deployed_scenes = query_param(&q, "has_deployed_scenes").map(|v| v == "true");
+    let order_by = match query_param(&q, "sort").unwrap_or("name") {
         "name" => WorldsOrderBy::Name,
         "last_deployed_at" => WorldsOrderBy::LastDeployedAt,
         other => {
@@ -99,7 +89,7 @@ pub async fn get_worlds(
             )));
         }
     };
-    let order_direction = match q.order.as_deref().unwrap_or("asc") {
+    let order_direction = match query_param(&q, "order").unwrap_or("asc") {
         "asc" => OrderDirection::Asc,
         "desc" => OrderDirection::Desc,
         other => {
@@ -113,6 +103,7 @@ pub async fn get_worlds(
         authorized_deployer: deployer,
         search,
         has_deployed_scenes,
+        banned_names: state.names.snapshot(&state.pool).await.banned_names(),
     };
     let options = WorldsListOptions {
         limit,

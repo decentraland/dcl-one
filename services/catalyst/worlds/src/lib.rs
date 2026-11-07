@@ -138,10 +138,16 @@ impl Settings {
             .unwrap_or_else(|| format!("http://{}", config.node.bind_addr()))
             .trim_end_matches('/')
             .to_string();
+        // Upstream answers `new URL(CONTENT_URL).toString()`: a set URL as
+        // configured, and this node's own without a trailing slash.
+        let own = |set: &Option<String>, url: String| match crate::config::Config::non_empty(set) {
+            Some(_) => url,
+            None => url.trim_end_matches('/').to_string(),
+        };
         Self {
+            content_public_url: own(&config.node.content_url, content.content_public_url),
+            lambdas_public_url: own(&config.node.lambdas_url, content.lambdas_public_url),
             public_url,
-            content_public_url: content.content_public_url,
-            lambdas_public_url: content.lambdas_public_url,
             network_id: network_id_for(&config.node.eth_network),
             global_scenes_urn: Vec::new(),
             realm_name_strip_ens: true,
@@ -473,8 +479,8 @@ mod tests {
         .unwrap();
         let s = Settings::from_config(&config).with_global_scenes_urn(Some(" urn:a  urn:b "));
         assert_eq!(s.public_url, "https://worlds.example.org");
-        assert_eq!(s.content_public_url, "https://worlds.example.org/content/");
-        assert_eq!(s.lambdas_public_url, "https://worlds.example.org/lambdas/");
+        assert_eq!(s.content_public_url, "https://worlds.example.org/content");
+        assert_eq!(s.lambdas_public_url, "https://worlds.example.org/lambdas");
         assert_eq!(s.network_id, 11_155_111);
         assert_eq!(s.global_scenes_urn, vec!["urn:a", "urn:b"]);
         assert!(s.realm_name_strip_ens);

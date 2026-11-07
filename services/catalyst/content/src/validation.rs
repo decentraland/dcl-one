@@ -34,16 +34,9 @@ pub enum BodyRefusal {
 /// the `oneOf`: the first error of each branch, then the `oneOf` error.
 pub fn active_entities_body(bytes: &[u8]) -> Result<(bool, Vec<String>), BodyRefusal> {
     let body: Value = serde_json::from_slice(bytes).map_err(|e| {
-        let message = v8_parse_message(bytes).unwrap_or_else(|| e.to_string());
-        BodyRefusal::Schema(json!({ "ok": false, "message": message }))
+        BodyRefusal::Schema(json!({ "ok": false, "message": json_parse_message(bytes, &e) }))
     })?;
-    // JSON.parse keeps keys in body order; AJV names the first extra one.
-    let keys = match body {
-        Value::Object(_) => serde_json::from_slice::<OrderedKeys>(bytes)
-            .map(|k| k.0)
-            .unwrap_or_default(),
-        _ => Vec::new(),
-    };
+    let keys = object_keys_in_order(&body, bytes);
     let mut errors = Vec::new();
     for (branch, key) in ["ids", "pointers"].into_iter().enumerate() {
         match selector_branch_error(&body, &keys, branch, key) {
@@ -76,6 +69,24 @@ pub fn active_entities_body(bytes: &[u8]) -> Result<(bool, Vec<String>), BodyRef
         "message": "Invalid JSON body",
         "data": errors,
     })))
+}
+
+/// The message `JSON.parse` throws for a body that is not JSON: V8's text
+/// for the failures below, else serde's. The schema validator answers it as
+/// `{ok: false, message}`.
+pub fn json_parse_message(bytes: &[u8], error: &serde_json::Error) -> String {
+    v8_parse_message(bytes).unwrap_or_else(|| error.to_string())
+}
+
+/// An object body's keys in body order, as `JSON.parse` keeps them (AJV names
+/// the first extra one); empty for any other value.
+pub fn object_keys_in_order(body: &Value, bytes: &[u8]) -> Vec<String> {
+    match body {
+        Value::Object(_) => serde_json::from_slice::<OrderedKeys>(bytes)
+            .map(|k| k.0)
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
 }
 
 /// V8's `JSON.parse` message for the parse failures the production peer was
