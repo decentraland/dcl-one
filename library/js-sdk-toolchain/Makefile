@@ -78,7 +78,7 @@ test:
 test-cli:
 	@rm -rf tmp
 	@mkdir -p tmp/scene
-	cd tmp/scene; $(PWD)/packages/@dcl/sdk-commands/dist/index.js init
+	cd tmp/scene; $(CURDIR)/packages/@dcl/sdk-commands/dist/index.js init
 
 test-file:
 	node_modules/.bin/jest --detectOpenHandles --colors --runTestsByPath $(FILE)
@@ -117,10 +117,10 @@ scripts/rpc-api-generation/src/proto/%.gen.ts: node_modules/@dcl/protocol/proto/
 			--dcl_ts_proto_opt=esModuleInterop=true,returnObservable=false,outputServices=generic-definitions \
 			--dcl_ts_proto_opt=fileSuffix=.gen \
 			--dcl_ts_proto_opt=onlyTypes=true \
-			--dcl_ts_proto_out="$(PWD)/scripts/rpc-api-generation/src/proto" \
-			-I="$(PWD)/scripts/rpc-api-generation/src/proto" \
-			-I="$(PWD)/node_modules/@dcl/protocol/proto/" \
-			"$(PWD)/node_modules/@dcl/protocol/proto/decentraland/kernel/apis/$*.proto";
+			--dcl_ts_proto_out="$(CURDIR)/scripts/rpc-api-generation/src/proto" \
+			-I="$(CURDIR)/scripts/rpc-api-generation/src/proto" \
+			-I="$(CURDIR)/node_modules/@dcl/protocol/proto/" \
+			"$(CURDIR)/node_modules/@dcl/protocol/proto/decentraland/kernel/apis/$*.proto";
 
 compile_apis: ${PBS_TS}
 
