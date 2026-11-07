@@ -602,7 +602,7 @@ mod tests {
             &uuid::Uuid::new_v4().simple().to_string()[..8]
         );
         let cased = format!("Card{}", &world[4..]);
-        let (x, y) = (rand::random::<u16>() % 150, rand::random::<u16>() % 150);
+        let (x, y) = (rand::random::<u16>() % 150, rand::random::<u16>() % 149 + 1);
         let position = format!("{x},-{y}");
         sqlx::query("INSERT INTO explore.place (id, base_position, title, description, raw) VALUES ($1, $2, 'Plaza <b>', 'First\n\nsecond', $3)")
             .bind(&place)

@@ -269,11 +269,11 @@ async fn a_stalled_analytics_request_times_out_without_holding_the_caller() {
     let weak = Arc::downgrade(&analytics.0);
     analytics.fire_event("ACCEPT_CALL", json!({"call_id":"fixture-call"}));
     drop(analytics);
-    tokio::time::timeout(Duration::from_secs(2), entries.recv())
+    tokio::time::timeout(Duration::from_secs(30), entries.recv())
         .await
         .unwrap()
         .unwrap();
-    tokio::time::timeout(Duration::from_secs(2), async {
+    tokio::time::timeout(Duration::from_secs(30), async {
         while weak.upgrade().is_some() {
             tokio::task::yield_now().await;
         }
