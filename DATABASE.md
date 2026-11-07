@@ -1091,3 +1091,36 @@ latency; this is not a guaranteed deadline. The application decodes only finite
 claimed schedules and never decodes infinity as a Rust timestamp. This change adds
 no migration column and does not relax the stable-ban migration's coordinated
 rollout requirements.
+
+## Segment webhook events workload
+
+`POST /events-notifier/forward`, `/forward-web` and
+`/forward-onboarding-checkpoint` are the Segment destination webhooks the
+events-notifier served. The first two store the event they accept as one row of
+`social.client_events`, inside the request, after the signature, the context
+checks and (client events) the auth chain verified. Writers are those two
+handlers at the destination's delivery rate: the explorer reports a
+`move_to_parcel` per parcel crossing and the distance and height events on
+thresholds, so the expected order is one row per active player per minute; no
+production rate is measured. Readers are consumers scanning forward in
+insertion order from a cursor of their own (none in this change) and the purge.
+A row is about 0.3-0.6 KB: `metadata` holds the sub-type part only (parcel,
+emote, passport, distance and step count, height, runtime; the web identify's
+agent, page and locale). The auth chain is verified at the ingress and not
+stored: no consumer reads it.
+
+Invariants: `key` is Segment's `messageId`, so an at-least-once redelivery
+inserts nothing (`INSERT ... ON CONFLICT (key) DO NOTHING`); `address` is the
+chain owner the signature proved (client) or `traits.ethAddress` (web),
+lower-cased and checked by the table; rows are immutable; `reported_at` and
+`received_at` are the client's and Segment's clocks and `created_at` the
+node's. Nothing references an event and an event references nothing: no FK.
+Deletion is the `client-events-purge` job only: daily, leased, it deletes rows
+whose `created_at` is older than `CLIENT_EVENTS_RETENTION_DAYS` (default 30)
+in batches of 5,000 keys through `client_events_created_idx (created_at,
+key)`, at most 200 batches a pass. A consumer that adds a cursor records that
+its cursor stays above the purge horizon; without a consumer the horizon is
+free.
+
+The bootstrap (`schemas/40_social.sql`) defines the table and index; an
+existing database gains both from the object pass, so no step exists.

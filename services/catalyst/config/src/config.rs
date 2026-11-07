@@ -217,8 +217,9 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 75] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 76] {
         [
+            ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
             (
                 "CATALYRST_CONTENT_ADMIN_TOKEN",
@@ -1070,6 +1071,7 @@ mod tests {
         };
         for flag in [
             "--livekit-api-secret",
+            "--segment-signing-key",
             "--moderator-token",
             "--sendgrid-api-key",
             "--turnstile-secret-key",
@@ -1113,6 +1115,7 @@ mod tests {
                 && !help.contains("[env: PULSE_ROOM_AUTHORITY_KEY=")
         );
         for var in [
+            "SEGMENT_SIGNING_KEY",
             "MARKET_ADMIN_TOKEN",
             "PRICE_ADMIN_TOKEN",
             "RELAYER_PRIVATE_KEY",

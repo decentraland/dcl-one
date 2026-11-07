@@ -736,6 +736,40 @@ pub struct SocialConfig {
     /// Empty = `<cache dir>/.render-tmp`.
     #[arg(long, env = "PROFILE_IMAGES_RENDER_WORKDIR", default_value = "")]
     pub profile_images_render_workdir: String,
+
+    /// The Segment destination webhooks (`/events-notifier/forward*`): the
+    /// shared key of the `x-signature` HMAC. Unset, the routes answer 503.
+    #[arg(long, env = "SEGMENT_SIGNING_KEY", hide_env_values = true)]
+    pub segment_signing_key: Option<String>,
+
+    /// Refuse an explorer event whose context fails the soft checks (renderer,
+    /// event type, address, auth-chain shape, realm) instead of only logging them.
+    #[arg(long, env = "FORCE_EXPLORER_CONTEXT_VALIDATION", default_value_t = false, action = clap::ArgAction::Set)]
+    pub force_explorer_context_validation: bool,
+
+    /// The realm name an explorer event must report, with the URL below;
+    /// unset, the realm check is skipped (the notifier outside production).
+    #[arg(long, env = "SEGMENT_EXPECTED_REALM")]
+    pub segment_expected_realm: Option<String>,
+
+    #[arg(long, env = "SEGMENT_EXPECTED_REALM_URL")]
+    pub segment_expected_realm_url: Option<String>,
+
+    /// Comma-separated anonymous ids whose events are refused (lower-cased).
+    #[arg(long, env = "SEGMENT_ANON_ID_DENYLIST", default_value = "")]
+    pub segment_anon_id_denylist: String,
+
+    /// The Segment project whose `identify` events are the web auth-identify events.
+    #[arg(
+        long,
+        env = "SEGMENT_WEB_PROJECT_ID",
+        default_value = "ncCetmghaPEGFVVa1n8hKY"
+    )]
+    pub segment_web_project_id: String,
+
+    /// Days a `social.client_events` row is kept before the purge deletes it.
+    #[arg(long, env = "CLIENT_EVENTS_RETENTION_DAYS", default_value_t = 30)]
+    pub client_events_retention_days: u32,
 }
 
 /// The Pulse room authority (`comms::gatekeeper`).
@@ -864,6 +898,31 @@ mod tests {
 
     fn social(pairs: &[(&str, &str)]) -> Result<super::SocialConfig, clap::Error> {
         Config::parse_env_for_tests(BASE.iter().chain(pairs).copied()).map(|c| c.social)
+    }
+
+    #[test]
+    fn segment_webhook_settings_default_to_the_notifier_outside_production() {
+        let defaults = social(&[]).unwrap();
+        assert_eq!(defaults.segment_signing_key, None);
+        assert!(!defaults.force_explorer_context_validation);
+        assert_eq!(defaults.segment_expected_realm, None);
+        assert_eq!(defaults.segment_expected_realm_url, None);
+        assert_eq!(defaults.segment_anon_id_denylist, "");
+        assert_eq!(defaults.segment_web_project_id, "ncCetmghaPEGFVVa1n8hKY");
+        assert_eq!(defaults.client_events_retention_days, 30);
+        let configured = social(&[
+            ("SEGMENT_SIGNING_KEY", "k"),
+            ("FORCE_EXPLORER_CONTEXT_VALIDATION", "true"),
+            ("SEGMENT_EXPECTED_REALM", "main"),
+            ("SEGMENT_ANON_ID_DENYLIST", "A, b"),
+            ("CLIENT_EVENTS_RETENTION_DAYS", "7"),
+        ])
+        .unwrap();
+        assert_eq!(configured.segment_signing_key.as_deref(), Some("k"));
+        assert!(configured.force_explorer_context_validation);
+        assert_eq!(configured.segment_expected_realm.as_deref(), Some("main"));
+        assert_eq!(configured.segment_anon_id_denylist, "A, b");
+        assert_eq!(configured.client_events_retention_days, 7);
     }
 
     #[test]

@@ -269,6 +269,16 @@ impl OnboardingStore {
     }
 }
 
+/// A recorded checkpoint as [`OnboardingState::checkpoint_state`] reports it.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CheckpointState {
+    pub completed: bool,
+    pub email: Option<String>,
+    pub wallet: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+}
+
 #[derive(Default)]
 pub struct OnboardingState {
     inner: Mutex<OnboardingStore>,
@@ -277,6 +287,37 @@ pub struct OnboardingState {
 impl OnboardingState {
     fn record(&self, payload: CheckpointPayload, now: DateTime<Utc>) {
         self.inner.lock().record_checkpoint(payload, now);
+    }
+
+    /// Validates `req` as `POST /onboarding/checkpoint` does, then records it.
+    pub fn record_checkpoint(&self, req: CheckpointRequest) -> Result<(), String> {
+        validate_checkpoint(&req)?;
+        self.record(
+            CheckpointPayload {
+                user_identifier: req.user_identifier,
+                identifier_type: req.identifier_type,
+                checkpoint_id: req.checkpoint_id,
+                action: req.action,
+                email: req.email,
+                wallet: req.wallet,
+                metadata: req.metadata,
+            },
+            Utc::now(),
+        );
+        Ok(())
+    }
+
+    /// The recorded checkpoint of `user_id`, for the tests of what records one.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn checkpoint_state(&self, user_id: &str, checkpoint: i64) -> Option<CheckpointState> {
+        let store = self.inner.lock();
+        let row = &store.checkpoints[*store.by_key.get(&(user_id.to_string(), checkpoint))?];
+        Some(CheckpointState {
+            completed: row.completed_at.is_some(),
+            email: row.email.clone(),
+            wallet: row.wallet.clone(),
+            metadata: row.metadata.clone(),
+        })
     }
 
     fn pending_nudges(&self, sequence: i64, now: DateTime<Utc>) -> Vec<PendingNudge> {
@@ -300,27 +341,29 @@ pub fn routes() -> Router<AppState> {
         .route("/pending-nudges", get(get_pending_nudges))
 }
 
+/// The body of `POST /onboarding/checkpoint`, also what the Segment webhooks
+/// lift from a forwarded checkpoint event (`social::segment_webhooks`).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CheckpointRequestBody {
+pub struct CheckpointRequest {
     #[serde(rename = "checkpointId")]
-    checkpoint_id: i64,
+    pub checkpoint_id: i64,
     #[serde(rename = "userIdentifier")]
-    user_identifier: String,
+    pub user_identifier: String,
     #[serde(rename = "identifierType")]
-    identifier_type: String,
-    action: String,
+    pub identifier_type: String,
+    pub action: String,
     #[serde(default)]
-    email: Option<String>,
+    pub email: Option<String>,
     #[serde(default)]
-    wallet: Option<String>,
+    pub wallet: Option<String>,
     #[serde(default)]
-    source: Option<String>,
+    pub source: Option<String>,
     #[serde(default)]
-    metadata: Option<serde_json::Value>,
+    pub metadata: Option<serde_json::Value>,
 }
 
-fn validate_checkpoint(body: &CheckpointRequestBody) -> Result<(), String> {
+fn validate_checkpoint(body: &CheckpointRequest) -> Result<(), String> {
     if body.checkpoint_id < MIN_CHECKPOINT || body.checkpoint_id > MAX_CHECKPOINT {
         return Err("checkpointId must be an integer between 1 and 7".to_string());
     }
@@ -366,26 +409,13 @@ async fn post_checkpoint(
         return *resp;
     }
 
-    let req: CheckpointRequestBody = match serde_json::from_slice(&body) {
+    let req: CheckpointRequest = match serde_json::from_slice(&body) {
         Ok(req) => req,
         Err(e) => return bad_request(&e.to_string()),
     };
-    if let Err(msg) = validate_checkpoint(&req) {
+    if let Err(msg) = state.onboarding.record_checkpoint(req) {
         return bad_request(&msg);
     }
-
-    state.onboarding.record(
-        CheckpointPayload {
-            user_identifier: req.user_identifier,
-            identifier_type: req.identifier_type,
-            checkpoint_id: req.checkpoint_id,
-            action: req.action,
-            email: req.email,
-            wallet: req.wallet,
-            metadata: req.metadata,
-        },
-        Utc::now(),
-    );
 
     (StatusCode::OK, Json(CheckpointAck { success: true })).into_response()
 }
@@ -635,7 +665,7 @@ mod tests {
 
     #[test]
     fn validation_rejects_out_of_range_and_bad_enums() {
-        let base = |cp: i64, id_type: &str, action: &str| CheckpointRequestBody {
+        let base = |cp: i64, id_type: &str, action: &str| CheckpointRequest {
             checkpoint_id: cp,
             user_identifier: "u".to_string(),
             identifier_type: id_type.to_string(),

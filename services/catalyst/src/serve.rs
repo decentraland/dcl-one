@@ -1040,6 +1040,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         comms_stage.gatekeeper.clone(),
         eip1654,
         &explore,
+        explorer_api.onboarding.clone(),
         metrics_handle,
     )?;
     social
@@ -1119,6 +1120,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     comms_stage.gatekeeper.spawn_jobs(&jobs);
     social.media.spawn_jobs(&jobs);
     social.rpc.spawn_jobs(&jobs);
+    social.segment_webhooks.spawn_jobs(&jobs);
     if config.writes.social_writes_enabled {
         let communities = social.communities.clone();
         jobs.spawn_periodic_leased(
@@ -2302,6 +2304,7 @@ fn social_states(
     comms: comms::gatekeeper::SharedState,
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     explore: &explore::SharedState,
+    onboarding: Arc<explore::api::onboarding::OnboardingState>,
     metrics_handle: comms::metrics::PrometheusHandle,
 ) -> anyhow::Result<social::States> {
     config
@@ -2472,6 +2475,24 @@ fn social_states(
         },
     ));
 
+    let segment_webhooks = Arc::new(social::segment_webhooks::State::new(
+        pool.clone(),
+        social::segment_webhooks::Settings {
+            signing_key: non_empty(&config.social.segment_signing_key),
+            force_context_validation: config.social.force_explorer_context_validation,
+            expected_realm: non_empty(&config.social.segment_expected_realm),
+            expected_realm_url: non_empty(&config.social.segment_expected_realm_url),
+            anon_id_denylist: social::segment_webhooks::Settings::parse_list(
+                &config.social.segment_anon_id_denylist,
+            ),
+            web_project_id: config.social.segment_web_project_id.clone(),
+            retention: Duration::from_secs(
+                u64::from(config.social.client_events_retention_days.max(1)) * 24 * 3600,
+            ),
+        },
+        onboarding,
+    ));
+
     let media = Arc::new(
         media::MediaState::new(
             pool.clone(),
@@ -2592,6 +2613,7 @@ fn social_states(
         translate = media.backend_label(),
         profile_images = %profile_images.sources_label(),
         livekit = comms.livekit.configured,
+        segment_webhooks = segment_webhooks.settings.signing_key.is_some(),
         "social routes"
     );
     Ok(social::States {
@@ -2603,6 +2625,7 @@ fn social_states(
         media,
         profile_images,
         rpc,
+        segment_webhooks,
     })
 }
 

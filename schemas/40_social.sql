@@ -1264,6 +1264,34 @@ CREATE TABLE social.land_transfer_cursor (
     CONSTRAINT land_transfer_cursor_pkey PRIMARY KEY (id),
     CONSTRAINT land_transfer_cursor_singleton_check CHECK (id = 1)
 );
+
+-- One row per Segment webhook event the explorer (`client`) or the web
+-- (`web`) delivered to /events-notifier (social/src/segment_webhooks), the
+-- notifier's published event: keyed by Segment's messageId so a redelivery
+-- is one row; address is the verified chain owner (client) or
+-- traits.ethAddress (web); metadata is the sub-type part. Rows are immutable;
+-- the client-events-purge job deletes those older than
+-- CLIENT_EVENTS_RETENTION_DAYS, oldest first.
+CREATE TABLE social.client_events (
+    key text NOT NULL,
+    source text NOT NULL,
+    sub_type text NOT NULL,
+    address text NOT NULL,
+    session_id text,
+    anonymous_id text,
+    realm text,
+    ip text,
+    reported_at timestamp(3) without time zone NOT NULL,
+    received_at timestamp(3) without time zone NOT NULL,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+    CONSTRAINT client_events_pkey PRIMARY KEY (key),
+    CONSTRAINT client_events_source_check CHECK (source IN ('client', 'web')),
+    CONSTRAINT client_events_sub_type_check CHECK (sub_type IN ('move-to-parcel', 'used-emote', 'passport-opened', 'walked-distance', 'vertical-height-reached', 'logged-in', 'logged-in-cached', 'auth-identify')),
+    CONSTRAINT client_events_address_check CHECK (address ~ '^0x[0-9a-f]{40}$')
+);
+-- Consumers scan forward in insertion order; the purge deletes the oldest.
+CREATE INDEX client_events_created_idx ON social.client_events (created_at, key);
 -- ==== end section: notifications ====
 
 -- ==== section: badges ====
