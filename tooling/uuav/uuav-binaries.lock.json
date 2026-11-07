@@ -60,7 +60,7 @@
     "client_manifest": {
       "kind": "file",
       "path": "library/uuav/uuav-client/Cargo.toml",
-      "sha256": "aecdfcf3eb8b976ee1c89149355eff0676ec080bee7d4f1e29f55d9e458f1ca9"
+      "sha256": "024b23f0e343bf25e80e39655f1e65f0dce4384cb6da0091c58a6edcc6b9d47b"
     },
     "server_manifest": {
       "kind": "file",
@@ -85,7 +85,7 @@
       "suffix": [
         ".rs"
       ],
-      "sha256": "be7f36ffb83639af5a383aa8ef15a6699592e8d1de9ab832c5b65995c4a05955",
+      "sha256": "80e1bcd9d405341912c76dc4ae004714be249e0a25fc7538192724bd76966dee",
       "entries": 12
     },
     "server_source": {
