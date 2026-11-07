@@ -123,6 +123,7 @@ async function preprocessProtoGeneration(protoPath: string) {
       .replace(/requestType: *([a-zA-Z]+)/g, `requestType: '$1'`)
       .replace(/responseType: *([a-zA-Z]+)/g, `responseType: '$1'`)
       .replace(`export const protobufPackage = `, '// protobufPackage = ')
+      .replace(`export const protobufFileName = `, '// protobufFileName = ')
 
     writeFileSync(filePath, textContent)
     const content = await import(filePath)
@@ -198,7 +199,7 @@ function processDeclarations(apiName: string, filePath: string) {
     where = decFile.indexOf('declare module', where)
     if (where !== -1) {
       const moduleName = decFile.slice(where).match(/^declare module "([^"]+)"/)?.[1] ?? ''
-      const block = getBlock(decFile, where).replace(/export const protobufPackage (.*)\n/, '')
+      const block = getBlock(decFile, where).replace(/export const protobuf(?:Package|FileName) (.*)\n/g, '')
       if (block.length > 0) {
         if (moduleName.includes('decentraland/sdk/components/common/') && isExportedByEcs(moduleName)) {
           // Nominal types (enums) shared with sdk components are already exported by

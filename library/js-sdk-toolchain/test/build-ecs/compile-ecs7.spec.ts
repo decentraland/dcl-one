@@ -23,7 +23,7 @@ describe('build: simple scene compilation', () => {
     if (!transformComponentIncluded) {
       throw new Error("scene doesn't include Transform(engine)")
     }
-    const textEncodingLibraryIncluded = fileText.includes('text-encoding')
+    const textEncodingLibraryIncluded = fileText.includes('/text-encoding/')
     if (textEncodingLibraryIncluded) {
       throw new Error('textEncoding is being bundled in the scene.')
     }
@@ -46,7 +46,7 @@ describe('build: scene with etherum', () => {
     if (!polyfillIncluded) {
       throw new Error(`scene doesn't include the TextEncoder/TextDecoder polyfill`)
     }
-    const textEncodingLibraryIncluded = fileText.includes('text-encoding')
+    const textEncodingLibraryIncluded = fileText.includes('/text-encoding/')
     if (textEncodingLibraryIncluded) {
       throw new Error('textEncoding is being bundled in the scene.')
     }

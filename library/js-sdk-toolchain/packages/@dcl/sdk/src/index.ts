@@ -4,6 +4,10 @@ import { crdtGetState, crdtSendToRenderer, sendBatch } from '~system/EngineApi'
 import { createRendererTransport } from './internal/transports/rendererTransport'
 import { pollEvents } from './observables'
 import { compositeProvider } from './composite-provider'
+import { polyfillTextEncoder } from './text-codec'
+
+// @dcl/ecs decodes protobuf messages with @bufbuild/protobuf, which needs the Encoding API on globalThis
+polyfillTextEncoder()
 
 // Attach CRDT transport
 // @internal

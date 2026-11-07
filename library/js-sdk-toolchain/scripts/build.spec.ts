@@ -91,7 +91,9 @@ flow('build-all', () => {
         'useMapType=true',
         'outputPartialMethods=false',
         'forceLong=false',
-        'unrecognizedEnum=false'
+        'unrecognizedEnum=false',
+        'emitDefaultValues=json-methods',
+        'globalThisPolyfill=true'
       ])
     })
 
