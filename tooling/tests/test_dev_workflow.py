@@ -49,7 +49,8 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn("patterns_allowed[]=nix-community/cache-nix-action@*", policy.read_text())
         installs = 0
         for name in ('development.yml', 'social-voice-release.yml'):
-            for job in re.split(r'(?m)^  (?=\w+:\n)', WORKFLOW.with_name(name).read_text()):
+            jobs = WORKFLOW.with_name(name).read_text().split('\njobs:\n', 1)[1]
+            for job in re.split(r'(?m)^  (?=[\w-]+:\n)', jobs):
                 steps = re.split(r'(?m)^      - ', job)
                 for i, step in enumerate(steps):
                     if not step.startswith('uses: cachix/install-nix-action@'):
@@ -63,7 +64,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     self.assertIn('restore-prefixes-first-match: ' + key + '\n', snapshot)
                     self.assertIn("save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}", snapshot)
                     self.assertIn('gc-max-store-size: 0', snapshot)
-                    self.assertIn(f'nix build --out-link .cache/nix-roots/shell ".#devShells.$(nix config show system).{shell}"', roots)
+                    self.assertIn('nix develop ' + ('.#ci ' if shell == 'ci' else '') + '--profile .cache/nix-roots/env --command true', roots)
                     self.assertIn('nix flake archive --json', roots)
                     for command in re.findall(r'nix develop(?: \.#\w+)?', job):
                         self.assertEqual(command, 'nix develop .#ci' if shell == 'ci' else 'nix develop', name)

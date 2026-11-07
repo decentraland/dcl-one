@@ -62,7 +62,7 @@ jobs:
           gc-max-store-size: 0
       - name: Root the shell and the flake inputs
         run: |
-          nix build --out-link .cache/nix-roots/shell ".#devShells.$(nix config show system).ci"
+          nix develop .#ci --profile .cache/nix-roots/env --command true
           nix-store --add-root .cache/nix-roots/input -r $(nix flake archive --json | jq -r '.inputs | .. | .path? // empty') > /dev/null
       - name: Test disposable release-proof database setup and cleanup
         run: nix develop .#ci --no-update-lock-file --command python3 -m unittest discover -s tooling/tests -p test_social_voice_release_ci.py -v

@@ -80,7 +80,7 @@ jobs:
           gc-max-store-size: 0
       - name: Root the shell and the flake inputs
         run: |
-          nix build --out-link .cache/nix-roots/shell ".#devShells.$(nix config show system).ci"
+          nix develop .#ci --profile .cache/nix-roots/env --command true
           nix-store --add-root .cache/nix-roots/input -r $(nix flake archive --json | jq -r '.inputs | .. | .path? // empty') > /dev/null
       - name: Verify the exact public ENet source pin
         run: nix develop .#ci --command python3 tooling/enet-provenance.py
@@ -160,7 +160,7 @@ jobs:
           gc-max-store-size: 0
       - name: Root the shell and the flake inputs
         run: |
-          nix build --out-link .cache/nix-roots/shell ".#devShells.$(nix config show system).default"
+          nix develop --profile .cache/nix-roots/env --command true
           nix-store --add-root .cache/nix-roots/input -r $(nix flake archive --json | jq -r '.inputs | .. | .path? // empty') > /dev/null
       - name: Evaluate supported systems
         run: nix flake show --all-systems
@@ -258,7 +258,7 @@ jobs:
           gc-max-store-size: 0
       - name: Root the shell and the flake inputs
         run: |
-          nix build --out-link .cache/nix-roots/shell ".#devShells.$(nix config show system).default"
+          nix develop --profile .cache/nix-roots/env --command true
           nix-store --add-root .cache/nix-roots/input -r $(nix flake archive --json | jq -r '.inputs | .. | .path? // empty') > /dev/null
       - name: Build the development shell and locate the pnpm store
         run: echo "PNPM_STORE=$(nix develop --command pnpm store path)" >> "$GITHUB_ENV"
