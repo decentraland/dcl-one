@@ -706,15 +706,15 @@ pub fn chain_status_sql(t: &str, now_p: &str) -> String {
 
 /// What the notification needs of one asset.
 #[derive(Clone, Debug, Default)]
-struct AssetMeta {
-    image: String,
-    seller: String,
-    category: String,
-    rarity: Option<String>,
-    name: Option<String>,
-    contract_address: String,
-    token_id: Option<String>,
-    item_id: Option<String>,
+pub(crate) struct AssetMeta {
+    pub(crate) image: String,
+    pub(crate) seller: String,
+    pub(crate) category: String,
+    pub(crate) rarity: Option<String>,
+    pub(crate) name: Option<String>,
+    pub(crate) contract_address: String,
+    pub(crate) token_id: Option<String>,
+    pub(crate) item_id: Option<String>,
 }
 
 impl AssetMeta {
@@ -762,7 +762,7 @@ fn format_ether(wei: &str) -> String {
     )
 }
 
-fn bid_accepted_event(trade: &StoredTrade, asset: &AssetMeta, base: &str) -> Value {
+pub(crate) fn bid_accepted_event(trade: &StoredTrade, asset: &AssetMeta, base: &str) -> Value {
     let price = trade.sent_amount.clone().unwrap_or_default();
     let mut m = serde_json::Map::new();
     m.insert("address".into(), json!(trade.signer));
@@ -786,7 +786,86 @@ fn bid_accepted_event(trade: &StoredTrade, asset: &AssetMeta, base: &str) -> Val
     json!({ "type": "blockchain", "subType": "bid-accepted", "key": format!("bid-accepted-{}", trade.id), "timestamp": 0, "metadata": Value::Object(m) })
 }
 
-fn item_sold_event(trade: &StoredTrade, asset: &AssetMeta, caller: &str, base: &str) -> Value {
+const BID_NOTIFICATION_NS: uuid::Uuid =
+    uuid::Uuid::from_u128(0x61a4_0d93_c2e7_4b18_9f35_7e0b_a8c6_14d2);
+
+/// The asset a bid is on, as the indexes describe it; `None` when none does.
+pub(super) async fn bid_asset(
+    pool: &PgPool,
+    land_image_base: &str,
+    network: &str,
+    bid: &listings::TradeCreation,
+) -> Result<Option<AssetMeta>, sqlx::Error> {
+    let Some(asset) = bid.received.first() else {
+        return Ok(None);
+    };
+    let net = network.to_ascii_lowercase();
+    let contract = asset.contract_address.to_ascii_lowercase();
+    Ok(match (asset.asset_type, &asset.token_id, &asset.item_id) {
+        (listings::ASSET_TYPE_ERC721, Some(token), _) => {
+            nft_meta(pool, land_image_base, &net, &contract, token).await?
+        }
+        (listings::ASSET_TYPE_COLLECTION_ITEM, _, Some(item)) => {
+            item_meta(pool, &net, &contract, item).await?
+        }
+        _ => None,
+    })
+}
+
+/// marketplace-server's BID_RECEIVED event of a local bid as the old parser
+/// stored it, for the asset's seller (item creator or nft owner); `None`
+/// without a price or when the bidder is the seller.
+pub(super) fn bid_received_notification(
+    meta: &AssetMeta,
+    marketplace_base: &str,
+    trade_id: &str,
+    network: &str,
+    bid: &listings::TradeCreation,
+) -> Option<catalyst_social::notifications::NewNotification> {
+    let price = bid.sent.first().and_then(|a| a.amount.as_ref())?;
+    if meta.seller.eq_ignore_ascii_case(&bid.signer) {
+        return None;
+    }
+    let recipient = catalyst_social::Address::parse(&meta.seller).ok()?;
+    let mut m = serde_json::Map::new();
+    m.insert("image".into(), json!(meta.image));
+    m.insert("seller".into(), json!(meta.seller));
+    m.insert("category".into(), json!(meta.category));
+    insert_opt(&mut m, "rarity", &meta.rarity);
+    m.insert(
+        "link".into(),
+        json!(format!("{marketplace_base}/account?section=bids")),
+    );
+    insert_opt(&mut m, "nftName", &meta.name);
+    m.insert("price".into(), json!(price));
+    m.insert("title".into(), json!("Bid Received"));
+    m.insert(
+        "description".into(),
+        json!(format!(
+            "You received a bid of {} MANA for this {}.",
+            format_ether(price),
+            meta.name.as_deref().unwrap_or_default()
+        )),
+    );
+    m.insert("network".into(), json!(network));
+    let mut n = catalyst_social::notifications::NewNotification::now(
+        recipient,
+        "bid_received",
+        Value::Object(m),
+    );
+    n.id = uuid::Uuid::new_v5(
+        &BID_NOTIFICATION_NS,
+        format!("bid-created:{trade_id}").as_bytes(),
+    );
+    Some(n)
+}
+
+pub(crate) fn item_sold_event(
+    trade: &StoredTrade,
+    asset: &AssetMeta,
+    caller: &str,
+    base: &str,
+) -> Value {
     let mut m = serde_json::Map::new();
     m.insert("address".into(), json!(trade.signer));
     m.insert("image".into(), json!(asset.image));
@@ -809,16 +888,16 @@ fn item_sold_event(trade: &StoredTrade, asset: &AssetMeta, caller: &str, base: &
     json!({ "type": "blockchain", "subType": "item-sold", "key": format!("item-sold-{}", trade.id), "timestamp": 0, "metadata": Value::Object(m) })
 }
 
-struct StoredTrade {
-    id: String,
-    network: String,
-    signer: String,
-    trade_type: String,
-    contract: String,
+pub(crate) struct StoredTrade {
+    pub(crate) id: String,
+    pub(crate) network: String,
+    pub(crate) signer: String,
+    pub(crate) trade_type: String,
+    pub(crate) contract: String,
     /// The first sent erc20 amount (a bid's price).
-    sent_amount: Option<String>,
+    pub(crate) sent_amount: Option<String>,
     /// (asset_type, contract, token or item id) of every sent then received asset.
-    assets: Vec<(i32, String, Option<String>, Option<String>)>,
+    pub(crate) assets: Vec<(i32, String, Option<String>, Option<String>)>,
 }
 
 async fn stored_trade(
@@ -877,7 +956,7 @@ fn category_of_item_type(item_type: &str) -> &'static str {
 }
 
 /// An item asset from the items mirror: the creator is the seller.
-async fn item_meta(
+pub(crate) async fn item_meta(
     pool: &PgPool,
     network: &str,
     contract: &str,
@@ -901,9 +980,75 @@ async fn item_meta(
     }))
 }
 
+/// [`item_meta`] of many `(contract, item_id)` at once, keyed as asked.
+pub(crate) async fn item_metas(
+    pool: &PgPool,
+    network: &str,
+    keys: &[(String, String)],
+) -> Result<HashMap<(String, String), AssetMeta>, sqlx::Error> {
+    let (contracts, items): (Vec<String>, Vec<String>) = keys
+        .iter()
+        .filter(|(_, i)| !i.is_empty() && i.bytes().all(|b| b.is_ascii_digit()))
+        .cloned()
+        .unzip();
+    let rows = sqlx::query(
+        "SELECT u.contract, u.item, i.image, i.creator, i.rarity, i.name, i.item_type \
+         FROM UNNEST($2::text[], $3::text[]) AS u(contract, item) \
+         JOIN shop.items i ON i.network = $1 AND i.contract_address = u.contract AND i.item_id = u.item::numeric",
+    )
+    .bind(network)
+    .bind(&contracts)
+    .bind(&items)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let (contract, item): (String, String) = (r.get("contract"), r.get("item"));
+            let meta = AssetMeta {
+                image: r.get::<Option<String>, _>("image").unwrap_or_default(),
+                seller: r.get("creator"),
+                category: category_of_item_type(&r.get::<String, _>("item_type")).to_string(),
+                rarity: r.get("rarity"),
+                name: r.get("name"),
+                contract_address: contract.clone(),
+                token_id: None,
+                item_id: Some(item.clone()),
+            };
+            ((contract, item), meta)
+        })
+        .collect())
+}
+
+/// [`nft_meta`] of many `(contract, token_id)` at once, keyed as asked.
+pub(crate) async fn nft_metas(
+    pool: &PgPool,
+    land_image_base: &str,
+    network: &str,
+    keys: &[(String, String)],
+) -> Result<HashMap<(String, String), AssetMeta>, sqlx::Error> {
+    let found = super::nft_reads::asset_metas(pool, land_image_base, network, keys).await?;
+    Ok(found
+        .into_iter()
+        .map(|((contract, token), n)| {
+            let meta = AssetMeta {
+                image: n.image,
+                seller: n.owner,
+                category: n.category,
+                rarity: n.rarity,
+                name: n.name,
+                contract_address: contract.clone(),
+                token_id: Some(token.clone()),
+                item_id: None,
+            };
+            ((contract, token), meta)
+        })
+        .collect())
+}
+
 /// An nft asset from the nft index (collections and names) or the LAND
 /// index: its current owner is the seller, as the old squid read had it.
-async fn nft_meta(
+pub(crate) async fn nft_meta(
     pool: &PgPool,
     land_image_base: &str,
     network: &str,

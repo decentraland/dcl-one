@@ -290,8 +290,9 @@ the moderator role.
 `the_notifications_host_answers_as_its_captures` replays `status`, the
 three `-unauth` reads and `unknown-path-404`, and re-signs the five signed
 reads with a fresh wallet. `subscription-signed` differs only in
-`details.message_type.friend_first_wear` and `.land_transfer_received`:
-Catalyst's own types, absent from upstream's `@dcl/schemas` list. Not
+`details.message_type.friend_first_wear` and `.land_transfer_received`
+(Catalyst's own types, absent from upstream's `@dcl/schemas` list) and
+`.item_discounted` (added upstream after the capture). Not
 replayed in process: `preflight-notifications` (200 with `*` for methods and
 headers, no `max-age` or `vary`, against 204), `-expired-timestamp` and
 `-bad-signature` (the recorded chains) and `unsubscribe-address-no-signature`.

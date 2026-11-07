@@ -54,6 +54,7 @@ pub mod handlers;
 pub mod http;
 pub mod index;
 pub mod nft;
+pub mod notices;
 pub mod signature;
 pub mod types;
 

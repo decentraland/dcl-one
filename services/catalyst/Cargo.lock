@@ -2011,6 +2011,7 @@ dependencies = [
  "getrandom 0.4.3",
  "hex",
  "hmac 0.13.0",
+ "ipnet",
  "k256",
  "parking_lot",
  "rand 0.10.3",

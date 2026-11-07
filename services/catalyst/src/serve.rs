@@ -1061,6 +1061,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         outfits.eip1654.clone(),
     ));
     subscriptions.spawn_jobs(&jobs);
+    shop::coupons::favorites::spawn_job(&market, config.shop.shop_base_url.clone(), &jobs);
     explore
         .live
         .set_participants(comms_stage.gatekeeper.clone());
@@ -1358,6 +1359,11 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             }),
         )
         .merge(shop::campaigns::builder_alias_router(market.clone()))
+        // events-notifier.<domain> reaches /events-notifier (gateway subdomain rule).
+        .nest(
+            "/events-notifier",
+            shop::market::tips::router(market.clone()),
+        )
         .nest("/marketplace-api", shop::market::market_router(market))
         .merge(land_authz::router(land))
         .merge(economy_routes(&economy_state))

@@ -6,6 +6,8 @@ export class CatalystError extends Error {
   override name = "CatalystError";
   status: number;
   url: string;
+  /** Seconds the server asked to wait before retrying (`Retry-After` or a JSON `retryAfter`). */
+  retryAfterSecs?: number;
 
   constructor(message: string, url: string, status = 0) {
     super(message);
@@ -348,14 +350,20 @@ export async function sendSignedJSON<T = unknown>(
 
   if (status < 200 || status >= 300) {
     let serverMsg = "";
+    let retryAfter: unknown;
     if (body) {
       try {
-        serverMsg = envelopeMessage(JSON.parse(body));
+        const parsed = JSON.parse(body) as { retryAfter?: unknown } | null;
+        serverMsg = envelopeMessage(parsed);
+        retryAfter = parsed?.retryAfter;
       } catch {
         serverMsg = body;
       }
     }
-    throw new CatalystError(serverMsg || `Catalyst returned ${status}`, url, status);
+    const err = new CatalystError(serverMsg || `Catalyst returned ${status}`, url, status);
+    // The bridge passes no headers, so the server repeats Retry-After in the body.
+    if (typeof retryAfter === "number" && Number.isFinite(retryAfter) && retryAfter > 0) err.retryAfterSecs = retryAfter;
+    throw err;
   }
 
   if (status === 204 || !body) return null;
