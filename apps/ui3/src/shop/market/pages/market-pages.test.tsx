@@ -91,11 +91,24 @@ describe("My items", () => {
 
   it("the old Marketplace section names land on their Shop section; empty, error and outage each explain themselves", async () => {
     const m = mountShop({ path: "/shop/my-items?section=ens", who: "web3", routes: [nfts([]), importable(0)] });
-    expect(await screen.findByRole("button", { name: "Names" })).toHaveAttribute("aria-current", "page");
+    // The section nav is the Collectibles category nav, as upstream's: NAMEs is pressed.
+    expect(await screen.findByRole("button", { name: "NAMEs" })).toHaveAttribute("aria-pressed", "true");
     expect(await screen.findAllByTestId("shop-asset-tile")).toHaveLength(1);
     m.unmount();
     mountShop({ path: "/shop/my-items?section=emotes", who: "web3", routes: [nfts([]), importable(0)] });
-    expect(await screen.findByTestId("shop-empty")).toHaveTextContent("You have no emotes yet");
+    const empty = await screen.findByTestId("owned-empty");
+    expect(empty).toHaveTextContent("Nothing here... yet!");
+    expect(within(empty).getByRole("link", { name: "Explore Shop" })).toHaveAttribute("href", "/shop/items");
+    expect(screen.getByTestId("browse-count")).toHaveTextContent("0 Items");
+  });
+
+  it("Wearables open to their sub-categories, as upstream's My Assets: one narrows the owned list and shows as a chip", async () => {
+    const m = mountShop({ path: "/shop/my-items", who: "web3", routes: [nfts(), importable(0)] });
+    await screen.findAllByTestId("shop-asset-tile");
+    expect(within(screen.getByTestId("my-items-sidebar")).getByText("Items")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Head" }));
+    await waitFor(() => expect(m.shop.requests.some((r) => r.url.searchParams.getAll("wearableCategory").length > 0)).toBe(true));
+    expect(within(screen.getByTestId("filter-chips")).getByRole("button", { name: /Head/ })).toBeInTheDocument();
   });
 
   it("an index that has not caught up is an outage with its reason, not an empty page", async () => {
@@ -113,7 +126,7 @@ describe("My items", () => {
     setShopCapabilities({ myStore: false });
     try {
       mountShop({ path: "/shop/my-items?section=creations", who: "web3", routes: [nfts(), importable(0)] });
-      expect(await screen.findByRole("button", { name: "Creations" })).toHaveAttribute("aria-current", "page");
+      expect(await screen.findByRole("button", { name: "My Creations" })).toHaveAttribute("aria-pressed", "true");
       expect(screen.queryByRole("link", { name: "My store" })).toBeNull();
       expect(await screen.findByRole("group", { name: "Period" })).toBeInTheDocument();
     } finally {
