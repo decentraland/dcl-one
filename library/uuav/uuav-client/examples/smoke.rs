@@ -152,7 +152,7 @@ fn with_probe<T>(init: impl FnOnce(*const std::ffi::c_void) -> T) -> T {
     init(probe.as_raw().cast_const())
 }
 
-fn wait_for<T>(timeout: Duration, mut check: impl FnMut() -> Option<T>) -> Option<T> {
+fn wait_until<T>(timeout: Duration, mut check: impl FnMut() -> Option<T>) -> Option<T> {
     let deadline = Instant::now() + timeout;
     let mut delay = Duration::from_millis(1);
     loop {
@@ -228,7 +228,7 @@ fn main() {
     let mut last_state = UUAVState::UUAV_UNKNOWN as i32;
     let mut first_time = None;
     let render = uuav::uuav_get_render_callback();
-    wait_for(Duration::from_secs(20), || {
+    wait_until(Duration::from_secs(20), || {
         render(player as i32);
         let state = uuav::uuav_player_state(player);
         if state as i32 != last_state {
@@ -249,7 +249,7 @@ fn main() {
 
     // video: drive the render callback like the host's render thread would and
     // expect the shared-texture pipeline to surface presentation textures
-    let (y, uv) = wait_for(Duration::from_secs(10), || {
+    let (y, uv) = wait_until(Duration::from_secs(10), || {
         render(player as i32);
         let mut y: *const std::ffi::c_void = std::ptr::null();
         let mut uv: *const std::ffi::c_void = std::ptr::null();
@@ -287,7 +287,7 @@ fn main() {
 
     // pointer stability: the presentation planes must not churn per frame
     let mut presented_at = None;
-    wait_for(Duration::from_secs(10), || {
+    wait_until(Duration::from_secs(10), || {
         render(player as i32);
         advancing(player, &mut presented_at)
     })
@@ -305,7 +305,7 @@ fn main() {
     // format negotiated at init) and expect real, non-silent samples
     let frames_per_pull = AUDIO.sample_rate / 100;
     let mut buffer = vec![0.0f32; (frames_per_pull * AUDIO.channels) as usize];
-    let heard_signal = wait_for(Duration::from_secs(10), || {
+    let heard_signal = wait_until(Duration::from_secs(10), || {
         let frames =
             unsafe { uuav::uuav_player_read_audio(player, buffer.as_mut_ptr(), frames_per_pull) };
         if frames > 0 && buffer.iter().any(|s| s.abs() > 1e-4) {
@@ -337,7 +337,7 @@ fn main() {
     kill_helper();
     println!("helper killed; waiting for automatic recovery");
     let mut first_time = None;
-    wait_for(Duration::from_secs(30), || {
+    wait_until(Duration::from_secs(30), || {
         if !recovered_since(previous_recovery) {
             return None;
         }
