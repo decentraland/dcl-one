@@ -142,7 +142,7 @@ sys.exit(29)
                         'tooling/tests/test_social_voice_release_ci.py',
                         '.github/workflows/social-voice-release.yml'):
             self.assertEqual(workflow.count(f"- '{pattern}'"), 2, pattern)
-        self.assertIn('nix develop --no-update-lock-file --command bash tooling/social-voice-release-test.sh', workflow)
+        self.assertIn('nix develop .#ci --no-update-lock-file --command bash tooling/social-voice-release-test.sh', workflow)
         self.assertNotIn('continue-on-error', workflow)
         self.assertNotIn('secrets.', workflow)
         self.assertIn('permissions:\n  contents: read\n', workflow)

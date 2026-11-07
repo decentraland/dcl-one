@@ -58,18 +58,18 @@ jobs:
         with:
           # One Nix store snapshot per platform and shell definition: main's first attempts write
           # it after garbage collection; every run restores the newest one for its platform.
-          primary-key: nix-store-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock', 'services/catalyst/rust-toolchain.toml', 'infra/dev/**', 'infra/packages/**') }}
-          restore-prefixes-first-match: nix-store-${{ runner.os }}-${{ runner.arch }}-
+          primary-key: nix-store-${{ runner.os }}-${{ runner.arch }}-ci-${{ hashFiles('flake.nix', 'flake.lock', 'services/catalyst/rust-toolchain.toml', 'infra/dev/**', 'infra/packages/**') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-${{ runner.arch }}-ci-
           save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           gc-max-store-size: 0
       - name: Root the development shell and the flake inputs for the store snapshot
         run: |
-          nix build --out-link .cache/nix-roots/shell ".#devShells.$(nix config show system).default"
+          nix build --out-link .cache/nix-roots/shell ".#devShells.$(nix config show system).ci"
           for input in $(nix flake archive --json | jq -r '.inputs | .. | .path? // empty'); do
             nix-store --add-root ".cache/nix-roots/${input##*/}" -r "$input" > /dev/null
           done
       - name: Test disposable release-proof database setup and cleanup
-        run: nix develop --no-update-lock-file --command python3 -m unittest discover -s tooling/tests -p test_social_voice_release_ci.py -v
+        run: nix develop .#ci --no-update-lock-file --command python3 -m unittest discover -s tooling/tests -p test_social_voice_release_ci.py -v
       - name: Restore Rust build cache
         id: rust-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -82,7 +82,7 @@ jobs:
           restore-keys: |
             social-voice-release-nodebug-v2-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-
       - name: Run the release suite against owned PostgreSQL 18.6
-        run: nix develop --no-update-lock-file --command bash tooling/social-voice-release-test.sh
+        run: nix develop .#ci --no-update-lock-file --command bash tooling/social-voice-release-test.sh
       - name: Save Rust build cache from main
         if: github.ref == 'refs/heads/main' && steps.rust-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

@@ -38,24 +38,39 @@
           dev = pkgs.writeShellScriptBin "foundation-dev" ''
             exec python3 "''${FOUNDATION_DEV_ROOT:?Enter nix develop first}/tooling/dev.py" "$@"
           '';
-          default = pkgs.mkShell ({
-            packages = with pkgs; [
-              rust nodejs_26 (pnpm.override { nodejs-slim = nodejs-slim_26; })
-              postgresql_18 process-compose watchexec livekit nats-server python3 bashInteractive
-              gitMinimal git-lfs gh ripgrep libarchive pkg-config cmake clang protobuf curl jq ffmpeg-headless dev
-            ];
+          environment = {
             buildInputs = [ pkgs.openssl ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ pkgs.libiconv ];
             LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
             OPENSSL_NO_VENDOR = "1";
-            LOCALE_ARCHIVE = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "${pkgs.glibcLocales}/lib/locale/locale-archive";
             shellHook = builtins.readFile ./infra/dev/shell-hook.sh;
           } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             # The prebuilt V8 the image build links (infra/packages/catalyst.nix), so a dev
             # build neither downloads it nor trusts a restored target cache to still hold it.
             RUSTY_V8_ARCHIVE = "${pkgs.callPackage ./infra/packages/librusty-v8.nix { }}";
+          };
+          default = pkgs.mkShell (environment // {
+            packages = with pkgs; [
+              rust nodejs_26 (pnpm.override { nodejs-slim = nodejs-slim_26; })
+              postgresql_18 process-compose watchexec livekit nats-server python3 bashInteractive
+              gitMinimal git-lfs gh ripgrep libarchive pkg-config cmake clang protobuf curl jq ffmpeg-headless dev
+            ];
+            LOCALE_ARCHIVE = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "${pkgs.glibcLocales}/lib/locale/locale-archive";
+          });
+          # The CI shell of the Rust suites: the toolchain without rust-docs, the services the tests
+          # start, the build tools the crates need, two locales, and no web or media tools.
+          toolchain = (builtins.fromTOML (builtins.readFile ./services/catalyst/rust-toolchain.toml)).toolchain;
+          ci = pkgs.mkShell (environment // {
+            packages = with pkgs; [
+              (rust-bin.fromRustupToolchain (toolchain // { profile = "minimal"; }))
+              postgresql_18 process-compose nats-server python3 bashInteractive gitMinimal
+              pkg-config cmake clang protobuf dev
+            ];
+            LOCALE_ARCHIVE = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "${
+              pkgs.glibcLocales.override { allLocales = false; locales = [ "C.UTF-8/UTF-8" "en_US.UTF-8/UTF-8" ]; }
+            }/lib/locale/locale-archive";
           });
         in {
-          inherit default;
+          inherit default ci;
           # foundation-dev desktop: the Tauri shell (apps/desktop). Linux needs
           # WebKitGTK; libsoup gets TLS from glib-networking.
           desktop = default.overrideAttrs (old: {
