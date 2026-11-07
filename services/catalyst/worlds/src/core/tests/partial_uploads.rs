@@ -1194,6 +1194,85 @@ async fn two_replicas_completing_one_entity_publish_it_once() {
 }
 
 #[tokio::test]
+async fn a_resume_landing_after_another_replica_completed_replays_the_receipt() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 1);
+    expect_batch(&f.app, &u, Batch::of(&owner, true, &[]), 202).await;
+
+    let mut held = f.pool.begin().await.unwrap();
+    let key = format!("worlds-partial-deployer:{}", owner.address.as_str());
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(key)
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let holder = backend_pid(&mut held).await;
+    let racer = async {
+        blocked_by(&f.pool, holder, "pg_advisory_xact_lock", 1).await;
+        completed_elsewhere(&f.pool, &u, &owner, &world).await;
+        held.commit().await.unwrap();
+    };
+    let ((status, _, body), ()) =
+        tokio::join!(send(&f.app, &u, Batch::of(&owner, false, &[0])), racer);
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["creationTimestamp"], 7);
+    assert_eq!(pending_count(&f.pool, &u.entity_id).await, 0);
+}
+
+#[tokio::test]
+async fn a_grantee_resuming_after_the_owner_completed_never_gets_the_receipt() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 1);
+    expect_batch(&f.app, &u, Batch::of(&owner, true, &[]), 202).await;
+    let grantee = Wallet::random();
+    grant_parcels(&f.pool, &world, &grantee.address, &["0,0"]).await;
+
+    let mut held = f.pool.begin().await.unwrap();
+    let key = format!("worlds-partial-deployer:{}", grantee.address.as_str());
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(key)
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let holder = backend_pid(&mut held).await;
+    let racer = async {
+        blocked_by(&f.pool, holder, "pg_advisory_xact_lock", 1).await;
+        completed_elsewhere(&f.pool, &u, &owner, &world).await;
+        held.commit().await.unwrap();
+    };
+    let ((status, _, body), ()) =
+        tokio::join!(send(&f.app, &u, Batch::of(&grantee, true, &[0])), racer);
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(
+        body["message"],
+        "This upload expired. Create a new entity with a fresh timestamp."
+    );
+    assert!(body.get("creationTimestamp").is_none(), "{body}");
+}
+
+/// Another replica finished `u`: its pending row is gone and `owner` holds the receipt with creation timestamp 7.
+async fn completed_elsewhere(pool: &PgPool, u: &Upload, owner: &Wallet, world: &WorldName) {
+    sqlx::query("DELETE FROM worlds.pending_scenes WHERE entity_id = $1")
+        .bind(&u.entity_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO worlds.completed_scene_uploads \
+           (entity_id, deployer, world_name, parcels, creation_timestamp, completed_at) \
+         VALUES ($1, $2, $3, '{}', 7, timezone('UTC', now()))",
+    )
+    .bind(&u.entity_id)
+    .bind(owner.address.as_str())
+    .bind(world.key())
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
 async fn an_upload_expiring_while_it_completes_is_reclaimed_by_a_concurrent_cleanup() {
     let Some(f) = fixture().await else { return };
     let (world, owner) = owned(&f).await;
