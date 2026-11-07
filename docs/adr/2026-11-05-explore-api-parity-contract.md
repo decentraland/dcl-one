@@ -187,8 +187,7 @@ exception:
 - `order_by=most_active` on `GET /api/worlds`;
 - `pointer` without `names` narrows destinations to places;
 - `GET /api/status` adds `catalogue`, `configured_mirrors` and `mirrors` to the three
-  upstream keys (today the two status entries in `known_gaps.json`; they become accepted
-  entries next);
+  upstream keys (the two status entries are accepted entries of the gate);
 - `PATCH /api/places/{id}/disable` with a free-text reason;
 - a custom `url` any signer sets on create and owner edits keep;
 - poster filenames by content hash, with the asset-URL guard and the profile requirement;
