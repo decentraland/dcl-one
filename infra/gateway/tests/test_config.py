@@ -104,6 +104,24 @@ class ConfigurationTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertIsNone(re.search(worlds, path))
 
+    def test_worlds_deploy_limits_answer_the_services_json(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],
+                 "deploy": ["/entities", "/content/entities"]}
+        text = gateway.render(table, cfg, "/mime.types")
+        worlds = re.search(r'location ~ "\^/worlds-content-server/entities/\*\$" \{\n(.*?)\n\}', text, re.S)[1]
+        self.assertIn("error_page 413 = @worlds_deploy_too_large; error_page 429 = @worlds_deploy_busy;", worlds)
+        self.assertNotIn("proxy_intercept_errors", text)
+        too_large = re.search(r"location @worlds_deploy_too_large \{\n(.*?)\n\}", text, re.S)[1]
+        self.assertIn("default_type application/json;", too_large)
+        self.assertIn("""return 413 '{"error":"Payload Too Large","message":"The multipart request is too large."}';""",
+                      too_large)
+        busy = re.search(r"location @worlds_deploy_busy \{\n(.*?)\n\}", text, re.S)[1]
+        self.assertIn("add_header Retry-After 5 always;", busy)
+        self.assertIn("add_header X-Content-Type-Options nosniff always;", busy)
+        self.assertIn("""return 429 '{"error":"Too Many Requests","message":"Too many uploads in progress from this client, please retry shortly."}';""",
+                      busy)
+
     def test_active_entities_take_upstreams_ten_mib_body_cap(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
         table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],

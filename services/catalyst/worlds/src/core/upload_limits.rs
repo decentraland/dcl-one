@@ -42,6 +42,55 @@ pub const MAX_MULTIPART_FIELDS: usize = 100;
 
 pub const MAX_MULTIPART_PARTS: usize = 10_100;
 
+/// Upstream's `formatBytes` (`src/logic/utils.ts`).
+pub(super) fn format_bytes(bytes: u64) -> String {
+    let b = bytes as f64;
+    const K: f64 = 1024.0;
+    if b < K {
+        format!("{bytes} bytes")
+    } else if b < K * K {
+        format!("{:.1} KiB", b / K)
+    } else if b < K * K * K {
+        format!("{:.1} MiB", b / (K * K))
+    } else {
+        format!("{:.1} GiB", b / (K * K * K))
+    }
+}
+
+/// JavaScript's `Number` text of `ms / 1000`.
+fn js_seconds(ms: u64) -> String {
+    (ms as f64 / 1000.0).to_string()
+}
+
+/// Upstream's `describeUploadTimeout`: what arrived on the wire before the upload timeout.
+pub(super) fn describe_upload_timeout(
+    timeout_ms: u64,
+    received_bytes: u64,
+    declared_bytes: Option<u64>,
+) -> String {
+    let received = match declared_bytes {
+        None => format_bytes(received_bytes),
+        Some(declared) => format!(
+            "{} of {}",
+            format_bytes(received_bytes),
+            format_bytes(declared)
+        ),
+    };
+    let rate = received_bytes as f64 / 1024.0 / (timeout_ms as f64 / 1000.0);
+    format!(
+        "The upload did not finish within {} s: received {received} (about {rate:.1} KiB/s). Retry on a faster connection or send smaller batches.",
+        js_seconds(timeout_ms)
+    )
+}
+
+/// Upstream's `DeploymentProcessingTimeoutError` text.
+pub(super) fn processing_timeout_message(timeout_ms: u64) -> String {
+    format!(
+        "The server could not finish processing the deployment within {} s after receiving it. Retry the deployment; if it keeps timing out, report it.",
+        js_seconds(timeout_ms)
+    )
+}
+
 static IN_FLIGHT_UPLOAD_BYTES: AtomicU64 = AtomicU64::new(0);
 static IN_FLIGHT_UPLOAD_FILES: AtomicU64 = AtomicU64::new(0);
 static ACTIVE_UPLOADS: AtomicU64 = AtomicU64::new(0);
@@ -464,6 +513,26 @@ mod tests {
             TOO_MANY_PARTS_MESSAGE,
             "The multipart request has too many parts."
         );
+    }
+
+    /// Upstream `test/integration/multipart-limiter.spec.ts` pins these texts by pattern.
+    #[test]
+    fn timeout_texts_are_upstreams() {
+        assert_eq!(
+            describe_upload_timeout(300_000, 3 * 1024 * 1024, Some(10 * 1024 * 1024)),
+            "The upload did not finish within 300 s: received 3.0 MiB of 10.0 MiB (about 10.2 KiB/s). Retry on a faster connection or send smaller batches."
+        );
+        assert_eq!(
+            describe_upload_timeout(500, 100, None),
+            "The upload did not finish within 0.5 s: received 100 bytes (about 0.2 KiB/s). Retry on a faster connection or send smaller batches."
+        );
+        assert_eq!(
+            processing_timeout_message(300_000),
+            "The server could not finish processing the deployment within 300 s after receiving it. Retry the deployment; if it keeps timing out, report it."
+        );
+        assert_eq!(format_bytes(1023), "1023 bytes");
+        assert_eq!(format_bytes(1536), "1.5 KiB");
+        assert_eq!(format_bytes(5 * 1024 * 1024 * 1024), "5.0 GiB");
     }
 
     #[test]

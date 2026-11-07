@@ -22,23 +22,27 @@
 //! ingredients (hashing, chain verification, the blob store), not its rows.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use axum::Json;
-use axum::extract::{Multipart, State};
-use axum::http::{HeaderMap, StatusCode, Uri};
+use axum::body::Body;
+use axum::extract::{FromRequest, Multipart, Request, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
+use futures::StreamExt;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use crate::auth::AuthChain;
+use crate::auth::{AuthChain, AuthError, AuthLinkType, is_eth_address};
 use crate::comms::world_identity::{DCL_ETH_SUFFIX, ParcelSet, WorldName};
 use crate::policy::Deploy;
 use crate::shared::identity::{Address, AuthorityNotEstablished};
 
 use super::deploy_form::{self, DeployForm};
 use super::deploy_validate::{
-    MAX_ENTITY_FILE_SIZE_BYTES, canon_pointer_set, entity_file_too_large_error,
+    MAX_ENTITY_FILE_SIZE_BYTES, STRING_EXPECTED, canon_pointer_set, entity_file_too_large_error,
     entity_schema_error, extract_auth_chain_from_fields, is_canonical_parcel_set,
     missing_minimap_images, missing_skybox_textures, validate_navmap_thumbnail,
     validate_parcel_in_bounds,
@@ -85,8 +89,12 @@ fn declared_length_exceeds_limit(declared_len: u64) -> bool {
     declared_len > MAX_UPLOAD_WIRE_SIZE_BYTES as u64
 }
 
-/// The old service's `{error, message}` answer of a refused deploy.
+/// The old service's `{error, message}` answer of a refused deploy; a 500 is
+/// `@dcl/http-commons`' bare `{"error":"Internal Server Error"}`.
 pub(super) fn rejection(status: StatusCode, message: impl Into<String>) -> Response {
+    if status == StatusCode::INTERNAL_SERVER_ERROR {
+        return (status, Json(json!({ "error": "Internal Server Error" }))).into_response();
+    }
     let error = match status {
         StatusCode::BAD_REQUEST => "Bad request",
         other => other.canonical_reason().unwrap_or("Error"),
@@ -140,12 +148,11 @@ pub(super) fn unavailable(message: impl Into<String>) -> Refusal {
     Refusal(StatusCode::SERVICE_UNAVAILABLE, message.into())
 }
 
-pub async fn deploy_entity(
-    State(state): State<SharedState>,
-    uri: Uri,
-    headers: HeaderMap,
-    multipart: Multipart,
-) -> Response {
+pub async fn deploy_entity(State(state): State<SharedState>, request: Request) -> Response {
+    // A partial upload's first batch is admitted at its arrival, before the body is read.
+    let arrived_ms = chrono::Utc::now().timestamp_millis();
+    let (parts, body) = request.into_parts();
+    let (uri, headers) = (parts.uri.clone(), parts.headers.clone());
     let limits = &state.settings.upload_limits;
     let declared: Option<u64> = match upload_limits::declared_content_length(&headers) {
         upload_limits::DeclaredContentLength::Invalid => {
@@ -177,8 +184,30 @@ pub async fn deploy_entity(
             max = limits.max_concurrent_uploads,
             "POST /entities shed: concurrent-upload cap exceeded"
         );
-        return upload_limits::shed_response(upload_limits::CONCURRENCY_SHED_MESSAGE);
+        return upload_limits::shed_response(upload_limits::BYTES_SHED_MESSAGE);
     };
+
+    if let Some(message) = deploy_form::content_type_error(&headers) {
+        worlds_metrics::upload_rejected(worlds_metrics::ENTITIES_ROUTE, "invalid_multipart");
+        return err_one(message);
+    }
+    // The wire bytes received, for the timeout's account of the upload.
+    let wire = Arc::new(AtomicU64::new(0));
+    let counted = {
+        let wire = wire.clone();
+        body.into_data_stream().inspect(move |chunk| {
+            if let Ok(chunk) = chunk {
+                wire.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+            }
+        })
+    };
+    let multipart =
+        match Multipart::from_request(Request::from_parts(parts, Body::from_stream(counted)), &())
+            .await
+        {
+            Ok(multipart) => multipart,
+            Err(rejection) => return err_one(rejection.body_text()),
+        };
 
     let mut bytes_lease = upload_limits::reserve_in_flight();
     let mut files_lease = upload_limits::reserve_in_flight_files();
@@ -222,7 +251,11 @@ pub async fn deploy_entity(
                 timeout_ms = limits.multipart_upload_timeout_ms,
                 "POST /entities: multipart upload timed out"
             );
-            return upload_limits::timeout_response(upload_limits::MULTIPART_TIMEOUT_MESSAGE);
+            return upload_limits::timeout_response(&upload_limits::describe_upload_timeout(
+                limits.multipart_upload_timeout_ms,
+                wire.load(Ordering::Relaxed),
+                declared,
+            ));
         }
     };
 
@@ -243,7 +276,7 @@ pub async fn deploy_entity(
     let processing = Instant::now();
     let resp = match tokio::time::timeout(
         Duration::from_millis(timeout_ms),
-        deploy_entity_inner(&state, &headers, form, is_partial),
+        deploy_entity_inner(&state, &headers, form, is_partial, arrived_ms),
     )
     .await
     {
@@ -253,9 +286,7 @@ pub async fn deploy_entity(
                 timeout_ms,
                 "POST /entities: deployment processing timed out"
             );
-            upload_limits::timeout_response(&format!(
-                "Deployment processing exceeded the {timeout_ms}ms deadline."
-            ))
+            upload_limits::timeout_response(&upload_limits::processing_timeout_message(timeout_ms))
         }
     };
     worlds_metrics::deployment_processed(mode, resp.status(), processing.elapsed());
@@ -411,42 +442,177 @@ fn deprecated_config_error(entity: &Value) -> Option<&'static str> {
     None
 }
 
-/// The uploaded files, each once in upload order, keyed by their CIDv1.
+/// `@dcl/schemas` `IPFSv2.validate`: `^(ba)[a-zA-Z0-9]{57}$`.
+fn is_ipfs_v2(name: &str) -> bool {
+    name.len() == 59 && name.starts_with("ba") && name.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
+/// The uploaded files in upload order, keyed by their form name (the form refuses a repeated
+/// name). Validation holds every name to the CIDv1 of its bytes before anything is stored.
 pub(super) struct Uploads {
     pub(super) order: Vec<String>,
-    pub(super) by_hash: HashMap<String, SpooledFile>,
+    pub(super) by_name: HashMap<String, SpooledFile>,
 }
 
 impl Uploads {
     pub(super) fn new(files: &[SpooledFile]) -> Self {
         let mut order = Vec::new();
-        let mut by_hash = HashMap::new();
+        let mut by_name = HashMap::new();
         for blob in files {
             if let std::collections::hash_map::Entry::Vacant(slot) =
-                by_hash.entry(blob.hash.clone())
+                by_name.entry(blob.name.clone())
             {
                 order.push(slot.key().clone());
                 slot.insert(blob.clone());
             }
         }
-        Self { order, by_hash }
+        Self { order, by_name }
+    }
+
+    /// Upstream `validateEntityId`: an uploaded entity file hashes to the entity id.
+    fn entity_hash_error(&self, entity_id: &str) -> Option<String> {
+        let file = self.by_name.get(entity_id)?;
+        (file.hash != entity_id).then(|| {
+            format!(
+                "Invalid entity hash: expected {} but got {entity_id}",
+                file.hash
+            )
+        })
+    }
+
+    /// Upstream `validateUploadedFiles`: each upload is the entity file or referenced by it, is
+    /// named by a CIDv1 and hashes to its name.
+    fn file_errors(&self, entity_id: &str, referenced: &HashSet<&str>) -> Vec<String> {
+        let mut errors = Vec::new();
+        for name in &self.order {
+            if name != entity_id && !referenced.contains(name.as_str()) {
+                errors.push(format!("Extra file detected {name}"));
+            }
+            if !is_ipfs_v2(name) {
+                errors.push(format!("Only CIDv1 are allowed for content files: {name}"));
+            }
+            if self.by_name[name].hash != *name {
+                errors.push(format!(
+                    "The hashed file doesn't match the provided content: {name}"
+                ));
+            }
+        }
+        errors
     }
 }
 
-/// The signer of a chain over `entity_id`, or the refusal.
+/// `@dcl/crypto`'s validator a link type is checked by, as its refusals name it.
+fn validator_name(link_type: &str) -> &'static str {
+    match link_type {
+        "ECDSA_EPHEMERAL" => "ECDSA_PERSONAL_EPHEMERAL_VALIDATOR",
+        "ECDSA_SIGNED_ENTITY" => "ECDSA_SIGNED_ENTITY_VALIDATOR",
+        "ECDSA_EIP_1654_EPHEMERAL" => "ECDSA_EIP_1654_EPHEMERAL_VALIDATOR",
+        _ => "EIP_1654_SIGNED_ENTITY_VALIDATOR",
+    }
+}
+
+/// `@dcl/crypto` 3.7.0 `Authenticator.validateSignature`'s text for a refused chain where the
+/// verifier's error identifies it; the verifier's own text otherwise.
+fn crypto_message(chain: &AuthChain, entity_id: &str, error: &AuthError) -> String {
+    let link = |link_type: &dyn std::fmt::Display, message: String| {
+        format!("ERROR. Link type: {link_type}. {message}.")
+    };
+    let first_of = |types: &[AuthLinkType]| {
+        chain
+            .iter()
+            .find(|l| types.contains(&l.link_type))
+            .map(|l| l.link_type)
+    };
+    match error {
+        AuthError::MalformedChain(m) if m == "invalid chain structure" => {
+            "ERROR: Malformed authChain".to_string()
+        }
+        // A lone SIGNER: its address is the final authority.
+        AuthError::MalformedChain(_) if chain.len() == 1 => format!(
+            "ERROR: Invalid final authority. Expected: {entity_id}. Current {}.",
+            chain[0].payload
+        ),
+        AuthError::FinalAuthorityMismatch { expected, actual } => {
+            format!("ERROR: Invalid final authority. Expected: {expected}. Current {actual}.")
+        }
+        AuthError::SignerMismatch {
+            index,
+            expected,
+            actual,
+        } => link(
+            &chain[*index].link_type,
+            format!("Invalid signer address. Expected: {expected}. Actual: {actual}"),
+        ),
+        AuthError::MissingSignature { link_type, .. } => link(
+            link_type,
+            format!(
+                "Invalid AuthLink. 'signature' must be present for type '{}'",
+                validator_name(link_type)
+            ),
+        ),
+        AuthError::EphemeralExpired {
+            expiration_ms,
+            now_ms,
+        } => match first_of(&[
+            AuthLinkType::EcdsaEphemeral,
+            AuthLinkType::EcdsaEip1654Ephemeral,
+        ]) {
+            Some(t) => link(
+                &t,
+                format!("Ephemeral key expired. Expiration: {expiration_ms}. Test: {now_ms}"),
+            ),
+            None => error.to_string(),
+        },
+        // Upstream validates with no provider, so a contract wallet is refused.
+        AuthError::Eip1654NotImplemented => match first_of(&[
+            AuthLinkType::EcdsaEip1654Ephemeral,
+            AuthLinkType::EcdsaEip1654SignedEntity,
+        ]) {
+            Some(t) => link(&t, "Missing provider".to_string()),
+            None => error.to_string(),
+        },
+        other => other.to_string(),
+    }
+}
+
+/// The signer of a chain over `entity_id`, or the refusal: a single request answers
+/// `Deployment failed: <reason>` (`AuthChain` schema, `Invalid signer`, `@dcl/crypto`), a partial
+/// batch `Invalid auth chain.` / `Invalid auth chain: <reason>`, as upstream's
+/// `authenticateRequest`.
 async fn authenticate(
     state: &SharedState,
     entity_id: &str,
     chain: &Value,
-    now_ms: i64,
+    partial: bool,
 ) -> Result<Address, Refusal> {
-    let chain: AuthChain = serde_json::from_value(chain.clone())
-        .map_err(|e| failed(format!("The auth chain is malformed: {e}")))?;
+    let schema = |ajv: String| match partial {
+        true => Refusal(StatusCode::BAD_REQUEST, "Invalid auth chain.".to_string()),
+        false => failed(ajv),
+    };
+    let refused = |reason: String| match partial {
+        true => Refusal(
+            StatusCode::BAD_REQUEST,
+            format!("Invalid auth chain: {reason}"),
+        ),
+        false => failed(reason),
+    };
+    let chain: AuthChain = serde_json::from_value(chain.clone()).map_err(|e| {
+        // The indexed fields are strings, so only a link type outside the enum fails here.
+        schema(if e.to_string().contains("unknown variant") {
+            "must be equal to one of the allowed values".to_string()
+        } else {
+            format!("The auth chain is malformed: {e}")
+        })
+    })?;
     let signer = chain
         .first()
-        .ok_or_else(|| failed("The auth chain is empty"))?;
-    let signer = Address::parse(&signer.payload)
-        .map_err(|_| failed(format!("Invalid signer: {}", signer.payload)))?;
+        .ok_or_else(|| schema("must NOT have fewer than 1 items".to_string()))?
+        .payload
+        .clone();
+    if !partial && !is_eth_address(&signer) {
+        return Err(failed(format!("Invalid signer: {signer}")));
+    }
+    let now_ms = chrono::Utc::now().timestamp_millis();
     match crate::auth::verify_auth_chain_async(
         &chain,
         entity_id,
@@ -455,11 +621,11 @@ async fn authenticate(
     )
     .await
     {
-        Ok(()) => Ok(signer),
-        Err(crate::auth::AuthError::Eip1654ValidationFailed(e)) => Err(unavailable(format!(
+        Ok(()) => Address::parse(&signer).map_err(|_| refused(format!("Invalid signer: {signer}"))),
+        Err(AuthError::Eip1654ValidationFailed(e)) => Err(unavailable(format!(
             "The auth chain could not be verified right now: {e}"
         ))),
-        Err(e) => Err(failed(format!("The auth chain is invalid: {e}"))),
+        Err(e) => Err(refused(crypto_message(&chain, entity_id, &e))),
     }
 }
 
@@ -519,8 +685,27 @@ pub(super) async fn validate(
             content.len()
         )));
     }
+    let referenced: HashSet<&str> = content
+        .iter()
+        .filter_map(|item| item["hash"].as_str())
+        .collect();
+    // Staging checks the entity id before the auth chain and the uploads right after the window,
+    // a publish the entity id after the window and the uploads with the missing files.
+    let staging = matches!(check, Check::Stage { .. });
+    if staging && let Some(e) = uploads.entity_hash_error(entity_id) {
+        return Err(failed(e));
+    }
     if let Some(e) = entity_timestamp_error(entity, anchor_ms) {
         return Err(failed(e));
+    }
+    if !staging && let Some(e) = uploads.entity_hash_error(entity_id) {
+        return Err(failed(e));
+    }
+    if staging {
+        let errors = uploads.file_errors(entity_id, &referenced);
+        if !errors.is_empty() {
+            return Err(failed(errors.join(", ")));
+        }
     }
 
     let metadata = entity.get("metadata").unwrap_or(&Value::Null);
@@ -652,21 +837,12 @@ pub(super) async fn validate(
         return Err(failed(e));
     }
 
-    let referenced: HashSet<&str> = content
-        .iter()
-        .filter_map(|item| item["hash"].as_str())
-        .collect();
-    let mut file_errors: Vec<String> = uploads
-        .order
-        .iter()
-        .filter(|hash| hash.as_str() != entity_id && !referenced.contains(hash.as_str()))
-        .map(|hash| format!("Extra file detected {hash}"))
-        .collect();
+    let mut file_errors = match staging {
+        true => Vec::new(),
+        false => uploads.file_errors(entity_id, &referenced),
+    };
     let mut sizes: HashMap<&str, i64> = HashMap::new();
-    for item in content
-        .iter()
-        .filter(|_| !matches!(check, Check::Stage { .. }))
-    {
+    for item in content.iter().filter(|_| !staging) {
         let (file, hash) = (
             item["file"].as_str().unwrap_or_default(),
             item["hash"].as_str().unwrap_or_default(),
@@ -678,7 +854,7 @@ pub(super) async fn validate(
             Check::Complete(known) => Some(known.get(hash).copied()),
             _ => None,
         };
-        let size = match (known, uploads.by_hash.get(hash)) {
+        let size = match (known, uploads.by_name.get(hash)) {
             (Some(known), _) => known,
             (None, Some(blob)) => Some(blob.len() as i64),
             (None, None) => match state.storage.file_info(hash).await {
@@ -831,6 +1007,7 @@ async fn deploy_entity_inner(
     headers: &HeaderMap,
     form: DeployForm,
     is_partial: bool,
+    arrived_ms: i64,
 ) -> Response {
     // `_spool` keeps the spooled parts on disk until this deploy has stored them.
     let DeployForm {
@@ -839,9 +1016,8 @@ async fn deploy_entity_inner(
         spool: _spool,
     } = form;
 
-    let entity_id = match fields.get("entityId") {
-        Some(id) if !id.is_empty() => id.clone(),
-        _ => return err_one("Missing entityId field"),
+    let Some(entity_id) = fields.get("entityId").cloned() else {
+        return err_one(STRING_EXPECTED);
     };
 
     let auth_chain_value = match extract_auth_chain_from_fields(&fields) {
@@ -849,10 +1025,9 @@ async fn deploy_entity_inner(
         Err(e) => return err_one(e),
     };
 
-    let now_ms = chrono::Utc::now().timestamp_millis();
     // The signer is established before the entity is read, as the old handler did; every
     // partial batch is authenticated the same way.
-    let signer = match authenticate(state, &entity_id, &auth_chain_value, now_ms).await {
+    let signer = match authenticate(state, &entity_id, &auth_chain_value, is_partial).await {
         Ok(signer) => signer,
         Err(refusal) => return refusal.into_response(),
     };
@@ -865,13 +1040,13 @@ async fn deploy_entity_inner(
             &auth_chain_value,
             &signer,
             &files,
-            now_ms,
+            arrived_ms,
         )
         .await;
     }
 
     let uploads = Uploads::new(&files);
-    let Some(entity_file) = uploads.by_hash.get(&entity_id) else {
+    let Some(entity_file) = uploads.by_name.get(&entity_id) else {
         return err_one(format!(
             "Entity file \"{entity_id}\" is missing from the request."
         ));
@@ -887,7 +1062,7 @@ async fn deploy_entity_inner(
         &signer,
         &entity_id,
         &uploads,
-        now_ms,
+        chrono::Utc::now().timestamp_millis(),
         Check::Publish,
     )
     .await
@@ -896,15 +1071,42 @@ async fn deploy_entity_inner(
         Err(refusal) => return refusal.into_response(),
     };
 
-    // Extra files are refused in validation, so every upload is referenced.
-    for (hash, blob) in &uploads.by_hash {
-        if let Err(e) = state.storage.store_file(hash, &blob.path).await {
-            tracing::error!(error = %e, hash = %hash, "deploy failed: could not store blob");
+    // A newer scene on the parcels refuses the publish before any blob is stored; the publish
+    // transaction checks it again.
+    let newer = match store::entity_timestamp(&entity) {
+        Ok(timestamp) => match state.pool.acquire().await {
+            Ok(mut conn) => {
+                store::newer_scene_deployed(
+                    &mut conn,
+                    &validated.world,
+                    &validated.parcels.canonical(),
+                    &entity_id,
+                    timestamp,
+                )
+                .await
+            }
+            Err(e) => Err(e),
+        },
+        Err(e) => return e.into_response(),
+    };
+    match newer {
+        Ok(false) => {}
+        Ok(true) => return failed(partial::NEWER_SCENE_MESSAGE).into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "deploy failed: newer-scene check");
+            return internal("Failed to persist deployment").into_response();
+        }
+    }
+
+    // Every upload is referenced and named by its own hash, as validation checked.
+    for blob in uploads.by_name.values() {
+        if let Err(e) = state.storage.store_file(&blob.hash, &blob.path).await {
+            tracing::error!(error = %e, hash = %blob.hash, "deploy failed: could not store blob");
             return internal("Failed to persist deployment content").into_response();
         }
     }
 
-    if let Err(resp) = publish(
+    let created_ms = match publish(
         state,
         headers,
         &entity_id,
@@ -916,14 +1118,15 @@ async fn deploy_entity_inner(
     )
     .await
     {
-        return resp;
-    }
+        Ok(created_ms) => created_ms,
+        Err(resp) => return resp,
+    };
 
     let scene_parcels = raw_strings(entity.pointer("/metadata/scene/parcels"));
     (
         StatusCode::OK,
         Json(DeploySuccess {
-            creation_timestamp: now_ms,
+            creation_timestamp: created_ms,
             message: deployment_message(
                 &state.settings.public_url,
                 &validated.world_name,
@@ -1075,7 +1278,11 @@ mod tests {
                 )
             );
         }
-        assert_eq!(body(err_one("Missing entityId field")).await.0, 400);
+        assert_eq!(body(err_one(STRING_EXPECTED)).await.0, 400);
+        assert_eq!(
+            body(internal("Failed to persist deployment").into_response()).await,
+            (500, json!({ "error": "Internal Server Error" }))
+        );
         assert_eq!(
             body(rejection(StatusCode::CONFLICT, "c")).await.1["error"],
             "Conflict"
@@ -1168,6 +1375,7 @@ mod tests {
     #[test]
     fn uploads_keep_the_first_copy_in_upload_order() {
         let spooled = |hash: &str| SpooledFile {
+            name: hash.to_string(),
             hash: hash.to_string(),
             len: 1,
             path: std::path::PathBuf::from(hash),
@@ -1175,6 +1383,6 @@ mod tests {
         let (a, b) = (spooled("a"), spooled("b"));
         let uploads = Uploads::new(&[b.clone(), a.clone(), b.clone()]);
         assert_eq!(uploads.order, vec!["b".to_string(), "a".to_string()]);
-        assert_eq!(uploads.by_hash.len(), 2);
+        assert_eq!(uploads.by_name.len(), 2);
     }
 }

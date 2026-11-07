@@ -52,7 +52,7 @@ pub const QUERY_WITHOUT_FIELD_MESSAGE: &str =
 const OWNERSHIP_MESSAGE: &str = "This upload was started by another account.";
 const NOT_FOUND_MESSAGE: &str = "Upload no longer exists; resend its manifest.";
 const TOO_BIG_MESSAGE: &str = "The deployment is too big.";
-const NEWER_SCENE_MESSAGE: &str =
+pub(super) const NEWER_SCENE_MESSAGE: &str =
     "a newer scene is already deployed on one or more of these parcels.";
 const PERSONAL_FIRST_MESSAGE: &str = "Partial uploads to a personal world start once it is published here; publish it in a single request first.";
 
@@ -252,19 +252,9 @@ fn millis(t: NaiveDateTime) -> i64 {
     t.and_utc().timestamp_millis()
 }
 
-/// Upstream's `formatBytes`.
+/// Upstream's `formatBytes` of a byte count.
 fn format_bytes(bytes: i64) -> String {
-    let b = bytes as f64;
-    const K: f64 = 1024.0;
-    if b < K {
-        format!("{bytes} bytes")
-    } else if b < K * K {
-        format!("{:.1} KiB", b / K)
-    } else if b < K * K * K {
-        format!("{:.1} MiB", b / (K * K))
-    } else {
-        format!("{:.1} GiB", b / (K * K * K))
-    }
+    super::upload_limits::format_bytes(bytes.max(0) as u64)
 }
 
 fn expired() -> Response {
@@ -435,15 +425,6 @@ fn success(
         .into_response()
 }
 
-/// The first file a batch carries more than once, as upstream refuses a repeated form field.
-fn repeated_file(files: &[SpooledFile]) -> Option<&str> {
-    let mut seen = HashSet::new();
-    files
-        .iter()
-        .find(|f| !seen.insert(f.hash.as_str()))
-        .map(|f| f.hash.as_str())
-}
-
 /// One partial batch, authenticated by the caller.
 pub(super) async fn stage(
     state: &SharedState,
@@ -469,9 +450,6 @@ async fn stage_batch(
     now_ms: i64,
 ) -> Result<Response, Response> {
     let limits = state.settings.partial_uploads;
-    if let Some(hash) = repeated_file(files) {
-        return Err(err_one(format!("Duplicate form field '{hash}'")));
-    }
     let uploads = Uploads::new(files);
 
     // Batches of one entity run one at a time in this process; each step below is atomic across replicas.
@@ -485,7 +463,7 @@ async fn stage_batch(
     }
     let own_upload = pending.as_ref().filter(|p| p.deployer == signer.as_str());
 
-    let entity = match uploads.by_hash.get(entity_id) {
+    let entity = match uploads.by_name.get(entity_id) {
         Some(file) => read_entity_file(file).await?,
         None => {
             // Only the upload's own signer resumes without the manifest: anyone can sign an id.
@@ -589,7 +567,7 @@ async fn stage_batch(
         .order
         .iter()
         .filter(|h| !stored.contains_key(*h) && !receipts.iter().any(|r| &r.hash == *h))
-        .filter_map(|h| uploads.by_hash.get(h))
+        .filter_map(|h| uploads.by_name.get(h))
         .collect();
     let incoming: i64 = files.iter().map(|f| f.len() as i64).sum();
     receipts.extend(to_store.iter().map(|f| Receipt {

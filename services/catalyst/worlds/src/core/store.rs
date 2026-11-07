@@ -796,7 +796,7 @@ pub async fn deploy_scene_with(
             if leftover.is_some() {
                 return Err(ApiError::conflict(format!(
                     "Scene replacement authorization changed while deploying to world \"{}\". Please retry.",
-                    world.key()
+                    world.display()
                 )));
             }
         }

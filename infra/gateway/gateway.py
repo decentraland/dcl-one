@@ -186,9 +186,19 @@ def render(table, cfg, mime):
     # spelling, so the match ignores case too.
     locations += location('~* "^(/content)?/entities/active/*$"', proxy("apis",
         "client_max_body_size 10m; limit_req zone=content burst=1000 nodelay;"))
+    # The gateway's own 413 and 429 on a worlds deploy answer the worlds service's JSON
+    # (its wire cap and its per-source upload refusal) instead of nginx's HTML pages; the
+    # app's own errors pass through, as the proxy does not intercept them.
     locations += location('~ "^/worlds-content-server/entities/*$"', proxy("apis",
         f"client_max_body_size {WORLDS_DEPLOY_CAP}; client_body_timeout 300s; "
-        f"limit_req zone=deploy burst=4 nodelay; {uploads}"))
+        f"limit_req zone=deploy burst=4 nodelay; {uploads}\n"
+        "error_page 413 = @worlds_deploy_too_large; error_page 429 = @worlds_deploy_busy;"))
+    json_error = ("default_type application/json;\n" + security_headers + "\n"
+                  "add_header Access-Control-Allow-Origin $cors_fallback always;\n")
+    locations += location("@worlds_deploy_too_large", json_error
+        + """return 413 '{"error":"Payload Too Large","message":"The multipart request is too large."}';""")
+    locations += location("@worlds_deploy_busy", json_error + "add_header Retry-After 5 always;\n"
+        + """return 429 '{"error":"Too Many Requests","message":"Too many uploads in progress from this client, please retry shortly."}';""")
     locations += location('~ "^(/worlds-content-server)?/world/[^/]+/settings/*$"', proxy("apis",
         f"client_max_body_size {WORLDS_SETTINGS_CAP};"))
     locations += location("~ ^/worlds-content-server/(contents|ipfs)/", proxy("apis",
