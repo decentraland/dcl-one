@@ -515,6 +515,23 @@ catalyst schema status
 Keep every writer stopped through that sequence. The release refuses mixed
 layouts, changed receipt hashes and a pre-existing destination. It audits pending
 wallets across both roles and refuses overlapping or non-normalized pending state.
+The explore parity layout (step `0029_explore_parity`) moves event moderation notices
+into the shared outbox `explore.moderation_hooks`; the earlier tables
+`explore.event_moderation_hooks`, `explore.event_moderation_hook_activation` and
+`explore.event_upcoming_hooks` are retired by their own release. Run it once, with the
+administrative role, after every replica runs a binary with the outbox and `catalyst
+schema migrate` has recorded step `0029_explore_parity`; it refuses to run earlier:
+
+```sh
+psql "$DATABASE_URL" -X -f schemas/releases/explore-retired-hook-tables.sql
+```
+
+Until it runs, every pass of the `moderation-hook` job first moves the pending rows of
+the old events table into the outbox, so the release finds few or none; it moves the
+rest in the same transaction, keeps the earlier of the two activation instants and
+drops delivered and dead-letter rows with the tables. The drop is not reversible: a
+rollback restores the matching backup. Do not reset a database.
+
 The canonical future definitions live once under `schemas/releases/v3/`; the
 compatible version-3 build explicitly enrolls them in the single fresh bootstrap.
 A version-2 build does not discover that nested directory. Merging dormant
