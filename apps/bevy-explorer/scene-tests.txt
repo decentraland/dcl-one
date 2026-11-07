@@ -1,0 +1,20 @@
+# Graphical scene suite for .github/workflows/bevy-explorer-scenes.yml, read by
+# `tooling/bevy-ci.py scene-suite`. One scene per line: its parcel, then each assertion of that
+# scene that currently fails and is allowed to, after a '/'. The runner exits 0 only when every
+# failure is listed here, so a newly failing assertion still breaks the run. Graphical acceptance
+# holds while no assertion is listed; list one only with its reason in the commit, and remove it
+# once its capture matches again.
+52,-52
+52,-54
+52,-56
+52,-58
+52,-60
+52,-62
+52,-64
+52,-66
+52,-68
+54,-52
+54,-54
+54,-56
+54,-58
+54,-60
