@@ -79,4 +79,50 @@ describe('when a text node carries its own line height', () => {
   it('should fall back to the style line height for an auto line height', () => {
     expect(whiteSpace(quest({ lineHeight: { unit: 'AUTO' } }), env)).toEqual(['nowrap'])
   })
+
+  it('should keep a single line just under the two-line boundary on one line', () => {
+    expect(whiteSpace(quest({ h: 20.9 }), env)).toEqual(['nowrap'])
+    expect(env.report.manual.size).toBe(0)
+  })
+
+  it.each([
+    ['just under two lines', 26.7],
+    ['just over two lines', 29.3]
+  ])('should count %s within the tolerance as two lines', (_, h) => {
+    expect(whiteSpace(quest({ h }), env)).toEqual([])
+    expect(env.report.manual.size).toBe(0)
+  })
+
+  it.each([
+    ['below', 26.5],
+    ['above', 29.5],
+    ['well above, where the style line height would wrap', 34]
+  ])('should not infer wrapping from a height %s the tolerance, and flag it instead', (_, h) => {
+    expect(whiteSpace(quest({ h }), env)).toEqual(['nowrap'])
+    expect([...env.report.manual]).toEqual([
+      'text-wrap-ambiguous:Description: the height is not a whole number of captured lines, so it stays on one line'
+    ])
+  })
+
+  // dcl-one keeps whole-line geometry meaningful in a fixed-height box (capturedLines in views.ts), where
+  // figma-design-system flags it: two or three whole captured lines wrap, unflagged.
+  it('should wrap a fixed-height box that holds a whole number of captured lines', () => {
+    expect(whiteSpace(quest({ sizing: ['FILL', 'FIXED'] }), env)).not.toContain('nowrap')
+    expect(whiteSpace(quest({ sizing: ['FILL', 'FIXED'], h: 42 }), env)).not.toContain('nowrap')
+    expect(env.report.notes).not.toContain('text-wrap-ambiguous:Description')
+  })
+
+  it('should flag a fixed-height box even when it holds less than two lines', () => {
+    expect(whiteSpace(quest({ sizing: ['FILL', 'FIXED'], h: 17 }), env)).toEqual(['nowrap'])
+    expect(env.report.notes).toContain('text-wrap-ambiguous:Description')
+  })
+
+  it.each([
+    ['exactly', 14, 14],
+    ['within the tolerance of', 19, 19.4]
+  ])('should keep a fixed-height box %s one line on one line, unflagged', (_, h, value) => {
+    const node = quest({ sizing: ['FILL', 'FIXED'], h, lineHeight: { unit: 'PIXELS', value } })
+    expect(whiteSpace(node, env)).toEqual(['nowrap'])
+    expect(env.report.manual.size).toBe(0)
+  })
 })
