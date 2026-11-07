@@ -64,10 +64,10 @@ python3 tooling/image-smoke.py
   checks out PR code. An hourly trusted sweep also removes uploads that finish
   after closure and retains only the newest Development Rust snapshot per
   platform, purpose and ref; image and Explorer caches are not pruned by that rule.
-- Multi-GB Rust PR snapshots require the `ci:cache` label and a same-repository
-  Linux test job. Add the label before pushing the commit to cache; adding it
-  alone does not start a new run. Main continues to refresh test and smoke snapshots. Cache
-  pressure is logged by the sweep; quota and idle eviction still apply between sweeps.
+- The Rust test job caches dependency artifacts only (`Swatinem/rust-cache`): main
+  saves, every PR reads, and the workspace crates rebuild on each run. Main also
+  refreshes the smoke snapshot. Cache pressure is logged by the sweep; quota and
+  idle eviction still apply between sweeps.
 - Imports use `--no-check-sigs`: only trusted workflows may write caches a publishing branch consumes.
 
 ## Publication and runtime
