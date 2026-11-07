@@ -1,4 +1,4 @@
-// from: shop@2d3bf62:app/src/pages/MyAssets.tsx; marketplace@f3956826:webapp/src/components/AccountPage (the /account sections);
+// from: shop@3a322cf9:app/src/pages/MyAssets.tsx (sidebar, toolbar, empty state); marketplace@f3956826:webapp/src/components/AccountPage (the /account sections);
 //       catalyrst-v2 ui3/src/marketplace/pages/{MkAccountPage,MkOnSaleOnRentAccountSections,MkMyBids}.tsx
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
 
@@ -9,11 +9,15 @@ import { Link, useNavigate, useSearchParams } from "react-router";
 import Button from "../../../atoms/Button";
 import EmptyState from "../../../components/EmptyState";
 import BrowseLayout from "../../discovery/components/BrowseLayout";
-import { SortDropdown } from "../../discovery/components/FilterBar";
+import FilterBar, { type SortOption } from "../../discovery/components/FilterBar";
+import { CategoryFilter, subCategoryLabel } from "../../discovery/components/Filters";
 import Icon from "../../discovery/components/Icon";
 import "../../discovery/components/filters.css";
 import "../../discovery/components/filterbar.css";
+import { CATEGORIES, SUBCAT_MAP } from "../../discovery/lib/categories";
 import { RARITIES, rarityColor } from "../../discovery/lib/rarity";
+import itemsEmptyIllustration from "../../components/empty-art/items-empty.svg?url";
+import salesEmptyIllustration from "../../components/empty-art/sales-empty.svg?url";
 import { shopPath } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { myStoreAccess, useShopCapabilities } from "../../seller/lib/featureFlags";
@@ -22,6 +26,7 @@ import { fetchBidsByAddress, fetchMyAssets, type Bid, type MyAsset, type MyAsset
 import { useArchivedBids } from "../store/archivedBids";
 import { useMarketplace, useMarketplaceAccess } from "../access";
 import AssetTile from "../components/AssetTile";
+import { EmptyPanel } from "../../components/EmptyPanel";
 import BidRow from "../components/BidRow";
 import { EnsureQueryClient, LoadFailure, Loading } from "../components/kit";
 import MyItemsSignedOut from "./myitems/SignedOut";
@@ -35,11 +40,21 @@ const MARKETPLACE_SECTIONS: ReadonlySet<MyItemsSection | "creations"> = new Set(
 const SECTION_LABEL: Record<MyItemsSection, string> = { wearables: "Wearables", emotes: "Emotes", names: "Names", land: "LAND", bids: "Bids" };
 const CATEGORY: Record<Exclude<MyItemsSection, "bids" | "land">, MyAssetsCategory> = { wearables: "wearable", emotes: "emote", names: "ens" };
 const SORTS = [
-  { key: "newest", label: "Newest" },
-  { key: "name", label: "Name (A–Z)" },
-  { key: "cheapest", label: "Cheapest" },
-] as const;
+  { key: "newest", label: "filterBar.sortNewest", server: "newest" },
+  { key: "name", label: "filterBar.sortName", server: "name" },
+  { key: "cheapest", label: "filterBar.sortCheapest", server: "cheapest" },
+] as const satisfies readonly SortOption[];
 type SortKey = (typeof SORTS)[number]["key"];
+/** The sidebar's CategoryFilter keys for the sections it lists (upstream's CATEGORY_OF_SECTION). */
+const CATEGORY_OF_SECTION: Partial<Record<MyItemsSection | "creations", string>> = { wearables: "wearable", emotes: "emote", names: "names" };
+const SECTION_OF_CATEGORY = Object.fromEntries(Object.entries(CATEGORY_OF_SECTION).map(([section, category]) => [category, section])) as Record<string, MyItemsSection>;
+
+/** The section a sub-category (or one of its leaves) belongs to: Head is a wearable's, Dance an emote's. */
+function sectionOfSub(key: string): MyItemsSection | null {
+  for (const top of CATEGORIES)
+    for (const sub of top.subs ?? []) if (sub.key === key || sub.subs?.some((leaf) => leaf.key === key)) return SECTION_OF_CATEGORY[top.key] ?? null;
+  return null;
+}
 type Status = "all" | "on_sale" | "not_for_sale";
 const STATUS_LABEL: Record<Status, string> = { all: "All", on_sale: "On sale", not_for_sale: "Not for sale" };
 const PAGE_SIZE = 48;
@@ -109,15 +124,22 @@ function ImportNudge({ address }: { address: string }) {
   );
 }
 
-type OwnedFilters = { status: Status; rarities: string[]; search: string; sort: SortKey };
+type OwnedFilters = { status: Status; rarities: string[]; subCategory: string | null; search: string; sort: SortKey };
 
 function useOwned(address: string, section: Exclude<MyItemsSection, "bids">, f: OwnedFilters) {
   const showRarity = section === "wearables" || section === "emotes";
   const query = useInfiniteQuery({
-    queryKey: ["my-assets", address, section, f.status, f.rarities, f.search, f.sort],
+    queryKey: ["my-assets", address, section, f.status, f.rarities, f.subCategory, f.search, f.sort],
     initialPageParam: 0,
     queryFn: async ({ pageParam }) => {
-      const base = { first: PAGE_SIZE, skip: pageParam, search: f.search || undefined, sortBy: f.sort, onlyOnSale: f.status === "on_sale" || undefined };
+      const base = {
+        first: PAGE_SIZE,
+        skip: pageParam,
+        search: f.search || undefined,
+        sortBy: f.sort,
+        onlyOnSale: f.status === "on_sale" || undefined,
+        onlyNotOnSale: f.status === "not_for_sale" || undefined,
+      };
       if (section === "land") {
         const [parcels, estates] = await Promise.all([
           fetchMyAssets(address, { ...base, category: "parcel" }),
@@ -125,7 +147,14 @@ function useOwned(address: string, section: Exclude<MyItemsSection, "bids">, f: 
         ]);
         return { items: [...parcels.assets, ...estates.assets], total: parcels.total + estates.total };
       }
-      const res = await fetchMyAssets(address, { ...base, category: CATEGORY[section], rarities: showRarity && f.rarities.length ? f.rarities : undefined });
+      const sub = showRarity && f.subCategory ? SUBCAT_MAP[f.subCategory] : undefined;
+      const res = await fetchMyAssets(address, {
+        ...base,
+        category: CATEGORY[section],
+        rarities: showRarity && f.rarities.length ? f.rarities : undefined,
+        wearableCategories: section === "wearables" ? sub : undefined,
+        emoteCategories: section === "emotes" ? sub : undefined,
+      });
       return { items: res.assets, total: res.total };
     },
     getNextPageParam: (last, pages) => {
@@ -133,29 +162,37 @@ function useOwned(address: string, section: Exclude<MyItemsSection, "bids">, f: 
       return loaded < last.total && last.items.length > 0 ? loaded : undefined;
     },
   });
-  const items = useMemo(() => {
-    const all = query.data?.pages.flatMap((p) => p.items) ?? [];
-    return f.status === "not_for_sale" ? all.filter((a) => !a.isOnSale) : all;
-  }, [query.data, f.status]);
-  const total = f.status === "not_for_sale" ? items.length : (query.data?.pages[0]?.total ?? items.length);
+  const items = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data]);
+  const total = query.data?.pages[0]?.total ?? items.length;
   return { query, items, total };
 }
 
-function OwnedGrid({ section, owned, filtered }: { section: Exclude<MyItemsSection, "bids">; owned: ReturnType<typeof useOwned>; filtered: boolean }) {
+function OwnedGrid({
+  section,
+  owned,
+  onSale,
+  filtered,
+  onClear,
+}: {
+  section: Exclude<MyItemsSection, "bids">;
+  owned: ReturnType<typeof useOwned>;
+  onSale: boolean;
+  /** A search, status, rarity or sub-category narrows the list: an empty grid is then no match, not an empty backpack. */
+  filtered: boolean;
+  onClear: () => void;
+}) {
   const { query, items } = owned;
   const marketplace = useMarketplace();
   const what = SECTION_LABEL[section].toLowerCase();
   if (query.isPending) return <Loading label={`Loading your ${what}…`} />;
   if (query.isError) return <LoadFailure error={query.error} what={`Your ${what}`} onRetry={() => void query.refetch()} />;
-  if (items.length === 0)
-    return (
-      <EmptyState
-        variant="inline"
-        title={filtered ? "Nothing matches these filters" : `You have no ${what} yet`}
-        actions={filtered ? [] : [{ label: "Browse the Shop", href: shopPath("items") }]}
-        data-testid="shop-empty"
-      />
-    );
+  if (items.length === 0) {
+    // As upstream's owned-empty: a "nothing on sale" grid is a listings state, not an empty backpack.
+    const icon = onSale ? salesEmptyIllustration : itemsEmptyIllustration;
+    if (filtered) return <EmptyPanel testId="owned-empty" icon={icon} title="Nothing matches these filters" body="Try other filters, or clear them to see everything you own." cta={{ label: "Clear all", onClick: onClear }} />;
+    if (section === "names") return <EmptyPanel testId="owned-empty" icon={itemsEmptyIllustration} title="No NAMEs yet" body="Claim a unique NAME to stand out in Decentraland — it’ll appear here once it’s yours." />;
+    return <EmptyPanel testId="owned-empty" icon={icon} title="Nothing here... yet!" body="Explore the Shop and find something awesome to make it yours." cta={{ label: "Explore Shop", to: shopPath("items") }} />;
+  }
   return (
     <>
       <div className="shop-grid mk-grid" data-testid="grid">
@@ -190,63 +227,17 @@ function FilterGroup({ title, summary, defaultOpen = true, children }: { title: 
   );
 }
 
-function Toolbar({
-  total,
-  loading,
-  search,
-  onSearch,
-  sort,
-  onSort,
-  onOpenFilters,
-  chips,
-  onClear,
-}: {
-  total: number;
-  loading: boolean;
-  search: string;
-  onSearch: (v: string) => void;
-  sort: SortKey;
-  onSort: (v: SortKey) => void;
-  onOpenFilters: () => void;
-  chips: { key: string; label: string; onRemove: () => void }[];
-  onClear: () => void;
-}) {
+/** from: shop@3a322cf9:app/src/pages/MyAssets.styles.ts (SearchBar): the page's own search, in the toolbar beside Sort By. */
+function MySearch({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
-    <div className="shop-filterbar" data-testid="browse-toolbar">
-      {loading || total > 0 ? (
-        <p className="shop-filterbar__count" aria-live="polite" aria-busy={loading || undefined}>
-          {loading ? <span className="shop-filterbar__shimmer" aria-hidden /> : `${total} ${total === 1 ? "Item" : "Items"}`}
-        </p>
-      ) : null}
-      {chips.length ? (
-        <div className="shop-filterbar__chips">
-          {chips.map((c) => (
-            <button key={c.key} type="button" className="shop-filterbar__chip" onClick={c.onRemove} aria-label={`Remove ${c.label} filter`}>
-              <span>{c.label}</span>
-              <Icon name="close" size={14} />
-            </button>
-          ))}
-          <button type="button" className="shop-filterbar__clear" onClick={onClear}>
-            Clear all
-          </button>
-        </div>
-      ) : null}
-      <div className="shop-myitems__search">
-        <Icon name="search" size={18} />
-        <input type="search" value={search} placeholder="Search your items" aria-label="Search your items" onChange={(e) => onSearch(e.target.value)} />
-        {search ? (
-          <button type="button" aria-label="Clear search" onClick={() => onSearch("")}>
-            <Icon name="close" size={16} />
-          </button>
-        ) : null}
-      </div>
-      <div className="shop-filterbar__right">
-        <SortDropdown value={sort} options={SORTS} onChange={(k) => onSort(k as SortKey)} />
-        <button type="button" className="shop-filterbar__pill" onClick={onOpenFilters}>
-          Filters
-          <Icon name="filter" size={16} />
+    <div className="shop-myitems__search">
+      <Icon name="search" size={18} />
+      <input type="search" value={value} placeholder="Search your items" aria-label="Search your items" onChange={(e) => onChange(e.target.value)} />
+      {value ? (
+        <button type="button" aria-label="Clear search" onClick={() => onChange("")}>
+          <Icon name="close" size={12} />
         </button>
-      </div>
+      ) : null}
     </div>
   );
 }
@@ -314,12 +305,16 @@ function OwnedMain({
   filtersOpen,
   setFiltersOpen,
   renderSidebar,
+  subCategory,
+  onSubCategory,
 }: {
   address: string;
   section: Exclude<MyItemsSection, "bids">;
   filtersOpen: boolean;
   setFiltersOpen: (v: boolean) => void;
   renderSidebar: (extra: ReactNode) => ReactNode;
+  subCategory: string | null;
+  onSubCategory: (key: string | null) => void;
 }) {
   const [status, setStatus] = useState<Status>("all");
   const [rarities, setRarities] = useState<string[]>([]);
@@ -331,12 +326,26 @@ function OwnedMain({
     return () => clearTimeout(id);
   }, [searchInput]);
   const showRarity = section === "wearables" || section === "emotes";
-  const owned = useOwned(address, section, { status, rarities, search, sort });
+  const owned = useOwned(address, section, { status, rarities, subCategory: showRarity ? subCategory : null, search, sort });
   const toggleRarity = (r: string) => setRarities((rs) => (rs.includes(r) ? rs.filter((x) => x !== r) : [...rs, r]));
+
+  // The chip bar's Clear all clears the chips; the search is not one and stays. The empty panel's clears everything.
+  const clearChips = () => {
+    setStatus("all");
+    setRarities([]);
+    onSubCategory(null);
+  };
+  const clearAll = () => {
+    clearChips();
+    setSearchInput("");
+    setSearch("");
+  };
+  const filtered = status !== "all" || rarities.length > 0 || !!search || (showRarity && !!subCategory);
 
   const chips = [
     ...(status !== "all" ? [{ key: "status", label: STATUS_LABEL[status], onRemove: () => setStatus("all") }] : []),
     ...rarities.map((r) => ({ key: `rarity-${r}`, label: r[0]!.toUpperCase() + r.slice(1), onRemove: () => toggleRarity(r) })),
+    ...(showRarity && subCategory ? [{ key: "sub", label: subCategoryLabel(subCategory), onRemove: () => onSubCategory(null) }] : []),
   ];
 
   const filters = (
@@ -374,21 +383,20 @@ function OwnedMain({
   return (
     <BrowseLayout sidebar={renderSidebar(filters)} open={filtersOpen} onClose={() => setFiltersOpen(false)} testId="my-items-browse">
       <ImportNudge address={address} />
-      <Toolbar
-        total={owned.total}
-        loading={owned.query.isPending}
-        search={searchInput}
-        onSearch={setSearchInput}
+      <FilterBar
         sort={sort}
-        onSort={setSort}
+        onSort={(k) => setSort(k as SortKey)}
+        sortOptions={[...SORTS]}
+        // A failed read has no count: "0 Items" over an outage would read as an empty backpack.
+        total={owned.query.isError ? null : owned.total}
+        loading={owned.query.isPending}
+        query={search}
         onOpenFilters={() => setFiltersOpen(true)}
         chips={chips}
-        onClear={() => {
-          setStatus("all");
-          setRarities([]);
-        }}
+        onClearChips={clearChips}
+        search={<MySearch value={searchInput} onChange={setSearchInput} />}
       />
-      <OwnedGrid section={section} owned={owned} filtered={status !== "all" || rarities.length > 0 || !!search} />
+      <OwnedGrid section={section} owned={owned} onSale={status === "on_sale"} filtered={filtered} onClear={clearAll} />
     </BrowseLayout>
   );
 }
@@ -413,28 +421,57 @@ export function MyItemsView({
   const shown = (section === "creations" && storeOn) || (!marketplace && section !== "creations" && MARKETPLACE_SECTIONS.has(section)) ? "wearables" : section;
   const [filtersOpen, setFiltersOpen] = useState(false);
   const waiting = access === "pending" && section !== "creations" && MARKETPLACE_SECTIONS.has(section);
+  // A sub-category filters the section it was picked in: any section change (the sidebar, the header's My Assets, a
+  // ?section= link, Back) drops it, as it drops the section's other filters (OwnedMain is keyed by section).
+  const [subCategory, setSubCategory] = useState<string | null>(null);
+  const [subFor, setSubFor] = useState(shown);
+  if (subFor !== shown) {
+    setSubFor(shown);
+    setSubCategory(null);
+  }
   const pick = (s: MyItemsSection | "creations") => {
     setFiltersOpen(false);
     onSection(s);
   };
+  // Only the shown section's group is open (CategoryFilter collapses the others), so a picked sub-category is its.
+  const pickSub = (key: string | null) => {
+    if (key === null || sectionOfSub(key) === shown) setSubCategory(key);
+  };
+  // As upstream: the Collectibles category nav (Wearables and Emotes open to their sub-categories), with no
+  // "Shop All" and with "My Creations" as its extra entry while the store dashboard is off. dcl-one's own
+  // sections (LAND, Bids, My store) follow it.
   const renderSidebar = (extra: ReactNode) => (
     <div className="shop-filters" data-testid="my-items-sidebar">
-      <nav className="shop-cats shop-myitems__cats" aria-label="My items sections">
-        <h2 className="shop-myitems__heading">Items</h2>
-        {MY_ITEMS_SECTIONS.filter((s) => marketplace || !MARKETPLACE_SECTIONS.has(s)).map((s) => (
-          <button key={s} type="button" className="shop-cats__cat" data-selected={shown === s || undefined} aria-current={shown === s ? "page" : undefined} onClick={() => pick(s)}>
-            <span>{SECTION_LABEL[s]}</span>
-          </button>
-        ))}
-        {storeOn ? (
-          <Link className="shop-cats__cat" to={shopPath("myStore")}>
-            <span>My store</span>
-          </Link>
-        ) : (
-          <button type="button" className="shop-cats__cat" data-selected={shown === "creations" || undefined} aria-current={shown === "creations" ? "page" : undefined} onClick={() => pick("creations")}>
-            <span>Creations</span>
-          </button>
-        )}
+      <nav className="shop-myitems__nav" aria-label="My items sections">
+        <CategoryFilter
+          title="Items"
+          category={CATEGORY_OF_SECTION[shown] ?? ""}
+          subCategory={subCategory}
+          onCategory={(key) => {
+            const next = SECTION_OF_CATEGORY[key];
+            if (!next || next === shown) return;
+            // Wearables and Emotes open their sub-categories in place: the mobile drawer stays open to choose one.
+            if (CATEGORIES.some((top) => top.key === key && top.subs)) onSection(next);
+            else pick(next);
+          }}
+          onSub={pickSub}
+          onCollections={storeOn ? undefined : () => pick("creations")}
+          collections={!storeOn && shown === "creations"}
+          extraLabel="My Creations"
+          hideAll
+        />
+        <div className="shop-cats shop-myitems__cats">
+          {(marketplace ? (["land", "bids"] as const) : []).map((s) => (
+            <button key={s} type="button" className="shop-cats__cat" data-selected={shown === s || undefined} aria-pressed={shown === s} onClick={() => pick(s)}>
+              <span>{SECTION_LABEL[s]}</span>
+            </button>
+          ))}
+          {storeOn ? (
+            <Link className="shop-cats__cat" to={shopPath("myStore")}>
+              <span>My store</span>
+            </Link>
+          ) : null}
+        </div>
       </nav>
       {extra}
     </div>
@@ -463,7 +500,18 @@ export function MyItemsView({
       </BrowseLayout>
     );
   }
-  return <OwnedMain key={shown} address={address} section={shown} filtersOpen={filtersOpen} setFiltersOpen={setFiltersOpen} renderSidebar={renderSidebar} />;
+  return (
+    <OwnedMain
+      key={shown}
+      address={address}
+      section={shown}
+      filtersOpen={filtersOpen}
+      setFiltersOpen={setFiltersOpen}
+      renderSidebar={renderSidebar}
+      subCategory={subCategory}
+      onSubCategory={pickSub}
+    />
+  );
 }
 
 export default function MyItems() {

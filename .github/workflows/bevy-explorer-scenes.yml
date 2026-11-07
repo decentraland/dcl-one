@@ -100,7 +100,7 @@ jobs:
             libssl-dev libx11-dev libgl1-mesa-dev libxext-dev pulseaudio libasound2-plugins alsa-utils \
             libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
       - name: Install clang for webrtc-sys
-        run: ../../../apps/bevy-explorer/install-clang.sh
+        uses: ./.github/actions/bevy-explorer-clang
       - name: Export CEF distribution
         run: |
           cargo install export-cef-dir --version "139.8.0+139.0.40"
