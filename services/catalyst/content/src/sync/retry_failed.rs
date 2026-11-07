@@ -446,15 +446,13 @@ pub async fn prune_failed_deployments(
     Ok(result.rows_affected())
 }
 
-/// The prune loop as the old binary ran it: first pass after `initial_delay`, then daily.
 pub async fn run_prune_loop(
     pool: sqlx::PgPool,
     ttl_days: i64,
-    initial_delay: std::time::Duration,
     cancel: CancellationToken,
     on_pass: impl Fn(Result<u64, &SyncError>),
 ) {
-    let mut delay = initial_delay;
+    let mut delay = std::time::Duration::ZERO;
     loop {
         tokio::select! {
             _ = cancel.cancelled() => return,

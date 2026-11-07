@@ -9,7 +9,6 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
-use std::time::Duration;
 
 use anyhow::Context;
 use sqlx::PgPool;
@@ -603,7 +602,6 @@ fn spawn_failed_deployment_jobs(
         run_prune_loop(
             pool,
             ttl_days,
-            Duration::from_secs(300),
             ctx.cancel.clone(),
             move |outcome| match outcome {
                 Ok(pruned) => trace.progress(format!("pruned {pruned}")),
@@ -674,6 +672,7 @@ impl Drop for Authority {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn config(args: &[&str]) -> Config {
         let mut argv = vec!["x", "--database-url", "postgres:///catalyst"];

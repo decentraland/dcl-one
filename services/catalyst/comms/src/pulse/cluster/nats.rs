@@ -290,8 +290,8 @@ async fn supervise(shared: Arc<Shared>, options: NatsFeedOptions) {
                 tracing::warn!("cluster feed connect failed");
             }
         }
-        tokio::time::sleep(delay + Duration::from_millis(rand::random::<u64>() % 251)).await;
-        delay = delay.saturating_mul(2).min(Duration::from_secs(30));
+        tokio::time::sleep(delay.mul_f64(0.5 + rand::random::<f64>() * 0.5)).await;
+        delay = delay.saturating_mul(2).min(Duration::from_secs(5));
     }
 }
 

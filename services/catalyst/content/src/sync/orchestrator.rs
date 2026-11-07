@@ -325,7 +325,7 @@ pub async fn run_sync_job(
             _ = ctx.cancel.cancelled() => break,
             _ = signal.wait(), if !bootstrapped => {
                 bootstrapped = true;
-                if !ctx.cancel.is_cancelled() {
+                if !ctx.cancel.is_cancelled() && matches!(status.state(), SyncState::Syncing | SyncState::PartiallySynced { .. }) {
                     on_bootstrap.take().unwrap()();
                 }
                 info!("Bootstrap complete, sync is now in steady state");
