@@ -20,3 +20,13 @@ export function needsMarketplace(line: CartLine): boolean {
   if (line.asset.token.kind === "item") return false;
   return !(assetKindOf(line.display.category ?? "") === "name" && !!line.listing.name);
 }
+
+/** The listings a visitor is offered: every kind with the Marketplace, creators' primary sales only without it. */
+export function listingTypeFor(marketplace: boolean): "primary" | undefined {
+  return marketplace ? undefined : "primary";
+}
+
+/** Whether a listing row is a resale (a token someone owns), which only the Marketplace sells. */
+export function isResale(row: { tokenId?: string | null; listingType?: string | null }): boolean {
+  return !!row.tokenId || row.listingType === "secondary";
+}

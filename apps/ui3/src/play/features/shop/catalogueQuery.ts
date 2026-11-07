@@ -16,6 +16,7 @@ import lowerBodyIcon from '../../assets/category-icons/lower_body.png'
 import feetIcon from '../../assets/category-icons/feet.png'
 import accessoriesIcon from '../../assets/category-icons/earring.png'
 import skinIcon from '../../assets/category-icons/skin.png'
+import { listingTypeFor } from '../../../shop/market/access-rule'
 
 export const SHOP_PAGE_SIZE = 48
 
@@ -128,7 +129,7 @@ export const shopQueries = {
               sortBy,
               isSmart: smart,
               onSale: true,
-              listingType: marketplace ? undefined : 'primary',
+              listingType: listingTypeFor(marketplace),
               discounted: creatorSales && filters.deals ? true : undefined,
               minPriceCredits: filters.minCredits ?? undefined,
               maxPriceCredits: filters.maxCredits ?? undefined,

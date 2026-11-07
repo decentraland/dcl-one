@@ -7,6 +7,7 @@ import type { Order } from "@catalyst-api/market/Order";
 import { fetchUnified, fetchShopListingsRaw, shopListingToItem, type Opts, type UnifiedListing } from "../discovery/api";
 import { toGender, type CatalogItem, type Gender, type RawCollectionItem } from "../discovery/lib/catalogItem";
 import { shopClient, type ShopClient } from "../api/shop";
+import { isResale } from "../market/access-rule";
 
 function c(opts?: Opts): ShopClient {
   return opts?.client ?? shopClient();
@@ -46,7 +47,7 @@ export function itemListingKey(contractAddress: string, itemId: string, scope: "
 
 export async function fetchPrimaryListingForItem(contractAddress: string, itemId: string, opts?: Opts): Promise<UnifiedListing | null> {
   const { items } = await fetchUnified({ contractAddress, itemId, first: 5, listingType: "primary" }, opts);
-  return items.find((l) => !l.tokenId) ?? null;
+  return items.find((l) => !isResale(l)) ?? null;
 }
 
 export async function fetchShopListingForItem(contractAddress: string, itemId: string, opts?: Opts): Promise<CatalogItem | null> {

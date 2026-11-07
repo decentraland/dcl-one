@@ -14,6 +14,7 @@ import type { UnifiedListing } from "@catalyst-api/market/UnifiedListing";
 import { centsFromUsdWeiCeil } from "../../model/money";
 import type { SaleRecord } from "../../history/activity";
 import { ASSET_TYPE, type ListingCoupon, type SignedTrade } from "../purchase/encoding";
+import { isResale } from "../../market/access-rule";
 
 /** Upstream `usdWeiToCents`: a USD-pegged amount (1e18 = $1) in cents, rounded UP; 0 when unparseable. */
 export function usdWeiToCents(amount?: string | null): number {
@@ -70,7 +71,7 @@ export async function fetchUnifiedListingForItem(contractAddress: string, itemId
  */
 export async function fetchTradeForItem(contractAddress: string, itemId: string, client: ShopClient = shopClient()): Promise<SignedTrade | null> {
   const body = await client.catalog.unified<{ data?: UnifiedListing[] }>({ contractAddress, itemId, first: 5, listingType: "primary" });
-  const listing = pickItemListing((body?.data ?? []).filter((l) => !l.tokenId));
+  const listing = pickItemListing((body?.data ?? []).filter((l) => !isResale(l)));
   return listing?.tradeId ? fetchTrade(listing.tradeId, client) : null;
 }
 

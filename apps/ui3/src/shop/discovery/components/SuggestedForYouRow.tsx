@@ -21,6 +21,7 @@ import { buildSuggestionSeeds, seedsKey } from "../lib/suggestionSeeds";
 import { useShopQuery } from "../query";
 import AssetCard from "./AssetCard";
 import Rail from "./Rail";
+import { isResale } from "../../market/access-rule";
 
 const RAIL_SIZE = 12;
 
@@ -40,7 +41,7 @@ export function useSuggestedForYou(first: number, { exclude }: { exclude?: strin
   // suggestions route reads no listing type, so the rows are narrowed here.
   const marketplace = useMarketplace();
   const result = useMemo(
-    () => (query.data && !marketplace ? { ...query.data, data: query.data.data.filter((s) => !s.tokenId && s.listingType !== "secondary") } : query.data),
+    () => (query.data && !marketplace ? { ...query.data, data: query.data.data.filter((s) => !isResale(s)) } : query.data),
     [query.data, marketplace],
   );
   return { result, isLoading: query.isLoading, isError: !!query.error, enabled, hasSignal };

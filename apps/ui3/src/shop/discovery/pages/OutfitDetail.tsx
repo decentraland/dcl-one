@@ -30,6 +30,7 @@ import { detailRouteFor } from "../lib/routes";
 import { useShopQuery } from "../query";
 import { classifyOutfitItem, fetchOutfit, isListingUnavailable, outfitItemKey, outfitRadialGradient, thumbnailUrl, type Outfit, type OutfitItemState } from "./outfits";
 import "./outfitdetail.css";
+import { listingTypeFor } from "../../market/access-rule";
 
 export { fetchOutfit, type Outfit } from "./outfits";
 
@@ -265,7 +266,7 @@ function OutfitContent({ outfit }: { outfit: Outfit }) {
     try {
       const live = await Promise.all(
         purchasable.map(async (item) => {
-          const page = await fetchShopItems({ contractAddress: item.contractAddress, itemId: item.itemId ?? "", first: 1, listingType: marketplace ? undefined : "primary" });
+          const page = await fetchShopItems({ contractAddress: item.contractAddress, itemId: item.itemId ?? "", first: 1, listingType: listingTypeFor(marketplace) });
           const fresh = page.items[0];
           return fresh && !isListingUnavailable(fresh) ? fresh : null;
         }),

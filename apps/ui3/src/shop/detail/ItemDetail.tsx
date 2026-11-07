@@ -78,6 +78,7 @@ import { offerQueryKey, offersRevalidation, useOffers, type OfferQuery } from ".
 import { useShopServices } from "../checkout/services";
 import { readManaBalanceWei } from "../checkout/lib/mana";
 import { usePurchaseLauncher } from "./purchase";
+import { listingTypeFor } from "../market/access-rule";
 import { serviceBase } from "../../data/catalyst/client";
 import "./itemdetail.css";
 
@@ -434,7 +435,7 @@ export default function ItemDetail() {
   const relatedQ = useShopQuery(
     needsPadding && creatorSettled && withCreatorCount < SUGGESTIONS_TARGET && validContract && pageItemId ? ["rail-related", contractAddress, pageItemId, SUGGESTIONS_TARGET, listingScope] : null,
     // A resale card is the Marketplace's: without it the rail suggests primary sales only.
-    (signal) => fetchRelatedItems(contractAddress, pageItemId!, { first: SUGGESTIONS_TARGET, listingType: marketplace ? undefined : "primary" }, { signal }),
+    (signal) => fetchRelatedItems(contractAddress, pageItemId!, { first: SUGGESTIONS_TARGET, listingType: listingTypeFor(marketplace) }, { signal }),
     { staleMs: 60_000 },
   );
   const rail = useMemo(

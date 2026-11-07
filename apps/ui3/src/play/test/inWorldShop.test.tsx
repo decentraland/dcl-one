@@ -235,7 +235,8 @@ describe('in-world shop', () => {
     view.unmount()
 
     const on = serve({ trending: [listingRow()], listings: [[listingRow()]], flags: { 'dapps-shop-marketplace-features': true } })
-    renderShop()
+    // A signed-in player, not a guest: the HUD offers the Marketplace to no one before the profile says which.
+    renderShop({ profile: fakeProfileState({ data: { address: '0x00000000000000000000000000000000000ab47f', name: 'Mojito', hasClaimedName: true, isGuest: false } }) })
     expect(await findCard('Golden Armor')).toBeInTheDocument()
     await waitFor(() => expect(calls(on, '/v3/catalog/unified').some((u) => !u.searchParams.has('listingType'))).toBe(true))
   })

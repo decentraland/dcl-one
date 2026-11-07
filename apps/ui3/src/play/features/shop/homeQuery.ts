@@ -5,6 +5,7 @@ import { queryOptions, useQuery } from '@tanstack/react-query'
 import { shopClient } from '../../../shop/api/shop'
 import { isShopApiError } from '../../../shop/api/client'
 import { fetchCatalogByIds, fetchShopItems, fetchTrendingItems } from '../../../shop/discovery/api'
+import { listingTypeFor } from '../../../shop/market/access-rule'
 
 export const HOME_ROW_SIZE = 12
 
@@ -79,9 +80,6 @@ export const homeQueries = {
 }
 
 export type Rollouts = { creatorSales: boolean; marketplace: boolean }
-
-/** The listings a player is offered: primary sales only without the Marketplace. */
-export const listingTypeFor = (marketplace: boolean): 'primary' | undefined => (marketplace ? undefined : 'primary')
 
 export const useShopOutfits = (enabled: boolean) => useQuery({ ...homeQueries.outfits(), enabled })
 export const useTrending = (rollouts: Rollouts, enabled: boolean) => useQuery({ ...homeQueries.trending(rollouts), enabled })

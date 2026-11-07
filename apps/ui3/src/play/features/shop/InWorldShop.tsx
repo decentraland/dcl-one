@@ -171,10 +171,10 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   // their sale prices and be read again once it lands.
   const creatorSalesFlag = useShopFlag(REMOTE_FLAG.creatorSales)
   // Resales, NAME resales and offers are the Marketplace's: offered only while its rollout is on (a host's declaration
-  // first, as on the web) and never to a guest, who has no account to hold a wallet. Off, the rows and the catalogue
+  // first, as on the web) and never to a guest, who has no account to hold a wallet, nor before the profile says which. Off, the rows and the catalogue
   // list creators' primary sales only. The HUD knows no wallet kind, so the web Shop a resale opens still asks for a
   // web3 wallet session (shop/market/access.tsx).
-  const marketplaceFlag = hostOr('marketplaceFeatures', useShopFlag(REMOTE_FLAG.marketplaceFeatures) ?? null) === true && profile.data?.isGuest !== true
+  const marketplaceFlag = hostOr('marketplaceFeatures', useShopFlag(REMOTE_FLAG.marketplaceFeatures) ?? null) === true && profile.data != null && !profile.data.isGuest
   const flagsKnown = creatorSalesFlag !== undefined
   const creatorSales = creatorSalesFlag ?? false
   const grid = useShopCatalogue(filters, page, { creatorSales, marketplace: marketplaceFlag, enabled: shop.open && flagsKnown && isCatalogue(section) })

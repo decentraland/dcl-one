@@ -93,6 +93,9 @@ export function beginShellBrowserSignIn(): ShellSignIn {
         expiration: expirationIso,
         authChain,
       };
+      // Not recorded as a sign-in kind (signin-kind.ts): the approval happened in the system browser, by whatever
+      // method the user chose there, so this webview cannot tell. It also holds no wallet provider to sign the
+      // Marketplace's trades with, so the managed fallback (no Marketplace) is the honest answer here.
       setIdentity(next);
       return next;
     }
