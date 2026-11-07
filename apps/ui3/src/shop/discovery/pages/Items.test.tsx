@@ -1,9 +1,10 @@
 
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useLocation } from "react-router";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { createShopClient, type ShopClient } from "../../api/shop";
+import { marketplaceOn } from "../../market/testing-flags";
 import { catalogClient, catalogTransport, COLLECTION, CREATOR, ShopHarness, type CatalogScenario, type SessionKind } from "../fixtures";
 import { invalidateShopQueries } from "../query";
 import Items from "./Items";
@@ -19,9 +20,11 @@ function Where() {
   return <output data-testid="where">{pathname + search}</output>;
 }
 
-function items(entry = "/shop/items", opts: { scenario?: CatalogScenario; session?: SessionKind; client?: ShopClient } = {}) {
+// `marketplace`: the grid as a web3 session with the Marketplace on sees it, resales mixed in (market/access.tsx).
+function items(entry = "/shop/items", opts: { scenario?: CatalogScenario; session?: SessionKind; client?: ShopClient; marketplace?: boolean } = {}) {
+  if (opts.marketplace) onTestFinished(marketplaceOn());
   return render(
-    <ShopHarness path="/shop/*" entry={entry} scenario={opts.scenario} session={opts.session} client={opts.client}>
+    <ShopHarness path="/shop/*" entry={entry} scenario={opts.scenario} session={opts.session ?? (opts.marketplace ? "web3" : undefined)} client={opts.client}>
       <>
         <Items />
         <Where />
@@ -44,7 +47,7 @@ describe("the collectibles grid", () => {
 
   it("On Sale reads the item-unified feed, one card per item, priced under the rule", async () => {
     const client = catalogClient();
-    items("/shop/items", { client });
+    items("/shop/items", { client, marketplace: true });
     const grid = await screen.findByTestId("grid");
     const cards = await within(grid).findAllByTestId("card");
     expect(cards).toHaveLength(5);
@@ -65,7 +68,7 @@ describe("the collectibles grid", () => {
   });
 
   it("a card links to the item or token page, never confusing the two", async () => {
-    items();
+    items("/shop/items", { marketplace: true });
     const cards = await screen.findAllByTestId("card");
     const hrefs = cards.map((c) => within(c).getByTestId("card-link").getAttribute("href"));
     expect(hrefs).toContain("/shop/item/0x000000000000000000000000000000000000c011/7");
@@ -123,13 +126,13 @@ describe("the collectibles grid", () => {
 
   it("starts the Marketplace's filters folded, and opens one already in use", async () => {
     const head = (name: RegExp) => screen.getAllByRole("button").find((b) => name.test(b.textContent ?? ""))!;
-    const view = items("/shop/items?category=wearable");
+    const view = items("/shop/items?category=wearable", { marketplace: true });
     await screen.findAllByTestId("card");
     for (const name of [/^Creators/, /^Collection/, /^Body shape/, /^Sale type/]) expect(head(name)).toHaveAttribute("aria-expanded", "false");
     expect(head(/^Filter by type/)).toHaveAttribute("aria-expanded", "true");
     view.unmount();
 
-    items(`/shop/items?category=wearable&bodyShape=female&creators=${CREATOR}`);
+    items(`/shop/items?category=wearable&bodyShape=female&creators=${CREATOR}`, { marketplace: true });
     await screen.findAllByTestId("card");
     expect(head(/^Body shape/)).toHaveAttribute("aria-expanded", "true");
     expect(head(/^Creators/)).toHaveAttribute("aria-expanded", "true");
@@ -209,7 +212,7 @@ describe("the collectibles grid", () => {
 
   it("filters primary offers before sorting, and hides sale type outside On Sale", async () => {
     const client = catalogClient();
-    items("/shop/items", { client });
+    items("/shop/items", { client, marketplace: true });
     await screen.findAllByTestId("card");
     fireEvent.click(within(screen.getByRole("radiogroup", { name: "Sale type" })).getByRole("radio", { name: "From the creator" }));
     fireEvent.click(screen.getByRole("button", { name: "Sort by" }));
@@ -314,7 +317,7 @@ describe("the creators and collection pickers", () => {
 
   it("picks one collection by name, searching every collection while resales are in the grid", async () => {
     const client = catalogClient();
-    items("/shop/items", { client });
+    items("/shop/items", { client, marketplace: true });
     await screen.findAllByTestId("card");
     const box = screen.getByRole("combobox", { name: "Collection" });
     fireEvent.focus(box);

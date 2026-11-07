@@ -43,6 +43,7 @@ import { PermissionsPopover } from '../permissions/PermissionsPopover'
 import { useNearbyVoice, type NearbyVoice } from '../voice/useNearbyVoice'
 import { withUtm } from '../../lib/utm'
 import { siteUrl } from '../../lib/baseDomain'
+import { IN_WORLD_SHOP } from '../shop/entry'
 
 // `hotkey` names the engine SystemAction whose live binding renders as the tooltip hint.
 type Item =
@@ -61,6 +62,7 @@ type Item =
   | { kind: 'skybox'; icon: IconName; label: string }
   | { kind: 'permissions'; icon: IconName; label: string }
   | { kind: 'gallery'; icon: IconName; label: string; hotkey?: string }
+  | { kind: 'shop'; icon: IconName; label: string }
   | { kind: 'create'; icon: IconName; label: string }
   | { kind: 'link'; icon: IconName; label: string; url: string | (() => string) }
   | { kind: 'divider' }
@@ -99,7 +101,7 @@ const TOP: Item[] = [
   { kind: 'places', icon: 'places', label: 'Places', hotkey: 'Places' },
   { kind: 'communities', icon: 'communities', label: 'Communities', hotkey: 'Communities' },
   { kind: 'backpack', icon: 'backpack', label: 'Backpack', hotkey: 'Backpack' },
-  { kind: 'link', icon: 'marketplace', label: 'Shop', url: () => withUtm(siteUrl('/shop')) },
+  { kind: 'shop', icon: 'marketplace', label: 'Shop' },
   { kind: 'gallery', icon: 'gallery', label: 'Gallery', hotkey: 'Gallery' },
   { kind: 'settings', icon: 'settings', label: 'Settings', hotkey: 'Settings' },
   { kind: 'create', icon: 'create', label: 'Create' },
@@ -206,6 +208,13 @@ function renderItem(item: Item, i: number, session: EngineSession, snap: Binding
         active={session.places.open}
         onClick={session.places.toggle}
       />
+    )
+  // The in-world Shop page where this HUD runs it (always, unless `?shop=old`); otherwise the web Shop in a new tab.
+  if (item.kind === 'shop')
+    return IN_WORLD_SHOP ? (
+      <RailButton key="shop" icon={item.icon} label={item.label} active={session.shop.open} onClick={session.shop.toggle} />
+    ) : (
+      <RailButton key="shop" icon={item.icon} label={item.label} onClick={() => window.open(withUtm(siteUrl('/shop')), '_blank', 'noopener')} />
     )
   if (item.kind === 'gallery')
     return (

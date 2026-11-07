@@ -52,6 +52,11 @@ pub(crate) mod support {
             Self::build(tag, None, settings).await
         }
 
+        /// A node over `pool` (a stalling one, say) with `settings`.
+        pub async fn with_pool_settings(tag: &str, pool: sqlx::PgPool, settings: Settings) -> Self {
+            Self::build(tag, Some(pool), settings).await
+        }
+
         /// `None` (skip) without CATALYST_TEST_DATABASE_URL; otherwise over
         /// the process's scratch database (`db::scratch`).
         pub async fn with_db(tag: &str) -> Option<Self> {
@@ -78,8 +83,9 @@ pub(crate) mod support {
             }
         }
 
+        /// The router as `serve` mounts it, with upstream's routing under `/content/`.
         pub fn router(&self) -> axum::Router {
-            build_router(self.state.clone())
+            crate::routing::upstream_routing(build_router(self.state.clone()))
         }
 
         pub async fn store(&self, hash: &str, data: Bytes) {
@@ -119,8 +125,10 @@ const DB_FIXTURES: &[&str] = &[
     "active-entities-200-nonexistent-id",
     "active-entities-200-nonexistent-pointer",
     "audit-200-scenes-canonicalized",
+    "audit-404-outfits-accepted",
     "audit-404-unknown-entity",
     "contents-active-entities-404-unknown-hash",
+    "entities-200-outfits-accepted",
 ];
 
 /// The replay fixtures are the two edge-case directories; `tests/fixtures`
@@ -260,6 +268,15 @@ async fn edge_case_fixtures_replay_exactly() {
     let has_db = std::env::var("CATALYST_TEST_DATABASE_URL").is_ok();
     // A node that has caught up reports Syncing; the status fixture was captured on one.
     node.state.sync.set_state(SyncState::Syncing);
+    // The write fixture is a node that takes deploys (upstream outside `READ_ONLY`).
+    node.state.attach_writes(
+        true,
+        std::sync::Arc::new(super::write_deployer::WriteDeployer::with_optional_eip1654(
+            node.state.pool.clone(),
+            node.state.storage.clone(),
+            None,
+        )),
+    );
 
     let mut failures = Vec::new();
     let mut replayed = 0;
@@ -356,7 +373,8 @@ async fn about_and_status_report_the_sync_state_honestly() {
         body["synchronizationStatus"]["synchronizationState"],
         "Bootstrapping"
     );
-    assert_eq!(body["commitHash"], "unknown");
+    assert_eq!(body["commitHash"], "Unknown");
+    assert_eq!(body["synchronizationStatus"]["lastSyncWithDAO"], 0);
     assert!(body["synchronizationStatus"].get("up").is_none());
 
     node.state.sync.set_state(SyncState::Syncing);
@@ -374,10 +392,17 @@ async fn about_and_status_report_the_sync_state_honestly() {
     let (_, body) = get_json(node.router(), "/status").await;
     assert_eq!(body["synchronizationStatus"]["up"], true);
     assert_eq!(body["synchronizationStatus"]["syncFrontier"], 42);
+    let heartbeat = node.state.sync.heartbeat_ms().unwrap();
+    assert_eq!(body["synchronizationStatus"]["lastSyncWithDAO"], heartbeat);
 
+    // Upstream answers 200 whatever the sync state.
     node.state.sync.set_state(SyncState::Failed);
-    let (status, _) = get_json(node.router(), "/content/status").await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    let (status, body) = get_json(node.router(), "/content/status").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["synchronizationStatus"]["synchronizationState"],
+        "Failed"
+    );
 }
 
 struct FakeCore(bool, u64);
@@ -535,15 +560,18 @@ async fn about_golden_replays_with_the_comms_block() {
     assert!(notes.is_empty(), "about-golden: {}", notes.join("\n"));
 }
 
+/// Upstream mints one bare UUID per process (`logic/peer-cluster/component.ts:51`)
+/// and answers it on every call.
 #[tokio::test]
-async fn challenge_is_fresh_per_call() {
+async fn challenge_is_one_uuid_per_process() {
     let node = TestNode::without_db("challenge").await;
     let (status, a) = get_json(node.router(), "/content/challenge").await;
     assert_eq!(status, StatusCode::OK);
     let (_, b) = get_json(node.router(), "/challenge").await;
     let a = a["challengeText"].as_str().unwrap().to_string();
-    assert!(a.starts_with("dcl-crypto-"));
-    assert_ne!(a, b["challengeText"]);
+    assert!(uuid::Uuid::parse_str(&a).is_ok(), "{a}");
+    assert_eq!(a.len(), 36);
+    assert_eq!(a, b["challengeText"]);
 }
 
 #[tokio::test]
@@ -571,6 +599,225 @@ async fn unknown_routes_and_write_routes() {
         StatusCode::SERVICE_UNAVAILABLE,
         "a node without CONTENT_WRITES_ENABLED refuses the deploy (write_path_tests has the rest)"
     );
+}
+
+async fn send(router: Router, request: Request<Body>) -> (StatusCode, header::HeaderMap, Vec<u8>) {
+    let resp = router.oneshot(request).await.unwrap();
+    let (parts, body) = resp.into_parts();
+    let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+    (parts.status, parts.headers, bytes.to_vec())
+}
+
+/// `conformance/content-lambdas/captures/content-reads/CR-12-*.json`: the
+/// production peer's answers to a method its router does not serve on a path.
+#[tokio::test]
+async fn wrong_methods_answer_like_the_captured_router() {
+    let node = TestNode::without_db("methods").await;
+    let (status, headers, body) = send(
+        node.router(),
+        Request::get("/content/entities/active")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(headers[header::CONTENT_TYPE], "application/json");
+    assert_eq!(body, br#"{"error":"Unrecognized type: active"}"#);
+
+    for (method, path, allow) in [
+        ("PUT", "/content/status", "HEAD, GET"),
+        ("PATCH", "/content/status", "HEAD, GET"),
+        ("DELETE", "/content/entities/active", "HEAD, GET, POST"),
+        ("POST", "/content/contents/bafkreiabc", "HEAD, GET"),
+    ] {
+        let (status, headers, body) = send(
+            node.router(),
+            Request::builder()
+                .method(method)
+                .uri(path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "{method} {path}");
+        assert_eq!(headers[header::ALLOW], allow, "{method} {path}");
+        assert!(body.is_empty(), "{method} {path}");
+    }
+}
+
+/// `CR-16-path-case-*.json`, `CS-23-path-case-deployments.json`: the static
+/// segments under `/content/` match whatever their case.
+#[tokio::test]
+async fn content_paths_match_case_insensitively() {
+    let node = TestNode::without_db("path-case").await;
+    node.store(support::TEST_CID, bytes::Bytes::from_static(b"hello"))
+        .await;
+    let (status, headers, _) = send(
+        node.router(),
+        Request::head(format!("/content/Contents/{}", support::TEST_CID))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_LENGTH], "5");
+
+    let (status, body) = get_json(node.router(), "/content/Status").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["synchronizationStatus"].is_object(), "{body}");
+
+    // The history read reaches its handler (the absent database's 500), not
+    // the 404 fallback.
+    let (status, _) = get_json(node.router(), "/content/Deployments?limit=1").await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+
+    // A GET keeps `/entities/{type}` and echoes the type as sent, as
+    // upstream's `/entities/:type` does.
+    let (status, _, body) = send(
+        node.router(),
+        Request::get("/content/Entities/Active")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, br#"{"error":"Unrecognized type: Active"}"#);
+
+    // The write routes keep their case: the gateway's deploy location and
+    // its limits match these spellings.
+    let (status, _, _) = send(
+        node.router(),
+        Request::post("/content/Entities")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // The root mounts stay case-sensitive: upstream production has none.
+    let (status, _, _) = send(
+        node.router(),
+        Request::get("/Status").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// The case rewrite's route lists name only routed paths: a `PATCH` (served
+/// on none) is each one's 405, not the 404 fallback.
+#[tokio::test]
+async fn every_listed_content_route_is_routed() {
+    let node = TestNode::without_db("route-list").await;
+    for route in crate::routing::CONTENT_ROUTE_PATHS
+        .iter()
+        .chain(crate::routing::CASE_SENSITIVE_ROUTE_PATHS)
+    {
+        let path: Vec<&str> = route
+            .split('/')
+            .map(|s| if s.starts_with('{') { "x" } else { s })
+            .collect();
+        let path = format!("/content{}", path.join("/"));
+        let (status, _, _) = send(
+            node.router(),
+            Request::patch(&path).body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "{path}");
+    }
+}
+
+/// Upstream's preflight allows `GET,HEAD,POST,OPTIONS` only, so a content
+/// route that takes another method must keep the shared CORS rule
+/// (`routing::upstream_cors_path` false), or browsers could not call it.
+#[tokio::test]
+async fn every_route_outside_upstreams_cors_methods_is_exempt() {
+    let node = TestNode::without_db("cors-methods").await;
+    for route in crate::routing::CONTENT_ROUTE_PATHS
+        .iter()
+        .chain(crate::routing::CASE_SENSITIVE_ROUTE_PATHS)
+    {
+        let path: Vec<&str> = route
+            .split('/')
+            .map(|s| if s.starts_with('{') { "x" } else { s })
+            .collect();
+        let path = format!("/content{}", path.join("/"));
+        let (status, headers, _) = send(
+            node.router(),
+            Request::patch(&path).body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "{path}");
+        let allow = headers[header::ALLOW].to_str().unwrap().to_string();
+        let other = allow
+            .split(',')
+            .map(str::trim)
+            .any(|m| !["GET", "HEAD", "POST", "OPTIONS"].contains(&m));
+        if other {
+            assert!(
+                !crate::routing::upstream_cors_path(&path),
+                "{path} allows {allow} but takes upstream's CORS rule"
+            );
+        }
+    }
+}
+
+/// The other direction: every path `content_routes` registers is in exactly
+/// one of the two lists, so a new route cannot silently stay out of the
+/// case rewrite.
+#[test]
+fn every_content_route_is_listed_once() {
+    let source = include_str!("lib.rs");
+    let body = source
+        .split("fn content_routes(")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}\n").next())
+        .expect("content_routes in lib.rs");
+    let mut registered: Vec<&str> = body
+        .split(".route(")
+        .skip(1)
+        .filter_map(|call| call.split('"').nth(1))
+        .collect();
+    registered.sort_unstable();
+    let mut listed: Vec<&str> = crate::routing::CONTENT_ROUTE_PATHS
+        .iter()
+        .chain(crate::routing::CASE_SENSITIVE_ROUTE_PATHS)
+        .copied()
+        .collect();
+    listed.sort_unstable();
+    assert_eq!(registered, listed);
+}
+
+/// `CR-17-body-over-10mib.json`: upstream caps the `POST /entities/active`
+/// body at `MAX_ACTIVE_ENTITIES_BODY_SIZE` (10 MiB) with a plain-text 413.
+#[tokio::test]
+async fn active_entities_body_cap_is_ten_mib() {
+    let node = TestNode::without_db("body-cap").await;
+    let body_of = |len: usize| {
+        let mut body = br#"{"pointers":[""#.to_vec();
+        body.resize(len - 3, b'a');
+        body.extend_from_slice(br#""]}"#);
+        body
+    };
+    let post = |body: Vec<u8>| {
+        Request::post("/content/entities/active")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .unwrap()
+    };
+    let (status, headers, body) = send(
+        node.router(),
+        post(body_of(
+            crate::routing::MAX_ACTIVE_ENTITIES_BODY_BYTES + 512,
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(headers[header::CONTENT_TYPE], "text/plain; charset=utf-8");
+    assert_eq!(body, b"Payload Too Large");
+
+    // Under the cap the body reaches the lookup (the absent database's 500).
+    let (status, _, _) = send(node.router(), post(body_of(1024 * 1024))).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
 }
 
 #[tokio::test]
@@ -634,10 +881,12 @@ async fn active_entities_parses_the_body_whatever_the_content_type() {
 async fn snapshot_routes_over_the_database() {
     require_test_db!(Some(node) = TestNode::with_db("snapshots").await);
     let pool = node.state.pool.clone();
-    sqlx::query("DELETE FROM content.snapshots WHERE hash LIKE 'test-snap-%'")
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "DELETE FROM content.snapshots WHERE hash LIKE 'test-snap-%' OR (hash IS NULL AND init_timestamp = to_timestamp(5))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
 
     let (status, body) = get_json(node.router(), "/content/snapshots").await;
     if status == StatusCode::OK {
@@ -670,17 +919,43 @@ async fn snapshot_routes_over_the_database() {
         .await
         .unwrap();
     }
+    // A row without a hash is not a stored snapshot: upstream never lists one.
+    sqlx::query(
+        "INSERT INTO content.snapshots (hash, init_timestamp, end_timestamp, replaced_hashes, number_of_entities, generation_time)
+         VALUES (NULL, to_timestamp(5), to_timestamp(6), '{}', 1, to_timestamp(7))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     node.state.deployments_cache.clear();
 
     let (status, body) = get_json(node.router(), "/content/snapshots").await;
     assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.as_array()
+            .unwrap()
+            .iter()
+            .all(|s| !s["hash"].as_str().unwrap().is_empty()),
+        "{body}"
+    );
     let listed: Vec<&Value> = body
         .as_array()
         .unwrap()
         .iter()
         .filter(|s| s["hash"].as_str().unwrap_or("").starts_with("test-snap-"))
         .collect();
-    assert_eq!(listed.len(), 4);
+    // Division order, as upstream: oldest window first, then the shorter
+    // windows that start later.
+    let order: Vec<&str> = listed.iter().map(|s| s["hash"].as_str().unwrap()).collect();
+    assert_eq!(
+        order,
+        [
+            "test-snap-year",
+            "test-snap-month",
+            "test-snap-week",
+            "test-snap-day"
+        ]
+    );
     let month = listed
         .iter()
         .find(|s| s["hash"] == "test-snap-month")
@@ -714,10 +989,12 @@ async fn snapshot_routes_over_the_database() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body, json!({"error": "Unrecognized type: banana"}));
 
-    sqlx::query("DELETE FROM content.snapshots WHERE hash LIKE 'test-snap-%'")
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "DELETE FROM content.snapshots WHERE hash LIKE 'test-snap-%' OR (hash IS NULL AND init_timestamp = to_timestamp(5))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
 }
 
 struct SeededEntity {
@@ -862,6 +1139,29 @@ async fn active_entities_by_pointers_dedupe_multi_pointer_entities() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(answer, json!([]));
+
+    // CR-8: upstream's POST answer has no `Cache-Control`, while the
+    // `GET /entities/:type` one does (`CR-14-active-entity-key-order.json`,
+    // `CR-16-trailing-slash-entities.json`).
+    let (status, headers, _) = send(
+        node.router(),
+        Request::post("/content/entities/active")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"pointers":["7401,7401"]}"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers.get(header::CACHE_CONTROL).is_none());
+    let (status, headers, _) = send(
+        node.router(),
+        Request::get("/content/entities/scene?pointer=7401,7401")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CACHE_CONTROL], "public, max-age=10");
 
     unseed(&pool, tag).await;
 }
@@ -1058,6 +1358,16 @@ async fn entity_reads_over_seeded_rows() {
     assert_eq!(body["authChain"][0]["type"], "SIGNER");
     assert!(body.get("localProvenance").is_none());
 
+    // Upstream filters the audit lookup on the type too: the scene's id under
+    // another type is not found.
+    let (status, body) = get_json(
+        node.router(),
+        &format!("/content/audit/wearable/{}", scene.id),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({"error": "No deployment found"}));
+
     node.state.denylist.add(&scene.id);
     let (status, body) = post_json(
         node.router(),
@@ -1073,6 +1383,60 @@ async fn entity_reads_over_seeded_rows() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+
+    unseed(&pool, tag).await;
+}
+
+/// An id only a remote list (`DENYLIST_URLS`) names is hidden from the
+/// active-entity and history reads as an operator-listed one is
+/// (`AB-10-peer-active-by-denylisted-id.json`: production answers `[]`).
+#[tokio::test]
+async fn a_remote_listed_entity_is_hidden_from_the_reads() {
+    require_test_db!(Some(node) = TestNode::with_db("remotedeny").await);
+    let pool = node.state.pool.clone();
+    let tag = "remotedeny";
+    unseed(&pool, tag).await;
+    let scene = seed_deployment(&pool, tag, 1, "scene", "-7332,7332", 1_700_000_000_000).await;
+    let (status, body) = post_json(
+        node.router(),
+        "/content/entities/active",
+        json!({"ids": [scene.id]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_array().unwrap().len(), 1);
+
+    node.state
+        .denylist
+        .set_remote("https://registry.example/denylist", [scene.id.clone()]);
+    for body in [
+        json!({"ids": [scene.id]}),
+        json!({"pointers": [scene.pointer]}),
+    ] {
+        let (status, answer) = post_json(node.router(), "/content/entities/active", body).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(answer, json!([]));
+    }
+    let (status, answer) = get_json(
+        node.router(),
+        &format!("/content/entities/scene?id={}", scene.id),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(answer, json!([]));
+    let (status, _) = get_json(
+        node.router(),
+        &format!("/content/contents/{}/active-entities", scene.hash),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, answer) = get_json(
+        node.router(),
+        &format!("/content/deployments?entityId={}", scene.id),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(answer["deployments"], json!([]));
 
     unseed(&pool, tag).await;
 }
@@ -1137,6 +1501,38 @@ async fn history_reads_over_seeded_rows() {
     assert_eq!(body["deployments"].as_array().unwrap().len(), 1);
     assert_eq!(body["deployments"][0]["entityId"], ids[0]);
     assert_eq!(body["pagination"]["moreData"], false);
+
+    // As upstream `qsGetArray`, a single empty value is no filter, while an
+    // empty element inside a list is kept and matches nothing.
+    let (status, body) = get_json(
+        node.router(),
+        &format!("/content/deployments?{id_filter}&pointer=&entityType="),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["deployments"].as_array().unwrap().len(), 3);
+    let (status, body) = get_json(
+        node.router(),
+        &format!("/content/deployments?{id_filter}&pointer=-1,7000&pointer="),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["deployments"].as_array().unwrap().len(), 1);
+    assert_eq!(body["filters"]["pointers"], json!(["-1,7000", ""]));
+
+    // Upstream sends no cache headers on /deployments; the memo is internal.
+    let resp = node
+        .router()
+        .oneshot(
+            Request::get(format!("/content/deployments?{id_filter}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(resp.headers().get(header::CACHE_CONTROL).is_none());
+    assert!(resp.headers().get("x-cache").is_none());
 
     // Upstream drops denylisted entities from the page after computing
     // `moreData` (`logic/deployments/component.ts:316-318`): the page is
@@ -1244,7 +1640,31 @@ async fn history_reads_over_seeded_rows() {
     assert_eq!(failed["failureTimestamp"], base);
     assert_eq!(failed["retryCount"], 0);
     assert_eq!(failed["errorDescription"], "boom");
+    assert_eq!(failed["reason"], "Deployment error");
+    assert_eq!(failed["snapshotHash"], "test-history-snapshot");
     assert!(failed["nextRetryAt"].as_i64().unwrap() > 0);
+
+    // CS-10: a failure outside a snapshot has no `snapshotHash` key, and every
+    // reason reads as upstream's only one.
+    sqlx::query(
+        "INSERT INTO content.failed_deployments
+            (entity_id, entity_type, failure_time, reason, auth_chain, error_description, snapshot_hash)
+         VALUES ($1, 'scene', to_timestamp($2 / 1000.0), 'No entity', '[]'::json, 'gone', '')",
+    )
+    .bind(format!("test-{tag}-unsnapshotted"))
+    .bind(base as f64)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (_, body) = get_json(node.router(), "/content/failed-deployments").await;
+    let failed = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["entityId"] == format!("test-{tag}-unsnapshotted"))
+        .expect("the seeded failure is listed");
+    assert_eq!(failed["reason"], "Deployment error");
+    assert!(failed.get("snapshotHash").is_none(), "{failed}");
     let (status, body) = get_json(
         node.router(),
         "/content/failed-deployments?offset=0&limit=1",

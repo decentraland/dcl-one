@@ -27,8 +27,12 @@ import type { RailContext } from "./purchase/rail";
 import { createSpendGuard } from "./purchase/spend-guard";
 import { useShopServices } from "./services";
 import { cartOfferFetcher, useOfferSource } from "../detail/offers";
+import { needsMarketplace, useMarketplaceAccess } from "../market/access";
 import type { ManaWei, UsdCents } from "../model/money";
 import { creditsCeil } from "../model/money";
+
+/** The blocker of a cart the credit balance does not cover: the summary offers a top-up instead of stating it. */
+export const CREDITS_SHORT = "Your Credits balance doesn't cover the Credits part of this cart.";
 
 export type ReviewState =
   | { kind: "empty" }
@@ -60,11 +64,17 @@ export type CheckoutView = {
   session: Session;
   account: string | null;
   lines: CartLine[];
+  /** The lines only the Marketplace sells, kept out of pricing and payment while it is off for this visitor. */
+  offMarket: string[];
+  /** The same lines while access is not `on` yet: `offMarket` once it is off, still waiting while it is pending. */
+  heldBack: string[];
   offers: Record<string, PurchaseOffer | null>;
   views: Record<string, PaymentPresentation | null>;
   partition: CartPartition | null;
   refusedByLine: Record<string, LineRefusal>;
   review: ReviewState;
+  /** The lines (with their quantities and methods) the last finished price check priced (`revalidationIdentity`). */
+  pricedFor: string | null;
   changesByLine: Record<string, LineChange[]>;
   balance: UsdBalance | undefined;
   balanceError: boolean;
@@ -82,13 +92,16 @@ export type CheckoutView = {
   canConfirm: boolean;
   canResume: boolean;
   walletNeededKeys: string[];
-  setMethod(lineId: string, method: PaymentMethod): void;
+  /** Null puts the line back on its default way to pay (credits where the rule allows them). */
+  setMethod(lineId: string, method: PaymentMethod | null): void;
   setQuantity(lineId: string, quantity: number): void;
   remove(lineId: string): void;
   clear(): void;
   revalidate(): void;
   acceptChanges(): void;
   confirm(): Promise<void>;
+  /** A payment the buyer started by hand: a resume armed by sign-in must not start a second one. */
+  holdAutoConfirm(): void;
   resume(): Promise<void>;
   discardCheckout(): Promise<void>;
   dismissTopUp(): void;
@@ -98,6 +111,9 @@ export type CheckoutView = {
 const NO_OFFERS: OfferFetcher = async () => ({});
 
 const IN_FLIGHT = "A purchase from this cart is still being confirmed.";
+export const OFF_MARKET = "Resales can't be bought in the Shop right now. Remove them to continue.";
+const CHECKING = "Checking prices and availability…";
+const NONE: string[] = [];
 const RUNNING = "Purchase in progress…";
 
 export function lineRule(line: CartLine, session: Session): Eligibility {
@@ -116,8 +132,15 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
   const qc = useQueryClient();
   const { session, account } = wallet;
   const snapshot = useCart((s) => s, services.cart);
-  const lines = snapshot.lines;
+  const allLines = snapshot.lines;
   const checkout = snapshot.checkout;
+  // A resale or a rental saved before is the Marketplace's (market/access.tsx): until it is on for this visitor the
+  // line is neither priced nor bought. Off, it blocks the checkout until removed; pending, the cart is still checking.
+  // Everything below prices and pays `lines`.
+  const access = useMarketplaceAccess();
+  const heldBack = useMemo(() => (access === "on" ? [] : allLines.filter(needsMarketplace).map((l) => l.id)), [allLines, access]);
+  const offMarket = access === "off" ? heldBack : NONE;
+  const lines = useMemo(() => (heldBack.length ? allLines.filter((l) => !heldBack.includes(l.id)) : allLines), [allLines, heldBack]);
 
   const balanceQuery = useBalance(account);
   const manaQuery = useManaBalance(session.kind === "web3" ? account : null, settlementChainId());
@@ -167,7 +190,8 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
   const refusedByLine = useMemo(() => Object.fromEntries((partition?.refused ?? []).map((r) => [r.lineId, r])), [partition]);
 
   const review: ReviewState = useMemo(() => {
-    if (lines.length === 0) return { kind: "empty" };
+    if (allLines.length === 0) return { kind: "empty" };
+    if (lines.length === 0) return { kind: "current" };
     if (!fetchOffers) return { kind: "outage", reason: "no-quote-route" };
     switch (revalidation.status) {
       case "idle":
@@ -180,7 +204,7 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
       case "current":
         return { kind: "current" };
     }
-  }, [lines.length, fetchOffers, revalidation.status, revalidation.changes]);
+  }, [allLines.length, lines.length, fetchOffers, revalidation.status, revalidation.changes]);
 
   const reviewChanges = useMemo(() => revalidation.changes.filter((c) => c.kind !== "quoteUnavailable"), [revalidation.changes]);
   const quoteOutage = useMemo(() => {
@@ -213,18 +237,19 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
 
   const blockers = useMemo(() => {
     const out: string[] = [];
-    if (lines.length === 0) return out;
+    if (allLines.length === 0) return out;
     if (session.kind === "signedOut") out.push("Sign in to check out.");
+    if (offMarket.length > 0) out.push(OFF_MARKET);
     if (wallet.accountMismatch) out.push("Your wallet switched to another account. Sign in again with it, or switch your wallet back.");
     if (review.kind === "outage") out.push("Prices can't be checked right now, so nothing can be bought. Try again in a moment.");
-    if (review.kind === "checking") out.push("Checking prices and availability…");
+    if (review.kind === "checking" || heldBack.length > offMarket.length) out.push(CHECKING);
     if (reviewChanges.some((c) => c.kind === "priceChanged")) out.push("Prices changed since you added these items. Accept the new prices to continue.");
     if (reviewChanges.some((c) => c.kind !== "priceChanged")) out.push("Some items changed since you added them. See the note on each item.");
     for (const method of quoteOutage) out.push(outageText(method, null));
     const refused = partition?.refused.filter((r) => r.code !== "quoteUnavailable" && r.code !== "offerUnavailable") ?? [];
     if (refused.some((r) => r.code === "methodNotAllowed" && r.allowed.length > 0)) out.push("Some items can't be paid the way they're set. Choose how to pay for them.");
     if (refused.some((r) => r.code !== "methodNotAllowed" || r.allowed.length === 0)) out.push("Some items can't be bought as they are. See the note on each item.");
-    if (partition?.creditsShort) out.push("Your Credits balance doesn't cover the Credits part of this cart.");
+    if (partition?.creditsShort) out.push(CREDITS_SHORT);
     if (session.kind !== "signedOut" && !provider) {
       out.push(session.kind === "web3" ? "Connect your wallet again to sign the purchase." : "Your sign-in can't confirm purchases right now. Sign in again to continue.");
     }
@@ -233,7 +258,7 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
     }
     if (running) out.push(RUNNING);
     return out;
-  }, [lines.length, session.kind, wallet.accountMismatch, review.kind, reviewChanges, quoteOutage, partition, provider, checkout, running]);
+  }, [allLines.length, offMarket.length, heldBack.length, session.kind, wallet.accountMismatch, review.kind, reviewChanges, quoteOutage, partition, provider, checkout, running]);
 
   const payableGroups = useMemo(() => (partition?.groups ?? []).filter((g) => !walletNeededKeys.includes(g.keyId)), [partition, walletNeededKeys]);
   const canConfirm = blockers.length === 0 && payableGroups.length > 0;
@@ -328,15 +353,18 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
     [qc, lines, services.cart, opts],
   );
 
+  // One checkout at a time: two callers in one effect flush both see `running` false, so the lock is a ref.
+  const confirming = useRef(false);
   const confirm = useCallback(async () => {
     if (!account) {
       stashResumeIntent({ type: "cart-checkout" });
       wallet.host?.onSignIn?.();
       return;
     }
-    if (!canConfirm || !partition) return;
+    if (!canConfirm || !partition || confirming.current) return;
     const d = deps();
     if (!d) return;
+    confirming.current = true;
     setRunning(true);
     setTopUp(null);
     try {
@@ -365,6 +393,7 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
       }
       finish(runnable, next, resolved);
     } finally {
+      confirming.current = false;
       setRunning(false);
     }
   }, [account, canConfirm, partition, deps, settle, payableGroups, services.cart, finish, wallet.host]);
@@ -442,7 +471,9 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
     wallet,
     session,
     account,
-    lines,
+    lines: allLines,
+    offMarket,
+    heldBack,
     offers,
     views,
     partition,
@@ -453,6 +484,7 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
     quoteOutage,
     balance,
     balanceError: balanceQuery.isError,
+    pricedFor: revalidation.pricedFor,
     manaBalance,
     checkout,
     summary: checkout ? checkoutSummary(checkout) : null,
@@ -475,6 +507,7 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
     revalidate: revalidation.revalidate,
     acceptChanges: revalidation.accept,
     confirm,
+    holdAutoConfirm: () => setAutoConfirm(false),
     resume,
     discardCheckout,
     dismissTopUp: () => setTopUp(null),

@@ -136,10 +136,11 @@ pub async fn ws_upgrade(
     let ws = ws
         .max_frame_size(state.settings.ws_max_frame_bytes)
         .max_message_size(state.settings.ws_max_frame_bytes);
+    let caller_ip = crate::shared::client_ip::client_ip(&headers);
     let mgr = Arc::clone(&state);
     ws.on_upgrade(move |socket| async move {
         mgr.scenes.on_ws_connected();
-        handle_socket(&mgr, socket, scene, paths).await;
+        handle_socket(&mgr, socket, scene, paths, caller_ip).await;
         mgr.scenes.on_ws_closed();
     })
     .into_response()
@@ -150,6 +151,7 @@ async fn handle_socket(
     socket: WebSocket,
     scene: Arc<Scene>,
     paths: Vec<String>,
+    caller_ip: String,
 ) {
     let (mut sink, mut stream) = socket.split();
 
@@ -180,17 +182,53 @@ async fn handle_socket(
         }
     };
 
+    let caller = if caller_ip.is_empty() {
+        authed.signer.as_str()
+    } else {
+        &caller_ip
+    };
     let now = chrono::Utc::now().naive_utc();
-    let grant = match admit(
-        state,
-        &scene,
-        &authed.signer,
-        authed.presented_secret(),
-        None,
-        now,
-    )
-    .await
+    // Resolve authority without a secret first. Store failures close below, and a
+    // world that changes to shared-secret access cannot skip its attempt budget.
+    let mut admission = admit(state, &scene, &authed.signer, None, None, now).await;
+    if matches!(admission, Err(AdmissionRefused::InvalidSecret))
+        || (matches!(admission, Err(AdmissionRefused::Undetermined(_)))
+            && authed.presented_secret().is_some())
     {
+        let SceneKey::World(world) = &scene.identity.key else {
+            let _ = sink.close().await;
+            return;
+        };
+        let throttle = crate::comms::gatekeeper::admission::world_mint::SecretThrottle {
+            pool: &state.pool,
+            max_attempts: state.secret_max_attempts,
+            world: world.key(),
+            subject: caller,
+        };
+        let reservation = match throttle.reserve(now).await {
+            Ok(Some(reservation)) => reservation,
+            _ => {
+                let _ = sink.close().await;
+                return;
+            }
+        };
+        admission = admit(
+            state,
+            &scene,
+            &authed.signer,
+            authed.presented_secret(),
+            None,
+            now,
+        )
+        .await;
+        throttle
+            .settle(
+                matches!(admission, Err(AdmissionRefused::InvalidSecret)),
+                reservation,
+            )
+            .await;
+    }
+    let grant = match admission {
         Ok(grant) => grant,
         Err(reason) => {
             tracing::info!(scene = %scene.name, address = %authed.signer, %reason, "ws admission refused");

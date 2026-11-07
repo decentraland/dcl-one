@@ -5,7 +5,7 @@
 // View Passport · Mention · Block/Unblock.
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Avatar, VerifiedBadge } from '../../design'
+import { Avatar, BlockUserIcon, ReportFlag, VerifiedBadge } from '../../design'
 import { shortAddr, splitName, userColor } from '../../lib/identity'
 import { looksClaimed, mentionName } from '../../engine/mention'
 import { peekProfile } from '../session/profileStore'
@@ -63,27 +63,8 @@ function MentionIcon(): React.JSX.Element {
     </svg>
   )
 }
-function BlockIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">
-      <circle cx="10" cy="8" r="3.4" stroke="currentColor" strokeWidth="1.8" />
-      <path d="M4 19c0-3.2 2.7-5 6-5 1 0 2 .2 2.8.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <circle cx="17.5" cy="16.5" r="4.2" stroke="currentColor" strokeWidth="1.8" />
-      <path d="M14.7 13.7l5.6 5.6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
-  )
-}
-
 
 export type MenuContext = 'default' | 'friend' | 'request' | 'blocked'
-
-function ReportIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">
-      <path d="M5 21V4h11l-1.5 4L16 12H5" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-    </svg>
-  )
-}
 
 export function ProfileCardPresentation({
   user,
@@ -206,13 +187,13 @@ export function ProfileCardPresentation({
   )
   const block = canBlock && (
     <button type="button" className={`${styles.row} ${styles.danger}`} onClick={run(onBlock)}>
-      <BlockIcon />
+      <BlockUserIcon />
       <span>Block</span>
     </button>
   )
   const report = canReport && (
     <button type="button" className={`${styles.row} ${styles.danger}`} onClick={run(onReport)}>
-      <ReportIcon />
+      <ReportFlag />
       <span>Report</span>
     </button>
   )

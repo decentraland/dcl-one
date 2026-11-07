@@ -203,7 +203,6 @@ const DB_FIXTURES: &[&str] = &[
 const READER_FIXTURES: &[&str] = &[
     "users-wearables-200-unknown-address",
     "users-emotes-200-unknown-address",
-    "users-names-200-pagesize-cap-1000",
     "collections-wearables-by-owner-200-unknown",
 ];
 
@@ -461,10 +460,11 @@ async fn profiles_reject_too_many_ids_and_malformed_json() {
     assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
-/// The old lambdas answered 400 before touching a reader; a configured
-/// subgraph must not see the string.
+/// lamb2 takes any `:address` on the item routes: one that is not an
+/// Ethereum address owns nothing, answered before any reader call, so a
+/// configured subgraph never sees the string. The names route still refuses it.
 #[tokio::test]
-async fn user_item_routes_reject_a_malformed_address_before_any_reader_call() {
+async fn user_item_routes_answer_a_malformed_address_empty_before_any_reader_call() {
     let settings = Settings {
         eth_collections_subgraph_url: Some("http://127.0.0.1:1/collections".into()),
         marketplace_subgraph_url: Some("http://127.0.0.1:1/marketplace".into()),
@@ -473,16 +473,36 @@ async fn user_item_routes_reject_a_malformed_address_before_any_reader_call() {
     let state = support::state_without_db_settings(settings);
     for path in [
         "/lambdas/users/not-an-address/wearables",
-        "/lambdas/users/0xZZ/emotes",
-        "/lambdas/users/0x8d6f/names",
+        "/lambdas/users/0xZZ/emotes?pageSize=10abc",
     ] {
         let (status, body) = get_json(router(state.clone()), path).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
-        assert_eq!(
-            body["message"], "Address must be a valid Ethereum address",
-            "{path}"
-        );
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert_eq!(body["elements"], json!([]), "{path}");
+        assert_eq!(body["totalAmount"], 0, "{path}");
     }
+    let (_, body) = get_json(
+        router(state.clone()),
+        "/lambdas/users/0xZZ/emotes?pageSize=10abc&pageNum=x",
+    )
+    .await;
+    assert_eq!(
+        (&body["pageSize"], &body["pageNum"]),
+        (&json!(10), &Value::Null)
+    );
+    // lamb2's names answer an empty page for a string that owns nothing
+    // (the unreachable reader would answer the 502 if it were asked).
+    let (status, body) = get_json(
+        router(state),
+        "/lambdas/users/0x8d6f/names?pageSize=2&pageNum=3",
+    )
+    .await;
+    assert_eq!(
+        (status, body),
+        (
+            StatusCode::OK,
+            json!({ "elements": [], "totalAmount": 0, "pageNum": 3, "pageSize": 2 })
+        )
+    );
 }
 
 #[tokio::test]
@@ -509,12 +529,17 @@ async fn a_configured_but_unreachable_reader_fails_closed() {
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert_eq!(body["error"], "Service Unavailable");
-    let (status, _) = get_json(
+    // Names answer lamb2's 502 `FetcherError`, still never an empty page.
+    let (status, body) = get_json(
         router(state.clone()),
         "/lambdas/users/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef/names",
     )
     .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert_eq!(
+        body["message"],
+        "Cannot fetch elements for 0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    );
     let (status, _) = get_json(
         router(state),
         "/lambdas/collections/emotes-by-owner/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",

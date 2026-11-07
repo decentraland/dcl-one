@@ -1,0 +1,73 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://asset-bundle-registry.decentraland.org",
+  "request": {
+    "method": "POST",
+    "path": "/entities/active",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "pointers": [
+        "0,0"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": [
+      {
+        "id": "bafkreigz7h2jvi4zd53rnvfrqtaavuyyiazuqftb3ph7fgm3ylzkgibpxi",
+        "type": "scene",
+        "timestamp": "1791215990965",
+        "deployer": "0x0000000000000000000000000000000000000b02",
+        "pointers": [
+          "-1,-4",
+          "0,-4",
+          "<68 more>"
+        ],
+        "content": [
+          {
+            "file": "main.crdt",
+            "hash": "bafkreiceucqnyllw2l2h4chabmc6nt4a226otgnfkqhelqjv3niv4dv6gi"
+          },
+          "<1408 more>"
+        ],
+        "metadata": "<elided: scene metadata object>",
+        "status": "fallback",
+        "bundles": {
+          "assets": {
+            "mac": "complete",
+            "windows": "complete",
+            "webgl": "pending"
+          },
+          "lods": {
+            "mac": "pending",
+            "windows": "pending",
+            "webgl": "pending"
+          }
+        },
+        "versions": {
+          "assets": {
+            "mac": {
+              "version": "v49",
+              "buildDate": "2026-10-05T16:08:08.914Z"
+            },
+            "windows": {
+              "version": "v49",
+              "buildDate": "2026-10-05T16:09:47.358Z"
+            },
+            "webgl": {
+              "version": "",
+              "buildDate": ""
+            }
+          }
+        }
+      }
+    ]
+  },
+  "note": "Top-level key order kept; timestamp is a JSON string."
+}

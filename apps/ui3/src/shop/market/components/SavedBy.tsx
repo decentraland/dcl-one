@@ -14,6 +14,7 @@ import LoadMore from "../../discovery/components/LoadMore";
 import { useProfiles } from "../../discovery/hooks";
 import { shortAddress } from "../../model/address";
 import { shopPath } from "../../routes";
+import { useMarketplace } from "../access";
 import { fetchWhoPicked } from "../lib/favorites";
 import { EnsureQueryClient, LoadFailure, Loading } from "./kit";
 import styles from "./SavedBy.module.css";
@@ -31,6 +32,8 @@ export default function SavedBy(props: Props) {
 }
 
 function SavedByDialog({ itemKey, name, onClose }: Props) {
+  // An account's page is the Marketplace's (market/access.tsx): without it the names are not links.
+  const marketplace = useMarketplace();
   const q = useInfiniteQuery({
     queryKey: ["saved-by", itemKey],
     queryFn: ({ pageParam }) => fetchWhoPicked(itemKey, { first: SAVED_BY_PAGE, skip: pageParam }),
@@ -64,10 +67,17 @@ function SavedByDialog({ itemKey, name, onClose }: Props) {
               const named = profiles[address.toLowerCase()]?.name;
               return (
                 <li key={address}>
-                  <Link to={shopPath("account", { address })} title={address} onClick={onClose}>
-                    <strong>{named || shortAddress(address)}</strong>
-                    {named ? <span>{shortAddress(address)}</span> : null}
-                  </Link>
+                  {marketplace ? (
+                    <Link to={shopPath("account", { address })} title={address} onClick={onClose}>
+                      <strong>{named || shortAddress(address)}</strong>
+                      {named ? <span>{shortAddress(address)}</span> : null}
+                    </Link>
+                  ) : (
+                    <div className={styles.account} title={address}>
+                      <strong>{named || shortAddress(address)}</strong>
+                      {named ? <span>{shortAddress(address)}</span> : null}
+                    </div>
+                  )}
                 </li>
               );
             })}

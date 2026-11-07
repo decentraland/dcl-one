@@ -4,8 +4,9 @@
 //! from the receipt through the index or the chain's finality to a settled
 //! (or reverted, mismatched, dropped) row. The row carries what the
 //! settlement must show, taken from the record the report names rather
-//! than the body: the asset, the venue, the counterparty, the exact price
-//! and the address the asset must end with. `(chain_id, tx_hash)` is the
+//! than the body: the asset, the venue, the counterparty, the signed price
+//! (a trade's coupon is read from its transaction at settlement) and the
+//! address the asset must end with. `(chain_id, tx_hash)` is the
 //! idempotency key: a hash reported twice is one row.
 
 use alloy_primitives::{Address, U256};
@@ -370,6 +371,11 @@ async fn expectation(
                         contract: Some(contract),
                         token_id,
                         reference: Some(hashed_signature.clone()),
+                        // The signed price. A coupon is not resolved here: the
+                        // tracker reads the one the transaction carried from its
+                        // calldata and discounts this price by it, so a coupon
+                        // that ends, runs out or is outbid after sending does not
+                        // move the expectation (`tracker::expected_price`).
                         price: if usd_pegged {
                             None
                         } else {

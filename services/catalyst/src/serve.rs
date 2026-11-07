@@ -219,6 +219,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     .await
     .context("connecting to DATABASE_URL")?;
     db::bootstrap(&pool).await?;
+    worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
 
     let storage_root = Path::new(&config.node.storage_root_folder);
     let storage = Arc::new(
@@ -418,9 +419,19 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .map(|a| a.trim().to_lowercase())
             .filter(|a| !a.is_empty())
             .collect(),
+        places_base_url: config.explore.places_base_url.trim().to_string(),
+        places_moderation_webhook: config.explore.places_moderation_webhook.clone(),
+        snapshot_score_url: Some(config.explore.snapshot_score_url.trim().to_string())
+            .filter(|u| !u.is_empty()),
         events_base_url: config
             .explore
             .events_base_url
+            .trim_end_matches('/')
+            .to_string(),
+        jump_in_site_url: config
+            .explore
+            .jump_in_site_url
+            .trim()
             .trim_end_matches('/')
             .to_string(),
         events_asset_base_url: explore::Settings::events_asset_base_for(&config.node.own_url()),
@@ -433,9 +444,13 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .unwrap_or("main")
             .to_string(),
     };
+    let explore_cors = explore::cors::Policy::upstream_with(&config.explore.explore_cors_origins)
+        .map_err(|e| anyhow::anyhow!("EXPLORE_CORS_ORIGINS: {e}"))?;
     let explore = Arc::new(
         explore::ExploreState::new(pool.clone(), explore_settings, eip1654.clone())
-            .with_storage(storage.clone()),
+            .with_storage(storage.clone())
+            .with_outbound(http_client.clone())
+            .with_cors(explore_cors),
     );
     explore.spawn_jobs(&jobs, http_client.clone());
 
@@ -549,7 +564,27 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             crate::index::market_settings(&config, &self_hosts)?,
         )
         .with_eip1654(eip1654.clone())
-        .with_read_through(read_through.clone()),
+        .with_read_through(read_through.clone())
+        .with_denylist(storage.denylist().clone())
+        .with_feature_flags(shop::market::features::Source {
+            url: config.shop.shop_feature_flags_url.clone(),
+            origin: if config.shop.shop_feature_flags_origin.is_empty() {
+                // The service answers by Referer: an origin it cannot name asks for no site, and every flag reads off.
+                match url::Url::parse(&config.shop.shop_base_url).map(|u| u.origin()) {
+                    Ok(origin) if origin.is_tuple() => origin.ascii_serialization(),
+                    _ => {
+                        tracing::warn!(
+                            shop_base_url = %config.shop.shop_base_url,
+                            "SHOP_FEATURE_FLAGS_ORIGIN is empty and SHOP_BASE_URL names no origin: the dapps flags are asked for no site, so they read off"
+                        );
+                        String::new()
+                    }
+                }
+            } else {
+                config.shop.shop_feature_flags_origin.clone()
+            },
+            refresh: Duration::from_secs(config.shop.shop_feature_flags_refresh_secs),
+        }),
     );
     market.spawn_api_jobs(&jobs);
 
@@ -605,6 +640,24 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .await
         .context("loading content.denylist")?;
     content.spawn_jobs(&jobs);
+    // The remote moderation lists (DENYLIST_URLS; Decentraland's on a
+    // mirror), fetched once before the routes serve and every 120 s after,
+    // into the same projection; a failed fetch is logged, never fatal.
+    let denylist_urls = config.content.denylist_urls()?;
+    if !denylist_urls.is_empty() {
+        let (remote, errors) = content
+            .reload_remote_denylist(&http_client, &denylist_urls)
+            .await;
+        for error in &errors {
+            tracing::warn!(%error, "remote denylist fetch failed at boot");
+        }
+        tracing::info!(
+            urls = denylist_urls.len(),
+            remote,
+            "remote denylists loaded"
+        );
+    }
+    content.spawn_remote_denylist(&jobs, http_client.clone(), denylist_urls);
     if config.writes.content_writes_enabled {
         tracing::warn!(
             denylisted,
@@ -933,18 +986,50 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         },
         eip1654.clone(),
     ));
-    let mana = Arc::new(shop::mana::State::new(
-        pool.clone(),
-        http_client.clone(),
-        market.clone(),
-        signatures.clone(),
-        shop::mana::Settings {
-            writes_enabled: config.writes.data_writes_enabled,
-            track_interval: Duration::from_secs(config.marketplace.marketplace_index_interval_secs),
-        },
-        eip1654.clone(),
-    ));
+    let mana = Arc::new(
+        shop::mana::State::new(
+            pool.clone(),
+            http_client.clone(),
+            market.clone(),
+            signatures.clone(),
+            shop::mana::Settings {
+                writes_enabled: config.writes.data_writes_enabled,
+                track_interval: Duration::from_secs(
+                    config.marketplace.marketplace_index_interval_secs,
+                ),
+                collections_chain_id: config.economy.collections_chain_id,
+            },
+            eip1654.clone(),
+        )
+        .context("the Shop's MANA settlement venues")?,
+    );
     shop::mana::spawn_jobs(&mana, &jobs);
+    // The Shop prices at the settlement chain's newest marketplace's own feed
+    // (`shop::mana::feed_rate`), read in the background; without an endpoint or a
+    // marketplace on that chain it keeps the spot.
+    let settlement = mana.settings.collections_chain_id;
+    match shop::mana::feed_rate::settlement_venue(&mana.venues, settlement) {
+        Some((url, marketplace)) => shop::mana::feed_rate::install(
+            Arc::new(
+                shop::credits::feed::ChainFeed::new(
+                    Arc::new(shop::evm::chain::ChainComponent::new(
+                        http_client.clone(),
+                        &url,
+                        shop::evm::chain::DEFAULT_RPC_TIMEOUT,
+                    )),
+                    config.shop.credits_usd_pegged_feed_max_age_secs,
+                )
+                .reading_past_tolerance(),
+            ),
+            settlement,
+            marketplace,
+            config.shop.credits_usd_pegged_feed_max_age_secs,
+        ),
+        None => tracing::info!(
+            chain_id = settlement,
+            "shop MANA/USD: no endpoint or marketplace for the settlement chain; the Shop prices at the market spot"
+        ),
+    }
     let social = social_states(
         &config,
         &pool,
@@ -1363,6 +1448,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         content::create_entity::MAX_DEPLOYMENT_BYTES
             .max(worlds::core::deploy::MAX_UPLOAD_WIRE_SIZE_BYTES) as u64,
     );
+    // Upstream's router under /content/: static segments matched whatever
+    // their case, and its `Allow` list on a 405. Other paths pass untouched.
+    let app = content::routing::upstream_routing(app);
     // The old executable trimmed trailing slashes outside its router
     // (`/api/events/` is what the explorer requests), so the layer wraps the
     // finished app rather than any one router.
@@ -1370,6 +1458,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .with_context(|| format!("binding {addr} (HTTP_SERVER_HOST + HTTP_SERVER_PORT)"))?;
+    let shutdown = shutdown_signal();
     tracing::info!(%addr, "catalyst listening");
     let shutdown_jobs = jobs.clone();
     axum::serve(
@@ -1379,7 +1468,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         >(app),
     )
     .with_graceful_shutdown(async move {
-        shutdown_signal().await;
+        shutdown.await;
         socket_restart.cancel();
         // Workers first, so cursors and batches settle while the listener
         // still answers; then the listener drains.
@@ -1665,12 +1754,13 @@ async fn worlds_states(
                     deployment_processing_timeout_ms: config
                         .worlds
                         .deployment_processing_timeout_ms,
-                    max_concurrent_uploads_per_source: config
-                        .worlds
-                        .max_concurrent_uploads_per_source,
+                    max_concurrent_uploads_per_source: u64::from(
+                        config.content.max_concurrent_uploads_per_source,
+                    ),
                     max_in_flight_upload_bytes_per_source: config
-                        .worlds
-                        .max_in_flight_upload_bytes_per_source,
+                        .content
+                        .max_in_flight_upload_bytes_per_source
+                        .unwrap_or(worlds::core::upload_limits::DEFAULT_MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE),
                 },
             )
             .and_then(|s| {
@@ -1806,7 +1896,8 @@ async fn worlds_states(
                 settings,
                 eip1654.clone(),
             )
-            .context("building the scene host")?,
+            .context("building the scene host")?
+            .with_secret_max_attempts(config.worlds.shared_secret_max_attempts_per_minute),
         );
         host.spawn_jobs(jobs);
         Some(host)
@@ -2339,6 +2430,14 @@ fn social_states(
             signing_key: non_empty(&config.social.signing_key),
             service_base_url: config.social.notifications_service_base_url.clone(),
             community_cdn_url: communities.settings.cdn_url.clone(),
+            jump_in_site_url: explore.settings.jump_in_site_url.clone(),
+            event_slack_notices: explore.settings.events_upcoming_summaries_enabled
+                && explore.settings.operator_writes_enabled
+                && explore
+                    .settings
+                    .events_slack_webhook
+                    .as_deref()
+                    .is_some_and(|endpoint| !endpoint.trim().is_empty()),
             email: notifications::EmailConfig {
                 sendgrid_api_key: non_empty(&config.social.sendgrid_api_key),
                 from_email: non_empty(&config.social.sendgrid_from_email),
@@ -2527,20 +2626,21 @@ fn social_states(
     })
 }
 
-pub(crate) async fn shutdown_signal() {
+pub(crate) fn shutdown_signal() -> impl std::future::Future<Output = ()> {
     let ctrl_c = tokio::signal::ctrl_c();
     #[cfg(unix)]
-    {
-        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("installing the SIGTERM handler");
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("installing the SIGTERM handler");
+    async move {
+        #[cfg(unix)]
         tokio::select! {
             _ = ctrl_c => tracing::info!("SIGINT received"),
             _ = term.recv() => tracing::info!("SIGTERM received"),
         }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = ctrl_c.await;
-        tracing::info!("shutdown signal received");
+        #[cfg(not(unix))]
+        {
+            let _ = ctrl_c.await;
+            tracing::info!("shutdown signal received");
+        }
     }
 }

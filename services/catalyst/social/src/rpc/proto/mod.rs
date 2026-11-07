@@ -14,7 +14,10 @@ pub mod decentraland {
     pub mod social_service {
         include!(concat!(env!("OUT_DIR"), "/decentraland.social_service.rs"));
         pub mod v2 {
-            include!(concat!(env!("OUT_DIR"), "/decentraland.social_service.v2.rs"));
+            include!(concat!(
+                env!("OUT_DIR"),
+                "/decentraland.social_service.v2.rs"
+            ));
         }
     }
 }

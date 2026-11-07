@@ -727,6 +727,53 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         "5 MANA at the seeded 0.02 spot is one credit: {}",
         body["data"][0]
     );
+    // A price no credit amount can hold (Amoy carries an item at 2^256-1 wei)
+    // leaves its row in the page, priced in no credits, instead of failing the
+    // whole page on the bigint cast.
+    let priced = body["data"][0]["itemId"].as_str().unwrap().to_string();
+    let price: String = sqlx::query_scalar(
+        "SELECT price::text FROM shop.items WHERE contract_address = $1 AND item_id = $2::numeric",
+    )
+    .bind(c1.clone())
+    .bind(&priced)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let set_price = |value: String| {
+        sqlx::query(
+            "UPDATE shop.items SET price = $1::numeric WHERE contract_address = $2 AND item_id = $3::numeric",
+        )
+        .bind(value)
+        .bind(c1.clone())
+        .bind(priced.clone())
+        .execute(&pool)
+    };
+    set_price(
+        "115792089237316195423570985008687907853269984665640564039457584007913129639935".into(),
+    )
+    .await
+    .unwrap();
+    state.readers.clear();
+    let (status, body) = get(
+        app(),
+        &format!("/v3/catalog/items?contractAddress={c1}&first=1000"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "an absurd price fails no page: {body}"
+    );
+    let row = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["itemId"] == priced.as_str())
+        .cloned()
+        .unwrap_or_else(|| panic!("item {priced} stays in the page: {body}"));
+    assert_eq!(row["priceCredits"], 0, "priced in no credits: {row}");
+    set_price(price).await.unwrap();
+    state.readers.clear();
     // isOnSale=false is the complement of isOnSale=true, not the whole list:
     // item 4 sold out is the one item of c1 not on sale.
     let sold_out = |available: i32| {
@@ -1166,6 +1213,42 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     assert_eq!(
         body["data"][1]["tradeId"].as_str(),
         Some(resale_id.as_str())
+    );
+    // `/v1/nfts` gives a token with no legacy order its open v3 listing,
+    // but only one its current owner signed.
+    let resold_token = format!(
+        "{}",
+        alloy_primitives::U256::from(2u64) << 216u32 | alloy_primitives::U256::from(7u64)
+    );
+    let wanted = |owner: &str| {
+        vec![(
+            "matic".to_string(),
+            c_nft.to_ascii_lowercase(),
+            resold_token.clone(),
+            owner.to_string(),
+        )]
+    };
+    let listed = super::orders::open_trade_orders(&state, &wanted(WALLET_A))
+        .await
+        .unwrap();
+    let order = listed
+        .get(&(
+            "matic".to_string(),
+            c_nft.to_ascii_lowercase(),
+            resold_token.clone(),
+        ))
+        .expect("the owner's open listing");
+    assert_eq!(
+        (order.id.as_str(), order.trade_id.as_deref()),
+        (resale_id.as_str(), Some(resale_id.as_str()))
+    );
+    assert_eq!(order.price, "3000000000000000000");
+    assert!(
+        super::orders::open_trade_orders(&state, &wanted(CREATOR))
+            .await
+            .unwrap()
+            .is_empty(),
+        "a listing its signer no longer owns is not the token's order"
     );
     assert_eq!(body["data"][1]["issuedId"], "7");
     let (status, body) = get(app(), &format!("/v1/orders/open-by-items?item={c_nft}-2")).await;

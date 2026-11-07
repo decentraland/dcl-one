@@ -384,13 +384,34 @@ def testnet_env():
         # would read Sepolia through ETH_RPC_URL and store its logs as mainnet rows.
         'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         'VITE_SHOP_CHAIN_ID': '80002',
-        # Credits settle through Amoy's CreditsManager (contracts.decentraland.org, `amoy`). The usage index
-        # reads its CreditUsed events over RPC_ENDPOINT_POLYGON on COLLECTIONS_CHAIN_ID; POST /credits/authorize
-        # signs only while that index is ready. Mock card top-ups grant test credits with no charge.
-        'CREDITS_MANAGER_CONTRACT': '0x8052a560e6e6ac86eeb7e711a4497f639b322fb3',
+        # The catalogue's chainId for MATIC items, and the chain the Shop's coupons pair with: the pages ask the
+        # node to settle on it, and the node refuses a catalogue chain that differs from COLLECTIONS_CHAIN_ID.
+        'POLYGON_CHAIN_ID': '80002',
+        # A USD-priced trade settles at the MANA/USD feed of the marketplace it runs on. Amoy's off-chain
+        # marketplaces read this one (manaUsdAggregator()) and refuse a round older than 27 s
+        # (manaUsdAggregatorTolerance()), so the node checks the same age before it converts.
+        'MANA_USD_AGGREGATOR_ADDRESS': '0xdcf00f5f60b62b07e668a84c0cedaf6f453d416e',
+        'USD_PEGGED_ORACLE_MAX_AGE_SECS': '27',
+        # Credits settle through dcl-one's own CreditsManagerPolygon on Amoy. The settlement gate refuses the
+        # shared upstream manager (0x8052…2fb3 in contracts.decentraland.org's `amoy` list), so this one is
+        # ours: not paused, primary sales on, secondary sales off, no NAME executor allowlisted, funded with
+        # test MANA, and CREDITS_SIGNER_ROLE held by the testnet stack's credits signer (a stack whose key lacks
+        # it is refused at authorization). The usage index reads its CreditUsed events over RPC_ENDPOINT_POLYGON
+        # on COLLECTIONS_CHAIN_ID; POST /credits/authorize signs only while that index is ready. Mock card
+        # top-ups grant test credits with no charge.
+        # The relay doesn't admit this manager yet: it takes the contracts CONTRACT_ADDRESSES_URL lists (Amoy's
+        # entry is the shared one) and verified collections. So a self-custody wallet buys with Credits through
+        # its own transaction (the checkout falls back to it, paying its own gas); an in-app (managed) wallet,
+        # which can only relay, can't buy with Credits on this profile until the relay admits the manager.
+        'CREDITS_MANAGER_CONTRACT': '0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c',
+        # The same manager, for the Sites build: the in-world Shop's shell refuses a credit signed for any other.
+        'VITE_SHOP_CREDITS_MANAGER': '0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c',
         'CREDITS_USAGE_INDEX_ENABLED': 'true',
-        # Free test credits. With the signer key below they are spent through Amoy's shared CreditsManager, which
-        # pays testnet MANA only. This profile sets the mock card on Amoy alone, and the stack listens on 127.0.0.1.
+        # The index replays from the block that deployed the manager. Unset, it starts where the shared one was
+        # deployed (block 20612932), over 31 million blocks before this manager existed.
+        'CREDITS_USAGE_START_BLOCK': '52152027',
+        # Free test credits. With the signer key below they are spent through that manager, which pays testnet
+        # MANA only. This profile sets the mock card on Amoy alone, and the stack listens on 127.0.0.1.
         'CREDITS_MOCK_CARD': 'true',
         **credits_signer_env(),
     }
@@ -400,7 +421,8 @@ def credits_signer_env():
     """On-chain credit authorization, when the stack's state holds a signer key.
 
     The operator places the key in the gitignored stack state (credits-signer.key). It has to hold
-    CREDITS_SIGNER_ROLE on Amoy's CreditsManager, or the contract rejects every credit it signs."""
+    CREDITS_SIGNER_ROLE on the profile's CreditsManager (CREDITS_MANAGER_CONTRACT), or the contract rejects
+    every credit it signs; the manager's admin grants it."""
     key = STATE / 'credits-signer.key'
     # An empty file reads as no key on the server, so it must not turn authorization on.
     if not key.is_file() or not key.read_text().strip():
@@ -519,7 +541,9 @@ def postgres(config):
         raise RuntimeError('PostgreSQL major version changed. Data preserved; migrate it before restarting.')
     os.execvpe('postgres', ['postgres', '-D', str(data), '-h', '127.0.0.1',
                            '-p', str(config['port'] + 3), '-k', '',
-                           '-c', 'max_connections=40', '-c', 'shared_buffers=64MB'], env)
+                           '-c', 'max_connections=400', '-c', 'shared_buffers=64MB',
+                           # Concurrent test binaries apply the schema at once; an apply holds thousands of locks.
+                           '-c', 'max_locks_per_transaction=256'], env)
 
 
 def ensure_collation(config, database='catalyst'):
@@ -587,6 +611,15 @@ def seed_trades(config):
         subprocess.run(['psql', '-X', '-v', 'ON_ERROR_STOP=1', '-q', '--single-transaction'],
                        input=file.read(), env=psql_env(config), check=True, stdout=subprocess.DEVNULL)
     print(f"Seeded {sql(config, 'SELECT count(*) FROM shop.trades')} trades from {snapshot.name}.")
+
+
+def seed_dev_flags(config):
+    # The node refuses the Shop's Marketplace writes (resales, bids, lists, rental listings) while the
+    # dapps-shop-marketplace-features rollout is off, and a development stack reads no flags service: it
+    # counts only this node's overrides. A development stack and the trade journey exercise those writes,
+    # so they start with the override on; an override a developer set (either way) is kept.
+    sql(config, "INSERT INTO explore_api.feature_flags_local (app, name, value) "
+                "VALUES ('dapps', 'dapps-shop-marketplace-features', true) ON CONFLICT (app, name) DO NOTHING")
 
 
 # Creator Hub's asset catalogue, from the @dcl/asset-packs package Sites installs; the files it
@@ -689,6 +722,7 @@ def task(name):
         if name == 'api-build':
             # Before the index process starts mirroring, so the snapshot's rows are not fetched again.
             seed_trades(config)
+            seed_dev_flags(config)
             return
         import_asset_catalog(config, binary)
         os.execve(binary, [str(binary), 'serve'], {**runtime_env(config), **pulse_about_env(config)})

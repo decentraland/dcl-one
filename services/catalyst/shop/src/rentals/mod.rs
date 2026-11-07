@@ -170,6 +170,19 @@ impl State {
         .map(|signer| signer.into_string())
     }
 
+    /// A rental listing is the Marketplace's: refused while its rollout is off
+    /// (`market::features`), and when no marketplace state is there to say.
+    pub(crate) fn require_marketplace(&self) -> Result<(), ApiError> {
+        if self
+            .market
+            .as_ref()
+            .is_some_and(|m| m.marketplace_features())
+        {
+            return Ok(());
+        }
+        Err(ApiError::forbidden(crate::market::features::refusal()))
+    }
+
     /// The lowercased signer of a write; every refusal is the old 401 with
     /// [`wire_message`].
     pub async fn require_signer(

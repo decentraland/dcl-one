@@ -33,18 +33,17 @@ function renderBeforeSession(s: Partial<DemoScenario> & { path: string; handlers
 }
 
 describe("the credits page", () => {
-  it("shows the balance in whole credits, what is on hold, and the server's packs in order", async () => {
+  it("shows the server's packs in order; the balance and what is on hold live in the Shop's bars, as upstream", async () => {
     renderCredits({ balanceCents: 1234, held: { cents: 90, credits: 9, releasesAtSeconds: null, purchases: [] } });
-    await waitFor(() => expect(screen.getByTestId("credits-balance").textContent).toBe("123 Credits"));
-    expect(screen.getByTestId("held-credits").textContent).toContain("9");
     const packs = await screen.findAllByTestId("pack");
+    expect(screen.queryByTestId("credits-balance")).toBeNull();
+    expect(screen.queryByTestId("held-credits")).toBeNull();
     expect(packs.map((p) => p.getAttribute("aria-label"))).toEqual([
       "40 Credits for $5.99",
       expect.stringMatching(/^100 Credits for \$11\.99/),
       expect.stringMatching(/^260 Credits for \$29\.99/),
       expect.stringMatching(/^540 Credits for \$59\.99/),
     ]);
-    expect(screen.getByLabelText("1 Credit equals 0.10 US dollars")).toBeTruthy();
   });
 
   it("signed out: the packs are visible, choosing one asks to sign in", async () => {

@@ -39,6 +39,15 @@ function errMessage(err: unknown, fallback: string): string {
   return (err as { message?: string } | null)?.message ?? fallback;
 }
 
+/** The server's message in a parsed error envelope: `message` where a host still
+ * sends it, else `error` (the places and events routes answer `{ok, error, code}`). */
+export function envelopeMessage(parsed: unknown): string {
+  const body = parsed as { message?: unknown; error?: unknown } | null;
+  if (typeof body?.message === "string") return body.message;
+  if (typeof body?.error === "string") return body.error;
+  return "";
+}
+
 function defaultBase(): string {
   if (!import.meta.env.SSR) return window.location.origin;
   const proc = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process;
@@ -229,7 +238,7 @@ export async function sendJSON<T = unknown>(path: string, opts: SendOpts = {}): 
       const txt = await res.text();
       if (txt) {
         try {
-          serverMsg = (JSON.parse(txt) as { message?: string } | null)?.message ?? "";
+          serverMsg = envelopeMessage(JSON.parse(txt));
         } catch {
           serverMsg = txt;
         }
@@ -344,8 +353,8 @@ export async function sendSignedJSON<T = unknown>(
     let retryAfter: unknown;
     if (body) {
       try {
-        const parsed = JSON.parse(body) as { message?: string; retryAfter?: unknown } | null;
-        serverMsg = parsed?.message ?? "";
+        const parsed = JSON.parse(body) as { retryAfter?: unknown } | null;
+        serverMsg = envelopeMessage(parsed);
         retryAfter = parsed?.retryAfter;
       } catch {
         serverMsg = body;

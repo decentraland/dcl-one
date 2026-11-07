@@ -97,6 +97,14 @@ pub trait SceneIdentity: Send + Sync {
         world: &WorldName,
         scene: &SceneId,
     ) -> Result<Option<ActiveDeployment>, ResolveError>;
+    /// A retired scene and its active successors, while the existing retention window lasts.
+    async fn replaced_world_scene(
+        &self,
+        _world: &WorldName,
+        _scene: &SceneId,
+    ) -> Result<Option<crate::rooms::ReplacedScene>, ResolveError> {
+        Ok(None)
+    }
     /// The world's active scene, `None` when the world has no scene here.
     async fn world_active_scene(
         &self,

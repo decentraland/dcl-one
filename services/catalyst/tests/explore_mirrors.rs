@@ -265,7 +265,13 @@ async fn mirrored_worlds_serve_the_upstream_shape() {
     }
     let (_, named) = get_json(&pool, "/api/worlds?names=metadynelabs.dcl.eth").await;
     assert_eq!(named["data"].as_array().map(Vec::len), Some(1));
-    let (status, one) = get_json(&pool, "/api/worlds/MetadyneLabs.dcl.eth").await;
+    let (status, _) = get_json(&pool, "/api/worlds/MetadyneLabs.dcl.eth").await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "the detail takes the id verbatim"
+    );
+    let (status, one) = get_json(&pool, "/api/worlds/metadynelabs.dcl.eth").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(one["data"]["id"], "metadynelabs.dcl.eth");
     let (status, missing) = get_json(&pool, "/api/worlds/nowhere.dcl.eth").await;
@@ -273,16 +279,12 @@ async fn mirrored_worlds_serve_the_upstream_shape() {
     assert_eq!(missing["ok"], Value::Bool(false));
     let (_, names) = get_json(&pool, "/api/world_names").await;
     assert_eq!(names["total"].as_i64(), Some(5));
-    let (_, destinations) = get_json(
-        &pool,
-        "/api/destinations?kinds=world&with=live_events,next_event",
-    )
-    .await;
+    let (_, destinations) = get_json(&pool, "/api/destinations?with=live_events,next_event").await;
     assert_eq!(destinations["total"].as_i64(), Some(5), "{destinations}");
     let first = &destinations["data"][0];
-    assert_eq!(first["kind"], "world");
+    assert_eq!(first["world"], Value::Bool(true));
     assert_eq!(first["live"], Value::Bool(false));
-    assert_eq!(first["next_event"], Value::Null);
+    assert!(first.get("next_event").is_none(), "{first}");
     db.teardown().await;
 }
 
@@ -308,7 +310,7 @@ async fn worlds_sweep_deletes_unseen_worlds_but_spares_locals_and_places() {
     sqlx::query(
         "INSERT INTO explore.place_world_local \
          (id, base_position, deployed_at, raw, world, world_name, fetched_at) \
-         VALUES ('world:local.dcl.eth', '0,0', timezone('UTC', now()), \
+         VALUES ('local.dcl.eth', '0,0', timezone('UTC', now()), \
                  '{\"world\": true, \"world_name\": \"local.dcl.eth\"}', true, 'local.dcl.eth', \
                  timezone('UTC', now()) - interval '3 days')",
     )
@@ -381,7 +383,7 @@ async fn worlds_sweep_deletes_unseen_worlds_but_spares_locals_and_places() {
         );
     }
     assert!(
-        ids.contains(&"world:local.dcl.eth"),
+        ids.contains(&"local.dcl.eth"),
         "place_world_local is outside the mirror's sweep"
     );
     assert!(
@@ -776,13 +778,15 @@ async fn a_complete_places_pass_replaces_the_derived_rows_keeps_worlds_and_serve
         feed["total"], 1,
         "the content gate keeps the thumbnail-less world out of the generic feed: {feed}"
     );
-    assert_eq!(feed["data"][0]["kind"], "place");
+    assert!(feed["data"][0].get("kind").is_none(), "{feed}");
+    let (_, v1) = get_json(&pool, "/v1/destinations").await;
+    assert_eq!(v1["data"][0]["kind"], "place");
     let (_, named) = get_json(&pool, "/api/destinations?world_names=Harbour.dcl.eth").await;
     assert_eq!(
         named["total"], 1,
         "a name lookup is exempt from the gate: {named}"
     );
-    assert_eq!(named["data"][0]["kind"], "world");
+    assert_eq!(named["data"][0]["world"], Value::Bool(true));
     db.teardown().await;
 }
 
@@ -850,13 +854,14 @@ async fn a_places_mirror_serves_its_copy_with_as_of_and_503_before_its_first_pas
         assert_eq!(body["configure"], "PLACES_UPSTREAM_URL", "{uri}");
     }
     seed_places(&pool).await;
-    for (method, uri) in lists
-        .iter()
-        .copied()
-        .chain([("GET", "/api/places/derived-0-0")])
-    {
+    for (method, uri) in lists {
         let (status, body) = get_json_with(configured(), method, uri).await;
-        assert_eq!(status, StatusCode::OK, "{method} {uri}: {body}");
+        let want = if method == "POST" {
+            StatusCode::CREATED
+        } else {
+            StatusCode::OK
+        };
+        assert_eq!(status, want, "{method} {uri}: {body}");
         assert!(
             body.get("as_of").is_none(),
             "derived rows are live: {uri}: {body}"
@@ -898,7 +903,12 @@ async fn a_places_mirror_serves_its_copy_with_as_of_and_503_before_its_first_pas
         ("GET", "/v1/destinations"),
     ] {
         let (status, body) = get_json_with(configured(), method, uri).await;
-        assert_eq!(status, StatusCode::OK, "{method} {uri}: {body}");
+        let want = if method == "POST" {
+            StatusCode::CREATED
+        } else {
+            StatusCode::OK
+        };
+        assert_eq!(status, want, "{method} {uri}: {body}");
         assert_eq!(body["as_of"], at.as_str(), "{method} {uri}");
         assert_eq!(
             body["stale_after_secs"],
@@ -917,15 +927,17 @@ async fn a_places_mirror_serves_its_copy_with_as_of_and_503_before_its_first_pas
         at.as_str(),
         "the mirror switched off: still a copy"
     );
+    let own_id = catalyst::explore::places::parcel_place_id("5,5");
     sqlx::query(
         "INSERT INTO explore.place (id, base_position, title, raw) VALUES \
-         ('own-5-5', '5,5', 'Own scene', \
+         ($1, '5,5', 'Own scene', \
           jsonb_build_object('source', 'content', 'local', true, 'world', false, 'positions', jsonb_build_array('5,5')))",
     )
+    .bind(&own_id)
     .execute(&pool)
     .await
     .unwrap();
-    let (status, own) = get_json_with(configured(), "GET", "/api/places/own-5-5").await;
+    let (status, own) = get_json_with(configured(), "GET", &format!("/api/places/{own_id}")).await;
     assert_eq!(status, StatusCode::OK, "{own}");
     assert!(own.get("as_of").is_none(), "this node's own scene: {own}");
     let (_, mirrored) = get_json_with(
@@ -998,7 +1010,7 @@ async fn an_event_written_here_and_a_world_hosted_here_are_live_before_any_pass(
     );
     sqlx::query(
         "INSERT INTO explore.place_world_local (id, base_position, title, raw, world, world_name) \
-         VALUES ('hosted-world', '0,0', 'Hosted', '{}', true, $1)",
+         VALUES (lower($1), '0,0', 'Hosted', '{}', true, $1)",
     )
     .bind(world)
     .execute(&pool)
@@ -1026,7 +1038,7 @@ async fn a_list_before_the_first_complete_pass_serves_only_this_nodes_rows() {
     let hosted = "hosted.dcl.eth";
     sqlx::query(
         "INSERT INTO explore.place_world_local (id, base_position, title, raw, world, world_name) \
-         VALUES ('hosted-world', '0,0', 'Hosted', '{}', true, $1)",
+         VALUES (lower($1), '0,0', 'Hosted', '{}', true, $1)",
     )
     .bind(hosted)
     .execute(&pool)
@@ -1078,7 +1090,7 @@ async fn a_list_before_the_first_complete_pass_serves_only_this_nodes_rows() {
     for (uri, want) in [
         ("/api/events?list=all&limit=500", vec![local.to_string()]),
         ("/api/places?limit=100", vec![DERIVED_PLAZA.to_string()]),
-        ("/api/worlds?limit=100", vec!["hosted-world".to_string()]),
+        ("/api/worlds?limit=100", vec![hosted.to_string()]),
     ] {
         let (status, body) = get_json_with(configured(), "GET", uri).await;
         assert_eq!(status, StatusCode::OK, "{uri}: {body}");
@@ -1110,7 +1122,7 @@ async fn a_list_before_the_first_complete_pass_serves_only_this_nodes_rows() {
             .await
             .expect("body");
         let by_id: Value = serde_json::from_slice(&bytes).expect("json body");
-        assert_eq!(status, StatusCode::OK, "{uri}: {by_id}");
+        assert_eq!(status, StatusCode::CREATED, "{uri}: {by_id}");
         assert_eq!(
             ids(&by_id),
             vec![DERIVED_PLAZA.to_string()],
@@ -1248,9 +1260,10 @@ async fn upsert_real_page_is_idempotent_and_serves() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(one["data"]["id"], sample_id);
     assert!(one["data"]["attending"].is_boolean());
-    let (status, none) = get_json(&pool, "/api/events/no-such-event").await;
+    let missing = "00000000-0000-4000-8000-000000000000";
+    let (status, none) = get_json(&pool, &format!("/api/events/{missing}")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(none["error"], "Not found event \"no-such-event\"");
+    assert_eq!(none["error"], format!("Not found event \"{missing}\""));
     let (_, attendees) = get_json(&pool, &format!("/api/events/{sample_id}/attendees")).await;
     assert_eq!(
         attendees["data"].as_array().map(Vec::len),
@@ -1608,7 +1621,11 @@ async fn an_unlisted_row_is_settled_by_the_upstream_detail_in_the_same_pass() {
         "a detail 404 hides the row and leaves it to the grace sweep"
     );
     let (status, _) = get_json(&pool, &format!("/api/events/{gone_id}")).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the detail serves a soft-deleted event"
+    );
     let (raw, origin): (Value, String) =
         sqlx::query_as("SELECT raw, origin FROM explore.event WHERE id = $1")
             .bind(legacy_id)
@@ -1678,10 +1695,10 @@ async fn an_unlisted_row_is_settled_by_the_upstream_detail_in_the_same_pass() {
     let (status, one) = get_json(&pool, &format!("/api/events/{deleted_id}")).await;
     assert_eq!(
         status,
-        StatusCode::NOT_FOUND,
-        "a soft-deleted event is invisible to an anonymous viewer"
+        StatusCode::OK,
+        "the detail serves a soft-deleted event: {one}"
     );
-    assert_eq!(one["ok"], Value::Bool(false));
+    assert_eq!(one["data"]["deleted_by_user"], Value::Bool(true));
     db.teardown().await;
 }
 
@@ -2109,12 +2126,12 @@ async fn the_viewers_attendance_rides_in_the_list_and_get_statements() {
     let (cancelled_page, _) = component.query(&cancelled_filter, false).await.unwrap();
     assert!(!cancelled_page.iter().any(|event| event.id == id));
     assert!(
-        !component
+        component
             .attending(upstream_user)
             .await
             .unwrap()
             .iter()
-            .any(|event| event.id == id)
+            .any(|event| event.id == id && !event.attending)
     );
     events_mirror::upsert_event(&pool, &events[0])
         .await
@@ -2249,10 +2266,9 @@ async fn destinations_decorate_live_and_next_events_from_the_mirrored_catalogue(
         .expect("the place is in the feed");
     assert_eq!(place["live"], Value::Bool(true));
     assert_eq!(place["live_event_name"], "Movie Night");
-    assert_eq!(
-        place["next_event"],
-        Value::Null,
-        "a live event is not upcoming"
+    assert!(
+        place.get("next_event").is_none(),
+        "the old feed carries no next event: {place}"
     );
     let world = data
         .iter()
@@ -2260,6 +2276,17 @@ async fn destinations_decorate_live_and_next_events_from_the_mirrored_catalogue(
         .expect("the world is in the feed");
     assert_eq!(world["live"], Value::Bool(false));
     assert_eq!(world["live_event_name"], Value::Null);
+    let (status, body) = get_json(&pool, "/v1/destinations?with=live_events,next_event").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let data = body["data"].as_array().unwrap();
+    let place = data.iter().find(|d| d["id"] == "place-1").unwrap();
+    assert_eq!(place["live"], Value::Bool(true));
+    assert_eq!(
+        place["next_event"],
+        Value::Null,
+        "a live event is not upcoming"
+    );
+    let world = data.iter().find(|d| d["id"] == "my-world.dcl.eth").unwrap();
     assert_eq!(world["next_event"]["id"], "ev-next");
     assert_eq!(world["next_event"]["name"], "World Party");
 
@@ -2271,12 +2298,40 @@ async fn destinations_decorate_live_and_next_events_from_the_mirrored_catalogue(
         .map(|e| e["id"].as_str().unwrap())
         .collect();
     assert_eq!(ids, vec!["ev-live"], "a rejected event never lists");
-    let (_, by_place) = get_json(
-        &pool,
-        "/api/events?list=all&places_ids=place-1&places_ids=My-World.dcl.eth",
-    )
-    .await;
-    assert_eq!(by_place["data"]["total"], 2, "{by_place}");
+    // The old GET list ignores a `places_ids` query; the search takes the
+    // body and matches `place_id` verbatim (`Event/model.ts:268-270`): a
+    // world name or a differently cased id finds nothing.
+    for (ids, total) in [
+        (json!(["PLACE-1"]), 1),
+        (json!(["place-1", "my-world.dcl.eth"]), 0),
+    ] {
+        let res = router(state(&pool))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/events/search?list=all")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "placeIds": ids }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+        let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let by_place: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(by_place["data"]["total"], total, "{ids} {by_place}");
+    }
+    // `limit=0` answers before the only_attendee check (getEventList.ts:188,259).
+    let (status, body) = get_json(&pool, "/api/events?only_attendee=true&limit=0").await;
+    assert_eq!(
+        (status, body["data"].clone()),
+        (StatusCode::OK, json!([])),
+        "{body}"
+    );
+    let (status, _) = get_json(&pool, "/api/events?only_attendee=true").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     db.teardown().await;
 }
 
