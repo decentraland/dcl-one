@@ -25,7 +25,7 @@ The pinned upstream Shop already reads the marketplace's aggregator for this
 
 ## Decision
 
-- **Source.** The Shop's MANA/USD rate is the settlement chain's newest marketplace's own feed,
+- **Source.** The Shop's MANA/USD rate is the MANA/USD feed of the newest marketplace on the settlement chain,
   read the way a credits authorization reads it (`shop::credits::feed::ChainFeed`): the
   marketplace's `manaUsdAggregator()` and `manaUsdAggregatorTolerance()`, the aggregator's
   `decimals()` and `latestRoundData()`, at one block hash, on the endpoint's checked chain. There
@@ -33,8 +33,8 @@ The pinned upstream Shop already reads the marketplace's aggregator for this
   settlement chain keeps the spot.
 - **No request waits on the network.** One refresher per process keeps a slot current
   (`shop::mana::feed_rate`). Readers answer from the slot and never block. The refresher reads
-  every 15 s, just before a round leaves the marketplace's tolerance, and every 2 s once it has. It
-  backs off to 30 s while the endpoint fails. The slot is reported on `/health`
+  every 15 s, just before a round leaves the marketplace's tolerance, and every 2 s once it has. While
+  the endpoint fails it backs off exponentially, from 2 s up to 30 s. The slot is reported on `/health`
   (`shop_mana_usd_feed`).
 - **One read, three uses, each with its own bound.** Every age is the round's (when the feed set
   the answer), not the read's. It is counted on a monotonic clock from the read's start, and is
