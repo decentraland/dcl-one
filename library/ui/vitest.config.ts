@@ -17,7 +17,8 @@ export default defineConfig({
             'figma/src/**/*.test.ts',
             'figma/test/**/*.test.ts',
             'figma/agent-kit/**/*.test.ts',
-            'figma/key-guard.test.ts'
+            'figma/key-guard.test.ts',
+            'figma/lfs-prefetch.test.ts'
           ],
           // Fixtures that workers build once and copy per test live in one folder per run.
           globalSetup: ['figma/test/global-setup.ts']

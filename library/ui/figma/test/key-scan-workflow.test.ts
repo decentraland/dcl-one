@@ -122,51 +122,81 @@ describe('when a trusted scan cannot run', () => {
     }
   })
 })
-describe('when selecting historical UI LFS inputs', () => {
-  it('should prefetch intermediate UI commits even if the pushed tip removes their file', async () => {
-    const git = (...args: string[]) =>
-      execFileSync('git', args, { cwd: path.join(root, 'trusted'), stdio: 'pipe' })
-        .toString()
-        .trim()
-    await mkdir(path.join(root, 'trusted'))
-    git('init', '-q', '-b', 'main')
-    const commit = () => {
-      git('add', '-A')
-      git(
-        '-c',
-        'user.name=Test',
-        '-c',
-        'user.email=test@example.com',
-        '-c',
-        'commit.gpgsign=false',
-        'commit',
-        '-qm',
-        'fixture'
-      )
-    }
-    await writeFile(path.join(root, 'trusted/README'), 'clean')
-    commit()
-    const before = git('rev-parse', 'HEAD')
-    await mkdir(path.join(root, 'trusted/library/ui'), { recursive: true })
-    await writeFile(path.join(root, 'trusted/library/ui/transient'), 'synthetic input')
-    commit()
-    const intermediate = git('rev-parse', 'HEAD')
-    await rm(path.join(root, 'trusted/library/ui/transient'))
-    commit()
-    const after = git('rev-parse', 'HEAD')
+describe('when selecting the LFS inputs of the scan', () => {
+  const git = (...args: string[]) =>
+    execFileSync('git', args, { cwd: path.join(root, 'trusted'), stdio: 'pipe' })
+      .toString()
+      .trim()
+  const commit = () => {
+    git('add', '-A')
+    git(
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=test@example.com',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-qm',
+      'fixture'
+    )
+  }
+  // Runs the inputs step with git fetch and node recorded instead of executed.
+  async function inputs(env: Record<string, string>) {
     const script =
       `git() { case "$*" in *' fetch '*) printf '%s\\n' "$*" >> "$RUNNER_TEMP/fetches";; *) command git "$@";; esac; }\n` +
+      `node() { printf '%s\\n' "$*" >> "$RUNNER_TEMP/node"; }\n` +
       steps.find((step) => step.id === 'inputs')!.run!
     const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', script], {
       cwd: root,
       encoding: 'utf8',
-      env: { ...defaults(), BASE: before, HEAD_SHA: after, READ_TOKEN: 'synthetic' }
+      env: { ...defaults(), READ_TOKEN: 'synthetic', ...env }
     })
+    return { result, node: await readFile(path.join(root, 'node'), 'utf8') }
+  }
+  beforeEach(async () => {
+    await mkdir(path.join(root, 'trusted'))
+    git('init', '-q', '-b', 'main')
+    await writeFile(path.join(root, 'trusted/README'), 'clean')
+    commit()
+  })
+
+  it('should list the whole range, any path, and the library/ui tree when UI changed, then prefetch it', async () => {
+    const before = git('rev-parse', 'HEAD')
+    await mkdir(path.join(root, 'trusted/library/ui'), { recursive: true })
+    await writeFile(path.join(root, 'trusted/library/ui/transient'), 'synthetic input')
+    commit()
+    await rm(path.join(root, 'trusted/library/ui/transient'))
+    commit()
+    const after = git('rev-parse', 'HEAD')
+
+    const { result, node } = await inputs({ BASE: before, HEAD_SHA: after })
     expect(result.status, result.stderr).toBe(0)
     expect(await readFile(path.join(root, 'out'), 'utf8')).toContain('artifact_required=true')
-    expect(await readFile(path.join(root, 'fetches'), 'utf8')).toContain(
-      `lfs fetch --include library/ui/** origin ${after}`
+    const [list, prefetch] = node.trim().split('\n')
+    expect(list).toBe(
+      `trusted/library/ui/figma/key-guard.mjs --root trusted --no-worktree --range ${before}..${after} --tree ${after}:library/ui --lfs-objects`
     )
-    expect(await readFile(path.join(root, 'fetches'), 'utf8')).toContain(intermediate)
+    expect(prefetch).toBe(
+      `trusted/library/ui/figma/lfs-prefetch.mjs --root trusted --endpoint https://github.com/example/repo.git/info/lfs --objects ${root}/lfs-objects.jsonl`
+    )
+    expect(await readFile(path.join(root, 'fetches'), 'utf8')).not.toContain('lfs')
+  })
+
+  it('should still list and prefetch the range of a push that changes nothing under library/ui', async () => {
+    const before = git('rev-parse', 'HEAD')
+    await mkdir(path.join(root, 'trusted/apps/sites/public'), { recursive: true })
+    await writeFile(path.join(root, 'trusted/apps/sites/public/clean.bin'), 'pointer stand-in')
+    commit()
+    const after = git('rev-parse', 'HEAD')
+
+    const { result, node } = await inputs({ BASE: before, HEAD_SHA: after })
+    expect(result.status, result.stderr).toBe(0)
+    expect(await readFile(path.join(root, 'out'), 'utf8')).toContain('artifact_required=false')
+    const [list, prefetch] = node.trim().split('\n')
+    expect(list).toBe(
+      `trusted/library/ui/figma/key-guard.mjs --root trusted --no-worktree --range ${before}..${after} --lfs-objects`
+    )
+    expect(prefetch).toContain('lfs-prefetch.mjs')
   })
 })

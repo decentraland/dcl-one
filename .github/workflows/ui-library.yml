@@ -30,7 +30,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-          # Only library/ui's LFS content is read; the rest of the monorepo's LFS is not fetched.
+          # LFS content is fetched by oid below, only for the blobs the range adds or changes.
           lfs: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -56,12 +56,19 @@ jobs:
           fi
           echo "ui_changed=$changed" >> "$GITHUB_OUTPUT"
           echo "range=$range" >> "$GITHUB_OUTPUT"
-          # Prefetch once with checkout's credentials. Historical UI pointers must already be local when scanned.
-          if [ "$changed" = true ]; then
-            revisions=$(git rev-list "$range")
-            mapfile -t commits <<< "$revisions"
-            git lfs fetch --include "library/ui/**" origin "$HEAD_SHA" "${commits[@]}"
-          fi
+      # Every LFS object a blob of the range points to, in any path and in commits a later one deletes, is
+      # downloaded by oid from this repository's fixed LFS endpoint, so the scan reads each payload locally.
+      - name: Prefetch the LFS objects the range points to
+        env:
+          RANGE: ${{ steps.scope.outputs.range }}
+          REPOSITORY: ${{ github.repository }}
+          READ_TOKEN: ${{ github.token }}
+        run: |
+          authorization="Basic $(printf 'x-access-token:%s' "$READ_TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$authorization"
+          node library/ui/figma/key-guard.mjs --no-worktree --range "$RANGE" --lfs-objects > "$RUNNER_TEMP/lfs-objects.jsonl"
+          LFS_AUTHORIZATION="$authorization" node library/ui/figma/lfs-prefetch.mjs \
+            --endpoint "https://github.com/$REPOSITORY.git/info/lfs" --objects "$RUNNER_TEMP/lfs-objects.jsonl"
       - name: Scan every outgoing commit for Figma urls
         env:
           RANGE: ${{ steps.scope.outputs.range }}

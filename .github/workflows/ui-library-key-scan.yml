@@ -94,11 +94,16 @@ jobs:
           persist-credentials: false
           set-safe-directory: false
 
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.trigger.outputs.scan == 'true'
+        with:
+          node-version: 24
+
       # The scanned commits enter the object store under a private ref. Nothing is checked out from them. LFS
       # objects come from this repository's own fixed endpoint, through main's configuration only (no system or
-      # global Git config, and the scanned commits' .lfsconfig and .gitattributes are never read), and only for
-      # library/ui. The read token reaches Git through the environment of this one step and is not persisted.
-      - name: Fetch the scanned commits and their library/ui LFS objects
+      # global Git config, and the scanned commits' .lfsconfig and .gitattributes are never read), by oid, for
+      # exactly what the scan reads. The read token reaches this one step's environment and is not persisted.
+      - name: Fetch the scanned commits and the LFS objects they point to
         id: inputs
         if: steps.trigger.outputs.scan == 'true'
         env:
@@ -111,11 +116,9 @@ jobs:
         run: |
           header=$(printf 'x-access-token:%s' "$READ_TOKEN" | base64 | tr -d '\n')
           echo "::add-mask::$header"
-          export GIT_CONFIG_COUNT=2
+          export GIT_CONFIG_COUNT=1
           export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
           export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $header"
-          export GIT_CONFIG_KEY_1=lfs.url
-          export GIT_CONFIG_VALUE_1="https://github.com/$REPOSITORY.git/info/lfs"
           git -C trusted fetch --no-tags --no-recurse-submodules origin "+$HEAD_SHA:refs/key-scan/head"
           if [ "$BASE" != "0000000000000000000000000000000000000000" ]; then
             git -C trusted fetch --no-tags --no-recurse-submodules origin "+$BASE:refs/key-scan/base"
@@ -130,11 +133,15 @@ jobs:
             [ -z "$files" ] || required=true
           fi
           echo "artifact_required=$required" >> "$GITHUB_OUTPUT"
-          if [ "$required" = true ]; then
-            revisions=$(git -C trusted rev-list "$range")
-            mapfile -t commits <<< "$revisions"
-            git -C trusted lfs fetch --include "library/ui/**" origin "$HEAD_SHA" "${commits[@]}"
-          fi
+          # Every LFS object the scan will read: each blob the range adds or changes, in any path and in
+          # commits a later one deletes, plus the library/ui tree when the scan reads it. Main's scripts list
+          # them and download them by oid from the fixed endpoint; the scan step reads them locally, tokenless.
+          tree=()
+          [ "$required" != true ] || tree=(--tree "$HEAD_SHA:library/ui")
+          node trusted/library/ui/figma/key-guard.mjs --root trusted --no-worktree --range "$range" \
+            "${tree[@]}" --lfs-objects > "$RUNNER_TEMP/lfs-objects.jsonl"
+          LFS_AUTHORIZATION="Basic $header" node trusted/library/ui/figma/lfs-prefetch.mjs --root trusted \
+            --endpoint "https://github.com/$REPOSITORY.git/info/lfs" --objects "$RUNNER_TEMP/lfs-objects.jsonl"
 
       - name: Require the artifact for UI changes
         id: artifact_check
@@ -158,11 +165,6 @@ jobs:
           path: ${{ runner.temp }}/pr-artifact
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
-
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        if: steps.trigger.outputs.scan == 'true'
-        with:
-          node-version: 24
 
       # The only step that holds the key: main's key guard over the scanned commits, their library/ui tree and
       # the unpacked Review build (enumerated without following links, and size and count limited), all as data.
