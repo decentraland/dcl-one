@@ -535,15 +535,21 @@ struct Places {
     seeded: Uuid,
     missing: Uuid,
     disabled: Uuid,
-    world: Uuid,
+    /// A world scene: a places-table row with `world = true` and its own
+    /// UUID, naming `world_name` (`Place/model.ts:149` keeps it out of the
+    /// destinations union).
+    world_scene: Uuid,
+    /// The catalogue world, keyed by its lowercased name
+    /// (`World/model.ts:466-469`).
     world_name: String,
     upper: Uuid,
 }
 
 impl Places {
     /// A public community whose places are, newest first: a seeded place,
-    /// one with no destination, a disabled one, a world name, a seeded place
-    /// stored in uppercase and an id that is neither a UUID nor a name.
+    /// one with no destination, a disabled one, a world name, a world
+    /// scene's UUID, a seeded place stored in uppercase and an id that is
+    /// neither a UUID nor a name.
     async fn seed(rig: &Rig) -> Self {
         let owner = wallet();
         let community = rig.community(&owner, false).await;
@@ -553,7 +559,7 @@ impl Places {
             seeded: Uuid::new_v4(),
             missing: Uuid::new_v4(),
             disabled: Uuid::new_v4(),
-            world: Uuid::new_v4(),
+            world_scene: Uuid::new_v4(),
             world_name: format!("w{}.dcl.eth", &tag[..12]),
             upper: Uuid::new_v4(),
         };
@@ -575,8 +581,16 @@ impl Places {
         .await;
         seed_destination(
             &rig.pool,
-            &p.world.to_string(),
+            &p.world_name,
             "a world",
+            false,
+            Some(&p.world_name),
+        )
+        .await;
+        seed_destination(
+            &rig.pool,
+            &p.world_scene.to_string(),
+            "a world scene",
             false,
             Some(&p.world_name),
         )
@@ -604,6 +618,7 @@ impl Places {
             self.missing.to_string(),
             self.disabled.to_string(),
             self.world_name.clone(),
+            self.world_scene.to_string(),
             self.upper.to_string().to_uppercase(),
             "not-a-place".to_string(),
         ]
@@ -616,7 +631,7 @@ impl Places {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{v}");
-        assert_eq!(v["data"]["total"], 6, "{v}");
+        assert_eq!(v["data"]["total"], 7, "{v}");
         let rows = v["data"]["results"].as_array().unwrap().clone();
         let ids: Vec<&str> = rows.iter().map(|r| r["id"].as_str().unwrap()).collect();
         assert_eq!(ids, self.stored(), "added_at DESC");
@@ -624,7 +639,10 @@ impl Places {
     }
 
     async fn clear(&self, rig: &Rig) {
-        let ids = [self.seeded, self.disabled, self.world, self.upper].map(|u| u.to_string());
+        let mut ids: Vec<String> = [self.seeded, self.disabled, self.world_scene, self.upper]
+            .map(|u| u.to_string())
+            .to_vec();
+        ids.push(self.world_name.clone());
         sqlx::query("DELETE FROM explore.place WHERE id = ANY($1)")
             .bind(&ids[..])
             .execute(&rig.pool)
@@ -684,31 +702,45 @@ async fn a_community_place_is_its_destination_when_the_id_names_one_exactly() {
     expected.sort();
     assert_eq!(keys(seeded), expected);
 
-    // no destination, a disabled place, a world name, an uppercase id, neither: bare
-    for row in &rows[1..] {
+    // the world name: the catalogue world keyed by that name
+    // (`World/model.ts:132-135,466-469`), with upstream's world-row constants
+    // (`Destination/model.ts:39-49`)
+    let world = &rows[3];
+    assert_eq!(world["id"], places.world_name, "{world}");
+    assert_eq!(world["title"], "a world");
+    assert_eq!(world["world"], true);
+    assert_eq!(world["world_name"], places.world_name);
+    assert_eq!(world["positions"], json!([]));
+    assert_eq!(world["base_position"], "0,0");
+    assert_eq!(keys(world), expected);
+
+    // no destination, a disabled place, a world scene's UUID, an uppercase
+    // id, neither: bare
+    for row in rows[1..3].iter().chain(&rows[4..]) {
         assert_eq!(keys(row), BARE, "{row}");
     }
 
-    // the world and the uppercase place exist: only the exact-id merge leaves them bare
+    // the world scene and the uppercase place exist: the destinations union
+    // reads `world is false` places and catalogue worlds (`Place/model.ts:149`,
+    // `Destination/model.ts:282-304`), so the scene's UUID is no destination;
+    // the uppercase id is one, and only the exact-id merge leaves its row bare
     let explore = &rig.state.explore;
-    let found = crate::explore::places::destinations::destinations_by_ids(
+    let scene = crate::explore::places::destinations::destinations_by_ids(
         explore,
-        vec![places.world.to_string()],
+        vec![places.world_scene.to_string()],
     )
     .await
     .unwrap();
-    assert_eq!(found.len(), 1);
-    assert_eq!(
-        found[0].world_name.as_deref(),
-        Some(places.world_name.as_str())
-    );
+    assert!(scene.is_empty(), "{scene:?}");
     let by_name = crate::explore::places::destinations::destinations_by_ids(
         explore,
         vec![places.world_name.clone()],
     )
     .await
     .unwrap();
-    assert!(by_name.is_empty(), "array semantics match ids only");
+    assert_eq!(by_name.len(), 1, "{by_name:?}");
+    assert_eq!(by_name[0].id, places.world_name);
+    assert!(by_name[0].world);
     let found = crate::explore::places::destinations::destinations_by_ids(
         explore,
         vec![places.upper.to_string().to_uppercase()],
