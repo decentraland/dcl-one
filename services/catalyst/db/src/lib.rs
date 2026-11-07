@@ -22,6 +22,19 @@ pub const MIGRATIONS_SQL: &str = include_str!(concat!(env!("OUT_DIR"), "/migrati
 /// schema-qualified anyway, and no request ever changes either.
 const SESSION_OPTIONS: &[(&str, &str)] = &[("search_path", "content,meta"), ("TimeZone", "UTC")];
 
+/// Missing function signatures in input order, checked in one catalog query.
+/// Signatures use PostgreSQL's `to_regprocedure` spelling; query errors remain
+/// SQLx errors so callers can preserve their domain's operator guidance.
+pub async fn missing_functions(pool: &PgPool, signatures: &[String]) -> sqlx::Result<Vec<String>> {
+    sqlx::query_scalar(
+        "SELECT signature FROM unnest($1::text[]) WITH ORDINALITY AS functions(signature, position) \
+         WHERE to_regprocedure(signature) IS NULL ORDER BY position",
+    )
+    .bind(signatures)
+    .fetch_all(pool)
+    .await
+}
+
 #[derive(Debug, Clone)]
 pub struct PoolSettings {
     pub max_connections: u32,

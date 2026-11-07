@@ -326,6 +326,39 @@ pub struct ResolvedRoom {
     pub room: String,
 }
 
+/// A world scene a redeploy recently replaced: its own base and the bases of
+/// the active scenes now standing on its parcels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplacedScene {
+    pub base: Parcel,
+    pub successors: Vec<Parcel>,
+}
+
+impl ReplacedScene {
+    /// Every key whose ban reaches this scene's room: its own and its successors'.
+    pub fn ban_keys(&self, world: &WorldName) -> Vec<crate::access::SceneBanKey> {
+        std::iter::once(self.base)
+            .chain(self.successors.iter().copied())
+            .map(|base| crate::access::SceneBanKey::world(world, base))
+            .collect()
+    }
+}
+
+impl ResolvedRoom {
+    /// The key this scene's bans live under; `None` for the world lobby.
+    pub fn ban_key(&self) -> Option<crate::access::SceneBanKey> {
+        match (&self.realm, &self.deployment) {
+            (RealmId::World(world), Some(deployment)) => {
+                Some(crate::access::SceneBanKey::world(world, deployment.base))
+            }
+            _ => self
+                .scene_id
+                .as_ref()
+                .map(crate::access::SceneBanKey::scene),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

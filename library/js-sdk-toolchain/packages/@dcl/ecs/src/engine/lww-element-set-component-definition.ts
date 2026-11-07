@@ -1,0 +1,361 @@
+import { ISchema } from '../schemas'
+import { ByteBuffer, ReadWriteByteBuffer } from '../serialization/ByteBuffer'
+import {
+  PutComponentMessageBody,
+  DeleteComponentMessageBody,
+  ProcessMessageResultType,
+  CrdtMessageType,
+  CrdtMessageBody,
+  PutComponentOperation,
+  DeleteComponent,
+  PutNetworkComponentMessageBody,
+  DeleteComponentNetworkMessageBody
+} from '../serialization/crdt'
+import { dataCompare } from '../systems/crdt/utils'
+import { LastWriteWinElementSetComponentDefinition, ComponentType } from './component'
+import { Entity } from './entity'
+import { DeepReadonly, deepReadonly } from './readonly'
+
+export function incrementTimestamp(entity: Entity, timestamps: Map<Entity, number>): number {
+  const newTimestamp = (timestamps.get(entity) || 0) + 1
+  timestamps.set(entity, newTimestamp)
+  return newTimestamp
+}
+
+export function createDumpLwwFunctionFromCrdt(
+  componentId: number,
+  timestamps: Map<Entity, number>,
+  schema: Pick<ISchema<any>, 'serialize' | 'deserialize'>,
+  data: Map<Entity, unknown>
+) {
+  return function dumpCrdtState(buffer: ByteBuffer, filterEntity?: (entity: Entity) => boolean) {
+    for (const [entity, timestamp] of timestamps) {
+      /* istanbul ignore if */
+      if (filterEntity) {
+        // I swear that this is being tested on state-to-crdt.spec but jest is trolling me
+        /* istanbul ignore next */
+        if (!filterEntity(entity)) continue
+      }
+      /* istanbul ignore else */
+      if (data.has(entity)) {
+        const it = data.get(entity)!
+        const buf = new ReadWriteByteBuffer()
+        schema.serialize(it, buf)
+        PutComponentOperation.write(entity, timestamp, componentId, buf.toBinary(), buffer)
+      } else {
+        DeleteComponent.write(entity, componentId, timestamp, buffer)
+      }
+    }
+  }
+}
+
+export function createUpdateLwwFromCrdt(
+  componentId: number,
+  timestamps: Map<Entity, number>,
+  schema: Pick<ISchema<any>, 'serialize' | 'deserialize'>,
+  data: Map<Entity, unknown>,
+  lastSentData: Map<Entity, Uint8Array>
+) {
+  /**
+   * Process the received message only if the lamport number recieved is higher
+   * than the stored one. If its lower, we spread it to the network to correct the peer.
+   * If they are equal, the bigger raw data wins.
+
+    * Returns the recieved data if the lamport number was bigger than ours.
+    * If it was an outdated message, then we return void
+    * @public
+    */
+  function crdtRuleForCurrentState(
+    message:
+      | PutComponentMessageBody
+      | DeleteComponentMessageBody
+      | PutNetworkComponentMessageBody
+      | DeleteComponentNetworkMessageBody
+  ): ProcessMessageResultType {
+    const { entityId, timestamp } = message
+    const currentTimestamp = timestamps.get(entityId as Entity)
+
+    // The received message is > than our current value, update our state.components.
+    if (currentTimestamp === undefined || currentTimestamp < timestamp) {
+      return ProcessMessageResultType.StateUpdatedTimestamp
+    }
+
+    // Outdated Message. Resend our state message through the wire.
+    if (currentTimestamp > timestamp) {
+      // console.log('2', currentTimestamp, timestamp)
+      return ProcessMessageResultType.StateOutdatedTimestamp
+    }
+
+    // Deletes are idempotent
+    if (message.type === CrdtMessageType.DELETE_COMPONENT && !data.has(entityId)) {
+      return ProcessMessageResultType.NoChanges
+    }
+
+    let currentDataGreater = 0
+
+    if (data.has(entityId)) {
+      const writeBuffer = new ReadWriteByteBuffer()
+      schema.serialize(data.get(entityId)!, writeBuffer)
+      currentDataGreater = dataCompare(writeBuffer.toBinary(), (message as any).data || null)
+    } else {
+      currentDataGreater = dataCompare(null, (message as any).data)
+    }
+
+    // Same data, same timestamp. Weirdo echo message.
+    // console.log('3', currentDataGreater, writeBuffer.toBinary(), (message as any).data || null)
+    if (currentDataGreater === 0) {
+      return ProcessMessageResultType.NoChanges
+    } else if (currentDataGreater > 0) {
+      // Current data is greater
+      return ProcessMessageResultType.StateOutdatedData
+    } else {
+      // Curent data is lower
+      return ProcessMessageResultType.StateUpdatedData
+    }
+  }
+
+  return (msg: CrdtMessageBody): [null | PutComponentMessageBody | DeleteComponentMessageBody, any] => {
+    /* istanbul ignore next */
+    if (
+      msg.type !== CrdtMessageType.PUT_COMPONENT &&
+      msg.type !== CrdtMessageType.PUT_COMPONENT_NETWORK &&
+      msg.type !== CrdtMessageType.DELETE_COMPONENT &&
+      msg.type !== CrdtMessageType.DELETE_COMPONENT_NETWORK
+    )
+      /* istanbul ignore next */
+      return [null, data.get(msg.entityId)]
+
+    const action = crdtRuleForCurrentState(msg)
+    const entity = msg.entityId as Entity
+    switch (action) {
+      case ProcessMessageResultType.StateUpdatedData:
+      case ProcessMessageResultType.StateUpdatedTimestamp: {
+        timestamps.set(entity, msg.timestamp)
+
+        if (msg.type === CrdtMessageType.PUT_COMPONENT || msg.type === CrdtMessageType.PUT_COMPONENT_NETWORK) {
+          const buf = new ReadWriteByteBuffer(msg.data!)
+          data.set(entity, schema.deserialize(buf))
+          lastSentData.set(entity, new Uint8Array(msg.data!))
+        } else {
+          data.delete(entity)
+          lastSentData.delete(entity)
+        }
+
+        return [null, data.get(entity)]
+      }
+      case ProcessMessageResultType.StateOutdatedTimestamp:
+      case ProcessMessageResultType.StateOutdatedData: {
+        if (data.has(entity)) {
+          const writeBuffer = new ReadWriteByteBuffer()
+          schema.serialize(data.get(entity)!, writeBuffer)
+
+          return [
+            {
+              type: CrdtMessageType.PUT_COMPONENT,
+              componentId,
+              data: writeBuffer.toBinary(),
+              entityId: entity,
+              timestamp: timestamps.get(entity)!
+            } as PutComponentMessageBody,
+            data.get(entity)
+          ]
+        } else {
+          return [
+            {
+              type: CrdtMessageType.DELETE_COMPONENT,
+              componentId,
+              entityId: entity,
+              timestamp: timestamps.get(entity)!
+            } as DeleteComponentMessageBody,
+            undefined
+          ]
+        }
+      }
+    }
+
+    return [null, data.get(entity)]
+  }
+}
+
+export function createGetCrdtMessagesForLww(
+  componentId: number,
+  timestamps: Map<Entity, number>,
+  dirtyIterator: Set<Entity>,
+  schema: Pick<ISchema<any>, 'serialize'>,
+  data: Map<Entity, unknown>,
+  lastSentData: Map<Entity, Uint8Array>
+) {
+  return function* () {
+    const writeBuffer = new ReadWriteByteBuffer()
+    for (const entity of dirtyIterator) {
+      if (data.has(entity)) {
+        writeBuffer.resetBuffer()
+        schema.serialize(data.get(entity)!, writeBuffer)
+
+        // Compare against last-sent snapshot using the zero-copy subarray view.
+        // Only allocate a copy when bytes actually differ.
+        const previousBytes = lastSentData.get(entity)
+        if (previousBytes && dataCompare(writeBuffer.toBinary(), previousBytes) === 0) {
+          continue
+        }
+
+        const currentBytes = writeBuffer.toCopiedBinary()
+        const newTimestamp = incrementTimestamp(entity, timestamps)
+        lastSentData.set(entity, currentBytes)
+
+        const msg: PutComponentMessageBody = {
+          type: CrdtMessageType.PUT_COMPONENT,
+          componentId,
+          entityId: entity,
+          data: currentBytes,
+          timestamp: newTimestamp
+        }
+
+        yield msg
+      } else {
+        lastSentData.delete(entity)
+        const newTimestamp = incrementTimestamp(entity, timestamps)
+
+        const msg: DeleteComponentMessageBody = {
+          type: CrdtMessageType.DELETE_COMPONENT,
+          componentId,
+          entityId: entity,
+          timestamp: newTimestamp
+        }
+
+        yield msg
+      }
+    }
+    dirtyIterator.clear()
+  }
+}
+
+/**
+ * @internal
+ */
+export function createComponentDefinitionFromSchema<T>(
+  componentName: string,
+  componentId: number,
+  schema: ISchema<T>
+): LastWriteWinElementSetComponentDefinition<T> {
+  const data = new Map<Entity, T>()
+  const dirtyIterator = new Set<Entity>()
+  const timestamps = new Map<Entity, number>()
+  const lastSentData = new Map<Entity, Uint8Array>()
+  const onChangeCallbacks = new Map<Entity, ((data: T | undefined) => void)[]>()
+
+  return {
+    get componentId() {
+      return componentId
+    },
+    get componentName() {
+      return componentName
+    },
+    get componentType() {
+      // a getter is used here to prevent accidental changes
+      return ComponentType.LastWriteWinElementSet as const
+    },
+    schema,
+    has(entity: Entity): boolean {
+      return data.has(entity)
+    },
+    deleteFrom(entity: Entity, markAsDirty = true): T | null {
+      // Presence, not truthiness: a component defined from a primitive schema can
+      // legitimately hold 0, false or an empty string, and deleting one must still
+      // return the value that was there.
+      const had = data.has(entity)
+      const component = data.get(entity)
+      if (data.delete(entity) && markAsDirty) {
+        dirtyIterator.add(entity)
+      }
+      lastSentData.delete(entity)
+      return had ? (component as T) : null
+    },
+    entityDeleted(entity: Entity, markAsDirty: boolean): void {
+      if (data.delete(entity) && markAsDirty) {
+        dirtyIterator.add(entity)
+      }
+      lastSentData.delete(entity)
+    },
+    getOrNull(entity: Entity): DeepReadonly<T> | null {
+      // Presence, not truthiness: a component defined from a primitive schema
+      // can legitimately hold 0, false or an empty string.
+      if (!data.has(entity)) return null
+      return deepReadonly(data.get(entity) as T)
+    },
+    get(entity: Entity): DeepReadonly<T> {
+      if (!data.has(entity)) {
+        throw new Error(`[getFrom] Component ${componentName} for entity #${entity} not found`)
+      }
+      return deepReadonly(data.get(entity) as T)
+    },
+    create(entity: Entity, value?: T): T {
+      if (data.has(entity)) {
+        throw new Error(`[create] Component ${componentName} for ${entity} already exists`)
+      }
+      const usedValue =
+        value === undefined ? schema.create() : schema.extend ? schema.extend(value as DeepReadonly<T>) : value
+      data.set(entity, usedValue)
+      dirtyIterator.add(entity)
+      return usedValue
+    },
+    createOrReplace(entity: Entity, value?: T): T {
+      const usedValue =
+        value === undefined ? schema.create() : schema.extend ? schema.extend(value as DeepReadonly<T>) : value
+      data.set(entity, usedValue!)
+      dirtyIterator.add(entity)
+      lastSentData.delete(entity)
+      return usedValue!
+    },
+    getMutableOrNull(entity: Entity): T | null {
+      // Presence, not truthiness, so a falsy primitive value is still mutable.
+      if (!data.has(entity)) {
+        return null
+      }
+      dirtyIterator.add(entity)
+      return data.get(entity) as T
+    },
+    getOrCreateMutable(entity: Entity, value?: T): T {
+      // Presence, not truthiness: a stored 0/false/'' must not be treated as absent,
+      // which would send this through create() and throw "already exists".
+      if (!data.has(entity)) {
+        return this.create(entity, value)
+      } else {
+        dirtyIterator.add(entity)
+        return data.get(entity) as T
+      }
+    },
+    getMutable(entity: Entity): T {
+      const component = this.getMutableOrNull(entity)
+      if (component === null) {
+        throw new Error(`[mutable] Component ${componentName} for ${entity} not found`)
+      }
+      return component
+    },
+    *iterator(): Iterable<[Entity, T]> {
+      for (const [entity, component] of data) {
+        yield [entity, component]
+      }
+    },
+    *dirtyIterator(): Iterable<Entity> {
+      for (const entity of dirtyIterator) {
+        yield entity
+      }
+    },
+    getCrdtUpdates: createGetCrdtMessagesForLww(componentId, timestamps, dirtyIterator, schema, data, lastSentData),
+    updateFromCrdt: createUpdateLwwFromCrdt(componentId, timestamps, schema, data, lastSentData),
+    dumpCrdtStateToBuffer: createDumpLwwFunctionFromCrdt(componentId, timestamps, schema, data),
+    onChange(entity, cb) {
+      const cbs = onChangeCallbacks.get(entity) ?? []
+      cbs.push(cb)
+      onChangeCallbacks.set(entity, cbs)
+    },
+    __onChangeCallbacks(entity, value) {
+      const cbs = onChangeCallbacks.get(entity)
+      if (!cbs) return
+      for (const cb of cbs) {
+        cb(value)
+      }
+    }
+  }
+}

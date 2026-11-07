@@ -335,17 +335,25 @@ impl MediaState {
 /// root (the `autotranslate-server.` vhost, nginx's `/metamorph-api` strip)
 /// and under the old gateway prefix `/autotranslate-server` by the caller.
 pub fn router(state: SharedState) -> Router {
-    Router::new()
-        .route("/translate", post(translate::translate))
-        .route("/convert", get(convert::convert))
-        .route("/media/convert", get(convert::convert))
+    let converter = common_middleware(
+        Router::new()
+            .route("/convert", get(convert::convert))
+            .route("/media/convert", get(convert::convert)),
+    )
+    .layer(axum::middleware::map_response(convert::response_headers));
+    common_middleware(Router::new().route("/translate", post(translate::translate)))
+        .merge(converter)
+        .with_state(state)
+}
+
+fn common_middleware(router: Router<SharedState>) -> Router<SharedState> {
+    router
         .layer(axum::middleware::from_fn(
             crate::shared::nul_guard::nul_guard_middleware,
         ))
         .layer(axum::middleware::from_fn(
             crate::shared::cors::cors_middleware,
         ))
-        .with_state(state)
 }
 
 /// `{"ok":false,"error":msg,"message":msg}` (catalyrst-types' `ApiErrorBody`,

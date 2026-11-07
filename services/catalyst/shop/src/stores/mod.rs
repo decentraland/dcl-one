@@ -112,7 +112,11 @@ pub fn store_from_entity(owner: &str, entity: &Value, content_public_url: &str) 
     };
     store.exists = true;
     store.entity_id = entity.get("id").and_then(Value::as_str).map(str::to_string);
-    store.updated_at = entity.get("timestamp").and_then(Value::as_i64);
+    // A synced entity's timestamp can be fractional; it keeps whole milliseconds.
+    store.updated_at = entity
+        .get("timestamp")
+        .and_then(Value::as_f64)
+        .map(|t| t as i64);
     let cover_file = metadata
         .get("images")
         .and_then(Value::as_array)
@@ -155,9 +159,10 @@ pub fn store_from_entity(owner: &str, entity: &Value, content_public_url: &str) 
 }
 
 pub async fn read_store(state: &MarketplaceState, owner: &str) -> Result<Store, ApiError> {
-    let docs =
+    let mut docs =
         crate::content::queries::active_entity_docs_by_pointers(&state.pool, &[store_urn(owner)])
             .await?;
+    crate::content::queries::retain_non_denylisted(&mut docs, &state.denylist);
     let Some(doc) = docs.into_iter().next() else {
         return Ok(Store::empty(owner));
     };
@@ -407,6 +412,14 @@ mod tests {
                 "version": 1
             }
         })
+    }
+
+    #[test]
+    fn a_fractional_timestamp_keeps_its_whole_milliseconds() {
+        let mut e = entity();
+        e["timestamp"] = json!(1_700_000_000_000.5);
+        let s = store_from_entity(OWNER, &e, "https://peer.example/content/");
+        assert_eq!(s.updated_at, Some(1_700_000_000_000));
     }
 
     #[test]

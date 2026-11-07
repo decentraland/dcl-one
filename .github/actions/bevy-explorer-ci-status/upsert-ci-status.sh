@@ -220,8 +220,7 @@ for attempt in 1 2 3 4 5; do
   fi
 
   # Re-read and confirm our section landed on the surviving comment, and that no concurrent
-  # writer left a duplicate behind.
-  sleep 1
+  # writer left a duplicate behind. A stale read falls through to the retry below.
   RECHECK=$(gh api "/repos/$REPO/issues/$PR_NUMBER/comments" --paginate --slurp)
   RIDS=()
   while IFS= read -r line; do [ -n "$line" ] && RIDS+=("$line"); done <<< "$(marker_ids "$RECHECK")"

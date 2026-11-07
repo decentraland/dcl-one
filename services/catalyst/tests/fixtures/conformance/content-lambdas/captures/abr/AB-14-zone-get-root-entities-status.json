@@ -1,0 +1,23 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://peer.decentraland.zone",
+  "request": {
+    "method": "GET",
+    "path": "/entities/status/0,0",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "content-type": "application/octet-stream",
+      "content-length": "46",
+      "etag": "\"6053be42-2e\""
+    },
+    "body": {
+      "ok": false,
+      "error": "404 path not found"
+    }
+  },
+  "note": "Answered by the gateway in front of the peer (no application trace header)."
+}

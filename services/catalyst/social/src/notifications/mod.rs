@@ -87,6 +87,14 @@ pub struct Settings {
     pub commit_hash: Option<String>,
     /// Community thumbnail CDN (`communities::Settings::cdn_url`).
     pub community_cdn_url: String,
+    /// `JUMP_IN_SITE_URL`: the jump-in site the reminder, start and approval
+    /// notices link to (the old events service's `Notifications/index.ts:18`).
+    pub jump_in_site_url: String,
+    /// `EVENTS_UPCOMING_SUMMARIES_ENABLED` with explore's Slack moderation outbox
+    /// active (`OPS_WRITES_ENABLED` and `SLACK_WEBHOOK`): the reminder job then
+    /// queues the old `:runner:` upcoming-event notice through it, one per
+    /// occurrence; off, it queues none.
+    pub event_slack_notices: bool,
 }
 
 impl Default for Settings {
@@ -109,6 +117,8 @@ impl Default for Settings {
             current_version: None,
             commit_hash: None,
             community_cdn_url: "https://decentraland.org".into(),
+            jump_in_site_url: "https://decentraland.org/jump".into(),
+            event_slack_notices: false,
         }
     }
 }
@@ -210,10 +220,12 @@ impl State {
         land_transfers::spawn(self.store.pool().clone(), jobs);
         events::spawn(
             self.store.pool().clone(),
-            events::Origins {
-                link: self.settings.events_base_url.clone(),
-                assets: self.settings.events_asset_base_url.clone(),
+            events::Links {
+                base: self.settings.events_base_url.clone(),
+                asset_base: self.settings.events_asset_base_url.clone(),
+                jump_in_site_url: self.settings.jump_in_site_url.clone(),
                 community_cdn: self.settings.community_cdn_url.clone(),
+                slack_notices: self.settings.event_slack_notices,
             },
             jobs,
         );

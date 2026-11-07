@@ -62,11 +62,13 @@ python3 tooling/image-smoke.py
   cold-build headroom. Cleanup duration and free space are logged.
 - Closing a PR removes caches for its merge ref through a workflow that never
   checks out PR code. An hourly trusted sweep also removes uploads that finish
-  after closure and retains only the newest Development Rust snapshot per
-  platform, purpose and ref; image and Explorer caches are not pruned by that rule.
-- Multi-GB Rust PR snapshots require the `ci:cache` label and a same-repository
-  Linux test job. Add the label before pushing the commit to cache; adding it
-  alone does not start a new run. Main continues to refresh test and smoke snapshots. Cache
+  after closure and, on main and open PR refs, retains only the newest smoke snapshot
+  and Rust dependency cache per key prefix and platform; image and other caches are
+  not pruned by that rule.
+- The Rust test and release-proof jobs cache dependency artifacts only
+  (`Swatinem/rust-cache`): first attempts on main save, pull requests read, and the
+  workspace crates rebuild on each run. The Explorer jobs use the same action with
+  their own save rules. The smoke job keeps its full `target` snapshot. Cache
   pressure is logged by the sweep; quota and idle eviction still apply between sweeps.
 - Imports use `--no-check-sigs`: only trusted workflows may write caches a publishing branch consumes.
 
@@ -75,6 +77,15 @@ python3 tooling/image-smoke.py
 - `QUAY_USERNAME`/`QUAY_TOKEN` robot secrets never enter builds or layers.
 - PRs only build; `main` and `v*` publish; manual runs use the `publish` checkbox.
 - Publication is not atomic: deploy APIs and Sites from one verified SHA or recorded digests.
-- APIs listen on 5210, Sites on 5212, as `1000:1000`. APIs need `DATABASE_URL`, posture, public URL, encryption key and integration secrets; Sites needs `CATALYST_URL`, `CATALYST_DATABASE_URL` and a session secret.
+- APIs listen on 5210, Sites on 5212, as `1000:1000`. APIs need `DATABASE_URL`, posture, public URL, encryption key and integration secrets, and, behind the gateway, `HTTP_TRUSTED_PROXY_CIDRS` with the gateway's network ([gateway](../gateway/README.md)); Sites needs `CATALYST_URL`, `CATALYST_DATABASE_URL` and a session secret.
 - Sites' sign-in (`/auth/login`) offers each option only when its public identifier is set, the same ones decentraland.org ships: `THIRDWEB_CLIENT_ID` (email codes), `MAGIC_API_KEY` (Magic's publishable key: Google, Apple, Discord, X) and `WALLETCONNECT_PROJECT_ID`. A different identifier signs the same account into a different wallet. Magic must allow the site's origin and `<origin>/auth/callback`. `FEATURE_FLAGS_ORIGIN` names the site whose `dapps-sign-in-primary-option` rollout lays it out (decentraland.org when unset). Locally, `tooling/dev.py` takes the three identifiers, and nothing else of the shell's, from the environment it is started in.
 - Run `schema apply` (empty) or `schema migrate` as a job before the new API. Never reset an existing database.
+
+World-admission upgrade: the release script
+`schemas/releases/world-scene-ban-keys.sql` requires a maintenance window. Stop old API and
+scene-host replicas before `catalyst schema migrate`; the object pass installs the durable queue.
+Then run `psql -v ON_ERROR_STOP=1 -f schemas/releases/world-scene-ban-keys.sql`
+with the administrative role before starting the new binaries.
+Keep the pre-migration database backup: old binaries cannot read stable world ban
+keys, so rollback must restore the matching backup. See `DATABASE.md` for the
+retention and token-remint behavior.

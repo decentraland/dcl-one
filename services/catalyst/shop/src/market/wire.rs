@@ -289,15 +289,16 @@ pub fn get_number_parameter(
         Some(v) if !v.is_empty() => v,
         _ => return Ok(None),
     };
-    js_parse_int(&raw)
+    js_parse_int_auto_radix(&raw)
         .map(Some)
         .ok_or_else(|| InvalidParameterError::new(name, raw))
 }
 
 /// `Number.parseInt` without a radix: leading whitespace (U+FEFF included),
 /// an optional sign, an optional `0x` prefix, then the leading digits. A
-/// value too wide saturates, as JS yields a lossy float there.
-pub fn js_parse_int(raw: &str) -> Option<i64> {
+/// value too wide saturates, as JS yields a lossy float there. Unlike
+/// `shared::query_params::js_parse_int` (radix 10), `0x10` is 16 here.
+pub fn js_parse_int_auto_radix(raw: &str) -> Option<i64> {
     let trimmed = raw.trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
     let (negative, rest) = match trimmed.strip_prefix('-') {
         Some(rest) => (true, rest),

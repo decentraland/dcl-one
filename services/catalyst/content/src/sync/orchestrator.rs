@@ -18,7 +18,7 @@ use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use super::pointer_changes::{self, PointerChangesOptions, ScheduleTarget};
+use super::pointer_changes::{self, PeerUrls, PointerChangesOptions, ScheduleTarget};
 use super::repository::{LiveDeploymentRepository, LiveProcessedSnapshotStore};
 use super::snapshots::{self, SnapshotScheduling};
 use super::{
@@ -187,6 +187,7 @@ impl SyncOrchestrator {
                 deployment_repo: deps.deployment_repo,
                 status: deps.status,
                 servers: Default::default(),
+                peer_urls: Arc::new(PeerUrls::new(Arc::from(Vec::new()))),
                 bootstrap_done: Default::default(),
                 cancel: CancellationToken::new(),
                 control: deps.control,
@@ -228,6 +229,9 @@ impl SyncOrchestrator {
                 }
                 false
             });
+            let mut urls: Vec<String> = servers.keys().cloned().collect();
+            urls.sort();
+            *self.inner.peer_urls.write().unwrap() = Arc::from(urls);
         }
 
         if let Some(handle) = self.bootstrap_handle.lock().await.take() {
@@ -281,17 +285,26 @@ impl SyncOrchestrator {
     }
 }
 
-/// The sync job for [`crate::jobs::Jobs`]: starts sync against `peers`, waits for the
-/// bootstrap, then holds until the job is cancelled and stops the orchestrator. A bootstrap
-/// task that dies (panics) marks the node `Failed`; that is what `/status` 503s on.
+/// The sync job for [`crate::jobs::Jobs`]: starts sync against `peers` and holds until the job
+/// is cancelled, then stops the orchestrator. A bootstrap task that dies (panics) marks the node
+/// `Failed`; that is what `/status` 503s on. The bootstrap task ends once every peer streams (the
+/// streams are their own tasks), so the job keeps running without it.
+///
+/// A changed `peers` set (the DAO list refresh) is handed to
+/// [`SyncOrchestrator::sync_with_servers`] at any time, during the first bootstrap too: a new
+/// peer bootstraps beside the others while the node keeps its state, a dropped peer's stream
+/// stops and it no longer holds the node in bootstrap, and `retry_peers` (where the
+/// failed-deployments retry fetches from) follows.
 pub async fn run_sync_job(
     orchestrator: Arc<SyncOrchestrator>,
-    peers: HashSet<String>,
+    mut peers: tokio::sync::watch::Receiver<HashSet<String>>,
+    retry_peers: Arc<tokio::sync::RwLock<Vec<String>>>,
     ctx: JobContext,
 ) -> anyhow::Result<()> {
-    info!(peers = ?peers, "Sync orchestrator starting...");
+    let initial = peers.borrow_and_update().clone();
+    info!(peers = ?initial, "Sync orchestrator starting...");
     ctx.progress("starting");
-    let handle = match orchestrator.sync_with_servers(peers).await {
+    let mut handle = match orchestrator.sync_with_servers(initial).await {
         Ok(handle) => handle,
         Err(e) => {
             orchestrator.status().set_state(SyncState::Failed);
@@ -301,27 +314,49 @@ pub async fn run_sync_job(
     info!("Sync started, waiting for bootstrap...");
     ctx.progress("bootstrapping");
     let status = orchestrator.status();
-    tokio::select! {
-        _ = ctx.cancel.cancelled() => {
-            ctx.progress("stopping");
-            orchestrator.stop().await;
-            return Ok(());
-        }
-        _ = handle.wait_for_bootstrap() => {}
-    }
-    info!("Bootstrap complete, sync is now in steady state");
-    ctx.progress(format!("bootstrapped; {}", status.state_name()));
-    tokio::select! {
-        _ = ctx.cancel.cancelled() => {}
-        outcome = handle.join() => {
-            if let Err(e) = outcome
-                && !e.is_cancelled() {
-                    status.set_state(SyncState::Failed);
-                    ctx.error(format!("bootstrap task died: {e}"));
-                    orchestrator.stop().await;
-                    return Err(anyhow::anyhow!("bootstrap task died: {e}"));
+    let signal = handle.bootstrap_signal();
+    let mut bootstrapped = false;
+    let mut bootstrap_running = true;
+    let mut peers_open = true;
+    loop {
+        tokio::select! {
+            _ = ctx.cancel.cancelled() => break,
+            _ = signal.wait(), if !bootstrapped => {
+                bootstrapped = true;
+                info!("Bootstrap complete, sync is now in steady state");
+                ctx.progress(format!("bootstrapped; {}", status.state_name()));
+            }
+            changed = peers.changed(), if peers_open => {
+                if changed.is_err() {
+                    peers_open = false;
+                    continue;
                 }
-            ctx.cancel.cancelled().await;
+                let next = peers.borrow_and_update().clone();
+                info!(peers = ?next, "Sync peers changed");
+                handle = match orchestrator.sync_with_servers(next.clone()).await {
+                    Ok(handle) => handle,
+                    Err(e) => {
+                        warn!(error = %e, "Sync peers changed after the orchestrator stopped");
+                        ctx.error(format!("peer change after stop: {e}"));
+                        break;
+                    }
+                };
+                bootstrap_running = true;
+                let mut sorted: Vec<String> = next.into_iter().collect();
+                sorted.sort();
+                *retry_peers.write().await = sorted;
+                ctx.progress(format!("peers changed; {}", status.state_name()));
+            }
+            outcome = handle.join(), if bootstrap_running => {
+                bootstrap_running = false;
+                if let Err(e) = outcome
+                    && !e.is_cancelled() {
+                        status.set_state(SyncState::Failed);
+                        ctx.error(format!("bootstrap task died: {e}"));
+                        orchestrator.stop().await;
+                        return Err(anyhow::anyhow!("bootstrap task died: {e}"));
+                    }
+            }
         }
     }
     ctx.progress("stopping");
@@ -339,6 +374,9 @@ struct SyncOrchestratorRefs {
     deployment_repo: Arc<LiveDeploymentRepository>,
     status: Arc<SyncStatus>,
     servers: Arc<Mutex<HashMap<String, ServerState>>>,
+    /// Every peer's URL, the download fallback each stream reads per entity, so a running
+    /// stream follows peer changes.
+    peer_urls: Arc<PeerUrls>,
     bootstrap_done: Arc<Notify>,
     cancel: CancellationToken,
     control: SyncControl,
@@ -448,7 +486,12 @@ impl SyncOrchestratorRefs {
 
     /// Publishes `state` only when every peer reached steady state; otherwise the node stays
     /// where it is and the straggler retry publishes once the held peers catch up.
+    /// A node already `Syncing` (a peer added by a DAO list refresh re-runs the bootstrap) is
+    /// never sent back to `PartiallySynced`.
     async fn announce_if_every_server_synced(&self, state: SyncState, message: &str) {
+        if self.status.state() == SyncState::Syncing && state != SyncState::Syncing {
+            return;
+        }
         let held = self.servers_not_syncing().await;
         if held.is_empty() {
             info!("{message}");
@@ -979,13 +1022,14 @@ impl SyncOrchestratorRefs {
 
         let filter_owned = entity_type_filter.map(|f| Arc::new(f.clone()));
 
-        let mut handles = Vec::new();
+        // A JoinSet aborts its passes when dropped: a bootstrap aborted by a peer change (or a
+        // stop) never leaves a pass running beside the restarted one.
+        let mut passes = tokio::task::JoinSet::new();
         for (server, from_timestamp) in bootstrapping {
             let refs = self.clone();
             let filter = filter_owned.clone();
-            let all_servers = self.server_urls().await;
 
-            handles.push(tokio::spawn(async move {
+            passes.spawn(async move {
                 let options = PointerChangesOptions {
                     from_timestamp,
                     wait_time_ms: 0,
@@ -999,7 +1043,7 @@ impl SyncOrchestratorRefs {
                     &options,
                     ScheduleTarget {
                         deployer: refs.deployer.as_ref(),
-                        content_servers: &all_servers,
+                        content_servers: &refs.peer_urls,
                         report: &report,
                     },
                     persist_cursor.then(|| refs.deployment_repo.clone()),
@@ -1028,29 +1072,27 @@ impl SyncOrchestratorRefs {
                         state.phase = ServerPhase::Syncing;
                     }
                 }
-            }));
+            });
         }
 
-        for handle in handles {
-            let _ = handle.await;
-        }
+        while passes.join_next().await.is_some() {}
 
         self.deployer.on_idle().await?;
         Ok(())
     }
 
+    /// Spawns a stream for every `Syncing` peer without one. Spawning and recording the handle
+    /// happen under one lock, with no await between, so an abort of the bootstrap task never
+    /// leaves an unrecorded stream behind (which the next call would duplicate).
     async fn start_steady_state_sync(&self) -> Result<(), SyncError> {
-        let syncing = self
-            .select_servers(|url, s| {
-                (s.phase == ServerPhase::Syncing && s.sync_task.is_none())
-                    .then(|| (url.to_string(), s.last_snapshot_timestamp))
-            })
-            .await;
-
-        for (server, mut from_timestamp) in syncing {
+        let mut servers = self.servers.lock().await;
+        for (server, state) in servers.iter_mut() {
+            if state.phase != ServerPhase::Syncing || state.sync_task.is_some() {
+                continue;
+            }
             let refs = self.clone();
-            let all_servers = self.server_urls().await;
-            let server_key = server.clone();
+            let server = server.clone();
+            let mut from_timestamp = state.last_snapshot_timestamp;
 
             let handle = tokio::spawn(async move {
                 let cfg = &refs.config;
@@ -1072,7 +1114,7 @@ impl SyncOrchestratorRefs {
                         &options,
                         ScheduleTarget {
                             deployer: refs.deployer.as_ref(),
-                            content_servers: &all_servers,
+                            content_servers: &refs.peer_urls,
                             report: &report,
                         },
                         Some(refs.deployment_repo.clone()),
@@ -1108,10 +1150,7 @@ impl SyncOrchestratorRefs {
                     }
                 }
             });
-
-            if let Some(state) = self.servers.lock().await.get_mut(&server_key) {
-                state.sync_task = Some(handle);
-            }
+            state.sync_task = Some(handle);
         }
 
         Ok(())
@@ -1128,6 +1167,34 @@ impl SyncHandle {
     /// Returns once the node left `Bootstrapping` (partially or fully synced), even when that
     /// happened before this was called.
     pub async fn wait_for_bootstrap(&self) {
+        self.bootstrap_signal().wait().await
+    }
+
+    /// [`Self::wait_for_bootstrap`] without borrowing the handle; shared by every handle the
+    /// orchestrator returns.
+    pub fn bootstrap_signal(&self) -> BootstrapSignal {
+        BootstrapSignal {
+            bootstrap_done: self.bootstrap_done.clone(),
+            status: self.status.clone(),
+        }
+    }
+
+    /// The bootstrap task itself. It ends once every peer reached steady state (their streams
+    /// are separate tasks), on stop, when a later `sync_with_servers` aborts it, or on a panic.
+    pub async fn join(&mut self) -> Result<(), tokio::task::JoinError> {
+        (&mut self.task).await
+    }
+}
+
+/// Resolves once the node left `Bootstrapping`; see [`SyncHandle::bootstrap_signal`].
+#[derive(Clone)]
+pub struct BootstrapSignal {
+    bootstrap_done: Arc<Notify>,
+    status: Arc<SyncStatus>,
+}
+
+impl BootstrapSignal {
+    pub async fn wait(&self) {
         loop {
             let notified = self.bootstrap_done.notified();
             tokio::pin!(notified);
@@ -1137,11 +1204,6 @@ impl SyncHandle {
             }
             notified.await;
         }
-    }
-
-    /// The bootstrap task itself; it only ends on stop or on a panic.
-    pub async fn join(self) -> Result<(), tokio::task::JoinError> {
-        self.task.await
     }
 }
 

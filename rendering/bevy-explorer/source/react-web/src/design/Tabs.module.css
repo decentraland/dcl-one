@@ -160,6 +160,32 @@
   background: var(--accent);
 }
 
+/* ---- shop: the section tabs of the Shop's title bar, tighter and on a white wash ---- */
+.shop {
+  gap: 10px;
+}
+.shop .tab {
+  gap: 4px;
+  height: 42px;
+  padding: 0 14px 0 10px;
+  border-radius: var(--r-md);
+  background: var(--white-10);
+  color: var(--text);
+  font-size: var(--type-18);
+  font-weight: var(--fw-semibold);
+  transition: transform var(--dur-hover) var(--ease-inout);
+}
+.shop .tab:hover:not(:disabled) {
+  transform: scale(1.04);
+}
+.shop .tab:active:not(:disabled) {
+  animation: pressBounce 583ms var(--ease-inout);
+}
+.shop .active,
+.shop .active:hover {
+  background: var(--accent);
+}
+
 /* ---- subtab: tall labels on a divider, selected = thick brand underline ---- */
 .subtab {
   gap: 28px;

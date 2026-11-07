@@ -109,6 +109,67 @@ pub async fn dm_history_read(account: &str, partner: &str) -> Result<Vec<DmHisto
     read_records(&key, &path)
 }
 
+/// The lines from the `keep`-th last message on, so its reactions stay with it, and never more
+/// than the last `keep_records` lines (reactions alone can grow a conversation); `None` when
+/// nothing has to go. A line that does not decrypt to a record counts as a message, so a damaged
+/// line never drops its neighbours.
+fn trimmed_lines(
+    key: &[u8; 32],
+    lines: &[String],
+    keep: usize,
+    keep_records: usize,
+) -> Option<Vec<String>> {
+    let is_message = |line: &String| {
+        decrypt_record(key, line)
+            .and_then(|plain| serde_json::from_slice::<DmHistoryEntry>(&plain).ok())
+            .is_none_or(|entry| entry.reaction.is_none())
+    };
+    if keep == 0 {
+        return (!lines.is_empty()).then(Vec::new);
+    }
+    let mut seen = 0;
+    let by_messages = lines.iter().rposition(|line| {
+        if !is_message(line) {
+            return false;
+        }
+        seen += 1;
+        seen == keep
+    });
+    let first_kept = by_messages
+        .unwrap_or(0)
+        .max(lines.len().saturating_sub(keep_records));
+    (first_kept > 0).then(|| lines[first_kept..].to_vec())
+}
+
+/// Keeps only the last `keep` messages of a conversation and the reactions to them, within the
+/// last `keep_records` records.
+pub async fn dm_history_trim(
+    account: &str,
+    partner: &str,
+    keep: usize,
+    keep_records: usize,
+) -> Result<(), String> {
+    let key = key(account);
+    let path = account_dir(&key)?.join(hashed_name(&key, partner));
+    let _guard = LOCK.lock().map_err(|e| e.to_string())?;
+    let lines: Vec<String> = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.to_string()),
+    };
+    let Some(kept) = trimmed_lines(&key, &lines, keep, keep_records) else {
+        return Ok(());
+    };
+    // written whole, then renamed over the old file, so a crash leaves one or the other
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, kept.join("\n") + "\n").map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+}
+
 pub async fn dm_history_delete(account: &str, partner: &str) -> Result<(), String> {
     let key = key(account);
     let path = account_dir(&key)?.join(hashed_name(&key, partner));
@@ -117,5 +178,83 @@ pub async fn dm_history_delete(account: &str, partner: &str) -> Result<(), Strin
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::DmHistoryReaction;
+
+    fn message(key: &[u8; 32], n: u32) -> String {
+        let entry = DmHistoryEntry {
+            from: "0xa".to_owned(),
+            message: format!("m{n}"),
+            received_at: n as f64,
+            sent_at: Some(n as f64),
+            reaction: None,
+        };
+        encrypt_record(key, &serde_json::to_vec(&entry).unwrap())
+    }
+
+    fn reaction(key: &[u8; 32], to: u32) -> String {
+        let entry = DmHistoryEntry {
+            from: "0xb".to_owned(),
+            message: String::new(),
+            received_at: to as f64 + 0.5,
+            sent_at: None,
+            reaction: Some(DmHistoryReaction {
+                message_id: format!("0xa:{to}"),
+                emoji: "\u{1f44d}".to_owned(),
+                remove: false,
+            }),
+        };
+        encrypt_record(key, &serde_json::to_vec(&entry).unwrap())
+    }
+
+    #[test]
+    fn the_trim_keeps_the_last_messages_and_their_reactions() {
+        let key = key("0xaccount");
+        // m1 r1 m2 r2 r2 m3 r3 m4: keeping 2 messages keeps m3 r3 m4, and orphans r1 r2 go
+        let lines = vec![
+            message(&key, 1),
+            reaction(&key, 1),
+            message(&key, 2),
+            reaction(&key, 2),
+            reaction(&key, 2),
+            message(&key, 3),
+            reaction(&key, 3),
+            message(&key, 4),
+        ];
+        assert_eq!(
+            trimmed_lines(&key, &lines, 2, 100),
+            Some(lines[5..].to_vec())
+        );
+        assert_eq!(trimmed_lines(&key, &lines, 4, 100), None);
+        assert_eq!(trimmed_lines(&key, &lines, 0, 100), Some(Vec::new()));
+        // a line that is not a record counts as a message
+        let mut with_junk = lines.clone();
+        with_junk.push("not base64!".to_owned());
+        assert_eq!(
+            trimmed_lines(&key, &with_junk, 1, 100),
+            Some(vec!["not base64!".to_owned()])
+        );
+    }
+
+    #[test]
+    fn the_record_cap_bounds_a_conversation_that_only_gains_reactions() {
+        let key = key("0xaccount");
+        // m1 m2 then six reactions to m2: the two messages fit, the records do not
+        let mut lines = vec![message(&key, 1), message(&key, 2)];
+        lines.extend((0..6).map(|_| reaction(&key, 2)));
+        assert_eq!(trimmed_lines(&key, &lines, 2, 8), None);
+        assert_eq!(trimmed_lines(&key, &lines, 2, 5), Some(lines[3..].to_vec()));
+        // the record cap can cut below the message count
+        assert_eq!(trimmed_lines(&key, &lines, 2, 1), Some(lines[7..].to_vec()));
+        // the message cut wins when it is the tighter one
+        assert_eq!(
+            trimmed_lines(&key, &lines, 1, 100),
+            Some(lines[1..].to_vec())
+        );
     }
 }

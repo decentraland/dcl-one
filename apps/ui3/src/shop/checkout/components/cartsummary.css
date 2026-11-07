@@ -67,11 +67,6 @@
   margin: 0;
 }
 
-.shop-summary__row--balance {
-  padding-top: 12px;
-  border-top: 1px solid var(--shop-card-line, rgba(160, 155, 168, 0.25));
-}
-
 .shop-summary__sub {
   color: var(--shop-gray-4, #cfcdd4);
   font-size: 12px;
@@ -79,37 +74,9 @@
   line-height: 1;
 }
 
-.shop-summary__short {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.2);
-  color: #ffb86b;
-  font-size: 13px;
-}
-
-.shop-summary__topup {
-  padding: 4px 12px;
-  border: 1px solid #fcfcfc;
-  border-radius: var(--shop-radius-pill, 50px);
-  background: transparent;
-  color: #fcfcfc;
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-}
-
 @media (max-width: 880px) {
   .shop-summary {
     gap: 8px;
-  }
-
-  .shop-summary__value {
-    font-size: 20px;
   }
 }
 

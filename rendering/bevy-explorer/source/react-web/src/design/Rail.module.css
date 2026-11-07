@@ -2,11 +2,20 @@
   position: relative;
   padding-bottom: 16px;
 }
+/* Without dots there is nothing to keep room for under the cards. */
+.noDots {
+  padding-bottom: 0;
+}
 .viewport {
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
   scroll-snap-type: x mandatory;
+  /* --rail-bleed (the bleed prop): the clip reaches that far past the cards, padded back so they stay
+     put; the end padding gives the last page's last card the same room on the right. */
+  margin: calc(-1 * var(--rail-bleed-top, var(--rail-bleed, 0px))) 0 calc(-1 * var(--rail-bleed, 0px)) calc(-1 * var(--rail-bleed, 0px));
+  padding: var(--rail-bleed-top, var(--rail-bleed, 0px)) var(--rail-bleed, 0px) var(--rail-bleed, 0px);
+  scroll-padding-left: var(--rail-bleed, 0px);
 }
 .track {
   display: flex;
@@ -88,4 +97,23 @@
 .dotActive {
   width: 24px;
   background: var(--rail-dot-active);
+}
+
+/* The Shop home's dots: a 40px pill and 14px dots, 30px under the cards. */
+.shop {
+  padding-bottom: 54px;
+}
+.shop .dots {
+  bottom: 10px;
+  gap: 12px;
+  height: 14px;
+}
+.shop .dot {
+  width: 14px;
+  height: 14px;
+  background: var(--divider-strong);
+}
+.shop .dotActive {
+  width: 40px;
+  background: var(--brand);
 }

@@ -1,0 +1,21 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://peer.decentraland.zone",
+  "request": {
+    "method": "GET",
+    "path": "/content/entities/versions",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "39"
+    },
+    "body": {
+      "error": "Unrecognized type: versions"
+    }
+  },
+  "note": "Answered by the application (it carries the application trace header)."
+}

@@ -38,8 +38,9 @@ pub struct NodeConfig {
     pub http_server_port: u16,
 
     /// Direct backend proxies allowed to supply a single, overwritten X-Real-IP
-    /// for referral quotas. Empty trusts only the socket peer. These are the
-    /// backend proxy networks, not the proxy's own upstream CDN networks.
+    /// for referral quotas and the `/contents` rate limit. Empty trusts only the
+    /// socket peer. These are the backend proxy networks, not the proxy's own
+    /// upstream CDN networks.
     #[arg(long, env = "HTTP_TRUSTED_PROXY_CIDRS", value_delimiter = ',')]
     pub http_trusted_proxy_cidrs: Vec<ipnet::IpNet>,
 
@@ -94,7 +95,8 @@ pub struct NodeConfig {
 
     /// The map service `/lambdas/users/{address}/lands` points its parcel and
     /// estate images at (`<base>/v1/parcels/{x}/{y}/map.png`); empty is this
-    /// node's own `<PUBLIC_URL>/api`.
+    /// node's own `<PUBLIC_URL>/api`. `NODE_POSTURE=mirror` sets
+    /// `https://api.decentraland.org`, the base of the subgraph's images.
     #[arg(long, env = "LAND_IMAGE_BASE_URL", default_value = "")]
     pub land_image_base_url: String,
 

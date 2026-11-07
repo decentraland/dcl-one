@@ -24,6 +24,7 @@ import { creatorHubMeta } from "@/core/lib/seo/creator-hub-meta";
 import { LAND_CONTRACT } from "@ui/data/catalyst/landListing";
 
 import type { Route } from "./+types/create.land";
+import { useMarketplaceHere } from "@/data/lib/shop/marketplace-access";
 
 export const meta = () => creatorHubMeta("LAND");
 
@@ -67,6 +68,8 @@ export default function CreateLand({ loaderData }: Route.ComponentProps) {
 }
 
 function LandView({ address, owned, delegated, fallback }: LoaderData) {
+  // Buying LAND is the Shop's Marketplace: its browse link only for a visitor who has it.
+  const marketplace = useMarketplaceHere();
   const { rescoping, needsConnect } = useManageScope(address);
   const revalidator = useRevalidator();
   const navigate = useNavigate();
@@ -119,9 +122,11 @@ function LandView({ address, owned, delegated, fallback }: LoaderData) {
                       subtitle="This wallet owns no Genesis City parcels and has no parcel publishing grants. Every NAME you own comes with a World to publish to instead."
                       actions={
                         <>
-                          <Link to="/shop/lands" prefetch="intent" className="btn btn--secondary btn--md" style={{ textDecoration: "none" }}>
-                            Browse LAND
-                          </Link>
+                          {marketplace ? (
+                            <Link to="/shop/lands" prefetch="intent" className="btn btn--secondary btn--md" style={{ textDecoration: "none" }}>
+                              Browse LAND
+                            </Link>
+                          ) : null}
                           <Link to="/create/worlds" prefetch="intent" className="btn btn--secondary btn--md" style={{ textDecoration: "none" }}>
                             Your Worlds
                           </Link>

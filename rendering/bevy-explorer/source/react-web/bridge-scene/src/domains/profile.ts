@@ -398,7 +398,8 @@ export function registerProfile(ctx: Ctx): void {
     }
     const extras = toProfileExtras(msg)
     if (Object.keys(extras).length > 0) data.profileExtras = extras
-    if (data.base == null && data.profileExtras == null) {
+    if (msg.nameColor !== undefined) data.nameColor = { ...msg.nameColor, clear: false }
+    if (data.base == null && data.profileExtras == null && data.nameColor == null) {
       ctx.send({ kind: 'profileSaved', ok: true })
       return
     }
