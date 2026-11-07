@@ -9,6 +9,7 @@
     "allowSyntheticDefaultImports": true,
     "declaration": true,
     "stripInternal": true,
+    "skipLibCheck": true,
     "downlevelIteration": true,
     "preserveConstEnums": true,
     "outDir": "dist",

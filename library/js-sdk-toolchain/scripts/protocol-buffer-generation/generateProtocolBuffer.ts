@@ -23,14 +23,15 @@ export async function generateProtocolBuffer(params: {
 
   const protoCommandArgs: string[] = [
     `--plugin=${TS_PROTO_PLUGIN_PATH}`,
-    `--dcl_ts_proto_opt=esModuleInterop=true`,
-    `--dcl_ts_proto_opt=outputJsonMethods=false`,
-    `--dcl_ts_proto_opt=forceLong=false`,
-    `--dcl_ts_proto_opt=outputPartialMethods=false`,
-    `--dcl_ts_proto_opt=fileSuffix=.gen`,
-    `--dcl_ts_proto_opt=unrecognizedEnum=false`,
-    `--dcl_ts_proto_opt=oneof=unions`,
-    `--dcl_ts_proto_out=${pbGeneratedPath}`,
+    `--ts_proto_opt=esModuleInterop=true`,
+    `--ts_proto_opt=outputJsonMethods=false`,
+    `--ts_proto_opt=forceLong=false`,
+    `--ts_proto_opt=outputPartialMethods=false`,
+    `--ts_proto_opt=fileSuffix=.gen`,
+    `--ts_proto_opt=unrecognizedEnum=false`,
+    `--ts_proto_opt=oneof=unions`,
+    `--ts_proto_opt=annotateFilesWithVersion=false`,
+    `--ts_proto_out=${pbGeneratedPath}`,
     `--proto_path=${protocolPath}`,
     protoFiles
   ]
@@ -82,12 +83,32 @@ export function fixTsGeneratedByProto(filePath: string) {
   content = content.replace(/^import type/gm, 'import')
 
   /**
-   * Read the generated pb component and add @internal comments to exported methods
-   * So we dont add this types to the final .d.ts build
+   * Keep the per-file package and file-name constants private: every generated file exports
+   * the same names, which would collide in the rolled-up .d.ts
    */
-  content = content.replace(`export const protobufPackage = `, 'const protobufPackageSarasa = ')
+  content = content.replace(/^export const (protobufPackage|protobufFileName) = /gm, 'const $1 = ')
+
+  /**
+   * ts-proto types each message codec with a per-file `MessageFns<T>` interface. Exporting one
+   * per file collides in the rolled-up .d.ts and an unexported one makes api-extractor report a
+   * forgotten export, so let the codec's type be inferred from its literal and drop the interface
+   */
+  content = content.replace(/^export const (\w+): MessageFns<\1>( & \w+)? = \{$/gm, 'export const $1 = {')
+  content = content.replace(/\nexport interface MessageFns<T> \{\n[\s\S]*?\n\}\n/, '\n')
+
+  /**
+   * ts-proto >= 2.11 types `oneof=unions` members as `x: U | undefined`. Keep them optional (`x?:`) as
+   * the previous generator did, so component literals may omit the oneof and the public types stay the same
+   */
+  content = content.replace(
+    /^([ \t]+\w+):(\s*(?:\|\s*)?(?:\/\/[^\n]*\s*)?(?:\/\*\*[\s\S]*?\*\/\s*)?\{ \$case: "\w+"; )/gm,
+    '$1?:$2'
+  )
+
+  /**
+   * Add @public comments to the exported declarations so they are part of the final .d.ts build
+   */
   content = content.replace(/\nexport /g, publicInterface)
-  content = content.replace(/export const/g, internalComment)
 
   /**
    * Convert all `enum` to `const enum`
@@ -97,12 +118,6 @@ export function fixTsGeneratedByProto(filePath: string) {
   fs.removeSync(filePath)
   fs.writeFileSync(filePath, content)
 }
-
-const internalComment = `
-/**
- * @internal
- */
-export const`
 
 const publicInterface = `
 /**

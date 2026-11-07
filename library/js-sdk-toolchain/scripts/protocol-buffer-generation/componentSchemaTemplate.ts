@@ -8,9 +8,7 @@ import { PB$\{ComponentName\} } from './pb/decentraland/sdk/components/$\{Compon
 export const $\{ComponentName\}Schema: ISchema<PB$\{ComponentName\}> & { COMPONENT_ID: number } = {
   COMPONENT_ID: $\{ComponentId\},
   serialize(value: PB$\{ComponentName\}, builder: ByteBuffer): void {
-    const writer = PB$\{ComponentName\}.encode(value)
-    const buffer = new Uint8Array(writer.finish(), 0, writer.len)
-    builder.writeBuffer(buffer, false)
+    builder.writeBuffer(PB$\{ComponentName\}.encode(value).finish(), false)
   },
   deserialize(reader: ByteBuffer): PB$\{ComponentName\} {
     return PB$\{ComponentName\}.decode(reader.buffer(), reader.remainingBytes())

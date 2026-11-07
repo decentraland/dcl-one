@@ -14,4 +14,9 @@
  *
  */
 
+import { polyfillTextEncoder } from './text-codec'
+
+// @dcl/ecs decodes protobuf messages with @bufbuild/protobuf, which needs the Encoding API on globalThis
+polyfillTextEncoder()
+
 export * from '@dcl/ecs'

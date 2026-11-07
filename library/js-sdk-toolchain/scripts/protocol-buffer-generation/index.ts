@@ -122,8 +122,8 @@ export async function buildProtobuf(outTsPath: string, protobufferFilesPath: str
 
   const protoCommandArgs: string[] = [
     `--plugin=${TS_PROTO_PLUGIN_PATH}`,
-    `--dcl_ts_proto_opt=${protoOptions.join(',')}`,
-    `--dcl_ts_proto_out=${pbGeneratedPath}`,
+    `--ts_proto_opt=${[...protoOptions, 'annotateFilesWithVersion=false'].join(',')}`,
+    `--ts_proto_out=${pbGeneratedPath}`,
     `--proto_path=${protobufferFilesPath}`,
     protoFiles
   ]

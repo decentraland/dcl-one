@@ -11,7 +11,6 @@
     "@babel/preset-typescript": "^7.28.5",
     "@dcl/protocol": "file:../protocol",
     "@dcl/quickjs-emscripten": "^0.21.0-3680274614.commit-1808aa1",
-    "@dcl/ts-proto": "1.153.0",
     "@types/fs-extra": "^9.0.12",
     "@types/jest": "^28.1.8",
     "fs-extra": "^10.0.0",
@@ -26,6 +25,7 @@
     "@types/node": "^24.10.1",
     "npm-package-arg": "^12.0.2",
     "syncpack": "^13.0.4",
+    "ts-proto": "2.18.4",
     "typedoc": "^0.23.28"
   },
   "engines": {
