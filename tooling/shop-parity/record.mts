@@ -4,6 +4,7 @@
 //
 //   node record.mts --set <name> [--pages overview,items] [--viewports desktop,mobile]
 //   node record.mts --set <name> --fill     # replay; read what the replay could not answer, once
+import { signedHeaders, walletKey, WALLET_KEY_ENV } from "./lib/session.mts";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { PAGES, type PageSpec } from "./pages.mts";
@@ -12,6 +13,13 @@ import { RECORDINGS, referencePin, ROOT, STATE } from "./lib/paths.mts";
 import { fillMisses, Recording, savingAfter } from "./lib/recording.mts";
 import { runAll, selectViewports } from "./lib/run.mts";
 import { prepareReference } from "./reference.mts";
+
+/** The test wallet's signer for the pages that read signed in, when its key is set. */
+function testWalletSigner() {
+  if (!process.env[WALLET_KEY_ENV]) return undefined;
+  const key = walletKey();
+  return (method: string, path: string, metadata: string) => signedHeaders(key, method, path, Date.now(), metadata);
+}
 
 const arg = (name: string) => {
   const i = process.argv.indexOf(name);
@@ -28,14 +36,14 @@ if (process.argv.includes("--fill")) {
   const replay = new Recording(dir);
   if (!replay.manifest) throw new Error(`no recording ${set} under ${RECORDINGS}`);
   await runAll(replay, specs, selectViewports(arg("--viewports")), { now: Date.parse(replay.manifest.recordedAt), targets: replay.manifest.targets, out: join(STATE, "fill-run", set) });
-  const { failed } = await fillMisses(replay, new Recording(dir, { live: true }));
+  const { failed } = await fillMisses(replay, new Recording(dir, { live: true, signer: testWalletSigner() }));
   if (failed.length) {
     console.error(`could not fill ${failed.length} request(s); what was filled is saved:\n${failed.map((f) => `  ${f}`).join("\n")}`);
     process.exitCode = 1;
   }
 } else {
   prepareReference();
-  const live = new Recording(dir, { live: true });
+  const live = new Recording(dir, { live: true, signer: testWalletSigner() });
   live.synthesize = offerSynthesizer(live);
   const targets: Record<string, string> = { ...(live.manifest?.targets ?? {}) };
   const now = live.manifest?.recordedAt ? Date.parse(live.manifest.recordedAt) : Date.now();

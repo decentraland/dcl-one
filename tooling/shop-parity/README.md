@@ -79,6 +79,21 @@ or that went to a host the harness does not know is declared by the page (`unrec
 fails when one of them stops being identical. An expectation records a difference, it does not
 approve one: each names the rule or code behind it.
 
+## Signed-in pages
+
+A page with `signedIn` runs signed in as a test wallet on both sides: the shared
+`single-sign-on-<address>` session both apps read, and, for the reference's decentraland-connect, its
+stored injected connection and a `window.ethereum` that answers with the account and forwards every
+other call over the network (where the recording answers it). The wallet's key comes from
+`SHOP_PARITY_WALLET_KEY` (a test wallet's 0x-prefixed key, never committed); a signed-in page refuses
+to run without it. The ephemeral key is derived from it, so the same wallet and clock give the same
+session and the same captures.
+
+Pages sign their requests at the fixed clock, which production refuses a minute later. While
+recording, a request a page sent signed is signed again as the same wallet at the real time before
+it goes out; every other request still goes out unsigned. A replay answers by method, path, query
+and body, never by headers, so the signature is not part of what is compared.
+
 ## Recording
 
 ```sh

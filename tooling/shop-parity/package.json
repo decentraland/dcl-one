@@ -15,7 +15,8 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "playwright-core": "1.63.0"
+    "playwright-core": "1.63.0",
+    "viem": "2.57.7"
   },
   "devDependencies": {
     "@types/node": "26.6.5",

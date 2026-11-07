@@ -1,6 +1,7 @@
 // Capture one page on one side: settle, run the page's interactions, read the structure, and take
 // the page as a user scrolls it (viewport tiles stitched by their real scroll offset, so fixed
 // backgrounds and sticky bars are painted as they are seen, not stretched by a full-page grab).
+import { signIn, walletKey } from "./session.mts";
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import { pagePath, type PageSpec, type Side } from "../pages.mts";
 import { sideContext, type Viewport } from "./browser.mts";
@@ -136,6 +137,7 @@ export async function captureSide(
   opts: CaptureOptions,
 ): Promise<SideCapture> {
   const context = await sideContext(browser, vp, { now: opts.now, seed: opts.seed });
+  if (spec.signedIn) await signIn(context, walletKey(), opts.now);
   try {
     return await captureIn(context, spec, vp, side, opts);
   } finally {

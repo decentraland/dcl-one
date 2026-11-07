@@ -121,7 +121,8 @@ const BATCHED: Batched[] = [
   },
 ];
 
-export type Miss = { key: string; service: Service; method: string; path: string; query: string; side: string; request?: unknown };
+/** `signed`: the page sent it signed, with this `x-identity-metadata`, so a fill signs it again the same way. */
+export type Miss = { key: string; service: Service; method: string; path: string; query: string; side: string; request?: unknown; signed?: string };
 
 export class Recording {
   readonly dir: string;
@@ -140,11 +141,18 @@ export class Recording {
   readonly failures: string[] = [];
   /** The pauses before the second and third attempt when production fails. */
   private readonly retryDelays: number[];
+  /**
+   * Signs a request a page sent signed (an `x-identity-*` chain), as the test wallet, at the real
+   * time: the page signed at the fixed clock, which production refuses once a minute has passed.
+   * Without it a signed request goes out unsigned, as every other request does.
+   */
+  private readonly signer?: (method: string, path: string, metadata: string) => Promise<Record<string, string>>;
 
-  constructor(dir: string, opts: { live?: boolean; retryDelays?: number[] } = {}) {
+  constructor(dir: string, opts: { live?: boolean; retryDelays?: number[]; signer?: (method: string, path: string, metadata: string) => Promise<Record<string, string>> } = {}) {
     this.dir = dir;
     this.live = !!opts.live;
     this.retryDelays = opts.retryDelays ?? [1000, 3000];
+    this.signer = opts.signer;
     const index = join(dir, "index.json");
     if (existsSync(index)) {
       for (const e of JSON.parse(readFileSync(index, "utf8")) as Entry[]) this.entries.set(e.key, e);
@@ -206,6 +214,8 @@ export class Recording {
       if (attempt > 0) await new Promise((r) => setTimeout(r, Math.max(wait, this.retryDelays[attempt - 1] ?? 0)));
       wait = 0;
       try {
+        // The page's metadata is part of what it signed (a service may check who signs, e.g. the marketplace's `signer`).
+        if (this.signer && headers?.["x-identity-auth-chain-0"]) Object.assign(h, await this.signer(method, new URL(url).pathname, headers["x-identity-metadata"] ?? "{}"));
         const res = await fetch(url, { method, headers: h, body: method === "GET" || method === "HEAD" || !body ? undefined : new Uint8Array(body), signal: AbortSignal.timeout(30_000) });
         const answer = { status: res.status, contentType: res.headers.get("content-type") ?? "application/octet-stream", body: Buffer.from(await res.arrayBuffer()) };
         // A server error is the service's moment, not its answer: ask again, and the caller keeps none.
@@ -349,7 +359,8 @@ export class Recording {
       return { status: 200, contentType: "image/png", body: placeholderPng(req.path, size.width, size.height) };
     }
     if (!entry) {
-      this.misses.push({ key, service: req.service, method, path: req.path, query, side: req.side, ...(request === undefined ? {} : { request }) });
+      const signed = req.headers?.["x-identity-auth-chain-0"] ? (req.headers["x-identity-metadata"] ?? "{}") : undefined;
+      this.misses.push({ key, service: req.service, method, path: req.path, query, side: req.side, ...(request === undefined ? {} : { request }), ...(signed === undefined ? {} : { signed }) });
       if (request !== undefined && req.body?.length) this.missBodies.set(key, { body: req.body, contentType: req.headers?.["content-type"] });
       return { status: 404, contentType: "application/json", body: Buffer.from(JSON.stringify({ ok: false, error: "not in the parity recording", key })) };
     }
@@ -405,7 +416,9 @@ export async function fillMisses(replay: Recording, live: Recording, log: (line:
       }
       try {
         const before = live.failures.length;
-        const answer = await live.answer({ method: m.method, service: m.service, path: m.path, search: m.query, body: sent?.body, headers: { "content-type": sent?.contentType ?? "application/json", accept: "application/json" }, side: "fill" });
+        // A request the page signed goes out signed again (the live recording's signer, at the real time).
+        const signedBy: Record<string, string> = m.signed === undefined ? {} : { "x-identity-auth-chain-0": "page", "x-identity-metadata": m.signed };
+        const answer = await live.answer({ method: m.method, service: m.service, path: m.path, search: m.query, body: sent?.body, headers: { "content-type": sent?.contentType ?? "application/json", accept: "application/json", ...signedBy }, side: "fill" });
         // A server error (an rpc one is answered 200 with a JSON-RPC error) was not kept.
         if (live.failures.length > before) {
           failed.push(...live.failures.slice(before));
