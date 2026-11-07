@@ -28,8 +28,8 @@ const WORLDS_DOCS_URL = 'https://docs.decentraland.org/creator/worlds/about/'
 export type ShopNameStatus = 'idle' | 'short' | 'tooLong' | 'checking' | 'available' | 'taken' | 'banned' | 'error'
 
 export interface ShopNamesProps {
-  /** RESALE NAME: the NAMEs others resell. */
-  onResale: () => void
+  /** RESALE NAME: the NAMEs others resell. Absent while the Marketplace's rollout is off: no chip. */
+  onResale?: () => void
   /** The typed NAME. */
   value: string
   onChange: (value: string) => void
@@ -45,7 +45,8 @@ export interface ShopNamesProps {
   /** The NAME's price in whole Credits, once known. */
   price?: number | null
   onClaim: (input: PressedWith) => void
-  onMakeOffer: () => void
+  /** A taken NAME's offer to its owner, on the Marketplace. Absent while its rollout is off: no MAKE OFFER. */
+  onMakeOffer?: () => void
   onRetry: () => void
 }
 
@@ -54,7 +55,7 @@ export function ShopNames(props: ShopNamesProps): React.JSX.Element {
     <div className={styles.names}>
       <div className={styles.chips} role="group" aria-label="NAMEs">
         <Chip variant="dark" label="Unique name" icon={<MaskIcon src={uniqueIcon} size={26} />} selected />
-        <Chip variant="dark" label="Resale name" icon={<MaskIcon src={resaleIcon} size={26} />} onClick={props.onResale} />
+        {props.onResale ? <Chip variant="dark" label="Resale name" icon={<MaskIcon src={resaleIcon} size={26} />} onClick={props.onResale} /> : null}
       </div>
       <UniqueName {...props} />
       <NameBanner />
@@ -145,15 +146,19 @@ function Feedback({
       ) : status === 'taken' ? (
         <span className={`${styles.error} ${styles.taken}`}>
           <img src={warningIcon} alt="" width={15} height={15} />
-          <span>
-            {/* Broken where the design breaks it. */}
-            This NAME Is Taken. Choose Another NAME Or Make
-            <br />
-            An Offer To The Owner.{' '}
-            <button type="button" className={styles.makeOffer} onClick={onMakeOffer}>
-              MAKE OFFER
-            </button>
-          </span>
+          {onMakeOffer ? (
+            <span>
+              {/* Broken where the design breaks it. */}
+              This NAME Is Taken. Choose Another NAME Or Make
+              <br />
+              An Offer To The Owner.{' '}
+              <button type="button" className={styles.makeOffer} onClick={onMakeOffer}>
+                MAKE OFFER
+              </button>
+            </span>
+          ) : (
+            <span>This NAME Is Taken. Choose Another NAME.</span>
+          )}
         </span>
       ) : status === 'banned' ? (
         <span className={`${styles.error} ${styles.taken}`}>

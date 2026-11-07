@@ -17,6 +17,7 @@ import { useCollectionName, useCreatorNames } from "../components/PickerFilters"
 import LoadMore from "../components/LoadMore";
 import SkeletonCards from "../components/SkeletonCards";
 import { indexUnavailable, type IndexFreshness } from "../freshness";
+import { useMarketplace } from "../../market/access";
 import { shopFlags } from "../flags";
 import { useListingsFreshness, useScrollTopOnChange, useSeo, useUrlFilters } from "../hooks";
 import { t } from "../intl";
@@ -49,11 +50,12 @@ export default function Items({ contracts, hideNames = false, seo, lockStatus }:
   useSeo({ title: seo?.title ?? (rawQuery ? seoSearchTitle(rawQuery) : SEO_TITLE) });
 
   const flags = shopFlags();
+  const marketplace = useMarketplace();
   const dealsRequested = dealsRequestedIn(searchParams);
   const filterDefaults = useMemo(() => itemsFilterDefaults(q, dealsRequested), [dealsRequested, q]);
   const [filterState, setFilters] = useUrlFilters(filterDefaults);
   const { subCategory, rarities, priceMin, priceMax, smart } = filterState;
-  const { defaultStatus, deals, category, status, isUnified, min, max, bodyShape, listingType, wearableGenders, creators, collection, sortOptions, sortOption, key, fetchPage } = itemsGrid(filterState, q, { contracts, hideNames, lockStatus });
+  const { defaultStatus, deals, category, status, isUnified, min, max, bodyShape, listingType, wearableGenders, creators, collection, sortOptions, sortOption, key, fetchPage } = itemsGrid(filterState, q, { contracts, hideNames, lockStatus, marketplace });
   const emoteFilters = emoteFilterBindings(category, filterState, setFilters);
   useScrollTopOnChange(`${category}:${subCategory ?? ""}`);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -121,7 +123,7 @@ export default function Items({ contracts, hideNames = false, seo, lockStatus }:
             bodyShape={bodyShape}
             onBodyShape={category !== "emote" ? (v) => setFilters({ bodyShape: v }) : undefined}
             listingType={listingType ?? "all"}
-            onListingType={isUnified && flags.secondarySales ? (v) => setFilters({ listingType: v }) : undefined}
+            onListingType={isUnified && marketplace ? (v) => setFilters({ listingType: v }) : undefined}
             status={status}
             onStatus={(s) => setFilters({ status: s })}
             hideStatus={!!lockStatus}
@@ -134,7 +136,7 @@ export default function Items({ contracts, hideNames = false, seo, lockStatus }:
             collection={collection}
             onCollection={contracts ? undefined : (v) => setFilters({ collection: v ?? "" })}
             // The collections route's on-sale flag means "the creator still sells it"; resales in the grid need every collection.
-            collectionOnSale={isUnified && (!flags.secondarySales || listingType === "primary")}
+            collectionOnSale={isUnified && (!marketplace || listingType === "primary")}
             {...emoteFilters.props}
             deals={deals}
             onDeals={flags.creatorSales ? (v) => setFilters({ deals: v, sort: defaultSortFor(!!q, v) }) : undefined}

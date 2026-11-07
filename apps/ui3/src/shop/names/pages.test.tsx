@@ -1,13 +1,14 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { Hex } from "viem";
 import { useLocation } from "react-router";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { LAND_NETWORKS } from "../land/contracts";
 import { erc20Abi } from "../land/evm";
 import { NET, nameResult } from "../land/fixtures";
 import { fakeWallet, stubClient, type Answer } from "../land/testkit";
 import { ShopHarness, type SessionKind } from "../land/testkit-react";
+import { marketplaceOn } from "../market/testing-flags";
 import { CHAIN } from "../model/chain";
 import { controllerAbi, NAME_PRICE_WEI, registrarAbi, useCreditsAbi } from "./names";
 import NamesHub from "./NamesHub";
@@ -16,6 +17,7 @@ import { RESUME_NAME_KEY } from "./resume";
 import type { EvmAddress } from "../model/address";
 import type { PurchaseOffer } from "../model/purchase";
 import { nameRegistration } from "../payment/fixtures";
+import { primeRemoteFlags } from "../discovery/lib/remoteFlags";
 
 const MANA = 10n ** 18n;
 const BUYER = "0x0000000000000000000000000000000000000b0b";
@@ -91,11 +93,20 @@ describe("NAME registration search", () => {
     expect(screen.getByRole("textbox", { name: "Search for a NAME" })).toHaveValue("Nacho");
   });
 
-  it("links a taken NAME to its resale search", async () => {
-    setup({ session: "web2", available: false });
+  it("links a taken NAME to its resale search, for a web3 session with the Marketplace on", async () => {
+    onTestFinished(marketplaceOn());
+    setup({ session: "web3", available: false });
     type("taken");
     expect(await screen.findByRole("link", { name: "Make offer" })).toHaveAttribute("href", "/shop/names?section=resale&search=taken");
     expect(screen.getByRole("button", { name: "Claim name" })).toBeDisabled();
+  });
+
+  it("without the Marketplace (a web2 session), a taken NAME only asks for another: an offer is a Marketplace bid", async () => {
+    onTestFinished(marketplaceOn());
+    setup({ session: "web2", available: false });
+    type("taken");
+    expect(await screen.findByText("This NAME is taken. Choose another NAME.")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Make offer" })).toBeNull();
   });
 
   it("prices an available NAME in credits for everyone", async () => {
@@ -107,6 +118,7 @@ describe("NAME registration search", () => {
   });
 
   it("an offer the rule judges a resale is a taken NAME: no credit price, no credits wording, a link to the resale browse", async () => {
+    onTestFinished(marketplaceOn());
     const resale: PurchaseOffer = { ...nameRegistration({ kind: "web3", wallet: BUYER as EvmAddress }), sale: "secondary" };
     vi.spyOn(console, "warn").mockImplementation(() => {});
     render(
@@ -283,11 +295,31 @@ describe("the NAME buy dialog", () => {
   });
 });
 
+describe("a NAME resale link while the Marketplace has not answered", () => {
+  it("waits instead of mounting the claim page, and reads nothing", async () => {
+    primeRemoteFlags(null);
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
+    const client = stubClient({});
+    render(
+      <ShopHarness session="web3" path="/shop/names?section=resale" route="/shop/names">
+        <NamesHub client={client} />
+      </ShopHarness>,
+    );
+    expect(await screen.findByTestId("names-pending")).toHaveAttribute("aria-busy", "true");
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(client.requests).toHaveLength(0);
+  });
+});
+
 describe("NAMEs being resold", () => {
+  beforeEach(() => marketplaceOn());
   it("lists NAME resales with their MANA price and links to the token page", async () => {
     const client = stubClient({ "GET /shop-api/v1/nfts": { body: { data: [nameResult("Nacho", { price: (250n * MANA).toString() })], total: 1 } } });
     render(
-      <ShopHarness session="web2" path="/shop/names?section=resale" route="/shop/names">
+      <ShopHarness session="web3" path="/shop/names?section=resale" route="/shop/names">
         <NamesHub client={client} />
       </ShopHarness>,
     );
@@ -302,7 +334,7 @@ describe("NAMEs being resold", () => {
   it("says the index is catching up instead of an empty market", async () => {
     const client = stubClient({ "GET /shop-api/v1/nfts": { status: 503, body: { error: "Service Unavailable", message: "nft-indexer is catching up" } } });
     render(
-      <ShopHarness session="web2" path="/shop/names?section=resale" route="/shop/names">
+      <ShopHarness session="web3" path="/shop/names?section=resale" route="/shop/names">
         <NamesHub client={client} />
       </ShopHarness>,
     );
@@ -314,7 +346,7 @@ describe("NAMEs being resold", () => {
     const browse = (path: string, results = [nameResult("Nacho", { price: (5n * MANA).toString() })]) => {
       const client = stubClient({ "GET /shop-api/v1/nfts": { body: { data: results, total: results.length } } });
       render(
-        <ShopHarness session="web2" path={path} route="/shop/names">
+        <ShopHarness session="web3" path={path} route="/shop/names">
           <NamesHub client={client} />
           <Search />
         </ShopHarness>,

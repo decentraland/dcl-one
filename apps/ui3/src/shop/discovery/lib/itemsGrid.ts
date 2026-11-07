@@ -13,6 +13,8 @@ export type ItemsGridScope = {
   contracts?: string[];
   hideNames?: boolean;
   lockStatus?: FilterStatus;
+  /** Whether resales may show (market/access.tsx); off, the grid lists primary sales only, as the old shop. */
+  marketplace?: boolean;
 };
 
 export const defaultStatusFor = (searching: boolean): FilterStatus => (searching ? "all" : "on_sale");
@@ -80,12 +82,14 @@ export type ItemsFilterState = ReturnType<typeof itemsFilterDefaults>;
 
 export const dealsRequestedIn = (searchParams: URLSearchParams): boolean => shopFlags().creatorSales && searchParams.get("deals") === "true";
 
-export function itemsGrid(filterState: ItemsFilterState, q: string, { contracts, hideNames = false, lockStatus }: ItemsGridScope = {}) {
+export function itemsGrid(filterState: ItemsFilterState, q: string, { contracts, hideNames = false, lockStatus, marketplace = false }: ItemsGridScope = {}) {
   const flags = shopFlags();
   const { subCategory, rarities, priceMin, priceMax, smart, sort } = filterState;
   const defaultStatus = defaultStatusFor(!!q);
   const bodyShape = ["male", "female", "unisex"].includes(filterState.bodyShape) ? filterState.bodyShape : "all";
-  const listingType = filterState.listingType === "primary" || filterState.listingType === "secondary" ? filterState.listingType : undefined;
+  // Without the Marketplace there is no listing-type choice: a `?listingType=` in the URL selects nothing, and the
+  // reads ask for primary sales only.
+  const listingType = marketplace && (filterState.listingType === "primary" || filterState.listingType === "secondary") ? filterState.listingType : undefined;
   const deals = flags.creatorSales && filterState.deals;
   const offered = CATEGORIES.map((c) => c.key).filter((key) => !(hideNames && key === "names"));
   const category = offered.includes(filterState.category) ? filterState.category : "all";
@@ -116,7 +120,7 @@ export function itemsGrid(filterState: ItemsFilterState, q: string, { contracts,
     isSmart: smart || undefined,
     onSale: true,
     discounted: deals || undefined,
-    listingType: (flags.secondarySales ? listingType : "primary") as "primary" | "secondary" | undefined,
+    listingType: (marketplace ? listingType : "primary") as "primary" | "secondary" | undefined,
     contractAddresses: selectedContracts?.length ? selectedContracts : undefined,
     creators: creators.length ? creators : undefined,
     ...emote,

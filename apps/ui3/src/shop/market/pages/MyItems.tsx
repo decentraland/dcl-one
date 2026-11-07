@@ -20,6 +20,7 @@ import { myStoreAccess, useShopCapabilities } from "../../seller/lib/featureFlag
 import { fetchImportable } from "../../seller/lib/import";
 import { fetchBidsByAddress, fetchMyAssets, type Bid, type MyAsset, type MyAssetsCategory } from "../lib/api";
 import { useArchivedBids } from "../store/archivedBids";
+import { useMarketplace, useMarketplaceAccess } from "../access";
 import AssetTile from "../components/AssetTile";
 import BidRow from "../components/BidRow";
 import { EnsureQueryClient, LoadFailure, Loading } from "../components/kit";
@@ -28,6 +29,8 @@ import "./myitems/myitems.css";
 
 export const MY_ITEMS_SECTIONS = ["wearables", "emotes", "names", "land", "bids"] as const;
 export type MyItemsSection = (typeof MY_ITEMS_SECTIONS)[number];
+/** The sections that are the Marketplace's, shown only with it on (market/access.tsx). */
+const MARKETPLACE_SECTIONS: ReadonlySet<MyItemsSection | "creations"> = new Set(["land", "bids"]);
 
 const SECTION_LABEL: Record<MyItemsSection, string> = { wearables: "Wearables", emotes: "Emotes", names: "Names", land: "LAND", bids: "Bids" };
 const CATEGORY: Record<Exclude<MyItemsSection, "bids" | "land">, MyAssetsCategory> = { wearables: "wearable", emotes: "emote", names: "ens" };
@@ -140,6 +143,7 @@ function useOwned(address: string, section: Exclude<MyItemsSection, "bids">, f: 
 
 function OwnedGrid({ section, owned, filtered }: { section: Exclude<MyItemsSection, "bids">; owned: ReturnType<typeof useOwned>; filtered: boolean }) {
   const { query, items } = owned;
+  const marketplace = useMarketplace();
   const what = SECTION_LABEL[section].toLowerCase();
   if (query.isPending) return <Loading label={`Loading your ${what}…`} />;
   if (query.isError) return <LoadFailure error={query.error} what={`Your ${what}`} onRetry={() => void query.refetch()} />;
@@ -156,7 +160,7 @@ function OwnedGrid({ section, owned, filtered }: { section: Exclude<MyItemsSecti
     <>
       <div className="shop-grid mk-grid" data-testid="grid">
         {items.map((asset) => (
-          <AssetTile key={asset.id} asset={asset} actions={<OwnedActions asset={asset} />} />
+          <AssetTile key={asset.id} asset={asset} actions={marketplace ? <OwnedActions asset={asset} /> : undefined} />
         ))}
       </div>
       {query.hasNextPage ? (
@@ -402,8 +406,13 @@ export function MyItemsView({
   storeOn?: boolean;
   bidId?: string | null;
 }) {
-  const shown = section === "creations" && storeOn ? "wearables" : section;
+  // LAND and Bids are the Marketplace's (market/access.tsx): without it, they show the wearables instead. While the
+  // answer is pending a link to them waits, rather than mounting the wearables (and their reads) first.
+  const access = useMarketplaceAccess();
+  const marketplace = access === "on";
+  const shown = (section === "creations" && storeOn) || (!marketplace && section !== "creations" && MARKETPLACE_SECTIONS.has(section)) ? "wearables" : section;
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const waiting = access === "pending" && section !== "creations" && MARKETPLACE_SECTIONS.has(section);
   const pick = (s: MyItemsSection | "creations") => {
     setFiltersOpen(false);
     onSection(s);
@@ -412,7 +421,7 @@ export function MyItemsView({
     <div className="shop-filters" data-testid="my-items-sidebar">
       <nav className="shop-cats shop-myitems__cats" aria-label="My items sections">
         <h2 className="shop-myitems__heading">Items</h2>
-        {MY_ITEMS_SECTIONS.map((s) => (
+        {MY_ITEMS_SECTIONS.filter((s) => marketplace || !MARKETPLACE_SECTIONS.has(s)).map((s) => (
           <button key={s} type="button" className="shop-cats__cat" data-selected={shown === s || undefined} aria-current={shown === s ? "page" : undefined} onClick={() => pick(s)}>
             <span>{SECTION_LABEL[s]}</span>
           </button>
@@ -431,6 +440,7 @@ export function MyItemsView({
     </div>
   );
 
+  if (waiting) return <Loading label="Loading your items…" />;
   if (shown === "creations" || shown === "bids") {
     return (
       <BrowseLayout sidebar={renderSidebar(null)} open={filtersOpen} onClose={() => setFiltersOpen(false)} testId="my-items-browse">

@@ -1,11 +1,12 @@
 
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useLocation } from "react-router";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { shopCart } from "../../cart/store";
 import { itemAsset } from "../../model/asset";
 import { evmAddress } from "../../model/address";
+import { marketplaceOn } from "../../market/testing-flags";
 import { ShopHarness, type SessionKind } from "../fixtures";
 import ShopChrome, { shopTabs } from "./ShopChrome";
 
@@ -66,5 +67,17 @@ describe("the Shop frame", () => {
     window.history.pushState({}, "", "/?view=mobile-iap");
     await chrome("/shop/overview");
     expect(screen.queryByRole("link", { name: /buy credits/i })).toBeNull();
+  });
+
+  it("shows the Marketplace's tabs on its pages only to a visitor who has it; Settings is the Shop's", async () => {
+    await chrome("/shop/accounts/0x1", "web2");
+    expect(within(screen.getAllByTestId("subnav")[0]!).queryByRole("link", { name: "Land" })).toBeNull();
+    document.body.innerHTML = "";
+    onTestFinished(marketplaceOn());
+    await chrome("/shop/accounts/0x1", "web3");
+    expect(within(screen.getAllByTestId("subnav")[0]!).getAllByRole("link", { name: "Land" }).length).toBeGreaterThan(0);
+    document.body.innerHTML = "";
+    await chrome("/shop/settings", "web3");
+    expect(screen.getAllByTestId("subnav")[0]!).toHaveAttribute("data-set", "shop");
   });
 });

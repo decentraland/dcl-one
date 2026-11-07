@@ -7,13 +7,12 @@
 
 import { createShopClient, type ShopClient } from "@ui/shop/api";
 import { fetchCollection, fetchShopItems, fetchTrendingItems } from "@ui/shop/discovery/api";
-import { fetchItemDescription, fetchItemMeta, fetchTokenById, fetchUnifiedListingForItem } from "@ui/shop/detail/api";
+import { fetchItemDescription, fetchItemMeta, fetchPrimaryListingForItem, fetchTokenById, itemListingKey } from "@ui/shop/detail/api";
+import { LAND_NETWORKS } from "@ui/shop/land/contracts";
 import { itemIdFromTokenId } from "@ui/shop/detail/lib/token-id";
 import { routeSegment } from "@ui/shop/discovery/lib/routes";
 import { dealsRequestedIn, itemsFilterDefaults, itemsGrid, itemsQuery } from "@ui/shop/discovery/lib/itemsGrid";
 import { readUrlFilters } from "@ui/shop/discovery/hooks";
-import { fetchLandNfts } from "@ui/shop/land/api";
-import { landsFiltersFromParams, landsListingFilters, landsListingKey, landsListKey } from "@ui/shop/land/LandsPage";
 import { shopFlags } from "@ui/shop/discovery/flags";
 import { primeRemoteFlags } from "@ui/shop/discovery/lib/remoteFlags";
 import type { ShopPageId } from "@ui/shop/routes";
@@ -111,7 +110,9 @@ async function itemPage(input: Required<Pick<ShopLoadInput, "request" | "params"
   const signal = deadline(request);
   const opts = { client, signal };
   const [listing, meta, desc, collection, owned] = await Promise.all([
-    token ? Promise.resolve(null) : settle(fetchUnifiedListingForItem(contract, itemId!, opts)),
+    // The creator's primary sale only: the page's first render reads it while the Marketplace (resales, for a web3
+    // session with the rollout on) is still pending, so a resale is never server-rendered as the item's price.
+    token ? Promise.resolve(null) : settle(fetchPrimaryListingForItem(contract, itemId!, opts)),
     itemId ? settle(fetchItemMeta(contract, itemId, opts)) : Promise.resolve(null),
     itemId ? settle(fetchItemDescription(contract, itemId, opts)) : Promise.resolve(null),
     settle(fetchCollection(contract, opts)),
@@ -120,7 +121,7 @@ async function itemPage(input: Required<Pick<ShopLoadInput, "request" | "params"
 
   const at = now();
   const queries: PrimedQuery[] = [];
-  if (listing?.ok) queries.push([["shop-item", contract, itemId], listing.value, at]);
+  if (listing?.ok) queries.push([[...itemListingKey(contract, itemId!, "primary")], listing.value, at]);
   if (meta?.ok) queries.push([["item-meta", contract, itemId], meta.value, at]);
   if (desc?.ok) queries.push([["item-desc", contract, itemId], desc.value, at]);
   if (collection.ok) queries.push([["collection-meta", contract], collection.value, at]);
@@ -135,9 +136,12 @@ async function itemPage(input: Required<Pick<ShopLoadInput, "request" | "params"
   const answered = [token ? owned : meta, token ? null : listing].filter((r) => r !== null);
   const known = !!name;
   const missing = !known && answered.length > 0 && answered.every((r) => r!.ok);
+  // A LAND token's page is the Marketplace's (LAND, its owner's actions, its sales): drawn as a stripped page for
+  // anyone without it, so never indexed, as /shop/lands is not.
+  const land = token && Object.values(LAND_NETWORKS).some((n) => n.land.toLowerCase() === contract || n.estate.toLowerCase() === contract);
   return {
     queries,
-    seo: { ...seo, title: name || seo.title, description, image: image || undefined, noindex: missing },
+    seo: { ...seo, title: name || seo.title, description, image: image || undefined, noindex: missing || land, canonical: land ? undefined : seo.canonical },
     status: missing ? 404 : 200,
   };
 }
@@ -160,17 +164,17 @@ async function collectionPage(request: Request, params: ShopLoadInput["params"],
 async function overviewPage(ctx: ReadCtx, client: ShopClient, env: BaseEnv): Promise<Collected> {
   const seo = defaultShopSeo("overview", canonicalFor(ctx.request, "/shop/overview", env));
   const flags = shopFlags();
-  const listingType = flags.secondarySales ? undefined : ("primary" as const);
+  // The server reads for no one, and the Marketplace is a web3 session's (market/access.tsx): primary sales only.
   const [listings, trending, deals] = await Promise.all([
     settle(publicRead(ctx, "overview-listings", (signal) => fetchShopItems({ first: 12, sortBy: "newest", listingType: "primary" }, { client, signal }))),
-    settle(publicRead(ctx, `overview-trending|${listingType ?? "all"}`, (signal) => fetchTrendingItems({ first: 12, listingType }, { client, signal }))),
+    settle(publicRead(ctx, "overview-trending|primary", (signal) => fetchTrendingItems({ first: 12, listingType: "primary" }, { client, signal }))),
     flags.creatorSales
       ? settle(publicRead(ctx, "overview-deals", (signal) => fetchShopItems({ first: 12, discounted: true, sortBy: "discount", listingType: "primary" }, { client, signal })))
       : Promise.resolve(null),
   ]);
   const queries: PrimedQuery[] = [];
   if (listings.ok) queries.push([["overview-listings"], listings.value.value, listings.value.at]);
-  if (trending.ok) queries.push([["overview-trending", listingType ?? "all"], trending.value.value, trending.value.at]);
+  if (trending.ok) queries.push([["overview-trending", "primary"], trending.value.value, trending.value.at]);
   if (deals?.ok) queries.push([["overview-deals"], deals.value.value, deals.value.at]);
   return { queries, seo, status: 200 };
 }
@@ -185,17 +189,6 @@ async function itemsPage(ctx: ReadCtx, client: ShopClient, env: BaseEnv): Promis
   if (!grid.key) return { queries: [], seo, status: 200 };
   const page = await settle(publicRead(ctx, JSON.stringify(grid.key), (signal) => grid.fetchPage(0, { client, signal })));
   return { queries: page.ok ? [[grid.key, page.value.value, page.value.at]] : [], seo, status: 200 };
-}
-
-/** The LAND grid's first page (not the map, and never a visitor's own LAND: the server reads for no one). */
-async function landsPage(ctx: ReadCtx, client: ShopClient, env: BaseEnv): Promise<Collected> {
-  const url = new URL(ctx.request.url);
-  const seo = defaultShopSeo("lands", canonicalFor(ctx.request, url.pathname, env));
-  if (url.searchParams.get("isMap") === "true" || url.searchParams.get("owned") === "true") return { queries: [], seo, status: 200 };
-  const filters = landsFiltersFromParams(url.searchParams);
-  const key = landsListingKey(landsListKey(filters, null));
-  const page = await settle(publicRead(ctx, JSON.stringify(key), (signal) => fetchLandNfts(landsListingFilters(filters, null), { client, signal })));
-  return { queries: page.ok ? [[key, page.value.value, page.value.at]] : [], seo, status: 200 };
 }
 
 /** The SSR data for one /shop page: its head, its primed public reads and the HTTP status. */
@@ -225,9 +218,6 @@ export async function loadShopPage(page: ShopPageId, input: ShopLoadInput): Prom
       break;
     case "items":
       collected = await itemsPage(ctx, client, env);
-      break;
-    case "lands":
-      collected = await landsPage(ctx, client, env);
       break;
     case "notFound":
       collected = { queries: [], seo: defaultShopSeo("notFound"), status: 404 };

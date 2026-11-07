@@ -7,6 +7,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 
+import { useMarketplace } from "../market/access";
 import Button from "../../atoms/Button";
 import { useMediaQuery } from "../../data/hooks/useMediaQuery";
 import { shopClient } from "../api/shop";
@@ -81,6 +82,7 @@ export default function NamesPage({ client, offerSource, loadBanned, debounceMs 
   const wallet = useLandWallet();
   const location = useLocation();
   const navigate = useNavigate();
+  const marketplace = useMarketplace();
   const navResume = (location.state as NamesNavState | null)?.resumeName;
   const [value, setValue] = useState("");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
@@ -275,12 +277,17 @@ export default function NamesPage({ client, offerSource, loadBanned, debounceMs 
                   {status.kind === "banned" ? (
                     <span>This NAME is not available.</span>
                   ) : (
-                    <>
-                      <span>This NAME is taken. Choose another NAME or make an offer to the owner.</span>
-                      <Link className="shop-names-claim__action" to={resaleHref(value)}>
-                        Make offer
-                      </Link>
-                    </>
+                    // An offer to the owner is a Marketplace bid (market/access.tsx); without it, only another NAME.
+                    marketplace ? (
+                      <>
+                        <span>This NAME is taken. Choose another NAME or make an offer to the owner.</span>
+                        <Link className="shop-names-claim__action" to={resaleHref(value)}>
+                          Make offer
+                        </Link>
+                      </>
+                    ) : (
+                      <span>This NAME is taken. Choose another NAME.</span>
+                    )
                   )}
                 </div>
               ) : status.kind === "checking" || status.kind === "invalid" || status.kind === "error" || shortIdle ? (
