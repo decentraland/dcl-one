@@ -427,7 +427,7 @@ async fn refresh_room(state: &CommsState, room: &str) -> Result<(), ApiError> {
     };
     state
         .room_service()
-        .merge_room_metadata(&room, fields)
+        .merge_room_metadata(room, fields)
         .await
         .map_err(|_| ApiError::http(503, "LiveKit room metadata refresh failed"))?;
     Ok(())

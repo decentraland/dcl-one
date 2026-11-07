@@ -108,9 +108,9 @@ async fn production_feed_position_load() {
             && seconds <= 120
             && rate > 0
             && rate <= 40000
-            && rate % 1000 == 0
+            && rate.is_multiple_of(1000)
             && lookup_rate <= 5000
-            && lookup_rate % 1000 == 0
+            && lookup_rate.is_multiple_of(1000)
     );
     let observer = async_nats::connect(url.clone()).await.unwrap();
     let mut positions = observer.subscribe(SUBJECT).await.unwrap();
@@ -426,59 +426,55 @@ async fn production_feed_position_load() {
     .await
     .is_ok();
     let drain_elapsed_seconds = drain_started.elapsed().as_secs_f64();
-    let mut positions = position_latencies.lock().unwrap();
-    let mut lookups = lookup_latencies.lock().unwrap();
-    let mut handoffs = timed.handoffs.lock().unwrap();
-    let mut scheduled_positions = position_scheduled_latencies.lock().unwrap();
-    let mut scheduled_lookups = lookup_scheduled_latencies.lock().unwrap();
-    let lookup_lags = lookup_driver_lags.lock().unwrap();
-    let driver_late_ticks = driver_lags.iter().filter(|value| **value > 1000).count();
-    let max_lateness_us = driver_lags.iter().copied().max().unwrap_or(0);
-    let mut profile = serde_json::json!({
-            "schema_version":1,"steady_start_unix_ms":steady_start_unix_ms,"steady_end_unix_ms":steady_end_unix_ms,"warmup_seconds":5,"warmup":warmup_evidence,
-            "offered_rate": rate, "players": 10000, "seconds": seconds,
-            "offered": rate * seconds, "outbox_accepted": accepted,
-            "sdk_outcomes": {"submitted":timed.outcomes[0].load(Ordering::Relaxed),"no_connection":timed.outcomes[1].load(Ordering::Relaxed),"failed":timed.outcomes[2].load(Ordering::Relaxed),"unconfirmed":timed.outcomes[3].load(Ordering::Relaxed)},
-            "received": received.load(Ordering::Relaxed), "offering_elapsed_seconds": offering_elapsed.as_secs_f64(),
-            "actual_offered_rate":(rate*seconds) as f64/offering_elapsed.as_secs_f64(),
-            "actual_accepted_rate":accepted as f64/offering_elapsed.as_secs_f64(),
-            "actual_received_rate":received.load(Ordering::Relaxed) as f64/offering_elapsed.as_secs_f64(),
-            "offered_per_second":offered_bins,"offered_after_full_seconds":offered_overflow,"driver_late_ticks":driver_late_ticks,"max_lateness_us":max_lateness_us,
-            "driver_lateness_us":[percentile(&mut driver_lags,50),percentile(&mut driver_lags,95),percentile(&mut driver_lags,99)],
-            "pacing":"absolute 1ms batches; catch-up bursts and scheduled latency are explicitly measured",
-    });
-    let outcomes = serde_json::json!({
-            "payload_bytes": payload_bytes, "feed_dropped": state.outbox.dropped() - dropped_before,
-            "handoff_samples": handoffs.len(), "handoff_us": [percentile(&mut handoffs, 50), percentile(&mut handoffs, 95), percentile(&mut handoffs, 99)],
-            "handoff_measurement": "test-only delegator, clock and bounded recording overhead; first N completions",
-            "maximum_outbox": maximum_queue, "outbox_capacity": crate::archipelago::feed::OUTBOUND_CAPACITY,
-            "drained": drain, "receipt_residual":timed.outcomes[0].load(Ordering::Relaxed).saturating_sub(received.load(Ordering::Relaxed)),
-            "drain_elapsed_seconds":drain_elapsed_seconds,"latency_sample_count":positions.len(),"scheduled_latency_sample_count":scheduled_positions.len(),
-            "handoff_residual":accepted.saturating_sub(timed.outcomes.iter().map(|value|value.load(Ordering::Relaxed)).sum()),
-            "fence_messages": fences.load(Ordering::Relaxed),
-            "position_end_to_end_us": [percentile(&mut positions, 50), percentile(&mut positions, 95), percentile(&mut positions, 99)],
-            "position_scheduled_to_receipt_us":[percentile(&mut scheduled_positions,50),percentile(&mut scheduled_positions,95),percentile(&mut scheduled_positions,99)],
-            "latency_origin":"position_end_to_end_us begins at actual frame creation; scheduled_to_receipt includes generator lag",
-            "lookup_offered": lookup_rate * seconds, "lookup_completed": lookups.len(),"lookup_latency_sample_count":lookups.len(),"lookup_scheduled_latency_sample_count":scheduled_lookups.len(),
-            "lookup_errors": lookup_errors.load(Ordering::Relaxed), "lookup_timeouts": lookup_timeouts.load(Ordering::Relaxed), "lookup_driver_overload": lookup_overload.load(Ordering::Relaxed),
-            "lookup_us": [percentile(&mut lookups, 50), percentile(&mut lookups, 95), percentile(&mut lookups, 99)]
-            ,"lookup_scheduled_to_completion_us":[percentile(&mut scheduled_lookups,50),percentile(&mut scheduled_lookups,95),percentile(&mut scheduled_lookups,99)],
-            "lookup_offered_per_second":*lookup_offered_bins.lock().unwrap(),
-            "lookup_offered_after_full_seconds":lookup_overflow_offers.load(Ordering::Relaxed),
-            "lookup_driver_late_ticks":lookup_lags.iter().filter(|value|**value>1000).count(),
-            "lookup_max_lateness_us":lookup_lags.iter().copied().max().unwrap_or(0)
-    });
-    profile
-        .as_object_mut()
-        .unwrap()
-        .extend(outcomes.as_object().unwrap().clone());
-    println!("BUS_PROFILE {profile}");
-    drop(positions);
-    drop(lookups);
-    drop(handoffs);
-    drop(scheduled_positions);
-    drop(scheduled_lookups);
-    drop(lookup_lags);
+    {
+        let mut positions = position_latencies.lock().unwrap();
+        let mut lookups = lookup_latencies.lock().unwrap();
+        let mut handoffs = timed.handoffs.lock().unwrap();
+        let mut scheduled_positions = position_scheduled_latencies.lock().unwrap();
+        let mut scheduled_lookups = lookup_scheduled_latencies.lock().unwrap();
+        let lookup_lags = lookup_driver_lags.lock().unwrap();
+        let driver_late_ticks = driver_lags.iter().filter(|value| **value > 1000).count();
+        let max_lateness_us = driver_lags.iter().copied().max().unwrap_or(0);
+        let mut profile = serde_json::json!({
+                "schema_version":1,"steady_start_unix_ms":steady_start_unix_ms,"steady_end_unix_ms":steady_end_unix_ms,"warmup_seconds":5,"warmup":warmup_evidence,
+                "offered_rate": rate, "players": 10000, "seconds": seconds,
+                "offered": rate * seconds, "outbox_accepted": accepted,
+                "sdk_outcomes": {"submitted":timed.outcomes[0].load(Ordering::Relaxed),"no_connection":timed.outcomes[1].load(Ordering::Relaxed),"failed":timed.outcomes[2].load(Ordering::Relaxed),"unconfirmed":timed.outcomes[3].load(Ordering::Relaxed)},
+                "received": received.load(Ordering::Relaxed), "offering_elapsed_seconds": offering_elapsed.as_secs_f64(),
+                "actual_offered_rate":(rate*seconds) as f64/offering_elapsed.as_secs_f64(),
+                "actual_accepted_rate":accepted as f64/offering_elapsed.as_secs_f64(),
+                "actual_received_rate":received.load(Ordering::Relaxed) as f64/offering_elapsed.as_secs_f64(),
+                "offered_per_second":offered_bins,"offered_after_full_seconds":offered_overflow,"driver_late_ticks":driver_late_ticks,"max_lateness_us":max_lateness_us,
+                "driver_lateness_us":[percentile(&mut driver_lags,50),percentile(&mut driver_lags,95),percentile(&mut driver_lags,99)],
+                "pacing":"absolute 1ms batches; catch-up bursts and scheduled latency are explicitly measured",
+        });
+        let outcomes = serde_json::json!({
+                "payload_bytes": payload_bytes, "feed_dropped": state.outbox.dropped() - dropped_before,
+                "handoff_samples": handoffs.len(), "handoff_us": [percentile(&mut handoffs, 50), percentile(&mut handoffs, 95), percentile(&mut handoffs, 99)],
+                "handoff_measurement": "test-only delegator, clock and bounded recording overhead; first N completions",
+                "maximum_outbox": maximum_queue, "outbox_capacity": crate::archipelago::feed::OUTBOUND_CAPACITY,
+                "drained": drain, "receipt_residual":timed.outcomes[0].load(Ordering::Relaxed).saturating_sub(received.load(Ordering::Relaxed)),
+                "drain_elapsed_seconds":drain_elapsed_seconds,"latency_sample_count":positions.len(),"scheduled_latency_sample_count":scheduled_positions.len(),
+                "handoff_residual":accepted.saturating_sub(timed.outcomes.iter().map(|value|value.load(Ordering::Relaxed)).sum()),
+                "fence_messages": fences.load(Ordering::Relaxed),
+                "position_end_to_end_us": [percentile(&mut positions, 50), percentile(&mut positions, 95), percentile(&mut positions, 99)],
+                "position_scheduled_to_receipt_us":[percentile(&mut scheduled_positions,50),percentile(&mut scheduled_positions,95),percentile(&mut scheduled_positions,99)],
+                "latency_origin":"position_end_to_end_us begins at actual frame creation; scheduled_to_receipt includes generator lag",
+                "lookup_offered": lookup_rate * seconds, "lookup_completed": lookups.len(),"lookup_latency_sample_count":lookups.len(),"lookup_scheduled_latency_sample_count":scheduled_lookups.len(),
+                "lookup_errors": lookup_errors.load(Ordering::Relaxed), "lookup_timeouts": lookup_timeouts.load(Ordering::Relaxed), "lookup_driver_overload": lookup_overload.load(Ordering::Relaxed),
+                "lookup_us": [percentile(&mut lookups, 50), percentile(&mut lookups, 95), percentile(&mut lookups, 99)]
+                ,"lookup_scheduled_to_completion_us":[percentile(&mut scheduled_lookups,50),percentile(&mut scheduled_lookups,95),percentile(&mut scheduled_lookups,99)],
+                "lookup_offered_per_second":*lookup_offered_bins.lock().unwrap(),
+                "lookup_offered_after_full_seconds":lookup_overflow_offers.load(Ordering::Relaxed),
+                "lookup_driver_late_ticks":lookup_lags.iter().filter(|value|**value>1000).count(),
+                "lookup_max_lateness_us":lookup_lags.iter().copied().max().unwrap_or(0)
+        });
+        profile
+            .as_object_mut()
+            .unwrap()
+            .extend(outcomes.as_object().unwrap().clone());
+        println!("BUS_PROFILE {profile}");
+    }
     receiver.abort();
     responder.abort();
     fence_task.abort();
@@ -803,10 +799,10 @@ async fn restart_rejects_disconnected_calls_and_restores_fresh_positions_once() 
     .await
     .unwrap();
     let current = bus.shared.link().unwrap();
-    if let Some(old) = old_weak.upgrade() {
-        if Arc::ptr_eq(&old, &current) {
-            assert!(current.revision.load(Ordering::SeqCst) > old_revision);
-        }
+    if let Some(old) = old_weak.upgrade()
+        && Arc::ptr_eq(&old, &current)
+    {
+        assert!(current.revision.load(Ordering::SeqCst) > old_revision);
     }
     drop(current);
     assert_eq!(

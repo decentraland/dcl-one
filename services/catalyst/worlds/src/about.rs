@@ -379,11 +379,11 @@ impl RuntimeMeta {
         let minimap_data_image = mini_map
             .and_then(|m| m.get("dataImage"))
             .and_then(Value::as_str)
-            .and_then(&resolve);
+            .and_then(resolve);
         let minimap_estate_image = mini_map
             .and_then(|m| m.get("estateImage"))
             .and_then(Value::as_str)
-            .and_then(&resolve);
+            .and_then(resolve);
         let skybox_textures = skybox
             .and_then(|s| s.get("textures"))
             .and_then(Value::as_array)

@@ -4215,14 +4215,15 @@ async fn malformed_logs_permissions_grant_nothing() {
     }
 }
 
-/// Resolve export fixtures through the same deployment as the request. The
-/// optional conversion also supports the per-scene identity migration (#90).
+/// Resolve export fixtures through the same deployment as the request.
 async fn export_namespace(pool: &PgPool, world: &WorldName) -> SceneNamespace {
     let deployment = crate::rooms::world_scene_at(pool, world, Parcel::parse(PARCEL).unwrap())
         .await
         .unwrap()
         .unwrap();
-    Option::<SceneNamespace>::from(deployment.namespace).expect("fixture has a storage identity")
+    deployment
+        .namespace
+        .expect("fixture has a storage identity")
 }
 
 fn export_state(
@@ -4822,9 +4823,7 @@ async fn exports_bound_database_resources_and_keep_one_snapshot() {
         settings,
     )
     .await;
-    let error = result
-        .err()
-        .expect("exhausted pool must refuse export setup");
+    let error = result.expect_err("exhausted pool must refuse export setup");
     assert!(matches!(error, super::errors::ApiError::Unavailable(_)));
     let response = error.into_response();
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
