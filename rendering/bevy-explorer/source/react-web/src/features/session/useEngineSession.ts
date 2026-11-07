@@ -166,8 +166,9 @@ export interface BackpackState {
   focus: (focus: PreviewFocus) => void
   /** Turn the preview avatar by `degrees` about its vertical axis (a drag over it). */
   rotate: (degrees: number) => void
-  /** Zoom the preview avatar's camera: `zoom` × the framing in use, 1 to PREVIEW_MAX_ZOOM (the wheel over it). */
-  zoom: (zoom: number) => void
+  /** Zoom the preview avatar's camera: `zoom` × the framing in use, 1 to PREVIEW_MAX_ZOOM, keeping the height
+   *  `anchor` (0 top, 1 bottom of the camera's view) where it is (the wheel over it). */
+  zoom: (zoom: number, anchor: number) => void
   /** Categories shown even though an equipped item hides them. */
   forceRender: string[]
   /** Replace the force-render list (shown at once, deployed with the look on close). */
@@ -2828,8 +2829,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const rotatePreview = useCallback((degrees: number) => {
     driverRef.current?.send({ kind: 'previewRotate', degrees })
   }, [])
-  const zoomPreview = useCallback((zoom: number) => {
-    driverRef.current?.send({ kind: 'previewZoom', zoom })
+  const zoomPreview = useCallback((zoom: number, anchor: number) => {
+    driverRef.current?.send({ kind: 'previewZoom', zoom, anchor })
   }, [])
   const setForceRender = useCallback((categories: string[]) => {
     setForceRenderState(categories)

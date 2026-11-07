@@ -71,8 +71,9 @@ export interface InWorldShopProps {
   emote: (urn: string | null) => void
   /** Turns the preview avatar by these degrees (a drag over it). */
   rotate: (degrees: number) => void
-  /** Zooms the preview avatar's camera to this many times its framing (the wheel over it). */
-  zoom: (zoom: number) => void
+  /** Zooms the preview avatar's camera to this many times its framing, keeping the height `anchor` of its view
+   *  in place (the wheel over it). */
+  zoom: (zoom: number, anchor: number) => void
   /** No engine draws the avatar (the UI-only mock): the stage shows whole, without the avatar's window. */
   noEngine?: boolean
   /** Emotes tried on on the avatar (TRY ON, playing on select, STOP EMOTE). Off until the engine plays a

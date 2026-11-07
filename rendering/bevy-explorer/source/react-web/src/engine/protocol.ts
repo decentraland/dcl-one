@@ -1503,10 +1503,12 @@ export interface PreviewRotateRequest {
 }
 
 /** Zoom the preview avatar's camera: `zoom` × the framing in use (1 is the framing as it is, up to
- *  PREVIEW_MAX_ZOOM), on the centre that framing has. The page's wheel over the avatar. */
+ *  PREVIEW_MAX_ZOOM), keeping what is at `anchor` where it is: a height in the camera's view, 0 its top and 1
+ *  its bottom (the pointer's, as the page's wheel over the avatar asks). The view stays inside the framing. */
 export interface PreviewZoomRequest {
   kind: 'previewZoom'
   zoom: number
+  anchor: number
 }
 
 /** The furthest the preview avatar's camera zooms in: the head framing is 2.5× the whole body. */

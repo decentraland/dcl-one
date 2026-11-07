@@ -4,7 +4,7 @@
 // grid, and a right-hand detail panel. Wearables + Emotes tabs. Data via the bridge relay
 // of fetchWearablesPage; equipping goes back through setAvatar.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Chip, ColorPicker, HintsButton, KeyCap, MaskIcon, OptionMenu, Pager, SearchField, Tabs, WearableCard, rarityPanel, rarityTile, type Rarity, type TabItem } from '../../design'
 import allIcon from '../../assets/category-icons/all.png'
 import arrowLeftIcon from '../../assets/backpack/icon-arrow-left.webp'
@@ -394,6 +394,8 @@ export function BackpackPage({
   initialTab?: 'wearables' | 'emotes'
 }): React.JSX.Element | null {
   const [tab, setTab] = useState<BackpackTab>(initialTab)
+  // The engine's camera view (the 960×960 preview), which the drag surface measures its zoom anchor on.
+  const previewBox = useRef<HTMLDivElement>(null)
   const [section, setSection] = useState<Section>('categories')
   const [cat, setCat] = useState('all')
   const [query, setQuery] = useState('')
@@ -603,12 +605,13 @@ export function BackpackPage({
         <div className={styles.stage}>
           <div className={`${styles.frame} ${styles.fadeIn}`}>
             {/* The engine draws the avatar preview here, seen through the backdrop's hole. */}
-            <div className={styles.preview}>
+            <div ref={previewBox} className={styles.preview}>
               <EngineViewport region="avatarPreview" report={setEngineViewport} />
             </div>
-            {/* Drag to turn the avatar, the wheel to zoom (HINTS). */}
+            {/* Drag to turn the avatar, the wheel to zoom toward the pointer (HINTS); the zoom's anchor is
+                measured on the camera's whole view, wider than the column that takes the pointer. */}
             <div className={styles.avatarDrag}>
-              <AvatarDragSurface onRotate={backpack.rotate} onZoom={backpack.zoom} />
+              <AvatarDragSurface onRotate={backpack.rotate} onZoom={backpack.zoom} view={() => previewBox.current?.getBoundingClientRect() ?? null} />
             </div>
             <HintsButton className={styles.hints} hints={HINTS} />
             <RandomizeBar

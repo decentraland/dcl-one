@@ -189,8 +189,10 @@ let framing = FRAMING.body
 let framingFrom = FRAMING.body
 let framingTo = FRAMING.body
 let framingT = 1
-// The page's zoom over the framing in use (previewZoom): 1 is the framing as it is.
+// The page's zoom over the framing in use (previewZoom), and how far the view's centre has moved up (metres) to
+// keep the height the page zoomed toward in place: 1 and 0 are the framing as it is.
 let zoom = 1
+let zoomShift = 0
 // Non-persisting preview override (selecting an item in the Backpack): when set, the preview
 // avatar wears these urns instead of the player's actual equipped set. null = no override.
 let previewUrns: string[] | null = null
@@ -384,6 +386,7 @@ function disposePreview(): void {
   standbyLoad = null
   shownLoaded = false
   zoom = 1
+  zoomShift = 0
 }
 
 /** Re-read the look into the shape when it changes (a pick from the page, an equip via React →
@@ -637,7 +640,13 @@ export function registerAvatarPreview(ctx: Ctx): void {
     turnAvatar(msg.degrees)
   })
   ctx.on('previewZoom', (msg) => {
-    zoom = Math.min(PREVIEW_MAX_ZOOM, Math.max(1, Number.isFinite(msg.zoom) ? msg.zoom : 1))
+    const next = Math.min(PREVIEW_MAX_ZOOM, Math.max(1, Number.isFinite(msg.zoom) ? msg.zoom : 1))
+    const anchor = Number.isFinite(msg.anchor) ? Math.min(1, Math.max(0, msg.anchor)) : 0.5
+    // The height under the anchor stays where it is: the same share of the view above the centre, before and after.
+    const above = 0.5 - anchor
+    const height = framing.centerY + shiftWithin(framing, zoom, zoomShift) + (framing.range / zoom) * above
+    zoomShift = shiftWithin(framing, next, height - (framing.range / next) * above - framing.centerY)
+    zoom = next
     applyFraming(framing)
   })
 
@@ -686,12 +695,19 @@ function showPodium(visible: boolean): void {
   })
 }
 
-// The framing on the camera, zoomed `z` times on its centre (the page's zoom unless told otherwise).
-function applyFraming(f: { range: number; centerY: number }, z: number = zoom): void {
+// A zoomed view's centre moves at most as far as keeps it inside the framing it zooms (none at zoom 1).
+function shiftWithin(f: { range: number }, z: number, shift: number): number {
+  const room = (f.range - f.range / z) / 2
+  return Math.max(-room, Math.min(room, shift))
+}
+
+// The framing on the camera, zoomed `z` times with its centre moved `shift` up (the page's zoom unless told
+// otherwise), the view kept inside the framing.
+function applyFraming(f: { range: number; centerY: number }, z: number = zoom, shift: number = zoomShift): void {
   if (cameraEntity == null || stage !== 'backpack') return
   const cam = TextureCamera.getMutableOrNull(cameraEntity)
   if (cam?.mode?.$case === 'orthographic') cam.mode.orthographic.verticalRange = f.range / z
-  Transform.getMutable(cameraEntity).position = Vector3.create(8, f.centerY + PITCH_DROP, 8 - CAMERA_DISTANCE)
+  Transform.getMutable(cameraEntity).position = Vector3.create(8, f.centerY + shiftWithin(f, z, shift) + PITCH_DROP, 8 - CAMERA_DISTANCE)
 }
 
 /** The preview avatar, whole body, facing forward, without the podium, as a PNG data URL — or null
@@ -703,7 +719,7 @@ export async function captureAvatarThumbnail(): Promise<string | null> {
   Transform.getMutable(avatar).rotation = FACING
   framingT = 1
   // The whole body, whatever the page has zoomed to.
-  applyFraming(FRAMING.body, 1)
+  applyFraming(FRAMING.body, 1, 0)
   const podium = podiumEntities
   podium.forEach((e) => { Transform.getMutable(e).scale = Vector3.Zero() })
   try {

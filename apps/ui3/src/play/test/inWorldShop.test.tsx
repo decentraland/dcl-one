@@ -692,8 +692,9 @@ describe('in-world shop', () => {
     await waitFor(() => expect(props.zoom).toHaveBeenCalled())
     expect((props.zoom as ReturnType<typeof vi.fn>).mock.calls.at(-1)![0]).toBeGreaterThan(1)
     unmount()
-    // Closed, the next page to show the preview starts at its own framing.
-    expect(props.zoom).toHaveBeenLastCalledWith(1)
+    // Closed, the next page to show the preview starts at its own facing and framing.
+    expect(props.zoom).toHaveBeenLastCalledWith(1, 0.5)
+    expect(props.rotate).toHaveBeenLastCalledWith(10)
     renderShop({ noEngine: true })
     expect(document.querySelector('[class*="surface"]')).toBeNull()
   })
