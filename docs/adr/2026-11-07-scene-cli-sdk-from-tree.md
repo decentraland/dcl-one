@@ -41,8 +41,8 @@ The archive is built from this tree, by `apps/dcl-scene-cli/scripts/build-base-b
   `authoritative-server` when the loader sets `globalThis.__dclOneAuthoritative` and peers
   otherwise, and `types/tsconfig.ecs7.json` carries no `downlevelIteration` or
   `suppressExcessPropertyErrors` and resolves as `bundler`. `scripts/blob_overlays.py` keeps the
-  two remaining rewrites (the minimal `protobufjs`, the `@dcl/inspector` stand-in) and checks that
-  both tree-sourced behaviours reached the archive.
+  one remaining rewrite (the `@dcl/inspector` stand-in) and checks that both tree-sourced
+  behaviours reached the archive.
 - The shipped version is `7.31.0-dcl-one.1`: the upstream base the tree's SDK derives from plus
   a dcl-one iteration, written once in the scaffold manifests and read from there by the builder
   and by `init.rs`. It is not on npm.

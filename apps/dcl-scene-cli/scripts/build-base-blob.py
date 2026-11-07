@@ -149,34 +149,17 @@ Pre-existing prunes, with their evidence:
   install it either. A scene that wants ethers must add it to its own
   `package.json`. To put it back, add it to `src/vendor/registry/package.json`
   and to `ENTRY_PACKAGES` in `blob_collect.py`.
-* `protobufjs` - ALL of it, plus six of the seven `@protobufjs/*`
-  micro-packages. `add_pbmin()` writes `node_modules/protobufjs` from
-  `src/vendor/pbmin` instead: a dependency-free reimplementation of the
-  `Reader`/`Writer`/`util.Long`/`configure` surface, 4 files / ~48 KB where
-  upstream's minimal closure plus its micro-packages were 38 files / 99,989 B.
-  `@protobufjs/utf8` is the one that stays - `@dcl/ecs/dist-cjs` requires it
-  *directly*, not through protobufjs, so the replacement does not subsume it.
-  `long` stays too: `avatar_shape.gen.js` and `descriptor.gen.js` import it by
-  name.
-
-  This is a hand-written codec on the critical path of the scene protocol, so
-  the bar for it is a differential suite, not a review. See `add_pbmin()` in
-  `blob_overlays.py` for the numbers; the short version is 731,200 differential
-  message instances and 800,000 fuzz operations per seed against upstream 7.2.4
-  as the reference, across `@dcl/ecs` (both the CJS and the ESM build),
-  `@dcl/rpc`'s framing and the data-layer descriptor, asserting byte-identical
-  encodings and throw-parity - zero divergences over six seeds, and 13/13 on
-  injected wire-format mutants.
-
-  This DOES change the scene runtime. `swap_pbmin_into_tree()` redirects the
-  install tree's `minimal.js` before `build_chunks()` resolves it, so
-  `prebuilt/core.js` bundles the replacement and QuickJS runs it too.
-  `check_chunk_pbmin()` fails the build if it ever stops doing so.
-
-  A scene that imports `protobufjs` *itself* (the reflection library, or
-  `protobufjs/light`) must declare it in its own manifest, which the scaffold
-  does not - and the shipped manifest says `7.2.4-dcl-one-sdk-pbmin.1`, not
-  `7.2.4`, so a dependency listing cannot mistake one for the other.
+* `protobufjs` down to `minimal.js` and its require closure: the reader, the
+  writer, `util/minimal`, `LongBits`, rpc and roots (`PROTOBUFJS_MINIMAL` in
+  `blob_collect.py`, 13 files), plus the `@protobufjs/*` micro-packages those
+  files require. Reflection (`index.js`, `light.js`, the rest of `src/`), the
+  `dist/` bundles, `ext/`, `google/`, the `.d.ts` and
+  `@protobufjs/{codegen,fetch,path}` go: `@dcl/ecs/dist-cjs` requires
+  `protobufjs/minimal` and nothing else of it. `@protobufjs/utf8` is required
+  by `dist-cjs` directly, and `long` by name from `avatar_shape.gen.js` and
+  `descriptor.gen.js`. A scene that imports the reflection library itself
+  (`protobufjs`, `protobufjs/light`) must declare it in its own manifest,
+  which the scaffold does not.
 * `@types/node` (2.3 MB) and `undici-types` (0.1 MB). The scaffold's tsconfig
   inherits `"types": ["@dcl/js-runtime"]` from `@dcl/sdk/types/tsconfig.ecs7.json`,
   which turns off automatic `@types` inclusion, and the traced tsc run never
@@ -202,14 +185,8 @@ Pre-existing prunes, with their evidence:
 
 Two registry pins are owned elsewhere and checked here, not chosen here:
 
-* `protobufjs` 7.2.4 is `library/protocol`'s pin. No upstream protobufjs
-  runtime reaches the blob - not as a package (`add_pbmin()`) and not inside
-  `prebuilt/core.js` either (`swap_pbmin_into_tree()`). What is still
-  installed is its TYPES, which `build_types_rollup()` reads because
-  `@dcl/ecs/dist` imports `protobufjs/minimal` without declaring it, and its
-  runtime as the reference the differential suite compares against. The
-  second is what keeps the version tied to the protocol's: installing another
-  major would silently re-target the suite at a reference no scene runs.
+* `protobufjs` 7.2.4 is `library/protocol`'s pin: the blob ships, and
+  `prebuilt/core.js` bundles, the codec `@dcl/ecs` was generated against.
 * `typescript` is the scaffold's pin - see `TS_CEILING_NOTE` below and
   `src/vendor/README.md`.
 
@@ -223,8 +200,8 @@ Layout. This file is the pipeline: the two installs, the chunk build, the
 declaration rollup and `main()`. Two siblings are imported by name and never
 run. `blob_collect.py` decides what of the install tree ships - the entry
 points, the allowlists and the reachability walk that prunes the rest - and
-`blob_overlays.py` is every rewrite applied on top of that tree (the pbmin
-codec, the `@dcl/inspector` stand-in and its service descriptor) plus the
+`blob_overlays.py` is every rewrite applied on top of that tree (the
+`@dcl/inspector` stand-in and its service descriptor) plus the
 checks that the tree-sourced behaviours (the TypeScript 7 clean tsconfig and
 the peer-trust gate) reached the blob. A rewrite lives nowhere else, which is
 what lets `src/vendor/README.md` list them completely.
@@ -256,8 +233,7 @@ from blob_collect import (
     collect, list_packages, log, reachable, resolvable, specifiers_in_files,
 )
 from blob_overlays import (
-    add_pbmin, add_shim, build_service_descriptor, check_chunk_pbmin,
-    check_chunk_peer_trust, check_ecs7_tsconfig, swap_pbmin_into_tree,
+    add_shim, build_service_descriptor, check_chunk_peer_trust, check_ecs7_tsconfig,
 )
 
 CRATE = os.path.dirname(HERE)
@@ -899,14 +875,11 @@ def main() -> int:
     log(f'  dropping {len(dropped)}: {", ".join(dropped)}')
 
     files, kept_bytes = collect(nm, keep)
-    add_pbmin(files, kept_bytes)
     add_shim(files, kept_bytes)
     build_service_descriptor(args.work, files, kept_bytes)
     check_ecs7_tsconfig(files)
 
-    swap_pbmin_into_tree(args.work)
     build_chunks(args.work, cli_bin, files, kept_bytes)
-    check_chunk_pbmin(files)
     check_chunk_peer_trust(files)
     rollup = build_types_rollup(nm)
     files[TYPES_ROLLUP] = rollup

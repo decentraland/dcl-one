@@ -6,9 +6,8 @@ with no package manager and no network. It holds the scene toolchain the Rust CL
 dependencies) plus `typescript` for the type check. It is pure JavaScript, so one archive serves
 Linux, macOS and Windows.
 
-Other contents of this folder: `inspector-shim/` (the `@dcl/inspector` stand-in), `pbmin/` (the
-protobufjs replacement and its tests) and `registry/` (the manifest and lockfile of the registry
-packages the archive ships or bundles).
+Other contents of this folder: `inspector-shim/` (the `@dcl/inspector` stand-in) and `registry/`
+(the manifest and lockfile of the registry packages the archive ships or bundles).
 
 ## What the blob is
 
@@ -20,13 +19,13 @@ at `@dcl/sdk/smart-items`, `@dcl/ecs`, `@dcl/js-runtime`, `@dcl/react-ecs`) come
 packages with the scaffold's `@dcl/sdk` pin, keeps the other two at their manifest's version and
 rewrites the dependencies between them to the shipped versions. Everything else comes from the
 registry through `registry/pnpm-lock.yaml`: `typescript` (the scaffold's pin), `protobufjs` 7.2.4
-(`library/protocol`'s pin; both are checked), `react`, `react-reconciler`, `ws`, `mitt`, `long` and
-`@protobufjs/utf8`. `scripts/blob_collect.py` prunes that install tree to what is reachable; its
-pruning removes files and never edits one. `scripts/blob_overlays.py` holds the rewrites:
+(`library/protocol`'s pin; both are checked), `react`, `react-reconciler`, `ws`, `mitt`, `long`,
+`@protobufjs/utf8` and the other `@protobufjs/*` packages `protobufjs/minimal` requires.
+`scripts/blob_collect.py` prunes that install tree to what is reachable; its pruning removes files
+and never edits one. `scripts/blob_overlays.py` holds the rewrites:
 
 | Function | What the blob carries that the install tree did not |
 | --- | --- |
-| `add_pbmin()` | A minimal `protobufjs` (version `7.2.4-dcl-one-sdk-pbmin.1`) from `pbmin/`. `swap_pbmin_into_tree()` and `check_chunk_pbmin()` keep the chunks on the same code. |
 | `add_shim()` | A hand-written `@dcl/inspector` from `inspector-shim/`. |
 | `build_service_descriptor()` | `data-layer.gen.js`, transpiled at build time from the checked-in `data-layer.gen.ts`. |
 
@@ -61,9 +60,8 @@ Keep the license files the build script retains.
   the pin needs a packaging decision. The libraries are limited to ECMAScript and decorators. A
   scene that needs the DOM declarations must install them.
 - Node `>=24` is declared by the scaffold's `package.json`.
-- The minimal protobufjs supplies `Reader`, `Writer`, `util.Long` and `configure`, not
-  reflection. A scene that imports the full library declares its own dependency. Its differential
-  suite is in `pbmin/tests`. It does not cover QuickJS.
+- `protobufjs` ships as `protobufjs/minimal` (`Reader`, `Writer`, `util.Long`, `configure`), not
+  the reflection library. A scene that imports the full library declares its own dependency.
 - `ethers` is not vendored. A scene that uses it declares it.
 
 ## The `@dcl/inspector` stand-in
@@ -142,9 +140,9 @@ order:
    test or docs directories go everywhere; eight packages are allowlisted file by file
    (`FILE_ALLOWLIST`: `@dcl/ecs`, `@dcl/js-runtime`, `@dcl/rpc`, `@dcl/sdk`, `long`, `mitt`,
    `protobufjs`, `typescript`). `check_readme_allowlist()` fails the build if that sentence stops
-   matching the dict. `protobufjs` is cut to nothing and written back by step 5. `typescript`
-   keeps only `lib/tsc.js`, `lib/_tsc.js`, `package.json` and the ES `lib.*.d.ts` files that
-   `tsc -p tsconfig.json --noEmit` reads.
+   matching the dict. `protobufjs` keeps `minimal.js` and its require closure
+   (`PROTOBUFJS_MINIMAL`). `typescript` keeps only `lib/tsc.js`, `lib/_tsc.js`, `package.json`
+   and the ES `lib.*.d.ts` files that `tsc -p tsconfig.json --noEmit` reads.
 5. **Rewrites and checks.** The functions in the two tables above, in the order `main()` runs them.
 6. **Build products.** `build_chunks()` (via `dcl-scene-cli vendor-chunks`), the two chunk checks,
    then `build_types_rollup()`.

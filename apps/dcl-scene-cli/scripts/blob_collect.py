@@ -29,8 +29,7 @@ ENTRY_REASON = {
     '@dcl/js-runtime': 'scene ambient types (the rolled-up .d.ts)',
     '@dcl/ecs': 'dist-cjs: the crdt wire codec the inspector stand-in runs in node',
     'typescript': 'build --production type check',
-    'protobufjs': "undeclared import of @dcl/ecs/dist-cjs ('protobufjs/minimal')"
-                  ' - ships 0 upstream files, see add_pbmin()',
+    'protobufjs': "undeclared import of @dcl/ecs/dist-cjs ('protobufjs/minimal')",
     '@protobufjs/utf8': 'undeclared import of @dcl/ecs/dist-cjs',
     'ws': 'data-layer-host.mjs',
     '@dcl/rpc': 'the data-layer wire protocol (server, codegen, WebSocket transport)',
@@ -38,7 +37,15 @@ ENTRY_REASON = {
 
 NEVER = {'@dcl/sdk-commands', '@dcl/explorer'}
 
-PROTOBUFJS_SHIP_NOTHING = frozenset()
+# `protobufjs/minimal` and its require closure: the wire codec without
+# reflection, parsing or the `dist/` bundles. The `@protobufjs/*` packages
+# these files require are reached from them.
+PROTOBUFJS_MINIMAL = frozenset({
+    'package.json', 'LICENSE', 'minimal.js',
+    'src/index-minimal.js', 'src/reader.js', 'src/reader_buffer.js',
+    'src/writer.js', 'src/writer_buffer.js', 'src/util/minimal.js',
+    'src/util/longbits.js', 'src/rpc.js', 'src/rpc/service.js', 'src/roots.js',
+})
 
 RPC_RUNTIME = frozenset({
     'package.json', 'LICENSE',
@@ -53,7 +60,7 @@ TS_LIB_RE = re.compile(
     r'^lib/lib\.(?:es5|es20\d\d|esnext|decorators)(?:\.(?!full\b)[a-z0-9.]+)?\.d\.ts$')
 
 FILE_ALLOWLIST = {
-    'protobufjs': lambda rel: rel in PROTOBUFJS_SHIP_NOTHING,
+    'protobufjs': lambda rel: rel in PROTOBUFJS_MINIMAL,
     'typescript': lambda rel: rel in ('package.json', 'LICENSE.txt')
     or rel in ('lib/tsc.js', 'lib/_tsc.js')
     or bool(TS_LIB_RE.match(rel)),
@@ -94,7 +101,7 @@ DROP_DIRS = {
     'test', 'tests', '__tests__', 'docs', 'example', 'examples',
     'bench', 'benchmark', 'benchmarks', '.github',
 }
-DROP_FILES = {'eslint.config.js', '.eslintrc.js', '.eslintrc.cjs', 'karma.conf.js'}
+DROP_FILES = {'eslint.config.js', '.eslintrc.js', '.eslintrc.cjs', 'karma.conf.js', '.npmignore'}
 DROP_FILE_RE = re.compile(r'(^|\.)(test|tests|spec)\.(js|cjs|mjs|ts)$')
 
 SPEC_RE = re.compile(

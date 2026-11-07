@@ -1,9 +1,9 @@
 (dcl-scene-cli golden v1 composite production)
-TOOLCHAIN sdk=7.31.0-dcl-one.1 ecs=7.31.0-dcl-one.1 bundler=rolldown-1.2.6 blob=sha256:afaf76d8c93b10c5
-SCENE_COMPILED_JS_SIZE_PROD=562.9k bytes
+TOOLCHAIN sdk=7.31.0-dcl-one.1 ecs=7.31.0-dcl-one.1 bundler=rolldown-1.2.6 blob=sha256:d39a70f327213d0d
+SCENE_COMPILED_JS_SIZE_PROD=563.7k bytes
   ARTIFACT bin/index.js              10566 sha256=2df452158ab7539b
   ARTIFACT bin/scene.js               1149 sha256=0441eee7a04e15db
-  ARTIFACT bin/sdk-runtime.js       551234 sha256=5e1f7013c811e63b
+  ARTIFACT bin/sdk-runtime.js       551956 sha256=0b7fff078b99796f
 LOADER sdk=bin/sdk-runtime.js smart=- scene=bin/scene.js max_composite_entity=513
 ENTRYPOINT .dcl-one/entrypoint.ts main=guarded composites=0 script-utils=stub
   // BEGIN AUTO GENERATED CODE "~sdk/scene-entrypoint"
@@ -70,10 +70,10 @@ ENTRYPOINT .dcl-one/entrypoint.ts main=guarded composites=0 script-utils=stub
   REQUIRE(scene): ~sdk/all-composites
   REQUIRE(scene): ~sdk/script-utils
 MAIN_CRDT main.crdt 317 bytes sha256=a12a5297f2515775 (native, 1 composite)
-DEPLOY entity=bafkreicqmkhem7hyto2hvgmtszgnjctsfbpb4i4r2j34vr4wah4iod5oh4 files=6 total=565.1k bytes
+DEPLOY entity=bafkreiezwpz7xdudt64563w6owtinfzysbuvnfp45gvt7a2ax5l6ndf2b4 files=6 total=565.8k bytes
   bafkreibig7gpevw73nv2ygong3jlgzthtzutgbfy6u3qwpzxgzbujzc5cu scene.json 166 bytes
   bafkreifbfjjjp4srk523rnwg3ktgpy65qmvh2swj7ebkyzi5ncvkqtg4pq main.crdt 317 bytes
-  bafybeiaug33j7oomwylikemrynhqm4zxhz5nugaou34xsztlywardgfaqm bin/sdk-runtime.js 551234 bytes
+  bafybeigb6b7rebnmqryfyoaygsm6cuwvkcbshm3f5bpcljd4ekxrqvv7sq bin/sdk-runtime.js 551956 bytes
   bafkreiaeihxopicocxnxz3fllaejkbklculqbkef6txrbthpivfhxjbw6q bin/scene.js 1149 bytes
   bafkreibn6rjblcvxkon2qratpdikpoodeaii47teqsts7rlhc552r4byee bin/index.js 10566 bytes
   bafkreiajivmg7dakw5cltgz5g6lmx7ntzxvvz2r5cf6xtznoappci2w6nu assets/scene/main.composite 1664 bytes

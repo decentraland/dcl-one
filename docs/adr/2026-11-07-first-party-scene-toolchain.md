@@ -54,8 +54,9 @@ package that is being deprecated.
   `@dcl/hashing`, `@dcl/inspector`, `@dcl/linker-dapp`, `@dcl/mini-comms`, `@dcl/quests-client`,
   `@dcl/quests-manager` and `@dcl/schemas`, plus `@dcl/ts-proto`, `@dcl/quickjs-emscripten` and
   `@dcl/eslint-config` for the build itself. The vendored blob bundles no registry `@dcl/*`
-  package; its registry extras are `typescript`, `protobufjs`, `react`, `react-reconciler`, `ws`,
-  `mitt`, `long` and `@protobufjs/utf8`.
+  package; its registry extras are `typescript`, `protobufjs` (shipped as `protobufjs/minimal`
+  with the `@protobufjs/*` packages it requires), `react`, `react-reconciler`, `ws`, `mitt`,
+  `long` and `@protobufjs/utf8`.
 
 ## Consequences
 
