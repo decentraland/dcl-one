@@ -1,0 +1,83 @@
+name = "marketplace-server"
+repository = "github.com/decentraland/marketplace-server"
+revision = "cc5baede63cd311ba5f564a3e2909010756bb4ce"
+database_env = "MARKETPLACE_SERVER_DATABASE_URL"
+after = []
+notes = """The `dapps` database (schema `marketplace`); the favorites database
+is the separate source marketplace-favorites-server. See MAPPING.md.
+Moves the off-chain signed state only: trades with their assets, coupons,
+and a coupon_state snapshot. Migrated trades become local authority
+(mirrored_from NULL): a row the trades mirror already copied is promoted and
+its assets are replaced by upstream's (same content, upstream ids); that is
+the only delete. Not migrated: trade_digest and mv_trades (the node's
+trade-events fold derives both), item_neighbors*, item_search_*,
+collection_search_*, creator_profiles, creator_search_* (rebuilt caches),
+mana_usd_daily (oracle cache), favorite_discount_notifications and the
+coupons.favorites_* columns (notification dedupe with no target),
+mv_builder_server_items and the builder FDW tables (foreign data),
+pgmigrations."""
+
+[[step]]
+name = "trades"
+targets = ["shop.trades", "shop.trade_assets", "shop.trade_assets_erc20", "shop.trade_assets_erc721", "shop.trade_assets_item"]
+extract = "trades.extract.sql"
+load = "trades.load.sql"
+key = ["id"]
+watermark = "created_at"
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "network", type = "text" },
+  { name = "chain_id", type = "integer" },
+  { name = "signature", type = "text" },
+  { name = "hashed_signature", type = "text" },
+  { name = "checks", type = "jsonb" },
+  { name = "signer", type = "text" },
+  { name = "type", type = "text" },
+  { name = "expires_at", type = "timestamptz" },
+  { name = "effective_since", type = "timestamptz" },
+  { name = "contract", type = "text" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "assets", type = "jsonb" },
+]
+
+[[step]]
+name = "coupons"
+targets = ["shop.coupons"]
+extract = "coupons.extract.sql"
+load = "coupons.load.sql"
+key = ["id"]
+watermark = "created_at"
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "network", type = "text" },
+  { name = "chain_id", type = "integer" },
+  { name = "signer", type = "text" },
+  { name = "signature", type = "text" },
+  { name = "hashed_signature", type = "text" },
+  { name = "state_key", type = "text" },
+  { name = "coupon_manager", type = "text" },
+  { name = "coupon_address", type = "text" },
+  { name = "checks", type = "jsonb" },
+  { name = "discount_type", type = "smallint" },
+  { name = "discount_ppm", type = "integer" },
+  { name = "root", type = "text" },
+  { name = "collections", type = "text[]" },
+  { name = "effective_since", type = "timestamptz" },
+  { name = "expires_at", type = "timestamptz" },
+  { name = "created_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "coupon_state"
+targets = ["shop.coupon_state"]
+extract = "coupon_state.extract.sql"
+load = "coupon_state.load.sql"
+key = ["coupon_id"]
+watermark = "checked_at"
+columns = [
+  { name = "coupon_id", type = "uuid" },
+  { name = "uses", type = "integer" },
+  { name = "cancelled", type = "boolean" },
+  { name = "revoked", type = "boolean" },
+  { name = "checked_at", type = "timestamptz" },
+]

@@ -1,0 +1,72 @@
+name = "world-storage-service"
+repository = "github.com/decentraland/world-storage-service"
+revision = "d55f24cd52ac6095ccc870038b3894e0bb1280ef"
+database_env = "WORLD_STORAGE_DATABASE_URL"
+# Scopes resolve through explore.place (Genesis base parcels, via places) and
+# the identities worlds-content-server binds in explore.world_scene_place.
+after = ["worlds-content-server"]
+notes = """
+Copies world, player and env storage, re-scoped from upstream
+(world_name, place_id) to (realm, scene_namespace). See MAPPING.md.
+
+env_variables.value_enc is copied byte for byte: upstream and the node use
+the same AES-256-GCM layout (0x01 || IV || ciphertext || tag, no AAD), so the
+node must run with the upstream ENCRYPTION_KEY. No key or plaintext passes
+through this tool or its files.
+
+Not migrated: scene_collaborators (a projection the node derives at read time
+from logsPermissions) and pgmigrations. Deleted upstream values are not
+detected. A target row newer than the source row is kept.
+"""
+
+[[step]]
+name = "world_storage"
+targets = ["worlds.world_storage"]
+extract = "world_storage.extract.sql"
+load = "world_storage.load.sql"
+key = ["world_name", "place_id", "key"]
+watermark = "updated_at"
+columns = [
+  { name = "world_name", type = "text" },
+  { name = "place_id", type = "uuid" },
+  { name = "key", type = "text" },
+  { name = "value", type = "jsonb" },
+  { name = "value_size", type = "integer" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "player_storage"
+targets = ["worlds.player_storage"]
+extract = "player_storage.extract.sql"
+load = "player_storage.load.sql"
+key = ["world_name", "place_id", "player_address", "key"]
+watermark = "updated_at"
+columns = [
+  { name = "world_name", type = "text" },
+  { name = "place_id", type = "uuid" },
+  { name = "player_address", type = "text" },
+  { name = "key", type = "text" },
+  { name = "value", type = "jsonb" },
+  { name = "value_size", type = "integer" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "env_variable"
+targets = ["worlds.env_variables"]
+extract = "env_variable.extract.sql"
+load = "env_variable.load.sql"
+key = ["world_name", "place_id", "key"]
+watermark = "updated_at"
+columns = [
+  { name = "world_name", type = "text" },
+  { name = "place_id", type = "uuid" },
+  { name = "key", type = "text" },
+  { name = "value_enc", type = "bytea" },
+  { name = "value_size", type = "integer" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]

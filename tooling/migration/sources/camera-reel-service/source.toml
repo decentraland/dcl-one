@@ -1,0 +1,36 @@
+name = "camera-reel-service"
+repository = "github.com/decentraland/camera-reel-service"
+revision = "3e8bd0b099400e7c15b95477c1f003c63042d461"
+database_env = "CAMERA_REEL_DATABASE_URL"
+after = []
+notes = """
+Imports every photo into camera_reel.images. See MAPPING.md.
+
+Prerequisite, out of scope for a DB import: the image and thumbnail objects
+must be copied from the upstream bucket into the ONE blob store, and each
+object key recorded with its content hash and size in
+dcl_migration.blob_inventory (source 'camera-reel-service'); the step stops on
+an unmapped key.
+
+Not migrated: the url/thumbnail_url columns (the node renders URLs from the
+hash). camera_reel.withheld_blobs and review_status stay the node's (upstream
+has no moderation state). No watermark: is_public changes in place and there
+is no updated_at, so every run re-scans. Photos deleted upstream are not
+detected.
+"""
+
+[[step]]
+name = "image"
+targets = ["camera_reel.images"]
+extract = "image.extract.sql"
+load = "image.load.sql"
+key = ["id"]
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "user_address", type = "text" },
+  { name = "image_key", type = "text" },
+  { name = "thumbnail_key", type = "text" },
+  { name = "is_public", type = "boolean" },
+  { name = "metadata", type = "jsonb" },
+  { name = "created_at", type = "timestamptz" },
+]
