@@ -58,7 +58,13 @@ if (process.argv.includes("--fill")) {
         current = spec;
       },
       onPage: async (side, page) => {
-        if (side === "reference" && current?.discover) Object.assign(targets, await current.discover(page));
+        if (side === "reference" && current?.discover) {
+          // targets starts from the previous manifest: a target not found this time is dropped, never kept from it.
+          for (const [key, value] of Object.entries(await current.discover(page))) {
+            if (value == null) delete targets[key];
+            else targets[key] = value;
+          }
+        }
       },
       onResult: (r) => console.log(`recorded ${r.page}@${r.viewport}: ${r.sides.reference.error ?? "reference ok"}, ${r.sides["dcl-one"].error ?? "dcl-one ok"}`),
     });

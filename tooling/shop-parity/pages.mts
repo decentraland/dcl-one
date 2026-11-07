@@ -28,8 +28,9 @@ export type PageSpec = {
   signedIn?: boolean;
   /** Interactions after the first render (both sides do the same thing). */
   setup?: (page: Page, side: Side, targets: Record<string, string>) => Promise<void>;
-  /** While recording: read targets later pages need (from the reference). */
-  discover?: (page: Page) => Promise<Record<string, string>>;
+  /** While recording: read targets later pages need (from the reference). A null target was not found: the
+   *  recording drops it, so a page reading it refuses rather than compare the previous set's. */
+  discover?: (page: Page) => Promise<Record<string, string | null>>;
   keys: KeyElement[];
   masks?: Mask[];
   regions?: Region[];
@@ -181,9 +182,7 @@ export const PAGES: PageSpec[] = [
     unrecorded: [PROMO_PREVIEW, NEWSLETTER_EMBED],
     discover: async (page) => {
       const href = await page.locator("xpath=(//*[@data-testid='outfit-card']//a[@href] | //a[@data-testid='outfit-card'])[1]").getAttribute("href").catch(() => null);
-      const found: Record<string, string> = {};
-      if (href) found.outfit = new URL(href, page.url()).pathname.replace(/^(?!\/shop)/, "/shop");
-      return found;
+      return { outfit: href ? new URL(href, page.url()).pathname.replace(/^(?!\/shop)/, "/shop") : null };
     },
   },
   {
@@ -207,7 +206,7 @@ export const PAGES: PageSpec[] = [
       if (!href) throw new Error("no card in the reference items grid to take as the detail page");
       const second = await page.locator("[data-testid=grid] [data-testid=card] a[data-testid=card-link]").nth(1).getAttribute("href", { timeout: 5_000 }).catch(() => null);
       const shop = (h: string) => new URL(h, page.url()).pathname.replace(/^(?!\/shop)/, "/shop");
-      return { item: shop(href), ...(second ? { item2: shop(second) } : {}) };
+      return { item: shop(href), item2: second ? shop(second) : null };
     },
     maxHeight: 3000,
     masks: [WEBGL],
@@ -261,7 +260,7 @@ export const PAGES: PageSpec[] = [
       // The pinned reference names the item's collection and creator as text, not links. Its collection is the
       // item's contract (/shop/collection/<contract>, a page the reference serves), and its creator is the account
       // that collection page links to as its profile (/shop/items/creator/<address>).
-      const collection = shop(await link("/collection/")) ?? collectionOfItem(new URL(page.url()).pathname);
+      const collection = shop(await link("/collection/")) ?? collectionOfItem(shop(page.url()) ?? "");
       let creator = shop(await link("/creator/"));
       if (!creator && collection) {
         // Opened in the item capture's context, so its answers are recorded with the same routes and clock. That
@@ -276,12 +275,12 @@ export const PAGES: PageSpec[] = [
           const profile = await other.locator("xpath=(//main//a[contains(@href,'/profile/0x')])[1]").getAttribute("href", { timeout: 15_000 });
           creator = profile ? creatorOfProfile(profile) : null;
         } catch {
-          creator = null;
+          // Best-effort, as above: the creator stays unset.
         } finally {
-          await other.close();
+          await other.close().catch(() => {});
         }
       }
-      return { ...(collection ? { collection } : {}), ...(creator ? { creator } : {}) };
+      return { collection, creator };
     },
     unrecorded: [PREVIEW_AVATAR, NEWSLETTER_EMBED],
   },
