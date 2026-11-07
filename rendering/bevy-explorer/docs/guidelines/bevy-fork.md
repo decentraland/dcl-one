@@ -139,6 +139,9 @@ across workers:
 - `bevy_winit`: modifier transitions reported only via `ModifiersChanged` are synthesised as key
   events, so a modifier swallowed by an OS chord doesn't stick; `UpdateMode::Reactive` timing
   fix.
+- `WorldId::new` takes `try_update` behind `target_has_atomic = "ptr"` with the `fetch_update`
+  fallback (upstream #26020, **throwaway**); `try_update` needs Rust 1.95, so `bevy`, `bevy_ecs`
+  and `bevy_input_focus` declare `rust-version = "1.95.0"` (every build pins 1.99.1).
 
 ## UI
 
