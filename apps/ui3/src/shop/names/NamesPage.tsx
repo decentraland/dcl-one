@@ -120,8 +120,9 @@ export default function NamesPage({ client, offerSource, loadBanned, debounceMs 
     const linked = params.get("name");
     params.delete("name");
     const rest = params.toString();
-    const resume =
-      typeof navResume === "string" && nameLabel(navResume) ? navResume : linked !== null && nameLabel(linked) ? linked : takeNameResume();
+    // A stashed top-up NAME is taken either way: one the link or the navigation supersedes must not reopen later.
+    const stashed = takeNameResume();
+    const resume = typeof navResume === "string" && nameLabel(navResume) ? navResume : linked !== null && nameLabel(linked) ? linked : stashed;
     if (navResume || linked !== null) navigate(`${location.pathname}${rest ? `?${rest}` : ""}`, { replace: true, state: null });
     if (!resume) return;
     setValue(resume);

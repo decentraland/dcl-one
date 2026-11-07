@@ -2,7 +2,7 @@
 // the web Shop checks it (length, banned list, the registrar), priced in Credits, and registered or offered
 // for on the web.
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { keccak256, stringToHex } from 'viem'
@@ -10,6 +10,9 @@ import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop
 import { webNameResaleUrl, webNameUrl } from '../features/shop/itemLinks'
 import { NAMETAG_PLACEHOLDER } from '../features/shop/ui'
 import { userNameColor } from '../engine/nameColor'
+import { nameQueries } from '../features/shop/namesQuery'
+import { NAME_CHECK_DEBOUNCE_MS } from '../../shop/names/names'
+import { CHAIN } from '../../shop/model/chain'
 import { PopupHost, resetPopups } from '../design'
 import type { Profile } from '../engine/protocol'
 import { fakeProfileState } from './harness'
@@ -124,9 +127,9 @@ describe('the in-world Shop’s Names', () => {
     expect(nametag()).not.toHaveTextContent(NAMETAG_PLACEHOLDER)
     // In the colour the NAME takes once claimed, with the field's caret while it has the focus.
     expect(nametag()!.querySelector('span')).toHaveStyle({ color: userNameColor('Carolo', ADDRESS, true) })
-    expect(nametag()!.querySelector('[class*="caret"]')).not.toBeNull()
+    expect(within(nametag()!).getByTestId('nametag-caret')).toBeInTheDocument()
     fireEvent.blur(field)
-    expect(nametag()!.querySelector('[class*="caret"]')).toBeNull()
+    expect(within(nametag()!).queryByTestId('nametag-caret')).toBeNull()
   })
 
   it('keeps letters and digits only, and one past the limit says so', async () => {
@@ -218,17 +221,52 @@ describe('the in-world Shop’s Names', () => {
   })
 
   it('offers no NAME until the banned list answers', async () => {
-    let answer = (): void => undefined
-    const f = serve({ banned: ['badname'], bannedAfter: new Promise<void>((r) => (answer = r)) })
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      let answer = (): void => undefined
+      const f = serve({ banned: ['badname'], bannedAfter: new Promise<void>((r) => (answer = r)) })
+      renderShop()
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      await user.click(screen.getByRole('tab', { name: 'Names' }))
+      await user.type(screen.getByRole('textbox', { name: 'Your NAME' }), 'BadName')
+      // Past the typing's rest, with the list still out: nothing is asked of the registrar.
+      await act(() => vi.advanceTimersByTimeAsync(NAME_CHECK_DEBOUNCE_MS * 2))
+      expect(claim()).toBeDisabled()
+      expect(f.mock.calls.some(([input]) => String(input).includes('/rpc/'))).toBe(false)
+      answer()
+      expect(await screen.findByText(/This NAME Is Not Available/)).toBeInTheDocument()
+      expect(f.mock.calls.some(([input]) => String(input).includes('/rpc/'))).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('takes nothing typed into a full field, and leaves the caret where it was', async () => {
+    serve()
     renderShop()
     const field = await openNames()
-    await userEvent.type(field, 'BadName')
-    await new Promise((r) => setTimeout(r, 600))
-    expect(claim()).toBeDisabled()
-    expect(f.mock.calls.some(([input]) => String(input).includes('/rpc/'))).toBe(false)
-    answer()
-    expect(await screen.findByText(/This NAME Is Not Available/)).toBeInTheDocument()
-    expect(f.mock.calls.some(([input]) => String(input).includes('/rpc/'))).toBe(false)
+    await userEvent.type(field, 'CalabazaChoperia')
+    await userEvent.type(field, 'X', { initialSelectionStart: 3, initialSelectionEnd: 3 })
+    expect(field).toHaveValue('CalabazaChoperia')
+    await waitFor(() => expect(field.selectionStart).toBe(3))
+  })
+
+  it('announces what is wrong with the NAME, not the count on every keystroke', async () => {
+    serve({ taken: ['mojito'] })
+    renderShop()
+    const field = await openNames()
+    await userEvent.type(field, 'Moji')
+    // The field's description holds the live region, as a screen reader relates them.
+    const live = within(document.getElementById(field.getAttribute('aria-describedby')!)!).getByRole('status')
+    expect(screen.getByText('4/15')).toBeInTheDocument()
+    expect(live).not.toHaveTextContent('4/15')
+    await userEvent.type(field, 'to')
+    await waitFor(() => expect(live).toHaveTextContent(/This NAME Is Taken/))
+  })
+
+  it('keys a NAME’s availability by the network it is read on', () => {
+    expect(nameQueries.availability('Mojito', CHAIN.ETHEREUM).queryKey).not.toEqual(nameQueries.availability('Mojito', CHAIN.SEPOLIA).queryKey)
+    expect(nameQueries.availability('Mojito', CHAIN.SEPOLIA).queryKey).toEqual(nameQueries.availability('mojito', CHAIN.SEPOLIA).queryKey)
   })
 
   it('refuses a banned NAME without asking the registrar', async () => {
@@ -268,7 +306,7 @@ describe('the in-world Shop’s Names', () => {
     serve()
     renderShop()
     await openNames()
-    const surface = document.querySelector<HTMLElement>('[class*="surface"]')!
+    const surface = screen.getByTestId('avatar-drag-surface')
     fireEvent.wheel(surface, { deltaY: -400 })
     await waitFor(() => expect(nametag()).toBeNull())
     fireEvent.wheel(surface, { deltaY: 4000 })

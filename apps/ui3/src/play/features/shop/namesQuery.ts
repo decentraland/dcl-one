@@ -6,8 +6,10 @@
 import { queryOptions, useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { shopClient } from '../../../shop/api/shop'
+import type { ChainId } from '../../../shop/model/chain'
 import { creditsCeil } from '../../../shop/model/money'
 import { fetchBannedNames } from '../../../shop/names/api'
+import { landChainId } from '../../../shop/land/contracts'
 import { checkNameAvailability, NAME_CHECK_DEBOUNCE_MS, NAME_MAX_LENGTH, NAME_MIN_LENGTH, type NameAvailability } from '../../../shop/names/names'
 import { quoteNameCredits } from '../../../shop/names/offer'
 import type { ShopNameStatus } from './ui'
@@ -29,10 +31,10 @@ export const nameQueries = {
       },
       staleTime: 60_000
     }),
-  availability: (name: string) =>
+  availability: (name: string, chainId: ChainId = landChainId()) =>
     queryOptions({
-      queryKey: ['shop', 'names', 'availability', name.toLowerCase()] as const,
-      queryFn: ({ signal }): Promise<NameAvailability> => checkNameAvailability(name, { signal }),
+      queryKey: ['shop', 'names', 'availability', chainId, name.toLowerCase()] as const,
+      queryFn: ({ signal }): Promise<NameAvailability> => checkNameAvailability(name, { signal, chainId }),
       staleTime: 30_000
     })
 }
