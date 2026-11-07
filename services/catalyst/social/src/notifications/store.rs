@@ -7,7 +7,7 @@
 
 use crate::shared::now_utc;
 use std::sync::{Arc, LazyLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde_json::Value as Json;
@@ -38,7 +38,8 @@ pub fn naive_to_ms(t: NaiveDateTime) -> i64 {
 /// poll through the plan cache"). With the flags in the text, the generic
 /// plan keeps `occurred_at >= $2` in the index condition and the unread poll
 /// matches the partial `notifications_unread_idx`. Binds: `$1` address,
-/// then `from` when present, then the limit, then the touch time when
+/// then `from` when present, then the limit, then the broadcast horizon
+/// (oldest listed broadcast `occurred_at`), then the touch time when
 /// `touch` (the reader_seen upsert rides along as a data-modifying CTE;
 /// GREATEST keeps concurrent replicas from moving the mark backwards).
 fn list_sql(with_from: bool, only_unread: bool, touch: bool) -> String {
@@ -48,13 +49,20 @@ fn list_sql(with_from: bool, only_unread: bool, touch: bool) -> String {
         next += 1;
         format!("${n}")
     };
-    let from_cond = if with_from {
-        format!(" AND occurred_at >= {}", bind())
-    } else {
-        String::new()
+    let from = if with_from { Some(bind()) } else { None };
+    let from_cond = |col: &str| match &from {
+        Some(b) => format!(" AND {col} >= {b}"),
+        None => String::new(),
     };
+    let (own_from, bc_from) = (from_cond("occurred_at"), from_cond("b.occurred_at"));
     let unread_cond = if only_unread { " AND NOT read" } else { "" };
+    let bc_unread = if only_unread {
+        " AND r.broadcast_id IS NULL"
+    } else {
+        ""
+    };
     let limit = bind();
+    let horizon = bind();
     let touch_cte = if touch {
         format!(
             "WITH seen AS (
@@ -69,6 +77,7 @@ fn list_sql(with_from: bool, only_unread: bool, touch: bool) -> String {
     } else {
         String::new()
     };
+    // Each branch keeps its own index plan; broadcasts carry a null address.
     format!(
         "{touch_cte}SELECT id, type, address,
                    (EXTRACT(EPOCH FROM occurred_at) * 1000)::bigint AS timestamp,
@@ -76,9 +85,22 @@ fn list_sql(with_from: bool, only_unread: bool, touch: bool) -> String {
                    to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS created_at,
                    to_char(COALESCE(read_at, created_at), 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS updated_at,
                    metadata
-            FROM social.notifications
-            WHERE address = $1{from_cond}{unread_cond}
-              AND in_app IS TRUE
+            FROM (
+              (SELECT id, type, address, occurred_at, read, read_at, created_at, metadata
+               FROM social.notifications
+               WHERE address = $1{own_from}{unread_cond}
+                 AND in_app IS TRUE
+               ORDER BY occurred_at DESC, id DESC
+               LIMIT {limit})
+              UNION ALL
+              (SELECT b.id, b.type, NULL::text, b.occurred_at, r.read_at IS NOT NULL,
+                      r.read_at, b.created_at, b.metadata
+               FROM social.broadcast_notifications b
+               LEFT JOIN social.broadcast_reads r ON r.broadcast_id = b.id AND r.address = $1
+               WHERE b.occurred_at >= {horizon}{bc_from}{bc_unread}
+               ORDER BY b.occurred_at DESC, b.id DESC
+               LIMIT {limit})
+            ) n
             ORDER BY occurred_at DESC, id DESC
             LIMIT {limit}"
     )
@@ -98,7 +120,7 @@ pub(crate) fn details_flag(path: &str, default: bool) -> String {
 /// reason (pruned with the other terminal rows). `rows_affected` of the
 /// whole statement is therefore the number of notifications inserted. A
 /// type absent from `message_type` emails, as the old `autoMigrate` defaults.
-static DELIVERY_ROWS_SQL: LazyLock<String> = LazyLock::new(|| {
+pub(super) static DELIVERY_ROWS_SQL: LazyLock<String> = LazyLock::new(|| {
     format!(
         r#"
     INSERT INTO social.notification_deliveries (notification_id, channel, state, last_error)
@@ -123,7 +145,16 @@ static DELIVERY_ROWS_SQL: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
-type ListRow = (Uuid, String, String, i64, bool, String, String, Json);
+type ListRow = (
+    Uuid,
+    String,
+    Option<String>,
+    i64,
+    bool,
+    String,
+    String,
+    Json,
+);
 
 /// One notification a producer wants delivered. `id` is the producer's
 /// idempotency key (a v5 uuid over the event for replayable sources).
@@ -269,14 +300,55 @@ pub enum SetEmailOutcome {
 pub struct NotificationsStore {
     pool: PgPool,
     seen: Arc<SeenDebounce>,
+    broadcast_horizon: Duration,
 }
+
+/// Broadcasts older than this are neither listed nor kept (upstream kept them forever).
+pub const DEFAULT_BROADCAST_HORIZON: Duration = Duration::from_secs(90 * 24 * 3600);
 
 impl NotificationsStore {
     pub fn new(pool: PgPool) -> Self {
         Self {
             pool,
             seen: Arc::new(SeenDebounce::default()),
+            broadcast_horizon: DEFAULT_BROADCAST_HORIZON,
         }
+    }
+
+    pub fn with_broadcast_horizon(mut self, horizon: Duration) -> Self {
+        self.broadcast_horizon = horizon;
+        self
+    }
+
+    fn broadcast_cutoff(&self, now: NaiveDateTime) -> NaiveDateTime {
+        chrono::Duration::from_std(self.broadcast_horizon)
+            .ok()
+            .and_then(|h| now.checked_sub_signed(h))
+            .unwrap_or(NaiveDateTime::MIN)
+    }
+
+    /// Deletes up to `limit` broadcasts past the horizon (their reads cascade).
+    pub async fn prune_broadcasts(
+        &self,
+        now: NaiveDateTime,
+        limit: i64,
+    ) -> Result<u64, sqlx::Error> {
+        let res = sqlx::query(
+            r#"
+            DELETE FROM social.broadcast_notifications
+            WHERE id IN (
+                SELECT id FROM social.broadcast_notifications
+                WHERE occurred_at < $1
+                ORDER BY occurred_at
+                LIMIT $2
+            )
+            "#,
+        )
+        .bind(self.broadcast_cutoff(now))
+        .bind(limit)
+        .execute(&self.pool)
+        .await?;
+        Ok(res.rows_affected())
     }
 
     pub fn pool(&self) -> &PgPool {
@@ -335,7 +407,7 @@ impl NotificationsStore {
         if let Some(from) = from {
             query = query.bind(from);
         }
-        query = query.bind(limit);
+        query = query.bind(limit).bind(self.broadcast_cutoff(now_utc()));
         if let Some(at) = touch_at {
             query = query.bind(at);
         }
@@ -421,19 +493,29 @@ impl NotificationsStore {
     }
 
     pub async fn mark_read(&self, address: &Address, ids: &[Uuid]) -> Result<u64, ApiError> {
-        let res = sqlx::query(
+        // A broadcast id records this wallet's read; the count covers both kinds.
+        let updated: i64 = sqlx::query_scalar(
             r#"
-            UPDATE social.notifications
-            SET read = TRUE, read_at = $3
-            WHERE address = $1 AND id = ANY($2) AND read = FALSE
+            WITH own AS (
+                UPDATE social.notifications
+                SET read = TRUE, read_at = $3
+                WHERE address = $1 AND id = ANY($2) AND read = FALSE
+                RETURNING 1
+            ), bc AS (
+                INSERT INTO social.broadcast_reads (broadcast_id, address, read_at)
+                SELECT id, $1, $3 FROM social.broadcast_notifications WHERE id = ANY($2)
+                ON CONFLICT (broadcast_id, address) DO NOTHING
+                RETURNING 1
+            )
+            SELECT (SELECT count(*) FROM own) + (SELECT count(*) FROM bc)
             "#,
         )
         .bind(address)
         .bind(ids)
         .bind(now_utc())
-        .execute(&self.pool)
+        .fetch_one(&self.pool)
         .await?;
-        Ok(res.rows_affected())
+        Ok(updated as u64)
     }
 
     pub async fn get_subscription(
@@ -772,7 +854,11 @@ mod sql_shape_tests {
         );
         let both = list_sql(true, true, true);
         assert!(both.starts_with("WITH seen AS"), "{both}");
-        assert!(both.contains("VALUES ($1, $4::timestamp)"), "{both}");
+        assert!(both.contains("VALUES ($1, $5::timestamp)"), "{both}");
+        assert!(
+            both.contains("WHERE b.occurred_at >= $4 AND b.occurred_at >= $2"),
+            "{both}"
+        );
         assert!(
             both.contains("WHERE address = $1 AND occurred_at >= $2 AND NOT read")
                 && both.contains("LIMIT $3"),
@@ -897,7 +983,7 @@ mod pg_tests {
             vec![a_new, a_old]
         );
         assert_eq!(items[0].timestamp, 200_000);
-        assert_eq!(items[0].address, a.as_str());
+        assert_eq!(items[0].address.as_deref(), Some(a.as_str()));
         assert!(
             items[0].created_at.ends_with('Z') && items[0].created_at.len() == 24,
             "{}",

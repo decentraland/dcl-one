@@ -441,7 +441,8 @@
   "tip_received": {
     "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
     "metadata": {
-      "amount": "10000000000000000000",
+      "amount": "10.0",
+      "manaAmount": "10000000000000000000",
       "senderAddress": "0xABCDEF1234567890ABCDEF1234567890ABCDEF12",
       "receiverAddress": "0x1234567890ABCDEF1234567890ABCDEF12345678",
       "senderUsername": "CoolBuilder",

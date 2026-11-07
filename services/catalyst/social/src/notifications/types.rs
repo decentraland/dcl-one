@@ -18,7 +18,8 @@ pub struct NotificationItem {
     pub id: Uuid,
     #[serde(rename = "type")]
     pub kind: String,
-    pub address: String,
+    /// `null` for a broadcast, as upstream answered it.
+    pub address: Option<String>,
     /// Epoch ms, as a string (the explorer parses it with `Number`).
     #[serde(with = "i64_str")]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
@@ -136,6 +137,7 @@ pub const NOTIFICATION_TYPES: &[&str] = &[
     "governance_tender_passed",
     "governance_whale_vote",
     "governance_voted_on_behalf",
+    "item_discounted",
     "item_sold",
     "item_published",
     "rental_ended",
@@ -420,7 +422,7 @@ mod tests {
         let item = NotificationItem {
             id: Uuid::nil(),
             kind: "bid_received".into(),
-            address: "0xa".into(),
+            address: Some("0xa".into()),
             timestamp: 1700000000123,
             read: false,
             created_at: "x".into(),

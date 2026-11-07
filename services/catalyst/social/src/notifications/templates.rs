@@ -391,6 +391,26 @@ mod tests {
     }
 
     #[test]
+    fn tip_email_formats_the_wei_amount() {
+        let r = render(
+            "tip_received",
+            "0xa",
+            &json!({"amount": "2.5", "manaAmount": "2500000000000000000", "senderAddress": "0xb"}),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(r.content.contains("2.50 MANA"), "{}", r.content);
+        let big = render(
+            "tip_received",
+            "0xa",
+            &json!({"amount": "1500", "manaAmount": "1.5e+21", "senderAddress": "0xb"}),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(big.content.contains("1500.00 MANA"), "{}", big.content);
+    }
+
+    #[test]
     fn rendering_matches_the_old_processor() {
         let r = render(
             "banned",
