@@ -82,8 +82,9 @@ pub struct Settings {
     pub delivery_interval: Duration,
     /// `NOTIFICATIONS_BROADCAST_HORIZON_DAYS` (default 90): broadcasts older are hidden and pruned.
     pub broadcast_horizon: Duration,
-    /// `NOTIFICATION_DELIVERY_MAX_AGE_SECS` (default 7 days): pending emails older end `expired`.
-    pub delivery_max_age: Duration,
+    /// `NOTIFICATION_DELIVERY_MAX_AGE_SECS` (default 7 days, `None` = never):
+    /// pending emails older end `expired`; see [`delivery::max_age_from_secs`].
+    pub delivery_max_age: Option<Duration>,
     /// Deployment origin used by event notice links (`/whats-on/{id}`).
     pub events_base_url: String,
     /// Backend event asset origin and mount, distinct from notice links.
@@ -112,7 +113,7 @@ impl Default for Settings {
             first_wear: FirstWearSettings::default(),
             delivery_interval: Duration::from_secs(15),
             broadcast_horizon: store::DEFAULT_BROADCAST_HORIZON,
-            delivery_max_age: delivery::DEFAULT_MAX_AGE,
+            delivery_max_age: Some(delivery::DEFAULT_MAX_AGE),
             events_base_url: "https://decentraland.org".into(),
             events_asset_base_url: "http://localhost/events".into(),
             current_version: None,
@@ -198,9 +199,10 @@ impl State {
                     let pool = state.store.pool();
                     let expired = delivery::expire(pool, crate::shared::now_utc(), max_age).await?;
                     if expired > 0 {
-                        tracing::info!(expired, "stale notification deliveries expired");
+                        tracing::warn!(expired, "stale notification deliveries expired unsent");
                     }
-                    let summary = delivery::run_pass(pool, &state.email, configured).await?;
+                    let summary =
+                        delivery::run_pass(pool, &state.email, configured, max_age).await?;
                     if summary.claimed > 0 {
                         tracing::info!(?summary, "notification deliveries pass");
                         ctx.progress(format!("{summary:?}"));

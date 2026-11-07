@@ -16175,7 +16175,9 @@ CREATE TABLE shop.notification_cursor (
     seed_block bigint NOT NULL,
     seed_log_index integer NOT NULL,
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    CONSTRAINT notification_cursor_producer_shape CHECK (producer ~ '^[a-z_]+(:[a-z_]+)*$'),
+    -- Exactly notice_cursor::PRODUCERS (a test compares them).
+    CONSTRAINT notification_cursor_producer_known CHECK (producer IN ('transfer_received', 'royalties_earned',
+        'rental_started', 'rental_ended', 'sales:traded:ethereum', 'sales:traded:matic', 'sales:order_successful:matic')),
     CONSTRAINT notification_cursor_end_time_shape CHECK ((producer = 'rental_ended') = (end_time IS NOT NULL)),
     CONSTRAINT notification_cursor_seed_end_time_shape CHECK ((producer = 'rental_ended') = (seed_end_time IS NOT NULL))
 );
@@ -16751,13 +16753,14 @@ CREATE INDEX mana_transfer_recipient ON shop.mana_transfer (network, recipient, 
 
 -- Tip forwards (POST /events-notifier/forward-blockchain) waiting for the
 -- MANA transfer index to reach their transaction. Workload: one row per tip,
--- deleted once notified, rejected, an hour old, or passed by the published
--- index without its transfer; at most 20 per sender (under a per-sender
--- advisory lock) and MARKETPLACE_TIP_MAX_PENDING in all (past either a
--- forward is settled unstored if indexed, else refused); a resolve
--- pass settles at most 500 that have a published transfer, found through
--- mana_transfer_sender. A sender's claim never blocks another's: the key is
--- (transaction, signer).
+-- deleted once notified, rejected or an hour old; at most 20 per sender
+-- (under a per-sender advisory lock; past it the sender's oldest unmatched
+-- claim is evicted) and MARKETPLACE_TIP_MAX_PENDING in all (past it the
+-- oldest unmatched claim over 5 minutes old is evicted through
+-- tip_claim_created_at, else the forward is settled unstored if indexed or
+-- answered retryable 429); a resolve pass settles at most 500 that have a
+-- published transfer, found through mana_transfer_sender. A sender's claim
+-- never blocks another's: the key is (transaction, signer).
 CREATE TABLE shop.tip_claim (
     transaction_hash text NOT NULL CHECK (transaction_hash ~ '^0x[0-9a-f]{64}$'),
     sender text NOT NULL CHECK (sender ~ '^0x[0-9a-f]{40}$'),
@@ -16765,4 +16768,5 @@ CREATE TABLE shop.tip_claim (
     PRIMARY KEY (transaction_hash, sender)
 );
 CREATE INDEX tip_claim_sender ON shop.tip_claim (sender);
+CREATE INDEX tip_claim_created_at ON shop.tip_claim (created_at);
 

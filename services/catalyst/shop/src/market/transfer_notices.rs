@@ -532,10 +532,12 @@ pub(crate) mod tests {
         assert_eq!(cursor().await, (102, 0));
 
         // A reorg rewinds the nft index: block 102's log is replaced.
+        // chain_walk's order: plan, delete and rewind, then apply.
         let mut tx = pool.begin().await.unwrap();
-        notice_cursor::replay(&mut tx, INDEXER_NFT, ChainNet::Matic, -1, 102)
+        let plan = notice_cursor::plan_replay(&mut tx, INDEXER_NFT, ChainNet::Matic, -1, 102)
             .await
-            .unwrap();
+            .unwrap()
+            .expect("within the replay window");
         sqlx::query("DELETE FROM shop.nft_event WHERE network = 'matic' AND block_number > 101")
             .execute(&mut *tx)
             .await
@@ -543,6 +545,7 @@ pub(crate) mod tests {
         chain_walk::rewind(&mut tx, INDEXER_NFT, ChainNet::Matic, -1)
             .await
             .unwrap();
+        plan.apply(&mut tx).await.unwrap();
         tx.commit().await.unwrap();
         assert!(
             cursor().await < (101, 0),

@@ -115,12 +115,7 @@ pub async fn run_once(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
     let mut emitted = 0;
     loop {
         let mut txn = pool.begin().await?;
-        let (since_block, since_log): (i64, i32) = sqlx::query_as(
-            "SELECT block_number, log_index FROM shop.notification_cursor WHERE producer = $1 FOR UPDATE",
-        )
-        .bind(KIND)
-        .fetch_one(&mut *txn)
-        .await?;
+        let (_, since_block, since_log) = notice_cursor::lock(&mut txn, KIND).await?;
         let rows: Vec<SaleRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {key} AS id_key, e.block_number, e.log_index, e.block_time, e.contract_address, e.token_id::text AS token_id, \
                     div(e.amount * $6, 1000000)::text AS cut, \
@@ -173,15 +168,9 @@ pub async fn run_once(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
             Some(last) if full => (last.block_number, last.log_index),
             _ => (published, i32::MAX),
         };
-        sqlx::query(
-            "UPDATE shop.notification_cursor SET block_number = $2, log_index = $3, updated_at = timezone('UTC', now()) \
-             WHERE producer = $1 AND (block_number, log_index) < ($2, $3)",
-        )
-        .bind(KIND)
-        .bind(to_block)
-        .bind(to_log)
-        .execute(&mut *txn)
-        .await?;
+        if (to_block, to_log) > (since_block, since_log) {
+            notice_cursor::advance(&mut txn, KIND, None, to_block, to_log).await?;
+        }
         txn.commit().await?;
         if !full {
             break;

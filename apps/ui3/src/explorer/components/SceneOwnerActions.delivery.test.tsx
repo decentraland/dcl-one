@@ -149,6 +149,8 @@ describe("tip delivery", () => {
             return null;
           case "eth_sendTransaction":
             return TX;
+          case "eth_getTransactionReceipt":
+            return { status: "0x1", transactionHash: TX };
           default:
             throw new Error(`unexpected ${args.method}`);
         }
@@ -185,17 +187,19 @@ describe("tip delivery", () => {
     await user.click(send);
 
     expect(await screen.findByText(TX)).toBeInTheDocument();
+    const forward = await waitFor(() => bridge.expectSent("SignedFetch"));
     expect(calls.map((c) => c.method)).toEqual([
       "eth_requestAccounts",
       "eth_chainId",
       "wallet_switchEthereumChain",
       "eth_sendTransaction",
+      "eth_getTransactionReceipt",
     ]);
+    expect(calls[4]?.params).toEqual([TX]);
     expect(calls[2]?.params).toEqual([{ chainId: "0x89" }]);
     expect(calls[3]?.params).toEqual([
       { from: SIGNER, to: MANA, data: encodeManaTransfer(OWNER, 5n * 10n ** 18n) },
     ]);
-    const forward = bridge.expectSent("SignedFetch");
     expect(forward.url).toBe(`${catalystBase()}/events-notifier/forward-blockchain`);
     expect(forward.method).toBe("POST");
     expect(JSON.parse(forward.body ?? "")).toEqual({ type: "tip-received", transactionHash: TX });
@@ -203,16 +207,16 @@ describe("tip delivery", () => {
     expect(bridge.sentOf("SignedFetch")).toHaveLength(1);
   });
 
-  test("a failed tip forward is only logged and the tip stays submitted", async () => {
+  test("a refused tip forward is only logged and the tip stays submitted", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { provider } = fakeWallet();
     window.ethereum = provider;
     const user = mount(<SceneTipModal owner={OWNER} sceneTitle="Plaza" coords="0,0" onClose={() => {}} />);
     act(() => bridge.pushIdentity({ address: SIGNER, signerAddress: SIGNER }));
     await user.click(await screen.findByRole("button", { name: "Send 5 MANA" }));
-    const forward = bridge.expectSent("SignedFetch", isForward);
-    act(() => bridge.push({ kind: "signedFetchResult", id: forward.id, status: 500, body: "{\"error\":\"down\"}" }));
-    await waitFor(() => expect(warn).toHaveBeenCalledWith("[tip] could not notify the recipient", TX, expect.anything()));
+    const forward = await waitFor(() => bridge.expectSent("SignedFetch", isForward));
+    act(() => bridge.push({ kind: "signedFetchResult", id: forward.id, status: 400, body: "{\"error\":\"too small\"}" }));
+    await waitFor(() => expect(warn).toHaveBeenCalledWith("[tip] could not notify the recipient", TX, "refused"));
     expect(screen.getByText(/Tip submitted on Polygon/)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
   });
@@ -238,9 +242,9 @@ describe("tip delivery", () => {
     });
     await user.type(screen.getByRole("textbox", { name: "Feedback" }), "Thanks!");
     await user.click(await screen.findByRole("button", { name: "Send 5 MANA and message" }));
-    const forward = bridge.expectSent("SignedFetch", isForward);
+    const forward = await waitFor(() => bridge.expectSent("SignedFetch", isForward));
     act(() => bridge.push({ kind: "signedFetchResult", id: forward.id, status: 204, body: "" }));
-    const first = bridge.expectSent("SignedFetch", isMessage);
+    const first = await waitFor(() => bridge.expectSent("SignedFetch", isMessage));
     act(() => bridge.push({ kind: "signedFetchResult", id: first.id, status: 500, body: "unavailable" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Your tip was already submitted");
     expect(screen.queryByRole("group", { name: "Quick amounts" })).toBeNull();

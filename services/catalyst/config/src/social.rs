@@ -630,7 +630,8 @@ pub struct SocialConfig {
         default_value_t = 90
     )]
     pub notifications_broadcast_horizon_days: u64,
-    /// Pending notification emails idle this long end skipped as expired (default 7 days).
+    /// Pending notification emails idle this long end skipped as expired (default 7 days;
+    /// `0` never expires, other values below an hour are raised to an hour).
     #[arg(
         long,
         env = "NOTIFICATION_DELIVERY_MAX_AGE_SECS",

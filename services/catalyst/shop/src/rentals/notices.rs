@@ -502,12 +502,21 @@ mod tests {
             "The rent of your LAND at 1,2 has ended."
         );
 
-        // A rewind to block 20 moves both cursors back over the rents after
-        // it; the replay announces nothing twice.
+        // A rewind to block 20 (planned, rows deleted, then applied) moves
+        // both cursors back over the rents after it; the rewritten rows are
+        // announced nothing twice.
         let mut tx = pool.begin().await.unwrap();
-        notice_cursor::replay(&mut tx, INDEXER_RENTALS, ChainNet::Ethereum, 20, 30)
+        let plan = notice_cursor::plan_replay(&mut tx, INDEXER_RENTALS, ChainNet::Ethereum, 20, 30)
             .await
-            .unwrap();
+            .unwrap()
+            .expect("within the replay window");
+        sqlx::query(
+            "DELETE FROM shop.rental_event WHERE network = 'ethereum' AND block_number > 20",
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        plan.apply(&mut tx).await.unwrap();
         tx.commit().await.unwrap();
         let cursors: Vec<(String, Option<i64>, i64, i32)> = sqlx::query_as(
             "SELECT producer, end_time, block_number, log_index FROM shop.notification_cursor ORDER BY producer",
@@ -522,6 +531,9 @@ mod tests {
                 (KIND_STARTED.to_string(), None, 20, i32::MAX),
             ]
         );
+        rent(21, 0, t0 + 3 * DAY, "8", 1, false).await;
+        rent(22, 0, t0 + 3 * DAY + 5, "8", 2, true).await;
+        rent(31, 0, t0 + 4 * DAY, "9", 1, false).await;
         assert_eq!(run_started(&pool, base).await.unwrap(), Pass::Emitted(0));
         assert_eq!(run_ended(&pool, base).await.unwrap(), Pass::Emitted(0));
         db.drop().await;

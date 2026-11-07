@@ -7,34 +7,40 @@
 //! `from` is the signer, and its `to` is told `tip_received`. The forward
 //! arrives before the index reaches the transaction, so it is kept as a
 //! claim (`shop.tip_claim`) and resolved then, by the request itself or the
-//! `tip-notifications` job; a claim the index never confirms expires once
-//! the published index is [`UNMATCHED_GRACE_SECS`] past it, or after an
-//! hour. Past the pending cap a forward is still settled when the index
-//! already holds its transfer, and refused only otherwise; each client
-//! address may forward [`FORWARDS_PER_MINUTE`] a minute. A transfer below
-//! the minimum amount, or mined longer than the maximum age before its
-//! claim, is rejected (`TipSettings`). The notification id is a uuid v5 of
-//! the transaction hash.
+//! `tip-notifications` job; a claim the index never confirms expires after
+//! an hour. The table is bounded without refusing fresh claims: past a
+//! sender's [`MAX_PENDING_PER_SENDER`] its own oldest unmatched claim makes
+//! room, and past `MARKETPLACE_TIP_MAX_PENDING` the oldest unmatched claim
+//! older than [`EVICTABLE_AFTER_SECS`] does; only when none is that old is
+//! the forward answered with a retryable 429 and `Retry-After` (a forward
+//! the index already holds is settled unstored instead). Each client source
+//! (the TCP peer, or a trusted proxy's `X-Real-IP`; IPv6 by /64) may forward
+//! [`FORWARDS_PER_MINUTE`] a minute, an IPv6 /48 [`FORWARDS_PER_MINUTE_PER_48`].
+//! A transfer below the minimum amount, or mined longer than the maximum age
+//! before its claim, is rejected (`TipSettings`). The notification id is a
+//! uuid v5 of the transaction hash.
 
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::LazyLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use alloy_primitives::U256;
 use axum::Json;
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::{OriginalUri, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::extract::{ConnectInfo, Extension, OriginalUri, State};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use chrono::NaiveDateTime;
+use parking_lot::Mutex;
 use serde_json::{Value, json};
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
 use super::SharedState;
-use super::chain_walk::{self, ChainNet, Cursor, INDEXER_MANA};
-use crate::comms::limits::{RateLimitDecision, RateLimiter};
+use super::chain_walk::{self, ChainNet, INDEXER_MANA};
 use crate::jobs::{Jobs, PeriodicCfg};
 use crate::shared::identity::Address;
 use crate::shared::signed_fetch::{self, PayloadPolicy, SignedPath};
@@ -43,12 +49,18 @@ use crate::social::notifications::store::{NewNotification, insert_notifications}
 pub const KIND: &str = "tip_received";
 const SUBTYPE: &str = "tip-received";
 const NET: ChainNet = ChainNet::Matic;
-const CLAIM_TTL_SECS: i64 = 3600;
-/// How far the published index must be past an unmatched claim to drop it.
-pub const UNMATCHED_GRACE_SECS: i64 = 600;
-/// Forwards one client address (IPv6 by /64) may send a minute.
+/// How long a claim waits for its transfer (the old service's window).
+pub const CLAIM_TTL_SECS: i64 = 3600;
+/// The age before another sender's flood may evict an unmatched claim: a
+/// mined tip is indexed well within it.
+pub const EVICTABLE_AFTER_SECS: i64 = 300;
+/// Forwards one client source (IPv6 by /64) may send a minute.
 pub const FORWARDS_PER_MINUTE: u32 = 30;
-const MAX_PENDING_PER_SENDER: i64 = 20;
+/// Forwards every /64 of one IPv6 /48 may send a minute together.
+pub const FORWARDS_PER_MINUTE_PER_48: u32 = 120;
+/// Limiter keys kept; past it the least recently used goes.
+const LIMITER_KEYS: usize = 10_000;
+pub const MAX_PENDING_PER_SENDER: i64 = 20;
 /// Claims one resolve pass settles at most.
 const RESOLVE_LIMIT: i64 = 500;
 const POLL_SECS: u64 = 15;
@@ -66,6 +78,8 @@ pub struct TipSettings {
     pub max_age_secs: i64,
     /// `MARKETPLACE_TIP_MAX_PENDING`: pending claims across every sender.
     pub max_pending: i64,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`: peers whose `X-Real-IP` names the client.
+    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
 }
 
 impl Default for TipSettings {
@@ -92,7 +106,13 @@ impl TipSettings {
             min_amount_wei,
             max_age_secs: i64::try_from(max_age_secs).unwrap_or(i64::MAX),
             max_pending: i64::try_from(max_pending).unwrap_or(i64::MAX),
+            trusted_proxy_cidrs: Vec::new(),
         })
+    }
+
+    pub fn with_trusted_proxies(mut self, cidrs: Vec<ipnet::IpNet>) -> Self {
+        self.trusted_proxy_cidrs = cidrs;
+        self
     }
 }
 
@@ -109,8 +129,94 @@ pub fn router(state: SharedState) -> Router {
         .with_state(state)
 }
 
-static FORWARD_LIMITER: LazyLock<RateLimiter> =
-    LazyLock::new(|| RateLimiter::new(FORWARDS_PER_MINUTE, Duration::from_secs(60)));
+struct Bucket {
+    tokens: f64,
+    last: Instant,
+}
+
+/// Token buckets per client source and per IPv6 /48, bounded by dropping the
+/// least recently used key: a flood of fresh keys never resets the busy ones.
+struct ForwardLimiter {
+    max_keys: usize,
+    buckets: Mutex<HashMap<String, Bucket>>,
+}
+
+impl ForwardLimiter {
+    fn new(max_keys: usize) -> Self {
+        Self {
+            max_keys: max_keys.max(2),
+            buckets: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Spends one token of every key of `ip` (`None`: one shared key), or none.
+    fn allow(&self, ip: Option<&str>) -> bool {
+        let keys = forward_keys(ip);
+        let now = Instant::now();
+        let mut map = self.buckets.lock();
+        let mut ok = true;
+        for (key, per_minute) in &keys {
+            if !map.contains_key(key) && map.len() >= self.max_keys {
+                let oldest = map
+                    .iter()
+                    .filter(|(k, _)| !keys.iter().any(|(own, _)| own == *k))
+                    .min_by_key(|(_, b)| b.last)
+                    .map(|(k, _)| k.clone());
+                if let Some(oldest) = oldest {
+                    map.remove(&oldest);
+                }
+            }
+            let cap = f64::from(*per_minute);
+            let b = map.entry(key.clone()).or_insert(Bucket {
+                tokens: cap,
+                last: now,
+            });
+            let elapsed = now.saturating_duration_since(b.last).as_secs_f64();
+            b.tokens = (b.tokens + elapsed * cap / 60.0).min(cap);
+            b.last = now;
+            ok &= b.tokens >= 1.0;
+        }
+        if ok {
+            for (key, _) in &keys {
+                if let Some(b) = map.get_mut(key) {
+                    b.tokens -= 1.0;
+                }
+            }
+        }
+        ok
+    }
+}
+
+/// The limiter keys of a client address and their budgets a minute.
+fn forward_keys(ip: Option<&str>) -> Vec<(String, u32)> {
+    let Some(ip) = ip else {
+        return vec![("unknown".into(), FORWARDS_PER_MINUTE)];
+    };
+    let mut keys = vec![(
+        crate::shared::client_ip::source_key(ip),
+        FORWARDS_PER_MINUTE,
+    )];
+    if let Ok(IpAddr::V6(v6)) = ip.parse::<IpAddr>()
+        && v6.to_ipv4_mapped().is_none()
+    {
+        let net = Ipv6Addr::from(u128::from(v6) & (u128::MAX << 80));
+        keys.push((format!("{net}/48"), FORWARDS_PER_MINUTE_PER_48));
+    }
+    keys
+}
+
+static FORWARD_LIMITER: LazyLock<ForwardLimiter> =
+    LazyLock::new(|| ForwardLimiter::new(LIMITER_KEYS));
+
+fn retry_later(message: &str, secs: i64) -> Response {
+    let secs = secs.max(1);
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [(header::RETRY_AFTER, secs.to_string())],
+        Json(json!({ "error": message, "retryAfter": secs })),
+    )
+        .into_response()
+}
 
 fn error(status: StatusCode, message: impl Into<String>) -> Response {
     (status, Json(json!({ "error": message.into() }))).into_response()
@@ -144,16 +250,20 @@ fn parse_body(body: &[u8]) -> Result<String, String> {
 
 async fn forward(
     State(state): State<SharedState>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     OriginalUri(original): OriginalUri,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let ip = crate::shared::client_ip::client_ip(&headers);
-    if !ip.is_empty()
-        && FORWARD_LIMITER.check(&crate::shared::client_ip::source_key(&ip))
-            == RateLimitDecision::Deny
-    {
-        return error(StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded");
+    let peer = peer.map(|Extension(ConnectInfo(p))| p);
+    let ip = crate::shared::client_ip::peer_client_ip(
+        &headers,
+        peer,
+        &state.settings.market.tips.trusted_proxy_cidrs,
+    )
+    .or_else(|| peer.map(|p| p.ip().to_canonical().to_string()));
+    if !FORWARD_LIMITER.allow(ip.as_deref()) {
+        return retry_later("rate limit exceeded", 2);
     }
     let signer = match signed_fetch::require_signer_at(
         &headers,
@@ -183,10 +293,9 @@ async fn forward(
     match claim(&state.pool, &state.settings.market.tips, &tx, &signer).await {
         Ok(Outcome::Notified) => StatusCode::NO_CONTENT.into_response(),
         Ok(Outcome::Pending) => (StatusCode::ACCEPTED, Json(json!({}))).into_response(),
-        Ok(Outcome::TooMany) => error(
-            StatusCode::TOO_MANY_REQUESTS,
-            "Too many tips waiting for confirmation",
-        ),
+        Ok(Outcome::Busy { retry_after_secs }) => {
+            retry_later("Too many tips waiting for confirmation", retry_after_secs)
+        }
         Ok(Outcome::Rejected(why)) => error(StatusCode::BAD_REQUEST, why.message(&tx)),
         Err(e) => {
             tracing::error!(error = %e, tx, "tip forward failed");
@@ -203,7 +312,10 @@ pub enum Outcome {
     Notified,
     Pending,
     Rejected(Rejection),
-    TooMany,
+    /// Every pending claim is too young to evict: retry after this long.
+    Busy {
+        retry_after_secs: i64,
+    },
 }
 
 /// Why a claim was refused; each is the old route's 400.
@@ -228,10 +340,11 @@ impl Rejection {
     }
 }
 
-/// Records the claim (under the sender's lock, within the per-sender and
-/// global caps) and resolves it at once if the index already has it. Past
-/// a cap the claim is settled from the index without being stored, and
-/// refused only when the index does not hold its transfer yet.
+/// Records the claim under the sender's lock and resolves it at once if
+/// the index already has it. Past a cap, unmatched claims are evicted
+/// oldest first (the sender's own at any age, others' only past
+/// [`EVICTABLE_AFTER_SECS`]); when nothing may go, an indexed forward is
+/// settled unstored and any other is `Busy`.
 pub async fn claim(
     pool: &PgPool,
     settings: &TipSettings,
@@ -253,10 +366,26 @@ pub async fn claim(
     .fetch_one(&mut *txn)
     .await?;
     if !exists {
+        let mut room = true;
+        let mut all = all;
+        if mine >= MAX_PENDING_PER_SENDER {
+            let need = mine - MAX_PENDING_PER_SENDER + 1;
+            let freed = evict(&mut txn, Some(sender), need, 0).await?;
+            all -= freed;
+            room = freed >= need;
+        }
         // The global count is advisory: concurrent senders may pass it together.
-        if mine >= MAX_PENDING_PER_SENDER || all >= settings.max_pending {
+        if room && all >= settings.max_pending {
+            let need = all - settings.max_pending + 1;
+            room = evict(&mut txn, None, need, EVICTABLE_AFTER_SECS).await? >= need;
+        }
+        if !room {
+            let retry_after_secs =
+                retry_after(&mut txn, sender, mine >= MAX_PENDING_PER_SENDER).await?;
             txn.rollback().await?;
-            return resolve_unstored(pool, settings, tx, sender).await;
+            return Ok(resolve_unstored(pool, settings, tx, sender)
+                .await?
+                .unwrap_or(Outcome::Busy { retry_after_secs }));
         }
         sqlx::query(
             "INSERT INTO shop.tip_claim (transaction_hash, sender) VALUES ($1, $2) ON CONFLICT DO NOTHING",
@@ -273,6 +402,58 @@ pub async fn claim(
         .next()
         .map(|(_, o)| o)
         .unwrap_or(Outcome::Pending))
+}
+
+/// SQL: claim `c` has no indexed transfer yet (published or not).
+fn unmatched() -> String {
+    format!(
+        "NOT EXISTS (SELECT 1 FROM shop.mana_transfer m WHERE m.network = '{}' \
+         AND m.sender = c.sender AND m.transaction_hash = c.transaction_hash)",
+        NET.db_name()
+    )
+}
+
+/// Deletes up to `limit` unmatched claims (of `sender`, or anyone's) at
+/// least `min_age_secs` old, oldest first; returns how many.
+async fn evict(
+    conn: &mut PgConnection,
+    sender: Option<&str>,
+    limit: i64,
+    min_age_secs: i64,
+) -> sqlx::Result<i64> {
+    let n = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DELETE FROM shop.tip_claim d USING ( \
+             SELECT c.transaction_hash, c.sender FROM shop.tip_claim c \
+             WHERE ($1::text IS NULL OR c.sender = $1) \
+               AND c.created_at <= timezone('UTC', now()) - make_interval(secs => $2) AND {} \
+             ORDER BY c.created_at LIMIT $3 FOR UPDATE SKIP LOCKED) e \
+         WHERE d.transaction_hash = e.transaction_hash AND d.sender = e.sender",
+        unmatched()
+    )))
+    .bind(sender)
+    .bind(min_age_secs as f64)
+    .bind(limit)
+    .execute(conn)
+    .await?
+    .rows_affected();
+    Ok(i64::try_from(n).unwrap_or(i64::MAX))
+}
+
+/// Seconds until the oldest unmatched claim may be evicted (the sender's
+/// own when `own`), or a resolve pass when every claim is matched.
+async fn retry_after(conn: &mut PgConnection, sender: &str, own: bool) -> sqlx::Result<i64> {
+    let wait: Option<f64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT EXTRACT(EPOCH FROM min(c.created_at) + make_interval(secs => $2) - timezone('UTC', now()))::float8 \
+         FROM shop.tip_claim c WHERE ($1::text IS NULL OR c.sender = $1) AND {}",
+        unmatched()
+    )))
+    .bind(own.then_some(sender))
+    .bind(if own { 0.0 } else { EVICTABLE_AFTER_SECS as f64 })
+    .fetch_one(conn)
+    .await?;
+    Ok(wait
+        .map_or(POLL_SECS as i64, |w| w.ceil() as i64)
+        .clamp(1, EVICTABLE_AFTER_SECS))
 }
 
 #[derive(sqlx::FromRow)]
@@ -318,16 +499,16 @@ pub fn metadata(sender: &str, recipient: &str, amount: &str) -> Value {
     })
 }
 
-/// Settles a claim that was not stored from the published index; `TooMany` when it cannot yet.
+/// Settles a claim that was not stored from the published index; `None` when it cannot yet.
 async fn resolve_unstored(
     pool: &PgPool,
     settings: &TipSettings,
     tx: &str,
     sender: &str,
-) -> anyhow::Result<Outcome> {
+) -> anyhow::Result<Option<Outcome>> {
     let Some(cursor) = chain_walk::ready_cursor(pool, INDEXER_MANA, NET, chrono::Utc::now()).await
     else {
-        return Ok(Outcome::TooMany);
+        return Ok(None);
     };
     let rows: Vec<ClaimRow> = sqlx::query_as(
         "SELECT transaction_hash, sender, timezone('UTC', now())::timestamp(3) AS created_at, \
@@ -342,19 +523,19 @@ async fn resolve_unstored(
     .fetch_all(pool)
     .await?;
     let Some(first) = rows.first() else {
-        return Ok(Outcome::TooMany);
+        return Ok(None);
     };
     let transfers: Vec<(&str, &str, i64)> = rows
         .iter()
         .filter_map(|r| Some((r.recipient.as_deref()?, r.amount.as_deref()?, r.timestamp?)))
         .collect();
-    Ok(match judge(settings, first, &transfers) {
+    Ok(Some(match judge(settings, first, &transfers) {
         Ok(n) => {
             insert_notifications(pool, &[n]).await?;
             Outcome::Notified
         }
         Err(why) => Outcome::Rejected(why),
-    })
+    }))
 }
 
 /// The verdict on a claim's published transfers.
@@ -466,25 +647,12 @@ pub async fn resolve(
     Ok(outcomes)
 }
 
-/// Drops claims past their hour, and those without a published transfer
-/// once the published index (`published`) is [`UNMATCHED_GRACE_SECS`] past
-/// them; returns how many.
-async fn expire(pool: &PgPool, published: Option<&Cursor>) -> anyhow::Result<u64> {
-    let (block, time) = published
-        .and_then(|c| Some((c.last_block, c.last_block_time?)))
-        .unzip();
+/// Drops claims past their hour; returns how many.
+async fn expire(pool: &PgPool) -> anyhow::Result<u64> {
     Ok(sqlx::query(
-        "DELETE FROM shop.tip_claim c WHERE c.created_at < timezone('UTC', now()) - make_interval(secs => $1) \
-            OR ($3::bigint IS NOT NULL \
-                AND c.created_at < timezone('UTC', to_timestamp($3)) - make_interval(secs => $4) \
-                AND NOT EXISTS (SELECT 1 FROM shop.mana_transfer m WHERE m.network = $5 AND m.sender = c.sender \
-                                AND m.transaction_hash = c.transaction_hash AND m.block_number <= $2))",
+        "DELETE FROM shop.tip_claim WHERE created_at < timezone('UTC', now()) - make_interval(secs => $1)",
     )
     .bind(CLAIM_TTL_SECS as f64)
-    .bind(block)
-    .bind(time)
-    .bind(UNMATCHED_GRACE_SECS as f64)
-    .bind(NET.db_name())
     .execute(pool)
     .await?
     .rows_affected())
@@ -506,10 +674,11 @@ pub fn spawn_job(state: &SharedState, jobs: &Jobs) {
         move |ctx| {
             let (pool, settings) = (pool.clone(), settings.clone());
             async move {
-                let Some(published) =
-                    chain_walk::ready_cursor(&pool, INDEXER_MANA, NET, chrono::Utc::now()).await
-                else {
-                    let expired = expire(&pool, None).await?;
+                if chain_walk::ready_cursor(&pool, INDEXER_MANA, NET, chrono::Utc::now())
+                    .await
+                    .is_none()
+                {
+                    let expired = expire(&pool).await?;
                     let waiting: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.tip_claim")
                         .fetch_one(&pool)
                         .await?;
@@ -518,9 +687,9 @@ pub fn spawn_job(state: &SharedState, jobs: &Jobs) {
                         NET.db_name()
                     ));
                     return Ok(());
-                };
+                }
                 let outcomes = resolve(&pool, &settings, None).await?;
-                let expired = expire(&pool, Some(&published)).await?;
+                let expired = expire(&pool).await?;
                 let notified = outcomes
                     .iter()
                     .filter(|(_, o)| *o == Outcome::Notified)
@@ -615,11 +784,10 @@ mod tests {
         .unwrap();
     }
 
-    /// A claim the published index has passed by the grace without its
-    /// transfer is dropped early; one inside the grace or whose transfer is
-    /// published stays for the resolver.
+    /// An unmatched claim waits its hour even after the published index
+    /// passes it (a tip slow to mine), then expires.
     #[tokio::test]
-    async fn unmatched_claims_expire_once_the_index_passes_them() {
+    async fn unmatched_claims_wait_an_hour() {
         let Some(db) = crate::market::tests::support::OwnDb::create("tips_expiry").await else {
             return;
         };
@@ -628,71 +796,120 @@ mod tests {
         for n in 1..=3u8 {
             claim(pool, &settings, &hash(n), TIPPER).await.unwrap();
         }
-        sqlx::query(
-            "UPDATE shop.tip_claim SET created_at = created_at - interval '20 minutes' WHERE transaction_hash <> $1",
-        )
-        .bind(hash(3))
-        .execute(pool)
-        .await
-        .unwrap();
-        transfer(
-            pool,
-            50,
-            0,
-            &hash(2),
-            TIPPER,
-            RECEIVER,
-            "1000000000000000000",
-            now_secs(),
-        )
-        .await;
-        publish_at(pool, 100, now_secs()).await;
-        let cursor = chain_walk::ready_cursor(pool, INDEXER_MANA, NET, chrono::Utc::now())
+        let age = |n: u8, minutes: i32| async move {
+            sqlx::query(
+                "UPDATE shop.tip_claim SET created_at = created_at - make_interval(mins => $2) WHERE transaction_hash = $1",
+            )
+            .bind(hash(n))
+            .bind(minutes)
+            .execute(pool)
             .await
             .unwrap();
-        assert_eq!(expire(pool, None).await.unwrap(), 0, "within the hour");
-        assert_eq!(expire(pool, Some(&cursor)).await.unwrap(), 1);
+        };
+        age(1, 50).await;
+        age(2, 61).await;
+        publish_at(pool, 100, now_secs()).await;
+        assert_eq!(expire(pool).await.unwrap(), 1);
         let left: Vec<String> = sqlx::query_scalar(
             "SELECT transaction_hash FROM shop.tip_claim ORDER BY transaction_hash",
         )
         .fetch_all(pool)
         .await
         .unwrap();
-        assert_eq!(left, vec![hash(2), hash(3)]);
+        assert_eq!(left, vec![hash(1), hash(3)], "50 minutes old still waits");
         db.drop().await;
     }
 
-    /// One client address is throttled before the signature is read.
-    #[tokio::test]
-    async fn forwards_are_rate_limited_per_client_address() {
-        use tower::ServiceExt;
-        let app = Router::new().nest(
+    fn forward_app(trusted: &str) -> Router {
+        let mut settings = crate::market::Settings::for_tests();
+        settings.market.tips =
+            TipSettings::default().with_trusted_proxies(vec![trusted.parse().unwrap()]);
+        Router::new().nest(
             "/events-notifier",
-            router(crate::market::tests::support::state_without_db()),
-        );
-        let send = |ip: &'static str| {
-            let app = app.clone();
-            async move {
-                app.oneshot(
-                    axum::http::Request::post("/events-notifier/forward-blockchain")
-                        .header("x-real-ip", ip)
-                        .body(axum::body::Body::from("{}"))
-                        .unwrap(),
-                )
-                .await
-                .unwrap()
-                .status()
-            }
-        };
-        for _ in 0..FORWARDS_PER_MINUTE {
-            assert_eq!(send("2001:db8:7:7::1").await, StatusCode::UNAUTHORIZED);
+            router(crate::market::tests::support::state_without_db_settings(
+                settings,
+            )),
+        )
+    }
+
+    async fn send_from(app: &Router, peer: Option<&str>, real_ip: Option<&str>) -> StatusCode {
+        use tower::ServiceExt;
+        let mut req = axum::http::Request::post("/events-notifier/forward-blockchain");
+        if let Some(ip) = real_ip {
+            req = req.header("x-real-ip", ip);
+        }
+        if let Some(p) = peer {
+            req = req.extension(ConnectInfo(SocketAddr::new(p.parse().unwrap(), 4242)));
+        }
+        app.clone()
+            .oneshot(req.body(axum::body::Body::from("{}")).unwrap())
+            .await
+            .unwrap()
+            .status()
+    }
+
+    /// The key is the TCP peer; only a trusted proxy's `X-Real-IP` replaces
+    /// it, and a rotated header from anyone else changes nothing.
+    #[tokio::test]
+    async fn forwards_are_rate_limited_per_peer() {
+        let app = forward_app("192.0.2.0/24");
+        for n in 0..FORWARDS_PER_MINUTE {
+            let spoof = format!("198.51.100.{n}");
+            assert_eq!(
+                send_from(&app, Some("203.0.113.77"), Some(&spoof)).await,
+                StatusCode::UNAUTHORIZED
+            );
         }
         assert_eq!(
-            send("2001:db8:7:7::2").await,
+            send_from(&app, Some("203.0.113.77"), Some("198.51.100.250")).await,
             StatusCode::TOO_MANY_REQUESTS,
-            "the same /64"
+            "an untrusted peer's header is ignored"
         );
-        assert_eq!(send("203.0.113.77").await, StatusCode::UNAUTHORIZED);
+        for _ in 0..FORWARDS_PER_MINUTE {
+            assert_eq!(
+                send_from(&app, Some("192.0.2.9"), Some("2001:db8:7:7::1")).await,
+                StatusCode::UNAUTHORIZED
+            );
+        }
+        assert_eq!(
+            send_from(&app, Some("192.0.2.10"), Some("2001:db8:7:7::2")).await,
+            StatusCode::TOO_MANY_REQUESTS,
+            "the proxied client's /64"
+        );
+        assert_eq!(
+            send_from(&app, Some("192.0.2.9"), Some("203.0.113.78")).await,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    /// Without any address the forwards share one bucket: never unlimited.
+    #[test]
+    fn forwards_without_an_address_share_one_bucket() {
+        let limiter = ForwardLimiter::new(16);
+        for _ in 0..FORWARDS_PER_MINUTE {
+            assert!(limiter.allow(None));
+        }
+        assert!(!limiter.allow(None));
+        assert!(limiter.allow(Some("203.0.113.1")));
+    }
+
+    /// Cycling /64s of one /48 hits the /48 budget, and churning more keys
+    /// than the limiter keeps never resets a busy bucket.
+    #[test]
+    fn a_rotating_prefix_cannot_reset_its_limit() {
+        let limiter = ForwardLimiter::new(8);
+        let allowed = (0..1_000u32)
+            .filter(|n| limiter.allow(Some(&format!("2001:db8:1:{n:x}::1"))))
+            .count();
+        assert_eq!(allowed, FORWARDS_PER_MINUTE_PER_48 as usize);
+        for _ in 0..FORWARDS_PER_MINUTE {
+            assert!(limiter.allow(Some("203.0.113.5")));
+        }
+        for n in 0..50u8 {
+            limiter.allow(Some(&format!("198.51.100.{n}")));
+            assert!(!limiter.allow(Some("203.0.113.5")), "kept while in use");
+        }
+        assert!(limiter.buckets.lock().len() <= 8);
     }
 
     async fn tip_count(pool: &PgPool) -> i64 {
@@ -703,8 +920,8 @@ mod tests {
     }
 
     /// Pending until the published index holds the transfer, then the
-    /// recipient is told once; unpublished blocks, a stranger's claim, a
-    /// multi-transfer transaction and the per-sender cap are refused.
+    /// recipient is told once; unpublished blocks, a stranger's claim and a
+    /// multi-transfer transaction never notify, and the sender's cap evicts.
     #[tokio::test]
     async fn a_tip_notifies_its_recipient_once_the_index_publishes_it() {
         let Some(db) = crate::market::tests::support::OwnDb::create("tips").await else {
@@ -775,19 +992,33 @@ mod tests {
             .execute(pool)
             .await
             .unwrap();
-        assert_eq!(expire(pool, None).await.unwrap(), 2);
+        assert_eq!(expire(pool).await.unwrap(), 2);
         for n in 10..10 + MAX_PENDING_PER_SENDER as u8 {
             assert_eq!(
                 claim(pool, &settings, &hash(n), TIPPER).await.unwrap(),
                 Outcome::Pending
             );
         }
+        sqlx::query("UPDATE shop.tip_claim SET created_at = created_at - interval '1 minute' WHERE transaction_hash = $1")
+            .bind(hash(10))
+            .execute(pool)
+            .await
+            .unwrap();
         assert_eq!(
             claim(pool, &settings, &hash(99), TIPPER).await.unwrap(),
-            Outcome::TooMany
+            Outcome::Pending,
+            "past the sender's cap its own oldest claim makes room"
         );
+        let mine: Vec<String> =
+            sqlx::query_scalar("SELECT transaction_hash FROM shop.tip_claim WHERE sender = $1")
+                .bind(TIPPER)
+                .fetch_all(pool)
+                .await
+                .unwrap();
+        assert_eq!(mine.len(), MAX_PENDING_PER_SENDER as usize);
+        assert!(!mine.contains(&hash(10)) && mine.contains(&hash(99)));
         assert_eq!(
-            claim(pool, &settings, &hash(10), TIPPER).await.unwrap(),
+            claim(pool, &settings, &hash(11), TIPPER).await.unwrap(),
             Outcome::Pending,
             "a repeated claim is not a new one"
         );
@@ -873,8 +1104,31 @@ mod tests {
         db.drop().await;
     }
 
-    /// Past the global cap a forward whose transfer is not indexed is
-    /// refused until claims settle; one the index holds is settled unstored.
+    async fn stored(pool: &PgPool) -> Vec<String> {
+        sqlx::query_scalar("SELECT transaction_hash FROM shop.tip_claim ORDER BY transaction_hash")
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn age_claim(pool: &PgPool, n: u8, minutes: i32) {
+        sqlx::query(
+            "UPDATE shop.tip_claim SET created_at = created_at - make_interval(mins => $2) WHERE transaction_hash = $1",
+        )
+        .bind(hash(n))
+        .bind(minutes)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    fn other(n: u8) -> String {
+        format!("0x{:040x}", 0xf00 + u32::from(n))
+    }
+
+    /// Past the global cap the oldest unmatched claim old enough to evict
+    /// makes room; a matched one never goes; with none old enough a forward
+    /// is retryably busy, unless the index already holds it.
     #[tokio::test]
     async fn the_pending_claims_have_a_global_cap() {
         let Some(db) = crate::market::tests::support::OwnDb::create("tips_cap").await else {
@@ -883,31 +1137,29 @@ mod tests {
         let pool = &db.pool;
         let settings = TipSettings::parse(DEFAULT_MIN_AMOUNT_WEI, DEFAULT_MAX_AGE_SECS, 3).unwrap();
         for n in 1..=3u8 {
-            let sender = format!("0x{:040x}", n);
             assert_eq!(
-                claim(pool, &settings, &hash(n), &sender).await.unwrap(),
+                claim(pool, &settings, &hash(n), &other(n)).await.unwrap(),
                 Outcome::Pending
             );
         }
-        assert_eq!(
-            claim(
-                pool,
-                &settings,
-                &hash(9),
-                "0x00000000000000000000000000000000000000f9"
-            )
-            .await
-            .unwrap(),
-            Outcome::TooMany
+        let Outcome::Busy { retry_after_secs } =
+            claim(pool, &settings, &hash(9), &other(9)).await.unwrap()
+        else {
+            panic!("fresh claims are not evicted");
+        };
+        assert!(
+            (EVICTABLE_AFTER_SECS - 5..=EVICTABLE_AFTER_SECS).contains(&retry_after_secs),
+            "{retry_after_secs}"
         );
         let t = now_secs();
         let one = "1000000000000000000";
         transfer(pool, 10, 0, &hash(20), TIPPER, RECEIVER, one, t).await;
         transfer(pool, 11, 0, &hash(21), TIPPER, RECEIVER, "1", t).await;
-        transfer(pool, 500, 0, &hash(22), TIPPER, RECEIVER, one, t).await;
-        assert_eq!(
-            claim(pool, &settings, &hash(20), TIPPER).await.unwrap(),
-            Outcome::TooMany,
+        assert!(
+            matches!(
+                claim(pool, &settings, &hash(20), TIPPER).await.unwrap(),
+                Outcome::Busy { .. }
+            ),
             "an index that is not ready answers nothing"
         );
         publish(pool, 100).await;
@@ -920,33 +1172,66 @@ mod tests {
             claim(pool, &settings, &hash(21), TIPPER).await.unwrap(),
             Outcome::Rejected(Rejection::TooSmall)
         );
+        assert_eq!(stored(pool).await, vec![hash(1), hash(2), hash(3)]);
+
+        // hash(1) is the oldest but its transfer is indexed (not yet published).
+        age_claim(pool, 1, 30).await;
+        age_claim(pool, 2, 10).await;
+        transfer(pool, 500, 0, &hash(1), &other(1), RECEIVER, one, t).await;
         assert_eq!(
-            claim(pool, &settings, &hash(22), TIPPER).await.unwrap(),
-            Outcome::TooMany,
-            "past the published block"
-        );
-        assert_eq!(tip_count(pool).await, 1);
-        let stored: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.tip_claim")
-            .fetch_one(pool)
-            .await
-            .unwrap();
-        assert_eq!(stored, 3, "nothing stored past the cap");
-        sqlx::query("DELETE FROM shop.tip_claim WHERE transaction_hash = $1")
-            .bind(hash(1))
-            .execute(pool)
-            .await
-            .unwrap();
-        assert_eq!(
-            claim(
-                pool,
-                &settings,
-                &hash(9),
-                "0x00000000000000000000000000000000000000f9"
-            )
-            .await
-            .unwrap(),
+            claim(pool, &settings, &hash(9), &other(9)).await.unwrap(),
             Outcome::Pending
         );
+        assert_eq!(stored(pool).await, vec![hash(1), hash(3), hash(9)]);
+        assert_eq!(tip_count(pool).await, 1);
+        db.drop().await;
+    }
+
+    /// The cap is full of a flood's claims when a real tip is forwarded; its
+    /// transfer is indexed only afterwards, and it is still notified while
+    /// the flood goes on.
+    #[tokio::test]
+    async fn a_tip_forwarded_into_a_full_cap_is_notified_once_indexed() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("tips_cap_late").await else {
+            return;
+        };
+        let pool = &db.pool;
+        let settings = TipSettings::parse(DEFAULT_MIN_AMOUNT_WEI, DEFAULT_MAX_AGE_SECS, 3).unwrap();
+        publish(pool, 100).await;
+        for n in 1..=3u8 {
+            claim(pool, &settings, &hash(n), &other(n)).await.unwrap();
+            age_claim(pool, n, 10).await;
+        }
+        assert_eq!(
+            claim(pool, &settings, &hash(50), TIPPER).await.unwrap(),
+            Outcome::Pending,
+            "the real tip is stored"
+        );
+        for n in 4..=8u8 {
+            claim(pool, &settings, &hash(n), &other(n)).await.unwrap();
+        }
+        assert!(
+            stored(pool).await.contains(&hash(50)),
+            "the flood cannot evict it yet"
+        );
+        transfer(
+            pool,
+            150,
+            0,
+            &hash(50),
+            TIPPER,
+            RECEIVER,
+            "1000000000000000000",
+            now_secs(),
+        )
+        .await;
+        publish(pool, 200).await;
+        let outcomes = resolve(pool, &settings, None).await.unwrap();
+        assert!(
+            outcomes.contains(&(hash(50), Outcome::Notified)),
+            "{outcomes:?}"
+        );
+        assert_eq!(tip_count(pool).await, 1);
         db.drop().await;
     }
 
