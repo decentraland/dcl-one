@@ -33,7 +33,7 @@ SETTINGS = STATE / 'settings.json'
 PROFILES = ('mirror', 'testnet', 'offline')
 DARWIN = platform.system() == 'Darwin'
 PROGRESS_SECONDS = 30
-ANSI = re.compile(r'\x1b\[[0-9;?]*[ -/]*[@-~]')
+ANSI = re.compile(r'\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))')
 
 
 def run(argv, **kwargs):
@@ -458,6 +458,7 @@ def pc_argv(*args):
 
 def pc_env(env=None):
     xdg = STATE / 'xdg'
+    # This fallback directory quiets missing-config noise without shadowing host settings.
     (xdg / 'process-compose').mkdir(parents=True, exist_ok=True)
     env = dict(os.environ if env is None else env)
     env['XDG_CONFIG_DIRS'] = f"{env.get('XDG_CONFIG_DIRS') or '/etc/xdg'}:{xdg}"
@@ -925,24 +926,36 @@ def up(postgres_only=False):
     return status()
 
 
-def last_line(path, limit=4096):
+def log_position(path):
+    try:
+        stat = path.stat()
+        return stat.st_dev, stat.st_ino, stat.st_size
+    except OSError:
+        return None
+
+
+def last_line(path, limit=4096, after=None):
     try:
         with path.open('rb') as log:
-            log.seek(max(0, log.seek(0, os.SEEK_END) - limit))
-            tail = ANSI.sub('', log.read().decode(errors='replace')).rstrip()
+            stat = os.fstat(log.fileno())
+            offset = after[2] if after and after[:2] == (stat.st_dev, stat.st_ino) and after[2] <= stat.st_size else 0
+            log.seek(max(offset, stat.st_size - limit))
+            tail = ANSI.sub('', log.read().decode(errors='replace'))
+            tail = ''.join(c for c in tail if c.isprintable() or c in '\n\r').rstrip()
             return re.split(r'[\r\n]', tail)[-1].strip()
     except OSError:
         return ''
 
 
-def progress(processes, elapsed):
+def progress(processes, elapsed, log_positions=None):
     running = [p['name'] for p in processes if p.get('is_running')]
     pending = [p['name'] for p in processes if not p.get('is_running') and p.get('status') == 'Pending']
     line = f"{int(elapsed) // 60}m{int(elapsed) % 60:02d}s running: {', '.join(running) or 'nothing'}"
     if pending:
         line += f"; waiting to start: {', '.join(pending)}"
     for name in ('web-install', 'api-build'):
-        if name in running and (last := last_line(STATE / f'{name}.log')):
+        after = (log_positions or {}).get(name)
+        if name in running and (last := last_line(STATE / f'{name}.log', after=after)):
             line += f'; {name}: {last[:160]}'
     return line
 
@@ -952,6 +965,7 @@ def wait_ready(timeout, postgres_only=False):
     urls = [f"http://127.0.0.1:{config['port']}/about", f"http://127.0.0.1:{config['port'] + 2}/"]
     started = reported = time.monotonic()
     deadline = started + timeout
+    log_positions = {name: log_position(STATE / f'{name}.log') for name in ('web-install', 'api-build')}
     print(f"Waiting up to {timeout}s for {'PostgreSQL' if postgres_only else 'the API and Sites'}.", flush=True)
     while time.monotonic() < deadline:
         processes = pc('process', 'list', '--output', 'json', capture_output=True, text=True)
@@ -964,7 +978,7 @@ def wait_ready(timeout, postgres_only=False):
                 raise RuntimeError(f'{name} failed. Inspect foundation-dev logs {name}.')
         if time.monotonic() - reported >= PROGRESS_SECONDS:
             reported = time.monotonic()
-            print(progress(listing, reported - started), flush=True)
+            print(progress(listing, reported - started, log_positions), flush=True)
         try:
             if postgres_only:
                 sql(config, 'SELECT 1', 'postgres')
