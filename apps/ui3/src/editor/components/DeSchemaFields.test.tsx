@@ -16,7 +16,7 @@ function change(label: string, next: string) { const input = screen.getByLabelTe
 describe("upstream schema authoring", () => {
   it("exposes every upstream action and trigger through the existing composer", () => {
     expect(ACTIONS.map(action => action.id).sort()).toEqual(Object.keys(ACTION_SCHEMAS).sort());
-    const triggerTypes = (COMPONENT_SCHEMAS["asset-packs::Triggers"]!.schema.properties!.value!.items!.properties!.type!.enum ?? []).map(String);
+    const triggerTypes = (COMPONENT_SCHEMAS["smart-items::Triggers"]!.schema.properties!.value!.items!.properties!.type!.enum ?? []).map(String);
     expect(triggerTypes.length).toBeGreaterThan(0);
     expect(TRIGGERS.map(trigger => trigger.id)).toEqual(expect.arrayContaining(triggerTypes));
   });
@@ -43,7 +43,7 @@ describe("upstream schema authoring", () => {
     expect(schemaError(ACTION_SCHEMAS.call_script_method!.schema, value())).toBeNull();
   });
   it("adds conditions with entity references and exact string comparison values", () => {
-    const schema = COMPONENT_SCHEMAS["asset-packs::Triggers"]!.schema.properties!.value!.items!;
+    const schema = COMPONENT_SCHEMAS["smart-items::Triggers"]!.schema.properties!.value!.items!;
     render(<Harness schema={schema} initial={schemaDefault(schema)} />);
     fireEvent.click(screen.getByRole("button", { name: "Set conditions" }));
     fireEvent.click(screen.getByRole("button", { name: "Add conditions" }));

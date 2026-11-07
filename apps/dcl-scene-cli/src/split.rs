@@ -13,13 +13,11 @@ const MARKER_FILE: &str = "split";
 /// "not in the sdk runtime registry" at eval time.
 ///
 /// `@dcl/sdk/platform` and `@dcl/sdk/text-codec` are here because
-/// `@dcl/asset-packs` requires both, and once the smart-item runtime lives in
-/// its *own* chunk those requires cross the chunk boundary and have to be
-/// served by the registry. They were invisible while asset-packs was bundled
-/// into the same chunk as the SDK. Adding them also fixes the same latent
-/// throw for a scene that imports either subpath directly: `scene_externals()`
-/// has always externalised all of `@dcl/sdk/*`, which is broader than the
-/// registry on purpose.
+/// `@dcl/sdk/smart-items` requires both, and since the smart-item runtime lives
+/// in its *own* chunk those requires cross the chunk boundary and have to be
+/// served by the registry. Having them also covers a scene that imports either
+/// subpath directly: `scene_externals()` externalises all of `@dcl/sdk/*`,
+/// which is broader than the registry on purpose.
 ///
 /// `@dcl/sdk/server`, the three `@dcl/sdk/network/*` subpaths and
 /// `@dcl/sdk/testing/assert` are the auth-server line's public modules
@@ -61,7 +59,18 @@ const REGISTRY_KEYS: &[&str] = &[
     "~sdk/script-utils",
 ];
 
+/// The smart-item runtime inside `@dcl/sdk`: `initSmartItems`, the component
+/// definitions and the action/trigger helpers. Its subpaths are
+/// `@dcl/sdk/smart-items/*`.
+pub const SMART_ITEMS: &str = "@dcl/sdk/smart-items";
+
 /// What the *smart-item* chunk publishes, on top of the core registry.
+///
+/// `@dcl/sdk/smart-items` is what an editor scene's entrypoint and a scene's
+/// own imports reach; `@dcl/sdk/smart-items/scripts` is the script runtime the
+/// generated `~sdk/script-utils` imports. Each key costs the chunk one lazy
+/// getter, and a scene import of any other `@dcl/sdk/smart-items/*` subpath
+/// throws in the loader.
 ///
 /// `~sdk/script-utils` is deliberately in both lists. The core chunk carries
 /// the no-op stub (`_initializeScripts` does nothing); the smart chunk carries
@@ -69,8 +78,13 @@ const REGISTRY_KEYS: &[&str] = &[
 /// loader's later-chunk-wins overlay exists for — without it a smart-item scene
 /// loads the smart chunk and still never runs a script.
 const SMART_REGISTRY_KEYS: &[&str] = &[
-    "@dcl/asset-packs",
-    "@dcl/asset-packs/dist/scene-entrypoint",
+    SMART_ITEMS,
+    "@dcl/sdk/smart-items/scripts",
+    // The deep paths the creator docs tell a scene to import.
+    "@dcl/sdk/smart-items/admin",
+    "@dcl/sdk/smart-items/events",
+    "@dcl/sdk/smart-items/admin-toolkit-ui/fetch-utils",
+    "@dcl/sdk/smart-items/admin-toolkit-ui/ModerationControl/api",
     "~sdk/script-utils",
 ];
 
@@ -95,11 +109,10 @@ pub fn smart_registry_keys() -> &'static [&'static str] {
     SMART_REGISTRY_KEYS
 }
 
-pub fn has_asset_packs(project: &Project) -> bool {
-    project.node_module("@dcl/asset-packs").is_some()
-        || project
-            .node_module("@dcl/inspector/node_modules/@dcl/asset-packs")
-            .is_some()
+/// Does the installed `@dcl/sdk` ship the smart-item runtime? The vendored one
+/// does; an older npm install has no `smart-items/`.
+pub fn has_smart_items(project: &Project) -> bool {
+    project.node_module(SMART_ITEMS).is_some()
 }
 
 /// react 18 ships `react/jsx-runtime`; a tree without it cannot bundle the key.
@@ -110,7 +123,7 @@ fn has_jsx_runtime(project: &Project) -> bool {
             .is_some()
 }
 
-/// The core chunk's keys: never the asset-packs ones, which belong to the smart
+/// The core chunk's keys: never the smart-item ones, which belong to the smart
 /// chunk alone so a scene without smart items stays off that +30% payload.
 pub fn core_registry_keys(project: &Project) -> Vec<&'static str> {
     let mut keys: Vec<&'static str> = REGISTRY_KEYS
@@ -129,36 +142,46 @@ pub fn core_registry_keys(project: &Project) -> Vec<&'static str> {
 }
 
 /// The keys of the single mono SDK chunk built from source — the npm flow,
-/// where `@dcl/asset-packs` is in the scene's own `node_modules` and lands in
-/// the same chunk as the SDK.
+/// where `@dcl/sdk/smart-items` lands in the same chunk as the rest of the SDK.
 pub fn registry_keys(project: &Project) -> Vec<&'static str> {
     let mut keys = core_registry_keys(project);
-    if has_asset_packs(project) {
-        keys.push("@dcl/asset-packs");
-        keys.push("@dcl/asset-packs/dist/scene-entrypoint");
+    if has_smart_items(project) {
+        let smart: Vec<&'static str> = SMART_REGISTRY_KEYS
+            .iter()
+            .copied()
+            .filter(|key| !keys.contains(key))
+            .collect();
+        keys.extend(smart);
     }
     keys
 }
 
-pub fn scene_externals(project: &Project) -> Vec<String> {
+/// Externals for the scene chunk: everything either runtime chunk owns.
+/// `@dcl/sdk/*` covers `@dcl/sdk/smart-items`, served from the smart chunk's
+/// registry (or the mono chunk's, in the npm flow).
+pub fn scene_externals() -> Vec<String> {
     let mut externals = smart_externals();
     externals.push("~sdk/script-utils".to_string());
-    if has_asset_packs(project) || crate::prebuilt::locate(project).is_some() {
-        externals.push("@dcl/asset-packs".to_string());
-        externals.push("@dcl/asset-packs/*".to_string());
-    }
     externals
 }
 
 /// Externals for the *smart-item* chunk: everything the core chunk owns.
 /// `~sdk/script-utils` is absent on purpose — the smart chunk has to *bundle*
-/// the real implementation, not import the core chunk's stub.
+/// the real implementation, not import the core chunk's stub — and
+/// `@dcl/sdk/smart-items` is carved back out of `@dcl/sdk/*` by
+/// [`smart_bundled`].
 pub fn smart_externals() -> Vec<String> {
     SDK_EXTERNALS
         .iter()
         .map(|s| s.to_string())
         .chain(["~sdk/all-composites".to_string()])
         .collect()
+}
+
+/// What the *smart-item* chunk bundles although `@dcl/sdk/*` is external to
+/// it: the runtime itself, out of the same `@dcl/sdk` the core chunk came from.
+pub fn smart_bundled() -> Vec<String> {
+    vec![SMART_ITEMS.to_string(), format!("{SMART_ITEMS}/*")]
 }
 
 pub fn write_generated(project: &Project, dir: &Path) -> Result<()> {
@@ -428,6 +451,35 @@ mod tests {
         assert!(e.iter().any(|s| s == "@dcl/sdk/*"));
         assert!(e.iter().any(|s| s == "~sdk/all-composites"));
         assert!(!e.iter().any(|s| s == "~sdk/script-utils"));
+    }
+
+    #[test]
+    fn smart_chunk_bundles_its_runtime_out_of_the_sdk_external() {
+        assert!(smart_externals().iter().any(|s| s == "@dcl/sdk/*"));
+        assert_eq!(
+            smart_bundled(),
+            vec!["@dcl/sdk/smart-items", "@dcl/sdk/smart-items/*"]
+        );
+        assert!(scene_externals().iter().any(|s| s == "@dcl/sdk/*"));
+        assert!(scene_externals().iter().any(|s| s == "~sdk/script-utils"));
+    }
+
+    #[test]
+    fn mono_registry_publishes_the_smart_item_keys_only_when_the_sdk_ships_them() {
+        let dir = crate::scene::Tmp::new("split-smart-keys");
+        let project = Project {
+            root: dir.0.clone(),
+            scene_json: serde_json::json!({}),
+        };
+        assert!(!registry_keys(&project).contains(&SMART_ITEMS));
+        std::fs::create_dir_all(dir.0.join("node_modules/@dcl/sdk/smart-items")).unwrap();
+        let keys = registry_keys(&project);
+        assert!(keys.contains(&SMART_ITEMS));
+        assert!(keys.contains(&"@dcl/sdk/smart-items/scripts"));
+        assert_eq!(
+            keys.iter().filter(|k| **k == "~sdk/script-utils").count(),
+            1
+        );
     }
 
     #[test]

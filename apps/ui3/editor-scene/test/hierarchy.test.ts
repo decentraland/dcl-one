@@ -95,12 +95,12 @@ test('a later rejected move rolls completed transforms back', async () => {
 
 import { createComponentBatch } from '../src/component-batch'
 test('a failed interaction trigger restores prior actions and rejects the edit', async () => {
-  const snapshot: Snapshot = { '512': { 'asset-packs::Actions': { id: 512, value: [] } } }
+  const snapshot: Snapshot = { '512': { 'smart-items::Actions': { id: 512, value: [] } } }
   const batch = createComponentBatch({ ready: async () => {}, snapshot: () => snapshot,
-    write: async (id, name, value) => { if (name === 'asset-packs::Triggers') throw new Error('Invalid trigger'); snapshot[id][name] = value },
+    write: async (id, name, value) => { if (name === 'smart-items::Triggers') throw new Error('Invalid trigger'); snapshot[id][name] = value },
     remove: async (id, name) => { delete snapshot[id][name] }, refresh: async () => {} })
-  await assert.rejects(batch('512', [{ name: 'asset-packs::Actions', value: { id: 512, value: [{ name: 'new action' }] } }, { name: 'asset-packs::Triggers', value: { value: [] } }]), /Invalid trigger/)
-  assert.deepEqual(snapshot['512'], { 'asset-packs::Actions': { id: 512, value: [] } })
+  await assert.rejects(batch('512', [{ name: 'smart-items::Actions', value: { id: 512, value: [{ name: 'new action' }] } }, { name: 'smart-items::Triggers', value: { value: [] } }]), /Invalid trigger/)
+  assert.deepEqual(snapshot['512'], { 'smart-items::Actions': { id: 512, value: [] } })
 })
 test('batch validation runs before any component writes', async () => {
   let writes = 0
@@ -118,7 +118,7 @@ test('custom writes advance clocks only after acknowledgment and survive deletio
   const originalWrite = cmd.setComponentRaw
   const originalDelete = cmd.deleteComponent
   const timestamps: number[] = []
-  const name = 'asset-packs::Counter'
+  const name = 'smart-items::Counter'
   const entity = '9102'
   cmd.setComponentRaw = async (_entity, _component, timestamp) => { timestamps.push(timestamp); return 'set' }
   cmd.deleteComponent = async (_entity, component) => { assert.match(component, /^\d+$/); return 'removed' }

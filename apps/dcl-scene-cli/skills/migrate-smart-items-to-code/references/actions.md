@@ -1,7 +1,7 @@
 # Smart-Item Actions → SDK7
 
-All 63 `ActionType` values from `@dcl/asset-packs` (verified — `dist/enums.d.ts` in
-`@dcl/asset-packs` 2.17.2 declares exactly 63), with the SDK7 they compile down to. Every
+All 63 `ActionType` values `@dcl/sdk/smart-items` exports, with the SDK7 they compile
+down to. Every
 snippet below type-checks against `@dcl/sdk` 7.25.
 
 For the porting method, the composition patterns (delay, loop, state, counter, world
@@ -1119,4 +1119,4 @@ async function claimAirdrop(campaignKey: string): Promise<string | null> {
 
 You still have to create the campaign in the Rewards dashboard and hold the dispenser key.
 If the campaign requires a captcha you must build that UI yourself; the smart item's
-captcha prompt is a react-ecs form inside `@dcl/asset-packs`, not something the SDK offers.
+captcha prompt is a react-ecs form inside `@dcl/sdk/smart-items`, not something the core SDK offers.

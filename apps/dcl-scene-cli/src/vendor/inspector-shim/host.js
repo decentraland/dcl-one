@@ -3,8 +3,8 @@
 // The minimal data-layer host: the RPC service the browser editor talks to.
 //
 // Upstream's host is `src/lib/data-layer/host/*` — ~2.3 MB once its imports of
-// `@dcl/asset-packs`, the undo/redo state machine and the migration passes are
-// pulled in. FOUR of its 22 methods are what a live editing session actually
+// the smart-item runtime, the undo/redo state machine and the migration passes
+// are pulled in. FOUR of its 22 methods are what a live editing session actually
 // turns on, and all four are cheap once `@dcl/ecs` is present (it is: the blob
 // ships `dist-cjs` for the crdt dumper already):
 //
@@ -31,19 +31,27 @@
 // `templates/data-layer-host.mjs` resolves the scene's node_modules first and
 // only falls back to this package.
 //
-// Ported as DATA rather than code: `@dcl/asset-packs`' `initComponents`,
+// Ported as DATA rather than code: the smart-item runtime's `initComponents`,
 // which upstream's `composite-provider.ts` runs after every load to put
-// `asset-packs::ActionTypes` and `asset-packs::Counter` on entity 0. The 7.43
+// `smart-items::ActionTypes` and `smart-items::Counter` on entity 0. The 7.43
 // editor reads them unconditionally and unmounts on their absence. See
 // `seedRootComponents` and `root-components.json`.
+//
+// The smart-item components are the ones `@dcl/sdk/smart-items` defines, named
+// `smart-items::*` and numbered from that name (`component-schemas.json`). A
+// composite saved under the `asset-packs::*` names is read as `smart-items::*`
+// (`createFsCompositeProvider`), so it loads, edits and saves under the
+// runtime's names. The registry `@dcl/inspector` UI, when it is installed,
+// addresses those components by the numbers it computes from its own names,
+// which this engine does not define: its edits reach core components only.
 //
 // Deliberately NOT ported:
 //   * undo/redo — a 978-line state machine with 100 ms transaction batching.
 //   * the load-time migrations in `composite-provider.ts::runMigrations`
-//     (`migrateAll` of both packages and the fix-up passes around them). We
-//     pass a composite through verbatim: a scene carrying
-//     `inspector::SceneMetadata-v4` stays v4 here and is migrated when Creator
-//     Hub next opens it. That is the safe direction — we never rewrite.
+//     (`migrateAll` of both packages and the fix-up passes around them). The
+//     smart-item namespace is the one load-time rewrite; everything else
+//     passes through verbatim: a scene carrying `inspector::SceneMetadata-v4`
+//     stays v4 here and is migrated when Creator Hub next opens it.
 //   * `SceneProvider` / `overrideWithSceneJson`, which sync engine
 //     `SceneMetadata` to and from `scene.json`. Scene-metadata edits made
 //     against THIS host do not reach `scene.json`.
@@ -155,6 +163,19 @@ async function listFiles(fs, dirPath, ignore, out) {
   return out
 }
 
+// Composites saved before the smart-item runtime moved into `@dcl/sdk` name
+// its components `asset-packs::*`; the engine defines them as `smart-items::*`.
+const LEGACY_SMART_ITEMS_PREFIX = 'asset-packs::'
+/** @param {import('@dcl/ecs/dist-cjs').CompositeDefinition} composite */
+function renameSmartItems(composite) {
+  for (const component of composite.components) {
+    if (component.name.startsWith(LEGACY_SMART_ITEMS_PREFIX)) {
+      component.name = 'smart-items::' + component.name.slice(LEGACY_SMART_ITEMS_PREFIX.length)
+    }
+  }
+  return composite
+}
+
 // A port of `host/utils/fs-composite-provider.ts`. The scan matters even
 // though we only ever save ONE composite: `Composite.instance` resolves a
 // scene's child composites through this provider, and an unresolvable child
@@ -171,7 +192,7 @@ async function createFsCompositeProvider(fs) {
       const composite = src.endsWith('.bin')
         ? ECS.Composite.fromBinary(new Uint8Array(content))
         : ECS.Composite.fromJson(JSON.parse(new TextDecoder().decode(content)))
-      composites.push({ src, composite })
+      composites.push({ src, composite: renameSmartItems(composite) })
     } catch (err) {
       console.error(`Error loading composite ${src}: ${err}`)
     }
@@ -192,12 +213,12 @@ async function createFsCompositeProvider(fs) {
   }
 }
 
-// A port of `@dcl/asset-packs`' `initComponents(engine)`, which upstream's
+// A port of the smart-item runtime's `initComponents(engine)`, which upstream's
 // `composite-provider.ts` runs after every `Composite.instance`. The values are
 // the `root-components.json` snapshot (see `scripts/dump-inspector-tables.cjs`)
-// rather than asset-packs itself, which the blob does not carry.
+// rather than a call into `@dcl/sdk/smart-items`, which this host never loads.
 //
-// `asset-packs::ActionTypes` follows `addActionType` exactly: each snapshot
+// `smart-items::ActionTypes` follows `addActionType` exactly: each snapshot
 // entry replaces the same `type` in the existing list and is appended, so a
 // scene saved by an older editor keeps action types we do not know and picks
 // up the ones it lacks. Everything else is `getOrCreateMutable` — created when
@@ -216,7 +237,7 @@ function seedRootComponents(engine) {
   const snapshot = /** @type {Record<string, any>} */ (ROOT_COMPONENTS.components)
   for (const [name, value] of Object.entries(snapshot)) {
     const component = /** @type {any} */ (engine.getComponent(name))
-    if (name === 'asset-packs::ActionTypes') {
+    if (name === 'smart-items::ActionTypes') {
       const current = component.getOrNull(root)
       let list = current ? current.value : []
       for (const entry of value.value) {

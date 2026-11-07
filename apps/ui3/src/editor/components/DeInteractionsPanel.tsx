@@ -56,7 +56,7 @@ const SIMPLE_TRIGGERS: TriggerDef[] = [
   { id: "on_input_action", label: "Primary button is pressed (E)" },
 ];
 
-const triggerSchema = COMPONENT_SCHEMAS["asset-packs::Triggers"]!.schema.properties!.value!.items!;
+const triggerSchema = COMPONENT_SCHEMAS["smart-items::Triggers"]!.schema.properties!.value!.items!;
 export const TRIGGERS: TriggerDef[] = [
   ...SIMPLE_TRIGGERS,
   ...(triggerSchema.properties!.type!.enum ?? []).map(String).filter(id => !SIMPLE_TRIGGERS.some(trigger => trigger.id === id)).map(id => ({ id, label: fieldLabel(id) })),
@@ -292,10 +292,10 @@ export default function DeInteractionsPanel({
     const { actionName, actionsJson, triggersJson } = compose();
     setPending(true);
     try {
-      if (onWriteBatch) await onWriteBatch([{ name: "asset-packs::Actions", json: actionsJson }, { name: "asset-packs::Triggers", json: triggersJson }]);
+      if (onWriteBatch) await onWriteBatch([{ name: "smart-items::Actions", json: actionsJson }, { name: "smart-items::Triggers", json: triggersJson }]);
       else {
-        await onWrite?.("asset-packs::Actions", actionsJson);
-        await onWrite?.("asset-packs::Triggers", triggersJson);
+        await onWrite?.("smart-items::Actions", actionsJson);
+        await onWrite?.("smart-items::Triggers", triggersJson);
       }
       const triggerLabel = TRIGGERS.find((t) => t.id === triggerType)?.label ?? triggerType;
       setAdded((prev) => [...prev, { trigger: triggerLabel, action: actionName, actionsJson, triggersJson }]);
@@ -420,9 +420,9 @@ export default function DeInteractionsPanel({
             aria-label="Component JSON preview"
             spellCheck={false}
             value={
-              "asset-packs::Actions\n" +
+              "smart-items::Actions\n" +
               pretty(preview.actionsJson) +
-              "\n\nasset-packs::Triggers\n" +
+              "\n\nsmart-items::Triggers\n" +
               pretty(preview.triggersJson)
             }
           />

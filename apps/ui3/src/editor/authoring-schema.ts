@@ -65,7 +65,7 @@ export function componentFields(name: string, value: Record<string, unknown>): A
   const definition = COMPONENT_SCHEMAS[name];
   if (!definition) return undefined;
   const schema = structuredClone(definition.schema);
-  if (name === "asset-packs::States" && schema.properties) {
+  if (name === "smart-items::States" && schema.properties) {
     schema.properties.value = { ...schema.properties.value, title: "States" };
     const states = Array.isArray(value.value) ? value.value.filter((entry): entry is string => typeof entry === "string") : [];
     for (const key of ["defaultValue", "currentValue", "previousValue"]) {

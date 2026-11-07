@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type
 import type { EditorTool } from "../bus-protocol";
 import { setViewportEditorSession, isEngineOnlyViewport, type EditorBus, type EditorCamMode } from "../editor-bus";
 import { RESTORE_COMPOSITE_TIMEOUT_MS } from "../editor-config";
+import { SMART_ITEM_PREFIX } from "../smart-item-components";
 import type {
   AuthorComponentFn,
   CameraPrefs,
@@ -910,10 +911,10 @@ export default function DeWorkspace({
   const wiring = useMemo(() => {
     if (!busLive) return undefined;
     const vals = activeId == null ? {} : (compValuesRef.current[String(activeId)] ?? {});
-    const triggers = vals["asset-packs::Triggers"] as
+    const triggers = vals["smart-items::Triggers"] as
       | { value?: Array<{ type?: string; actions?: Array<{ id?: number; name?: string }> }> }
       | undefined;
-    const actions = vals["asset-packs::Actions"] as
+    const actions = vals["smart-items::Actions"] as
       | { value?: Array<{ type?: string; name?: string }> }
       | undefined;
     const actionType = (ref: { name?: string }): string =>
@@ -923,7 +924,7 @@ export default function DeWorkspace({
       actions: (t.actions ?? []).map(actionType).filter((type) => type !== ""),
     }));
     return {
-      smart: Object.keys(vals).some((k) => k.startsWith("asset-packs::")),
+      smart: Object.keys(vals).some((k) => k.startsWith(SMART_ITEM_PREFIX)),
       wired: rows.length > 0,
       rows,
     };

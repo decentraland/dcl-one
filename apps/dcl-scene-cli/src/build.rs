@@ -112,7 +112,8 @@ pub fn stage(project: &Project, opts: &BuildOptions, art_root: &Path) -> Result<
         outfile: art_root.join(&paths.scene),
         tsconfig,
         aliases: vec![],
-        externals: split::scene_externals(project),
+        externals: split::scene_externals(),
+        bundled: vec![],
     };
     let loader = split::Loader {
         outfile: art_root.join(&main),
@@ -301,12 +302,13 @@ pub fn sdk_chunk_options(
         tsconfig: tsconfig.to_path_buf(),
         aliases,
         externals: vec![],
+        bundled: vec![],
     })
 }
 
 /// Install the prebuilt smart-item chunk if this scene uses smart items, clear
 /// a stale one if it no longer does, and say whether the loader should name it.
-/// Only the prebuilt path has one: the source path bundles `@dcl/asset-packs`
+/// Only the prebuilt path has one: the source path bundles `@dcl/sdk/smart-items`
 /// into the single SDK chunk.
 pub fn install_smart_chunk(
     project: &Project,

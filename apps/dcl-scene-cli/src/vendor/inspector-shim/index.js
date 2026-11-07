@@ -24,8 +24,8 @@
 //                           src/lib/data-layer/host/utils/engine-to-composite.ts
 //   engine.js               upstream host/utils/engine.ts, with the editor's
 //                           component set read from component-schemas.json
-//                           instead of from @dcl/asset-packs + the inspector's
-//                           own versioning registry
+//                           instead of from the smart-item runtime + the
+//                           inspector's own versioning registry
 //   host.js                 4 live rpc methods of 22; the rest are inert,
 //                           well-formed stubs. Read its header before assuming
 //                           a method does anything.

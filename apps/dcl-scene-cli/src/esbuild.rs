@@ -9,6 +9,9 @@ pub struct EsbuildOptions {
     pub tsconfig: PathBuf,
     pub aliases: Vec<(String, PathBuf)>,
     pub externals: Vec<String>,
+    /// Patterns bundled even where `externals` matches them: the smart-item
+    /// chunk owns `@dcl/sdk/smart-items` under the external `@dcl/sdk/*`.
+    pub bundled: Vec<String>,
 }
 
 #[cfg(feature = "rolldown")]
@@ -26,8 +29,8 @@ pub async fn bundle(_project: &Project, _opts: &EsbuildOptions) -> Result<()> {
     .into())
 }
 
-/// `@dcl/sdk` is required; the rest alias to whichever of two install
-/// locations exists, if either does.
+/// `@dcl/sdk` is required; `@dcl/ecs` and `react` alias to whichever of two
+/// install locations exists, if either does.
 pub fn resolve_aliases(project: &Project) -> Result<Vec<(String, PathBuf)>> {
     let mut aliases = vec![(
         "@dcl/sdk".to_string(),
@@ -36,11 +39,6 @@ pub fn resolve_aliases(project: &Project) -> Result<Vec<(String, PathBuf)>> {
     for (name, first, second) in [
         ("@dcl/ecs", "@dcl/sdk/node_modules/@dcl/ecs", "@dcl/ecs"),
         ("react", "react", "@dcl/react-ecs/node_modules/react"),
-        (
-            "@dcl/asset-packs",
-            "@dcl/asset-packs",
-            "@dcl/inspector/node_modules/@dcl/asset-packs",
-        ),
     ] {
         if let Some(path) = project
             .node_module(first)

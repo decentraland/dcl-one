@@ -5,7 +5,10 @@
 //! Core components (`core::Foo`) are protobuf, encoded here against the
 //! @dcl/protocol descriptors in library/protocol (see build.rs); everything else is
 //! encoded by [`crate::schema_crdt`] against the `jsonSchema` the composite
-//! carries.
+//! carries, under the number hashed from its name. Smart-item components are
+//! numbered by their `smart-items::` name whichever prefix the composite
+//! carries ([`smart_item_name`]): the runtime defines only those, and `@dcl/ecs`
+//! drops a message for a number no component owns.
 //!
 //! ts-proto writer semantics reproduced deliberately (verified against
 //! main.crdt files produced by @dcl/ecs 7.24.5):
@@ -19,6 +22,7 @@
 //!   selected, even when empty
 //! - fields encode in field-number order
 
+use crate::composite_norm::smart_item_name;
 use crate::jsjson::JsValue;
 use crate::schema_crdt::{self, Schema, SchemaError};
 use crate::{SceneFiles, find_composites, read_composite_text};
@@ -130,6 +134,7 @@ pub fn generate(scene: &dyn SceneFiles) -> Result<Option<Generated>, GenError> {
                 .get("name")
                 .and_then(|n| n.as_str())
                 .ok_or_else(|| GenError::Invalid(format!("{file}: component without a name")))?;
+            let name = &*smart_item_name(name);
             if name == COMPOSITE_ROOT {
                 if references_nested_composite(comp) {
                     return Err(GenError::Unsupported(format!(
@@ -226,7 +231,11 @@ fn register_schema(
     }
     let json_schema = ordered
         .get(index)
-        .filter(|c| c.get("name").and_then(JsValue::as_str) == Some(name))
+        .filter(|c| {
+            c.get("name")
+                .and_then(JsValue::as_str)
+                .is_some_and(|n| smart_item_name(n) == name)
+        })
         .and_then(|c| c.get("jsonSchema"))
         .ok_or_else(|| {
             GenError::Unsupported(format!(
@@ -360,8 +369,9 @@ fn component_names(scene: &dyn SceneFiles) -> HashMap<u32, String> {
             .flatten()
         {
             if let Some(name) = comp.get("name").and_then(|n| n.as_str()) {
-                out.entry(schema_crdt::component_number_from_name(name))
-                    .or_insert_with(|| name.to_string());
+                let name = smart_item_name(name);
+                out.entry(schema_crdt::component_number_from_name(&name))
+                    .or_insert_with(|| name.into_owned());
             }
         }
     }
@@ -651,6 +661,39 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// The reference streams were produced while the smart-item components
+    /// were still named `asset-packs::*`, which is also how the captures name
+    /// them. This crate numbers those by their `smart-items::*` name and
+    /// nothing else in a message moves, so the reference is compared with each
+    /// legacy number replaced by the new one in the message header.
+    fn with_smart_item_numbers(reference: &[u8], composite: &str) -> Vec<u8> {
+        let doc: Value = serde_json::from_str(composite).unwrap();
+        let renumbered: HashMap<u32, u32> = doc["components"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|c| c["name"].as_str())
+            .filter(|n| n.starts_with(crate::composite_norm::LEGACY_PREFIX))
+            .map(|n| {
+                (
+                    schema_crdt::component_number_from_name(n),
+                    schema_crdt::component_number_from_name(&smart_item_name(n)),
+                )
+            })
+            .collect();
+        let mut out = reference.to_vec();
+        let mut offset = 0usize;
+        while offset + CRDT_HEADER_LEN as usize <= out.len() {
+            let word = |at: usize| u32::from_le_bytes(out[at..at + 4].try_into().unwrap());
+            let length = word(offset) as usize;
+            if let Some(new) = renumbered.get(&word(offset + 12)) {
+                out[offset + 12..offset + 16].copy_from_slice(&new.to_le_bytes());
+            }
+            offset += length;
+        }
+        out
+    }
+
     /// Every golden here was regenerated through the node data-layer
     /// (`data-layer-host.mjs <scene> dump-crdt`) when committed — a scene's
     /// checked-in main.crdt can predate its own composite, so it is not a
@@ -686,10 +729,34 @@ mod tests {
             let generated = generate(&files).unwrap().unwrap();
             assert_eq!(generated.composites, 1);
             assert_eq!(
-                generated.bytes, expected,
+                generated.bytes,
+                with_smart_item_numbers(expected, composite),
                 "native main.crdt for '{name}' must match the node data-layer's"
             );
         }
+    }
+
+    /// A Creator Hub capture from before the move carries `asset-packs::*`
+    /// names; its main.crdt has to number them as `smart-items::*`, or the
+    /// runtime never sees them.
+    #[test]
+    fn legacy_smart_item_components_are_numbered_by_their_new_name() {
+        let composite = include_str!("../testdata/gather-main.composite");
+        assert!(composite.contains("\"asset-packs::Actions\""));
+        let files = scene(&[("assets/scene/main.composite", composite)]);
+        let generated = generate(&files).unwrap().unwrap();
+        let ids: Vec<u32> = parse_messages(&generated.bytes)
+            .iter()
+            .map(|m| m.1)
+            .collect();
+        let new = schema_crdt::component_number_from_name("smart-items::Actions");
+        let old = schema_crdt::component_number_from_name("asset-packs::Actions");
+        assert!(ids.contains(&new), "{ids:?}");
+        assert!(!ids.contains(&old), "{ids:?}");
+        assert_eq!(
+            component_names(&files).get(&new).map(String::as_str),
+            Some("smart-items::Actions")
+        );
     }
 
     #[test]

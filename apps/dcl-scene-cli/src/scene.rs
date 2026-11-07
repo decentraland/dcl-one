@@ -1,5 +1,6 @@
 use crate::ux::{TrySteps, UserError};
 use anyhow::{Context, Result};
+use dcl_scene_authoring::composite_norm::{SMART_ITEMS_PREFIX, smart_item_name};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -165,6 +166,9 @@ impl Project {
         .into())
     }
 
+    /// A scene the Creator Hub authored smart items into: its main composite
+    /// carries a `smart-items::*` component other than the script list, under
+    /// either spelling of the prefix (`composite_norm::smart_item_name`).
     pub fn is_editor_scene(&self) -> bool {
         let Ok(raw) = std::fs::read(self.root.join("assets/scene/main.composite")) else {
             return false;
@@ -177,7 +181,8 @@ impl Project {
             .is_some_and(|comps| {
                 comps.iter().any(|c| {
                     c.get("name").and_then(|n| n.as_str()).is_some_and(|n| {
-                        n.starts_with("asset-packs::") && n != "asset-packs::Script"
+                        let n = smart_item_name(n);
+                        n.starts_with(SMART_ITEMS_PREFIX) && n != "smart-items::Script"
                     })
                 })
             })
@@ -509,7 +514,7 @@ mod tests {
     }
 
     #[test]
-    fn editor_scene_requires_a_runtime_asset_packs_component() {
+    fn editor_scene_requires_a_runtime_smart_item_component() {
         let t = Tmp::new("editorscene");
         let project = |root: &Path| Project {
             root: root.to_path_buf(),
@@ -520,14 +525,33 @@ mod tests {
         assert!(!project(&t.0).is_editor_scene());
         t.write(
             "assets/scene/main.composite",
-            r#"{"version":1,"components":[{"name":"asset-packs::Script","data":{}},{"name":"core::Transform","data":{}}]}"#,
+            r#"{"version":1,"components":[{"name":"smart-items::Script","data":{}},{"name":"core::Transform","data":{}}]}"#,
         );
         assert!(!project(&t.0).is_editor_scene());
         t.write(
             "assets/scene/main.composite",
-            r#"{"version":1,"components":[{"name":"asset-packs::Actions","data":{}}]}"#,
+            r#"{"version":1,"components":[{"name":"smart-items::Actions","data":{}}]}"#,
         );
         assert!(project(&t.0).is_editor_scene());
+    }
+
+    #[test]
+    fn editor_scene_detection_reads_the_legacy_prefix() {
+        let t = Tmp::new("editorscene-legacy");
+        let project = Project {
+            root: t.0.clone(),
+            scene_json: serde_json::json!({}),
+        };
+        t.write(
+            "assets/scene/main.composite",
+            r#"{"version":1,"components":[{"name":"asset-packs::Script","data":{}}]}"#,
+        );
+        assert!(!project.is_editor_scene());
+        t.write(
+            "assets/scene/main.composite",
+            r#"{"version":1,"components":[{"name":"asset-packs::Actions","data":{}}]}"#,
+        );
+        assert!(project.is_editor_scene());
     }
 
     #[test]

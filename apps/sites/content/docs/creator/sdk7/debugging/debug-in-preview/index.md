@@ -105,12 +105,6 @@ npm i @dcl/js-runtime@latest
 npm i @dcl/sdk@latest
 ```
 
-If your scene uses smart items, it may also be using the `@dcl/asset-packs` library, which you can update via:
-
-```
-npm i @dcl/asset-packs@latest
-```
-
 If you're using any of the [utils libraries](https://studios.decentraland.org/resources?sdk_version=SDK7&resource_type=Library) make sure those are also up to date, as older versions of these libraries may not be compatible with newer versions of `@dcl/sdk`.
 
 ## Lighting conditions

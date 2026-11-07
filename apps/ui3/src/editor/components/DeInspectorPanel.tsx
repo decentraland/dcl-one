@@ -199,7 +199,7 @@ const HIDDEN_COMPONENTS = new Set<string>([
   "inspector::TransformConfig",
   "inspector::SceneMetadata-v3",
   "inspector::Config",
-  "asset-packs::Placeholder",
+  "smart-items::Placeholder",
 ]);
 
 export const DUPLICATE_SKIP = new Set<string>([...HIDDEN_COMPONENTS, "Name"]);
@@ -207,7 +207,7 @@ export const DUPLICATE_SKIP = new Set<string>([...HIDDEN_COMPONENTS, "Name"]);
 const NS_LABEL: Record<string, string | null> = {
   core: null,
   "core-schema": null,
-  "asset-packs": "Smart Item",
+  "smart-items": "Smart Item",
   inspector: "Inspector",
 };
 
@@ -232,8 +232,8 @@ const CANONICAL_COMPONENT: Record<string, string> = {
   MeshCollider: "core::MeshCollider",
   VisibilityComponent: "core::VisibilityComponent",
   VideoPlayer: "core::VideoPlayer",
-  Actions: "asset-packs::Actions",
-  Triggers: "asset-packs::Triggers",
+  Actions: "smart-items::Actions",
+  Triggers: "smart-items::Triggers",
 };
 
 interface GltfSrcFieldProps {
@@ -447,7 +447,7 @@ function bodyFor(
           {GLTF_LOADING_STATE[num(["currentState"], 0)] ?? "Unknown"}
         </PropRow>
       );
-    case "asset-packs::Actions": {
+    case "smart-items::Actions": {
       const entries = entryList(v);
       const rd = onWrite === undefined;
       const patchValue = (list: Record<string, unknown>[]) =>
@@ -489,12 +489,12 @@ function bodyFor(
         </>
       );
     }
-    case "asset-packs::Triggers": {
+    case "smart-items::Triggers": {
       const entries = entryList(v);
       const rd = onWrite === undefined;
       const patchValue = (list: Record<string, unknown>[]) =>
         onWrite?.({ ...v, value: list });
-      const actionsRaw = sibling?.["asset-packs::Actions"];
+      const actionsRaw = sibling?.["smart-items::Actions"];
       const actionNames: string[] = [];
       if (actionsRaw !== null && typeof actionsRaw === "object") {
         for (const a of entryList(actionsRaw as CompValue)) {
@@ -775,7 +775,7 @@ export function DeInspectorPanel({
                 ? (compName) => {
                     const definition = COMPONENT_SCHEMAS[compName.includes("::") ? compName : `core::${compName}`];
                     const defaults = structuredClone(definition?.defaults ?? {}) as Record<string, unknown>;
-                    if (["asset-packs::Actions", "asset-packs::States", "asset-packs::Counter"].includes(compName)) defaults.id = Number(id);
+                    if (["smart-items::Actions", "smart-items::States", "smart-items::Counter"].includes(compName)) defaults.id = Number(id);
                     onAuthorComponent(id, compName, JSON.stringify(defaults));
                     setLocalAddOpen(false);
                   }
@@ -787,8 +787,8 @@ export function DeInspectorPanel({
           <DeInteractionsPanel
             key={id}
             entityId={id}
-            existingActions={componentValues?.["asset-packs::Actions"] as { id?: number; value?: unknown[] } | undefined}
-            existingTriggers={componentValues?.["asset-packs::Triggers"] as { value?: unknown[] } | undefined}
+            existingActions={componentValues?.["smart-items::Actions"] as { id?: number; value?: unknown[] } | undefined}
+            existingTriggers={componentValues?.["smart-items::Triggers"] as { value?: unknown[] } | undefined}
             entityName={name}
             onWriteBatch={onAuthorComponents ? changes => onAuthorComponents(id, changes) : undefined}
             onWrite={
@@ -840,12 +840,12 @@ export const ADD_COMPONENTS: readonly AddComponentDef[] = [
   { name: "ParticleSystem", label: "Particles", group: "3D Content", description: "Emit sparks, smoke, rain or any particle effect." },
   { name: "VirtualCamera", label: "Virtual camera", group: "3D Content", description: "A camera position the scene can cut to." },
   { name: "AvatarAttach", label: "Avatar attachment", group: "3D Content", description: "Pin the item to a player's hand, head or body." },
-  { name: "asset-packs::States", label: "States", group: "Smart item", description: "A named state (open, closed, on...) that triggers can read and set." },
-  { name: "asset-packs::Counter", label: "Counter", group: "Smart item", description: "A number that actions increase, decrease or reset." },
-  { name: "asset-packs::Actions", label: "Actions", group: "Smart item", description: "Things this item can do: move, play a sound, show text..." },
-  { name: "asset-packs::Triggers", label: "Triggers", group: "Smart item", description: "When something happens, run one or more actions." },
-  { name: "asset-packs::Rewards", label: "Rewards", group: "Smart item", description: "Give the player a wearable or emote from a campaign." },
-  { name: "asset-packs::Script", label: "Scripts", group: "Smart item", description: "Attach a custom script with its own parameters." },
+  { name: "smart-items::States", label: "States", group: "Smart item", description: "A named state (open, closed, on...) that triggers can read and set." },
+  { name: "smart-items::Counter", label: "Counter", group: "Smart item", description: "A number that actions increase, decrease or reset." },
+  { name: "smart-items::Actions", label: "Actions", group: "Smart item", description: "Things this item can do: move, play a sound, show text..." },
+  { name: "smart-items::Triggers", label: "Triggers", group: "Smart item", description: "When something happens, run one or more actions." },
+  { name: "smart-items::Rewards", label: "Rewards", group: "Smart item", description: "Give the player a wearable or emote from a campaign." },
+  { name: "smart-items::Script", label: "Scripts", group: "Smart item", description: "Attach a custom script with its own parameters." },
   { name: "core-schema::Sync-Components", label: "Synchronized components", group: "Smart item", description: "Keep chosen components in sync for every player." },
   { name: "PointerEvents", label: "Clickable", group: "Interaction", description: "Show a hover hint and react to clicks or key presses." },
   { name: "AudioSource", label: "Sound", group: "Interaction", description: "Play an audio file from this item's position." },

@@ -13,6 +13,7 @@ import {
 } from './session'
 import { allocateNamedEntities } from './entities'
 import { deleteComponent } from './component-ops'
+import { renameLegacySmartItemComponents } from '../../../src/editor/smart-item-components'
 
 
 function isImportableEntity(eid: number): boolean {
@@ -39,12 +40,12 @@ function remapComponentRefs(
     case 'Transform':
       if ('parent' in value) value.parent = remapId(value.parent, idMap)
       return value
-    case 'asset-packs::Actions':
-    case 'asset-packs::States':
-    case 'asset-packs::Counter':
+    case 'smart-items::Actions':
+    case 'smart-items::States':
+    case 'smart-items::Counter':
       if ('id' in value) value.id = remapId(value.id, idMap)
       return value
-    case 'asset-packs::Triggers': {
+    case 'smart-items::Triggers': {
       const triggers = (value as { value?: unknown }).value
       if (Array.isArray(triggers)) {
         for (const t of triggers) {
@@ -70,7 +71,7 @@ function readCompositeEntities(blocks: unknown[]): {
 } {
   const comps = new Map<number, Map<string, unknown>>()
   const names = new Map<number, string>()
-  for (const block of blocks) {
+  for (const block of renameLegacySmartItemComponents(blocks)) {
     if (!isObj(block) || typeof block.name !== 'string' || !isObj(block.data)) continue
     if (block.name === NAME_COMPONENT) {
       for (const [idKey, raw] of Object.entries(block.data)) {

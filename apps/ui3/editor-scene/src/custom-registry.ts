@@ -54,10 +54,10 @@ enum MediaSource {
 
 
 export const CUSTOM_REGISTRY_DEFS = [
-  engine.defineComponent('asset-packs::ActionTypes', {
+  engine.defineComponent('smart-items::ActionTypes', {
     value: Schemas.Array(Schemas.Map({ type: Schemas.String, jsonSchema: Schemas.String }))
   }),
-  engine.defineComponent('asset-packs::Actions', {
+  engine.defineComponent('smart-items::Actions', {
     id: Schemas.Int,
     value: Schemas.Array(
       Schemas.Map({
@@ -70,11 +70,11 @@ export const CUSTOM_REGISTRY_DEFS = [
       })
     )
   }),
-  engine.defineComponent('asset-packs::Counter', {
+  engine.defineComponent('smart-items::Counter', {
     id: Schemas.Number,
     value: Schemas.Int
   }),
-  engine.defineComponent('asset-packs::Triggers', {
+  engine.defineComponent('smart-items::Triggers', {
     value: Schemas.Array(
       Schemas.Map({
         type: Schemas.EnumString<TriggerType>(TriggerType, TriggerType.ON_INPUT_ACTION),
@@ -106,19 +106,19 @@ export const CUSTOM_REGISTRY_DEFS = [
       })
     )
   }),
-  engine.defineComponent('asset-packs::States', {
+  engine.defineComponent('smart-items::States', {
     id: Schemas.Number,
     value: Schemas.Array(Schemas.String),
     defaultValue: Schemas.Optional(Schemas.String),
     currentValue: Schemas.Optional(Schemas.String),
     previousValue: Schemas.Optional(Schemas.String)
   }),
-  engine.defineComponent('asset-packs::CounterBar', {
+  engine.defineComponent('smart-items::CounterBar', {
     primaryColor: Schemas.Optional(Schemas.String),
     secondaryColor: Schemas.Optional(Schemas.String),
     maxValue: Schemas.Optional(Schemas.Float)
   }),
-  engine.defineComponent('asset-packs::AdminTools', {
+  engine.defineComponent('smart-items::AdminTools', {
     adminPermissions: Schemas.EnumString<AdminPermissions>(AdminPermissions, AdminPermissions.PUBLIC),
     authorizedAdminUsers: Schemas.Map({
       me: Schemas.Boolean,
@@ -179,26 +179,26 @@ export const CUSTOM_REGISTRY_DEFS = [
       )
     })
   }),
-  engine.defineComponent('asset-packs::VideoScreen', {
+  engine.defineComponent('smart-items::VideoScreen', {
     thumbnail: Schemas.String,
     defaultMediaSource: Schemas.EnumNumber<MediaSource>(MediaSource, MediaSource.VideoURL),
     defaultURL: Schemas.String
   }),
-  engine.defineComponent('asset-packs::Rewards', {
+  engine.defineComponent('smart-items::Rewards', {
     campaignId: Schemas.String,
     dispenserKey: Schemas.String,
     testMode: Schemas.Boolean
   }),
-  engine.defineComponent('asset-packs::TextAnnouncements', {
+  engine.defineComponent('smart-items::TextAnnouncements', {
     text: Schemas.String,
     author: Schemas.Optional(Schemas.String),
     id: Schemas.String
   }),
-  engine.defineComponent('asset-packs::VideoControlState', {
+  engine.defineComponent('smart-items::VideoControlState', {
     endsAt: Schemas.Optional(Schemas.Int64),
     streamKey: Schemas.Optional(Schemas.String)
   }),
-  engine.defineComponent('asset-packs::Script', {
+  engine.defineComponent('smart-items::Script', {
     value: Schemas.Array(
       Schemas.Map({
         path: Schemas.String,
@@ -207,7 +207,7 @@ export const CUSTOM_REGISTRY_DEFS = [
       })
     )
   }),
-  engine.defineComponent('asset-packs::Placeholder', {
+  engine.defineComponent('smart-items::Placeholder', {
     src: Schemas.String
   }),
 

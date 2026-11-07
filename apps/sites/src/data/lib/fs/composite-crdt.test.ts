@@ -1,4 +1,4 @@
-import { Engine, PutComponentOperation } from "@dcl/ecs";
+import { Engine, PutComponentOperation, Schemas } from "@dcl/ecs";
 import * as components from "@dcl/ecs/dist/components";
 import { ReadWriteByteBuffer } from "@dcl/ecs/dist/serialization/ByteBuffer";
 import { expect, test } from "vitest";
@@ -42,4 +42,26 @@ test("a component saved without a schema the SDK lacks is left out instead of fa
   });
   const puts = messages(compositeToMainCrdt(composite));
   expect(puts.map((m) => m.entityId)).toEqual([512]);
+});
+
+test("a composite saved under the legacy smart-item namespace instances the current components", () => {
+  const counterSchema = {
+    type: "object",
+    properties: { id: { type: "number", serializationType: "float32" }, value: { type: "integer", serializationType: "int32" } },
+    serializationType: "map",
+  };
+  const composite = JSON.stringify({
+    version: 1,
+    components: [
+      { name: "core::Transform", data: { 512: { json: { position: { x: 1, y: 2, z: 3 }, rotation: { x: 0, y: 0, z: 0, w: 1 }, scale: { x: 1, y: 1, z: 1 }, parent: 0 } } } },
+      { name: "asset-packs::Counter", jsonSchema: counterSchema, data: { 512: { json: { id: 512, value: 3 } } } },
+    ],
+  });
+  const engine = Engine();
+  const Counter = engine.defineComponent("smart-items::Counter", { id: Schemas.Number, value: Schemas.Int });
+  const legacyId = engine.defineComponent("asset-packs::Counter", { id: Schemas.Number, value: Schemas.Int }).componentId;
+  const puts = messages(compositeToMainCrdt(composite));
+  expect(puts.some((m) => m.componentId === legacyId)).toBe(false);
+  const put = puts.find((m) => m.componentId === Counter.componentId && m.entityId === 512)!;
+  expect(Counter.schema.deserialize(new ReadWriteByteBuffer(put.data))).toEqual({ id: 512, value: 3 });
 });

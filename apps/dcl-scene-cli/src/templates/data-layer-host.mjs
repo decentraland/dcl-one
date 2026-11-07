@@ -98,14 +98,27 @@ function findComposites(dir, base, out) {
   return out
 }
 
-async function dumpCrdtFallback() {
+// Composites saved before the smart-item runtime moved into `@dcl/sdk` name its
+// components `asset-packs::*`; the runtime defines them as `smart-items::*`, so
+// every composite is read as the latter.
+const LEGACY_SMART_ITEMS_PREFIX = 'asset-packs::'
+function renameSmartItems(composite) {
+  for (const component of composite.components || []) {
+    if (typeof component.name === 'string' && component.name.startsWith(LEGACY_SMART_ITEMS_PREFIX)) {
+      component.name = 'smart-items::' + component.name.slice(LEGACY_SMART_ITEMS_PREFIX.length)
+    }
+  }
+  return composite
+}
+
+async function dumpCrdt() {
   const inspector = req('@dcl/inspector')
   const { Composite, Engine, EntityMappingMode } = req('@dcl/ecs/dist-cjs')
   const files = findComposites(projectDir, projectDir, []).sort()
   const composites = {}
   for (const file of files) {
     const raw = await fs.promises.readFile(path.join(projectDir, file), 'utf8')
-    composites[file] = Composite.fromJson(JSON.parse(raw))
+    composites[file] = Composite.fromJson(renameSmartItems(JSON.parse(raw)))
   }
   const provider = {
     getCompositeOrNull(src) {
@@ -114,9 +127,9 @@ async function dumpCrdtFallback() {
   }
   const engine = Engine()
   // NOTE: the crdt this produces carries every component the composites
-  // define, but not the editor's own composite::root marker — the
-  // @dcl/sdk-commands path sets that when its data layer opens a composite.
-  // Scene content is identical; only that bookkeeping entry is absent.
+  // define, but not the editor's own composite::root marker, which a data-layer
+  // host adds when it opens a composite. Scene content is identical; only that
+  // bookkeeping entry is absent.
   for (const src of Object.keys(composites)) {
     Composite.instance(engine, provider.getCompositeOrNull(src), provider, {
       entityMapping: {
@@ -128,26 +141,6 @@ async function dumpCrdtFallback() {
   const crdt = inspector.dumpEngineToCrdtCommands(engine)
   await fs.promises.writeFile(path.join(projectDir, 'main.crdt'), crdt)
   process.stdout.write(JSON.stringify({ ok: true, composites: files.length }) + '\n')
-}
-
-async function dumpCrdt() {
-  let getAllComposites
-  try {
-    ;({ getAllComposites } = req('@dcl/sdk-commands/dist/logic/composite.js'))
-  } catch {}
-  if (!getAllComposites) return dumpCrdtFallback()
-  const log = (...args) => console.error(...args)
-  const components = {
-    fs: {
-      readFile: (p) => fs.promises.readFile(p),
-      writeFile: (p, data) => fs.promises.writeFile(p, data)
-    },
-    logger: { log, info: log, warn: log, error: log, debug: log }
-  }
-  const data = await getAllComposites(components, projectDir)
-  process.stdout.write(
-    JSON.stringify({ ok: !data.withErrors, composites: data.compositeLines.length }) + '\n'
-  )
 }
 
 async function serve() {

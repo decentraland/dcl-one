@@ -68,7 +68,7 @@ describe("parse / serialize round-trip", () => {
       version: 1,
       components: [
         ...SAMPLE.components,
-        { name: "asset-packs::Actions", jsonSchema: actions, data: { "512": { json: { value: [] } } } },
+        { name: "smart-items::Actions", jsonSchema: actions, data: { "512": { json: { value: [] } } } },
       ],
     });
     const wire = JSON.parse(serializeSceneComposite(parsed)) as {
@@ -80,7 +80,7 @@ describe("parse / serialize round-trip", () => {
       properties: { value: { type: "string", serializationType: "utf8-string" } },
       serializationType: "map",
     });
-    expect(schemaOf("asset-packs::Actions")).toEqual(actions);
+    expect(schemaOf("smart-items::Actions")).toEqual(actions);
     expect(schemaOf(TRANSFORM)).toBeUndefined();
   });
 
@@ -171,5 +171,24 @@ describe("buildCompositeFromHierarchy", () => {
     expect(entityName(c, 512)).toBe("Sign");
     expect(parentOf(c, 513)).toBe(512);
     expect(parseComposite(JSON.parse(serializeSceneComposite(c)))).toEqual(c);
+  });
+});
+
+describe("legacy smart-item namespace", () => {
+  it("reads blocks saved as asset-packs::X as smart-items::X and writes the current names back", () => {
+    const schema = { type: "object", properties: { value: { type: "array" } }, serializationType: "map" };
+    const parsed = parseComposite({
+      version: 1,
+      components: [
+        ...SAMPLE.components,
+        { name: "asset-packs::Actions", jsonSchema: schema, data: { "512": { json: { id: 512, value: [] } } } },
+      ],
+    });
+    expect(parsed.components.map((b) => b.name)).toContain("smart-items::Actions");
+    expect(parsed.components.some((b) => b.name.startsWith("asset-packs::"))).toBe(false);
+    expect(getComponentValue(parsed, 512, "smart-items::Actions")).toEqual({ id: 512, value: [] });
+    const wire = serializeSceneComposite(parsed);
+    expect(wire).toContain('"smart-items::Actions"');
+    expect(wire).not.toContain("asset-packs::");
   });
 });

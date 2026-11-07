@@ -388,9 +388,9 @@ const COMMON_IMPORTS =
   `  InputAction,\n` +
   `} from '@dcl/sdk/ecs'\n` +
   `import { Color3, Color4, Vector3 } from '@dcl/sdk/math'\n` +
-  `import { initAssetPacks } from '@dcl/asset-packs/dist/scene-entrypoint'\n\n` +
+  `import { initSmartItems } from '@dcl/sdk/smart-items'\n\n` +
   `// Runs no-code Actions/Triggers (smart items) authored in the editor.\n` +
-  `initAssetPacks(engine)\n\n` +
+  `initSmartItems(engine)\n\n` +
   `/** Find a template entity by the Name the editor shows in the tree. */\n` +
   `function byName(value: string): Entity | null {\n` +
   `  for (const [entity, name] of engine.getEntitiesWith(Name)) {\n` +

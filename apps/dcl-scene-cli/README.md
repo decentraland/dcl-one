@@ -52,7 +52,11 @@ Serves a local realm on 8000 and reloads the client on save. `http://127.0.0.1:8
 page (deep-link knobs, web **Player** via `?where=web&player=<url>`). abgen on 5147 serves
 `{realm}/optimized-assets`. Scene errors print via the client's MCP port (default 8123, range
 1024-65535). `/content/contents/{hash}` resolves by path: a stale digest gets the current bytes.
-`--data-layer` serves the Creator Hub protocol at `/data-layer` and `/inspector/`.
+`--data-layer` serves the Creator Hub protocol at `/data-layer` and `/inspector/`. Its bundled
+host defines the smart-item components as `smart-items::*` (a composite saved under the former
+`asset-packs::*` names loads as the same) and seeds them on the root entity; the registry
+`@dcl/inspector` UI, when installed, addresses those components by numbers it computes from its
+own names, so it edits core components only.
 
 ### Play
 

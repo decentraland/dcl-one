@@ -1,6 +1,7 @@
 import { Composite, Engine, EntityMappingMode, PutComponentOperation, type Entity } from "@dcl/ecs";
 import { Name } from "@dcl/ecs/dist/components";
 import { ReadWriteByteBuffer } from "@dcl/ecs/dist/serialization/ByteBuffer";
+import { renameLegacySmartItemComponents } from "@ui/editor/smart-item-components";
 
 /** The main.crdt `sdk-commands build` writes for a main.composite: the composite instanced with
     its own entity numbers, every component value as a PUT at timestamp 0. The engine loads it as
@@ -8,7 +9,9 @@ import { ReadWriteByteBuffer } from "@dcl/ecs/dist/serialization/ByteBuffer";
 export function compositeToMainCrdt(compositeText: string): Uint8Array {
   const engine = Engine();
   Name(engine);
-  const composite = Composite.fromJson(JSON.parse(compositeText));
+  const json = JSON.parse(compositeText) as { components?: unknown };
+  if (Array.isArray(json.components)) json.components = renameLegacySmartItemComponents(json.components);
+  const composite = Composite.fromJson(json);
   // A component neither the SDK nor the composite defines (an editor-only one saved without its
   // schema) cannot be serialized; the engine would ignore it anyway.
   composite.components = composite.components.filter(

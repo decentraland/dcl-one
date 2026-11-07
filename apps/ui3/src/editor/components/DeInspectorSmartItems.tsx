@@ -6,7 +6,7 @@ import { IconPlus, IconTrash } from "./DeIcons";
 import { NumField, PropRow, TextField, type CompValue } from "./DeInspectorFields";
 
 export const ACTION_TYPE_OPTIONS: readonly string[] = Object.keys(ACTION_SCHEMAS);
-const triggerSchema = COMPONENT_SCHEMAS["asset-packs::Triggers"]!.schema.properties!.value!.items!;
+const triggerSchema = COMPONENT_SCHEMAS["smart-items::Triggers"]!.schema.properties!.value!.items!;
 const TRIGGER_TYPE_OPTIONS = (triggerSchema.properties!.type!.enum ?? []).map(value => ({ value: String(value), label: fieldLabel(String(value)) }));
 const CONDITION_TYPE_OPTIONS = (triggerSchema.properties!.conditions!.items!.properties!.type!.enum ?? []).map(String);
 

@@ -48,7 +48,9 @@
 //! [`MainCrdt::Unsupported`]).
 
 use anyhow::{Context, Result, anyhow, bail};
-use dcl_scene_authoring::composite_norm::CompositeNormalizer;
+use dcl_scene_authoring::composite_norm::{
+    CompositeNormalizer, SMART_ITEMS_PREFIX, smart_item_name,
+};
 use dcl_scene_authoring::crdt_gen::{self, GenError};
 use dcl_scene_authoring::{
     COMPOSITE_FILE_MAX_BYTES, SceneFiles, entity_names, find_composites, is_pruned_dir,
@@ -80,8 +82,8 @@ const WORK_DIR: &str = ".dcl-one";
 const ALWAYS_EXTERNAL: &[&str] = &["~system/*", "@dcl/inspector", "@dcl/inspector/*"];
 
 /// dcl-scene-cli `split::scene_externals` over a prebuilt SDK: everything the
-/// core chunk owns, the two generated `~sdk/*` modules, and asset-packs (the
-/// smart-item chunk's).
+/// core chunk owns and the two generated `~sdk/*` modules. `@dcl/sdk/*` covers
+/// `@dcl/sdk/smart-items`, the smart-item chunk's.
 const SCENE_EXTERNALS: &[&str] = &[
     "@dcl/sdk",
     "@dcl/sdk/*",
@@ -95,8 +97,6 @@ const SCENE_EXTERNALS: &[&str] = &[
     "react/*",
     "~sdk/all-composites",
     "~sdk/script-utils",
-    "@dcl/asset-packs",
-    "@dcl/asset-packs/*",
 ];
 
 pub struct Options {
@@ -258,8 +258,8 @@ async fn build_async(root: &Path, opts: &Options) -> Result<Report> {
     outputs.push(scene_rel.clone());
     let scene_code = std::fs::read_to_string(root.join(&scene_rel)).unwrap_or_default();
     let smart_items = is_editor_scene(root)
-        || scene_code.contains("require(\"@dcl/asset-packs")
-        || scene_code.contains("require('@dcl/asset-packs");
+        || scene_code.contains("require(\"@dcl/sdk/smart-items")
+        || scene_code.contains("require('@dcl/sdk/smart-items");
     if smart_items {
         if !root.join(SDK_SMART).is_file() {
             bail!(
@@ -370,7 +370,9 @@ fn beside(main: &str, name: &str) -> String {
     }
 }
 
-/// dcl-scene-cli `Project::is_editor_scene`.
+/// dcl-scene-cli `Project::is_editor_scene`: the main composite carries a
+/// `smart-items::*` component other than the script list, under either
+/// spelling of the prefix (`composite_norm::smart_item_name`).
 fn is_editor_scene(root: &Path) -> bool {
     let Ok(raw) = std::fs::read(root.join("assets/scene/main.composite")) else {
         return false;
@@ -382,9 +384,10 @@ fn is_editor_scene(root: &Path) -> bool {
         .and_then(Value::as_array)
         .is_some_and(|comps| {
             comps.iter().any(|c| {
-                c.get("name")
-                    .and_then(Value::as_str)
-                    .is_some_and(|n| n.starts_with("asset-packs::") && n != "asset-packs::Script")
+                c.get("name").and_then(Value::as_str).is_some_and(|n| {
+                    let n = smart_item_name(n);
+                    n.starts_with(SMART_ITEMS_PREFIX) && n != "smart-items::Script"
+                })
             })
         })
 }
@@ -641,7 +644,7 @@ const SDK_BOOT: &str = "import { engine, setCompositeProvider } from '@dcl/sdk/e
 fn entrypoint_code(safe_entry: &str, editor_scene: bool) -> String {
     let composite_fill = "import { compositeFromLoader as __sceneComposites } from './all-composites.js'\nObject.assign(compositeFromLoader, __sceneComposites)\n";
     let editor_block = if editor_scene {
-        "\nimport { syncEntity } from '@dcl/sdk/network'\nimport players from '@dcl/sdk/players'\nimport { setCompositeProvider } from '@dcl/sdk/ecs'\nimport { initAssetPacks } from '@dcl/asset-packs/dist/scene-entrypoint'\nsetCompositeProvider(engine, compositeProvider)\ninitAssetPacks(engine, { syncEntity }, players)\n"
+        "\nimport { syncEntity } from '@dcl/sdk/network'\nimport players from '@dcl/sdk/players'\nimport { setCompositeProvider } from '@dcl/sdk/ecs'\nimport { initSmartItems } from '@dcl/sdk/smart-items'\nsetCompositeProvider(engine, compositeProvider)\ninitSmartItems(engine, { syncEntity }, players)\n"
             .to_string()
     } else {
         "false".to_string()
@@ -655,14 +658,14 @@ import {{ compositeProvider }} from '@dcl/sdk/composite-provider'
 import {{ compositeFromLoader }} from '~sdk/all-composites'
 import {{ _initializeScripts }} from '~sdk/script-utils'
 // Registers the composite provider, and must be imported BEFORE the scene.
-// A scene that calls initAssetPacks() at module scope -- as the Creator Hub
+// A scene that calls initSmartItems() at module scope -- as the Creator Hub
 // templates do -- reads that provider while its own module body runs, and until
 // this existed the only thing registering it was `@dcl/sdk`'s body, which the
-// bundler emits at the END of the chunk. So the editor logged "[asset-packs] No
-// SDK composite provider registered; SPAWN_ENTITY cannot resolve composites"
-// and placing a smart item resolved nothing. Upstream sdk-commands has the same
-// ordering (logic/bundle.ts) and gets away with it only because upstream scenes
-// never call initAssetPacks themselves.
+// bundler emits at the END of the chunk. So the editor logged "No SDK composite
+// provider registered; SPAWN_ENTITY cannot resolve composites" and placing a
+// smart item resolved nothing. Upstream's bundler has the same ordering
+// (logic/bundle.ts) and gets away with it only because upstream scenes never
+// call initSmartItems themselves.
 //
 // A separate module because neither cheaper fix works: statements here run after
 // every import including the scene's, and the bundler does not honour moving
@@ -704,4 +707,68 @@ export * from {safe_entry}
 export * from '~sdk/script-utils'
 "#
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SceneDir, all_composites, is_editor_scene};
+    use std::path::PathBuf;
+
+    struct Tmp(PathBuf);
+
+    impl Tmp {
+        fn new(tag: &str) -> Self {
+            let dir =
+                std::env::temp_dir().join(format!("dcl-scene-build-{tag}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            Tmp(dir)
+        }
+
+        fn write(&self, rel: &str, contents: &str) {
+            let p = self.0.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, contents).unwrap();
+        }
+    }
+
+    impl Drop for Tmp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A composite the Creator Hub saved before the runtime moved into `@dcl/sdk`.
+    const LEGACY: &str = r#"{"version":1,"components":[{"name":"asset-packs::Actions","jsonSchema":{"type":"object"},"data":{"512":{"json":{"value":[]}}}}]}"#;
+
+    #[test]
+    fn editor_scene_detection_reads_both_prefixes() {
+        let t = Tmp::new("editor");
+        assert!(!is_editor_scene(&t.0));
+        t.write(
+            "assets/scene/main.composite",
+            r#"{"version":1,"components":[{"name":"asset-packs::Script","data":{}}]}"#,
+        );
+        assert!(!is_editor_scene(&t.0));
+        t.write("assets/scene/main.composite", LEGACY);
+        assert!(is_editor_scene(&t.0));
+        t.write(
+            "assets/scene/main.composite",
+            r#"{"version":1,"components":[{"name":"smart-items::Counter","data":{}}]}"#,
+        );
+        assert!(is_editor_scene(&t.0));
+    }
+
+    #[test]
+    fn inlined_composites_carry_the_runtime_namespace() {
+        let t = Tmp::new("inline");
+        t.write("main.composite", LEGACY);
+        let scene = SceneDir {
+            root: t.0.clone(),
+            files: vec!["main.composite".to_string()],
+        };
+        let js = all_composites(&scene, false).unwrap();
+        assert!(js.contains(r#""name":"smart-items::Actions""#), "{js}");
+        assert!(!js.contains("asset-packs::"), "{js}");
+    }
 }
