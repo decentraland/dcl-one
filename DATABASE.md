@@ -65,7 +65,14 @@ the data and its operations.
    includes the one the running binary still calls); drop them by hand once no
    process runs an older binary, a generated column's one with that column.
    A step that adds a column calling such a function creates it first with
-   `CREATE FUNCTION`, skipped when the database has it.
+   `CREATE FUNCTION`, skipped when the database has it. A body that computes
+   the same values at a lower cost is the one in-place change: the binary
+   hashes it under a new name for fresh databases, and a step replaces the
+   shipped name's body with it (`CREATE OR REPLACE FUNCTION`), so the
+   generated columns of a migrated database take the new cost without a
+   rewrite; a test pins the replacement to the binary's definition and a
+   test shows both bodies agree on every shape of input
+   (`0033_explore_recurrence_one_pass`).
    The `deleter_deployment` repair runs once per database and repair version
    (`content.system_properties` key `deleter_repair_version`, only ever
    raised), at a sync leader's bootstrap or a non-syncing process's startup.
@@ -558,7 +565,11 @@ only paid or pending rewards. `0030_explore_read_columns` adds the stored read
 columns of `explore.place`, `explore.place_world_local` and `explore.event` in
 one `ALTER TABLE` per table, so each table is rewritten once: 0.96 s, 0.91 s and
 0.14 s on 10,008, 10,008 and 3,011 rows, where one statement per column took
-2.38 s, 2.07 s and 0.39 s.
+2.38 s, 2.07 s and 0.39 s. `0033_explore_recurrence_one_pass` replaces the
+bodies of the two recurrence functions of `explore.event` in place with
+one-pass bodies computing the same values: 19 ms on 7,686 rows, no row
+rewritten; a write parses each `recurrent_dates` entry once per column
+(5.7 µs per entry where the shipped bodies took 21 µs).
 
 The object pass also builds `deployments_active_entity_timestamp_idx` on
 `content.deployments` (the snapshot generator's inactive-entities count) in the
