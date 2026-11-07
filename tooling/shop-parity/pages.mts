@@ -30,7 +30,7 @@ export type PageSpec = {
   setup?: (page: Page, side: Side, targets: Record<string, string>) => Promise<void>;
   /** While recording: read targets later pages need (from the reference). A null target was not found: the
    *  recording drops it, so a page reading it refuses rather than compare the previous set's. */
-  discover?: (page: Page) => Promise<Record<string, string | null>>;
+  discover?: (page: Page, targets: Readonly<Record<string, string>>) => Promise<Record<string, string | null>>;
   keys: KeyElement[];
   masks?: Mask[];
   regions?: Region[];
@@ -254,7 +254,7 @@ export const PAGES: PageSpec[] = [
       { match: /^key:preview$/, why: NO_MODELS, only: ["text"] },
       { match: /(^|\/)detail-play-mode$|^key:tag\.play-mode$|^"PLAY ONCE"$/, status: "only-reference", why: PLAY_MODE },
     ],
-    discover: async (page) => {
+    discover: async (page, targets) => {
       const shop = (h: string | null) => (h ? new URL(h, page.url()).pathname.replace(/^(?!\/shop)/, "/shop") : null);
       const link = (contains: string) => page.locator(`xpath=(//main//a[contains(@href,'${contains}')])[1]`).getAttribute("href", { timeout: 2_000 }).catch(() => null);
       // The pinned reference names the item's collection and creator as text, not links. Its collection is the
@@ -265,9 +265,11 @@ export const PAGES: PageSpec[] = [
       if (!creator && collection) {
         // Opened in the item capture's context, so its answers are recorded with the same routes and clock. That
         // context's request log is shared too: a host only the collection page asks for is listed under item@.
-        // Best-effort: a collection page that fails leaves the creator unset and keeps the collection found above.
-        const other = await page.context().newPage();
+        // Best-effort: a collection page that fails keeps the collection found above, and the creator already known
+        // for that same collection (from the previous set or another viewport), which is still its creator.
+        let other: Page | undefined;
         try {
+          other = await page.context().newPage();
           await other.goto(new URL(collection, page.url()).href, { waitUntil: "load" });
           // The first profile link in <main> is the collection header's creator, which renders before the cards. A
           // layout that put another profile link first would record that account; the creator page would then
@@ -275,9 +277,9 @@ export const PAGES: PageSpec[] = [
           const profile = await other.locator("xpath=(//main//a[contains(@href,'/profile/0x')])[1]").getAttribute("href", { timeout: 15_000 });
           creator = profile ? creatorOfProfile(profile) : null;
         } catch {
-          // Best-effort, as above: the creator stays unset.
+          creator = targets.collection === collection ? (targets.creator ?? null) : null;
         } finally {
-          await other.close().catch(() => {});
+          await other?.close().catch(() => {});
         }
       }
       return { collection, creator };

@@ -64,7 +64,7 @@ if (process.argv.includes("--fill")) {
           // targets starts from the previous manifest. discover runs once per viewport: a target one of them found
           // in this run stays, and one that a discover reports as not found, with no viewport finding it, is dropped
           // rather than kept from the previous set.
-          for (const [key, value] of Object.entries(await current.discover(page))) {
+          for (const [key, value] of Object.entries(await current.discover(page, targets))) {
             if (value != null) {
               targets[key] = value;
               found.add(key);
