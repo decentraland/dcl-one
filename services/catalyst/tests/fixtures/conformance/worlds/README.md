@@ -63,9 +63,9 @@ No item is P0. The P1 items:
 
 ## Themes that cut across files
 
-- **Signed-fetch refusals** (WD-02, WP-01, WW-24, WC-01, fixed): one mapper, `comms/src/signed_fetch.rs`
+- **Signed-fetch refusals** (WD-02, WP-01, WW-24, WC-01): one mapper, `comms/src/signed_fetch.rs`
   `map_auth_error_api`, answers every signed worlds route with the crypto-middleware 6.3.0 text and the
-  ADR-44 line. `PUT /settings` still reads its multipart body first (WW-24).
+  ADR-44 line. `PUT /settings` reads its multipart body before the signed fetch (WW-24).
 - **Validator bodies** (WP-02, WW-15): schema-validated routes answer the worlds envelope where
   upstream answers `{ok:false,message,data}`; the content crate already rebuilds that body (CR-2).
 - **Absent vs `null`** (WP-03, WW-04, WW-18, WR-15, WR-18): several bodies write `null` where upstream
