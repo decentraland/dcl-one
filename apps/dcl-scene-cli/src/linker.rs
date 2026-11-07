@@ -405,7 +405,6 @@ pub(crate) fn finish(done: &Mutex<Option<DoneSender>>, result: Result<String>) {
     let tx = done.lock().unwrap_or_else(PoisonError::into_inner).take();
     if let Some(tx) = tx {
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(150)).await;
             let _ = tx.send(result);
         });
     }
@@ -498,6 +497,15 @@ pub async fn run(dep: LinkerDeploy, opts: LinkerOptions) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test(start_paused = true)]
+    async fn finish_reports_the_outcome_without_advancing_time() {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let started = tokio::time::Instant::now();
+        super::finish(&std::sync::Mutex::new(Some(tx)), Ok("published".into()));
+        assert_eq!(rx.await.unwrap().unwrap(), "published");
+        assert_eq!(tokio::time::Instant::now(), started);
+    }
+
     use super::*;
     use crate::deploy::TempTree;
     use crate::scene::Project;

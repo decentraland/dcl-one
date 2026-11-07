@@ -377,6 +377,7 @@ impl Sidecar {
             Err(_) => return false,
         };
         let deadline = Instant::now() + READY_TIMEOUT;
+        let mut delay = READY_POLL_INTERVAL;
         while Instant::now() < deadline {
             if *self.exited.borrow() {
                 crate::ux::note_stderr(format!(
@@ -391,9 +392,10 @@ impl Sidecar {
                 return true;
             }
             tokio::select! {
-                _ = tokio::time::sleep(READY_POLL_INTERVAL) => {}
+                _ = tokio::time::sleep(delay.min(deadline.saturating_duration_since(Instant::now()))) => {}
                 _ = self.exited.changed() => {}
             }
+            delay = delay.saturating_mul(2).min(Duration::from_secs(1));
         }
         crate::ux::note_stderr(format!(
             "asset bundles off \u{2014} {} did not come up on {} within {} ({INSTALL_HINT})",

@@ -294,9 +294,14 @@ pub(crate) async fn serve(
     } else {
         ux::note("browser auto-open disabled \u{2014} open the URL manually");
     }
-    let serve = axum::serve(listener, app);
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let serve = axum::serve(listener, app).with_graceful_shutdown(async {
+        let _ = stopped.await;
+    });
+    let serve = std::future::IntoFuture::into_future(serve);
+    tokio::pin!(serve);
     tokio::select! {
-        r = serve => {
+        r = &mut serve => {
             r.context("serving the signing page")?;
             Err(UserError::new(
                 "the signing page stopped before a signature arrived",
@@ -304,13 +309,20 @@ pub(crate) async fn serve(
             )
             .into())
         }
-        res = rx => match res {
-            Ok(outcome) => outcome,
-            Err(_) => Err(UserError::new(
-                "the signing flow ended without a result",
-                TrySteps::one("re-run the command"),
-            )
-            .into()),
+        res = rx => {
+            let _ = stop.send(());
+            tokio::time::timeout(std::time::Duration::from_secs(5), &mut serve)
+                .await
+                .context("timed out draining the signing response")?
+                .context("serving the signing response")?;
+            match res {
+                Ok(outcome) => outcome,
+                Err(_) => Err(UserError::new(
+                    "the signing flow ended without a result",
+                    TrySteps::one("re-run the command"),
+                )
+                .into()),
+            }
         },
         _ = tokio::time::sleep(opts.timeout) => Err(timeout_error(opts.timeout, &url, summary)),
     }
@@ -417,6 +429,58 @@ load();
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn standalone_signing_drains_the_response_before_returning() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let done = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
+        let expected = "published".repeat(128 * 1024);
+        let response = expected.clone();
+        let app = axum::Router::new().route(
+            "/done",
+            axum::routing::get(move || {
+                let done = done.clone();
+                let response = response.clone();
+                async move {
+                    crate::linker::finish(&done, Ok("published".into()));
+                    response
+                }
+            }),
+        );
+        let server = tokio::spawn(super::serve(
+            app,
+            rx,
+            "example.dcl.eth",
+            "publish",
+            crate::linker::LinkerOptions {
+                port: Some(port),
+                open_browser: false,
+                timeout: std::time::Duration::from_secs(5),
+                host: None,
+            },
+        ));
+        let body = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let mut delay = std::time::Duration::from_millis(1);
+            loop {
+                match reqwest::get(format!("http://127.0.0.1:{port}/done")).await {
+                    Ok(response) => break response.text().await.unwrap(),
+                    Err(_) => {
+                        tokio::time::sleep(delay).await;
+                        delay = delay
+                            .saturating_mul(2)
+                            .min(std::time::Duration::from_millis(50));
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(body, expected);
+        assert_eq!(server.await.unwrap().unwrap(), "published");
+    }
+
     use super::*;
     use crate::world::SettingsUpdate;
 
