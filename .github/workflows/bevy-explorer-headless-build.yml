@@ -59,6 +59,7 @@ jobs:
         with:
           key: bevy-explorer-headless-${{ matrix.platform }}
           workspaces: rendering/bevy-explorer/source -> target
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
       - name: Restore the vendored Bevy's cached file times
         run: python "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Build the local headless app
