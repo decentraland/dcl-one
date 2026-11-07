@@ -3,7 +3,9 @@
 
 import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
 import { itemUrn } from '../../../shop/detail/lib/urn'
+import { landNetwork } from '../../../shop/land/contracts'
 import { CHAIN } from '../../../shop/model/chain'
+import { nameTokenIdOf } from '../../../shop/names/names'
 import { siteUrl } from '../../lib/baseDomain'
 import { withUtm } from '../../lib/utm'
 
@@ -29,8 +31,12 @@ export function webNameUrl(name: string): string {
   return withUtm(siteUrl(`/shop/names?name=${encodeURIComponent(name)}`))
 }
 
-/** NAMEs for resale on the web Shop, narrowed to `name` when given: where an offer is made to a NAME's owner. */
-export function webNameResaleUrl(name?: string): string {
-  const search = name != null && name !== '' ? `&search=${encodeURIComponent(name)}` : ''
-  return withUtm(siteUrl(`/shop/names?section=resale${search}`))
+/** The NAMEs on sale on the web Shop's resale (the Marketplace's). */
+export function webNameResaleUrl(): string {
+  return withUtm(siteUrl('/shop/names?section=resale'))
+}
+
+/** A registered NAME's bid page on the web Shop: an offer to its owner, whether or not they list it. */
+export function webNameOfferUrl(name: string): string {
+  return withUtm(siteUrl(`/shop/token/${landNetwork().nameRegistrar}/${nameTokenIdOf(name)}/bid`))
 }

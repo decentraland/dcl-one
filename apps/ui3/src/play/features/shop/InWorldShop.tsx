@@ -36,7 +36,7 @@ import { cartRequestLines, cartUnits, inWorldCart, inWorldCartInputFor, useInWor
 import { CATALOGUE_SORTS, categoriesFor, defaultFilters, pageCount, statusOf, useShopCatalogue, type CatalogueFilters, type CatalogueKind } from './catalogueQuery'
 import { useShopFlag } from './flagsQuery'
 import { homeQueries, useNewest, useShopOutfits, useTrending, type OutfitSummary } from './homeQuery'
-import { tryOnUrn, webNameResaleUrl, webNameUrl, webOutfitUrl, webShopUrl } from './itemLinks'
+import { tryOnUrn, webNameOfferUrl, webNameResaleUrl, webNameUrl, webOutfitUrl, webShopUrl } from './itemLinks'
 import { useNameCheck } from './namesQuery'
 import { useCreditsBalance, useShopCapabilities, useShopPurchase } from './purchaseQuery'
 import { categoryGlyph, CreatorName, SelectedItemPanel, ShopCard } from './ShopItems'
@@ -421,10 +421,10 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   }
   // The NAME field keeps letters and digits only, one past the limit at most.
   const typeName = (value: string): void => setNameDraft(value.replace(/[^a-zA-Z0-9]/g, '').slice(0, NAME_TYPED_MAX))
-  // A NAME is registered on the web Shop, its NAMEs page opening on it; a taken one's owner takes offers on
-  // the Marketplace, as RESALE NAME's NAMEs are sold there.
+  // A NAME is registered on the web Shop, its NAMEs page opening on it; a taken one's owner takes an offer
+  // on its bid page on the Marketplace, listed or not; RESALE NAME browses the NAMEs on sale there.
   const claimName = (): void => void openWebShop(webNameUrl(nameDraft))
-  const makeNameOffer = (): void => void openWebShop(webNameResaleUrl(nameDraft), 'Marketplace')
+  const makeNameOffer = (): void => void openWebShop(webNameOfferUrl(nameDraft), 'Marketplace')
   const browseNameResales = (): void => void openWebShop(webNameResaleUrl(), 'Marketplace')
 
   const p = profile.data

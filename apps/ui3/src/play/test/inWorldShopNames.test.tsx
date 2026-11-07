@@ -5,6 +5,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { keccak256, stringToHex } from 'viem'
 import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop'
 import { webNameResaleUrl, webNameUrl } from '../features/shop/itemLinks'
 import { NAMETAG_PLACEHOLDER } from '../features/shop/ui'
@@ -15,6 +16,8 @@ import { fakeProfileState } from './harness'
 
 const ADDRESS = '0x00000000000000000000000000000000000ab47f'
 const ME: Profile = { address: ADDRESS, name: 'Mojito', hasClaimedName: true, isGuest: false }
+/** DCLRegistrar on mainnet, the network a build that names none registers on. */
+const MAINNET_REGISTRAR = '0x2a187453064356c898cae034eaed119e1663acb8'
 const TRUE_WORD = `0x${'0'.repeat(63)}1`
 const FALSE_WORD = `0x${'0'.repeat(64)}`
 
@@ -26,6 +29,8 @@ interface Routes {
   credits?: string
   /** The registrar is down. */
   registrarDown?: boolean
+  /** The banned list answers once this settles. */
+  bannedAfter?: Promise<void>
 }
 
 /** The banned list, the credits quote and the registrar's `available` through the catalyst's read relay. */
@@ -33,7 +38,10 @@ function serve(routes: Routes = {}): ReturnType<typeof vi.fn> {
   const f = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input instanceof Request ? input.url : input), location.href)
     const path = url.pathname
-    if (path.endsWith('/dcl-lists/banned-names')) return Response.json({ data: routes.banned ?? [] })
+    if (path.endsWith('/dcl-lists/banned-names')) {
+      await routes.bannedAfter
+      return Response.json({ data: routes.banned ?? [] })
+    }
     if (path.endsWith('/shop-api/v1/credit-quotes')) return Response.json({ items: [], amounts: [routes.credits ?? '94'] })
     if (path.includes('/rpc/')) {
       if (routes.registrarDown) return new Response('', { status: 503 })
@@ -154,7 +162,7 @@ describe('the in-world Shop’s Names', () => {
     expect(webNameUrl('Carolo')).toMatch(/\/shop\/names\?name=Carolo&utm_source=/)
   })
 
-  it('says a taken NAME is taken, and MAKE OFFER opens its resale on the web Marketplace', async () => {
+  it('says a taken NAME is taken, and MAKE OFFER opens its bid page on the web Marketplace, listed or not', async () => {
     serve({ taken: ['mojito'] })
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
     renderShop()
@@ -165,7 +173,26 @@ describe('the in-world Shop’s Names', () => {
     expect(claim()).toBeDisabled()
     await userEvent.click(screen.getByRole('button', { name: 'MAKE OFFER' }))
     await continueTo('You will be redirected to the web Marketplace')
-    expect(open).toHaveBeenCalledWith(webNameResaleUrl('Mojito'), '_blank', 'noopener')
+    // The registrar's token for the NAME (keccak of its lowercase label): an offer to its owner, which needs
+    // no listing (the resale browse only shows NAMEs on sale).
+    const token = BigInt(keccak256(stringToHex('mojito'))).toString()
+    const url = new URL(open.mock.calls[0]![0] as string)
+    expect(url.pathname).toBe(`/shop/token/${MAINNET_REGISTRAR}/${token}/bid`)
+    expect(url.searchParams.has('section')).toBe(false)
+  })
+
+  it('offers no NAME until the banned list answers', async () => {
+    let answer = (): void => undefined
+    const f = serve({ banned: ['badname'], bannedAfter: new Promise<void>((r) => (answer = r)) })
+    renderShop()
+    const field = await openNames()
+    await userEvent.type(field, 'BadName')
+    await new Promise((r) => setTimeout(r, 600))
+    expect(claim()).toBeDisabled()
+    expect(f.mock.calls.some(([input]) => String(input).includes('/rpc/'))).toBe(false)
+    answer()
+    expect(await screen.findByText(/This NAME Is Not Available/)).toBeInTheDocument()
+    expect(f.mock.calls.some(([input]) => String(input).includes('/rpc/'))).toBe(false)
   })
 
   it('refuses a banned NAME without asking the registrar', async () => {

@@ -59,7 +59,10 @@ export function useNameCheck(name: string, enabled: boolean): NameCheck {
   const valid = length >= NAME_MIN_LENGTH && length <= NAME_MAX_LENGTH
   const banned = useQuery({ ...nameQueries.banned(), enabled })
   const isBanned = valid && banned.data?.has(name.toLowerCase()) === true
-  const ask = enabled && valid && !isBanned && settled === name
+  // Until the banned list answers a NAME isn't offered; once it fails, the registrar alone decides (the
+  // purchase checks again).
+  const listKnown = !banned.isPending
+  const ask = enabled && valid && listKnown && !isBanned && settled === name
   const availability = useQuery({ ...nameQueries.availability(settled), enabled: ask })
   const price = useQuery({ ...nameQueries.price(), enabled })
 

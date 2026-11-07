@@ -3,7 +3,7 @@
 // long, taken, available…), its price and what CLAIM NAME, MAKE OFFER and RESALE NAME do come in as props;
 // the page checks the NAME and draws the nametag over the avatar from the same value.
 
-import { Chip, MaskIcon } from '../../../design'
+import { Button, Chip, MaskIcon } from '../../../design'
 import uniqueIcon from '../../../assets/shop/names/unique-name.svg'
 import resaleIcon from '../../../assets/shop/names/resale-name.svg'
 import creditsIcon from '../../../assets/shop/names/credits-outline.svg'
@@ -103,9 +103,8 @@ function UniqueName({ value, onChange, onFocusChange, maxLength, limit, suffix, 
             <Feedback value={value} limit={limit} status={status} onMakeOffer={onMakeOffer} onRetry={onRetry} />
           </div>
           <div className={styles.cta}>
-            <button
-              type="button"
-              className={styles.claimBtn}
+            <Button
+              size="cta"
               disabled={status !== 'available'}
               aria-label={price != null ? `Claim name for ${price} Credits` : 'Claim name'}
               onClick={(e) => onClaim(pressedWith(e))}
@@ -117,7 +116,7 @@ function UniqueName({ value, onChange, onFocusChange, maxLength, limit, suffix, 
                   {price}
                 </span>
               )}
-            </button>
+            </Button>
           </div>
         </div>
       </div>
