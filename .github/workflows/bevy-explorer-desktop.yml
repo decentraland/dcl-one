@@ -50,6 +50,7 @@ jobs:
         with:
           workspaces: rendering/bevy-explorer/source -> target
           key: bevy-explorer-desktop-${{ matrix.build_name }}
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
       - name: Restore the vendored Bevy's cached file times
         run: python "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: add darwin target
