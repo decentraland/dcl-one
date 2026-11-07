@@ -157,7 +157,11 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE, "{path}");
-            assert_eq!(res.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff", "{path}");
+            assert_eq!(
+                res.headers()[header::X_CONTENT_TYPE_OPTIONS],
+                "nosniff",
+                "{path}"
+            );
         }
     }
 
