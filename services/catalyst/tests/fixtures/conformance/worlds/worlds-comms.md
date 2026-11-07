@@ -426,7 +426,7 @@ Both trees advertise
      `map_auth_error_api` answers `ApiError::SignedFetch`: `{error: <text>, message:
      SIGNED_FETCH_MESSAGE}` (`comms/src/worlds_envelope.rs`, the constant the storage routes
      already used). `answer()` leaves that body alone. The mapper's only callers are worlds
-     routes (the mints, settings, the eight signed permission routes, scene delete, undeploy,
+     routes (the mints, settings, the seven signed permission routes, scene delete, undeploy,
      `/wallet/contribute`); no other route used it. Pinned by
      `tests/gatekeeper_policy.rs` `the_world_mints_decide_through_the_permission_core_and_throttle_secrets`
      (no chain on all three routes, malformed link, expired), `comms/src/signed_fetch.rs` tests and
