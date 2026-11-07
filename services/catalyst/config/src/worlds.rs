@@ -131,12 +131,22 @@ pub struct WorldsConfig {
     )]
     pub worlds_owner_reconcile_interval_secs: u64,
 
-    /// Wallets a world's access allow-list may hold.
-    #[arg(long, env = "ACCESS_MAX_WALLETS", default_value_t = 1000)]
+    /// Wallets a world's access allow-list may hold (1..=10,000; 0 would refuse every addition).
+    #[arg(
+        long,
+        env = "ACCESS_MAX_WALLETS",
+        default_value_t = 1000,
+        value_parser = clap::value_parser!(u32).range(1..=10_000)
+    )]
     pub access_max_wallets: u32,
 
-    /// Communities a world's access allow-list may hold.
-    #[arg(long, env = "ACCESS_MAX_COMMUNITIES", default_value_t = 50)]
+    /// Communities a world's access allow-list may hold (1..=1,000; 0 would refuse every addition).
+    #[arg(
+        long,
+        env = "ACCESS_MAX_COMMUNITIES",
+        default_value_t = 50,
+        value_parser = clap::value_parser!(u32).range(1..=1_000)
+    )]
     pub access_max_communities: u32,
 
     /// Entries a deployed entity's `content` may list, at most the 10,000 file parts a deploy may upload.
@@ -547,6 +557,40 @@ mod tests {
         assert_eq!(with("10000").unwrap().worlds.max_file_count, 10_000);
         assert!(with("10001").is_err());
         assert!(with("0").is_err());
+    }
+
+    #[test]
+    fn access_allow_list_caps_keep_the_upstream_defaults_within_a_range() {
+        let with = |flag: &str, v: &str| parse(&["x", "--database-url", "postgres:///c", flag, v]);
+        let defaults = parse(&["x", "--database-url", "postgres:///c"]).unwrap();
+        assert_eq!(
+            (
+                defaults.worlds.access_max_wallets,
+                defaults.worlds.access_max_communities
+            ),
+            (1000, 50)
+        );
+        assert_eq!(
+            with("--access-max-wallets", "10000")
+                .unwrap()
+                .worlds
+                .access_max_wallets,
+            10_000
+        );
+        assert_eq!(
+            with("--access-max-communities", "1000")
+                .unwrap()
+                .worlds
+                .access_max_communities,
+            1_000
+        );
+        for (flag, over) in [
+            ("--access-max-wallets", "10001"),
+            ("--access-max-communities", "1001"),
+        ] {
+            assert!(with(flag, "0").is_err(), "{flag} 0");
+            assert!(with(flag, over).is_err(), "{flag} {over}");
+        }
     }
 
     #[test]
