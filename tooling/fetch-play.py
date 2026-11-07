@@ -315,9 +315,9 @@ def fetch(wait=0, production=False, receipt=None):
     read_deadline = deadline if wait > 0 else None
     checked = set()
     keys = {}
-    # This commit's own finished Bevy runs: the ones to rerun when nothing else can supply it.
+    # The newest Bevy run of this commit and why it cannot supply the build: named for a rerun.
     head = pr['head'] if pr else os.environ.get('GITHUB_SHA')
-    own = {}
+    newest, hint = 0, None
     candidates = workflow_runs(read_deadline)
     while True:
         pending = set()
@@ -326,13 +326,14 @@ def fetch(wait=0, production=False, receipt=None):
             attempt = (run['id'], run['run_attempt'])
             if not trusted(run, pr) or attempt in checked:
                 continue
-            if run['status'] == 'completed' and run['conclusion'] != 'success':
-                if match_inputs and run['head_sha'] == head:
-                    own[run['id']] = run['conclusion']
+            failed = run['status'] == 'completed' and run['conclusion'] != 'success'
+            if match_inputs and run['head_sha'] == head and run['id'] >= newest:
+                # A rerun or a newer run of the commit, under way or succeeded, replaces an older failure.
+                newest = run['id']
+                hint = f'did not succeed: {run["id"]} ({run["conclusion"]})' if failed else None
+            if failed:
                 checked.add(attempt)
                 continue
-            # A rerun under way or succeeded replaces the attempt the hint would name.
-            own.pop(run['id'], None)
             revision = pr['merge'] if run['event'] == 'pull_request' else run['head_sha']
             if revision not in keys:
                 keys[revision] = inputs_at(revision)
@@ -357,6 +358,8 @@ def fetch(wait=0, production=False, receipt=None):
                     result = download_run(run, pr, production, receipt, read_deadline, producer=producer)
                     if result:
                         return result
+                    if run['id'] == newest:
+                        hint = f'succeeded, but its web artifact is unavailable: {run["id"]}'
             except ValueError as exc:
                 if producer is None:
                     raise  # the build of these very inputs is corrupt or tampered with
@@ -367,9 +370,8 @@ def fetch(wait=0, production=False, receipt=None):
         if not pending or time.monotonic() >= deadline:
             recovery = ('Refresh main with: gh workflow run bevy-explorer-ci.yml --ref main. '
                         'Wait for its successful web build, then retry with matching inputs. ')
-            if own:
-                runs = ', '.join(f'{run_id} ({conclusion})' for run_id, conclusion in sorted(own.items()))
-                recovery = f'The Bevy CI run of this commit did not succeed: {runs}. Rerun it, then this job. ' + recovery
+            if hint:
+                recovery = f'The Bevy CI run of this commit {hint}. Rerun it, then this job. ' + recovery
             if not production:
                 recovery += ('For local development, build with make bevy-web and use '
                              '--from-build apps/bevy-explorer/dist/web. ')

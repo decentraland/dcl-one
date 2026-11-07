@@ -666,6 +666,38 @@ class PlayImportTests(unittest.TestCase):
             play.fetch()
         self.assertNotIn('50', str(failure.exception))
 
+    def test_only_the_newest_run_of_this_commit_decides_the_rerun_hint(self):
+        pr = {'number': 7, 'head': SHA, 'base': 'b' * 40, 'merge': 'c' * 40}
+
+        def own(**changes):
+            return run(event='pull_request', head_branch='feature', pull_requests=[{'number': 7}], **changes)
+
+        older = own(id=51, conclusion='failure')
+        cases = [
+            # A newer run under way, as inside the Bevy CI run itself: nothing to rerun.
+            ([own(id=53, status='in_progress', conclusion=None), older], None),
+            # Two failures, after a close and reopen: the newest is the one to rerun.
+            ([own(id=53, conclusion='cancelled'), older], r'did not succeed: 53 \(cancelled\)\. Rerun it'),
+            # A success whose web artifact is gone: rerunning it is the fix.
+            ([own(id=53), older], r'succeeded, but its web artifact is unavailable: 53\. Rerun it'),
+        ]
+        for runs, named in cases:
+            with self.subTest(runs=[candidate['id'] for candidate in runs]), \
+                    patch.object(play, 'api', return_value={'workflow_runs': runs}), \
+                    patch.object(play, 'current_pr', return_value=pr), \
+                    patch.object(play, 'engine_changed', return_value=True), \
+                    patch.object(contract, 'inputs', return_value='ours'), \
+                    patch.object(play, 'inputs_at', return_value='ours'), \
+                    patch.object(play, 'download_run', return_value=None), \
+                    self.assertRaises(RuntimeError) as failure:
+                play.fetch()
+            message = str(failure.exception)
+            self.assertNotIn('51', message)
+            if named is None:
+                self.assertNotIn('Rerun it', message)
+            else:
+                self.assertRegex(message, named)
+
     def test_pr_without_engine_changes_still_requires_a_trusted_successful_run(self):
         pr = {'number': 7, 'head': SHA, 'base': 'b' * 40, 'merge': 'c' * 40}
         candidates = [run(head_repository={'full_name': 'other/project'}), run(head_branch='dev'),
