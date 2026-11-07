@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { CatalystError } from "../../data/catalyst/client";
 import {
   chainName,
   deliverTip,
+  forwardTip,
   TIP_DELIVERY_WINDOW_MS,
   encodeManaTransfer,
   manaToWei,
@@ -126,7 +127,7 @@ describe("deliverTip", () => {
   const hash = `0x${"cd".repeat(32)}`;
 
   // A wallet whose receipt reads return `receipts` in turn (the last repeats), on a fake clock.
-  function harness(receipts: unknown[], outcomes: (number | null)[]) {
+  function harness(receipts: unknown[], outcomes: (number | null | { status: number; retryAfter: number })[]) {
     let clock = 0;
     const slept: number[] = [];
     const methods: string[] = [];
@@ -143,9 +144,12 @@ describe("deliverTip", () => {
     let f = 0;
     const forward = async () => {
       forwards.push(clock);
-      const status = outcomes[Math.min(f++, outcomes.length - 1)];
-      if (status === null) return;
-      throw new CatalystError(`Catalyst returned ${status}`, "url", status);
+      const outcome = outcomes[Math.min(f++, outcomes.length - 1)];
+      if (outcome == null) return;
+      const status = typeof outcome === "number" ? outcome : outcome.status;
+      const err = new CatalystError(`Catalyst returned ${status}`, "url", status);
+      if (typeof outcome !== "number") err.retryAfterSecs = outcome.retryAfter;
+      throw err;
     };
     const opts = {
       forward,
@@ -178,6 +182,12 @@ describe("deliverTip", () => {
     expect(h.slept).toEqual([5_000, 10_000, 20_000]);
   });
 
+  it("waits at least the server's Retry-After, bounded by the longest backoff", async () => {
+    const h = harness([{ status: "0x1" }], [{ status: 429, retryAfter: 2 }, { status: 429, retryAfter: 60 }, { status: 503, retryAfter: 600 }, null]);
+    expect(await deliverTip(h.provider, hash, h.opts)).toBe("notified");
+    expect(h.slept).toEqual([5_000, 60_000, 120_000]);
+  });
+
   it("stops without retrying when the server refuses the tip", async () => {
     const h = harness([{ status: "0x1" }], [400, null]);
     expect(await deliverTip(h.provider, hash, h.opts)).toBe("refused");
@@ -192,5 +202,27 @@ describe("deliverTip", () => {
     const unmined = harness([null], [null]);
     expect(await deliverTip(unmined.provider, hash, unmined.opts)).toBe("gave-up");
     expect(unmined.forwards).toEqual([]);
+  });
+});
+
+describe("forwardTip", () => {
+  afterEach(() => {
+    delete (window as unknown as { dclBridge?: unknown }).dclBridge;
+  });
+
+  it("carries the server's retryAfter from a signed 429 body onto the error", async () => {
+    const listeners = new Set<(push: unknown) => void>();
+    (window as unknown as { dclBridge: unknown }).dclBridge = {
+      send: (_action: string, payload: { id: string }) =>
+        queueMicrotask(() => {
+          const body = JSON.stringify({ error: "rate limit exceeded", retryAfter: 7 });
+          for (const cb of listeners) cb({ kind: "signedFetchResult", id: payload.id, status: 429, body });
+        }),
+      onState: (cb: (push: unknown) => void) => {
+        listeners.add(cb);
+        return () => listeners.delete(cb);
+      },
+    };
+    await expect(forwardTip(`0x${"ab".repeat(32)}`)).rejects.toMatchObject({ status: 429, retryAfterSecs: 7 });
   });
 });

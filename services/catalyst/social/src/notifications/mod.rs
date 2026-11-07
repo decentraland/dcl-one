@@ -82,8 +82,8 @@ pub struct Settings {
     pub delivery_interval: Duration,
     /// `NOTIFICATIONS_BROADCAST_HORIZON_DAYS` (default 90): broadcasts older are hidden and pruned.
     pub broadcast_horizon: Duration,
-    /// `NOTIFICATION_DELIVERY_MAX_AGE_SECS` (default 7 days, `None` = never):
-    /// pending emails older end `expired`; see [`delivery::max_age_from_secs`].
+    /// `NOTIFICATION_DELIVERY_MAX_AGE_SECS` (default 7 days, `None` = never, but
+    /// a hold for a missing key still ends): see [`delivery::expire`].
     pub delivery_max_age: Option<Duration>,
     /// Deployment origin used by event notice links (`/whats-on/{id}`).
     pub events_base_url: String,
@@ -179,6 +179,7 @@ impl State {
         let state = self.clone();
         let max_age = self.settings.delivery_max_age;
         let configured = self.email.notifications_configured();
+        let can_sign = self.email.has_signing_key();
         if !configured {
             tracing::info!(
                 "SENDGRID_API_KEY, SENDGRID_FROM_EMAIL or SENDGRID_NOTIFICATION_TEMPLATE_ID unset: email deliveries are recorded as skipped"
@@ -197,7 +198,8 @@ impl State {
                 let state = state.clone();
                 async move {
                     let pool = state.store.pool();
-                    let expired = delivery::expire(pool, crate::shared::now_utc(), max_age).await?;
+                    let expired =
+                        delivery::expire(pool, crate::shared::now_utc(), max_age, can_sign).await?;
                     if expired > 0 {
                         tracing::warn!(expired, "stale notification deliveries expired unsent");
                     }

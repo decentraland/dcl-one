@@ -39,28 +39,25 @@ pub const PRODUCERS: &[&str] = &[
 /// rows are not announced again, and a backfill entirely below it replays nothing.
 pub const REPLAY_BLOCKS: i64 = 1_000;
 
-/// The producers reading `indexer` on `net`.
-pub fn producers_of(indexer: &str, net: ChainNet) -> &'static [&'static str] {
-    match (indexer, net) {
-        (INDEXER_NFT, ChainNet::Matic) => &[
-            TRANSFER_RECEIVED,
-            ROYALTIES_EARNED,
-            SALES_ORDER_SUCCESSFUL_MATIC,
-        ],
-        (INDEXER_TRADE_EVENTS, ChainNet::Matic) => &[TRANSFER_RECEIVED, SALES_TRADED_MATIC],
-        (INDEXER_TRADE_EVENTS, ChainNet::Ethereum) => &[SALES_TRADED_ETHEREUM],
-        (INDEXER_RENTALS, ChainNet::Ethereum) => &[RENTAL_STARTED, RENTAL_ENDED],
-        _ => &[],
-    }
+/// The network `producer` reads and every index it reads there.
+fn reads(producer: &str) -> Option<(ChainNet, &'static [&'static str])> {
+    Some(match producer {
+        TRANSFER_RECEIVED => (ChainNet::Matic, &[INDEXER_NFT, INDEXER_TRADE_EVENTS]),
+        ROYALTIES_EARNED | SALES_ORDER_SUCCESSFUL_MATIC => (ChainNet::Matic, &[INDEXER_NFT]),
+        SALES_TRADED_MATIC => (ChainNet::Matic, &[INDEXER_TRADE_EVENTS]),
+        SALES_TRADED_ETHEREUM => (ChainNet::Ethereum, &[INDEXER_TRADE_EVENTS]),
+        RENTAL_STARTED | RENTAL_ENDED => (ChainNet::Ethereum, &[INDEXER_RENTALS]),
+        _ => return None,
+    })
 }
 
-/// The index whose positions `producer`'s cursor holds.
-fn cursor_index(producer: &str) -> &'static str {
-    match producer {
-        SALES_TRADED_ETHEREUM | SALES_TRADED_MATIC => INDEXER_TRADE_EVENTS,
-        RENTAL_STARTED | RENTAL_ENDED => INDEXER_RENTALS,
-        _ => INDEXER_NFT,
-    }
+/// The producers reading `indexer` on `net`.
+pub fn producers_of(indexer: &str, net: ChainNet) -> Vec<&'static str> {
+    PRODUCERS
+        .iter()
+        .copied()
+        .filter(|p| reads(p).is_some_and(|(n, idx)| n == net && idx.contains(&indexer)))
+        .collect()
 }
 
 fn known(producer: &str) -> sqlx::Result<()> {
@@ -139,9 +136,9 @@ pub struct Replay {
 
 /// Plans moving the cursors of the producers reading `indexer` on `net`
 /// back to just after `from_block`, for rows written again up to
-/// `max_block`. Each producer is clamped by the head of the index its
-/// cursor tracks ([`cursor_index`]): nothing when `max_block` is
-/// [`REPLAY_BLOCKS`] or more below it, never further back than that.
+/// `max_block`. Each producer is clamped by the lowest head of the indexes
+/// it reads ([`reads`]), which its cursor never passes: nothing when
+/// `max_block` is [`REPLAY_BLOCKS`] or more below it, never further back than that.
 /// Reads only, so it runs before the rows are deleted without holding the
 /// cursor rows.
 pub async fn plan_replay(
@@ -152,13 +149,14 @@ pub async fn plan_replay(
     max_block: i64,
 ) -> sqlx::Result<Option<Replay>> {
     let mut moves = Vec::new();
-    for &producer in producers_of(indexer, net) {
+    for producer in producers_of(indexer, net) {
+        let indexes = reads(producer).map_or(&[][..], |(_, idx)| idx);
         let head: Option<i64> = sqlx::query_scalar(
-            "SELECT last_block FROM shop.chain_cursor WHERE indexer = $1 AND network = $2",
+            "SELECT min(last_block) FROM shop.chain_cursor WHERE indexer = ANY($1) AND network = $2",
         )
-        .bind(cursor_index(producer))
+        .bind(indexes)
         .bind(net.db_name())
-        .fetch_optional(&mut *conn)
+        .fetch_one(&mut *conn)
         .await?;
         match head {
             Some(head) if max_block > head - REPLAY_BLOCKS => {
@@ -281,18 +279,14 @@ mod tests {
 
     #[test]
     fn the_producers_are_the_listed_names() {
-        for indexer in [
-            INDEXER_NFT,
-            INDEXER_TRADE_EVENTS,
-            INDEXER_RENTALS,
-            INDEXER_MANA,
-        ] {
-            for net in ChainNet::ALL {
-                for p in producers_of(indexer, net) {
-                    assert!(PRODUCERS.contains(p), "{p}");
-                }
-            }
+        for p in PRODUCERS {
+            assert!(reads(p).is_some(), "{p} lists its indexes");
         }
+        assert!(producers_of(INDEXER_MANA, ChainNet::Matic).is_empty());
+        assert_eq!(
+            producers_of(INDEXER_TRADE_EVENTS, ChainNet::Matic),
+            [TRANSFER_RECEIVED, SALES_TRADED_MATIC]
+        );
         let mut sorted = PRODUCERS.to_vec();
         sorted.sort();
         sorted.dedup();
@@ -440,8 +434,8 @@ mod tests {
         db.drop().await;
     }
 
-    /// A trade_events reorg moves `transfer_received` (nft positions) only
-    /// within the nft index's window, and `sales:traded:matic` by its own.
+    /// `transfer_received` reads up to the lower of the nft and trade heads,
+    /// so a reorg of the lagging trade index replays it by that head.
     #[tokio::test]
     async fn replays_clamp_each_producer_by_the_index_it_tracks() {
         let Some(db) = crate::market::transfer_notices::tests::PrivateDb::create("noticeidx").await
@@ -471,8 +465,9 @@ mod tests {
         for p in [TRANSFER_RECEIVED, SALES_TRADED_MATIC] {
             seed(pool, p, None, 0, -1).await.unwrap();
         }
+        // run_once never passes min(nft head, trade head) = 3000.
         let mut conn = pool.acquire().await.unwrap();
-        advance(&mut conn, TRANSFER_RECEIVED, None, 8_999, 0)
+        advance(&mut conn, TRANSFER_RECEIVED, None, 2_999, 0)
             .await
             .unwrap();
         advance(&mut conn, SALES_TRADED_MATIC, None, 2_999, 0)
@@ -482,31 +477,44 @@ mod tests {
         publish(INDEXER_NFT, 9_000).await;
         publish(INDEXER_TRADE_EVENTS, 3_000).await;
 
-        // The trade index lags: its reorg is far below the nft head.
+        // Below head - REPLAY_BLOCKS of both indexes: history.
         replay(
             &mut pool.acquire().await.unwrap(),
             INDEXER_TRADE_EVENTS,
             ChainNet::Matic,
             10,
+            1_500,
+        )
+        .await
+        .unwrap();
+        assert_eq!(cursor(TRANSFER_RECEIVED).await, (2_999, 0));
+        assert_eq!(cursor(SALES_TRADED_MATIC).await, (2_999, 0));
+
+        // The trade index lags the nft one by 6000 blocks; its reorg at its
+        // head rewinds both producers reading it.
+        replay(
+            &mut pool.acquire().await.unwrap(),
+            INDEXER_TRADE_EVENTS,
+            ChainNet::Matic,
+            2_990,
             2_999,
         )
         .await
         .unwrap();
-        assert_eq!(cursor(SALES_TRADED_MATIC).await, (2_000, i32::MAX));
-        assert_eq!(cursor(TRANSFER_RECEIVED).await, (8_999, 0), "not moved");
+        assert_eq!(cursor(TRANSFER_RECEIVED).await, (2_990, i32::MAX));
+        assert_eq!(cursor(SALES_TRADED_MATIC).await, (2_990, i32::MAX));
 
-        // Near the nft head, the transfer cursor moves to the reorged block.
-        publish(INDEXER_TRADE_EVENTS, 9_000).await;
+        // An nft reorg near its own head is above the transfer cursor.
         replay(
             &mut pool.acquire().await.unwrap(),
-            INDEXER_TRADE_EVENTS,
+            INDEXER_NFT,
             ChainNet::Matic,
             8_950,
             8_990,
         )
         .await
         .unwrap();
-        assert_eq!(cursor(TRANSFER_RECEIVED).await, (8_950, i32::MAX));
+        assert_eq!(cursor(TRANSFER_RECEIVED).await, (2_990, i32::MAX));
         db.drop().await;
     }
 }
