@@ -1507,6 +1507,20 @@ pub extern "C" fn uuav_player_get_rate(player_id: PlayerId) -> f64 {
 
 // ---- video -------------------------------------------------------------
 
+pub fn uuav_player_progress(player_id: PlayerId) -> Option<(f64, u64)> {
+    let state = CLIENT.load();
+    let client = state.as_ref()?;
+    let mirror = client.mirror(player_id)?;
+    if client.lifecycle.get() != Lifecycle::Running
+        || mirror.awaiting_snapshot.load(Ordering::Acquire)
+    {
+        return None;
+    }
+    let time = mirror.state.load().as_ref()?.update.media_time?;
+    let frames = mirror.video.lock().ok()?.presented_frames;
+    Some((time, frames))
+}
+
 // The render-event signature: host-agnostic, one `i32` player id
 pub type UUAVRenderEvent = extern "C" fn(event_id: i32);
 
