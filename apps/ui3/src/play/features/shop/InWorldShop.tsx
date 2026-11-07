@@ -439,8 +439,9 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     setDraft('')
     patch({ ...defaultFilters(kind) })
   }
-  // The NAME field keeps letters and digits only, one past the limit at most: cleaned first, so a pasted NAME
-  // loses its punctuation, not its letters.
+  // The NAME field keeps letters and digits only (its edits cleaned and capped where they are made), one past
+  // the limit at most.
+  const cleanName = (raw: string): string => sanitizeNameInput(raw, Number.POSITIVE_INFINITY)
   const typeName = (value: string): void => setNameDraft(sanitizeNameInput(value, NAME_TYPED_MAX))
   // A NAME is registered on the web Shop, its NAMEs page opening on it; a taken one's owner takes an offer
   // on its bid page on the Marketplace, listed or not; RESALE NAME browses the NAMEs on sale there.
@@ -591,6 +592,8 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                 onResale={marketplaceFlag ? browseNameResales : undefined}
                 value={nameDraft}
                 onChange={typeName}
+                clean={cleanName}
+                maxLength={NAME_TYPED_MAX}
                 onFocusChange={setNameFocused}
                 minLength={NAME_MIN_LENGTH}
                 limit={NAME_MAX_LENGTH}

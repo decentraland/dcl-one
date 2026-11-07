@@ -13,6 +13,7 @@
   },
   "include": [
     "*.mts",
-    "lib/*.mts"
+    "lib/*.mts",
+    "test/*.mts"
   ]
 }

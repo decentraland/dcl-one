@@ -92,7 +92,7 @@ export default function OutfitDetail() {
   }
   if (outfitQ.error) {
     return (
-      <div className="shop-page shop-outfit shop-outfit__empty" data-testid="outfit-error">
+      <div className="shop-page shop-outfit shop-outfit__empty" data-testid="outfit-detail-error">
         <p className="shop-outfit__notice" role="alert">
           <Icon name="warning-fill" size={16} />
           {COPY.generic}
@@ -105,7 +105,7 @@ export default function OutfitDetail() {
   }
   if (!outfit) {
     return (
-      <div className="shop-page shop-outfit" aria-busy="true" data-testid="outfit-loading">
+      <div className="shop-page shop-outfit" aria-busy="true" data-testid="outfit-detail-loading">
         <div className="shop-outfit__main">
           <div className="shop-outfit__preview">
             <span className="shop-outfit__skel" style={{ position: "absolute", inset: 0 }} aria-hidden />
@@ -300,7 +300,7 @@ function OutfitContent({ outfit }: { outfit: Outfit }) {
       </nav>
 
       <div className="shop-outfit__main">
-        <div className="shop-outfit__preview" data-testid="outfit-preview" style={{ background: outfitRadialGradient(outfit) }}>
+        <div className="shop-outfit__preview" data-testid="outfit-detail-preview" style={{ background: outfitRadialGradient(outfit) }}>
           {!show3d ? (
             thumb && !loading ? <img className="shop-outfit__fallback" src={thumb} alt={outfit.name} /> : null
           ) : (
@@ -312,7 +312,7 @@ function OutfitContent({ outfit }: { outfit: Outfit }) {
 
         <div className="shop-outfit__info">
           <h1 className="shop-outfit__title">{outfit.name}</h1>
-          <p className="shop-outfit__meta" data-testid="outfit-meta">
+          <p className="shop-outfit__meta" data-testid="outfit-detail-meta">
             {COPY.itemsCount(outfit.items.length)}
           </p>
 
@@ -356,7 +356,7 @@ function OutfitContent({ outfit }: { outfit: Outfit }) {
                 {loading ? (
                   <span className="shop-outfit__skel" style={{ width: "100%", height: 52, borderRadius: 26 }} aria-hidden />
                 ) : (
-                  <button type="button" className="shop-outfit__cta" data-testid="add-look" onClick={() => void addOutfit()} disabled={adding || purchasable.length === 0} aria-busy={adding || undefined}>
+                  <button type="button" className="shop-outfit__cta" data-testid="outfit-detail-cta" onClick={() => void addOutfit()} disabled={adding || purchasable.length === 0} aria-busy={adding || undefined}>
                     {adding ? COPY.adding : purchasable.length > 0 ? COPY.addCount(purchasable.length) : inCartCount > 0 ? COPY.nothingToAdd : COPY.unavailable}
                     {!adding && purchasable.length > 0 && allCredits ? (
                       <span className="shop-outfit__cta-price">

@@ -551,7 +551,26 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         )
         .with_eip1654(eip1654.clone())
         .with_read_through(read_through.clone())
-        .with_denylist(storage.denylist().clone()),
+        .with_denylist(storage.denylist().clone())
+        .with_feature_flags(shop::market::features::Source {
+            url: config.shop.shop_feature_flags_url.clone(),
+            origin: if config.shop.shop_feature_flags_origin.is_empty() {
+                // The service answers by Referer: an origin it cannot name asks for no site, and every flag reads off.
+                match url::Url::parse(&config.shop.shop_base_url).map(|u| u.origin()) {
+                    Ok(origin) if origin.is_tuple() => origin.ascii_serialization(),
+                    _ => {
+                        tracing::warn!(
+                            shop_base_url = %config.shop.shop_base_url,
+                            "SHOP_FEATURE_FLAGS_ORIGIN is empty and SHOP_BASE_URL names no origin: the dapps flags are asked for no site, so they read off"
+                        );
+                        String::new()
+                    }
+                }
+            } else {
+                config.shop.shop_feature_flags_origin.clone()
+            },
+            refresh: Duration::from_secs(config.shop.shop_feature_flags_refresh_secs),
+        }),
     );
     market.spawn_api_jobs(&jobs);
 

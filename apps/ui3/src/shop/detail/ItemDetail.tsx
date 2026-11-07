@@ -549,7 +549,7 @@ export default function ItemDetail() {
   };
   const onAddToCart = (method: PaymentMethod | null) => {
     if (!cartInput) return;
-    launch({ line: cartInput, method, offer }, (to) => navigate(to));
+    launch({ line: cartInput, method, offer, intent: "add" }, (to) => navigate(to));
   };
 
   const favItemId = pageItemId && current.name && !["parcel", "estate"].includes(current.category) ? pageItemId : null;

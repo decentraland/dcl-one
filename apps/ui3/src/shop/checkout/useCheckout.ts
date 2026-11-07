@@ -31,6 +31,9 @@ import { needsMarketplace, useMarketplaceAccess } from "../market/access";
 import type { ManaWei, UsdCents } from "../model/money";
 import { creditsCeil } from "../model/money";
 
+/** The blocker of a cart the credit balance does not cover: the summary offers a top-up instead of stating it. */
+export const CREDITS_SHORT = "Your Credits balance doesn't cover the Credits part of this cart.";
+
 export type ReviewState =
   | { kind: "empty" }
   | { kind: "outage"; reason: "no-quote-route" | "failed" }
@@ -70,6 +73,8 @@ export type CheckoutView = {
   partition: CartPartition | null;
   refusedByLine: Record<string, LineRefusal>;
   review: ReviewState;
+  /** The lines (with their quantities and methods) the last finished price check priced (`revalidationIdentity`). */
+  pricedFor: string | null;
   changesByLine: Record<string, LineChange[]>;
   balance: UsdBalance | undefined;
   balanceError: boolean;
@@ -87,13 +92,16 @@ export type CheckoutView = {
   canConfirm: boolean;
   canResume: boolean;
   walletNeededKeys: string[];
-  setMethod(lineId: string, method: PaymentMethod): void;
+  /** Null puts the line back on its default way to pay (credits where the rule allows them). */
+  setMethod(lineId: string, method: PaymentMethod | null): void;
   setQuantity(lineId: string, quantity: number): void;
   remove(lineId: string): void;
   clear(): void;
   revalidate(): void;
   acceptChanges(): void;
   confirm(): Promise<void>;
+  /** A payment the buyer started by hand: a resume armed by sign-in must not start a second one. */
+  holdAutoConfirm(): void;
   resume(): Promise<void>;
   discardCheckout(): Promise<void>;
   dismissTopUp(): void;
@@ -241,7 +249,7 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
     const refused = partition?.refused.filter((r) => r.code !== "quoteUnavailable" && r.code !== "offerUnavailable") ?? [];
     if (refused.some((r) => r.code === "methodNotAllowed" && r.allowed.length > 0)) out.push("Some items can't be paid the way they're set. Choose how to pay for them.");
     if (refused.some((r) => r.code !== "methodNotAllowed" || r.allowed.length === 0)) out.push("Some items can't be bought as they are. See the note on each item.");
-    if (partition?.creditsShort) out.push("Your Credits balance doesn't cover the Credits part of this cart.");
+    if (partition?.creditsShort) out.push(CREDITS_SHORT);
     if (session.kind !== "signedOut" && !provider) {
       out.push(session.kind === "web3" ? "Connect your wallet again to sign the purchase." : "Your sign-in can't confirm purchases right now. Sign in again to continue.");
     }
@@ -345,15 +353,18 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
     [qc, lines, services.cart, opts],
   );
 
+  // One checkout at a time: two callers in one effect flush both see `running` false, so the lock is a ref.
+  const confirming = useRef(false);
   const confirm = useCallback(async () => {
     if (!account) {
       stashResumeIntent({ type: "cart-checkout" });
       wallet.host?.onSignIn?.();
       return;
     }
-    if (!canConfirm || !partition) return;
+    if (!canConfirm || !partition || confirming.current) return;
     const d = deps();
     if (!d) return;
+    confirming.current = true;
     setRunning(true);
     setTopUp(null);
     try {
@@ -382,6 +393,7 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
       }
       finish(runnable, next, resolved);
     } finally {
+      confirming.current = false;
       setRunning(false);
     }
   }, [account, canConfirm, partition, deps, settle, payableGroups, services.cart, finish, wallet.host]);
@@ -472,6 +484,7 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
     quoteOutage,
     balance,
     balanceError: balanceQuery.isError,
+    pricedFor: revalidation.pricedFor,
     manaBalance,
     checkout,
     summary: checkout ? checkoutSummary(checkout) : null,
@@ -494,6 +507,7 @@ export function useCheckout(opts: { onComplete?(purchased: PurchasedLine[], resu
     revalidate: revalidation.revalidate,
     acceptChanges: revalidation.accept,
     confirm,
+    holdAutoConfirm: () => setAutoConfirm(false),
     resume,
     discardCheckout,
     dismissTopUp: () => setTopUp(null),

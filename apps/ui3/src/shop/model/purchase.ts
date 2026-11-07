@@ -72,6 +72,8 @@ export type CartLineDisplay = {
   creator?: string;
   urn?: string;
   href?: string;
+  /** The credits price per unit the catalog showed when it was added: what the cart drawer shows. Never charged. */
+  priceCredits?: number;
 };
 
 /** Upstream `AddToCartSource` (first touch wins). */
@@ -91,6 +93,8 @@ export type CartLine = {
   /** The last authoritative offer the buyer was shown, for revalidation diffs. */
   seen: PurchaseOffer | null;
   addedAt: number;
+  /** A mint's remaining supply when it was added (the card's or the page's): the drawer's stepper cap. */
+  available?: number | null;
 };
 
 /** idle -> authorizing -> submitted -> pending -> confirmed | failed | expired. */

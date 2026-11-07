@@ -151,6 +151,8 @@ describe("NAME registration search", () => {
     setup({ session: "web2", path: "/shop/names?name=Nacho&utm_source=bevy-web-client" });
     expect(await screen.findByRole("dialog", { name: "Buy Nacho.dcl.eth" })).toBeInTheDocument();
     expect(screen.getByTestId("location")).toHaveTextContent("/shop/names?utm_source=bevy-web-client");
+    // The superseded top-up NAME is taken too: it would reopen on a later visit.
+    expect(sessionStorage.getItem(RESUME_NAME_KEY)).toBeNull();
   });
 
   it("ignores a linked NAME that can't be registered", async () => {

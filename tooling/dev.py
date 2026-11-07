@@ -611,6 +611,15 @@ def seed_trades(config):
     print(f"Seeded {sql(config, 'SELECT count(*) FROM shop.trades')} trades from {snapshot.name}.")
 
 
+def seed_dev_flags(config):
+    # The node refuses the Shop's Marketplace writes (resales, bids, lists, rental listings) while the
+    # dapps-shop-marketplace-features rollout is off, and a development stack reads no flags service: it
+    # counts only this node's overrides. A development stack and the trade journey exercise those writes,
+    # so they start with the override on; an override a developer set (either way) is kept.
+    sql(config, "INSERT INTO explore_api.feature_flags_local (app, name, value) "
+                "VALUES ('dapps', 'dapps-shop-marketplace-features', true) ON CONFLICT (app, name) DO NOTHING")
+
+
 # Creator Hub's asset catalogue, from the @dcl/asset-packs package Sites installs; the files it
 # names are pulled from BUILDER_CONTENT_BUCKET_URL (then BUILDER_ASSET_PACKS_BUCKET_URL) on first read.
 ASSET_PACKS_CATALOG = ROOT / 'apps/sites/node_modules/@dcl/asset-packs/catalog.json'
@@ -711,6 +720,7 @@ def task(name):
         if name == 'api-build':
             # Before the index process starts mirroring, so the snapshot's rows are not fetched again.
             seed_trades(config)
+            seed_dev_flags(config)
             return
         import_asset_catalog(config, binary)
         os.execve(binary, [str(binary), 'serve'], {**runtime_env(config), **pulse_about_env(config)})

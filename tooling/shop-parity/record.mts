@@ -4,6 +4,7 @@
 //
 //   node record.mts --set <name> [--pages overview,items] [--viewports desktop,mobile]
 //   node record.mts --set <name> --fill     # replay; read what the replay could not answer, once
+import { runnable, signedHeaders, walletKey, WALLET_KEY_ENV } from "./lib/session.mts";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { PAGES, type PageSpec } from "./pages.mts";
@@ -13,6 +14,13 @@ import { fillMisses, Recording, savingAfter } from "./lib/recording.mts";
 import { runAll, selectViewports } from "./lib/run.mts";
 import { prepareReference } from "./reference.mts";
 
+/** The test wallet's signer for the pages that read signed in, when its key is set. */
+function testWalletSigner() {
+  if (!process.env[WALLET_KEY_ENV]) return undefined;
+  const key = walletKey();
+  return (method: string, path: string, metadata: string) => signedHeaders(key, method, path, Date.now(), metadata);
+}
+
 const arg = (name: string) => {
   const i = process.argv.indexOf(name);
   return i >= 0 ? process.argv[i + 1] : undefined;
@@ -21,21 +29,21 @@ const set = arg("--set");
 if (!set || !/^[a-z0-9-]+$/.test(set)) throw new Error("--set <name> (lowercase, digits, dashes) is required");
 const dir = join(RECORDINGS, set);
 const wanted = arg("--pages")?.split(",");
-const specs = wanted ? PAGES.filter((p) => wanted.includes(p.id)) : PAGES;
+const specs = runnable(wanted ? PAGES.filter((p) => wanted.includes(p.id)) : PAGES);
 
 if (process.argv.includes("--fill")) {
   // Replay the recording, then read each request it could not answer once from production.
   const replay = new Recording(dir);
   if (!replay.manifest) throw new Error(`no recording ${set} under ${RECORDINGS}`);
   await runAll(replay, specs, selectViewports(arg("--viewports")), { now: Date.parse(replay.manifest.recordedAt), targets: replay.manifest.targets, out: join(STATE, "fill-run", set) });
-  const { failed } = await fillMisses(replay, new Recording(dir, { live: true }));
+  const { failed } = await fillMisses(replay, new Recording(dir, { live: true, signer: testWalletSigner() }));
   if (failed.length) {
     console.error(`could not fill ${failed.length} request(s); what was filled is saved:\n${failed.map((f) => `  ${f}`).join("\n")}`);
     process.exitCode = 1;
   }
 } else {
   prepareReference();
-  const live = new Recording(dir, { live: true });
+  const live = new Recording(dir, { live: true, signer: testWalletSigner() });
   live.synthesize = offerSynthesizer(live);
   const targets: Record<string, string> = { ...(live.manifest?.targets ?? {}) };
   const now = live.manifest?.recordedAt ? Date.parse(live.manifest.recordedAt) : Date.now();

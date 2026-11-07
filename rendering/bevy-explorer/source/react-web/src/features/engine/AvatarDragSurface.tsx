@@ -91,6 +91,7 @@ export function AvatarDragSurface({
       ref={self}
       className={`${styles.surface} ${className ?? ''}`.trim()}
       aria-hidden="true"
+      data-testid="avatar-drag-surface"
       onPointerDown={(e) => {
         if (e.button !== 0) return
         drag.current = { pointer: e.pointerId, x: e.clientX }
