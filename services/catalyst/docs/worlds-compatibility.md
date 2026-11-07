@@ -327,6 +327,10 @@ difference not listed here is a gap, not a decision.
 ## Permissions
 
 - **Community ids** in an allow-list must be UUIDs.
+- **Allow-list caps.** `ACCESS_MAX_WALLETS` (1..=10,000, default 1000) and
+  `ACCESS_MAX_COMMUNITIES` (1..=1,000, default 50) are refused at startup
+  outside their range; upstream takes any number, and `0` there refuses
+  every addition.
 - **Allow-list documents** are stored normalized: `GET .../permissions`
   returns the access wallets lowercased and deduplicated, in the order they
   were added, and the community ids as lowercase UUIDs, whatever spelling

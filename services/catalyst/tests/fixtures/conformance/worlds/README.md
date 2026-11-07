@@ -41,7 +41,7 @@ share a section where they share a handler).
 | [worlds-world.md](worlds-world.md) | `/world/:n/{about,scenes,settings,manifest,limits}`, `/worlds`, `/wallet/:w/stats`, `/wallet/contribute` | 10 | 1 | 0 | 9 | 0 | WW-01..38 |
 | [worlds-permissions.md](worlds-permissions.md) | the ten `/world/:n/permissions*` routes | 10 | 2 | 0 | 8 | 0 | WP-01..19 |
 | [worlds-comms.md](worlds-comms.md) | `/worlds/:w/comms`, `/worlds/:w/scenes/:id/comms`, `/get-comms-adapter/:roomId`, `/livekit-webhook`, `/live-data`, `/wallet/:w/connected-world` | 6 | 0 | 0 | 6 | 0 | WC-01..27 |
-| **total** | | **40** | **1** | **1** | **37** | **1** | **145** |
+| **total** | | **40** | **3** | **1** | **35** | **1** | **145** |
 
 Every upstream route has a route at the same method and path in this tree except `POST /reprocess-ab`
 (WR-22). `POST /entities` and `DELETE /entities/:world_name` answer only under `/worlds-content-server`
@@ -69,8 +69,9 @@ No item is P0. The P1 items:
 - **Signed-fetch refusals** (WD-02, WP-01, WW-24, WC-01, fixed): one mapper, `comms/src/signed_fetch.rs`
   `map_auth_error_api`, answers every signed worlds route with the crypto-middleware 6.3.0 text and the
   ADR-44 line. `PUT /settings` still reads its multipart body first (WW-24).
-- **Validator bodies** (WP-02, WW-15): schema-validated routes answer the worlds envelope where
-  upstream answers `{ok:false,message,data}`; the content crate already rebuilds that body (CR-2).
+- **Validator bodies** (WW-15; WP-02 closed): schema-validated routes answer the worlds envelope where
+  upstream answers `{ok:false,message,data}`; the parcel permission routes build that body with the
+  content crate's validator (`content::validation`, CR-2).
 - **Absent vs `null`** (WP-03, WW-04, WW-18, WR-15, WR-18): several bodies write `null` where upstream
   leaves the key out, or the reverse.
 - **Multipart limits and texts** (WD-04..11, WW-21..23): field caps, duplicate fields, 413 vs 400 and
