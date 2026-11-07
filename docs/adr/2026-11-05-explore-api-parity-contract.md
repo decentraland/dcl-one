@@ -127,12 +127,10 @@ pinned callers build. Each is a known difference, not an approval.
   Before a mirror's first complete pass the routes answer from the database, a static copy
   that has not landed yet answers 503 with `Retry-After`, and owner edits of a mirrored
   event answer 409 while the node mirrors. The 409 follows the row's `origin`
-  (`events/writes.rs`), not the configuration: a row the mirror wrote keeps `upstream`
-  after `EVENTS_MIRROR_UPSTREAM` is turned off, and only rows an older binary created
-  locally are reclaimed (`events/mirror.rs`). Cut-over is decided as configuration: when
-  the mirror is off, the rows it wrote become local and their owners edit them, and the
-  read gate is open. That reclassification is next work, with a fixture that proves an
-  owner edit succeeds on a formerly mirrored event once the mirror is off.
+  (`events/writes.rs`), and cut-over is configuration alone: a node that starts with
+  `EVENTS_MIRROR_UPSTREAM` off adopts every row the mirror wrote as `local`, once
+  (`events/mirror.rs`, `adopt_upstream`), so their owners edit and delete them, their
+  RSVPs and moderation stay, and the read gate is open (`tests/explore_mirrors.rs`).
 - Browser origins are the old services' per-router allow-lists rather than the reflecting
   CORS the shared crate offers. `EXPLORE_CORS_ORIGINS` appends a deployment's own origins
   to every list.

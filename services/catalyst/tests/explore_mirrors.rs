@@ -22,11 +22,14 @@ use sqlx::PgPool;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
+use catalyst::auth::signed_fetch::build_payload_v6;
+use catalyst::auth::{Wallet, create_simple_auth_chain};
 use catalyst::explore::events::mirror as events_mirror;
 use catalyst::explore::events::{EventListFilters, EventListType, EventsComponent};
 use catalyst::explore::places::mirror as places_mirror;
 use catalyst::explore::places::mirror::{Leg, SweepOutcome};
 use catalyst::explore::{ExploreState, MirrorSource, Settings, mirror_state, router};
+use catalyst::jobs::{JobState, Jobs};
 
 #[path = "support/db.rs"]
 mod db;
@@ -2453,5 +2456,220 @@ async fn a_local_rsvp_outside_the_upstream_preview_keeps_the_signed_delta_estima
             .iter()
             .any(|address| address.eq_ignore_ascii_case(USER))
     );
+    db.teardown().await;
+}
+
+/// A wallet's signed fetch of the events routes (`x-identity-*`), the body
+/// JSON when given.
+async fn signed_json(
+    state: Arc<ExploreState>,
+    wallet: &Wallet,
+    method: &str,
+    path: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
+    let timestamp = Utc::now().timestamp_millis().to_string();
+    let payload = build_payload_v6(method, path, &timestamp, "{}");
+    let chain = create_simple_auth_chain(wallet, &payload).expect("sign");
+    let mut request = Request::builder()
+        .method(method)
+        .uri(path)
+        .header("content-type", "application/json")
+        .header("x-identity-timestamp", timestamp)
+        .header("x-identity-metadata", "{}");
+    for (i, link) in chain.as_array().unwrap().iter().enumerate() {
+        request = request.header(format!("x-identity-auth-chain-{i}"), link.to_string());
+    }
+    let body = body.map_or_else(Body::empty, |b| Body::from(b.to_string()));
+    let res = router(state)
+        .oneshot(request.body(body).unwrap())
+        .await
+        .expect("route response");
+    let status = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .expect("body");
+    (status, serde_json::from_slice(&bytes).expect("json body"))
+}
+
+/// A serve start of the explore state: its jobs spawned, the one-shot
+/// `events-adopt` of a node without an events upstream run to its end.
+async fn started(pool: &PgPool, settings: Settings) -> Arc<ExploreState> {
+    let state = Arc::new(ExploreState::new(pool.clone(), settings, None));
+    let jobs = Jobs::new();
+    state.spawn_jobs(&jobs, client());
+    for _ in 0..400 {
+        let adopt = jobs.report().into_iter().find(|j| j.name == "events-adopt");
+        match adopt.map(|j| j.state) {
+            Some(JobState::Finished) => return state,
+            Some(JobState::Failed) => panic!("events-adopt failed: {:?}", jobs.report()),
+            _ => tokio::time::sleep(Duration::from_millis(25)).await,
+        }
+    }
+    panic!("events-adopt did not finish: {:?}", jobs.report());
+}
+
+/// The cut-over is configuration alone: a node that starts with no events
+/// upstream adopts the rows the mirror wrote as its own, once, and from
+/// then on their owners edit and delete them where the mirror answered 409;
+/// their RSVPs and moderation stay, and a second start changes nothing.
+#[tokio::test]
+async fn starting_without_an_events_upstream_adopts_the_mirrored_rows_for_their_owners() {
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let owner =
+        Wallet::from_hex("59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d")
+            .unwrap();
+    let mut events = fixture_events()[..2].to_vec();
+    // The owner's, of no community (the edit validates one it names), with
+    // an occurrence the edit's date checks accept.
+    let (start, finish) = (
+        Utc::now() + chrono::Duration::days(1),
+        Utc::now() + chrono::Duration::days(1) + chrono::Duration::hours(2),
+    );
+    for e in &mut events {
+        e["user"] = json!(owner.address());
+        e["community_id"] = Value::Null;
+        e["start_at"] = json!(start);
+        e["next_start_at"] = json!(start);
+        e["finish_at"] = json!(finish);
+        e["next_finish_at"] = json!(finish);
+        e["duration"] = json!(7_200_000);
+        e["recurrent"] = json!(false);
+        e["recurrent_dates"] = json!([]);
+    }
+    let edited = events[0]["id"].as_str().unwrap().to_string();
+    let deleted = events[1]["id"].as_str().unwrap().to_string();
+    let up = serve_upstream(
+        "/api/events",
+        vec![events.clone()],
+        500,
+        false,
+        vec![],
+        None,
+    )
+    .await;
+    let out = events_mirror::run_pass(
+        &client(),
+        &pool,
+        &up.source(),
+        HOUR,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert!(out.complete);
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM explore.event WHERE origin = 'upstream'"
+        )
+        .await,
+        2
+    );
+    sqlx::query(
+        "INSERT INTO explore.event_attendance_local (event_id, signer, action) VALUES ($1, $2, 'going')",
+    )
+    .bind(&edited)
+    .bind(USER.to_lowercase())
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO explore.event_moderation (event_id, trending, set_by) VALUES ($1, true, $2)",
+    )
+    .bind(&deleted)
+    .bind(USER.to_lowercase())
+    .execute(&pool)
+    .await
+    .unwrap();
+    let mut settings = Settings::for_tests();
+    settings.user_writes_enabled = true;
+    let edit = json!({"name": "Edited here"});
+    let path = format!("/api/events/{edited}");
+
+    // While the mirror is on, nothing changes: the owner's edit answers 409.
+    let mut mirroring = settings.clone();
+    mirroring.events_upstream = Some(up.source());
+    let mirroring = Arc::new(ExploreState::new(pool.clone(), mirroring, None));
+    let (status, body) = signed_json(mirroring, &owner, "PATCH", &path, Some(edit.clone())).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM explore.event WHERE origin = 'upstream'"
+        )
+        .await,
+        2
+    );
+
+    let state = started(&pool, settings.clone()).await;
+    let origins: Vec<String> = sqlx::query_scalar("SELECT origin FROM explore.event ORDER BY id")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        origins,
+        ["local", "local"],
+        "the mirror's rows are this node's"
+    );
+
+    let (status, body) =
+        signed_json(state.clone(), &owner, "PATCH", &path, Some(edit.clone())).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["data"]["name"], "Edited here");
+    let (status, body) = signed_json(state.clone(), &owner, "GET", &path, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["data"]["name"], "Edited here", "the edit is served");
+
+    let (status, body) = signed_json(
+        state.clone(),
+        &owner,
+        "DELETE",
+        &format!("/api/events/{deleted}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        count(
+            &pool,
+            &format!("SELECT count(*) FROM explore.event WHERE id = '{deleted}' AND deleted")
+        )
+        .await
+            == 1,
+        "the owner's delete lands"
+    );
+    assert_eq!(
+        count(&pool, "SELECT count(*) FROM explore.event_attendance_local").await,
+        1,
+        "the RSVP survives the cut-over and the edit"
+    );
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM explore.event_moderation WHERE trending"
+        )
+        .await,
+        1,
+        "the moderation row survives the cut-over and the delete"
+    );
+
+    // A second start changes nothing.
+    let before: Vec<(String, String, Value)> =
+        sqlx::query_as("SELECT id, origin, raw FROM explore.event ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    drop(state);
+    let _again = started(&pool, settings).await;
+    let after: Vec<(String, String, Value)> =
+        sqlx::query_as("SELECT id, origin, raw FROM explore.event ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(before, after);
     db.teardown().await;
 }

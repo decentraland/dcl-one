@@ -145,6 +145,32 @@ pub async fn reclaim_local(pool: &PgPool) -> sqlx::Result<()> {
     Ok(())
 }
 
+/// The cut-over: with no events upstream configured, the rows the mirror
+/// wrote are this node's. `origin` is all a local row keys on (the write
+/// routes' 409, the recurrence job, `copies::origin`), so the one statement
+/// is the whole adoption; its RSVPs and its `event_moderation` row stay (the
+/// last upsert projected that onto the row, and nothing reads it for a local
+/// row), and `events_local`, the audit of a local write, is written by the
+/// first one. Idempotent: a second start finds no 'upstream' row.
+const ADOPT_UPSTREAM: &str = "UPDATE explore.event SET origin = 'local' WHERE origin = 'upstream'";
+
+/// Runs [`ADOPT_UPSTREAM`]; the count is the rows adopted. Only for a node
+/// with no events upstream ([`crate::ExploreState::spawn_jobs`]): with one,
+/// the mirror owns those rows.
+pub async fn adopt_upstream(pool: &PgPool) -> sqlx::Result<u64> {
+    let n = sqlx::query(ADOPT_UPSTREAM)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    if n > 0 {
+        tracing::info!(
+            rows = n,
+            "event catalogue: mirrored events adopted as local (no upstream configured)"
+        );
+    }
+    Ok(n)
+}
+
 /// The local RSVPs and moderation go with the event in the same statement,
 /// and so do the ones an earlier sweep left behind on an event already gone;
 /// the count is the events deleted.

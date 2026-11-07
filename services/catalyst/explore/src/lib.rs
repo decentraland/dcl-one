@@ -629,6 +629,18 @@ impl ExploreState {
                     Ok(())
                 }
             });
+        } else {
+            // The cut-over (`events::mirror::adopt_upstream`): once at start,
+            // in the branch the mirror cannot share, so it never runs with an
+            // upstream configured; here rather than lazily in the write
+            // routes so the recurrence job and the reads see local rows
+            // before any write. One idempotent statement, so every replica
+            // may run it.
+            let pool = self.pool.clone();
+            jobs.spawn("events-adopt", move |_ctx| async move {
+                events::mirror::adopt_upstream(&pool).await?;
+                Ok(())
+            });
         }
     }
 }
