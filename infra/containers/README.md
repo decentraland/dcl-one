@@ -62,12 +62,12 @@ python3 tooling/image-smoke.py
   cold-build headroom. Cleanup duration and free space are logged.
 - Closing a PR removes caches for its merge ref through a workflow that never
   checks out PR code. An hourly trusted sweep also removes uploads that finish
-  after closure and retains only the newest smoke snapshot and Rust dependency
-  cache per platform and ref; image and Explorer caches are not pruned by that rule.
-- The Rust test job caches dependency artifacts only (`Swatinem/rust-cache`): main
-  saves, every PR reads, and the workspace crates rebuild on each run. Main also
-  refreshes the smoke snapshot. Cache pressure is logged by the sweep; quota and
-  idle eviction still apply between sweeps.
+  after closure and retains only the newest smoke snapshot and Rust dependency cache
+  per key prefix, platform and ref; image and other caches are not pruned by that rule.
+- The Rust jobs cache dependency artifacts only (`Swatinem/rust-cache`): main saves
+  on first attempts, every PR reads, and the workspace crates rebuild on each run.
+  Main also refreshes the smoke snapshot. Cache pressure is logged by the sweep;
+  quota and idle eviction still apply between sweeps.
 - Imports use `--no-check-sigs`: only trusted workflows may write caches a publishing branch consumes.
 
 ## Publication and runtime

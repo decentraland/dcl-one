@@ -31,7 +31,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         cache = re.search(r'(?ms)^      - name: Restore the Rust dependency cache\n(.*?)(?=^      - |\Z)', rust).group(1)
         self.assertIn('uses: Swatinem/rust-cache@', cache)
         self.assertIn('workspaces: services/catalyst', cache)
-        self.assertIn("save-if: ${{ github.ref == 'refs/heads/main' }}", cache)
+        self.assertIn("save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}", cache)
         self.assertIn('cache-on-failure: true', cache)
         self.assertLess(rust.index('Put the Nix Rust toolchain on PATH'), rust.index('Swatinem/rust-cache@'))
         self.assertLess(rust.index('Swatinem/rust-cache@'), rust.index('bash tooling/dev-test.sh rust'))
@@ -109,12 +109,13 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     listing.assert_not_called()
                     deletion.assert_not_called()
 
-    def test_scheduled_sweep_catches_late_uploads_and_bounds_only_dev_snapshots(self):
+    def test_scheduled_sweep_catches_late_uploads_and_bounds_dev_and_rust_caches(self):
         source = CLEANUP.read_text()
         self.assertIn("cron: '17 * * * *'", source)
         script = textwrap.dedent(source.split("python3 - <<'PY'\n", 1)[1].rsplit('\n          PY', 1)[0])
         prefix = 'foundation-dev-v2-smoke-decentraland/dcl-one-Linux-X64-'
-        deps = 'v0-rust-dev-tests-0123abcd-'
+        deps = 'v0-rust-dev-tests-'
+        bevy = 'v0-rust-bevy-explorer-native-ci-test-test-Linux-x64-'
         caches = [
             {'id': 1, 'ref': 'refs/heads/main', 'key': prefix + 'old'},
             {'id': 2, 'ref': 'refs/heads/main', 'key': prefix + 'new'},
@@ -127,9 +128,14 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             {'id': 9, 'ref': 'refs/pull/10/head', 'key': prefix + 'ignored'},
             {'id': 10, 'ref': 'refs/heads/other', 'key': prefix + 'ignored'},
             {'id': 11, 'ref': 'refs/heads/main', 'key': 'bevy-cache'},
-            {'id': 12, 'ref': 'refs/heads/main', 'key': deps + 'Linux-x64-old'},
-            {'id': 13, 'ref': 'refs/heads/main', 'key': deps + 'Linux-x64-new'},
-            {'id': 14, 'ref': 'refs/heads/main', 'key': deps + 'Darwin-arm64-only'},
+            {'id': 12, 'ref': 'refs/heads/main', 'key': deps + '0' * 64 + '-Linux-x64-previous-flake'},
+            {'id': 13, 'ref': 'refs/heads/main', 'key': deps + 'f' * 64 + '-Linux-x64-new'},
+            {'id': 14, 'ref': 'refs/heads/main', 'key': deps + 'f' * 64 + '-Darwin-arm64-only'},
+            {'id': 15, 'ref': 'refs/heads/main', 'key': bevy + 'old'},
+            {'id': 16, 'ref': 'refs/heads/main', 'key': bevy + 'new'},
+            {'id': 17, 'ref': 'refs/pull/11/merge', 'key': bevy + 'old'},
+            {'id': 18, 'ref': 'refs/pull/11/merge', 'key': bevy + 'new'},
+            {'id': 19, 'ref': 'refs/heads/main', 'key': 'v0-rust-e2e-scene-cli-scene-cli-Windows_NT-x64-only'},
         ]
         def api(args, **kwargs):
             if any(arg.endswith('/actions/caches') for arg in args):
@@ -150,6 +156,8 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             'repos/decentraland/dcl-one/actions/caches/5',
             'repos/decentraland/dcl-one/actions/caches/6',
             'repos/decentraland/dcl-one/actions/caches/12',
+            'repos/decentraland/dcl-one/actions/caches/15',
+            'repos/decentraland/dcl-one/actions/caches/17',
         ])
         self.assertEqual(listing.call_count, 3, 'one state lookup per PR, regardless of cache count')
 

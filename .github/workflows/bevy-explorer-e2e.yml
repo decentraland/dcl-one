@@ -191,7 +191,7 @@ jobs:
         with:
           workspaces: services/catalyst -> target
           key: e2e-scene-cli
-          save-if: ${{ needs.inputs.outputs.pr == '' }}
+          save-if: ${{ needs.inputs.outputs.pr == '' && github.run_attempt == '1' }}
       - name: Build dcl-scene-cli
         working-directory: services/catalyst
         run: cargo build --release --locked -p dcl-scene-cli

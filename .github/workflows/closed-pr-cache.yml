@@ -53,9 +53,11 @@ jobs:
           caches = [cache for page in pages for cache in page['actions_caches']
                     if type(cache.get('id')) is int]
           cache_ids, closed, snapshots = set(), {}, {}
+          # The smoke snapshots and every rust-cache key, whose prefix ends with the platform.
+          # A flake hash inside a prefix folds away, so a flake update supersedes the entry.
           namespace = re.compile(r'^foundation-dev-v2-smoke-' + re.escape(repository)
                                  + r'-(Linux|macOS)-(X64|ARM64)-'
-                                 r'|^v0-rust-dev-tests-[0-9a-f]+-(Linux|Darwin)-(x64|arm64)-')
+                                 r'|^v0-rust-.+?-(Linux|Darwin|Windows_NT)-(x64|arm64)-')
           for cache in caches:
               cache_ref = cache.get('ref', '')
               if targeted:
@@ -77,9 +79,11 @@ jobs:
                   continue
               family = namespace.match(cache.get('key', ''))
               if family:
-                  snapshots.setdefault((cache_ref, family.group()), []).append(cache)
-          # Keep the newest build for each platform/purpose/ref; image and
-          # Explorer caches are outside this namespace and are never pruned.
+                  prefix = re.sub(r'[0-9a-f]{64}', '*', family.group())
+                  snapshots.setdefault((cache_ref, prefix), []).append(cache)
+          # Keep the newest entry per prefix, platform and ref: creation order is push order,
+          # as only first attempts save. Image and other caches are outside this namespace
+          # and are never pruned.
           for entries in snapshots.values():
               entries.sort(key=lambda cache: (cache.get('created_at', ''), cache['id']), reverse=True)
               cache_ids.update(cache['id'] for cache in entries[1:])
