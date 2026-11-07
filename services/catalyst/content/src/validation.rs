@@ -71,6 +71,27 @@ pub fn active_entities_body(bytes: &[u8]) -> Result<(bool, Vec<String>), BodyRef
     })))
 }
 
+/// `@dcl/schema-validator-component` 1.0.1's `isJsonContentType`, the check
+/// behind its 415: the media type before the first `;`, trimmed and
+/// lowercased, is `application/json` or matches `^[^/\s]+\/[^/\s]+\+json$`
+/// (an RFC 6839 `type/subtype+json`). An absent header is not JSON.
+pub fn is_json_content_type(content_type: Option<&str>) -> bool {
+    let Some(raw) = content_type else {
+        return false;
+    };
+    let media = raw
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let token = |s: &str| !s.is_empty() && !s.contains('/') && !s.contains(char::is_whitespace);
+    media == "application/json"
+        || media
+            .split_once('/')
+            .is_some_and(|(kind, sub)| token(kind) && sub.strip_suffix("+json").is_some_and(token))
+}
+
 /// The message `JSON.parse` throws for a body that is not JSON: V8's text
 /// for the failures below, else serde's. The schema validator answers it as
 /// `{ok: false, message}`.
@@ -296,6 +317,24 @@ impl<'de> serde::Deserialize<'de> for OrderedKeys {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_content_types_follow_the_schema_validator() {
+        let ct = |v: &str| is_json_content_type(Some(v));
+        assert!(ct("application/json"));
+        assert!(ct("Application/JSON; charset=utf-8"));
+        assert!(ct("application/vnd.api+json"));
+        assert!(ct("text/x+json"));
+        assert!(ct("a/b+c+json"));
+        assert!(!ct("application/+json"));
+        assert!(!ct("/+json"));
+        assert!(!ct("a/b/c+json"));
+        assert!(!ct("a b/c+json"));
+        assert!(!ct("application/jsonfoo"));
+        assert!(!ct("text/plain"));
+        assert!(!ct("application/json-patch"));
+        assert!(!is_json_content_type(None));
+    }
 
     fn strings(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()

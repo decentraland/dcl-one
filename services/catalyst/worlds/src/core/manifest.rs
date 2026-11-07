@@ -6,10 +6,8 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde_json::{Value, json};
 
-use crate::shared::identity::Address;
-
 use super::SharedState;
-use super::http::{ApiError, QueryPairs, pagination, query_param};
+use super::http::{ApiError, QueryPairs, authorized_deployer, pagination, query_param};
 use super::permissions::parse_world;
 use super::settings_policy::text_len;
 use super::store::{
@@ -56,17 +54,7 @@ pub async fn get_worlds(
 ) -> Result<Json<Value>, ApiError> {
     let (limit, offset) = pagination(&q);
 
-    // `EthAddress.validate`: `0x` and 40 hex digits, untrimmed.
-    let deployer = match query_param(&q, "authorized_deployer") {
-        Some(d) if !d.is_empty() => Some(
-            Some(d)
-                .filter(|d| d.starts_with("0x"))
-                .and_then(|d| Address::parse_untrimmed(d).ok())
-                .ok_or_else(|| ApiError::bad_request(format!("Invalid authorized_deployer address: {d}. Must be a valid Ethereum address.")))?
-                .into_string(),
-        ),
-        _ => None,
-    };
+    let deployer = authorized_deployer(&q)?;
     let search = match query_param(&q, "search")
         .map(str::trim)
         .filter(|s| !s.is_empty())

@@ -242,7 +242,7 @@ pub fn build_about(
 
     // Lambdas run in this process: only content's sync state can make the node unhealthy.
     let content_healthy = cfg.content_readiness.content_healthy();
-    let mut about = AboutResponse {
+    Ok(AboutResponse {
         healthy: content_healthy,
         accepting_users: content_healthy,
         spawn_coordinates,
@@ -257,10 +257,15 @@ pub fn build_about(
             },
             skybox: SkyboxConfig {
                 fixed_hour: rt.skybox_fixed_time,
+                // An unresolved texture links as upstream's
+                // `urlForFile(undefined)`: `""`.
                 textures: rt
                     .skybox_textures
                     .iter()
-                    .map(|t| format!("{contents_url}/contents/{t}"))
+                    .map(|t| {
+                        t.as_ref()
+                            .map_or_else(String::new, |t| format!("{contents_url}/contents/{t}"))
+                    })
                     .collect(),
             },
             realm_name: rt.name,
@@ -283,17 +288,7 @@ pub fn build_about(
             protocol: "v3".to_string(),
             adapter,
         },
-    };
-    // Upstream links an unresolved texture through `urlForFile(undefined)`:
-    // `""`, in its place.
-    for at in rt.skybox_unresolved {
-        about
-            .configurations
-            .skybox
-            .textures
-            .insert(at, String::new());
-    }
-    Ok(about)
+    })
 }
 
 const ENS_WORLD_SUFFIX: &str = ".dcl.eth";
@@ -352,10 +347,8 @@ struct RuntimeMeta {
     minimap_data_image: Option<String>,
     minimap_estate_image: Option<String>,
     skybox_fixed_time: Option<serde_json::Number>,
-    /// The hashes of the textures that name a content entry, in order.
-    skybox_textures: Vec<String>,
-    /// The positions (ascending) of the textures that name none.
-    skybox_unresolved: Vec<usize>,
+    /// Each texture's content hash, `None` where it names no content entry.
+    skybox_textures: Vec<Option<String>>,
     fixed_adapter: Option<String>,
 }
 
@@ -408,16 +401,13 @@ impl RuntimeMeta {
             .and_then(|m| m.get("estateImage"))
             .and_then(Value::as_str)
             .and_then(resolve);
-        let (mut skybox_textures, mut skybox_unresolved) = (Vec::new(), Vec::new());
-        let textures = skybox
+        let skybox_textures = skybox
             .and_then(|s| s.get("textures"))
-            .and_then(Value::as_array);
-        for (at, t) in textures.into_iter().flatten().enumerate() {
-            match t.as_str().filter(|f| !f.is_empty()).and_then(resolve) {
-                Some(hash) => skybox_textures.push(hash),
-                None => skybox_unresolved.push(at),
-            }
-        }
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|t| t.as_str().filter(|f| !f.is_empty()).and_then(resolve))
+            .collect();
         let fixed_adapter = wc
             .and_then(|c| c.get("fixedAdapter"))
             .and_then(Value::as_str)
@@ -430,7 +420,6 @@ impl RuntimeMeta {
             minimap_estate_image,
             skybox_fixed_time,
             skybox_textures,
-            skybox_unresolved,
             fixed_adapter,
         }
     }
@@ -966,5 +955,27 @@ mod tests {
         );
         assert_eq!(textures[1..], [json!(""), json!("")]);
         assert_eq!(c["minimap"], json!({"enabled": false}));
+
+        // A falsy legacy key is skipped: the current configs answer.
+        let v = about_of(json!({
+            "dclName": "",
+            "name": "Current Name",
+            "minimapVisible": false,
+            "miniMapConfig": {"visible": true, "dataImage": "images/minimap.png"},
+            "skybox": 0,
+            "skyboxConfig": {"fixedTime": 3600, "textures": ["sky/1.png"]}
+        }));
+        let c = &v["configurations"];
+        assert_eq!(c["realmName"], "Current Name");
+        assert_eq!(c["minimap"]["enabled"], true);
+        assert!(
+            c["minimap"]["dataImage"]
+                .as_str()
+                .unwrap()
+                .ends_with("/contents/bafkreiminimap"),
+            "{c}"
+        );
+        assert_eq!(c["skybox"]["fixedHour"], 3600);
+        assert_eq!(c["skybox"]["textures"].as_array().unwrap().len(), 1);
     }
 }

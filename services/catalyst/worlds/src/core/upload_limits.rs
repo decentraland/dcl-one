@@ -30,6 +30,11 @@ pub const INVALID_CONTENT_LENGTH_MESSAGE: &str = "Invalid Content-Length header.
 pub const TOO_MANY_FIELDS_MESSAGE: &str = "The multipart request has too many fields.";
 pub const TOO_MANY_PARTS_MESSAGE: &str = "The multipart request has too many parts.";
 
+/// The parser's field-count refusal (`multipart/middleware.ts:316`).
+pub fn too_many_fields_message(max_fields: usize) -> String {
+    format!("The multipart request has too many fields. The maximum allowed is {max_fields}.")
+}
+
 pub const MAX_MULTIPART_FIELD_VALUE_BYTES: usize = 1024 * 1024;
 
 pub const MAX_MULTIPART_FIELDS: usize = 100;
@@ -393,6 +398,12 @@ pub fn source_limit_response() -> axum::response::Response {
 // The shed and timeout answers live with the worlds envelope, whose
 // `ApiError` renders them too.
 pub use crate::comms::worlds_envelope::{DeployRejection, shed_response, timeout_response};
+
+/// 413 `{"error":"Payload Too Large","message":…}`, as upstream's multipart
+/// parser answers a size or count limit (`upload-error-handler.ts`).
+pub fn too_large(message: impl Into<String>) -> crate::comms::worlds_envelope::ApiError {
+    crate::comms::worlds_envelope::ApiError::http(413, message)
+}
 
 #[cfg(test)]
 mod tests {

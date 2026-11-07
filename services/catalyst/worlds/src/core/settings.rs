@@ -21,6 +21,7 @@ use crate::policy::Permission;
 use crate::shared::identity::PermissionDecision;
 use crate::shared::signed_fetch::SignedPath;
 
+use super::SharedState;
 use super::auth::{map_auth_error_api, require_verified};
 use super::http::ApiError;
 use super::permissions::parse_world;
@@ -29,7 +30,7 @@ use super::settings_policy::{
     TITLE_MIN_LENGTH, VALID_RATINGS, detect_image_format, storable_skybox_time, text_len,
 };
 use super::store::{self, WorldSettingsRow, WorldSettingsUpdate};
-use super::{SharedState, upload_limits};
+use super::upload_limits::{self, too_large};
 
 const MIN_PARCEL_COORDINATE: i32 = -150;
 const MAX_PARCEL_COORDINATE: i32 = 150;
@@ -95,11 +96,6 @@ impl IntoResponse for SettingsError {
 /// `UnauthorizedError`'s text (`logic/settings/errors.ts`).
 pub const NOT_ALLOWED_MESSAGE: &str =
     "Unauthorized. You do not have permission to update settings for this world.";
-
-/// 413, as upstream's multipart parser answers a size or count limit.
-fn too_large(message: impl Into<String>) -> ApiError {
-    ApiError::http(413, message)
-}
 
 /// The fields upstream's parser lets repeat (`repeatableFields`), and the
 /// catalyst-only list field.
@@ -319,7 +315,11 @@ fn format_bytes(bytes: u64) -> String {
 }
 
 /// upstream `describeUploadTimeout` (`controllers/multipart/errors.ts`).
-fn describe_upload_timeout(timeout_ms: u64, received: u64, declared: Option<u64>) -> String {
+pub(super) fn describe_upload_timeout(
+    timeout_ms: u64,
+    received: u64,
+    declared: Option<u64>,
+) -> String {
     let seconds = timeout_ms as f64 / 1000.0;
     let got = match declared {
         Some(d) => format!("{} of {}", format_bytes(received), format_bytes(d)),
@@ -464,9 +464,8 @@ async fn parse_multipart(
         } else {
             field_count += 1;
             if field_count > upload_limits::MAX_MULTIPART_FIELDS {
-                return Err(too_large(format!(
-                    "The multipart request has too many fields. The maximum allowed is {}.",
-                    upload_limits::MAX_MULTIPART_FIELDS
+                return Err(too_large(upload_limits::too_many_fields_message(
+                    upload_limits::MAX_MULTIPART_FIELDS,
                 ))
                 .into());
             }
