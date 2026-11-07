@@ -25,12 +25,15 @@ for (const pkg of packages) {
   if (fs.existsSync(pkg)) {
     console.log(`📦 Linting ${pkg}...`)
     try {
-      // Use the root ESLint to lint this specific package
+      // eslint lives in tools/compiler-api (it needs the TypeScript compiler API, see eslint.config.mjs)
       const fixFlag = shouldFix ? '--fix' : ''
-      execSync(`NODE_OPTIONS="--max-old-space-size=4096" npx eslint ${pkg} --ext .ts,.tsx ${fixFlag}`, {
-        stdio: 'inherit',
-        cwd: process.cwd()
-      })
+      execSync(
+        `NODE_OPTIONS="--max-old-space-size=4096" tools/compiler-api/node_modules/.bin/eslint ${pkg} --ext .ts,.tsx ${fixFlag}`,
+        {
+          stdio: 'inherit',
+          cwd: process.cwd()
+        }
+      )
       console.log(`✅ ${pkg} - No issues found\n`)
     } catch (error: any) {
       // Check if it's just warnings (exit code 1) vs actual errors (exit code 2)

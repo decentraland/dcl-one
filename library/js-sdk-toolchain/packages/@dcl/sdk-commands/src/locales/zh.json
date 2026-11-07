@@ -73,7 +73,8 @@
       "tsconfig_required": "此场景没有必需的文件 {{tsconfig}}",
       "no_input_files": "没有要构建的输入文件：{{entrypointSource}}",
       "rebuild_failed": "无法重新构建包：{{error}}",
-      "type_checker_failed": "类型检查器退出，代码为 {{code}}。"
+      "type_checker_failed": "类型检查器退出，代码为 {{code}}。",
+      "tsconfig_base_url": "TypeScript 7 已移除 \"baseUrl\" 选项：请从 {{tsconfig}} 中删除它，并让每个 \"paths\" 条目以 ./ 开头（相对于 tsconfig.json 解析）。"
     },
     "code_to_composite": {
       "build_failed": "构建场景失败：{{error}}",

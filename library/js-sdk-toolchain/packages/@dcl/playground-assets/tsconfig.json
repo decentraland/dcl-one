@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "es2020",
     "module": "esnext",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -10,8 +10,8 @@
     "allowSyntheticDefaultImports": true,
     "declaration": true,
     "stripInternal": true,
-    "downlevelIteration": true,
     "preserveConstEnums": true,
+    "rootDir": "src",
     "outDir": "dist",
     "lib": ["ES2020"],
     "types": ["@dcl/js-runtime"]

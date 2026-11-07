@@ -11,7 +11,7 @@ import { EntitySchema } from './custom/Entity'
 import { QuaternionSchema, QuaternionType } from './custom/Quaternion'
 import { Vector3Schema, Vector3Type } from './custom/Vector3'
 import { ISchema, JsonSchemaExtended, JsonArray, JsonMap, JsonPrimitive } from './ISchema'
-import { IMap } from './Map'
+import { IMap, MapResult, Spec } from './Map'
 import { IOptional } from './Optional'
 import { IOneOf } from './OneOf'
 import { jsonSchemaToSchema, mutateValues } from './buildSchema'
@@ -69,18 +69,23 @@ export namespace Schemas {
   /** @public */
   export const Entity: ISchema<Entity> = EntitySchema
 
+  // Typed explicitly: tsc 7 declares an untyped alias as `typeof <constructor>`, and the constructors are
+  // either internal-only (stripped from the declarations) or not exported by the entry point
   /** @public */
-  export const EnumNumber = IntEnumSchema
+  export const EnumNumber: <T>(enumObject: Record<any, any>, defaultValue: T) => ISchema<T> = IntEnumSchema
   /** @public */
-  export const EnumString = StringEnumSchema
+  export const EnumString: <T>(enumObject: Record<any, any>, defaultValue: T) => ISchema<T> = StringEnumSchema
   /** @public */
-  export const Array = IArray
+  export const Array: <T>(type: ISchema<T>) => ISchema<T[]> = IArray
   /** @public */
-  export const Map = IMap
+  export const Map: <T extends Spec>(spec: T, defaultValue?: Partial<MapResult<T>>) => ISchema<MapResult<T>> = IMap
   /** @public */
-  export const Optional = IOptional
+  export const Optional: <T>(spec: ISchema<T>) => ISchema<T | undefined> = IOptional
   /** @public */
-  export const OneOf = IOneOf
+  export const OneOf: <T extends Spec>(
+    specs: T
+  ) => ISchema<{ [K in keyof T]: { readonly $case: K; readonly value: ReturnType<T[K]['deserialize']> } }[keyof T]> =
+    IOneOf
 
   /**
    * @public Create an ISchema object from the json-schema

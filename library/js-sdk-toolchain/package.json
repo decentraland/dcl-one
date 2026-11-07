@@ -18,15 +18,13 @@
     "jest-matcher-deep-close-to": "^3.0.2",
     "source-map": "^0.7.4",
     "tslib": "^2.5.0",
-    "typescript": "^5.0.2"
+    "typescript": "7.0.2"
   },
   "devDependencies": {
-    "@dcl/eslint-config": "^3.1.0",
     "@types/node": "^24.10.1",
     "npm-package-arg": "^12.0.2",
     "syncpack": "^13.0.4",
-    "ts-proto": "2.18.4",
-    "typedoc": "^0.23.28"
+    "ts-proto": "2.18.4"
   },
   "engines": {
     "node": ">=24.16"

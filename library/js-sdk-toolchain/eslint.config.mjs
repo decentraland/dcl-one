@@ -1,9 +1,15 @@
-import { FlatCompat } from '@eslint/eslintrc'
+import { createRequire } from 'module'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
+// eslint and @dcl/eslint-config's typescript-eslint plugins embed the TypeScript compiler API, which
+// typescript 7 no longer ships: they are installed in tools/compiler-api with their own typescript 6,
+// so the shareable config and its plugins resolve from there.
+const toolsDirectory = path.join(path.dirname(fileURLToPath(import.meta.url)), 'tools', 'compiler-api')
+const { FlatCompat } = createRequire(path.join(toolsDirectory, 'package.json'))('@eslint/eslintrc')
+
 // @dcl/eslint-config still publishes an eslintrc-style config; wrap it for eslint 9.
-const compat = new FlatCompat({ baseDirectory: path.dirname(fileURLToPath(import.meta.url)) })
+const compat = new FlatCompat({ baseDirectory: toolsDirectory })
 
 export default [
   ...compat.config({
