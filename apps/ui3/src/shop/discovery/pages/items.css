@@ -92,14 +92,13 @@
   text-transform: uppercase;
   cursor: pointer;
   transition: background 0.15s ease;
-  background: rgba(0, 0, 0, 0.4);
+  /* As upstream's EmptyState CTA (shop@71433483): the glass fill, stronger on hover. */
+  background: rgba(255, 255, 255, 0.2);
   color: #fcfcfc;
 }
-.shop-items .shop-items__empty-cta:hover {
-  background: rgba(0, 0, 0, 0.55);
-}
+.shop-items .shop-items__empty-cta:hover,
 .shop-items .shop-items__empty-cta:active {
-  background: rgba(0, 0, 0, 0.65);
+  background: rgba(255, 255, 255, 0.3);
 }
 .shop-items .shop-items__empty-cta:focus-visible {
   outline: 2px solid #fcfcfc;

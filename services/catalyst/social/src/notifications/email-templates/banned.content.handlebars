@@ -1,0 +1,16 @@
+{{#if metadata.expiresAt}}
+<p style="font-size: 16px; line-height: 24px; text-align: center; color: #43404A; padding: 0 24px;">
+  Your account has been temporarily suspended due to a policy violation. You won't be able to log in until the suspension is lifted.
+</p>
+<p style="font-size: 16px; line-height: 24px; text-align: center; color: #43404A; padding: 0 16px;">
+  <b>BAN PERIOD:</b> {{duration metadata.bannedAt metadata.expiresAt}}<br>
+  <b>REASON:</b> {{metadata.reason}}
+</p>
+{{else}}
+<p style="font-size: 16px; line-height: 24px; text-align: center; color: #43404A; padding: 0 24px;">
+  Your account has been permanently banned due to a policy violation.
+</p>
+{{/if}}
+<p style="font-size: 16px; line-height: 24px; text-align: center; color: #43404A; padding: 0 16px;">
+  If you want to understand what happened, contact Support.
+</p>

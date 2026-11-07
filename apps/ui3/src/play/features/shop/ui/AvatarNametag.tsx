@@ -13,6 +13,8 @@ export function AvatarNametag({
   name,
   color,
   typing = false,
+  claimed = true,
+  suffix = '',
   className
 }: {
   /** The NAME it reads; empty, the placeholder. */
@@ -21,6 +23,10 @@ export function AvatarNametag({
   color: string
   /** Shows the caret after the NAME, while its field has the focus. */
   typing?: boolean
+  /** A claimed NAME carries the badge; an unclaimed name (the design system's NametagUnclaimed) its suffix. */
+  claimed?: boolean
+  /** What follows an unclaimed name: `#` and the last four of its address. */
+  suffix?: string
   className?: string
 }): React.JSX.Element {
   const empty = name === ''
@@ -32,10 +38,11 @@ export function AvatarNametag({
       ) : (
         <span className={styles.text} style={{ color }}>
           {name}
-          {typing && <span className={styles.caret} />}
+          {typing && <span className={styles.caret} data-testid="nametag-caret" />}
         </span>
       )}
-      <img className={styles.badge} src={verifiedIcon} alt="" />
+      {!empty && !claimed && suffix !== '' && <span className={styles.suffix}>{suffix}</span>}
+      {(empty || claimed) && <img className={styles.badge} src={verifiedIcon} alt="" />}
     </div>
   )
 }

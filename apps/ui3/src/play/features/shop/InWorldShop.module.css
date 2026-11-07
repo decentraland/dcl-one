@@ -236,6 +236,15 @@
 .stale {
   opacity: 0.5;
 }
+/* RESALE NAME: the NAMEs variant's 197px cards, six to the design's 1282px row, 20px apart both ways. */
+.nameGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 197px);
+  justify-content: space-between;
+  gap: 20px;
+  align-content: start;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
 /* With the item panel open, the same 203px columns beside it (four at the design's 1920, 872px: the spread
    leaves them 20px apart there), the thumb 9px past them and the panel 23px after that, 8px in from the right. */
 .withPanel .scroller {

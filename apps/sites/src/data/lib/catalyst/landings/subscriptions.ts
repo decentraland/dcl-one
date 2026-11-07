@@ -100,6 +100,7 @@ export const NOTIFICATION_GROUPS: Group[] = [
     label: "Marketplace",
     types: [
       "item_sold",
+      "item_discounted",
       "bid_accepted",
       "bid_received",
       "royalties_earned",

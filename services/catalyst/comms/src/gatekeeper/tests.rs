@@ -2987,10 +2987,13 @@ async fn world_mints_answer_404_for_an_unknown_or_blocked_world() {
             let (status, body) = body_json(app.clone().oneshot(request).await.unwrap()).await;
             assert_eq!(status, expected, "{admission:?} {path}: {body}");
             if expected == StatusCode::NOT_FOUND {
-                assert_eq!(
-                    body["message"], "World \"alice.dcl.eth\" is invalid or blocked.",
-                    "{body}"
-                );
+                // `comms-adapter-handler` words its 404 apart from the world mints'.
+                let message = if path.starts_with("/get-comms-adapter") {
+                    "World \"alice.dcl.eth\" was not found."
+                } else {
+                    "World \"alice.dcl.eth\" is invalid or blocked."
+                };
+                assert_eq!(body["message"], message, "{body}");
             }
         }
     }

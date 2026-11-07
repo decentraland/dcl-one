@@ -1,0 +1,1886 @@
+[
+  {
+    "id": "events.get_events.default_anonymous", "area": "events",
+    "request": {"method": "GET", "path": "/api/events"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "array", "item_keys": "events.$defs.event_record",
+        "optional_keys": ["previous_place_id"],
+        "invariants": [
+          "data.length <= 500", "data.length >= 1", "every item.approved == true",
+          "every item.rejected == false", "every item.deleted_by_user == false",
+          "every item.deleted_by_admin == false", "every item.attending == false",
+          "doc: list defaults to active: every item has next_finish_at > now (model.ts:211-214)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/server.ts:48-72", "src/entities/Event/routes/index.ts:65-96",
+        "src/entities/Event/routes/getEventList.ts:119-332", "src/entities/Event/schemas.ts:23-171",
+        "src/entities/Event/model.ts:165-286", "src/entities/Event/model.ts:388-430",
+        "src/entities/Event/model.ts:121-157", "src/entities/Event/model.ts:482-515",
+        "src/entities/Event/types.ts:125-195",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/utils.js:4-15",
+        "src/migrations/1584428582715_create-events.ts:8-62",
+        "src/migrations/1585075363316_add-url-userName-and-sceneName-to-event.ts",
+        "src/migrations/1592832550779_add-trending-props-to-events.ts:5-13",
+        "src/migrations/1591719525873_replace-active-until-props-on-events.ts:7-22",
+        "src/migrations/1772150400000_migrate-world-event-place-ids.ts:8-34",
+        "src/migrations/1780099200000_add-deleted-state-to-events.ts:8-35"
+      ]
+    },
+    "notes": "Anonymous: profile.user is '' (ProfileSettingsModel.getDefault), so the filter adds `e.approved IS TRUE`, `e.rejected IS FALSE`, both deleted flags FALSE and `next_finish_at > now()`; limit defaults to 500 (getEventList.ts:171-174). Seeded approved, attended and recurrent events qualify; pending, rejected, deleted and past do not. Key set = every column of `events` (SELECT e.*; migrations listed) minus `textsearch` (set undefined by EventModel.build so JSON drops it) minus contact/details (omitted by toPublic when the requester is not the creator), plus build()'s scene_name/coordinates and toPublic()'s attending/position/live. `previous_place_id` is a rollback column the 1772150400000 migration adds and never drops, so upstream serves it; it is optional here so dcl-one need not reproduce the artifact."
+  },
+  {
+    "id": "events.get_events.limit_not_uint", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"limit": "abc"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [{"instancePath": "/limit", "keyword": "format", "message": "must match format \"uint\""}],
+          "messages": ["limit must match format \"uint\" {\"format\":\"uint\"}"]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:119,139-142",
+        "src/entities/Event/schemas.ts:23-171",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64"
+      ]
+    },
+    "notes": "`limit` is {type:string, format:uint}; gatsby registers `uint` as validator isInt(value,{min:0}) (Schema/index.js:32). ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_events.offset_not_uint", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"offset": "-1"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [{"instancePath": "/offset", "keyword": "format", "message": "must match format \"uint\""}],
+          "messages": ["offset must match format \"uint\" {\"format\":\"uint\"}"]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:119,139-142",
+        "src/entities/Event/schemas.ts:23-171",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64"
+      ]
+    },
+    "notes": "`offset` is format uint; a negative value fails isInt(min 0). ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_events.limit_over_cap", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"limit": "1000"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "array", "item_keys": "events.$defs.event_record",
+        "optional_keys": ["previous_place_id"],
+        "invariants": [
+          "data.length <= 500", "every item.approved == true", "every item.rejected == false",
+          "every item.deleted_by_user == false", "every item.deleted_by_admin == false",
+          "every item.attending == false"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:171-174",
+        "src/entities/Event/model.ts:423",
+        "decentraland-gatsby@9.0.1 dist/entities/Database/utils/sql.js:97-111",
+        "src/entities/Event/schemas.ts:23-171"
+      ]
+    },
+    "notes": "1000 passes the uint format; the route clamps with Math.min(Math.max(n,0),500) and the SQL `limit()` helper caps at 500 again."
+  },
+  {
+    "id": "events.get_events.limit_zero", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"limit": "0"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": {"ok": true, "data": []},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96",
+        "src/entities/Event/routes/getEventList.ts:171-174,188-190",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61"
+      ]
+    },
+    "notes": "`limit=0` returns [] before any query (getEventList.ts:188-190)."
+  },
+  {
+    "id": "events.get_events.list_invalid", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"list": "bogus"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "/list", "keyword": "enum",
+              "message": "must be equal to one of the allowed values"
+            },
+            {
+              "instancePath": "/list", "keyword": "enum",
+              "message": "must be equal to one of the allowed values"
+            },
+            {
+              "instancePath": "/list", "keyword": "enum",
+              "message": "must be equal to one of the allowed values"
+            },
+            {
+              "instancePath": "/list", "keyword": "enum",
+              "message": "must be equal to one of the allowed values"
+            },
+            {
+              "instancePath": "/list", "keyword": "enum",
+              "message": "must be equal to one of the allowed values"
+            },
+            {"instancePath": "/list", "keyword": "oneOf", "message": "must match exactly one schema in oneOf"}
+          ],
+          "messages": [
+            "list must be equal to one of the allowed values {\"allowedValues\":[\"all\"]}",
+            "list must be equal to one of the allowed values {\"allowedValues\":[\"active\"]}",
+            "list must be equal to one of the allowed values {\"allowedValues\":[\"live\"]}",
+            "list must be equal to one of the allowed values {\"allowedValues\":[\"upcoming\"]}",
+            "list must be equal to one of the allowed values {\"allowedValues\":[\"highlight\"]}",
+            "list must match exactly one schema in oneOf {\"passingSchemas\":null}"
+          ]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:119,139-142",
+        "src/entities/Event/schemas.ts:23-171",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/entities/Event/schemas.ts:71-97"
+      ]
+    },
+    "notes": "`list` is a oneOf of five single-value enums. ajv's oneOf is a compositeRule, so even without allErrors every branch's enum error is kept and the oneOf error is appended last (ajv 8.12.0 dist/vocabularies/applicator/oneOf.js: cxt.error(true)); hence six errors/messages in this order. If dcl-one reports only one error, match errors[0] (instancePath /list, keyword enum). The `default: 'active'` has no effect (useDefaults off). ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_events.list_all", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"list": "all"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "array", "item_keys": "events.$defs.event_record",
+        "optional_keys": ["previous_place_id"],
+        "invariants": [
+          "data.length >= 1", "every item.approved == true", "every item.rejected == false",
+          "every item.deleted_by_user == false", "every item.deleted_by_admin == false",
+          "every item.attending == false", "doc: list=all adds no time filter (model.ts:210)",
+          "data.length >= 5 (approved, attended, recurrent, community and the past event; 4 with the active filter)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:153-179",
+        "src/entities/Event/model.ts:183-241", "src/entities/Event/schemas.ts:23-171"
+      ]
+    },
+    "notes": "`all` removes the next_finish_at filter but keeps approved-only, not rejected, not deleted for anonymous callers."
+  },
+  {
+    "id": "events.get_events.list_live", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"list": "live"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "array", "item_keys": "events.$defs.event_record",
+        "optional_keys": ["previous_place_id"],
+        "invariants": [
+          "every item.live == true", "every item.approved == true", "every item.rejected == false",
+          "every item.deleted_by_user == false", "every item.deleted_by_admin == false",
+          "every item.attending == false"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/model.ts:215-218",
+        "src/entities/Event/model.ts:501-503", "src/entities/Event/schemas.ts:23-171"
+      ]
+    },
+    "notes": "`live` = next_finish_at > now() AND next_start_at < now(); toPublic computes `live` from next_start_at/duration, so every returned item is live. No seeded event is live (the seed starts in 2031) and the harness has no seed hint for one, so the list is empty and the `every item.*` checks are vacuous until the seed carries a live event (seed candidate)."
+  },
+  {
+    "id": "events.get_events.list_upcoming", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"list": "upcoming"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "array", "item_keys": "events.$defs.event_record",
+        "optional_keys": ["previous_place_id"],
+        "invariants": [
+          "data.length >= 1", "every item.live == false", "every item.approved == true",
+          "every item.rejected == false", "every item.deleted_by_user == false",
+          "every item.deleted_by_admin == false", "every item.attending == false"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/model.ts:219-222",
+        "src/entities/Event/model.ts:501-503", "src/entities/Event/schemas.ts:23-171"
+      ]
+    },
+    "notes": "`upcoming` = next_finish_at > now() AND next_start_at > now(): the seeded approved (2031), attended and recurrent events."
+  },
+  {
+    "id": "events.get_events.order_invalid", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"order": "foo"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "/order", "keyword": "enum",
+              "message": "must be equal to one of the allowed values"
+            }
+          ],
+          "messages": ["order must be equal to one of the allowed values {\"allowedValues\":[\"asc\",\"desc\"]}"]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:119,139-142",
+        "src/entities/Event/schemas.ts:23-171",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/entities/Event/schemas.ts:107-111"
+      ]
+    },
+    "notes": "`order` enum asc|desc. ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_events.position_pattern", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"position": "abc"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "/position", "keyword": "pattern",
+              "message": "must match pattern \"^-?\\d{1,3},-?\\d{1,3}$\""
+            }
+          ],
+          "messages": [
+            "position must match pattern \"^-?\\d{1,3},-?\\d{1,3}$\" {\"pattern\":\"^-?\\\\d{1,3},-?\\\\d{1,3}$\"}"
+          ]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:119,139-142",
+        "src/entities/Event/schemas.ts:23-171",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/entities/Event/schemas.ts:36-40"
+      ]
+    },
+    "notes": "`position` pattern ^-?\\d{1,3},-?\\d{1,3}$ (schemas.ts:38). ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_events.position_match", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"position": "10,10"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "array", "item_keys": "events.$defs.event_record",
+        "optional_keys": ["previous_place_id"],
+        "invariants": [
+          "data.length >= 1", "every item.x == 10", "every item.y == 10", "every item.approved == true",
+          "every item.rejected == false", "every item.deleted_by_user == false",
+          "every item.deleted_by_admin == false", "every item.attending == false"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:204-217",
+        "src/entities/Event/model.ts:242-245", "src/entities/Event/schemas.ts:23-171"
+      ]
+    },
+    "notes": "position is split into x,y and filtered with `e.x = x AND e.y = y`; the seeded approved/attended events sit at 10,10."
+  },
+  {
+    "id": "events.get_events.position_outside_world", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"position": "999,999"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": {"ok": true, "data": []},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:204-217",
+        "src/entities/Event/schemas.ts:23-171"
+      ]
+    },
+    "notes": "999,999 passes the pattern but `isInsideWorldLimits` (@dcl/schemas 26.5.0 dist/dapps/world.js, bounds -150..163) is false, so the route returns [] without querying."
+  },
+  {
+    "id": "events.get_events.positions_not_array", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"positions": "10,10"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [{"instancePath": "/positions", "keyword": "type", "message": "must be array"}],
+          "messages": ["positions must be array {\"type\":\"array\"}"]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:119,139-142",
+        "src/entities/Event/schemas.ts:23-171",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/entities/Event/schemas.ts:41-46"
+      ]
+    },
+    "notes": "A bare `positions=` query value is a string; the schema wants an array (use `positions[]=`). ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_events.positions_item_pattern", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"positions[]": "abc"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "/positions/0", "keyword": "pattern",
+              "message": "must match pattern \"^-?\\d{1,3},-?\\d{1,3}$\""
+            }
+          ],
+          "messages": [
+            "positions/0 must match pattern \"^-?\\d{1,3},-?\\d{1,3}$\" {\"pattern\":\"^-?\\\\d{1,3},-?\\\\d{1,3}$\"}"
+          ]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:119,139-142",
+        "src/entities/Event/schemas.ts:23-171",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/entities/Event/schemas.ts:41-46"
+      ]
+    },
+    "notes": "Array items share the position pattern; instancePath is /positions/0 so the message starts with `positions/0`. ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_events.positions_match", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"positions[]": "10,10"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "array", "item_keys": "events.$defs.event_record",
+        "optional_keys": ["previous_place_id"],
+        "invariants": [
+          "data.length >= 1", "every item.x == 10", "every item.y == 10", "every item.approved == true",
+          "every item.rejected == false", "every item.deleted_by_user == false",
+          "every item.deleted_by_admin == false", "every item.attending == false"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:219-238",
+        "src/entities/Event/model.ts:168-179,246-249", "src/entities/Event/schemas.ts:23-171"
+      ]
+    },
+    "notes": "positions are filtered with `(e.x, e.y) = ANY(Array[(10,10)])`."
+  },
+  {
+    "id": "events.get_events.estate_id_not_int", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"estate_id": "abc"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [{"instancePath": "/estate_id", "keyword": "format", "message": "must match format \"int\""}],
+          "messages": ["estate_id must match format \"int\" {\"format\":\"int\"}"]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:119,139-142",
+        "src/entities/Event/schemas.ts:23-171",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/entities/Event/schemas.ts:47-51"
+      ]
+    },
+    "notes": "`estate_id` format int (validator isInt, Schema/index.js:31). ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_events.creator_not_address", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"creator": "abc"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [{"instancePath": "/creator", "keyword": "format", "message": "must match format \"address\""}],
+          "messages": ["creator must match format \"address\" {\"format\":\"address\"}"]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:119,139-142",
+        "src/entities/Event/schemas.ts:23-171",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/entities/Event/schemas.ts:52-56"
+      ]
+    },
+    "notes": "`creator` format address (validator isEthereumAddress, Schema/index.js:29). ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_events.only_attendee_anonymous", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"only_attendee": "true"}},
+    "expected": {
+      "status": 401, "content_type": "application/json",
+      "body": {"ok": false, "error": "only_attendee filter requieres autentication", "code": "unauthorized"},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:259-268",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64"
+      ]
+    },
+    "notes": "Literal (misspelled) message from getEventList.ts:262. RequestError.toJSON never adds `stack` in gatsby 9.0.1 (error.js:25 tests result.stack, which is unset)."
+  },
+  {
+    "id": "events.get_events.only_attendee_signed_user", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"only_attendee": "true"}, "auth": "signed:user"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "array", "item_keys": "events.$defs.event_record",
+        "optional_keys": ["previous_place_id"],
+        "invariants": ["data.length >= 1", "every item.attending == true", "every item.approved == true"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:259-268",
+        "src/entities/Event/model.ts:278-281,403-425", "src/entities/Event/model.ts:482-515",
+        "decentraland-gatsby@9.0.1 dist/entities/Auth/middleware.js:35-49"
+      ]
+    },
+    "notes": "With a user the query LEFT JOINs event_attendees and `AND a.user IS NOT NULL`; the signed:user wallet RSVP'd the seeded `attended` event. Non-owner: `(approved OR lower(e.user)=user)` so still approved only."
+  },
+  {
+    "id": "events.get_events.owner_enum", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"owner": "yes"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "/owner", "keyword": "enum",
+              "message": "must be equal to one of the allowed values"
+            }
+          ],
+          "messages": ["owner must be equal to one of the allowed values {\"allowedValues\":[\"1\",\"true\"]}"]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:119,139-142",
+        "src/entities/Event/schemas.ts:23-171",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/entities/Event/schemas.ts:102-106", "decentraland-gatsby@9.0.1 dist/entities/Schema/types.js:4-6"
+      ]
+    },
+    "notes": "`owner`, `highlighted` and `only_attendee` accept TruthyEnum strings only: ['1','true'] (Schema/types.js:5). ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_events.owner_anonymous", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"owner": "true"}},
+    "expected": {
+      "status": 401, "content_type": "application/json",
+      "body": {"ok": false, "error": "owner filter requires authentication", "code": "unauthorized"},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:144-151",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64"
+      ]
+    },
+    "notes": "Checked right after validation, before any query."
+  },
+  {
+    "id": "events.get_events.owner_signed_owner", "area": "events",
+    "request": {
+      "method": "GET", "path": "/api/events", "query": {"owner": "true", "list": "all"},
+      "auth": "signed:owner"
+    },
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "array", "item_keys": "events.$defs.event_record_owner",
+        "optional_keys": ["previous_place_id"],
+        "invariants": [
+          "data.length >= 1", "every item.deleted_by_user == false", "every item.deleted_by_admin == false",
+          "doc: owner list spans approved, pending and rejected (model.ts:184-185 replaces the rejected filter)",
+          "data.length >= 7 (every seeded event but the deleted one)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96",
+        "src/entities/Event/routes/getEventList.ts:144-151,163-179",
+        "src/entities/Event/model.ts:181-205,229-231,238-241", "src/entities/Event/model.ts:482-515",
+        "decentraland-gatsby@9.0.1 dist/entities/Auth/middleware.js:35-49"
+      ]
+    },
+    "notes": "owner=true filters `lower(e.user) = user` only; deleted events stay hidden (model.ts:194-197). toPublic keeps `contact` and `details` because event.user === profile.user, so the owner's key set has two extra keys."
+  },
+  {
+    "id": "events.get_events.schedule_not_uuid", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"schedule": "abc"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [{"instancePath": "/schedule", "keyword": "format", "message": "must match format \"uuid\""}],
+          "messages": ["schedule must match format \"uuid\" {\"format\":\"uuid\"}"]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:119,139-142",
+        "src/entities/Event/schemas.ts:23-171",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/entities/Event/schemas.ts:66-70"
+      ]
+    },
+    "notes": "`schedule` format uuid (ajv-formats). ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_events.from_not_datetime", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"from": "abc"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [{"instancePath": "/from", "keyword": "format", "message": "must match format \"date-time\""}],
+          "messages": ["from must match format \"date-time\" {\"format\":\"date-time\"}"]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:119,139-142",
+        "src/entities/Event/schemas.ts:23-171",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/entities/Event/schemas.ts:141-146"
+      ]
+    },
+    "notes": "`from` format date-time (ajv-formats). ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_events.to_not_datetime", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"to": "2031-01-01"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [{"instancePath": "/to", "keyword": "format", "message": "must match format \"date-time\""}],
+          "messages": ["to must match format \"date-time\" {\"format\":\"date-time\"}"]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:119,139-142",
+        "src/entities/Event/schemas.ts:23-171",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/entities/Event/schemas.ts:147-152"
+      ]
+    },
+    "notes": "A date without time fails ajv-formats date-time. ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_events.world_enum", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"world": "yes"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "/world", "keyword": "enum",
+              "message": "must be equal to one of the allowed values"
+            }
+          ],
+          "messages": [
+            "world must be equal to one of the allowed values {\"allowedValues\":[\"1\",\"true\",\"0\",\"false\"]}"
+          ]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:119,139-142",
+        "src/entities/Event/schemas.ts:23-171",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/entities/Event/schemas.ts:112-116", "decentraland-gatsby@9.0.1 dist/entities/Schema/types.js:4-6"
+      ]
+    },
+    "notes": "`world` accepts BooleanEnum strings in TruthyEnum+FalsyEnum order: ['1','true','0','false'] (Schema/types.js:4-6). ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_events.world_true", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"world": "true"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "array", "item_keys": "events.$defs.event_record",
+        "optional_keys": ["previous_place_id"],
+        "invariants": [
+          "every item.world == true", "every item.approved == true", "every item.rejected == false",
+          "every item.deleted_by_user == false", "every item.deleted_by_admin == false",
+          "every item.attending == false"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:270",
+        "src/entities/Event/model.ts:233", "decentraland-gatsby@9.0.1 dist/entities/Route/param.js:39-58"
+      ]
+    },
+    "notes": "bool('true') -> `AND e.world IS TRUE`. The seeded events are genesis events and the harness has no seed hint for a world event, so the list is empty and the `every item.*` checks are vacuous until the seed carries a `world: true` event (seed candidate)."
+  },
+  {
+    "id": "events.get_events.world_names_not_array", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"world_names": "harbour.dcl.eth"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [{"instancePath": "/world_names", "keyword": "type", "message": "must be array"}],
+          "messages": ["world_names must be array {\"type\":\"array\"}"]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:119,139-142",
+        "src/entities/Event/schemas.ts:23-171",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/entities/Event/schemas.ts:117-125"
+      ]
+    },
+    "notes": "`world_names` must be an array (`world_names[]=`). ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_events.world_names_item_pattern", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"world_names[]": "harbour"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "/world_names/0", "keyword": "pattern",
+              "message": "must match pattern \"^.*\\.dcl\\.eth$\""
+            }
+          ],
+          "messages": ["world_names/0 must match pattern \"^.*\\.dcl\\.eth$\" {\"pattern\":\"^.*\\\\.dcl\\\\.eth$\"}"]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:119,139-142",
+        "src/entities/Event/schemas.ts:23-171",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/entities/Event/schemas.ts:117-125"
+      ]
+    },
+    "notes": "Items must match ^.*\\.dcl\\.eth$ (schemas.ts:123). ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_events.search_too_short", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"search": "ab"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": {"ok": true, "data": []},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:192-198",
+        "src/entities/Event/schemas.ts:61-65"
+      ]
+    },
+    "notes": "The schema has no minLength; the route returns [] when the search has no 3-word-character run (/\\w{3}/)."
+  },
+  {
+    "id": "events.get_events.unknown_param", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"foo": "1"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "", "keyword": "additionalProperties",
+              "message": "must NOT have additional properties"
+            }
+          ],
+          "messages": ["must NOT have additional properties {\"additionalProperty\":\"foo\"}"]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:119,139-142",
+        "src/entities/Event/schemas.ts:23-171",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/entities/Event/schemas.ts:26"
+      ]
+    },
+    "notes": "additionalProperties:false; instancePath is '' so the message has no prefix. ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_events.approved_false_anonymous_ignored", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"approved": "false"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "array", "item_keys": "events.$defs.event_record",
+        "optional_keys": ["previous_place_id"],
+        "invariants": [
+          "data.length >= 1", "every item.approved == true", "every item.rejected == false",
+          "every item.deleted_by_user == false", "every item.deleted_by_admin == false",
+          "every item.attending == false"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:181-186",
+        "src/entities/Event/model.ts:206-209,229-231", "src/entities/Event/schemas.ts:158-161"
+      ]
+    },
+    "notes": "`approved`, `rejected` and `deleted` pass validation for everyone but are applied only when the admin bearer matched (routeOptions.admin); anonymous callers get the ordinary approved-only list, not a refusal."
+  },
+  {
+    "id": "events.get_events.with_connected_users_enum", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"with_connected_users": "yes"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "/with_connected_users", "keyword": "enum",
+              "message": "must be equal to one of the allowed values"
+            }
+          ],
+          "messages": [
+            "with_connected_users must be equal to one of the allowed values {\"allowedValues\":[\"true\",\"false\",\"1\",\"0\"]}"
+          ]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:119,139-142",
+        "src/entities/Event/schemas.ts:23-171",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/entities/Event/schemas.ts:153-157"
+      ]
+    },
+    "notes": "`with_connected_users` enum is spelled ['true','false','1','0'] in this schema (a different order from BooleanEnum). ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_events.with_connected_users", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "query": {"with_connected_users": "true"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "array",
+        "item_keys": [
+          "id", "name", "image", "image_vertical", "description", "start_at", "finish_at", "next_start_at",
+          "next_finish_at", "duration", "all_day", "x", "y", "server", "url", "user", "estate_id",
+          "estate_name", "user_name", "approved", "rejected", "highlighted", "trending", "created_at",
+          "updated_at", "recurrent", "recurrent_frequency", "recurrent_setpos", "recurrent_monthday",
+          "recurrent_weekday_mask", "recurrent_month_mask", "recurrent_interval", "recurrent_count",
+          "recurrent_until", "recurrent_dates", "total_attendees", "latest_attendees", "categories",
+          "schedules", "approved_by", "rejected_by", "rejection_reason", "deleted_by_user",
+          "deleted_by_admin", "deleted_by", "deleted_at", "deleted_reason", "world", "place_id",
+          "community_id", "featured_item", "scene_name", "coordinates", "attending", "position", "live",
+          "connected_addresses"
+        ],
+        "optional_keys": ["previous_place_id"],
+        "invariants": [
+          "data.length >= 1", "every item.approved == true", "every item.rejected == false",
+          "every item.deleted_by_user == false", "every item.deleted_by_admin == false",
+          "every item.attending == false"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96",
+        "src/entities/Event/routes/getEventList.ts:35-117,309-316",
+        "src/entities/Event/schemas.ts:153-157,452-460"
+      ]
+    },
+    "notes": "Each item gains `connected_addresses` (array of wallets). Upstream fills it from comms-gatekeeper scene/world participants and falls back to [] on error, so only the key is fixed, not the content."
+  },
+  {
+    "id": "events.get_events.bearer_wrong_read", "area": "events",
+    "request": {"method": "GET", "path": "/api/events", "auth": "bearer:wrong"},
+    "expected": {
+      "status": 401, "body": null, "body_match": "shape",
+      "shape": {"invariants": ["body contains 'Unauthorized'"]}
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96",
+        "src/entities/Event/routes/middleware/adminBearer.ts:18-64", "src/server.ts:48-72"
+      ]
+    },
+    "notes": "adminBearer: no signed auth and an `Authorization: Bearer ...` header -> assertAdminBearer; a non-matching token throws RequestError('Unauthorized', 401) and the middleware calls next(err). server.ts registers no error handler, so Express 4's finalhandler answers: status from err.statusCode (401), Content-Type text/html; charset=utf-8, body `<pre>Unauthorized</pre>` in production (the stack in other NODE_ENVs). Do not reproduce the HTML page: dcl-one should keep the status and may answer the JSON envelope {ok:false,error:'Unauthorized',code:'unauthorized'}. When EVENTS_ADMIN_AUTH_TOKEN is unset upstream answers 503 'EVENTS_ADMIN_AUTH_TOKEN is not configured; events admin endpoints are disabled' instead (adminBearer.ts:19-24)."
+  },
+  {
+    "id": "events.post_search.empty_body", "area": "events",
+    "request": {
+      "method": "POST", "path": "/api/events/search", "headers": {"content-type": "application/json"},
+      "body": {}
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "array", "item_keys": "events.$defs.event_record",
+        "optional_keys": ["previous_place_id"],
+        "invariants": [
+          "data.length <= 500", "data.length >= 1", "every item.approved == true",
+          "every item.rejected == false", "every item.deleted_by_user == false",
+          "every item.deleted_by_admin == false", "every item.attending == false"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96",
+        "src/entities/Event/routes/getEventList.ts:130-142,318-331",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/utils.js:4-15"
+      ]
+    },
+    "notes": "Same handler as GET /api/events. gatsby handle() answers defaultStatusCode(req) = 201 for POST (handle/utils.js:4-15). Without placeIds/communityId the answer is the plain array."
+  },
+  {
+    "id": "events.post_search.place_ids", "area": "events",
+    "request": {
+      "method": "POST", "path": "/api/events/search", "headers": {"content-type": "application/json"},
+      "body": {"placeIds": ["{place_id}"]}
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "object", "item_keys": ["events", "total"],
+        "invariants": [
+          "doc: events is the filtered list (e.place_id = ANY(placeIds)); total is countEventsWithFilter over the same conditions",
+          "data.total == 0 (no seeded event carries place_id)"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96",
+        "src/entities/Event/routes/getEventList.ts:130-142,276-279,318-331",
+        "src/entities/Event/model.ts:262-276,432-459", "src/entities/Event/schemas.ts:126-135"
+      ]
+    },
+    "notes": "Body `placeIds` is copied into the query as `places_ids` and validated by the list schema (array, maxItems 100, items minLength 1). With places_ids the answer is `{events, total}`. The seeded events' place_id is not described, so no count is asserted."
+  },
+  {
+    "id": "events.post_search.community", "area": "events",
+    "request": {
+      "method": "POST", "path": "/api/events/search", "headers": {"content-type": "application/json"},
+      "body": {"communityId": "11111111-1111-4111-8111-111111111111"}
+    },
+    "expected": {
+      "status": 201, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {"envelope": ["ok", "data"], "data_type": "object", "item_keys": ["events", "total"], "invariants": []}
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96",
+        "src/entities/Event/routes/getEventList.ts:130-142,281-286,318-331",
+        "src/entities/Event/model.ts:273-276"
+      ]
+    },
+    "notes": "Body `communityId` is NOT validated (getEventListByPlacesBodySchema exists in schemas.ts:495-516 but no route uses it); it is used as-is in `e.community_id = $1`. The answer takes the `{events,total}` form."
+  },
+  {
+    "id": "events.post_search.place_ids_not_array", "area": "events",
+    "request": {
+      "method": "POST", "path": "/api/events/search", "headers": {"content-type": "application/json"},
+      "body": {"placeIds": "abc"}
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [{"instancePath": "/places_ids", "keyword": "type", "message": "must be array"}],
+          "messages": ["places_ids must be array {\"type\":\"array\"}"]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:119,139-142",
+        "src/entities/Event/schemas.ts:23-171",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/entities/Event/schemas.ts:126-135"
+      ]
+    },
+    "notes": "A string placeIds lands in the query as places_ids and fails `type: array`. ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.post_search.place_ids_empty_item", "area": "events",
+    "request": {
+      "method": "POST", "path": "/api/events/search", "headers": {"content-type": "application/json"},
+      "body": {"placeIds": [""]}
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [
+            {
+              "instancePath": "/places_ids/0", "keyword": "minLength",
+              "message": "must NOT have fewer than 1 characters"
+            }
+          ],
+          "messages": ["places_ids/0 must NOT have fewer than 1 characters {\"limit\":1}"]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEventList.ts:119,139-142",
+        "src/entities/Event/schemas.ts:23-171",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/entities/Event/schemas.ts:126-135"
+      ]
+    },
+    "notes": "places_ids items have minLength 1. ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_event.approved_anonymous", "area": "events",
+    "request": {"method": "GET", "path": "/api/events/{event_id}"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "object", "item_keys": "events.$defs.event_record",
+        "optional_keys": ["previous_place_id"],
+        "invariants": [
+          "data.id == '{event_id}'", "data.approved == true", "data.rejected == false",
+          "data.attending == false"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEvent.ts:29-96",
+        "src/entities/Event/schemas.ts:11-21", "src/entities/Event/model.ts:121-157",
+        "src/entities/Event/model.ts:482-515",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/migrations/1584428582715_create-events.ts:8-62",
+        "src/migrations/1585075363316_add-url-userName-and-sceneName-to-event.ts",
+        "src/migrations/1592832550779_add-trending-props-to-events.ts:5-13",
+        "src/migrations/1591719525873_replace-active-until-props-on-events.ts:7-22",
+        "src/migrations/1772150400000_migrate-world-event-place-ids.ts:8-34",
+        "src/migrations/1780099200000_add-deleted-state-to-events.ts:8-35"
+      ]
+    },
+    "notes": "getEventWithOptions returns {...toPublic(event, profile), attending}; attending is false without a user. Key set = every column of `events` (SELECT e.*; migrations listed) minus `textsearch` (set undefined by EventModel.build so JSON drops it) minus contact/details (omitted by toPublic when the requester is not the creator), plus build()'s scene_name/coordinates and toPublic()'s attending/position/live. `previous_place_id` is a rollback column the 1772150400000 migration adds and never drops, so upstream serves it; it is optional here so dcl-one need not reproduce the artifact."
+  },
+  {
+    "id": "events.get_event.pending_anonymous", "area": "events",
+    "request": {"method": "GET", "path": "/api/events/{event_id}"},
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found event \"{event_id}\"", "code": "not_found"},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEvent.ts:29-96",
+        "src/entities/Event/schemas.ts:11-21", "src/entities/Event/model.ts:121-157",
+        "src/entities/Event/model.ts:482-515",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64"
+      ]
+    },
+    "harness": {"event_id": "pending"},
+    "notes": "Not approved and no user -> RequestError(`Not found event \"<id>\"`, 404) (getEvent.ts:61-71)."
+  },
+  {
+    "id": "events.get_event.rejected_anonymous", "area": "events",
+    "request": {"method": "GET", "path": "/api/events/{event_id}"},
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found event \"{event_id}\"", "code": "not_found"},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEvent.ts:29-96",
+        "src/entities/Event/schemas.ts:11-21", "src/entities/Event/model.ts:121-157",
+        "src/entities/Event/model.ts:482-515",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64"
+      ]
+    },
+    "harness": {"event_id": "rejected"},
+    "notes": "event.rejected without includeRejected and without a user -> 404 with the same literal message."
+  },
+  {
+    "id": "events.get_event.deleted_anonymous", "area": "events",
+    "request": {"method": "GET", "path": "/api/events/{event_id}"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "object", "item_keys": "events.$defs.event_record",
+        "optional_keys": ["previous_place_id"],
+        "invariants": ["data.id == '{event_id}'", "data.deleted_by_user == true", "data.approved == true"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEvent.ts:29-96",
+        "src/entities/Event/schemas.ts:11-21", "src/entities/Event/model.ts:121-157",
+        "src/entities/Event/model.ts:482-515",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64"
+      ]
+    },
+    "harness": {"event_id": "deleted"},
+    "notes": "Upstream's id read checks approved/rejected only (getEvent.ts:61-79); a soft-deleted but approved event is still served by id, although every list hides it. Recorded as upstream behaviour; the review may decide dcl-one should hide it instead."
+  },
+  {
+    "id": "events.get_event.pending_signed_owner", "area": "events",
+    "request": {"method": "GET", "path": "/api/events/{event_id}", "auth": "signed:owner"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "object", "item_keys": "events.$defs.event_record_owner",
+        "optional_keys": ["previous_place_id"],
+        "invariants": ["data.id == '{event_id}'", "data.approved == false", "data.rejected == false"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEvent.ts:29-96",
+        "src/entities/Event/schemas.ts:11-21", "src/entities/Event/model.ts:121-157",
+        "src/entities/Event/model.ts:482-515",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/entities/Event/routes/getEvent.ts:98-108",
+        "decentraland-gatsby@9.0.1 dist/entities/Auth/middleware.js:35-49"
+      ]
+    },
+    "harness": {"event_id": "pending"},
+    "notes": "canReadEvent: event.user === profile.user. toPublic keeps contact/details for the creator."
+  },
+  {
+    "id": "events.get_event.pending_signed_user", "area": "events",
+    "request": {"method": "GET", "path": "/api/events/{event_id}", "auth": "signed:user"},
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found event \"{event_id}\"", "code": "not_found"},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEvent.ts:29-96",
+        "src/entities/Event/schemas.ts:11-21", "src/entities/Event/model.ts:121-157",
+        "src/entities/Event/model.ts:482-515",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64",
+        "src/entities/Event/routes/getEvent.ts:98-108", "src/entities/ProfileSettings/utils.ts:13-32",
+        "decentraland-gatsby@9.0.1 dist/entities/Auth/middleware.js:35-49"
+      ]
+    },
+    "harness": {"event_id": "pending"},
+    "notes": "A signed wallet that is not admin, not the creator and has no ApproveAnyEvent/EditAnyEvent permission gets the same 404."
+  },
+  {
+    "id": "events.get_event.not_uuid", "area": "events",
+    "request": {"method": "GET", "path": "/api/events/abc"},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [{"instancePath": "/event_id", "keyword": "format", "message": "must match format \"uuid\""}],
+          "messages": ["event_id must match format \"uuid\" {\"format\":\"uuid\"}"]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEvent.ts:19-20,35",
+        "src/entities/Event/schemas.ts:11-21",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64"
+      ]
+    },
+    "notes": "validateGetEventParams(req.params) runs before the isUUID 404 branch, so a non-uuid id is a 400. ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_event.missing", "area": "events",
+    "request": {"method": "GET", "path": "/api/events/{event_id}"},
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found event \"{event_id}\"", "code": "not_found"},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getEvent.ts:29-96",
+        "src/entities/Event/schemas.ts:11-21", "src/entities/Event/model.ts:121-157",
+        "src/entities/Event/model.ts:482-515",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64"
+      ]
+    },
+    "harness": {"event_id": "missing"}, "notes": "findOne returns nothing -> 404 (getEvent.ts:48-53)."
+  },
+  {
+    "id": "events.get_event.bearer_wrong_read", "area": "events",
+    "request": {"method": "GET", "path": "/api/events/{event_id}", "auth": "bearer:wrong"},
+    "expected": {
+      "status": 401, "body": null, "body_match": "shape",
+      "shape": {"invariants": ["body contains 'Unauthorized'"]}
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96",
+        "src/entities/Event/routes/middleware/adminBearer.ts:18-64", "src/server.ts:48-72"
+      ]
+    },
+    "notes": "Same adminBearer path as events.get_events.bearer_wrong: 401 through Express's default HTML error page; do not reproduce the HTML, keep the status."
+  },
+  {
+    "id": "events.get_attendees.attended", "area": "events",
+    "request": {"method": "GET", "path": "/api/events/{event_id}/attendees"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "array",
+        "item_keys": ["event_id", "user", "user_name", "created_at"],
+        "invariants": ["data.length >= 1", "data.length <= 500", "every item.event_id == '{event_id}'"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/EventAttendee/routes.ts:21,35-42", "src/entities/EventAttendee/model.ts:19-40",
+        "src/entities/EventAttendee/types.ts:1-6", "src/entities/Event/routes/getEvent.ts:29-96",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61"
+      ]
+    },
+    "harness": {"event_id": "attended"},
+    "notes": "listByEventId SELECTs exactly event_id, user, user_name, created_at ORDER BY created_at DESC, LIMIT 500 (model.ts:27-34). The route resolves the event through getEvent first."
+  },
+  {
+    "id": "events.get_attendees.pending_anonymous", "area": "events",
+    "request": {"method": "GET", "path": "/api/events/{event_id}/attendees"},
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found event \"{event_id}\"", "code": "not_found"},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/EventAttendee/routes.ts:21,35-42", "src/entities/EventAttendee/model.ts:19-40",
+        "src/entities/EventAttendee/types.ts:1-6", "src/entities/Event/routes/getEvent.ts:29-96",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64"
+      ]
+    },
+    "harness": {"event_id": "pending"},
+    "notes": "getEvent(req) applies the same visibility as GET /api/events/{id}: pending and rejected events are 404 for anonymous callers; deleted-but-approved ones are listable."
+  },
+  {
+    "id": "events.get_attendees.missing", "area": "events",
+    "request": {"method": "GET", "path": "/api/events/{event_id}/attendees"},
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found event \"{event_id}\"", "code": "not_found"},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/EventAttendee/routes.ts:21,35-42", "src/entities/EventAttendee/model.ts:19-40",
+        "src/entities/EventAttendee/types.ts:1-6", "src/entities/Event/routes/getEvent.ts:29-96",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64"
+      ]
+    },
+    "harness": {"event_id": "missing"}
+  },
+  {
+    "id": "events.get_attendees.not_uuid", "area": "events",
+    "request": {"method": "GET", "path": "/api/events/abc/attendees"},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid data was sent to the server", "code": "bad_request",
+        "data": {
+          "errors": [{"instancePath": "/event_id", "keyword": "format", "message": "must match format \"uuid\""}],
+          "messages": ["event_id must match format \"uuid\" {\"format\":\"uuid\"}"]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/EventAttendee/routes.ts:21,35-42", "src/entities/EventAttendee/model.ts:19-40",
+        "src/entities/EventAttendee/types.ts:1-6", "src/entities/Event/routes/getEvent.ts:29-96",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "src/entities/Event/schemas.ts:11-21",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/validate.js:9-33",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64"
+      ]
+    },
+    "notes": "The params schema of getEvent applies. ajv 8 (gatsby Schema/index.js builds `new Ajv()` with defaults: allErrors off, no coercion) so exactly one error is reported; messages[0] is `<instancePath without leading slash> <message> <JSON.stringify(params)>` per gatsby Route/validate.js. errors[0] is listed with instancePath/keyword/message only; schemaPath/params may differ."
+  },
+  {
+    "id": "events.get_categories.list", "area": "events",
+    "request": {"method": "GET", "path": "/api/events/categories"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "array",
+        "item_keys": ["name", "active", "created_at", "updated_at", "i18n"],
+        "invariants": [
+          "data.length >= 1", "every item.active == true",
+          "doc: ordered by name asc; i18n is {en: <label from src/intl/en.json categories>}",
+          "doc: upstream seed (migration 1651240433447) = art,causes,competition,education,gambling,gaming,giveaway,health,hobbies,identity,live,music,networking,nft,other,party,play,poap,religion,shopping,social,sports,talks,town,tv"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/EventCategory/routes.ts:9-30", "src/entities/EventCategory/types.ts:1-10",
+        "src/migrations/1651240433447_create-tag-category.ts:9-73", "src/intl/en.json",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61"
+      ]
+    },
+    "notes": "Not a constant: rows come from event_categories WHERE active ORDER BY name, each extended with i18n.en from en.json. The migration seeds the 25 names listed, all active; `data.length == 25` holds only if the harness seeds the same table, so it is left as documentation."
+  },
+  {
+    "id": "events.get_schedules.list", "area": "events",
+    "request": {"method": "GET", "path": "/api/schedules"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "array", "item_keys": "events.$defs.schedule",
+        "invariants": [
+          "data.length >= 1",
+          "doc: only rows with active_until > now() (model.ts:17-18); the `active` flag is not filtered"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Schedule/routes.ts:26-46", "src/entities/Schedule/model.ts:15-20",
+        "src/entities/Schedule/types.ts:1-13", "src/migrations/1654102204538_schedules-to-db.ts:10-57",
+        "src/migrations/1667216550571_add-theme-prop-to-schedule.ts",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61"
+      ]
+    },
+    "notes": "SELECT * FROM schedule WHERE active_until > now; no ordering. Key set = the table columns (migration + theme)."
+  },
+  {
+    "id": "events.get_schedule.existing", "area": "events",
+    "request": {"method": "GET", "path": "/api/schedules/{schedule_id}"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "object", "item_keys": "events.$defs.schedule",
+        "invariants": [
+          "data.id == '{schedule_id}'", "data.name == 'Harness Season'", "data.theme == null",
+          "data.active == true"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Schedule/routes.ts:26-46", "src/entities/Schedule/model.ts:15-20",
+        "src/entities/Schedule/types.ts:1-13", "src/migrations/1654102204538_schedules-to-db.ts:10-57",
+        "src/migrations/1667216550571_add-theme-prop-to-schedule.ts",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61"
+      ]
+    },
+    "notes": "findOne({id}) and the row is returned as-is."
+  },
+  {
+    "id": "events.get_schedule.missing", "area": "events",
+    "request": {"method": "GET", "path": "/api/schedules/{schedule_id}"},
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Schedule \"{schedule_id}\" not found", "code": "not_found"},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Schedule/routes.ts:26-46", "src/entities/Schedule/model.ts:15-20",
+        "src/entities/Schedule/types.ts:1-13", "src/migrations/1654102204538_schedules-to-db.ts:10-57",
+        "src/migrations/1667216550571_add-theme-prop-to-schedule.ts",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64"
+      ]
+    },
+    "harness": {"schedule_id": "missing"}, "notes": "Literal message from routes.ts:42."
+  },
+  {
+    "id": "events.get_schedule.not_uuid", "area": "events",
+    "request": {"method": "GET", "path": "/api/schedules/abc"},
+    "expected": {"status": 404, "content_type": "application/json", "body": {"ok": false}, "body_match": "subset"},
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Schedule/routes.ts:26-46", "src/entities/Schedule/model.ts:15-20",
+        "src/entities/Schedule/types.ts:1-13", "src/migrations/1654102204538_schedules-to-db.ts:10-57",
+        "src/migrations/1667216550571_add-theme-prop-to-schedule.ts",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64"
+      ]
+    },
+    "notes": "UPSTREAM 500, DO NOT REPRODUCE: the route has no param validation (routes.ts:38-46) and `findOne({id:'abc'})` hits the UUID column, so Postgres raises `invalid input syntax for type uuid` and handleExpressError answers 500 with the pg message. The 404 here is the behaviour of the same route for an unknown id, not derived from upstream; drop or adjust this entry if the suite must record upstream only."
+  },
+  {
+    "id": "events.sitemap.index", "area": "events",
+    "request": {"method": "GET", "path": "/events/sitemap.xml"},
+    "expected": {
+      "status": 200, "content_type": "application/xml", "body": null, "body_match": "shape",
+      "shape": {
+        "root": "sitemapindex",
+        "invariants": [
+          "body contains '<?xml version=\"1.0\" encoding=\"UTF-8\"?>'",
+          "body contains '<sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">'",
+          "body contains '<sitemap><loc>https://events.decentraland.org/sitemap.static.xml</loc></sitemap>'",
+          "body contains '<sitemap><loc>https://events.decentraland.org/sitemap.schedules.xml</loc></sitemap>'",
+          "body contains '<loc>https://events.decentraland.org/sitemap.events.xml?page=0</loc>'",
+          "body contains '</sitemapindex>'"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/server.ts:76", "src/entities/Sitemap/routes.ts:10-24", "src/entities/Event/utils.ts:29-62",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleRaw.js:7-10",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "src/entities/Sitemap/routes.ts:26-53", "src/entities/Event/model.ts:288-290"
+      ]
+    },
+    "notes": "Loc prefix is EVENTS_BASE_URL (default https://events.decentraland.org, utils.ts:29-32); a deployment that sets it changes the prefix. Pages = ceil(count(approved)/100); countEvents counts approved rows regardless of deletion, so the seeded 5 approved events give one page (?page=0). handleRaw sends the string with res.type('application/xml') and status 200."
+  },
+  {
+    "id": "events.sitemap.static", "area": "events",
+    "request": {"method": "GET", "path": "/events/sitemap.static.xml"},
+    "expected": {
+      "status": 200, "content_type": "application/xml", "body": null, "body_match": "shape",
+      "shape": {
+        "root": "urlset",
+        "invariants": [
+          "body contains '<?xml version=\"1.0\" encoding=\"UTF-8\"?>'",
+          "body contains '<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">'",
+          "body contains '<url><loc>https://events.decentraland.org/</loc></url>'",
+          "body contains '<url><loc>https://events.decentraland.org/submit/</loc></url>'",
+          "body contains '</urlset>'"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/server.ts:76", "src/entities/Sitemap/routes.ts:10-24", "src/entities/Event/utils.ts:29-62",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleRaw.js:7-10",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "src/entities/Sitemap/routes.ts:55-63"
+      ]
+    },
+    "notes": "Fixed two-url document; the whole body is the concatenation of these pieces."
+  },
+  {
+    "id": "events.sitemap.events_no_page", "area": "events",
+    "request": {"method": "GET", "path": "/events/sitemap.events.xml"},
+    "expected": {
+      "status": 200, "content_type": "application/xml", "body": null, "body_match": "shape",
+      "shape": {
+        "root": "urlset",
+        "invariants": [
+          "body contains '<?xml version=\"1.0\" encoding=\"UTF-8\"?>'",
+          "body contains '<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"></urlset>'"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/server.ts:76", "src/entities/Sitemap/routes.ts:10-24", "src/entities/Event/utils.ts:29-62",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleRaw.js:7-10",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "src/entities/Sitemap/routes.ts:65-73"
+      ]
+    },
+    "notes": "Number(undefined) is NaN -> the empty urlset branch."
+  },
+  {
+    "id": "events.sitemap.events_page_0", "area": "events",
+    "request": {"method": "GET", "path": "/events/sitemap.events.xml", "query": {"page": "0"}},
+    "expected": {
+      "status": 200, "content_type": "application/xml", "body": null, "body_match": "shape",
+      "shape": {
+        "root": "urlset",
+        "invariants": [
+          "body contains '<?xml version=\"1.0\" encoding=\"UTF-8\"?>'",
+          "body contains '<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">'",
+          "body contains '<url><loc>https://events.decentraland.org/event/?id={event_id}</loc></url>'",
+          "body contains '</urlset>'"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/server.ts:76", "src/entities/Sitemap/routes.ts:10-24", "src/entities/Event/utils.ts:29-62",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleRaw.js:7-10",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "src/entities/Sitemap/routes.ts:65-82", "src/entities/Event/model.ts:292-305",
+        "src/entities/Event/types.ts:321"
+      ]
+    },
+    "notes": "Page 0 lists approved, not-deleted events ordered by created_at ASC, 100 per page (SITEMAP_ITEMS_PER_PAGE); the seeded approved event is in it. eventUrl = <base>/event/?id=<uuid> (utils.ts:52-56). Rejected-but-approved rows are not excluded by this query."
+  },
+  {
+    "id": "events.sitemap.events_page_abc", "area": "events",
+    "request": {"method": "GET", "path": "/events/sitemap.events.xml", "query": {"page": "abc"}},
+    "expected": {
+      "status": 200, "content_type": "application/xml", "body": null, "body_match": "shape",
+      "shape": {
+        "root": "urlset",
+        "invariants": [
+          "body contains '<?xml version=\"1.0\" encoding=\"UTF-8\"?>'",
+          "body contains '<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"></urlset>'"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/server.ts:76", "src/entities/Sitemap/routes.ts:10-24", "src/entities/Event/utils.ts:29-62",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleRaw.js:7-10",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "src/entities/Sitemap/routes.ts:65-73"
+      ]
+    },
+    "notes": "Non-finite page -> empty urlset, status 200."
+  },
+  {
+    "id": "events.sitemap.events_page_negative", "area": "events",
+    "request": {"method": "GET", "path": "/events/sitemap.events.xml", "query": {"page": "-1"}},
+    "expected": {
+      "status": 200, "content_type": "application/xml", "body": null, "body_match": "shape",
+      "shape": {
+        "root": "urlset",
+        "invariants": [
+          "body contains '<?xml version=\"1.0\" encoding=\"UTF-8\"?>'",
+          "body contains '<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"></urlset>'"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/server.ts:76", "src/entities/Sitemap/routes.ts:10-24", "src/entities/Event/utils.ts:29-62",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleRaw.js:7-10",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "src/entities/Sitemap/routes.ts:65-82", "src/entities/Event/model.ts:292-305"
+      ]
+    },
+    "notes": "UPSTREAM 500, DO NOT REPRODUCE: `String(-1 | 0) === '-1'` passes the guard (routes.ts:67), so getSitemapEvents runs `OFFSET -100` and Postgres fails (`OFFSET must not be negative`); handleExpressError then answers a 500 JSON envelope. The empty urlset expected here is the route's own answer for other invalid pages, chosen as the sane target; adjust if the suite must record upstream only."
+  },
+  {
+    "id": "events.sitemap.schedules", "area": "events",
+    "request": {"method": "GET", "path": "/events/sitemap.schedules.xml"},
+    "expected": {
+      "status": 200, "content_type": "application/xml", "body": null, "body_match": "shape",
+      "shape": {
+        "root": "urlset",
+        "invariants": [
+          "body contains '<?xml version=\"1.0\" encoding=\"UTF-8\"?>'",
+          "body contains '<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">'",
+          "body contains '<url><loc>https://events.decentraland.org/schedule/?id={schedule_id}</loc></url>'",
+          "body contains '</urlset>'"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/server.ts:76", "src/entities/Sitemap/routes.ts:10-24", "src/entities/Event/utils.ts:29-62",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleRaw.js:7-10",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "src/entities/Sitemap/routes.ts:84-94"
+      ]
+    },
+    "notes": "ScheduleModel.find() with no filter: every schedule row, inactive or expired included. scheduleUrl = <base>/schedule/?id=<uuid> (utils.ts:58-62)."
+  },
+  {
+    "id": "events.unknown_route.api_nope", "area": "events",
+    "request": {"method": "GET", "path": "/api/nope"},
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "NotFound", "code": "not_found"}, "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/server.ts:48-72",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64"
+      ]
+    },
+    "notes": "The last /api middleware is handle(() => { throw new RequestError('NotFound', 404) }) (server.ts:69-71); toJSON gives ok/error/code only."
+  },
+  {
+    "id": "events.get_attending.anonymous", "area": "events",
+    "request": {"method": "GET", "path": "/api/events/attending"},
+    "expected": {
+      "status": 401, "content_type": "application/json",
+      "body": {"ok": false, "error": "Unauthorized", "code": "unauthorized"}, "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/Event/routes/index.ts:65-96", "src/entities/Event/routes/getAttendingEventList.ts:6-10",
+        "decentraland-gatsby@9.0.1 dist/entities/Auth/middleware.js:35-49",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/middleware.js:8-15",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64"
+      ]
+    },
+    "notes": "auth() without optional: no x-identity-auth-chain-0 header -> RequestError('Unauthorized', 401) via middleware() -> handleExpressError JSON."
+  },
+  {
+    "id": "events.profiles_me_settings.anonymous", "area": "events",
+    "request": {"method": "GET", "path": "/api/profiles/me/settings"},
+    "expected": {
+      "status": 401, "content_type": "application/json",
+      "body": {"ok": false, "error": "Unauthorized", "code": "unauthorized"}, "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/ProfileSettings/routes.ts:11-30",
+        "decentraland-gatsby@9.0.1 dist/entities/Auth/middleware.js:35-49",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/middleware.js:8-15",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64"
+      ]
+    }
+  },
+  {
+    "id": "events.profiles_settings.anonymous", "area": "events",
+    "request": {"method": "GET", "path": "/api/profiles/settings"},
+    "expected": {
+      "status": 401, "content_type": "application/json",
+      "body": {"ok": false, "error": "Unauthorized", "code": "unauthorized"}, "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/ProfileSettings/routes.ts:11-30",
+        "decentraland-gatsby@9.0.1 dist/entities/Auth/middleware.js:35-49",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/middleware.js:8-15",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64"
+      ]
+    },
+    "notes": "With a signed non-admin wallet this route answers 403 Forbidden (listProfileSettings.ts:9-16); anonymous is refused earlier by auth()."
+  },
+  {
+    "id": "events.profiles_subscriptions.anonymous", "area": "events",
+    "request": {"method": "GET", "path": "/api/profiles/subscriptions"},
+    "expected": {
+      "status": 401, "content_type": "application/json",
+      "body": {"ok": false, "error": "Unauthorized", "code": "unauthorized"}, "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/entities/ProfileSubscription/routes.ts:17-34",
+        "decentraland-gatsby@9.0.1 dist/entities/Auth/middleware.js:35-49",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/middleware.js:8-15",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-31",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-29,43-64"
+      ]
+    }
+  },
+  {
+    "id": "events.profile_face.not_an_address", "area": "events",
+    "request": {"method": "GET", "path": "/api/profile/nobody/face.png"},
+    "expected": {
+      "status": 302, "body": null, "body_match": "shape",
+      "shape": {"invariants": ["body contains 'https://decentraland.org/images/male.png'"]},
+      "headers": {"location": "https://decentraland.org/images/male.png", "cache-control": "max-age=86400"}
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/server.ts:48-72", "decentraland-gatsby@9.0.1 dist/entities/Profile/routes.js:13-18,20-24,51-71",
+        "decentraland-gatsby@9.0.1 dist/utils/loader/profile.js:12-23"
+      ]
+    },
+    "notes": "A user that is not an Ethereum address skips Catalyst and gets createDefaultProfile, whose snapshots.face256 is the DEFAULT_AVATAR; redirectTo sets Cache-Control max-age=86400 and res.redirect(302, url). For a real address the target comes from the Catalyst profile (external) and is not derivable."
+  },
+  {
+    "id": "events.profile_body.not_an_address", "area": "events",
+    "request": {"method": "GET", "path": "/api/profile/nobody/body.png"},
+    "expected": {
+      "status": 302, "body": null, "body_match": "shape",
+      "shape": {"invariants": ["body contains 'https://decentraland.org/images/male.png'"]},
+      "headers": {"location": "https://decentraland.org/images/male.png", "cache-control": "max-age=86400"}
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/server.ts:48-72", "decentraland-gatsby@9.0.1 dist/entities/Profile/routes.js:13-18,20-24,51-71",
+        "decentraland-gatsby@9.0.1 dist/utils/loader/profile.js:12-23"
+      ]
+    },
+    "notes": "The default profile's snapshots.body is '' which fails isURL, so redirectTo falls back to DEFAULT_AVATAR."
+  },
+  {
+    "id": "events.status.envelope", "area": "events", "request": {"method": "GET", "path": "/api/status"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": null, "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "object", "item_keys": ["image", "version", "timestamp"],
+        "invariants": []
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/events@b60d5bbd",
+      "refs": [
+        "src/server.ts:48-58", "decentraland-gatsby@9.0.1 dist/entities/Route/routes/status.js:9-26",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:26-61"
+      ]
+    },
+    "notes": "status() is mounted without an extra handler, so data is exactly {image, version, timestamp}; image/version come from the IMAGE env (`events:<ts>` default). Open: `/api/status` strict three fields `{image, version, timestamp}` as here, or dcl-one's superset with `catalogue`, `mirrors`, `configured_mirrors` kept on this path (else moved to `/v1/status`). The entry asserts upstream's envelope until that is settled."
+  }
+]

@@ -679,14 +679,14 @@ mod tests {
         ) -> Result<(), sqlx::Error> {
             self.stub.set_private_messages_privacy(a, p).await
         }
-        async fn notify_community_voice_ended(
+        async fn record_community_voice_ended(
             &self,
             c: CommunityId,
             k: &str,
             e: &Value,
             at: NaiveDateTime,
         ) -> Result<(), sqlx::Error> {
-            self.stub.notify_community_voice_ended(c, k, e, at).await
+            self.stub.record_community_voice_ended(c, k, e, at).await
         }
         async fn notify_streaming_notification(
             &self,

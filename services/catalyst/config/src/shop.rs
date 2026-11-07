@@ -122,6 +122,22 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub marketplace_mana_transfers_index_enabled: bool,
 
+    /// The smallest MANA transfer (wei) a tip forward notifies; smaller ones are refused.
+    #[arg(
+        long,
+        env = "MARKETPLACE_TIP_MIN_AMOUNT_WEI",
+        default_value = "1000000000000000000"
+    )]
+    pub marketplace_tip_min_amount_wei: String,
+
+    /// The oldest transfer (block time before the forward) a tip forward notifies.
+    #[arg(long, env = "MARKETPLACE_TIP_MAX_AGE_SECS", default_value_t = 86_400)]
+    pub marketplace_tip_max_age_secs: u64,
+
+    /// Tip forwards waiting for the MANA transfer index, across every sender.
+    #[arg(long, env = "MARKETPLACE_TIP_MAX_PENDING", default_value_t = 2_000)]
+    pub marketplace_tip_max_pending: u64,
+
     #[arg(long, env = "MARKETPLACE_INDEX_INTERVAL_SECS", default_value_t = 5)]
     pub marketplace_index_interval_secs: u64,
 
@@ -440,6 +456,19 @@ pub struct ShopConfig {
     )]
     pub shop_base_url: String,
 
+    /// The feature-flags service the Shop reads decentraland.org's `dapps` rollout flags from (as sites'
+    /// `FEATURE_FLAGS_URL`); empty reads only this node's local overrides (`explore_api.feature_flags_local`).
+    #[arg(long, env = "SHOP_FEATURE_FLAGS_URL", default_value = "")]
+    pub shop_feature_flags_url: String,
+
+    /// The site the flags are asked for: the service answers by Referer (as sites' `FEATURE_FLAGS_ORIGIN`).
+    /// The mirror posture asks as decentraland.org; empty asks as the origin of `SHOP_BASE_URL`.
+    #[arg(long, env = "SHOP_FEATURE_FLAGS_ORIGIN", default_value = "")]
+    pub shop_feature_flags_origin: String,
+
+    #[arg(long, env = "SHOP_FEATURE_FLAGS_REFRESH_SECS", default_value_t = 60)]
+    pub shop_feature_flags_refresh_secs: u64,
+
     /// The availability alert outbox worker's cadence.
     #[arg(long, env = "SHOP_NOTIFY_DELIVERY_INTERVAL_SECS", default_value_t = 30)]
     pub shop_notify_delivery_interval_secs: u64,
@@ -482,6 +511,11 @@ pub struct ShopConfig {
     /// Index no further (a development bound; an index held short is never published).
     #[arg(long, env = "CREDITS_USAGE_STOP_BLOCK")]
     pub credits_usage_stop_block: Option<u64>,
+
+    /// Walk the Rentals contract's logs on Ethereum (shop.rental_event, over TRADE_RPC_URLS 1=
+    /// or, on mainnet, ETH_RPC_URL): listing status sync and the rental notifications.
+    #[arg(long, env = "SHOP_RENTALS_INDEX_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub shop_rentals_index_enabled: bool,
 }
 
 #[cfg(test)]
@@ -692,6 +726,10 @@ mod tests {
         assert!(
             c.shop.credits_checkout_success_url.is_empty()
                 && c.shop.credits_checkout_cancel_url.is_empty()
+        );
+        assert!(
+            !c.shop.shop_rentals_index_enabled,
+            "the rentals index is opt-in"
         );
         assert!(
             !c.shop.credits_usage_index_enabled

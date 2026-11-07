@@ -31,7 +31,10 @@ use super::wire::{
 };
 use super::{SharedState, calls, verify};
 use crate::policy::{Authoritative, CartLine, Quote, Refusal, eligibility, partition, quote};
-use crate::types::{EvmAddress, ManaUsdRate, ManaWei, PaymentMethod, Session, SettlementGroupKey};
+use crate::types::{
+    AssetKind, EvmAddress, ManaUsdRate, ManaWei, PaymentMethod, SaleKind, Session,
+    SettlementGroupKey,
+};
 
 pub const ROUTE: &str = "/v1/purchase-offers";
 
@@ -367,6 +370,12 @@ impl Resolved {
     }
 }
 
+/// Whether a line may be quoted under the Marketplace rollout: a primary sale (a mint, a NAME registration) always,
+/// a resale or a rental only while it is on.
+pub(crate) fn marketplace_offered(sale: SaleKind, kind: AssetKind, marketplace_on: bool) -> bool {
+    marketplace_on || (sale != SaleKind::Secondary && kind != AssetKind::Rental)
+}
+
 /// One line's offer, or why there is none.
 pub async fn quote_line(
     state: &SharedState,
@@ -403,6 +412,21 @@ pub async fn quote_line(
         Ok(a) => a,
         Err(refusal) => return OfferAnswer::Error(refused(index, refusal)),
     };
+    // A resale (an existing token, LAND and NAMEs included) and a rental are the Marketplace's: while its rollout
+    // is off they are not offered at all (`market::features`), whatever the session.
+    if !marketplace_offered(
+        authoritative.sale(),
+        authoritative.kind(),
+        state.market.marketplace_features(),
+    ) {
+        return OfferAnswer::Error(LineError {
+            index,
+            error: "Forbidden",
+            message: crate::market::features::refusal(),
+            refusal: None,
+            source: None,
+        });
+    }
     let rate = rates.for_line(&authoritative);
     let elig = eligibility(&authoritative);
     let mut quotes = Vec::new();
@@ -540,6 +564,46 @@ pub type Shared = Arc<super::State>;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_marketplace_rollout_gates_resales_and_rentals_only() {
+        use crate::types::{AssetKind, SaleKind};
+        assert!(marketplace_offered(
+            SaleKind::PrimaryMint,
+            AssetKind::Wearable,
+            false
+        ));
+        assert!(marketplace_offered(
+            SaleKind::PrimaryNameRegistration,
+            AssetKind::Name,
+            false
+        ));
+        assert!(!marketplace_offered(
+            SaleKind::Secondary,
+            AssetKind::Wearable,
+            false
+        ));
+        assert!(!marketplace_offered(
+            SaleKind::Secondary,
+            AssetKind::Parcel,
+            false
+        ));
+        assert!(!marketplace_offered(
+            SaleKind::PrimaryMint,
+            AssetKind::Rental,
+            false
+        ));
+        assert!(marketplace_offered(
+            SaleKind::Secondary,
+            AssetKind::Parcel,
+            true
+        ));
+        assert!(marketplace_offered(
+            SaleKind::PrimaryMint,
+            AssetKind::Rental,
+            true
+        ));
+    }
 
     #[test]
     fn a_signed_identity_is_an_account_unless_its_metadata_names_a_wallet() {

@@ -120,6 +120,77 @@ fn with_fields(detail: &JsonValue, fields: &[(&str, JsonValue)]) -> JsonValue {
     detail
 }
 
+const CREDITS_GRANT_NS: uuid::Uuid =
+    uuid::Uuid::from_u128(0x8d2f_41c7_5a90_4e3b_b7d6_0c1e_9a4f_62d8);
+/// The old processor's `${CDN_URL}credits/notification-icon.png`.
+const CREDITS_NOTIFICATION_ICON: &str =
+    "https://assets-cdn.decentraland.org/credits/notification-icon.png";
+
+/// The credits-server USD `ON_DEMAND_CREDITS_GRANTED` event as the old
+/// parser stored it, keyed on the grant's audit row.
+fn credits_granted_notification(
+    address: catalyst_social::Address,
+    audit_id: i64,
+    amount: &str,
+    usd_cents: Option<i64>,
+    shop_base_url: &str,
+) -> catalyst_social::notifications::NewNotification {
+    let credits = amount
+        .parse::<serde_json::Number>()
+        .map_or_else(|_| JsonValue::String(amount.into()), JsonValue::Number);
+    let mut metadata = serde_json::json!({ "creditsGranted": credits, "denomination": "USD" });
+    if let Some(cents) = usd_cents {
+        metadata["usdCents"] = cents.into();
+    }
+    metadata["image"] = CREDITS_NOTIFICATION_ICON.into();
+    metadata["title"] = "Credits added to your account".into();
+    metadata["description"] = format!(
+        "You received {} Credits. They never expire: spend them in the Shop.",
+        en_us_amount(amount)
+    )
+    .into();
+    metadata["link"] = shop_base_url.into();
+    let mut n = catalyst_social::notifications::NewNotification::now(
+        address,
+        "credits_on_demand_granted",
+        metadata,
+    );
+    n.id = uuid::Uuid::new_v5(
+        &CREDITS_GRANT_NS,
+        format!("credits-grant:{audit_id}").as_bytes(),
+    );
+    n
+}
+
+/// `Number(x).toLocaleString('en-US')` on a plain decimal: grouped
+/// thousands, at most three fraction digits (truncated).
+fn en_us_amount(amount: &str) -> String {
+    let (int, frac) = amount.split_once('.').unwrap_or((amount, ""));
+    if int.is_empty() || !int.bytes().all(|b| b.is_ascii_digit()) {
+        return amount.to_string();
+    }
+    let int = match int.trim_start_matches('0') {
+        "" => "0",
+        t => t,
+    };
+    let mut out = String::new();
+    for (i, c) in int.chars().enumerate() {
+        if i > 0 && (int.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    let frac = frac
+        .get(..frac.len().min(3))
+        .unwrap_or("")
+        .trim_end_matches('0');
+    if !frac.is_empty() {
+        out.push('.');
+        out.push_str(frac);
+    }
+    out
+}
+
 impl Credits {
     pub async fn find_grant_by_idempotency_key(
         &self,
@@ -240,17 +311,20 @@ impl Credits {
                 ("kind", JsonValue::String(kind.to_string())),
             ],
         );
-        sqlx::query(
+        let (audit_id, usd_cents): (i64, Option<i64>) = sqlx::query_as(
             "WITH a AS ( \
                  INSERT INTO ops.admin_audit (actor, domain, action, target, detail, result) \
                  VALUES ($5, 'credits', 'grant', $1, $6, 'ok') RETURNING id \
              ), l AS ( \
                  INSERT INTO credits.ledger (address, kind, amount, bucket, captcha_ok, admin_audit_id) \
                  SELECT $1, $3, $2::numeric, 'paid', FALSE, a.id FROM a \
+             ), i AS ( \
+                 UPDATE credits.idempotency \
+                 SET available = $4::numeric, applied = $2::numeric \
+                 WHERE scope = 'grant' AND idempotency_key = $7 \
              ) \
-             UPDATE credits.idempotency \
-             SET available = $4::numeric, applied = $2::numeric \
-             WHERE scope = 'grant' AND idempotency_key = $7",
+             SELECT a.id, CASE WHEN c = trunc(c) AND c < 9e18 THEN c::int8 END \
+             FROM a, (SELECT $2::numeric * 10 AS c) cents",
         )
         .bind(address)
         .bind(amount)
@@ -259,8 +333,23 @@ impl Credits {
         .bind(actor)
         .bind(&detail)
         .bind(idempotency_key)
-        .execute(&mut **tx)
+        .fetch_one(&mut **tx)
         .await?;
+
+        // Only an operator grant notifies; purchases and refunds do not.
+        if kind == "grant"
+            && let Ok(recipient) = catalyst_social::Address::parse(address)
+        {
+            let notification = credits_granted_notification(
+                recipient,
+                audit_id,
+                amount,
+                usd_cents,
+                &self.shop_base_url,
+            );
+            catalyst_social::notifications::insert_notifications(&mut **tx, &[notification])
+                .await?;
+        }
 
         Ok(GrantOutcome {
             available,

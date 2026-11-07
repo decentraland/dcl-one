@@ -11,6 +11,7 @@ import {
   subscribe,
 } from "./session";
 import type { SignedRequest } from "./signer";
+import { forgetSignIn, recordSignIn } from "./signin-kind";
 import {
   clearThirdwebSession,
   setThirdwebSession,
@@ -32,6 +33,7 @@ async function identityFromInApp(
   const signer = makeInAppSigner(auth);
   const next = await createIdentityWith(signer.address, signer.personalSign, opts);
   setThirdwebSession({ token: signer.token, address: signer.address });
+  recordSignIn(next.signer, "managed");
   return next;
 }
 
@@ -104,6 +106,7 @@ export function useAuth(): UseAuth {
         if (opts?.walletRdns) selectWallet(opts.walletRdns);
         const { createIdentity } = await import("./identity");
         const next = await createIdentity(opts);
+        recordSignIn(next.signer, "web3");
         setIdentity(next);
         return next;
       } catch (err) {
@@ -211,6 +214,7 @@ export function useAuth(): UseAuth {
     // Magic keeps its own session for the account; sign-out ends it too (magic-session.ts).
     const magicEnded = import("./magic-session").then(({ endMagicSession }) => endMagicSession()).catch(() => {});
     clearStored();
+    forgetSignIn();
     void fetch("/auth/callback", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

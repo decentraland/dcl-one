@@ -754,10 +754,16 @@ pub async fn run_pass(
         if header.hash != stored {
             let to = cur.start_block - 1;
             let mut tx = pool.begin().await?;
+            let replay =
+                super::notice_cursor::plan_replay(&mut tx, name, net, to, cur.last_block).await?;
             ix.rewind(&mut tx, to)
                 .await
                 .context("undoing the reorged range")?;
             rewind(&mut tx, name, net, to).await?;
+            // Cursor rows are locked after the deletes: producers wait only for the commit.
+            if let Some(replay) = replay {
+                replay.apply(&mut tx).await?;
+            }
             tx.commit().await?;
             tracing::warn!(indexer = name, network = net.db_name(), block = cur.last_block, stored, chain = %header.hash, rewound_to = to, "marketplace index: the cursor block's hash changed (a reorg past the confirmation depth); rewound");
             out.reorg_rewound_to = Some(to);

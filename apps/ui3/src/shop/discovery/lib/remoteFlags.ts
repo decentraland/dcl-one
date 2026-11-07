@@ -22,6 +22,13 @@ export const REMOTE_FLAG = {
   suggestedForYou: "shop-suggested-for-you",
   /** Creators' running sales: discounted prices, the Best Deals rail and the deals filter (shop@94584a5c useCreatorSalesEnabled). */
   creatorSales: "shop-creator-sales",
+  /**
+   * The Marketplace inside the Shop: resales, bids, LAND, NAME resale, listing and selling, an item's owners and
+   * sales, favorites lists. Shown only with this on AND a web3 wallet session (market/access.tsx). That only decides
+   * what is drawn: the lock is the node's shop service reading the same key and refusing those calls while it is
+   * off, so the flag is turned on only where the node does.
+   */
+  marketplaceFeatures: "shop-marketplace-features",
 } as const;
 
 export type RemoteFlag = (typeof REMOTE_FLAG)[keyof typeof REMOTE_FLAG];
@@ -48,9 +55,17 @@ function service(): string {
   return (declared || DEFAULT_SERVICE).replace(/\/$/, "");
 }
 
+/** Bumped whenever the answer changes or a read gives up, so a gate waiting for an answer re-renders either way. */
+let version = 0;
+
+function notify(): void {
+  version++;
+  for (const l of listeners) l();
+}
+
 function publish(next: Snapshot | null): void {
   snapshot = next;
-  for (const l of listeners) l();
+  notify();
 }
 
 export async function fetchRemoteFlags(signal?: AbortSignal): Promise<Record<string, boolean>> {
@@ -86,7 +101,11 @@ export function refreshRemoteFlags(now = Date.now()): Promise<void> {
         // Retried once; after that the last answer (or "off") stands until the backoff passes.
       }
     }
-    if (generation === started) failedAt = stamp();
+    if (generation === started) {
+      // The answer stays as it was, but a gate waiting for one moves on: an unread flag is off.
+      failedAt = stamp();
+      notify();
+    }
   })().finally(() => {
     if (inflight === read) inflight = null;
   });
@@ -120,14 +139,35 @@ export function remoteFlag(flag: RemoteFlag): boolean {
   return snapshot?.flags[`${APP}-${flag}`] === true;
 }
 
-/** One rollout flag; false until the service answers yes. */
-export function useRemoteFlag(flag: RemoteFlag): boolean {
-  const current = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+function useRefreshOnMount(): void {
   useEffect(() => {
     void refreshRemoteFlags();
     const onFocus = () => void refreshRemoteFlags();
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, []);
+}
+
+/** One rollout flag; false until the service answers yes. */
+export function useRemoteFlag(flag: RemoteFlag): boolean {
+  const current = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  useRefreshOnMount();
   return current?.flags[`${APP}-${flag}`] === true;
+}
+
+/**
+ * One rollout flag, or null while nothing has answered yet: a gate that would otherwise send a visitor away can
+ * wait for the answer instead. A read that gave up answers false, as a flag that cannot be read is off.
+ */
+export function remoteFlagState(flag: RemoteFlag): boolean | null {
+  if (snapshot) return snapshot.flags[`${APP}-${flag}`] === true;
+  return failedAt !== null ? false : null;
+}
+
+const getVersion = () => version;
+
+export function useRemoteFlagState(flag: RemoteFlag): boolean | null {
+  useSyncExternalStore(subscribe, getVersion, getVersion);
+  useRefreshOnMount();
+  return remoteFlagState(flag);
 }

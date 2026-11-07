@@ -32,6 +32,8 @@ pub struct Credits {
     /// The chain of a configured CreditUsed index (`usage.rs`): the expiry
     /// sweep then waits for the index to read past a pledge's expiry.
     pub(crate) usage_chain: Option<i64>,
+    /// The grant notification's link (`SHOP_BASE_URL`).
+    pub(crate) shop_base_url: Arc<str>,
 }
 
 /// A wallet's balances in integer US cents at the peg (`floor(credits * 10)`;
@@ -67,7 +69,13 @@ impl Credits {
             packs: Arc::new(TtlMap::new(PACKS_CACHE_TTL)),
             kick: Arc::new(Notify::new()),
             usage_chain: None,
+            shop_base_url: crate::subscriptions::DEFAULT_SHOP_BASE_URL.into(),
         }
+    }
+
+    pub fn with_shop_base_url(mut self, url: &str) -> Self {
+        self.shop_base_url = url.trim_end_matches('/').into();
+        self
     }
 
     /// Bounds the authorization expiry sweep by the CreditUsed index of `chain_id`.
