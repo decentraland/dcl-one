@@ -30,9 +30,10 @@ pub const INVALID_CONTENT_LENGTH_MESSAGE: &str = "Invalid Content-Length header.
 pub const TOO_MANY_FIELDS_MESSAGE: &str = "The multipart request has too many fields.";
 pub const TOO_MANY_PARTS_MESSAGE: &str = "The multipart request has too many parts.";
 
-/// The parser's field-count refusal (`multipart/middleware.ts:316`).
+/// Upstream's `fieldsLimit` text (`src/controllers/multipart/middleware.ts`), naming the
+/// route's field cap.
 pub fn too_many_fields_message(max_fields: usize) -> String {
-    format!("The multipart request has too many fields. The maximum allowed is {max_fields}.")
+    format!("{TOO_MANY_FIELDS_MESSAGE} The maximum allowed is {max_fields}.")
 }
 
 pub const MAX_MULTIPART_FIELD_VALUE_BYTES: usize = 1024 * 1024;
