@@ -370,13 +370,13 @@ impl Resolved {
     }
 }
 
-/// One line's offer, or why there is none.
 /// Whether a line may be quoted under the Marketplace rollout: a primary sale (a mint, a NAME registration) always,
 /// a resale or a rental only while it is on.
 pub(crate) fn marketplace_offered(sale: SaleKind, kind: AssetKind, marketplace_on: bool) -> bool {
     marketplace_on || (sale != SaleKind::Secondary && kind != AssetKind::Rental)
 }
 
+/// One line's offer, or why there is none.
 pub async fn quote_line(
     state: &SharedState,
     session: Session,

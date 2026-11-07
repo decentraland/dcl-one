@@ -73,9 +73,8 @@ impl Snapshot {
         }
     }
 
-    /// Replaces the held document (tests that switch a flag mid-run).
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_document(&self, doc: Value) {
+    /// Replaces the held document: a reader that keeps its own copy of an application's flags.
+    pub fn replace(&self, doc: Value) {
         *self.doc.write() = Arc::new(doc);
     }
 
@@ -128,33 +127,39 @@ impl Snapshot {
                 .bind(app)
                 .fetch_optional(pool)
                 .await?;
-        let mut doc = row.map(|(d,)| d).unwrap_or_else(|| {
+        let doc = row.map(|(d,)| d).unwrap_or_else(|| {
             if app == "explorer" {
                 embedded_document()
             } else {
                 json!({"flags": {}, "variants": {}})
             }
         });
-        let overrides: Vec<(String, bool)> = sqlx::query_as(
-            "SELECT name, value FROM explore_api.feature_flags_local WHERE app = $1 ORDER BY name",
-        )
-        .bind(app)
-        .fetch_all(pool)
-        .await?;
-        if !overrides.is_empty() {
-            let flags = doc
-                .as_object_mut()
-                .map(|o| o.entry("flags").or_insert_with(|| json!({})))
-                .and_then(Value::as_object_mut);
-            if let Some(flags) = flags {
-                for (name, value) in overrides {
-                    flags.insert(name, Value::Bool(value));
-                }
-            }
-        }
+        let doc = with_local_overrides(pool, app, doc).await?;
         *self.doc.write() = Arc::new(doc);
         Ok(())
     }
+}
+
+/// `doc` with every `feature_flags_local` override of `app` applied to its `flags`.
+pub async fn with_local_overrides(pool: &PgPool, app: &str, mut doc: Value) -> sqlx::Result<Value> {
+    let overrides: Vec<(String, bool)> = sqlx::query_as(
+        "SELECT name, value FROM explore_api.feature_flags_local WHERE app = $1 ORDER BY name",
+    )
+    .bind(app)
+    .fetch_all(pool)
+    .await?;
+    if !overrides.is_empty() {
+        let flags = doc
+            .as_object_mut()
+            .map(|o| o.entry("flags").or_insert_with(|| json!({})))
+            .and_then(Value::as_object_mut);
+        if let Some(flags) = flags {
+            for (name, value) in overrides {
+                flags.insert(name, Value::Bool(value));
+            }
+        }
+    }
+    Ok(doc)
 }
 
 pub async fn set_local_flag(pool: &PgPool, app: &str, name: &str, value: bool) -> sqlx::Result<()> {
@@ -199,17 +204,15 @@ pub async fn store(pool: &PgPool, app: &str, doc: &Value, etag: Option<&str>) ->
 /// Refresh a separate application's document through the same outbound client,
 /// bounded body reader and persisted flag store as Explorer. A failed fetch or
 /// validation leaves both the persisted and process snapshots unchanged.
-pub async fn refresh_app(
-    state: &Shared,
-    snapshot: &Snapshot,
-    app: &str,
-    url: &str,
+/// One application's document as the service answers it for `referer` (the service picks flags by Referer),
+/// validated. `target` has already passed the caller's SSRF guard.
+pub async fn fetch_document(
+    http: &crate::http::Outbound,
+    target: reqwest::Url,
     referer: &str,
     timeout: std::time::Duration,
-) -> anyhow::Result<()> {
-    let target = state.settings.guarded_url(url)?;
-    let response = state
-        .http
+) -> anyhow::Result<Value> {
+    let response = http
         .get(target)
         .header("referer", referer)
         .timeout(timeout)
@@ -224,6 +227,19 @@ pub async fn refresh_app(
         .context("reading application feature flags")?;
     let doc: Value = serde_json::from_slice(&body).context("feature flags are not JSON")?;
     validate(&doc)?;
+    Ok(doc)
+}
+
+pub async fn refresh_app(
+    state: &Shared,
+    snapshot: &Snapshot,
+    app: &str,
+    url: &str,
+    referer: &str,
+    timeout: std::time::Duration,
+) -> anyhow::Result<()> {
+    let target = state.settings.guarded_url(url)?;
+    let doc = fetch_document(&state.http, target, referer, timeout).await?;
     store(&state.pool, app, &doc, None).await?;
     snapshot.reload(&state.pool, app).await?;
     Ok(())

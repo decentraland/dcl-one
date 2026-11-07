@@ -504,7 +504,7 @@ pub struct MarketplaceState {
     /// response points at are warmed there.
     pub(crate) profile_images: std::sync::OnceLock<crate::social::profile_images::SharedState>,
     /// decentraland.org's `dapps` rollout flags as this node enforces them (`features`); every flag off until read.
-    pub(crate) dapps_flags: Arc<crate::explore::api::feature_flags::Snapshot>,
+    pub(crate) dapps_flags: Arc<features::DappsFlags>,
     /// Where `dapps_flags` is read from (`SHOP_FEATURE_FLAGS_*`).
     pub(crate) flags_source: features::Source,
     /// The chain index's loopback switch: a test that flips it admits a
@@ -542,7 +542,7 @@ impl MarketplaceState {
             read_through: None,
             denylist: Arc::default(),
             profile_images: std::sync::OnceLock::new(),
-            dapps_flags: Arc::new(features::initial_snapshot()),
+            dapps_flags: Arc::new(features::DappsFlags::new()),
             flags_source: features::Source::default(),
             settings,
         }

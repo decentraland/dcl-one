@@ -1,36 +1,37 @@
 //! The `dapps` rollout flags this node enforces: decentraland.org's feature-flags file, the one sites and the
-//! Shop's pages read (apps/ui3 discovery/lib/remoteFlags.ts). One snapshot, refreshed on a timer from the service
-//! when `SHOP_FEATURE_FLAGS_URL` names one, and always reloaded from the stored document with its local
-//! overrides (`explore_api.feature_flags`, `explore_api.feature_flags_local`). Before the first answer, and
-//! whenever the file cannot be read, every flag is off: the features they open stay closed.
+//! Shop's pages read (apps/ui3 discovery/lib/remoteFlags.ts), asked as decentraland.org (the service answers by
+//! Referer). The fetched document is held in memory only: `explore_api.feature_flags` also has a `dapps` row,
+//! which Social writes asking as its own service, and the two answers may differ. On top of it go this node's
+//! local overrides (`explore_api.feature_flags_local`, app `dapps`). Before the first answer, and when the service
+//! is not configured, only the overrides count: every other flag is off and the features it opens stay closed.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::explore::api::feature_flags;
 use anyhow::Context as _;
-use serde_json::Value;
+use parking_lot::Mutex;
+use serde_json::{Value, json};
 
 use super::MarketplaceState;
+use crate::explore::api::feature_flags;
 use crate::jobs::{Jobs, PeriodicCfg};
 
 /// The application the Shop's flags are read under: a key `shop-x` is `dapps-shop-x` in the file.
 pub const APP: &str = "dapps";
 
 /// The Marketplace inside the Shop (apps/ui3 market/access.tsx): resales, bids, LAND, NAME resale, listing an
-/// owned token, favorites lists. Off, this node refuses them: a resale is not quoted, an NFT order or a bid is
-/// not accepted, and a list is not written.
+/// owned token, favorites lists. Off, this node refuses them: a resale or a rental is not quoted, an NFT order or
+/// a bid is not accepted, and a list is not written.
 pub const MARKETPLACE_FEATURES: &str = "shop-marketplace-features";
 
-const BODY_CAP: usize = 4 << 20;
 const TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Where the flags come from (`SHOP_FEATURE_FLAGS_*`, as sites' `FEATURE_FLAGS_URL` and `FEATURE_FLAGS_ORIGIN`).
 #[derive(Clone, Debug)]
 pub struct Source {
-    /// The service's base URL; empty reads only the stored document and its local overrides.
+    /// The service's base URL; empty reads only the local overrides.
     pub url: String,
-    /// The site the flags are asked for: the service answers by the request's Referer.
+    /// The site the flags are asked for (an origin such as `https://decentraland.org`).
     pub origin: String,
     pub refresh: Duration,
 }
@@ -39,10 +40,41 @@ impl Default for Source {
     fn default() -> Self {
         Self {
             url: String::new(),
-            origin: "https://decentraland.org".into(),
+            origin: String::new(),
             refresh: Duration::from_secs(60),
         }
     }
+}
+
+/// The flags as this node enforces them, and the last document the service answered.
+pub struct DappsFlags {
+    snapshot: feature_flags::Snapshot,
+    fetched: Mutex<Option<Value>>,
+}
+
+impl DappsFlags {
+    /// Every flag off until the first read. Tests (and `test-support` builds) start with the Marketplace on, so a
+    /// test of a resale, a bid or a list exercises it; a test of the rollout switches it off.
+    pub(super) fn new() -> Self {
+        let on = cfg!(any(test, feature = "test-support"));
+        Self {
+            snapshot: feature_flags::Snapshot::from_document(document(on)),
+            fetched: Mutex::new(None),
+        }
+    }
+
+    fn enabled(&self, feature: &str) -> bool {
+        self.snapshot.enabled(APP, feature)
+    }
+}
+
+fn document(marketplace: bool) -> Value {
+    let flags = if marketplace {
+        json!({ format!("{APP}-{MARKETPLACE_FEATURES}"): true })
+    } else {
+        json!({})
+    };
+    json!({ "flags": flags, "variants": {} })
 }
 
 impl MarketplaceState {
@@ -53,7 +85,7 @@ impl MarketplaceState {
 
     /// Whether this node offers the Marketplace's features (see [`MARKETPLACE_FEATURES`]).
     pub fn marketplace_features(&self) -> bool {
-        self.dapps_flags.enabled(APP, MARKETPLACE_FEATURES)
+        self.dapps_flags.enabled(MARKETPLACE_FEATURES)
     }
 
     /// Refuses one of the Marketplace's calls while its rollout is off: a 403 that names the flag.
@@ -69,73 +101,49 @@ impl MarketplaceState {
         ))
     }
 
-    /// Reads the service (when configured) into the stored document, then reloads the snapshot from it. A
-    /// failed read keeps the stored document: the last answer stands, and before any answer every flag is off.
+    /// Reads the service (when configured) and applies the local overrides on top. A failed read keeps the last
+    /// document the service answered; before any answer only the overrides count.
     pub async fn refresh_feature_flags(&self) -> anyhow::Result<()> {
         if !self.flags_source.url.is_empty() {
-            if let Err(error) = self.fetch_feature_flags().await {
-                tracing::warn!(%error, "dapps feature flags: keeping the stored document");
+            match self.fetch_feature_flags().await {
+                Ok(doc) => *self.dapps_flags.fetched.lock() = Some(doc),
+                Err(error) => {
+                    tracing::warn!(%error, "dapps feature flags: keeping the last answer")
+                }
             }
         }
-        self.dapps_flags
-            .reload(&self.pool, APP)
+        let base = self
+            .dapps_flags
+            .fetched
+            .lock()
+            .clone()
+            .unwrap_or_else(|| document(false));
+        let doc = feature_flags::with_local_overrides(&self.pool, APP, base)
             .await
-            .context("reloading the dapps feature flags")
-    }
-
-    async fn fetch_feature_flags(&self) -> anyhow::Result<()> {
-        let source = &self.flags_source;
-        let url = format!("{}/{APP}.json", source.url.trim_end_matches('/'));
-        let response = self
-            .http
-            .get(url.as_str())
-            .header(
-                "referer",
-                format!("{}/", source.origin.trim_end_matches('/')),
-            )
-            .timeout(TIMEOUT)
-            .send()
-            .await
-            .context("fetching the dapps feature flags")?;
-        if !response.status().is_success() {
-            anyhow::bail!("the dapps feature flags answered {}", response.status());
-        }
-        let body = crate::http::read_body_capped(response, BODY_CAP)
-            .await
-            .context("reading the dapps feature flags")?;
-        let doc: Value =
-            serde_json::from_slice(&body).context("the dapps feature flags are not JSON")?;
-        feature_flags::validate(&doc)?;
-        feature_flags::store(&self.pool, APP, &doc, None)
-            .await
-            .context("storing the dapps feature flags")?;
+            .context("reading the dapps feature flag overrides")?;
+        self.dapps_flags.snapshot.replace(doc);
         Ok(())
     }
-}
 
-/// Every flag off until the first read. Tests (and `test-support` builds) start with the Marketplace on, so a test
-/// of a resale, a bid or a list exercises it; a test of the rollout switches it off ([`set_marketplace_features`]).
-pub(super) fn initial_snapshot() -> feature_flags::Snapshot {
-    #[cfg(any(test, feature = "test-support"))]
-    {
-        feature_flags::Snapshot::from_document(serde_json::json!({
-            "flags": { format!("{APP}-{MARKETPLACE_FEATURES}"): true },
-            "variants": {}
-        }))
-    }
-    #[cfg(not(any(test, feature = "test-support")))]
-    {
-        feature_flags::Snapshot::empty()
+    async fn fetch_feature_flags(&self) -> anyhow::Result<Value> {
+        let source = &self.flags_source;
+        let url = format!("{}/{APP}.json", source.url.trim_end_matches('/'));
+        // The Shop's outbound guard (as its Stripe, captcha and RPC URLs): no private, internal or single-label host.
+        if !crate::http::is_safe_http_url(&url) {
+            anyhow::bail!(
+                "{url}: refused by the SSRF guard (private, internal or single-label host)"
+            );
+        }
+        let target = reqwest::Url::parse(&url).context("SHOP_FEATURE_FLAGS_URL is not a URL")?;
+        let referer = format!("{}/", source.origin.trim_end_matches('/'));
+        feature_flags::fetch_document(&self.http, target, &referer, TIMEOUT).await
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl MarketplaceState {
     pub fn set_marketplace_features(&self, on: bool) {
-        self.dapps_flags.set_document(serde_json::json!({
-            "flags": { format!("{APP}-{MARKETPLACE_FEATURES}"): on },
-            "variants": {}
-        }));
+        self.dapps_flags.snapshot.replace(document(on));
     }
 }
 
@@ -164,5 +172,13 @@ mod tests {
             format!("{APP}-{MARKETPLACE_FEATURES}"),
             "dapps-shop-marketplace-features"
         );
+    }
+
+    #[test]
+    fn a_document_names_the_marketplace_only_when_it_is_on() {
+        let on = feature_flags::Snapshot::from_document(document(true));
+        let off = feature_flags::Snapshot::from_document(document(false));
+        assert!(on.enabled(APP, MARKETPLACE_FEATURES));
+        assert!(!off.enabled(APP, MARKETPLACE_FEATURES));
     }
 }

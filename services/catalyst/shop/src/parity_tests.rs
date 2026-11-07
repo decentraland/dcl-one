@@ -929,6 +929,35 @@ async fn with_the_marketplace_rollout_off_lists_bids_and_resale_orders_are_refus
     .await;
     assert_ne!(status, StatusCode::FORBIDDEN, "{body}");
 
+    // Saving to a named list is refused; the plain favorite (the default list) is not, and fails later on an item
+    // that is not in the mirror.
+    let item = format!("{contract}-0");
+    let picks = format!("/v1/picks/{item}");
+    let named = "00000000-0000-4000-8000-000000000001";
+    for body in [
+        json!({ "pickedFor": [named] }),
+        json!({ "unpickedFrom": [named] }),
+    ] {
+        let (status, answer) = call(
+            app(),
+            "POST",
+            &picks,
+            signed_headers("post", &picks, "{}", true).await,
+            Some(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+    }
+    let (status, body) = call(
+        app(),
+        "POST",
+        &picks,
+        signed_headers("post", &picks, "{}", true).await,
+        Some(json!({ "pickedFor": [lists::DEFAULT_LIST_ID] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
     // On again, the same list is written.
     state.set_marketplace_features(true);
     let (status, body) = call(
@@ -940,6 +969,41 @@ async fn with_the_marketplace_rollout_off_lists_bids_and_resale_orders_are_refus
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
+}
+
+#[tokio::test]
+async fn the_marketplace_flag_reads_this_nodes_overrides_and_never_writes_the_shared_dapps_row() {
+    use crate::explore::api::feature_flags;
+    let Some(state) = matic_state(None).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let key = "dapps-shop-marketplace-features";
+    let stored = || async {
+        sqlx::query_scalar::<_, Value>(
+            "SELECT document FROM explore_api.feature_flags WHERE app = 'dapps'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap()
+    };
+    let before = stored().await;
+
+    // No service configured: only this node's overrides count, on top of an empty document.
+    feature_flags::set_local_flag(&pool, "dapps", key, true)
+        .await
+        .unwrap();
+    state.set_marketplace_features(false);
+    state.refresh_feature_flags().await.unwrap();
+    assert!(state.marketplace_features(), "the override opens it");
+    feature_flags::clear_local_flag(&pool, "dapps", key)
+        .await
+        .unwrap();
+    state.refresh_feature_flags().await.unwrap();
+    assert!(!state.marketplace_features(), "absent reads off");
+
+    assert_eq!(stored().await, before, "the shared dapps row is Social's");
+    state.set_marketplace_features(true);
 }
 
 #[tokio::test]

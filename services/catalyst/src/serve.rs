@@ -554,7 +554,13 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .with_denylist(storage.denylist().clone())
         .with_feature_flags(shop::market::features::Source {
             url: config.shop.shop_feature_flags_url.clone(),
-            origin: config.shop.shop_feature_flags_origin.clone(),
+            origin: if config.shop.shop_feature_flags_origin.is_empty() {
+                url::Url::parse(&config.shop.shop_base_url)
+                    .map(|u| u.origin().ascii_serialization())
+                    .unwrap_or_default()
+            } else {
+                config.shop.shop_feature_flags_origin.clone()
+            },
             refresh: Duration::from_secs(config.shop.shop_feature_flags_refresh_secs),
         }),
     );

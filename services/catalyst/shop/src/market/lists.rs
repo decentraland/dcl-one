@@ -698,6 +698,14 @@ async fn pick_inner(
     }
     validate_list_ids(&picked_for)?;
     validate_list_ids(&unpicked_from)?;
+    // A named list is the Marketplace's; the default list (the plain favorite) stays the Shop's.
+    if picked_for
+        .iter()
+        .chain(&unpicked_from)
+        .any(|id| !is_default_list(id))
+    {
+        state.require_marketplace()?;
+    }
     let (pick_ids, unpick_ids) = if picked_for.is_empty() && unpicked_from.is_empty() {
         if !item_exists(state, item_id).await? {
             return Err(PicksError::ItemNotFound(item_id.to_string()));
