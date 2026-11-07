@@ -1,0 +1,69 @@
+diff --git a/src/c/compress.rs b/src/c/compress.rs
+index e77bddfc..c8801a24 100644
+--- a/src/c/compress.rs
++++ b/src/c/compress.rs
+@@ -684,11 +684,8 @@ pub(crate) unsafe fn enet_range_coder_decompress(
+                         decode_range = decode_low.wrapping_neg()
+                             & (ENET_RANGE_CODER_BOTTOM as i32 - 1_i32) as u32;
+                     }
+-                    decode_code <<= 8_i32;
+                     if in_data < in_end {
+-                        let fresh20 = in_data;
+                         in_data = in_data.offset(1);
+-                        decode_code |= *fresh20 as u32;
+                     }
+                     decode_range <<= 8_i32;
+                     decode_low <<= 8_i32;
+diff --git a/src/connected.rs b/src/connected.rs
+index cd7aa1dd..d662b358 100644
+--- a/src/connected.rs
++++ b/src/connected.rs
+@@ -840,7 +840,7 @@ impl<C: Connection> Host<C> {
+         Some(connection)
+     }
+ 
+-    fn handle_event(&mut self, event: crate::EventNoRef) -> Option<Event<C>> {
++    fn handle_event(&mut self, event: crate::EventNoRef) -> Option<Event<'_, C>> {
+         let now = self.host.now();
+         Some(match event {
+             crate::EventNoRef::ReceiveLimitExceeded {
+@@ -923,7 +923,7 @@ impl<C: Connection> Host<C> {
+     }
+ 
+     /// Checks for any queued events on the host and dispatches one if available.
+-    pub fn check_events(&mut self) -> Option<Event<C>> {
++    pub fn check_events(&mut self) -> Option<Event<'_, C>> {
+         #[allow(clippy::option_if_let_else)]
+         match self.host.check_events() {
+             Some(event) => {
+@@ -937,7 +937,7 @@ impl<C: Connection> Host<C> {
+     /// Checks for events on the host and shuttles packets between the host and its peers.
+     ///
+     /// Should be called fairly regularly for adequate performance.
+-    pub fn service(&mut self) -> Option<Event<C>> {
++    pub fn service(&mut self) -> Option<Event<'_, C>> {
+         let now = self.host.now();
+         let mut disconnect_event = None;
+         for peer in &mut self.peers {
+diff --git a/src/host.rs b/src/host.rs
+index 10334d48..2ef0aa41 100644
+--- a/src/host.rs
++++ b/src/host.rs
+@@ -189,7 +189,7 @@ impl<S: Socket> Host<S> {
+     }
+ 
+     /// Checks for any queued events on the host and dispatches one if available.
+-    pub fn check_events(&mut self) -> Option<Event<S>> {
++    pub fn check_events(&mut self) -> Option<Event<'_, S>> {
+         unsafe {
+             let mut event: ENetEvent<S> = zeroed();
+             if enet_host_check_events(self.host, &mut event) {
+@@ -208,7 +208,7 @@ impl<S: Socket> Host<S> {
+     ///
+     /// Returns any error reported by the socket implementation during [`Socket::receive`] or
+     /// [`Socket::send`].
+-    pub fn service(&mut self) -> Result<Option<Event<S>>, S::Error> {
++    pub fn service(&mut self) -> Result<Option<Event<'_, S>>, S::Error> {
+         unsafe {
+             let mut event: ENetEvent<S> = zeroed();
+             if enet_host_service(self.host, &mut event)? {

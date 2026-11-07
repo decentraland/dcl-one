@@ -11,7 +11,7 @@
   "normalization": "Exact upstream and patched file bytes. Repository .gitattributes disables newline conversion for this subtree. SHA256 manifests are UTF-8 with LF lines and lexicographically sorted repository-relative paths. No Git metadata or Cargo cache marker is imported.",
   "manifests": {
     "upstream-files.sha256": "7bce19bf15feb754a84a36ffd7e17f1d2a540cda764a2f7179b69021c3394fca",
-    "checksums.sha256": "0e460ae4b4d714d631ef01f5809809431bc171f6a69b341cf83b9ce4f9874f88"
+    "checksums.sha256": "2aaf7c0cadbeddda9d1e5cbbdd587185b5e83c2565cf6bdf42773aa047075fde"
   },
   "patches": [
     {
@@ -57,6 +57,14 @@
       "sha256": "f136948351b53762596f1b006772918d0ab8dc4dd82c8e641ec668eca2afe7c0",
       "changes": [
         "Poll the host for up to five seconds in the oversized-declaration test instead of once: macOS delivers loopback datagrams asynchronously, so a single non-blocking poll after send_to raced and failed on the macOS runners"
+      ]
+    },
+    {
+      "path": "patches/0006-rust-1-99-warnings.patch",
+      "sha256": "4d1467e3cf9a7e49a95b7c55ce0bca903db9928549d32df57859e0c597576ed9",
+      "changes": [
+        "Name the borrowed lifetime in the Host and connected-host check_events, service and handle_event return types (Event<'_, S>), which rustc 1.99 reports as mismatched lifetime syntaxes",
+        "Drop the dead range-coder refill of decode_code on the decompressor's final escape symbol: nothing reads it once the decode loop ends; the input cursor advance is kept"
       ]
     }
   ],

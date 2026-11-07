@@ -684,11 +684,8 @@ pub(crate) unsafe fn enet_range_coder_decompress(
                         decode_range = decode_low.wrapping_neg()
                             & (ENET_RANGE_CODER_BOTTOM as i32 - 1_i32) as u32;
                     }
-                    decode_code <<= 8_i32;
                     if in_data < in_end {
-                        let fresh20 = in_data;
                         in_data = in_data.offset(1);
-                        decode_code |= *fresh20 as u32;
                     }
                     decode_range <<= 8_i32;
                     decode_low <<= 8_i32;

@@ -172,6 +172,9 @@ across workers:
   vendored root `Cargo.toml` allows `dead_code` (code our feature set leaves unused) and
   `mismatched_lifetime_syntaxes` (a lint newer than bevy 0.16); other warnings stay visible.
   Don't run Clippy inside bevy's own workspace: its code predates this toolchain's lints.
+  A warning the pinned toolchain raises in the tree is fixed at its site when the fix is
+  local (an import our edits left unused, a deprecated `core::f32` constant, a derived
+  `PartialEq` over a function pointer), so a build log only shows what is new.
 - Backport an upstream change: `git fetch https://github.com/bevyengine/bevy <sha>`, then
   `git format-patch -1 --stdout <sha> | git apply -3 --directory=rendering/bevy-explorer/bevy`.
   Name the upstream PR on this page, as the entries above do.
