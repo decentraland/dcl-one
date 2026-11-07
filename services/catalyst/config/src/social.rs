@@ -616,7 +616,7 @@ pub struct SocialConfig {
     pub notification_delivery_interval_secs: u64,
 
     /// Pending notification emails idle this long end skipped as expired (default 7 days;
-    /// `0` never expires, other values below an hour are raised to an hour).
+    /// `0` never expires while SIGNING_KEY is set, other values below an hour are raised to an hour).
     #[arg(
         long,
         env = "NOTIFICATION_DELIVERY_MAX_AGE_SECS",

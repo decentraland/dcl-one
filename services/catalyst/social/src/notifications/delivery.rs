@@ -7,7 +7,8 @@
 //! `SENDGRID_NOTIFICATION_TEMPLATE_ID` every claimed row ends `skipped`;
 //! without `SIGNING_KEY` rows stay `pending`, unclaimed and with their retry
 //! budget intact, until it is set. Pending rows idle past the configured max
-//! age end `skipped` (`expired`). Opt-outs are checked again at claim time, so
+//! age end `skipped` (`expired`); with expiry disabled a row held for the key
+//! still ends after [`DEFAULT_MAX_AGE`]. Opt-outs are checked again at claim time, so
 //! an unsubscribe stops queued rows. Terminal rows are pruned after [`RETENTION`].
 
 use std::sync::LazyLock;
@@ -316,39 +317,62 @@ pub async fn prune(pool: &PgPool, now: NaiveDateTime) -> Result<u64, sqlx::Error
 /// `now - max_age` as `skipped` (`expired`), over `notification_deliveries_due_idx`:
 /// a row left unclaimed for a missing key keeps its insert time as
 /// `next_attempt_at`, and a retried row reaches a terminal state within hours.
-/// `None` (expiry disabled) ends nothing.
+/// With expiry disabled (`None`) only a hold is bounded: without a signing key,
+/// due rows whose notification is older than [`DEFAULT_MAX_AGE`] end `expired`.
 pub async fn expire(
     pool: &PgPool,
     now: NaiveDateTime,
     max_age: Option<Duration>,
+    can_sign: bool,
 ) -> Result<u64, sqlx::Error> {
-    let Some(max_age) = max_age else {
-        return Ok(0);
+    let cutoff = |age: Duration| {
+        chrono::Duration::from_std(age)
+            .ok()
+            .and_then(|age| now.checked_sub_signed(age))
+            .unwrap_or(NaiveDateTime::MIN)
     };
-    let cutoff = chrono::Duration::from_std(max_age)
-        .ok()
-        .and_then(|age| now.checked_sub_signed(age))
-        .unwrap_or(NaiveDateTime::MIN);
-    let res = sqlx::query(
-        r#"
-        UPDATE social.notification_deliveries d
-        SET state = 'skipped', last_error = $3, updated_at = $4
-        FROM (
-            SELECT notification_id, channel FROM social.notification_deliveries
-            WHERE state = 'pending' AND next_attempt_at < $1
-            ORDER BY next_attempt_at, notification_id
-            LIMIT $2
-            FOR UPDATE SKIP LOCKED
-        ) old
-        WHERE d.notification_id = old.notification_id AND d.channel = old.channel
-        "#,
-    )
-    .bind(cutoff)
-    .bind(PRUNE_BATCH)
-    .bind(EXPIRED)
-    .bind(now)
-    .execute(pool)
-    .await?;
+    let (cutoff, sql) = match max_age {
+        Some(age) => (
+            cutoff(age),
+            r#"
+            UPDATE social.notification_deliveries d
+            SET state = 'skipped', last_error = $3, updated_at = $4
+            FROM (
+                SELECT notification_id, channel FROM social.notification_deliveries
+                WHERE state = 'pending' AND next_attempt_at < $1
+                ORDER BY next_attempt_at, notification_id
+                LIMIT $2
+                FOR UPDATE SKIP LOCKED
+            ) old
+            WHERE d.notification_id = old.notification_id AND d.channel = old.channel
+            "#,
+        ),
+        None if !can_sign => (
+            cutoff(DEFAULT_MAX_AGE),
+            r#"
+            UPDATE social.notification_deliveries d
+            SET state = 'skipped', last_error = $3, updated_at = $4
+            FROM (
+                SELECT pd.notification_id, pd.channel
+                FROM social.notification_deliveries pd
+                JOIN social.notifications n ON n.id = pd.notification_id
+                WHERE pd.state = 'pending' AND pd.next_attempt_at <= $4 AND n.created_at < $1
+                ORDER BY pd.next_attempt_at, pd.notification_id
+                LIMIT $2
+                FOR UPDATE OF pd SKIP LOCKED
+            ) old
+            WHERE d.notification_id = old.notification_id AND d.channel = old.channel
+            "#,
+        ),
+        None => return Ok(0),
+    };
+    let res = sqlx::query(sql)
+        .bind(cutoff)
+        .bind(PRUNE_BATCH)
+        .bind(EXPIRED)
+        .bind(now)
+        .execute(pool)
+        .await?;
     Ok(res.rows_affected())
 }
 
@@ -1120,23 +1144,53 @@ mod pg_tests {
     }
 
     #[tokio::test]
-    async fn expire_with_the_max_age_disabled_ends_nothing() {
+    async fn expire_with_the_max_age_disabled_ends_only_holds_past_the_default_age() {
         let Some(pool) = private_pool("dlv-expire-off").await else {
             return;
         };
-        let stale = pending_for(&pool, &fresh_address()).await[0].id;
-        sqlx::query("UPDATE social.notification_deliveries SET next_attempt_at = $2 WHERE notification_id = $1")
-            .bind(stale)
-            .bind(now_utc() - chrono::Duration::days(400))
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert_eq!(expire(&pool, now_utc(), None).await.unwrap(), 0);
-        assert_eq!(delivery_state(&pool, stale).await.unwrap().0, "pending");
+        let backdate = |sql: &'static str, id: Uuid, days: i64| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(sql)
+                    .bind(id)
+                    .bind(now_utc() - chrono::Duration::days(days))
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+        };
+        let idle = pending_for(&pool, &fresh_address()).await[0].id;
+        backdate(
+            "UPDATE social.notification_deliveries SET next_attempt_at = $2 WHERE notification_id = $1",
+            idle,
+            400,
+        )
+        .await;
+        let old = pending_for(&pool, &fresh_address()).await[0].id;
+        backdate(
+            "UPDATE social.notifications SET created_at = $2 WHERE id = $1",
+            old,
+            8,
+        )
+        .await;
+
+        // With the key set nothing expires.
+        assert_eq!(expire(&pool, now_utc(), None, true).await.unwrap(), 0);
+        assert_eq!(delivery_state(&pool, idle).await.unwrap().0, "pending");
+        assert_eq!(delivery_state(&pool, old).await.unwrap().0, "pending");
+
+        // Without it a hold is bounded by the notification's age, not by idleness.
+        assert_eq!(expire(&pool, now_utc(), None, false).await.unwrap(), 1);
+        assert_eq!(
+            delivery_state(&pool, old).await.unwrap(),
+            ("skipped".into(), 0, Some(EXPIRED.into()))
+        );
+        assert_eq!(delivery_state(&pool, idle).await.unwrap().0, "pending");
+
         // The floor keeps a just-inserted row from expiring before a pass sends it.
         let fresh = pending_for(&pool, &fresh_address()).await[0].id;
         assert_eq!(
-            expire(&pool, now_utc(), max_age_from_secs(1))
+            expire(&pool, now_utc(), max_age_from_secs(1), true)
                 .await
                 .unwrap(),
             1
@@ -1163,7 +1217,7 @@ mod pg_tests {
                 .unwrap();
         }
         assert_eq!(
-            expire(&pool, now_utc(), Some(DEFAULT_MAX_AGE))
+            expire(&pool, now_utc(), Some(DEFAULT_MAX_AGE), false)
                 .await
                 .unwrap(),
             1
@@ -1175,7 +1229,7 @@ mod pg_tests {
         assert_eq!(delivery_state(&pool, stale_sent).await.unwrap().0, "sent");
         assert_eq!(delivery_state(&pool, fresh).await.unwrap().0, "pending");
         assert_eq!(
-            expire(&pool, now_utc(), Some(DEFAULT_MAX_AGE))
+            expire(&pool, now_utc(), Some(DEFAULT_MAX_AGE), false)
                 .await
                 .unwrap(),
             0
