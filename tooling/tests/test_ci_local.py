@@ -43,6 +43,56 @@ class CiLocalTest(unittest.TestCase):
         names = [s.name for s in ci.pre_push_steps({'docs/README.md'})]
         self.assertEqual(names, ['ownership catalogue', 'module layers'])
 
+    def test_documentation_is_excluded_from_development_and_image_inputs(self):
+        docs = {'DATABASE.md', 'services/catalyst/docs/events.md',
+                'services/catalyst/docs/example.json', 'library/example/README.md',
+                'rendering/bevy-explorer/docs/example.json'}
+        for workflow in ('development.yml', 'apis-sites-images.yml'):
+            with self.subTest(workflow=workflow):
+                self.assertFalse(ci.triggered(workflow, docs, event='push'))
+                self.assertTrue(ci.triggered(workflow, docs | {'services/catalyst/src/lib.rs'}, event='push'))
+
+    def test_negative_globs_match_root_files_and_allow_later_inclusions(self):
+        self.assertTrue(ci.glob_regex('**/*.md').match('README.md'))
+        self.assertTrue(ci.glob_regex('**/docs/**').match('docs/example.json'))
+        with patch.object(ci, 'workflow_paths', return_value=['**', '!**/*.md', 'keep.md']):
+            self.assertFalse(ci.triggered('example.yml', {'README.md'}))
+            self.assertTrue(ci.triggered('example.yml', {'keep.md'}))
+
+    def test_documentation_patterns_match_development_workflow(self):
+        paths = ci.workflow_paths('development.yml', event='push')
+        expected = ci.paths.DEVELOPMENT_DOCUMENTATION_PATHS
+        self.assertEqual(tuple(paths[-len(expected):]), expected)
+
+    def test_fixture_exceptions_stay_within_each_workflows_inputs(self):
+        bevy = 'rendering/bevy-explorer/source/local-harness/benchmark/tests/fixtures/report/ok.md'
+        creator = 'apps/creator-hub/tests/fixtures/example.md'
+        for path in (bevy, creator, 'apps/creator-hub/tests/fixtures/example.json'):
+            with self.subTest(path=path):
+                self.assertFalse(ci.triggered('development.yml', [path], event='push'))
+        self.assertFalse(ci.triggered('apis-sites-images.yml', [creator]))
+        self.assertFalse(ci.triggered('apis-sites-images.yml', ['apps/creator-hub/tests/fixtures/example.json']))
+        self.assertTrue(ci.triggered('apis-sites-images.yml', [bevy]))
+        for path in ('services/catalyst/tests/fixtures/example.md',
+                     'services/catalyst/db/tests/fixtures/example.md',
+                     'library/example/tests/fixtures/example.md'):
+            self.assertTrue(ci.triggered('development.yml', [path], event='push'))
+
+    def test_shared_matcher_triggers_engine_images_and_scenes(self):
+        for workflow in ('bevy-explorer-ci.yml', 'bevy-explorer-scenes.yml', 'apis-sites-images.yml'):
+            with self.subTest(workflow=workflow):
+                self.assertTrue(ci.triggered(workflow, ['tooling/ci_paths.py'], event='push'))
+
+    def test_docs_source_embedded_data_and_published_content_select_jobs(self):
+        for path in ('apps/sites/src/features/docs/DocsPage.tsx',
+                     'apps/sites/src/data/lib/docs/render.ts',
+                     'library/dcl-scene-authoring/docs/composite-component-schemas.json',
+                     'apps/sites/content/docs/example.md', 'apps/sites/content/docs/manifest.json',
+                     'services/catalyst/tests/fixtures/example.md'):
+            for workflow in ('development.yml', 'apis-sites-images.yml'):
+                with self.subTest(path=path, workflow=workflow):
+                    self.assertTrue(ci.triggered(workflow, [path], event='push'))
+
     def test_engine_edits_select_the_engine_and_its_sites_consumer(self):
         changed = {'rendering/bevy-explorer/source/src/lib.rs'}
         self.assertTrue(ci.triggered('bevy-explorer-ci.yml', changed))

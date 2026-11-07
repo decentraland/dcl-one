@@ -11,6 +11,7 @@ on:
       - library/vendor/rusty_enet/**
       - tooling/dev-regressions*
       - tooling/bevy-ci.py
+      - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
       - tooling/tests/test_bevy_*.py
       - .github/workflows/bevy-explorer-scenes.yml

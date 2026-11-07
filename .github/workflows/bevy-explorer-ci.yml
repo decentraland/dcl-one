@@ -9,6 +9,7 @@
       - apps/bevy-explorer/**
       - tooling/dev-regressions*
       - tooling/bevy-ci.py
+      - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
       - tooling/play-artifact.py
       - tooling/tests/test_play_*.py
@@ -40,6 +41,7 @@
       - apps/bevy-explorer/**
       - tooling/dev-regressions*
       - tooling/bevy-ci.py
+      - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
       - tooling/play-artifact.py
       - tooling/tests/test_play_*.py

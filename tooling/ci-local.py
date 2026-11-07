@@ -22,7 +22,6 @@ import importlib.util
 import os
 from pathlib import Path
 import platform
-import re
 import shutil
 import subprocess
 import sys
@@ -37,6 +36,12 @@ NODE_CRATES = ('--workspace --exclude dcl-scene-cli --exclude dcl-scene-authorin
 SHELL_INPUTS = ('flake.nix', 'flake.lock', 'services/catalyst/rust-toolchain.toml', 'infra/dev/shell-hook.sh')
 LINUX = platform.system() == 'Linux'
 WINDOWS = os.name == 'nt'
+_paths_spec = importlib.util.spec_from_file_location('ci_paths', Path(__file__).with_name('ci_paths.py'))
+paths = importlib.util.module_from_spec(_paths_spec)
+_paths_spec.loader.exec_module(paths)
+glob_regex = paths.glob_regex
+matching_paths = paths.matching_paths
+non_documentation = paths.non_documentation
 
 
 def git(*args, cwd=ROOT, env=None, check=True, input=None):
@@ -84,27 +89,14 @@ def workflow_paths(name, event='pull_request', source=None):
     return paths
 
 
-def glob_regex(pattern):
-    out, i = '', 0
-    while i < len(pattern):
-        if pattern.startswith('**', i):
-            out += '.*'
-            i += 2
-        elif pattern[i] == '*':
-            out += '[^/]*'
-            i += 1
-        else:
-            out += re.escape(pattern[i])
-            i += 1
-    return re.compile(out + r'\Z')
-
-
 def triggered(name, changed, event='pull_request'):
     paths = workflow_paths(name, event)
     if paths is None:
         return True
-    regexes = [glob_regex(p) for p in paths]
-    return any(r.match(f) for f in changed for r in regexes)
+    matched = matching_paths(changed, paths)
+    if name == 'apis-sites-images.yml':
+        matched = non_documentation(matched)
+    return bool(matched)
 
 
 def touches(changed, *patterns):
