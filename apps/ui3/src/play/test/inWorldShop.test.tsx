@@ -651,9 +651,9 @@ describe('in-world shop', () => {
     expect(screen.getByRole('status', { name: 'Loading the catalogue' })).toBeInTheDocument()
   })
 
-  it("keeps emotes to browse and open, without trying them on, while the engine can't play them", async () => {
+  it('keeps emotes to browse and open, without trying them on, where no engine draws the avatar', async () => {
     serve({ listings: [[listingRow({ category: 'emote', wearableCategory: null, name: 'Moonwalk' })]] })
-    const { props } = renderShop()
+    const { props } = renderShop({ noEngine: true })
     await openTab('Emotes')
     await findCard('Moonwalk')
     expect(screen.queryByRole('button', { name: 'TRY ON' })).not.toBeInTheDocument()
@@ -697,7 +697,8 @@ describe('in-world shop', () => {
 
   it('plays a tried-on emote on the avatar, and STOP EMOTE stops it', async () => {
     serve({ listings: [[listingRow({ category: 'emote', wearableCategory: null, name: 'Moonwalk' })]] })
-    const { props } = renderShop({ equipped: [], emoteTryOn: true })
+    // Tried on by default, wherever an engine draws the avatar.
+    const { props } = renderShop({ equipped: [] })
     await openTab('Emotes')
     await findCard('Moonwalk')
     // An emote plays over any look, so it doesn't wait for the equipped one.
@@ -711,7 +712,7 @@ describe('in-world shop', () => {
 
   it('stops the emote when the Shop closes', async () => {
     serve({ listings: [[listingRow({ category: 'emote', wearableCategory: null, name: 'Moonwalk' })]] })
-    const { props, rerender } = renderShop({ emoteTryOn: true })
+    const { props, rerender } = renderShop()
     await openTab('Emotes')
     await findCard('Moonwalk')
     await userEvent.click(screen.getByRole('button', { name: 'TRY ON' }))
