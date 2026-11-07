@@ -14,6 +14,7 @@ import { shopRouteObjects } from "../routes";
 import { ShopWalletProvider } from "../wallet/context";
 import type { ShopWalletHost, WalletKind } from "../wallet/session";
 import { fakeShop, fakeWallet, type FakeRoute, type FakeShop, type FakeWallet } from "./testing";
+import { marketplaceOn } from "./testing-flags";
 
 export function testIdentity(signer: string, ms = 3_600_000): AuthIdentity {
   return {
@@ -28,7 +29,11 @@ export type Who = "signedOut" | "web2" | "web3";
 
 export type Mounted = { shop: FakeShop; wallet: FakeWallet; host: ShopWalletHost; client: QueryClient; router: ReturnType<typeof createMemoryRouter> };
 
-export function mountShop(opts: { path: string; who: Who; routes?: FakeRoute[]; wallet?: FakeWallet; host?: Partial<ShopWalletHost> }): Mounted & ReturnType<typeof render> {
+export function mountShop(opts: { path: string; who: Who; routes?: FakeRoute[]; wallet?: FakeWallet; host?: Partial<ShopWalletHost>; marketplace?: boolean | null }): Mounted & ReturnType<typeof render> {
+  // These are the Marketplace's pages: its rollout is on unless a test says otherwise (market/access.tsx still
+  // asks for a web3 session).
+  // `null` declares nothing: the page asks the flags service (a test stubs it).
+  if (opts.marketplace !== null) onTestFinished(marketplaceOn(opts.marketplace ?? true));
   const wallet = opts.wallet ?? fakeWallet();
   const shop = fakeShop(opts.routes ?? [], { signer: opts.who === "signedOut" ? null : wallet.address });
   setShopClient(shop.client);

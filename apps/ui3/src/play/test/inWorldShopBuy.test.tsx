@@ -70,22 +70,25 @@ const listing = (): Record<string, unknown> => ({
   chainId: row.chainId
 })
 
-function serveCatalogue(): void {
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async (input: RequestInfo | URL) => {
+function serveCatalogue(flags: Record<string, boolean> = {}): ReturnType<typeof vi.fn> {
+  const f = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input instanceof Request ? input.url : input), location.href)
+      if (url.pathname.endsWith('/dapps.json')) return Response.json({ flags, variants: {} })
       if (url.pathname.endsWith('/v3/catalog/items')) return Response.json({ data: [row], total: 1 })
       if (url.pathname.endsWith('/v3/catalog/unified')) return Response.json({ data: [listing()], total: 1 })
       return new Response('', { status: 404 })
     })
-  )
+  vi.stubGlobal('fetch', f)
+  return f
 }
 
 let balance = 700
-function answerShell(): void {
+function answerShell(wallet: 'managed' | 'web3' = 'managed', marketplace: boolean | 'reject' = wallet === 'web3'): void {
   shell.request.mockImplementation(async (method: string) => {
-    if (method === 'shop.capabilities') return { v: 1, buyer: BUYER, wallet: 'managed', credits: true }
+    if (method === 'shop.capabilities') {
+      if (marketplace === 'reject') throw new Error('the shell did not answer')
+      return { v: 1, buyer: BUYER, wallet, credits: true, marketplace }
+    }
     if (method === 'shop.balance') return { v: 1, credits: balance }
     if (method === 'shop.buy') return { v: 1, operation: 'op', state: 'reviewing', items: [{ contract: CONTRACT, itemId: '1', quantity: 1 }] }
     if (method === 'shop.status') return []
@@ -228,5 +231,43 @@ describe('buying in the in-world Shop', () => {
     await screen.findByRole('status', { name: 'Credits balance: 700' })
     emit({ state: 'exploded', next: 'backpack' })
     expect(props.onNavigate).not.toHaveBeenCalled()
+  })
+})
+
+describe('the Marketplace in the web shell', () => {
+  const unified = (f: ReturnType<typeof vi.fn>): URL[] =>
+    f.mock.calls.map(([input]) => new URL(String(input instanceof Request ? input.url : input), location.href)).filter((u) => u.pathname.endsWith('/v3/catalog/unified'))
+
+  it('follows the shell\u2019s Marketplace answer: primary sales only unless it vouches for a web3 wallet', async () => {
+    const managed = serveCatalogue({ 'dapps-shop-marketplace-features': true })
+    answerShell('managed')
+    renderShop()
+    await waitFor(() => expect(shell.request).toHaveBeenCalledWith('shop.capabilities', undefined))
+    await waitFor(() => expect(unified(managed).length).toBeGreaterThan(0))
+    await act(async () => {})
+    expect(unified(managed).every((u) => u.searchParams.get('listingType') === 'primary')).toBe(true)
+    cleanup()
+
+    // A web3 wallet the page doesn't vouch for (a guessed or unsignable sign-in): still primary only.
+    const guessed = serveCatalogue({ 'dapps-shop-marketplace-features': true })
+    answerShell('web3', false)
+    renderShop()
+    await waitFor(() => expect(unified(guessed).length).toBeGreaterThan(0))
+    await act(async () => {})
+    expect(unified(guessed).every((u) => u.searchParams.get('listingType') === 'primary')).toBe(true)
+    cleanup()
+
+    const web3 = serveCatalogue({ 'dapps-shop-marketplace-features': true })
+    answerShell('web3')
+    renderShop()
+    await waitFor(() => expect(unified(web3).some((u) => !u.searchParams.has('listingType'))).toBe(true))
+  })
+
+  it('loads the primary listings when the shell never answers what the session can pay with', async () => {
+    const f = serveCatalogue({ 'dapps-shop-marketplace-features': true })
+    answerShell('web3', 'reject')
+    renderShop()
+    await waitFor(() => expect(unified(f).length).toBeGreaterThan(0))
+    expect(unified(f).every((u) => u.searchParams.get('listingType') === 'primary')).toBe(true)
   })
 })
