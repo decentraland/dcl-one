@@ -41,6 +41,33 @@ pub async fn scratch_database() -> Option<ScratchDb> {
     Some(ScratchDb { pool, admin, name })
 }
 
+/// A database an earlier run kept (`EXPLORE_PARITY_KEEP_DB`), with its schema
+/// and data as they are; `teardown` drops it like any scratch database.
+#[allow(dead_code)]
+pub async fn existing_database(name: &str) -> Option<ScratchDb> {
+    let url = std::env::var("CATALYST_TEST_DATABASE_URL").ok()?;
+    let base: PgConnectOptions = url
+        .parse()
+        .expect("CATALYST_TEST_DATABASE_URL must be a postgres DSN");
+    let admin = PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(Duration::from_secs(10))
+        .connect_with(base.clone().database("postgres"))
+        .await
+        .unwrap_or_else(|e| panic!("connecting to disposable PostgreSQL: {e}"));
+    let pool = PgPoolOptions::new()
+        .max_connections(8)
+        .acquire_timeout(Duration::from_secs(10))
+        .connect_with(base.database(name).options([("TimeZone", "UTC")]))
+        .await
+        .unwrap_or_else(|e| panic!("connecting to {name}: {e}"));
+    Some(ScratchDb {
+        pool,
+        admin,
+        name: name.to_string(),
+    })
+}
+
 impl ScratchDb {
     pub async fn teardown(self) {
         self.pool.close().await;

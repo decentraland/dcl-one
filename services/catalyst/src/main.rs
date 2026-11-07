@@ -58,6 +58,11 @@ enum Command {
         #[command(subcommand)]
         command: CommunitiesCommand,
     },
+    /// Explore (places, events) operator commands.
+    Explore {
+        #[command(subcommand)]
+        command: ExploreCommand,
+    },
     /// The secrets a self-contained host mints for itself (deploy/README.md, "Secrets").
     Secrets {
         #[command(subcommand)]
@@ -87,6 +92,25 @@ enum PostureCommand {
         #[arg(value_parser = ["mirror", "island", "journey"])]
         name: String,
         keys: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ExploreCommand {
+    /// Import upstream's `user_likes` export as the ground truth of the like
+    /// rates: one JSON object a line, as `psql "$OLD_PLACES_DB" -Atc "COPY
+    /// (SELECT row_to_json(l) FROM user_likes l) TO STDOUT"` writes it. Each
+    /// row becomes a like fact with `source = 'upstream'` and its voting
+    /// power at vote time; a wallet that already voted on this node keeps
+    /// its local fact; the counters of the touched entities are rebuilt. One
+    /// transaction: a malformed line imports nothing. Prints the outcome as
+    /// JSON. Not behind DATA_WRITES_ENABLED: an import is operator data.
+    ImportLikes {
+        #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+        /// The export; `-` reads standard input.
+        #[arg(long)]
+        file: String,
     },
 }
 
@@ -451,6 +475,33 @@ async fn run() -> anyhow::Result<()> {
             }
         }
         Command::Pulse => catalyst::comms::pulse::run_from_env().await,
+        Command::Explore {
+            command: ExploreCommand::ImportLikes { database_url, file },
+        } => {
+            use std::io::BufRead;
+            tracing_subscriber::fmt().with_target(false).init();
+            let pool = db::connect_pool(
+                &database_url,
+                &db::PoolSettings {
+                    max_connections: 2,
+                    ..Default::default()
+                },
+            )
+            .await
+            .context("connecting to DATABASE_URL")?;
+            db::bootstrap(&pool).await?;
+            let reader: Box<dyn BufRead> = if file == "-" {
+                Box::new(std::io::BufReader::new(std::io::stdin()))
+            } else {
+                Box::new(std::io::BufReader::new(
+                    std::fs::File::open(&file).with_context(|| format!("opening {file}"))?,
+                ))
+            };
+            let out =
+                explore::places::interactions::import_upstream_likes(&pool, reader.lines()).await?;
+            println!("{}", serde_json::to_string(&out)?);
+            Ok(())
+        }
         Command::Communities {
             command:
                 CommunitiesCommand::Mirror {

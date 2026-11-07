@@ -495,7 +495,7 @@ async fn a_non_member_sees_a_room_only_through_its_places_and_never_when_banned(
         (json!([]), json!([]))
     );
 
-    let (place, world) = rig.world_place(c, &owner).await;
+    let world = rig.world_place(c, &owner).await;
     let chat = room(&rig, c, &viewer)
         .await
         .expect("listed through its world");
@@ -519,7 +519,7 @@ async fn a_non_member_sees_a_room_only_through_its_places_and_never_when_banned(
         room(&rig, c, &banned).await.is_none(),
         "a banned wallet does not see it"
     );
-    rig.clear_world_place(place).await;
+    rig.clear_world_place(&world).await;
     rig.finish();
 }
 
@@ -971,7 +971,7 @@ async fn a_started_room_carries_the_places_and_the_thumbnail() {
     let (owner, member) = (wallet(), wallet());
     let c = rig.community(&owner, false).await;
     rig.member(c, &member, "member").await;
-    let (place, world) = rig.world_place(c, &owner).await;
+    let world = rig.world_place(c, &owner).await;
     sqlx::query("INSERT INTO social.community_thumbnails (community_id, thumbnail_hash) VALUES ($1, 'bafythumb')")
         .bind(c)
         .execute(&rig.pool)
@@ -1019,7 +1019,7 @@ async fn a_started_room_carries_the_places_and_the_thumbnail() {
         started.status,
         CommunityVoiceChatStatus::CommunityVoiceChatStarted as i32
     );
-    assert_eq!(started.worlds, vec![world]);
+    assert_eq!(started.worlds, vec![world.clone()]);
     assert!(started.positions.is_empty());
     assert_eq!(started.community_image.as_deref(), Some(image.as_str()));
     assert!(started.is_member);
@@ -1032,7 +1032,7 @@ async fn a_started_room_carries_the_places_and_the_thumbnail() {
     .await
     .unwrap();
     assert_eq!(thumbnail, vec![image]);
-    rig.clear_world_place(place).await;
+    rig.clear_world_place(&world).await;
     rig.finish();
     database.close().await;
 }

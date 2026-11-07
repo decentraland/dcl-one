@@ -170,19 +170,47 @@ async fn recipients(
     Ok(rows)
 }
 
-fn metadata(intent: &Intent, recipient: &Recipient, base: &str, asset_base: &str) -> Value {
+/// The sites the notices point at and the Slack switch.
+#[derive(Clone, Debug)]
+pub struct Links {
+    /// The events site (`/whats-on/{id}`): the link of the notices the old
+    /// service sent without one (rejected, deleted, community created).
+    pub base: String,
+    /// Backend asset origin and mount for relative default posters.
+    pub asset_base: String,
+    /// `JUMP_IN_SITE_URL`: `buildEventLink` (`Notifications/index.ts:30-39`)
+    /// for the reminder, start and approval notices.
+    pub jump_in_site_url: String,
+    /// Explore's Slack moderation outbox is active: the reminder job queues
+    /// the old `:runner:` notice there (`Event/cron.ts:76`).
+    pub slack_notices: bool,
+}
+
+fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
     let name = text(&intent.event, "name");
     let description =
         crate::explore::sanitize::sanitize_event_description(text(&intent.event, "description"));
-    let link = format!(
-        "{}/whats-on/{}",
-        base.trim_end_matches('/'),
-        urlencoding::encode(&intent.event_id)
-    );
+    // `Notifications/index.ts:48,85,205`: the jump-in link; the other kinds
+    // had no link upstream and keep this node's event page.
+    let link = match intent.kind.as_str() {
+        "events_starts_soon" | "events_started" | "event_approved" => {
+            crate::explore::events::notifications::event_link(
+                &links.jump_in_site_url,
+                &intent.event_id,
+                &intent.event,
+            )
+        }
+        _ => format!(
+            "{}/whats-on/{}",
+            links.base.trim_end_matches('/'),
+            urlencoding::encode(&intent.event_id)
+        ),
+    };
     let (title, description) = match intent.kind.as_str() {
+        // `Notifications/index.ts:56-57`
         "events_starts_soon" => (
-            "Event starts soon".to_string(),
-            format!("The event {name} starts soon."),
+            "Event starts in an hour".to_string(),
+            format!("The event {name} starts in an hour."),
         ),
         "events_started" if recipient.community => (
             "Community Event starting".into(),
@@ -204,7 +232,14 @@ fn metadata(intent: &Intent, recipient: &Recipient, base: &str, asset_base: &str
         ),
         _ => (name.to_string(), description),
     };
-    let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":catalyst_explore::events::posters::absolute_default_image(text(&intent.event,"image"),asset_base),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
+    let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":catalyst_explore::events::posters::absolute_default_image(text(&intent.event,"image"),&links.asset_base),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
+    if matches!(
+        intent.kind.as_str(),
+        "events_starts_soon" | "events_started" | "event_created"
+    ) {
+        // `Notifications/index.ts:63,105,138`: the recipient of a per-attendee notice.
+        metadata["attendee"] = json!(recipient.address);
+    }
     if let Some(start) = intent.occurrence_start {
         let duration = intent
             .event
@@ -254,9 +289,8 @@ fn timed_out(error: &anyhow::Error) -> bool {
 
 async fn dispatch_page(
     pool: &PgPool,
-    base: &str,
+    links: &Links,
     now: NaiveDateTime,
-    asset_base: &str,
 ) -> anyhow::Result<Option<u64>> {
     // Commit fair rotation separately from delivery. If a later page times out
     // or rolls back, another intent gets the next turn instead of starvation.
@@ -328,13 +362,35 @@ async fn dispatch_page(
                 id: Uuid::new_v5(&intent.id, address.as_str().as_bytes()),
                 address,
                 kind: intent.kind.clone(),
-                metadata: metadata(&intent, recipient, base, asset_base),
+                metadata: metadata(&intent, recipient, links),
                 occurred_at: delivered_at,
             })
         })
         .collect();
     let inserted = insert_event_notifications(&mut *tx, &batch).await?;
     let finished = recipients.len() < PAGE as usize;
+    if finished
+        && suppression.is_none()
+        && links.slack_notices
+        && intent.kind == "events_starts_soon"
+    {
+        // `Event/cron.ts:66-76`: the Slack notice counts the occurrence's
+        // attendees (`attendees.length`), queued with the last reminder page
+        // so a crash before this commit repeats neither.
+        let attendees: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM explore.event_attendance_local WHERE event_id=$1 AND action='going'",
+        )
+        .bind(&intent.event_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        crate::explore::events::notifications::record_upcoming_notice(
+            &mut tx,
+            &intent.event_id,
+            &intent.event,
+            attendees,
+        )
+        .await?;
+    }
     sqlx::query("UPDATE social.event_notification_intents SET recipient_after=$2,processed_at=CASE WHEN $3 THEN $4 ELSE NULL END,dispatch_at=timezone('UTC', clock_timestamp()) WHERE id=$1")
         .bind(intent.id).bind(recipients.last().map(|row| row.address.as_str()).unwrap_or(&intent.recipient_after))
         .bind(finished).bind(checked_at).execute(&mut *tx).await?;
@@ -434,12 +490,7 @@ async fn within_scan_budget(
 /// survives a timed-out page. Non-timeout scan failures surface after dispatch;
 /// expected scan deferrals and maintenance failures are error-logged without
 /// delaying the normal delivery cadence.
-pub async fn run_once(
-    pool: &PgPool,
-    base: &str,
-    now: NaiveDateTime,
-    asset_base: &str,
-) -> anyhow::Result<u64> {
+pub async fn run_once(pool: &PgPool, links: &Links, now: NaiveDateTime) -> anyhow::Result<u64> {
     match tokio::time::timeout(CLEANUP_BUDGET, cleanup(pool, now)).await {
         Ok(Err(error)) => {
             tracing::error!(%error, "event intent cleanup deferred")
@@ -457,7 +508,7 @@ pub async fn run_once(
     let deadline = tokio::time::Instant::now() + PASS_BUDGET;
     let mut emitted = 0;
     loop {
-        match tokio::time::timeout_at(deadline, dispatch_page(pool, base, now, asset_base)).await {
+        match tokio::time::timeout_at(deadline, dispatch_page(pool, links, now)).await {
             Ok(Err(error)) if timed_out(&error) => {
                 tracing::warn!(%error, "event notification page deferred")
             }
@@ -474,15 +525,15 @@ pub async fn run_once(
     Ok(emitted)
 }
 
-pub fn spawn(pool: PgPool, base: String, asset_base: String, jobs: &crate::jobs::Jobs) {
+pub fn spawn(pool: PgPool, links: Links, jobs: &crate::jobs::Jobs) {
     jobs.spawn_periodic_leased(
         "event-notifications",
         crate::jobs::PeriodicCfg::every(Duration::from_secs(60))
             .with_error_backoff(Duration::from_secs(300)),
         move |ctx| {
-            let (pool, base, asset_base) = (pool.clone(), base.clone(), asset_base.clone());
+            let (pool, links) = (pool.clone(), links.clone());
             async move {
-                let emitted = run_once(&pool, &base, Utc::now().naive_utc(), &asset_base).await?;
+                let emitted = run_once(&pool, &links, Utc::now().naive_utc()).await?;
                 if emitted > 0 {
                     ctx.progress(format!("{emitted} event notices emitted"));
                 }
@@ -495,6 +546,15 @@ pub fn spawn(pool: PgPool, base: String, asset_base: String, jobs: &crate::jobs:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_links(base: &str) -> Links {
+        Links {
+            base: base.into(),
+            asset_base: "https://events.decentraland.org".into(),
+            jump_in_site_url: "https://decentraland.org/jump".into(),
+            slack_notices: false,
+        }
+    }
 
     #[tokio::test(start_paused = true)]
     async fn client_scan_budget_defers_without_backoff() {
@@ -604,9 +664,7 @@ mod tests {
         crate::explore::events::attendees::rsvp_going(&pool, &historical, RSVP, None)
             .await
             .unwrap();
-        run_once(&pool, base, t0, "https://events.decentraland.org")
-            .await
-            .unwrap();
+        run_once(&pool, &test_links(base), t0).await.unwrap();
         assert_eq!(
             count(&pool, &historical, "events_started", RSVP).await,
             0,
@@ -634,10 +692,9 @@ mod tests {
         );
 
         let soon = t0 + Span::hours(1) + Span::seconds(1);
-        let (first, second) = tokio::join!(
-            run_once(&pool, base, soon, "https://events.decentraland.org"),
-            run_once(&pool, base, soon, "https://events.decentraland.org")
-        );
+        let links = test_links(base);
+        let (first, second) =
+            tokio::join!(run_once(&pool, &links, soon), run_once(&pool, &links, soon));
         first.unwrap();
         second.unwrap();
         assert_eq!(count(&pool, &event, "events_starts_soon", RSVP).await, 1);
@@ -653,12 +710,8 @@ mod tests {
             "upstream preview is not local consent"
         );
         let started = t0 + Span::hours(2) + Span::seconds(1);
-        run_once(&pool, base, started, "https://events.decentraland.org")
-            .await
-            .unwrap();
-        run_once(&pool, base, started, "https://events.decentraland.org")
-            .await
-            .unwrap();
+        run_once(&pool, &test_links(base), started).await.unwrap();
+        run_once(&pool, &test_links(base), started).await.unwrap();
         assert_eq!(
             count(&pool, &event, "events_started", DUAL).await,
             1,
@@ -677,15 +730,14 @@ mod tests {
             metadata["endsAt"], "2099-06-01T19:00:00+00:00",
             "occurrence duration, not series finish"
         );
-        assert_eq!(metadata["link"], format!("{base}/whats-on/{event}"));
-        run_once(
-            &pool,
-            base,
-            soon + Span::days(1),
-            "https://events.decentraland.org",
-        )
-        .await
-        .unwrap();
+        assert_eq!(
+            metadata["link"],
+            format!("https://decentraland.org/jump/events?id={event}&position=0%2C0"),
+            "`Notifications/index.ts:85`: the jump-in link"
+        );
+        run_once(&pool, &test_links(base), soon + Span::days(1))
+            .await
+            .unwrap();
         assert_eq!(
             count(&pool, &event, "events_starts_soon", RSVP).await,
             2,
@@ -705,14 +757,9 @@ mod tests {
         )
         .await
         .unwrap();
-        run_once(
-            &pool,
-            base,
-            soon + Span::days(1),
-            "https://events.decentraland.org",
-        )
-        .await
-        .unwrap();
+        run_once(&pool, &test_links(base), soon + Span::days(1))
+            .await
+            .unwrap();
         assert_eq!(count(&pool, &event, "event_rejected", HOST).await, 1);
 
         let queued: i64 = sqlx::query_scalar(
@@ -769,15 +816,15 @@ mod tests {
             .naive_utc();
         sqlx::query("INSERT INTO social.event_notification_intents (id,event_id,kind,event,local_event,occurrence_start,occurred_at) SELECT $1,id,'events_started',raw,true,$3,$3 FROM explore.event WHERE id=$2")
             .bind(intent_id).bind(&paged).bind(paged_start).execute(&pool).await.unwrap();
-        dispatch_page(&pool, base, paged_start, "https://events.decentraland.org")
+        dispatch_page(&pool, &test_links(base), paged_start)
             .await
             .unwrap();
         let pending: bool = sqlx::query_scalar("SELECT processed_at IS NULL AND recipient_after <> '' FROM social.event_notification_intents WHERE id=$1")
             .bind(intent_id).fetch_one(&pool).await.unwrap();
         assert!(pending, "a full page persists its resume key");
         let (left, right) = tokio::join!(
-            dispatch_page(&pool, base, paged_start, "https://events.decentraland.org"),
-            dispatch_page(&pool, base, paged_start, "https://events.decentraland.org")
+            dispatch_page(&pool, &links, paged_start),
+            dispatch_page(&pool, &links, paged_start)
         );
         left.unwrap();
         right.unwrap();
@@ -810,13 +857,7 @@ mod tests {
             .execute(&mut *held)
             .await
             .unwrap();
-        let result = run_once(
-            pool,
-            "https://example.org",
-            now,
-            "https://assets.example.org/events",
-        )
-        .await;
+        let result = run_once(pool, &test_links("https://example.org"), now).await;
         held.rollback().await.unwrap();
         result.expect("metric lock deferral preserves normal notification cadence");
         assert_eq!(count(pool, &event_id, "event_approved", &address).await, 1);
@@ -908,12 +949,7 @@ mod tests {
             passes += 1;
             match tokio::time::timeout_at(
                 deadline,
-                run_once(
-                    pool,
-                    "https://example.org",
-                    now,
-                    "https://events.decentraland.org",
-                ),
+                run_once(pool, &test_links("https://example.org"), now),
             )
             .await
             {
@@ -1037,14 +1073,9 @@ mod tests {
             SELECT $1,id,'event_created',raw,true,$3 FROM explore.event WHERE id=$2")
             .bind(large_intent).bind(&large_event).bind(now).execute(pool).await.unwrap();
         let large_before = std::time::Instant::now();
-        dispatch_page(
-            pool,
-            "https://example.org",
-            now,
-            "https://events.decentraland.org",
-        )
-        .await
-        .unwrap();
+        dispatch_page(pool, &test_links("https://example.org"), now)
+            .await
+            .unwrap();
         let (cursor, completed): (String, bool) = sqlx::query_as(
             "SELECT recipient_after,processed_at IS NOT NULL FROM social.event_notification_intents WHERE id=$1",
         ).bind(large_intent).fetch_one(pool).await.unwrap();
@@ -1054,12 +1085,7 @@ mod tests {
         );
         if let Ok(result) = tokio::time::timeout(
             Duration::from_millis(1),
-            run_once(
-                pool,
-                "https://example.org",
-                now,
-                "https://events.decentraland.org",
-            ),
+            run_once(pool, &test_links("https://example.org"), now),
         )
         .await
         {
@@ -1095,23 +1121,13 @@ mod tests {
             crate::explore::events::attendees::rsvp_going(pool, &id, &address, None)
                 .await
                 .unwrap();
-            run_once(
-                pool,
-                "https://example.org",
-                now,
-                "https://events.decentraland.org",
-            )
-            .await
-            .unwrap();
+            run_once(pool, &test_links("https://example.org"), now)
+                .await
+                .unwrap();
             sqlx::query("UPDATE explore.event SET approved=true,raw=raw || '{\"approved\":true}'::jsonb WHERE id=$1").bind(&id).execute(pool).await.unwrap();
-            run_once(
-                pool,
-                "https://example.org",
-                now,
-                "https://events.decentraland.org",
-            )
-            .await
-            .unwrap();
+            run_once(pool, &test_links("https://example.org"), now)
+                .await
+                .unwrap();
             let kind = if suffix == "late-start" {
                 "events_started"
             } else {
@@ -1130,14 +1146,9 @@ mod tests {
         crate::explore::events::attendees::rsvp_going(pool, &moved, &address, None)
             .await
             .unwrap();
-        run_once(
-            pool,
-            "https://example.org",
-            now,
-            "https://events.decentraland.org",
-        )
-        .await
-        .unwrap();
+        run_once(pool, &test_links("https://example.org"), now)
+            .await
+            .unwrap();
         let old_intent = Uuid::new_v4();
         sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurrence_start,occurred_at) VALUES($1,$2,'events_starts_soon',$3,false,$4,$5)")
             .bind(old_intent).bind(&moved).bind(&body).bind(start).bind(now).execute(pool).await.unwrap();
@@ -1146,14 +1157,9 @@ mod tests {
         crate::explore::events::mirror::upsert_event(pool, &body)
             .await
             .unwrap();
-        run_once(
-            pool,
-            "https://example.org",
-            now,
-            "https://events.decentraland.org",
-        )
-        .await
-        .unwrap();
+        run_once(pool, &test_links("https://example.org"), now)
+            .await
+            .unwrap();
         assert_eq!(count(pool, &moved, "events_starts_soon", &address).await, 1);
 
         // A queued started notice can become stale during an outage, and is
@@ -1163,14 +1169,9 @@ mod tests {
         sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurrence_start,occurred_at)
             SELECT $1,id,'events_started',raw,false,$3,$3 FROM explore.event WHERE id=$2")
             .bind(stale_id).bind(&stale_event).bind(now-Span::hours(3)).execute(pool).await.unwrap();
-        run_once(
-            pool,
-            "https://example.org",
-            now,
-            "https://events.decentraland.org",
-        )
-        .await
-        .unwrap();
+        run_once(pool, &test_links("https://example.org"), now)
+            .await
+            .unwrap();
         assert_eq!(
             count(pool, &stale_event, "events_started", &address).await,
             0
@@ -1205,9 +1206,8 @@ mod tests {
         assert!(!retained.contains(&old));
         run_once(
             pool,
-            "https://example.org",
+            &test_links("https://example.org"),
             now + Span::days(40),
-            "https://events.decentraland.org",
         )
         .await
         .unwrap();
@@ -1250,14 +1250,9 @@ mod tests {
             .execute(&mut *held)
             .await
             .unwrap();
-        let error = dispatch_page(
-            pool,
-            "https://example.org",
-            now,
-            "https://events.decentraland.org",
-        )
-        .await
-        .unwrap_err();
+        let error = dispatch_page(pool, &test_links("https://example.org"), now)
+            .await
+            .unwrap_err();
         assert!(
             timed_out(&error),
             "PostgreSQL must cancel the blocked page: {error}"
@@ -1268,14 +1263,9 @@ mod tests {
             rotated,
             "claim rotation commits even when the delivery transaction rolls back"
         );
-        dispatch_page(
-            pool,
-            "https://example.org",
-            now,
-            "https://events.decentraland.org",
-        )
-        .await
-        .unwrap();
+        dispatch_page(pool, &test_links("https://example.org"), now)
+            .await
+            .unwrap();
         assert_eq!(
             count(pool, &fast, "event_approved", &address).await,
             1,
@@ -1285,14 +1275,9 @@ mod tests {
         sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurred_at,processed_at)
             VALUES($1,'expired','event_approved','{}',false,$2,$2)")
             .bind(expired).bind(now-Span::days(40)).execute(pool).await.unwrap();
-        run_once(
-            pool,
-            "https://example.org",
-            now,
-            "https://events.decentraland.org",
-        )
-        .await
-        .unwrap();
+        run_once(pool, &test_links("https://example.org"), now)
+            .await
+            .unwrap();
         let retained: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM social.event_notification_intents WHERE id=$1)",
         )
@@ -1357,26 +1342,14 @@ mod tests {
             .execute(pool).await.unwrap();
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE TRIGGER {trigger} BEFORE INSERT ON social.event_notification_intents FOR EACH ROW EXECUTE FUNCTION social.{function}()")))
             .execute(pool).await.unwrap();
-        let result = run_once(
-            pool,
-            "https://example.org",
-            now,
-            "https://events.decentraland.org",
-        )
-        .await;
+        let result = run_once(pool, &test_links("https://example.org"), now).await;
         // Unlike deadline deferrals, an ordinary scan database failure remains
         // a failed job, but queued host notices still receive their turn.
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE OR REPLACE FUNCTION social.{function}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_id='{reminder}' AND NEW.kind='events_starts_soon' THEN RAISE EXCEPTION 'test scan failure'; END IF; RETURN NEW; END $$"))).execute(pool).await.unwrap();
         let queued_event = format!("{prefix}-scan-error-delivery");
         sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurred_at) VALUES($1,$2,'event_approved',$3,false,$4)")
             .bind(Uuid::new_v4()).bind(&queued_event).bind(json!({"user":address})).bind(now).execute(pool).await.unwrap();
-        let failed_scan = run_once(
-            pool,
-            "https://example.org",
-            now,
-            "https://events.decentraland.org",
-        )
-        .await;
+        let failed_scan = run_once(pool, &test_links("https://example.org"), now).await;
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "DROP TRIGGER {trigger} ON social.event_notification_intents"
         )))
@@ -1406,14 +1379,9 @@ mod tests {
             0
         );
         let from = (now - Span::minutes(5)).and_utc().timestamp_millis();
-        run_once(
-            pool,
-            "https://example.org",
-            now,
-            "https://events.decentraland.org",
-        )
-        .await
-        .unwrap();
+        run_once(pool, &test_links("https://example.org"), now)
+            .await
+            .unwrap();
         let store = super::super::NotificationsStore::new(pool.clone());
         let fresh = store
             .list(&address.parse().unwrap(), 100, Some(from), false)
@@ -1423,7 +1391,7 @@ mod tests {
             .iter()
             .find(|item| item.metadata["eventId"] == reminder)
             .expect("incremental polling must see a newly delivered catch-up reminder");
-        assert_eq!(reminder_notice.metadata["title"], "Event starts soon");
+        assert_eq!(reminder_notice.metadata["title"], "Event starts in an hour");
         assert_eq!(
             reminder_notice.metadata["occurredAt"],
             (now - Span::minutes(50)).and_utc().to_rfc3339()
@@ -1513,13 +1481,7 @@ mod tests {
         let function = format!("fail_cleanup_{prefix}");
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE FUNCTION social.{function}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF OLD.event_id='{cleanup_event}' THEN RAISE EXCEPTION 'test cleanup failure'; END IF; RETURN OLD; END $$"))).execute(pool).await.unwrap();
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE TRIGGER {function} BEFORE DELETE ON social.event_notification_intents FOR EACH ROW EXECUTE FUNCTION social.{function}()"))).execute(pool).await.unwrap();
-        let result = run_once(
-            pool,
-            "https://example.org",
-            now,
-            "https://events.decentraland.org",
-        )
-        .await;
+        let result = run_once(pool, &test_links("https://example.org"), now).await;
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "DROP TRIGGER {function} ON social.event_notification_intents"
         )))
@@ -1586,6 +1548,13 @@ mod tests {
             count(pool, &lock_event, "events_starts_soon", &address).await,
             1
         );
+        // This fixture's wall-clock events (a local community one among them)
+        // would otherwise count as endings in the metric tests of this process.
+        sqlx::query("DELETE FROM explore.event WHERE id LIKE $1")
+            .bind(format!("{prefix}-%"))
+            .execute(pool)
+            .await
+            .unwrap();
     }
     #[test]
     fn queued_relative_defaults_use_the_asset_origin_and_keep_the_notice_link_origin() {
@@ -1605,19 +1574,189 @@ mod tests {
             community: false,
             community_name: None,
         };
-        let payload = metadata(
-            &intent,
-            &recipient,
-            "https://web.example.org",
-            "https://assets.example.org/events/",
-        );
+        let links = Links {
+            base: "https://web.example.org".into(),
+            asset_base: "https://assets.example.org/events/".into(),
+            jump_in_site_url: "https://jump.example.org/".into(),
+            slack_notices: false,
+        };
+        let payload = metadata(&intent, &recipient, &links);
         assert_eq!(
             payload["image"],
             "https://assets.example.org/events/assets/event-default.webp"
         );
         assert_eq!(
-            payload["link"],
-            "https://web.example.org/whats-on/legacy-event"
+            payload["link"], "https://jump.example.org/events?id=legacy-event&position=0%2C0",
+            "an approval links the jump-in site (`Notifications/index.ts:205`)"
         );
+        assert!(payload.get("attendee").is_none());
+        let rejected = Intent {
+            kind: "event_rejected".into(),
+            ..intent
+        };
+        assert_eq!(
+            metadata(&rejected, &recipient, &links)["link"],
+            "https://web.example.org/whats-on/legacy-event",
+            "notices upstream sent without a link keep this node's event page"
+        );
+    }
+
+    /// `Notifications/index.ts:44-68,73-110`: the reminder and start titles,
+    /// descriptions, jump-in links (`position` and `realm`) and `attendee`.
+    #[test]
+    fn reminder_and_start_notices_follow_upstream_titles_and_links() {
+        let start = chrono::DateTime::parse_from_rfc3339("2099-06-01T18:00:00Z")
+            .unwrap()
+            .naive_utc();
+        let links = test_links("https://example.org");
+        let intent = Intent {
+            id: Uuid::new_v4(),
+            event_id: "ev-1".into(),
+            kind: "events_starts_soon".into(),
+            event: json!({"name":"Launch","x":10,"y":-20,"server":"world.dcl.eth","duration":3600000}),
+            local_event: true,
+            occurrence_start: Some(start),
+            occurred_at: start - Span::hours(1),
+            recipient_after: String::new(),
+        };
+        let attendee = Recipient {
+            address: "0x1111111111111111111111111111111111111111".into(),
+            community: false,
+            community_name: None,
+        };
+        let reminder = metadata(&intent, &attendee, &links);
+        assert_eq!(reminder["title"], "Event starts in an hour");
+        assert_eq!(
+            reminder["description"],
+            "The event Launch starts in an hour."
+        );
+        assert_eq!(
+            reminder["link"],
+            "https://decentraland.org/jump/events?id=ev-1&position=10%2C-20&realm=world.dcl.eth"
+        );
+        assert_eq!(reminder["attendee"], attendee.address);
+        assert_eq!(reminder["startsAt"], "2099-06-01T18:00:00+00:00");
+        assert_eq!(reminder["endsAt"], "2099-06-01T19:00:00+00:00");
+        let started = Intent {
+            kind: "events_started".into(),
+            ..intent
+        };
+        let plain = metadata(&started, &attendee, &links);
+        assert_eq!(plain["title"], "Event started");
+        assert_eq!(plain["description"], "The event Launch has begun!");
+        assert_eq!(
+            plain["link"],
+            "https://decentraland.org/jump/events?id=ev-1&position=10%2C-20&realm=world.dcl.eth"
+        );
+        let member = Recipient {
+            address: "0x2222222222222222222222222222222222222222".into(),
+            community: true,
+            community_name: Some("Builders".into()),
+        };
+        let community = metadata(&started, &member, &links);
+        assert_eq!(community["title"], "Community Event starting");
+        assert_eq!(
+            community["description"],
+            "A Builders event is about to start."
+        );
+        assert_eq!(community["communityName"], "Builders");
+        assert_eq!(community["attendee"], member.address);
+    }
+
+    /// `Event/cron.ts:51-83`: an occurrence starting within the next hour is
+    /// reminded once, a later one is not yet, a started one never; the
+    /// reminder's Slack notice (`:76`) is queued with the attendee count only
+    /// while the channel is on.
+    #[tokio::test]
+    async fn reminder_window_and_upcoming_slack_notice() {
+        let _guard = super::super::event_ended::TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        let now = chrono::DateTime::parse_from_rfc3339("2102-03-01T12:00:00Z")
+            .unwrap()
+            .naive_utc();
+        let prefix = Uuid::new_v4().to_string();
+        let address = format!("0x{}00000000", Uuid::new_v4().simple());
+        let other = format!("0x{}00000000", Uuid::new_v4().simple());
+        for (suffix, offset) in [
+            ("in-59", Span::minutes(59)),
+            ("in-61", Span::minutes(61)),
+            ("started", -Span::minutes(1)),
+        ] {
+            let id = format!("{prefix}:{suffix}");
+            let start = now + offset;
+            crate::explore::events::mirror::upsert_event(&pool, &json!({
+                "id":id,"name":"Window","approved":true,"x":5,"y":6,"user":address,
+                "start_at":start.and_utc().to_rfc3339(),"finish_at":(start+Span::hours(1)).and_utc().to_rfc3339(),"duration":3600000
+            })).await.unwrap();
+            for signer in [&address, &other] {
+                crate::explore::events::attendees::rsvp_going(&pool, &id, signer, None)
+                    .await
+                    .unwrap();
+            }
+        }
+        let mut links = test_links("https://example.org");
+        links.slack_notices = true;
+        let reminders = |suffix: &str| {
+            let (pool, id) = (pool.clone(), format!("{prefix}:{suffix}"));
+            async move {
+                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM social.notifications WHERE metadata->>'eventId'=$1 AND type='events_starts_soon'")
+                    .bind(id).fetch_one(&pool).await.unwrap()
+            }
+        };
+        let slack = |suffix: &str| {
+            let (pool, id) = (pool.clone(), format!("{prefix}:{suffix}"));
+            async move {
+                sqlx::query_as::<_, (String, Value)>("SELECT kind,payload FROM explore.moderation_hooks WHERE channel='events' AND subject=$1 ORDER BY created_at")
+                    .bind(id).fetch_all(&pool).await.unwrap()
+            }
+        };
+        run_once(&pool, &links, now).await.unwrap();
+        run_once(&pool, &links, now).await.unwrap();
+        assert_eq!(reminders("in-59").await, 2, "both attendees, once");
+        assert_eq!(reminders("in-61").await, 0, "not within the hour yet");
+        assert_eq!(
+            reminders("started").await,
+            0,
+            "a started event is no reminder"
+        );
+        let queued = slack("in-59").await;
+        assert_eq!(queued.len(), 1, "one upcoming notice per occurrence");
+        assert_eq!(queued[0].0, "upcoming");
+        assert_eq!(queued[0].1["notifications"], 2);
+        assert_eq!(queued[0].1["name"], "Window");
+        assert!(slack("started").await.is_empty());
+        let link: String = sqlx::query_scalar("SELECT metadata->>'link' FROM social.notifications WHERE metadata->>'eventId'=$1 AND type='events_starts_soon' LIMIT 1")
+            .bind(format!("{prefix}:in-59")).fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            link,
+            format!(
+                "https://decentraland.org/jump/events?id={}&position=5%2C6",
+                urlencoding::encode(&format!("{prefix}:in-59"))
+            )
+        );
+        // Two minutes later the later occurrence crosses the hour line, while
+        // the Slack channel is off: the reminder goes out, no notice is queued.
+        links.slack_notices = false;
+        run_once(&pool, &links, now + Span::minutes(2))
+            .await
+            .unwrap();
+        assert_eq!(reminders("in-61").await, 2);
+        assert!(slack("in-61").await.is_empty());
+        for suffix in ["in-59", "in-61", "started"] {
+            sqlx::query(
+                "DELETE FROM explore.moderation_hooks WHERE channel='events' AND subject=$1",
+            )
+            .bind(format!("{prefix}:{suffix}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query("DELETE FROM explore.event WHERE id LIKE $1")
+            .bind(format!("{prefix}:%"))
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 }
