@@ -1559,7 +1559,6 @@ dependencies = [
  "clap",
  "dcl-auth",
  "dcl-http",
- "flate2",
  "futures",
  "getrandom 0.4.3",
  "hex",

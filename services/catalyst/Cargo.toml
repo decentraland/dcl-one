@@ -181,7 +181,6 @@ base64.workspace = true
 alloy-primitives.workspace = true
 sha2.workspace = true
 reqwest.workspace = true
-flate2.workspace = true
 url.workspace = true
 prost.workspace = true
 hmac.workspace = true

@@ -41,7 +41,6 @@ pub(crate) use catalyst_storage as storage;
 pub(crate) use dcl_auth as auth;
 pub(crate) use dcl_http as http;
 
-pub mod analytics;
 pub mod campaigns;
 pub mod checkout;
 pub mod coupons;
@@ -104,8 +103,6 @@ pub(crate) fn admin_extensions() -> Router<market::SharedState> {
 /// The states the canonical router serves over: each module keeps its own.
 pub struct States {
     pub market: Arc<market::MarketplaceState>,
-    /// The ops telemetry sink the Shop's analytics events land in (`analytics`).
-    pub analytics: analytics::Sink,
     pub credits: Arc<credits::State>,
     pub economy: Arc<crate::evm::State>,
     pub outfits: Arc<outfits::State>,
@@ -130,7 +127,6 @@ pub fn router(states: States) -> Router {
     Router::new()
         .merge(market::market_router(states.market.clone()))
         .merge(market::shop_admin_router(states.market))
-        .merge(analytics::router(states.analytics))
         .merge(credits::shop_router(states.credits))
         .merge(checkout::shop_router(states.economy.clone()))
         .merge(treasury::shop_router(states.economy))

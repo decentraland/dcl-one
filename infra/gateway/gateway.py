@@ -302,8 +302,6 @@ http {{
         default 0;
         "~*^/(admin|server)(\\\\W|$)" 1;
         "~*^/metabase(/|\\\\.|$)" 1;
-        "~*^/telemetry/dash/(sql|flag|group/target)(\\\\.data)?/?$" 1;
-        "~*^/telemetry/dash/admin(/|\\\\.|$)" 1;
     }}
     map "$operator_path:$admin_gate" $operator_denied {{ volatile; default 0; "1:" 1; }}
     # Listed sync peers (the API's TRUSTED_SYNC_PEER_IPS) get an empty key on

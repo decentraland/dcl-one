@@ -178,10 +178,7 @@ def client(args):
             assert status == 404, (path, status, body)
     operator_paths = ["/admin", "/admin/", "/admin.data", "/Admin.data", "/ADMIN/jobs.data",
                       "/admin/api/jobs", "/%61dmin/api/jobs", "/x/../admin/api/jobs",
-                      "/server", "/server.data", "/metabase/", "/metabase.data",
-                      "/telemetry/dash/sql", "/telemetry/dash/sql.data",
-                      "/telemetry/dash/flag.data", "/telemetry/dash/group/target.data",
-                      "/telemetry/dash/admin.data", "/telemetry/dash/admin/users"]
+                      "/server", "/server.data", "/metabase/", "/metabase.data"]
     forged = {"X-Forwarded-For": "198.51.100.7", "X-Real-IP": "198.51.100.7",
               "CF-Connecting-IP": "203.0.113.88", "True-Client-IP": "203.0.113.88",
               "X-Catalyst-Admin-Gate": "admitted", "X-Forwarded-Proto": "https",

@@ -607,6 +607,29 @@ tests exercise the composed release and real migrator against captured, genuinel
 prepared and shipped-main version-2 state; deployment backup, restore, historical
 raw-alias loss and cutover validation remain separate operating gates.
 
+### Retired telemetry sink
+
+The node is not a Sentry or Segment sink: the `telemetry` schema (the sink
+tables, their console state and the Shop analytics rows) left `schemas/`, no
+binary reads or writes it, and client telemetry goes to Segment from the sites
+and the explorer. A database stamped before the removal keeps the schema until
+the release script drops it; the bootstrap and the object pass neither create
+nor drop it, so the old tables are inert, not an error. Rollout: run the binary
+without the sink on every replica, stop every `serve` of the old build (its
+ingest writer and `telemetry-purge` job write the schema), then once, with the
+administrative role:
+
+```sh
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f schemas/releases/telemetry-retired.sql
+```
+
+The release drops the schema with its twelve tables and nine indexes in one
+transaction and keeps `ops.admin_audit`: its rows with domain `telemetry` and
+the CHECK value that admits them stay. The deployment then drops the read-only
+role it created for the console's SQL reader and the `TELEMETRY_*` settings.
+The drop is not reversible without the matching backup. Do not reset a
+database.
+
 Peer sync is not a backup of local state. Keep local write paths disabled until a backup restore of the node's database, blobs and credentials has been demonstrated. Record the restore and rollback evidence in the task report before enabling writes. Development and commit builds sharing a database must agree on its schema; do not reset or silently migrate shared state to fit a working tree.
 
 

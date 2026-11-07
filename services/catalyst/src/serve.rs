@@ -87,11 +87,7 @@ mod metrics_tests {
             .unwrap();
         assert!(response.status().is_success());
         let rendered = response.text().await.unwrap();
-        for sample in [
-            "comms_nats_connected 0",
-            "comms_cluster_work_running 0",
-            "telemetry_rows_refused_total 0",
-        ] {
+        for sample in ["comms_nats_connected 0", "comms_cluster_work_running 0"] {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");
         }
         let reserved = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -104,7 +100,7 @@ mod metrics_tests {
     }
 
     #[test]
-    fn serve_registers_health_work_and_telemetry_before_events() {
+    fn serve_registers_health_and_work_before_events() {
         let recorder = crate::comms::metrics::prometheus_builder()
             .unwrap()
             .build_recorder();
@@ -117,11 +113,6 @@ mod metrics_tests {
             "comms_cluster_work_running 0",
             "comms_cluster_work_queued 0",
             "comms_cluster_work_rejected_total{reason=\"wallet_full\"} 0",
-            "telemetry_rows_refused_total 0",
-            "telemetry_ingest_dropped_total{reason=\"queue_full\"} 0",
-            "telemetry_ingest_dropped_total{reason=\"quota\"} 0",
-            "telemetry_ingest_dropped_total{reason=\"rows_ceiling\"} 0",
-            "telemetry_ingest_dropped_total{reason=\"bytes_ceiling\"} 0",
         ] {
             assert!(rendered.contains(sample), "missing {sample}: {rendered}");
         }
@@ -190,7 +181,6 @@ fn install_restore_stamps(config: &Config) -> anyhow::Result<()> {
 
 fn register_metrics() {
     comms::gatekeeper::admission::cluster::metrics::register_series();
-    ops::telemetry::register_metrics();
 }
 
 fn install_metrics(raw: &str) -> anyhow::Result<comms::metrics::PrometheusHandle> {
@@ -855,13 +845,10 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     }
 
     // The operator plane and the remaining services (the old
-    // catalyrst-telemetry, -credits, -rpc and
-    // -bvimposters units): every one over the same pool, client, blob store,
-    // validator and job lifecycle. The credits ledger and
-    // the telemetry console writes are local authority behind
-    // OPS_WRITES_ENABLED (the social switch's twin); the telemetry sinks
-    // have their own TELEMETRY_INGEST_ENABLED, since an ingest sink is not
-    // user state and a node in catch-up may accept telemetry before writes.
+    // catalyrst-credits, -rpc and -bvimposters units): every one over the
+    // same pool, client, blob store, validator and job lifecycle. The credits
+    // ledger is local authority behind OPS_WRITES_ENABLED (the social
+    // switch's twin).
     let stage5_ops = ops_states(
         &config,
         &pool,
@@ -872,7 +859,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             price: &price,
             economy: &economy_state,
             eip1654: eip1654.clone(),
-            self_hosts: &self_hosts,
             public_url: &public_url,
         },
     )
@@ -1272,7 +1258,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         // The console's /admin/api/<family>/* calls into these modules in
         // this process (the old console proxied to each over loopback HTTP).
         .with_domains(ops::admin::console::Domains {
-            telemetry: Some(stage5_ops.telemetry.clone()),
             credits: Some(stage5_ops.credits.clone()),
             price: Some(price.clone()),
             comms: Some(comms_stage.gatekeeper.clone()),
@@ -1295,8 +1280,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     tracing::info!(
         console = ops_admin.settings.admin_enabled(),
         sync_control = ops_admin.sync_control.is_some(),
-        telemetry = %stage5_ops.telemetry.sources_label(),
-        telemetry_ingest = config.ops.telemetry_ingest_enabled,
         credits_admin = stage5_ops.credits.settings.admin_token.is_some(),
         stripe = stage5_ops.credits.settings.stripe_secret_key.is_some(),
         rpc_networks = stage5_ops.rpc.upstreams_snapshot().len(),
@@ -1307,17 +1290,13 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     );
     if config.ops.ops_writes_enabled {
         tracing::warn!(
-            "OPS_WRITES_ENABLED=true: this node is the authority for the credits ledger, the telemetry console and the operator console's writes"
+            "OPS_WRITES_ENABLED=true: this node is the authority for the credits ledger and the operator console's writes"
         );
     } else {
         tracing::info!(
             "OPS_WRITES_ENABLED=false: operator-plane routes serve reads; every write answers 503"
         );
     }
-    if !config.ops.telemetry_ingest_enabled {
-        tracing::info!("TELEMETRY_INGEST_ENABLED=false: the Sentry and Segment sinks answer 503");
-    }
-
     let addr = config.node.bind_addr();
     // The old gateway's location table (catalyrst/nixos/web-gateway.nix): the
     // content routes and /lambdas at the root, every other service under the
@@ -1348,7 +1327,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             "/shop-api",
             shop::router(shop::States {
                 market: market.clone(),
-                analytics: shop::analytics::Sink::from(stage5_ops.telemetry.clone()),
                 credits: stage5_ops.credits.clone(),
                 economy: economy_state.clone(),
                 signatures: signatures.clone(),
@@ -1411,15 +1389,13 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .merge(builder::root_router(builder.clone()))
         .nest("/builder-api", builder::router(builder))
         .nest("/camera-reel-service", camera_reel::router(camera_reel));
-    // The operator plane under the old gateway's prefixes: the sinks and the
-    // console under /telemetry (TELEMETRY_BASE_PATH), credits under /credits
-    // only (its /users, /cart and /checkout would collide at the root; the
+    // The operator plane under the old gateway's prefixes: credits under
+    // /credits only (its /users, /cart and /checkout would collide at the root; the
     // handlers verify a signed fetch over the public path and the route-local
     // one), the relay under /rpc (rpc.<domain>/x -> /rpc/x),
     // the imposter zips under /bvimposters (the prefix baked into the explorer
     // wasm), the console API at the root (/admin/auth, /admin/api/*).
     let app = app
-        .nest("/telemetry", ops::telemetry::router(stage5_ops.telemetry))
         .nest("/credits", shop::credits::router(stage5_ops.credits))
         .nest("/rpc", ops::rpc::router(stage5_ops.rpc))
         .nest(
@@ -1520,14 +1496,11 @@ struct OpsSources<'a> {
     price: &'a Arc<price::State>,
     economy: &'a Arc<shop::evm::State>,
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
-    /// Every host this node answers at (`content::own_hosts`).
-    self_hosts: &'a [String],
     public_url: &'a str,
 }
 
 /// The operator-plane states, one per old unit, with their jobs attached.
 struct OpsStates {
-    telemetry: Arc<ops::telemetry::State>,
     credits: Arc<shop::credits::State>,
     rpc: ops::rpc::Shared,
     imposters: explore::imposters::Shared,
@@ -1541,35 +1514,6 @@ async fn ops_states(
     sources: OpsSources<'_>,
 ) -> anyhow::Result<OpsStates> {
     let non_empty = Config::non_empty;
-
-    let telemetry = Arc::new(
-        ops::telemetry::State::new(
-            pool.clone(),
-            http_client.clone(),
-            ops::telemetry::Settings::resolve(
-                ops::telemetry::RawSettings {
-                    ingest_enabled: config.ops.telemetry_ingest_enabled,
-                    writes_enabled: config.ops.ops_writes_enabled,
-                    admin_token: non_empty(&config.ops.catalyrst_telemetry_admin_token),
-                    contract_path: non_empty(&config.ops.telemetry_contract_path),
-                    contract_projects: non_empty(&config.ops.telemetry_contract_projects),
-                    flags_url: non_empty(&config.ops.telemetry_flags_url),
-                    base_path: config.ops.telemetry_base_path.clone(),
-                    retention_days: config.ops.telemetry_retention_days,
-                    purge_max_batches: config.ops.telemetry_purge_max_batches,
-                    default_daily_limit: config.ops.telemetry_default_daily_limit,
-                    max_rows_per_minute: config.ops.telemetry_max_rows_per_minute,
-                    max_bytes_per_minute: config.ops.telemetry_max_bytes_per_minute,
-                    sql_database_url: non_empty(&config.ops.telemetry_sql_database_url),
-                },
-                sources.self_hosts,
-            )
-            .context("TELEMETRY_* configuration")?,
-        )
-        .await
-        .context("loading telemetry.ingest_settings / project_quotas")?,
-    );
-    telemetry.spawn_jobs(jobs);
 
     let credits = Arc::new(shop::credits::State::new(
         pool.clone(),
@@ -1623,7 +1567,6 @@ async fn ops_states(
     imposters.spawn_jobs(jobs);
 
     Ok(OpsStates {
-        telemetry,
         credits,
         rpc,
         imposters,

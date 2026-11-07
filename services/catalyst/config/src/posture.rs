@@ -897,7 +897,6 @@ const FED_PEERS_FILE: &str = "WORLDS_FED_PEERS_FILE";
 /// loopback and this node's own address.
 pub const ANY_HOST: &[(&str, &str)] = &[
     ("DATABASE_URL", DATABASE),
-    ("TELEMETRY_SQL_DATABASE_URL", DATABASE),
     ("PUBLIC_URL", "this node's own address"),
     ("HTTP_SERVER_HOST", "the address it listens on"),
     ("ACCOUNT_BASE_URL", LINK),
