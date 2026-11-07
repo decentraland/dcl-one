@@ -829,6 +829,7 @@ async fn spawn_stub_peer(now: i64) -> (String, tokio::task::JoinHandle<()>) {
 fn sync_settings(peer: &str) -> SyncSettings {
     SyncSettings {
         peers: vec![peer.to_string()],
+        dao: None,
         entity_types: None,
         from_timestamp_ms: 0,
         phased_sync: true,

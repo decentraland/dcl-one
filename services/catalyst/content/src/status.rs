@@ -11,9 +11,10 @@ const HEARTBEAT_MAX_AGE_MS: i64 = 300_000;
 
 /// Always 200, as upstream at the pinned revision (no component reports a
 /// status check there). `lastSyncWithDAO` is the last sync heartbeat, this
-/// node's equivalent of upstream's last DAO-list refresh (this node has no
-/// DAO list; both are refreshed while the node follows its peers), and 0
-/// before the first one, as upstream's `timeOfLastSync` starts.
+/// node's equivalent of upstream's last DAO-list refresh (both are refreshed
+/// while the node follows its peers, whether they come from `SYNC_SOURCE` or,
+/// with `SYNC_FROM_DAO`, from the DAO list), and 0 before the first one, as
+/// upstream's `timeOfLastSync` starts.
 pub async fn get_status(State(state): State<SharedState>) -> impl IntoResponse {
     let sync_state = state.sync.state_name().to_string();
     let now_ms = chrono::Utc::now().timestamp_millis();

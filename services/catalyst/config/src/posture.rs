@@ -172,6 +172,8 @@ const ROWS: &[Row] = &[
         Is("true"),
     ),
     upstream("sync", "SYNC_SOURCE", DCL_PEERS),
+    // The DAO catalyst list over ETH_RPC_URL; SYNC_SOURCE is its fallback.
+    mirrored("sync", "SYNC_FROM_DAO"),
     mirrored("sync", "READ_THROUGH_ENABLED"),
     // Decentraland's moderation list, hidden from the content reads as the
     // upstream catalyst hides it (its DENYLIST_URLS default).
