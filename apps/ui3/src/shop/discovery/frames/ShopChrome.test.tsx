@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { shopCartDrawer } from "../../cart/drawer";
 import { shopCart } from "../../cart/store";
 import { itemAsset } from "../../model/asset";
 import { evmAddress } from "../../model/address";
@@ -12,6 +13,7 @@ import ShopChrome, { shopTabs } from "./ShopChrome";
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
   shopCart.clear();
+  shopCartDrawer.close();
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -60,6 +62,20 @@ describe("the Shop frame", () => {
     await chrome("/shop/cart");
     expect(within(screen.getByTestId("subnav-tabs")).queryByRole("link", { name: "Cart" })).toBeNull();
     expect(screen.getByTestId("subnav-cart")).toBeTruthy();
+  });
+
+  it("the subnav's cart button opens the drawer, with no banner, and stays on the page", async () => {
+    await chrome("/shop/items");
+    fireEvent.click(screen.getAllByTestId("subnav-cart")[0]!);
+    expect(screen.getByRole("dialog", { name: "Shopping cart" })).toBeTruthy();
+    expect(screen.queryByTestId("cart-drawer-banner")).toBeNull();
+    expect(screen.getByTestId("where")).toHaveTextContent("/shop/items");
+  });
+
+  it("mounts the drawer on a marketplace page too, where a card's Add to cart still opens it", async () => {
+    await chrome("/shop/accounts/0x000000000000000000000000000000000000abcd");
+    act(() => shopCartDrawer.added());
+    expect(screen.getByRole("dialog", { name: "Shopping cart" })).toBeTruthy();
   });
 
   it("hides the credits entry in the iOS web view", async () => {
