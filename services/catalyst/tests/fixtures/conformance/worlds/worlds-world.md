@@ -13,7 +13,7 @@ Pinned revisions:
   `@dcl/schema-validator-component` 1.0.1, `@dcl/crypto-middleware` 6.3.0, `@dcl/http-server` 2.3.0 (`cors.js`).
   `@dcl/schemas` (`EthAddress`, `IPFSv2`, `SceneParcels`), `@dcl/catalyst-contracts` and
   `@dcl/catalyst-api-specs` were not read; rows that depend on them say so.
-- dcl-one: `dcl-one` @ `2da8b8aea` (origin/main), Rust workspace `services/catalyst`.
+- dcl-one: origin main `2da8b8aea`, Rust workspace `services/catalyst`.
 
 Everything below is from reading the code and the upstream tests. Nothing was built, run or captured,
 and no line is "verified".
