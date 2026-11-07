@@ -2606,21 +2606,25 @@ fn social_states(
     })
 }
 
+/// Installs the shutdown signal handlers now and returns the wait for one of
+/// them. Call it before logging that the process is ready, so a signal sent
+/// in reply to that line finds its handler.
 pub(crate) fn shutdown_signal() -> impl std::future::Future<Output = ()> {
-    let ctrl_c = tokio::signal::ctrl_c();
     #[cfg(unix)]
-    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .expect("installing the SIGTERM handler");
-    async move {
-        #[cfg(unix)]
-        tokio::select! {
-            _ = ctrl_c => tracing::info!("SIGINT received"),
-            _ = term.recv() => tracing::info!("SIGTERM received"),
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut interrupt = signal(SignalKind::interrupt()).expect("installing the SIGINT handler");
+        let mut term = signal(SignalKind::terminate()).expect("installing the SIGTERM handler");
+        async move {
+            tokio::select! {
+                _ = interrupt.recv() => tracing::info!("SIGINT received"),
+                _ = term.recv() => tracing::info!("SIGTERM received"),
+            }
         }
-        #[cfg(not(unix))]
-        {
-            let _ = ctrl_c.await;
-            tracing::info!("shutdown signal received");
-        }
+    }
+    #[cfg(not(unix))]
+    async {
+        let _ = tokio::signal::ctrl_c().await;
+        tracing::info!("shutdown signal received");
     }
 }
