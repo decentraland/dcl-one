@@ -11,6 +11,18 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / 'tooling/social-voice-release-test.sh'
 WORKFLOW = ROOT / '.github/workflows/social-voice-release.yml'
+LOCKED_POSTGRES = 'postgres (PostgreSQL) 18.6'
+
+
+def locked_toolchain():
+    postgres = shutil.which('postgres')
+    if not postgres:
+        return False
+    return subprocess.run([postgres, '--version'], capture_output=True, text=True).stdout.strip() == LOCKED_POSTGRES
+
+
+# The runner refuses any other toolchain before these scenarios start (see the wrong-toolchain test).
+needs_locked_toolchain = unittest.skipUnless(locked_toolchain(), f'requires the locked {LOCKED_POSTGRES} toolchain (nix develop)')
 
 
 class SocialVoiceReleaseCiTests(unittest.TestCase):
@@ -73,6 +85,7 @@ sys.exit(int(os.environ.get('RELEASE_CI_TEST_CARGO_EXIT', '0')))
                                     capture_output=True, text=True, timeout=5)
             self.assertNotEqual(result.returncode, 0, 'owned PostgreSQL must be stopped')
 
+    @needs_locked_toolchain
     def test_always_supplies_owned_database_and_psql_to_the_actual_release_target(self):
         self.env['CARGO_TARGET_DIR'] = str(self.files / 'isolated-target')
         result = self.run_runner()
@@ -92,12 +105,14 @@ sys.exit(int(os.environ.get('RELEASE_CI_TEST_CARGO_EXIT', '0')))
         self.assertEqual(record['collation'], 't')
         self.assert_owned_cluster_removed(record)
 
+    @needs_locked_toolchain
     def test_cargo_failure_is_not_hidden_and_still_removes_the_owned_cluster(self):
         self.env['RELEASE_CI_TEST_CARGO_EXIT'] = '7'
         result = self.run_runner()
         self.assertEqual(result.returncode, 7, result.stdout + result.stderr)
         self.assert_owned_cluster_removed(json.loads(self.record.read_text()))
 
+    @needs_locked_toolchain
     def test_startup_failure_is_fatal_before_cargo_and_removes_owned_files(self):
         self.write_tool('pg_ctl', f'''
 import json, os, sys
@@ -113,6 +128,7 @@ os.execv({self.tools['pg_ctl']!r}, [{self.tools['pg_ctl']!r}] + sys.argv[1:])
         self.assertNotIn('args', record, 'Cargo must not run after startup failure')
         self.assert_owned_cluster_removed(record)
 
+    @needs_locked_toolchain
     def test_unavailable_database_is_fatal_before_cargo_and_stops_owned_server(self):
         self.write_tool('psql', '''
 import json, os, sys
