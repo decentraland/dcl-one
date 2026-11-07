@@ -124,4 +124,40 @@ describe("wire decoding refuses what serde refuses", () => {
       "a settlement key names its own method",
     ).toBeNull();
   });
+
+  it("decodes the coupon an offer was priced with and refuses a malformed one", () => {
+    const base = {
+      asset: { chainId: 137, contract, token: { kind: "item", itemId: "7" } },
+      kind: "wearable",
+      sale: "primaryMint",
+      bundle: false,
+      eligibility: { allowed: ["credits", "mana"], default: "credits", reasons: ["creditsFirst", "manaSecond"], guidance: null },
+      quotes: [{ method: "credits", quoted: 90 }],
+      unavailable: [],
+      settlement: [{ method: "credits", key }],
+      available: 3,
+      quotedAt: 1,
+    };
+    const coupon = { id: "sale-1", couponAddress: "0xC914507fe297b2dddd1232ac3a8903f1c125e794", discountPpm: 100_000 };
+    expect(decodePurchaseOffer(base)?.coupon, "absent").toBeUndefined();
+    expect(decodePurchaseOffer({ ...base, coupon: null })?.coupon, "null").toBeUndefined();
+    const offer = decodePurchaseOffer({ ...base, coupon });
+    expect(offer?.coupon).toEqual({ ...coupon, couponAddress: coupon.couponAddress.toLowerCase() });
+    expect(
+      decodePurchaseOffer(JSON.parse(JSON.stringify(encodePurchaseOffer(offer!))))?.coupon,
+      "a persisted cart keeps the coupon",
+    ).toEqual(offer!.coupon);
+    for (const bad of [
+      { ...coupon, discountPpm: "100000" },
+      { ...coupon, discountPpm: 0 },
+      { ...coupon, discountPpm: 1_000_000 },
+      { ...coupon, discountPpm: 1.5 },
+      { ...coupon, couponAddress: "0xc914" },
+      { ...coupon, id: "" },
+      { ...coupon, id: 7 },
+      "sale-1",
+    ]) {
+      expect(decodePurchaseOffer({ ...base, coupon: bad }), JSON.stringify(bad)).toBeNull();
+    }
+  });
 });

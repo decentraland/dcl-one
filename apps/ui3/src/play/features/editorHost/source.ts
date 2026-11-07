@@ -1,7 +1,7 @@
-// Where the editor package comes from and which services it talks to (README "Releasing the
-// editor"). Read by the Create page's chunk only; config.ts holds what the HUD itself needs.
+// Where the editor package comes from and which services it talks to (react-web/AGENTS.md, "The
+// scene editor host"). Read by the Create page's chunk only; config.ts holds what the HUD itself needs.
 
-import { isLoopback, RELEASED_EDITOR } from './config'
+import { isLoopback, PINNED_EDITOR, RELEASED_EDITOR } from './config'
 
 /** An editor package the page runs from one directory. */
 export interface EditorPin {
@@ -110,15 +110,18 @@ const ownPackage = (hostname: string): boolean => isLoopback(hostname) && (impor
 export const hasEditor = (hostname: string): boolean => ownPackage(hostname) || RELEASED_EDITOR != null
 
 /** The editor this page opens, or null when it has none. A dev server on loopback serves its
- *  own package (vite.config.ts `editorPackage`); a production build follows the release wherever
- *  it runs. */
+ *  own package (vite.config.ts `editorPackage`); a pinned host runs its pin; a production build
+ *  follows the release anywhere else. */
 export async function editorSource(search: string, hostname: string, pageDir: string, baseDomain: string): Promise<EditorSource | null> {
   const loopback = isLoopback(hostname)
+  const pinned = PINNED_EDITOR?.hosts.includes(hostname) === true ? PINNED_EDITOR : null
   const pin: EditorPin | null = ownPackage(hostname)
     ? { base: `${pageDir}editor/`, editorJsIntegrity: null, editorSceneEntity: null }
-    : RELEASED_EDITOR == null
-      ? null
-      : await releasedPin({ ...RELEASED_EDITOR, tag: releaseTag(search, RELEASED_EDITOR.tag) })
+    : pinned != null
+      ? { base: pinned.base, editorJsIntegrity: pinned.editorJsIntegrity, editorSceneEntity: pinned.editorSceneEntity }
+      : RELEASED_EDITOR == null
+        ? null
+        : await releasedPin({ ...RELEASED_EDITOR, tag: releaseTag(search, RELEASED_EDITOR.tag) })
   if (pin == null) return null
   if (!loopback) return { ...pin, services: pinnedServices(baseDomain) }
   const q = new URLSearchParams(search)

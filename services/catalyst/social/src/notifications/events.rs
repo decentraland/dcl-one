@@ -50,15 +50,22 @@ struct Recipient {
     community_thumbnail: bool,
 }
 
-/// Origins a notice's links and images resolve against.
+/// The sites the notices point at and the Slack switch.
 #[derive(Clone, Debug)]
-pub struct Origins {
-    /// Deployment origin of `/whats-on` links.
-    pub link: String,
-    /// Backend event asset origin and mount.
-    pub assets: String,
+pub struct Links {
+    /// The events site (`/whats-on/{id}`): the link of the notices the old
+    /// service sent without one (rejected, deleted, community created).
+    pub base: String,
+    /// Backend asset origin and mount for relative default posters.
+    pub asset_base: String,
+    /// `JUMP_IN_SITE_URL`: `buildEventLink` (`Notifications/index.ts:30-39`)
+    /// for the reminder, start and approval notices.
+    pub jump_in_site_url: String,
     /// Community thumbnail CDN (`communities::thumbnail_url`).
     pub community_cdn: String,
+    /// Explore's Slack moderation outbox is active: the reminder job queues
+    /// the old `:runner:` notice there (`Event/cron.ts:76`).
+    pub slack_notices: bool,
 }
 
 fn occurrence_id(event_id: &str, starts_at: NaiveDateTime, kind: &str) -> Uuid {
@@ -191,16 +198,28 @@ async fn recipients(
     Ok(rows)
 }
 
-fn metadata(intent: &Intent, recipient: &Recipient, origins: &Origins) -> Value {
-    let base = origins.link.trim_end_matches('/');
+fn metadata(intent: &Intent, recipient: &Recipient, links: &Links) -> Value {
+    let base = links.base.trim_end_matches('/');
     let name = text(&intent.event, "name");
     let description =
         crate::explore::sanitize::sanitize_event_description(text(&intent.event, "description"));
-    let link = format!("{base}/whats-on/{}", urlencoding::encode(&intent.event_id));
+    // `Notifications/index.ts:48,85,205`: the jump-in link; the other kinds
+    // had no link upstream and keep this node's event page.
+    let link = match intent.kind.as_str() {
+        "events_starts_soon" | "events_started" | "event_approved" => {
+            crate::explore::events::notifications::event_link(
+                &links.jump_in_site_url,
+                &intent.event_id,
+                &intent.event,
+            )
+        }
+        _ => format!("{base}/whats-on/{}", urlencoding::encode(&intent.event_id)),
+    };
     let (title, description) = match intent.kind.as_str() {
+        // `Notifications/index.ts:56-57`
         "events_starts_soon" => (
-            "Event starts soon".to_string(),
-            format!("The event {name} starts soon."),
+            "Event starts in an hour".to_string(),
+            format!("The event {name} starts in an hour."),
         ),
         "events_started" if recipient.community => (
             "Community Event starting".into(),
@@ -222,7 +241,14 @@ fn metadata(intent: &Intent, recipient: &Recipient, origins: &Origins) -> Value 
         ),
         _ => (name.to_string(), description),
     };
-    let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":catalyst_explore::events::posters::absolute_default_image(text(&intent.event,"image"),&origins.assets),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
+    let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":catalyst_explore::events::posters::absolute_default_image(text(&intent.event,"image"),&links.asset_base),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
+    if matches!(
+        intent.kind.as_str(),
+        "events_starts_soon" | "events_started" | "event_created"
+    ) {
+        // `Notifications/index.ts:63,105,138`: the recipient of a per-attendee notice.
+        metadata["attendee"] = json!(recipient.address);
+    }
     if let Some(start) = intent.occurrence_start {
         let duration = intent
             .event
@@ -244,10 +270,8 @@ fn metadata(intent: &Intent, recipient: &Recipient, origins: &Origins) -> Value 
         if recipient.community_thumbnail {
             // The stored thumbnail lives under the canonical UUID.
             let id = Uuid::parse_str(community).map_or(community.to_string(), |id| id.to_string());
-            metadata["communityThumbnail"] = json!(crate::communities::thumbnail_url(
-                &origins.community_cdn,
-                &id
-            ));
+            metadata["communityThumbnail"] =
+                json!(crate::communities::thumbnail_url(&links.community_cdn, &id));
         }
     }
     if matches!(
@@ -291,7 +315,7 @@ fn timed_out(error: &anyhow::Error) -> bool {
 
 async fn dispatch_page(
     pool: &PgPool,
-    origins: &Origins,
+    links: &Links,
     now: NaiveDateTime,
 ) -> anyhow::Result<Option<u64>> {
     // Commit fair rotation separately from delivery. If a later page times out
@@ -364,13 +388,35 @@ async fn dispatch_page(
                 id: Uuid::new_v5(&intent.id, address.as_str().as_bytes()),
                 address,
                 kind: intent.kind.clone(),
-                metadata: metadata(&intent, recipient, origins),
+                metadata: metadata(&intent, recipient, links),
                 occurred_at: delivered_at,
             })
         })
         .collect();
     let inserted = insert_event_notifications(&mut *tx, &batch).await?;
     let finished = recipients.len() < PAGE as usize;
+    if finished
+        && suppression.is_none()
+        && links.slack_notices
+        && intent.kind == "events_starts_soon"
+    {
+        // `Event/cron.ts:66-76`: the Slack notice counts the occurrence's
+        // attendees (`attendees.length`), queued with the last reminder page
+        // so a crash before this commit repeats neither.
+        let attendees: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM explore.event_attendance_local WHERE event_id=$1 AND action='going'",
+        )
+        .bind(&intent.event_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        crate::explore::events::notifications::record_upcoming_notice(
+            &mut tx,
+            &intent.event_id,
+            &intent.event,
+            attendees,
+        )
+        .await?;
+    }
     sqlx::query("UPDATE social.event_notification_intents SET recipient_after=$2,processed_at=CASE WHEN $3 THEN $4 ELSE NULL END,dispatch_at=timezone('UTC', clock_timestamp()) WHERE id=$1")
         .bind(intent.id).bind(recipients.last().map(|row| row.address.as_str()).unwrap_or(&intent.recipient_after))
         .bind(finished).bind(checked_at).execute(&mut *tx).await?;
@@ -470,7 +516,7 @@ async fn within_scan_budget(
 /// survives a timed-out page. Non-timeout scan failures surface after dispatch;
 /// expected scan deferrals and maintenance failures are error-logged without
 /// delaying the normal delivery cadence.
-pub async fn run_once(pool: &PgPool, origins: &Origins, now: NaiveDateTime) -> anyhow::Result<u64> {
+pub async fn run_once(pool: &PgPool, links: &Links, now: NaiveDateTime) -> anyhow::Result<u64> {
     match tokio::time::timeout(CLEANUP_BUDGET, cleanup(pool, now)).await {
         Ok(Err(error)) => {
             tracing::error!(%error, "event intent cleanup deferred")
@@ -488,7 +534,7 @@ pub async fn run_once(pool: &PgPool, origins: &Origins, now: NaiveDateTime) -> a
     let deadline = tokio::time::Instant::now() + PASS_BUDGET;
     let mut emitted = 0;
     loop {
-        match tokio::time::timeout_at(deadline, dispatch_page(pool, origins, now)).await {
+        match tokio::time::timeout_at(deadline, dispatch_page(pool, links, now)).await {
             Ok(Err(error)) if timed_out(&error) => {
                 tracing::warn!(%error, "event notification page deferred")
             }
@@ -505,15 +551,15 @@ pub async fn run_once(pool: &PgPool, origins: &Origins, now: NaiveDateTime) -> a
     Ok(emitted)
 }
 
-pub fn spawn(pool: PgPool, origins: Origins, jobs: &crate::jobs::Jobs) {
+pub fn spawn(pool: PgPool, links: Links, jobs: &crate::jobs::Jobs) {
     jobs.spawn_periodic_leased(
         "event-notifications",
         crate::jobs::PeriodicCfg::every(Duration::from_secs(60))
             .with_error_backoff(Duration::from_secs(300)),
         move |ctx| {
-            let (pool, origins) = (pool.clone(), origins.clone());
+            let (pool, links) = (pool.clone(), links.clone());
             async move {
-                let emitted = run_once(&pool, &origins, Utc::now().naive_utc()).await?;
+                let emitted = run_once(&pool, &links, Utc::now().naive_utc()).await?;
                 if emitted > 0 {
                     ctx.progress(format!("{emitted} event notices emitted"));
                 }
@@ -529,12 +575,18 @@ mod tests {
 
     const CDN: &str = "https://cdn.example.org";
 
-    fn origins(link: &str, assets: &str) -> Origins {
-        Origins {
-            link: link.into(),
-            assets: assets.into(),
+    fn origins(link: &str, assets: &str) -> Links {
+        Links {
+            base: link.into(),
+            asset_base: assets.into(),
+            jump_in_site_url: "https://decentraland.org/jump".into(),
             community_cdn: CDN.into(),
+            slack_notices: false,
         }
+    }
+
+    fn test_links(base: &str) -> Links {
+        origins(base, "https://events.decentraland.org")
     }
 
     #[tokio::test(start_paused = true)]
@@ -735,7 +787,11 @@ mod tests {
             metadata["endsAt"], "2099-06-01T19:00:00+00:00",
             "occurrence duration, not series finish"
         );
-        assert_eq!(metadata["link"], format!("{base}/whats-on/{event}"));
+        assert_eq!(
+            metadata["link"],
+            format!("https://decentraland.org/jump/events?id={event}&position=0%2C0"),
+            "`Notifications/index.ts:85`: the jump-in link"
+        );
         run_once(
             &pool,
             &origins(base, "https://events.decentraland.org"),
@@ -1468,7 +1524,7 @@ mod tests {
             .iter()
             .find(|item| item.metadata["eventId"] == reminder)
             .expect("incremental polling must see a newly delivered catch-up reminder");
-        assert_eq!(reminder_notice.metadata["title"], "Event starts soon");
+        assert_eq!(reminder_notice.metadata["title"], "Event starts in an hour");
         assert_eq!(
             reminder_notice.metadata["occurredAt"],
             (now - Span::minutes(50)).and_utc().to_rfc3339()
@@ -1630,7 +1686,15 @@ mod tests {
             count(pool, &lock_event, "events_starts_soon", &address).await,
             1
         );
+        // This fixture's wall-clock events (a local community one among them)
+        // would otherwise count as endings in the metric tests of this process.
+        sqlx::query("DELETE FROM explore.event WHERE id LIKE $1")
+            .bind(format!("{prefix}-%"))
+            .execute(pool)
+            .await
+            .unwrap();
     }
+
     fn intent(kind: &str, event: Value) -> Intent {
         Intent {
             id: Uuid::new_v4(),
@@ -1671,8 +1735,21 @@ mod tests {
             "https://assets.example.org/events/assets/event-default.webp"
         );
         assert_eq!(
-            payload["link"],
-            "https://web.example.org/whats-on/legacy-event"
+            payload["link"], "https://decentraland.org/jump/events?id=legacy-event&position=0%2C0",
+            "an approval links the jump-in site (`Notifications/index.ts:205`)"
+        );
+        assert!(payload.get("attendee").is_none());
+        assert_eq!(
+            metadata(
+                &intent("event_rejected", json!({"name":"Legacy"})),
+                &recipient(false, false),
+                &origins(
+                    "https://web.example.org",
+                    "https://assets.example.org/events/"
+                ),
+            )["link"],
+            "https://web.example.org/whats-on/legacy-event",
+            "notices upstream sent without a link keep this node's event page"
         );
     }
 
@@ -1748,5 +1825,166 @@ mod tests {
             generic.get("communityThumbnail").is_none(),
             "an RSVP-only notice is not community-scoped"
         );
+    }
+
+    /// `Notifications/index.ts:44-68,73-110`: the reminder and start titles,
+    /// descriptions, jump-in links (`position` and `realm`) and `attendee`.
+    #[test]
+    fn reminder_and_start_notices_follow_upstream_titles_and_links() {
+        let start = chrono::DateTime::parse_from_rfc3339("2099-06-01T18:00:00Z")
+            .unwrap()
+            .naive_utc();
+        let links = test_links("https://example.org");
+        let intent = Intent {
+            id: Uuid::new_v4(),
+            event_id: "ev-1".into(),
+            kind: "events_starts_soon".into(),
+            event: json!({"name":"Launch","x":10,"y":-20,"server":"world.dcl.eth","duration":3600000}),
+            local_event: true,
+            occurrence_start: Some(start),
+            occurred_at: start - Span::hours(1),
+            recipient_after: String::new(),
+        };
+        let attendee = Recipient {
+            address: "0x1111111111111111111111111111111111111111".into(),
+            community: false,
+            community_name: None,
+            community_thumbnail: false,
+        };
+        let reminder = metadata(&intent, &attendee, &links);
+        assert_eq!(reminder["title"], "Event starts in an hour");
+        assert_eq!(
+            reminder["description"],
+            "The event Launch starts in an hour."
+        );
+        assert_eq!(
+            reminder["link"],
+            "https://decentraland.org/jump/events?id=ev-1&position=10%2C-20&realm=world.dcl.eth"
+        );
+        assert_eq!(reminder["attendee"], attendee.address);
+        assert_eq!(reminder["startsAt"], "2099-06-01T18:00:00+00:00");
+        assert_eq!(reminder["endsAt"], "2099-06-01T19:00:00+00:00");
+        let started = Intent {
+            kind: "events_started".into(),
+            ..intent
+        };
+        let plain = metadata(&started, &attendee, &links);
+        assert_eq!(plain["title"], "Event started");
+        assert_eq!(plain["description"], "The event Launch has begun!");
+        assert_eq!(
+            plain["link"],
+            "https://decentraland.org/jump/events?id=ev-1&position=10%2C-20&realm=world.dcl.eth"
+        );
+        let member = Recipient {
+            address: "0x2222222222222222222222222222222222222222".into(),
+            community: true,
+            community_name: Some("Builders".into()),
+            community_thumbnail: false,
+        };
+        let community = metadata(&started, &member, &links);
+        assert_eq!(community["title"], "Community Event starting");
+        assert_eq!(
+            community["description"],
+            "A Builders event is about to start."
+        );
+        assert_eq!(community["communityName"], "Builders");
+        assert_eq!(community["attendee"], member.address);
+    }
+
+    /// `Event/cron.ts:51-83`: an occurrence starting within the next hour is
+    /// reminded once, a later one is not yet, a started one never; the
+    /// reminder's Slack notice (`:76`) is queued with the attendee count only
+    /// while the channel is on.
+    #[tokio::test]
+    async fn reminder_window_and_upcoming_slack_notice() {
+        let _guard = super::super::event_ended::TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        let now = chrono::DateTime::parse_from_rfc3339("2102-03-01T12:00:00Z")
+            .unwrap()
+            .naive_utc();
+        let prefix = Uuid::new_v4().to_string();
+        let address = format!("0x{}00000000", Uuid::new_v4().simple());
+        let other = format!("0x{}00000000", Uuid::new_v4().simple());
+        for (suffix, offset) in [
+            ("in-59", Span::minutes(59)),
+            ("in-61", Span::minutes(61)),
+            ("started", -Span::minutes(1)),
+        ] {
+            let id = format!("{prefix}:{suffix}");
+            let start = now + offset;
+            crate::explore::events::mirror::upsert_event(&pool, &json!({
+                "id":id,"name":"Window","approved":true,"x":5,"y":6,"user":address,
+                "start_at":start.and_utc().to_rfc3339(),"finish_at":(start+Span::hours(1)).and_utc().to_rfc3339(),"duration":3600000
+            })).await.unwrap();
+            for signer in [&address, &other] {
+                crate::explore::events::attendees::rsvp_going(&pool, &id, signer, None)
+                    .await
+                    .unwrap();
+            }
+        }
+        let mut links = test_links("https://example.org");
+        links.slack_notices = true;
+        let reminders = |suffix: &str| {
+            let (pool, id) = (pool.clone(), format!("{prefix}:{suffix}"));
+            async move {
+                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM social.notifications WHERE metadata->>'eventId'=$1 AND type='events_starts_soon'")
+                    .bind(id).fetch_one(&pool).await.unwrap()
+            }
+        };
+        let slack = |suffix: &str| {
+            let (pool, id) = (pool.clone(), format!("{prefix}:{suffix}"));
+            async move {
+                sqlx::query_as::<_, (String, Value)>("SELECT kind,payload FROM explore.moderation_hooks WHERE channel='events' AND subject=$1 ORDER BY created_at")
+                    .bind(id).fetch_all(&pool).await.unwrap()
+            }
+        };
+        run_once(&pool, &links, now).await.unwrap();
+        run_once(&pool, &links, now).await.unwrap();
+        assert_eq!(reminders("in-59").await, 2, "both attendees, once");
+        assert_eq!(reminders("in-61").await, 0, "not within the hour yet");
+        assert_eq!(
+            reminders("started").await,
+            0,
+            "a started event is no reminder"
+        );
+        let queued = slack("in-59").await;
+        assert_eq!(queued.len(), 1, "one upcoming notice per occurrence");
+        assert_eq!(queued[0].0, "upcoming");
+        assert_eq!(queued[0].1["notifications"], 2);
+        assert_eq!(queued[0].1["name"], "Window");
+        assert!(slack("started").await.is_empty());
+        let link: String = sqlx::query_scalar("SELECT metadata->>'link' FROM social.notifications WHERE metadata->>'eventId'=$1 AND type='events_starts_soon' LIMIT 1")
+            .bind(format!("{prefix}:in-59")).fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            link,
+            format!(
+                "https://decentraland.org/jump/events?id={}&position=5%2C6",
+                urlencoding::encode(&format!("{prefix}:in-59"))
+            )
+        );
+        // Two minutes later the later occurrence crosses the hour line, while
+        // the Slack channel is off: the reminder goes out, no notice is queued.
+        links.slack_notices = false;
+        run_once(&pool, &links, now + Span::minutes(2))
+            .await
+            .unwrap();
+        assert_eq!(reminders("in-61").await, 2);
+        assert!(slack("in-61").await.is_empty());
+        for suffix in ["in-59", "in-61", "started"] {
+            sqlx::query(
+                "DELETE FROM explore.moderation_hooks WHERE channel='events' AND subject=$1",
+            )
+            .bind(format!("{prefix}:{suffix}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query("DELETE FROM explore.event WHERE id LIKE $1")
+            .bind(format!("{prefix}:%"))
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 }

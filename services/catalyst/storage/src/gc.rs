@@ -196,6 +196,10 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
     ("explore.user_likes.entity_id", "a place id"),
     ("explore.place_interaction_counts.entity_id", "a place id"),
     (
+        "explore.place_content_ratings.entity_id",
+        "a place id or a world name",
+    ),
+    (
         "explore.signed_actions.signature_hash",
         "an envelope digest",
     ),

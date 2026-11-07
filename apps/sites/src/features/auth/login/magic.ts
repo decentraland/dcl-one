@@ -8,6 +8,7 @@
 // sites. Magic's SDK is loaded only when a reader picks one of them, and only in the browser.
 
 import { createIdentityWith } from "@/data/lib/auth/identity";
+import { recordSignIn } from "@/data/lib/auth/signin-kind";
 import { magicClient, markMagicSession } from "@/data/lib/auth/magic-session";
 import type { AuthIdentity } from "@/data/lib/auth/types";
 
@@ -129,5 +130,6 @@ export async function finishMagicSignIn(apiKey: string): Promise<AuthIdentity> {
     },
     { expirationMs: SESSION_MS },
   );
+  recordSignIn(identity.signer, "managed");
   return identity;
 }

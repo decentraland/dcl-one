@@ -6,6 +6,7 @@ import { useSearchParams } from "react-router";
 
 import type { ShopClient } from "../api/shop";
 import { useSeo } from "../discovery/hooks";
+import { useMarketplaceAccess } from "../market/access";
 import NamesBrowse from "./NamesBrowse";
 import NamesPage, { type NamesPageProps } from "./NamesPage";
 import "./names.css";
@@ -19,9 +20,14 @@ export type NamesHubProps = NamesPageProps & { client?: ShopClient };
 
 export default function NamesHub(props: NamesHubProps) {
   const [params] = useSearchParams();
-  const resale = params.get("section") === "resale";
+  // NAME resale is the Marketplace's (market/access.tsx): without it, the claim page answers every NAMEs link. While
+  // the answer is pending a resale link waits, rather than mounting the claim page (its SEO and reads) first.
+  const access = useMarketplaceAccess();
+  const asked = params.get("section") === "resale";
+  const resale = access === "on" && asked;
   const iapMode = props.modal?.iapMode ?? params.get("view") === "mobile-iap";
-  useSeo(resale ? {} : CLAIM_SEO);
+  useSeo(resale || (asked && access === "pending") ? {} : CLAIM_SEO);
+  if (asked && access === "pending") return <div className="shop-names" data-testid="names-pending" aria-busy="true" />;
   return (
     <div className={resale ? "shop-names" : "shop-names shop-names--claim"}>
       {resale ? <NamesBrowse client={props.client} /> : <NamesPage {...props} modal={{ ...props.modal, iapMode }} />}

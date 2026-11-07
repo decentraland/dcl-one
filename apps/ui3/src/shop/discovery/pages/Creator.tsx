@@ -32,7 +32,7 @@ import "../components/browselayout.css";
 import "./creator.css";
 import CreatorHero from "./creator/CreatorHero";
 import collectionsEmptyIllustration from "./creator/collections-empty.svg?url";
-import itemsEmptyIllustration from "./creator/items-empty.svg?url";
+import itemsEmptyIllustration from "../../components/empty-art/items-empty.svg?url";
 import searchEmptyIllustration from "./creator/search-empty.svg?url";
 
 const PAGE_SIZE = 48;

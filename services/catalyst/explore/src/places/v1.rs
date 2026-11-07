@@ -12,7 +12,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::destinations::{
-    Destination, decorate_next_event, enrich, list_destinations, parse_with_options,
+    Destination, Surface, decorate_next_event, enrich, list_destinations, parse_with_options,
 };
 use super::handlers::{category_i18n_en, curated_counts};
 use super::interactions::is_place_id;
@@ -53,11 +53,19 @@ pub async fn get_v1_destinations_list(
     headers: HeaderMap,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Result<Json<ApiDataTotal<Destination>>, ApiError> {
-    list_destinations(&state, &headers, method.as_str(), uri.path(), &pairs).await
+    list_destinations(
+        &state,
+        &headers,
+        method.as_str(),
+        uri.path(),
+        &pairs,
+        Surface::V1,
+    )
+    .await
 }
 
 /// A place by its UUID (enabled, not a world) or a world by its name
-/// (enabled, a world, listed in places).
+/// (enabled, a world, listed in places); both case-insensitive, a v1 liberty.
 pub async fn find_destination_for(
     state: &SharedState,
     id: &str,
@@ -171,16 +179,17 @@ mod tests {
         let place = uuid::Uuid::new_v4().to_string();
         let disabled = uuid::Uuid::new_v4().to_string();
         let (listed, hidden) = (format!("v1l{tag}.dcl.eth"), format!("v1h{tag}.dcl.eth"));
+        // a catalogue world is keyed by its lowercased name, as the mirror writes it
         for (id, disabled_row, raw) in [
             (place.clone(), false, json!({ "positions": ["7,7"] })),
             (disabled.clone(), true, json!({ "positions": ["8,8"] })),
             (
-                uuid::Uuid::new_v4().to_string(),
+                listed.clone(),
                 false,
                 json!({ "world": true, "world_name": listed }),
             ),
             (
-                uuid::Uuid::new_v4().to_string(),
+                hidden.clone(),
                 false,
                 json!({ "world": true, "world_name": hidden, "show_in_places": false }),
             ),
@@ -212,7 +221,7 @@ mod tests {
             let (status, body) = get(&app, &format!("/v1/destinations/{gone}")).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{gone}: {body}");
             assert_eq!(
-                body["message"],
+                body["error"],
                 json!(format!("Destination not found: {gone}"))
             );
         }

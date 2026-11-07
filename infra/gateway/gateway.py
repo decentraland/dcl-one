@@ -12,6 +12,14 @@ import subprocess
 # `MAX_SETTINGS_UPLOAD_WIRE_BYTES`); a worlds test pins them.
 WORLDS_DEPLOY_CAP = "360m"
 WORLDS_SETTINGS_CAP = "12m"
+# The content server's `POST /entities` route limit at the default field
+# count (`max_deployment_body_bytes`: 200 MiB of files and fields plus
+# multipart framing), rounded up, so its own 413 is the one a client meets.
+CONTENT_DEPLOY_CAP = "248m"
+# Uploads one address may have in flight on a deploy route: nginx buffers each
+# body before proxying it, and the app's limits only answer after that. Above
+# upstream catalyst's 4 per source, so it stays a coarse guard.
+DEPLOY_CONNECTIONS_PER_ADDRESS = 10
 
 
 def words(value):
@@ -77,12 +85,20 @@ def settings(env, resolv_conf="/etc/resolv.conf"):
     storage = env.get("GATEWAY_STORAGE_ROOT", "")
     if storage and not re.fullmatch(r"/[a-zA-Z0-9_./-]+", storage):
         raise ValueError("GATEWAY_STORAGE_ROOT must be an absolute path without whitespace")
+    trusted = networks(env.get("GATEWAY_TRUSTED_PROXY_CIDRS", ""))
+    storage_trusted = networks(env.get("GATEWAY_STORAGE_TRUSTED_CIDRS", ""))
+    if any(ipaddress.ip_network(proxy).overlaps(ipaddress.ip_network(caller))
+           for proxy in trusted for caller in storage_trusted
+           if ipaddress.ip_network(proxy).version == ipaddress.ip_network(caller).version):
+        raise ValueError("GATEWAY_STORAGE_TRUSTED_CIDRS must not overlap GATEWAY_TRUSTED_PROXY_CIDRS")
     return {
         "domain": domain, "hosts": aliases, "resolvers": " ".join(resolvers),
         "apis": [upstream(value) for value in words(env.get("GATEWAY_APIS_UPSTREAMS", "apis:5210"))],
         "sites": [upstream(value) for value in words(env.get("GATEWAY_SITES_UPSTREAMS", "sites:5212"))],
         "admins": networks(env.get("GATEWAY_ADMIN_CIDRS", "")),
-        "trusted": networks(env.get("GATEWAY_TRUSTED_PROXY_CIDRS", "")),
+        "trusted": trusted,
+        "storage_trusted": storage_trusted,
+        "sync_peers": networks(env.get("GATEWAY_TRUSTED_SYNC_PEER_IPS", "")),
         "storage": storage.rstrip("/"),
     }
 
@@ -110,6 +126,8 @@ def render(table, cfg, mime):
     domain_names = " ".join(dict.fromkeys([cfg["domain"], "~^[a-z0-9-]+\\." + domain + "$", *cfg["hosts"]]))
     admin_geo = " ".join(f'{net} "admitted";' for net in cfg["admins"])
     trusted_geo = " ".join(f"{net} 1;" for net in cfg["trusted"])
+    sync_peer_geo = " ".join(f"{net} 1;" for net in cfg["sync_peers"])
+    storage_geo = " ".join(f"{net} 1;" for net in cfg["storage_trusted"])
     real_ip = "\n".join(f"set_real_ip_from {net};" for net in cfg["trusted"])
     blocked = "|".join(re.escape(path.lstrip("/")) for path in table["internal"])
     upstreams = ""
@@ -149,12 +167,28 @@ def render(table, cfg, mime):
         # rewrite could send /social/... to the Sites /social page instead.
         locations += location(row["key"], f"rewrite {rewrite} break;\n" + proxy("apis"))
     # Worlds deploys reach these matches already rewritten under their host prefix.
+    # The content deploy zone is only a coarse abuse guard: 200 at once, then
+    # 5 r/s per address, above the content server's own per-client burst limit
+    # (upstream's 200 per 60 s, answered as JSON with Retry-After), so a
+    # client within that limit never meets nginx's HTML 429. Concurrent
+    # uploads per address are capped on both deploy routes, since each body
+    # is buffered in the gateway's temp space before the app sees it.
     deploy = "|".join(re.escape(path) for path in table["deploy"])
-    locations += location(f'~ "^({deploy})/*$"', proxy("apis",
-        "client_max_body_size 200m; client_body_timeout 300s; limit_req zone=deploy burst=4 nodelay;"))
+    uploads = f"limit_conn deploy_uploads {DEPLOY_CONNECTIONS_PER_ADDRESS};"
+    # Case-insensitive, as nginx would otherwise pass /content/Entities to the
+    # /content/ location and its looser limits.
+    locations += location(f'~* "^({deploy})/*$"', proxy("apis",
+        f"client_max_body_size {CONTENT_DEPLOY_CAP}; client_body_timeout 300s; "
+        f"limit_req zone=deploy burst=200 nodelay; {uploads}"))
+    # Upstream caps the POST /entities/active body at 10 MiB and answers its
+    # own 413 (MAX_ACTIVE_ENTITIES_BODY_SIZE); the server-wide 1m would answer
+    # nginx's HTML 413 first. The content server's case rewrite routes any
+    # spelling, so the match ignores case too.
+    locations += location('~* "^(/content)?/entities/active/*$"', proxy("apis",
+        "client_max_body_size 10m; limit_req zone=content burst=1000 nodelay;"))
     locations += location('~ "^/worlds-content-server/entities/*$"', proxy("apis",
         f"client_max_body_size {WORLDS_DEPLOY_CAP}; client_body_timeout 300s; "
-        "limit_req zone=deploy burst=4 nodelay;"))
+        f"limit_req zone=deploy burst=4 nodelay; {uploads}"))
     locations += location('~ "^(/worlds-content-server)?/world/[^/]+/settings/*$"', proxy("apis",
         f"client_max_body_size {WORLDS_SETTINGS_CAP};"))
     locations += location("~ ^/worlds-content-server/(contents|ipfs)/", proxy("apis",
@@ -176,6 +210,12 @@ def render(table, cfg, mime):
     for path in ("/assets/", "/fonts/", "/errors/", "/template-bundles/"):
         locations += location("^~ " + path, proxy("sites"))
     locations += location("/content/", proxy("apis", "limit_req zone=content burst=1000 nodelay;"))
+    # Matched after host rewrites, so every storage host form shares this budget.
+    storage_limits = ("limit_req zone=storage burst=400 nodelay; "
+                      "limit_req zone=storage_write burst=60 nodelay; "
+                      "limit_req zone=storage_trusted burst=1000 nodelay;")
+    locations += location("= /world-storage", proxy("apis", storage_limits))
+    locations += location("^~ /world-storage/", proxy("apis", storage_limits))
     storage = 'return 404;'
     if cfg["storage"]:
         # A host rewrite also marks a request internal in nginx. Require an
@@ -266,10 +306,33 @@ http {{
         "~*^/telemetry/dash/admin(/|\\\\.|$)" 1;
     }}
     map "$operator_path:$admin_gate" $operator_denied {{ volatile; default 0; "1:" 1; }}
+    # Listed sync peers (the API's TRUSTED_SYNC_PEER_IPS) get an empty key on
+    # GET and HEAD /contents/{{hash}}, which nginx does not count: upstream exempts
+    # a peer that syncs from it on that route only.
+    geo $sync_peer {{ default 0; {sync_peer_geo} }}
+    map "$sync_peer:$request_method:$uri" $content_limit_key {{
+        default $binary_remote_addr;
+        "~^1:(GET|HEAD):(/content)?/contents/[^/]+/*$" "";
+    }}
+    geo $storage_trusted {{ default 0; {storage_geo} }}
+    map $storage_trusted $storage_limit_key {{ 1 ""; default $binary_remote_addr; }}
+    map "$storage_trusted:$request_method" $storage_write_key {{
+        default $binary_remote_addr;
+        "~^1:" "";
+        "0:GET" "";
+        "0:HEAD" "";
+        "0:OPTIONS" "";
+    }}
+    map $storage_trusted $storage_trusted_key {{ 1 $binary_remote_addr; default ""; }}
+    limit_req_zone $storage_write_key zone=storage_write:10m rate=30r/s;
+    limit_req_zone $storage_trusted_key zone=storage_trusted:10m rate=1000r/s;
     limit_req_zone $binary_remote_addr zone=read:10m rate=30r/s;
-    limit_req_zone $binary_remote_addr zone=content:10m rate=100r/s;
-    limit_req_zone $binary_remote_addr zone=deploy:10m rate=2r/s;
+    limit_req_zone $content_limit_key zone=content:10m rate=100r/s;
+    limit_req_zone $storage_limit_key zone=storage:10m rate=100r/s;
+    limit_req_zone $binary_remote_addr zone=deploy:10m rate=5r/s;
     limit_req_status 429;
+    limit_conn_zone $binary_remote_addr zone=deploy_uploads:10m;
+    limit_conn_status 429;
     proxy_http_version 1.1;
     proxy_read_timeout 600s;
     proxy_buffering off;

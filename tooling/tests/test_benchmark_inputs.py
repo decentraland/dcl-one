@@ -137,6 +137,13 @@ class ResolverTest(unittest.TestCase):
         self.assertFalse(result['legs'])
         self.assertIn(f'base web build ({MAIN[0]}, CI run 90) is not optimized', result['notes'])
 
+    def test_a_fleet_that_is_off_is_the_note_even_for_an_unoptimized_change_build(self):
+        self.github.build_info = {f'bevy-explorer-web-{MERGE}': {'engine': {'optimized': False}}}
+        result = self.resolve(enabled='none')
+        self.assertFalse(result['run'])
+        self.assertEqual(result['notes'], 'BENCHMARK_ENABLED_RUNNERS enables no laptop of the fleet.')
+        self.assertEqual(self.github.zips_read(), [])
+
     def test_fork_pr(self):
         self.assert_skipped(self.resolve(event=completed(head_repository={'full_name': 'fork/project'},
                                                          pull_requests=[])))

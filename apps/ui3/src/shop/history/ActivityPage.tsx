@@ -24,7 +24,7 @@ import { CreditsAmount, ManaAmount } from "../credits/components/Amount";
 import { buildActivityFeed, filterActivity, type ActivityEntry, type ActivityFilter, type SaleRecord } from "./activity";
 import { foldOrderLines, purchaseOrderPill, type OrderLineItem, type PurchaseOrder } from "./purchases";
 import signInIllustration from "./assets/signin-empty.svg";
-import salesEmptyIllustration from "./assets/sales-empty.svg";
+import salesEmptyIllustration from "../components/empty-art/sales-empty.svg";
 import creditsProduct from "./assets/credits-product.svg";
 import nameGlyph from "./assets/name-glyph.svg";
 import "./activitypage.css";

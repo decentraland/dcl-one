@@ -5,6 +5,7 @@
 //! over the scene and world identity of `scene`.
 
 pub mod cluster;
+pub mod functions;
 pub mod handlers;
 pub mod island_kick;
 pub mod island_refresh;

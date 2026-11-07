@@ -1,5 +1,6 @@
 import { setIdentity } from "./session";
 import type { AuthIdentity, AuthLink } from "./types";
+import { forgetSignIn } from "./signin-kind";
 
 export const RELAY_PATH = "/internal/native-auth-relay";
 const APPROVE_PATH = "/auth/native";
@@ -93,6 +94,10 @@ export function beginShellBrowserSignIn(): ShellSignIn {
         expiration: expirationIso,
         authChain,
       };
+      // Not recorded as a sign-in kind (signin-kind.ts): the approval happened in the system browser, by whatever
+      // method the user chose there, so this webview cannot tell, and an earlier record (left by an identity that
+      // expired rather than signed out) no longer says how this one signed. It is forgotten, so no Marketplace here.
+      forgetSignIn();
       setIdentity(next);
       return next;
     }

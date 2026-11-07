@@ -6,7 +6,7 @@
 //! depending on it.
 
 use crate::shared::identity::Address;
-use crate::world_identity::{ParcelSet, SceneId, WorldName};
+use crate::world_identity::{Parcel, ParcelSet, SceneId, WorldName};
 
 /// `worlds.worlds.access_type`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -61,6 +61,26 @@ pub enum WorldAdmission {
     /// Disabled, or its owner's quota block is past [`QUOTA_BLOCK_GRACE`].
     Blocked,
     Open(AccessType),
+}
+
+/// The `social.scene_bans.place_id` a scene's bans live under: a world scene
+/// by world and base parcel, so a ban survives redeploys (the old
+/// worlds-content-server's key), a Genesis scene by its entity id.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SceneBanKey(String);
+
+impl SceneBanKey {
+    pub fn world(world: &WorldName, base: Parcel) -> Self {
+        Self(format!("{}:{base}", world.key()))
+    }
+
+    pub fn scene(scene: &SceneId) -> Self {
+        Self(scene.as_str().to_owned())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// Why a world join is refused before any access setting is consulted.

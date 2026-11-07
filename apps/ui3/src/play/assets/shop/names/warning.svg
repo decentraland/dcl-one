@@ -1,0 +1,21 @@
+<svg width="15" height="15" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="Icn/WarningError">
+<mask id="stroke0_0_22081" maskUnits="userSpaceOnUse" x="0.0405762" y="0.767847" width="15" height="13" fill="black">
+<rect fill="white" x="0.0405762" y="0.767847" width="15" height="13"/>
+<path d="M7.09443 2.513C7.29631 2.17583 7.78485 2.17582 7.98672 2.513L13.5645 11.8289C13.772 12.1755 13.5223 12.6161 13.1183 12.6161H1.96281C1.55883 12.6161 1.30914 12.1755 1.51666 11.8289L7.09443 2.513Z"/>
+</mask>
+<path id="Polygon 5" d="M1.96281 12.6161H13.1183C13.5223 12.6161 13.772 12.1755 13.5645 11.8289L7.98672 2.513C7.78485 2.17582 7.29631 2.17583 7.09443 2.513L1.51666 11.8289C1.30914 12.1755 1.55883 12.6161 1.96281 12.6161Z" stroke-width="2.08" stroke="#FF0000" mask="url(#stroke0_0_22081)"/>
+<g id="Background">
+<use xlink:href="#stroke1_0_22081" fill="#FF0000"/>
+<mask id="stroke2_0_22081" maskUnits="userSpaceOnUse" x="6.09019" y="4.84685" width="3" height="5" fill="black">
+<rect fill="white" x="6.09019" y="4.84685" width="3" height="5"/>
+<use xlink:href="#stroke1_0_22081"/>
+</mask>
+<path d="M7.60644 5.28573C7.8736 5.28573 8.09019 5.50231 8.09019 5.76948L8.09019 8.3631C8.09019 8.63027 7.8736 8.84685 7.60644 8.84685C7.33927 8.84685 7.12269 8.63027 7.12269 8.3631L7.12269 5.76948C7.12269 5.50231 7.33927 5.28573 7.60644 5.28573Z" stroke-width="0.52" stroke-linecap="round" stroke-linejoin="round" stroke="#FF0000" mask="url(#stroke2_0_22081)"/>
+</g>
+<circle id="Ellipse 85" cx="7.60633" cy="10.5093" r="0.613749" fill="#FF0000" stroke-width="0.26" stroke-linecap="round" stroke-linejoin="round" stroke="#FF0000"/>
+</g>
+<defs>
+<path id="stroke1_0_22081" d="M8.09019 8.3631C8.09019 8.63027 7.8736 8.84685 7.60644 8.84685C7.33927 8.84685 7.12269 8.63027 7.12269 8.3631L7.12269 5.76948C7.12269 5.50231 7.33927 5.28573 7.60644 5.28573C7.8736 5.28573 8.09019 5.50231 8.09019 5.76948L8.09019 8.3631Z"/>
+</defs>
+</svg>

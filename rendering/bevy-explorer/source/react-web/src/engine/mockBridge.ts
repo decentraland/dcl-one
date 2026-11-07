@@ -5,10 +5,13 @@
 
 import {
   bridgeChannelName,
+  type AppNotification,
   type Badge,
   type BadgeTier,
   type BindingEntry,
   type Community,
+  type CommunityChannel,
+  type CommunityMember,
   type DmHistoryEntry,
   type Emote,
   type Envelope,
@@ -22,6 +25,7 @@ import {
   type Wearable
 } from './protocol'
 import { applyProfileEdit } from './profileEdit'
+import { mentionName } from './mention'
 import type { Color3 } from './generated'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
 import { DEFAULT_REALM } from '../lib/baseDomain'
@@ -323,7 +327,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
   const mockNow = 1_700_000_000_000
   // Shapes mirror the real notifications service: friendship notifications carry the other user
   // under metadata.sender (name + avatar), with no metadata.title.
-  const mockNotifications = [
+  let mockPolled = false
+  const mockNotifications: AppNotification[] = [
     { id: 'n1', type: 'social_service_friendship_accepted', read: false, timestamp: new Date(mockNow).toISOString(), metadata: { sender: { address: '0x5854cce95d5e25817b41f4c41f06b695a83bc495', name: 'Mojito', profileImageUrl: 'https://profile-images.decentraland.org/entities/bafkreid5btlh76opew65hxu6dtkdo6ybqhymdof6vrrmjy2p5a74oy4huq/face.png' } } },
     { id: 'n2', type: 'social_service_friendship_request', read: false, timestamp: new Date(mockNow - 1800_000).toISOString(), metadata: { sender: { address: '0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4', name: 'Sharknado', profileImageUrl: 'https://profile-images.decentraland.org/entities/bafkreie5bpho47gnh3jrfxoezwc4pxffup4cmmhmdxsmpf3oslopxb4enm/face.png' } } },
     { id: 'n3', type: 'item_sold', read: false, timestamp: new Date(mockNow - 3600_000).toISOString(), metadata: { title: 'Item sold', description: 'Your “Sunset Hoodie” sold for 120 MANA.', image: 'https://profile-images.decentraland.org/entities/bafkreie5bpho47gnh3jrfxoezwc4pxffup4cmmhmdxsmpf3oslopxb4enm/face.png' } },
@@ -361,7 +366,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
   // Message ids as the engine makes them: the sender and a timestamp.
   let mockClock = 46000
   const messageId = (sender: string): string => `${sender.toLowerCase()}:${(mockClock += 0.001).toFixed(3)}`
-  // DM history per partner, as the engine's local store would hold it; one conversation is seeded.
+  // DM history per partner, as the engine's local store would hold it; one conversation is seeded,
+  // and one community chat (stored the same way, under `community:<id>`).
   const mojito = '0x5854cce95d5e25817b41f4c41f06b695a83bc495'
   const dmStores = new Map<string, DmHistoryEntry[]>([
     [
@@ -376,8 +382,26 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
           reactions: [{ emoji: '\u{1f44d}', from: [mojito] }]
         }
       ]
+    ],
+    [
+      'community:c1',
+      [
+        { from: mojito, message: 'welcome everyone to the Foundation chat', receivedAt: Date.now() - 3_600_000, messageId: messageId(mojito), reactions: [{ emoji: '\u{1f44b}', from: [o.userId] }] },
+        { from: o.userId, message: 'hi all!', receivedAt: Date.now() - 3_500_000, messageId: messageId(o.userId), reactions: [] }
+      ]
     ]
   ])
+  // The communities the mock user is in, as chat channels; who is online in one.
+  const memberNames = ['DCLOfficial', 'KazeNoKai', 'METAWOLF', 'laurenmae', 'Eax', 'Thund', 'aixa', 'Kimbo', 'BayBackner', 'Rochyou', 'Soultasium', 'franfranfran', 'olavra', 'Meshroom']
+  const memberAddr = (i: number): string => `0x${(i + 1).toString(16).padStart(40, '0')}`
+  const communityChannels = (): CommunityChannel[] =>
+    mockCommunities.filter((c) => c.role === 'owner' || c.role === 'moderator' || c.role === 'member').map((c) => ({ id: c.id, name: c.name, thumbnail: c.thumbnail ?? '', role: c.role }))
+  const onlineMembers = (): CommunityMember[] => [
+    // the mock user is in the server's list too: the HUD must not count them
+    { address: o.userId, name: 'You', role: 'member' },
+    { address: mojito, name: 'Mojito', role: 'moderator', picture: 'https://picsum.photos/seed/mojito/64/64' },
+    ...memberNames.slice(0, 5).map((name, i) => ({ address: memberAddr(i), name, role: i === 0 ? 'owner' : 'member', picture: `https://picsum.photos/seed/${name}/64/64` }))
+  ]
   const dmStore = (address: string): DmHistoryEntry[] => {
     const key = address.toLowerCase()
     let store = dmStores.get(key)
@@ -540,7 +564,9 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
             { id: 'r1', address: '0x77a0b1c2d3e4f5061728394a5b6c7d8e9f001122', name: 'SpottyGoat', message: 'Met you at the plaza!' }
           ],
           sent: [{ id: 's1', address: '0x9f8c2a1b4d6e7f0a3b5c8d9e1f2a4b6c8d0e1f23', name: 'Johnny' }],
-          blocked: []
+          blocked: [],
+          // The unnamed nearby player has blocked you: their passport offers no CHAT or friend button.
+          blockedBy: ['0xc0ffee254729296a45a3885639ac7e10f9d54979']
         }),
       1600
     )
@@ -833,6 +859,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'previewFocus') return
+    // No engine in mock mode — the Shop's stage, emote try-on, turning and zoom have no avatar to show on.
+    if (msg.kind === 'previewStage' || msg.kind === 'previewEmote' || msg.kind === 'previewRotate' || msg.kind === 'previewZoom') return
     if (msg.kind === 'previewAvatar') {
       // No engine in mock mode — avatar preview has nothing to render.
       return
@@ -874,6 +902,28 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       reply({ kind: 'communities', communities: mockCommunities })
       return
     }
+    if (msg.kind === 'getCommunity') {
+      const c = mockCommunities.find((x) => x.id === msg.id)
+      if (c) reply({ kind: 'community', community: c })
+      return
+    }
+    if (msg.kind === 'getCommunityChannels') {
+      reply({ kind: 'communityChannels', communities: communityChannels() })
+      // a line that mentions the mock user, and a member arriving, a while after they are in
+      setTimeout(() => {
+        // stored before it is relayed, as the engine does: the shown tab re-reads the store
+        const line = { sender: mojito, message: `@${mentionName(o.hasPreviousLogin ? 'Mojito' : 'Guest', o.userId, o.hasPreviousLogin)} the Foundation town hall starts in 10 minutes`, channel: 'community:c1', messageId: messageId(mojito) }
+        dmStore('community:c1').push({ from: line.sender, message: line.message, receivedAt: Date.now(), messageId: line.messageId, reactions: [] })
+        reply({ kind: 'chat', chat: line })
+      }, 6000)
+      setTimeout(() => reply({ kind: 'communityPresence', communityId: 'c1', member: { address: memberAddr(7), name: memberNames[7], role: 'member' }, online: true }), 9000)
+      return
+    }
+    if (msg.kind === 'setCommunityChannels' || msg.kind === 'playUiSound') return
+    if (msg.kind === 'getCommunityOnlineMembers') {
+      reply({ kind: 'communityOnlineMembers', id: msg.id, members: msg.id === 'c1' ? onlineMembers() : onlineMembers().slice(0, 3) })
+      return
+    }
     if (msg.kind === 'createCommunity') {
       mockCommunities.unshift({
         id: `new-${mockCommunities.length}`,
@@ -893,6 +943,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       if (c) {
         c.role = 'member'
         c.membersCount += 1
+        reply({ kind: 'communityChannelAdded', community: { id: c.id, name: c.name, thumbnail: c.thumbnail ?? '', role: c.role } })
       }
       reply({ kind: 'communities', communities: mockCommunities })
       return
@@ -914,13 +965,13 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       if (c) {
         c.role = 'none'
         c.membersCount = Math.max(0, c.membersCount - 1)
+        reply({ kind: 'communityChannelRemoved', id: c.id })
       }
       reply({ kind: 'communities', communities: mockCommunities })
       return
     }
     if (msg.kind === 'getCommunityDetail') {
-      const memberNames = ['DCLOfficial', 'KazeNoKai', 'METAWOLF', 'laurenmae', 'Eax', 'Thund', 'aixa', 'Kimbo', 'BayBackner', 'Rochyou', 'Soultasium', 'franfranfran', 'olavra', 'Meshroom']
-      const addr = (i: number): string => `0x${(i + 1).toString(16).padStart(40, '0')}`
+      const addr = memberAddr
       const day = 24 * 60 * 60 * 1000
       reply({
         kind: 'communityDetail',
@@ -957,6 +1008,21 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'getNotifications') {
       reply({ kind: 'notifications', notifications: mockNotifications })
+      // Once per session, a poll result a few seconds later, so ?mock=1 shows the new-notification
+      // toasts (one at a time) and the list growing.
+      if (!mockPolled) {
+        mockPolled = true
+        setTimeout(() => {
+          const fresh: AppNotification[] = [
+            { id: 'n7', type: 'community_invite_received', read: false, timestamp: new Date().toISOString(), metadata: { communityName: 'Toxic Events', communityId: 'c5', thumbnailUrl: 'https://picsum.photos/seed/dcl/80/80' } },
+            { id: 'n8', type: 'social_service_friendship_request', read: false, timestamp: new Date(Date.now() - 1000).toISOString(), metadata: { sender: { address: '0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4', name: 'Sharknado' } } },
+            // Opens the reward popup as well as its toast.
+            { id: 'n9', type: 'reward_in_progress', read: false, timestamp: new Date(Date.now() - 2000).toISOString(), metadata: { title: 'New item unlocked', description: 'Your reward is being processed', tokenName: 'Mock Reward Hat', tokenImage: 'https://picsum.photos/seed/reward/256/256', tokenRarity: 'epic', tokenCategory: 'hat' } }
+          ]
+          mockNotifications.unshift(...fresh)
+          reply({ kind: 'notificationsNew', notifications: fresh })
+        }, 4000)
+      }
       return
     }
     if (msg.kind === 'markNotificationsRead') {

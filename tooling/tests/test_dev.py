@@ -39,6 +39,14 @@ class DevTest(unittest.TestCase):
         with patch.dict(os.environ, {'FOUNDATION_DEV_PROFILE': 'offline'}):
             self.config = dev.settings(create=True)
 
+    def test_a_dev_stack_starts_with_the_marketplace_override_on_and_keeps_a_developers_own(self):
+        queries = []
+        with patch.object(dev, 'sql', lambda config, query, database='catalyst': queries.append(query) or ''):
+            dev.seed_dev_flags(self.config)
+        self.assertEqual(len(queries), 1)
+        self.assertIn("('dapps', 'dapps-shop-marketplace-features', true)", queries[0])
+        self.assertIn('ON CONFLICT (app, name) DO NOTHING', queries[0])
+
     def test_trades_snapshot_comes_from_a_local_file(self):
         snapshot = self.state / 'trades.sql.gz'
         snapshot.write_bytes(gzip.compress(b'-- trades'))
@@ -481,6 +489,16 @@ class DevTest(unittest.TestCase):
         self.assertTrue(env['RPC_ENDPOINT_POLYGON'].endswith('/amoy'))
         for key in ('VITE_SHOP_CHAIN_ID', 'COLLECTIONS_CHAIN_ID', 'CONTRACT_ADDRESSES_CHAIN_KEY', 'CONTRACT_ADDRESSES_URL'):
             self.assertNotIn(key, mirror, key)
+        # MANA settles on Amoy's venues, which the node accepts only with a testnet ETH_NETWORK, the Matic index on
+        # Amoy and Amoy's own endpoint; USD prices convert at the feed and tolerance of Amoy's marketplaces.
+        self.assertEqual(env['ETH_NETWORK'], 'sepolia')
+        self.assertEqual(env['POLYGON_CHAIN_ID'], env['COLLECTIONS_CHAIN_ID'])
+        self.assertNotIn('POLYGON_CHAIN_ID', mirror)
+        self.assertIn('80002=https://', env['TRADE_RPC_URLS'])
+        self.assertEqual(env['MANA_USD_AGGREGATOR_ADDRESS'], '0xdcf00f5f60b62b07e668a84c0cedaf6f453d416e')
+        self.assertEqual(env['USD_PEGGED_ORACLE_MAX_AGE_SECS'], '27')
+        for key in ('MANA_USD_AGGREGATOR_ADDRESS', 'USD_PEGGED_ORACLE_MAX_AGE_SECS'):
+            self.assertNotIn(key, mirror, key)
         # Otherwise the mirror profile's catalogue passes, against the testnet subgraphs.
         self.assertEqual(env['MARKETPLACE_MIRRORS_ENABLED'], 'true')
         self.assertIn('index', dev.project({**self.config, 'profile': 'testnet'})['processes'])
@@ -488,9 +506,15 @@ class DevTest(unittest.TestCase):
     def test_the_testnet_profile_settles_credits_on_amoy(self):
         env = dev.runtime_env({**self.config, 'profile': 'testnet'})
         mirror = dev.runtime_env({**self.config, 'profile': 'mirror'})
-        self.assertEqual(env['CREDITS_MANAGER_CONTRACT'], '0x8052a560e6e6ac86eeb7e711a4497f639b322fb3')
+        # dcl-one's own manager: the settlement gate refuses the shared upstream one (0x8052…2fb3).
+        self.assertEqual(env['CREDITS_MANAGER_CONTRACT'], '0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c')
+        self.assertNotEqual(env['CREDITS_MANAGER_CONTRACT'], '0x8052a560e6e6ac86eeb7e711a4497f639b322fb3')
+        # The Sites build trusts the same manager.
+        self.assertEqual(env['VITE_SHOP_CREDITS_MANAGER'], env['CREDITS_MANAGER_CONTRACT'])
         self.assertEqual((env['CREDITS_USAGE_INDEX_ENABLED'], env['CREDITS_MOCK_CARD']), ('true', 'true'))
-        for key in ('CREDITS_MANAGER_CONTRACT', 'CREDITS_MOCK_CARD', 'CREDITS_SIGNER_KEY_FILE'):
+        # Its usage index replays from the manager's deployment block, not the shared manager's.
+        self.assertEqual(env['CREDITS_USAGE_START_BLOCK'], '52152027')
+        for key in ('CREDITS_MANAGER_CONTRACT', 'VITE_SHOP_CREDITS_MANAGER', 'CREDITS_MOCK_CARD', 'CREDITS_SIGNER_KEY_FILE', 'CREDITS_USAGE_START_BLOCK'):
             self.assertNotIn(key, mirror, key)
         # Without a signer key in the stack's state, nothing signs credits on chain.
         self.assertEqual(env['CREDITS_ONCHAIN_AUTHORIZE_ENABLED'], 'false')

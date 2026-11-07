@@ -426,6 +426,20 @@ async fn a_profile_past_the_sync_age_limit_is_reachable_through_the_profile_look
     assert_eq!(docs.len(), 1);
     assert_eq!(docs[0].id, profile.id);
     assert_eq!(node.deployments(&profile.id).await, 1);
+
+    // A listed entity is left out of the answer, and its pointer counts as
+    // answered: hidden, never asked of the sources again.
+    let calls = fake.active_calls();
+    node.storage
+        .denylist()
+        .set_remote("https://registry.example/denylist", [profile.id.clone()]);
+    let docs = node
+        .read_through
+        .active_docs(false, std::slice::from_ref(&address))
+        .await
+        .unwrap();
+    assert!(docs.is_empty(), "{docs:?}");
+    assert_eq!(fake.active_calls(), calls);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -757,8 +771,10 @@ async fn a_file_the_peers_lack_is_read_from_a_file_source_which_is_never_asked_f
     assert_eq!((worlds.active_calls(), worlds.audit_calls()), (0, 0));
 }
 
+/// A profile's avatar render is stored like any other content file, and one a node is missing
+/// (a blob lost, or a node that once synced without renders) is fetched on its first read.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_profile_render_sync_skips_stays_a_miss_for_the_content_route() {
+async fn a_profile_render_is_stored_and_a_missing_one_is_filled_on_read() {
     let fake = start_fake().await;
     require_test_db!(Some(node) = Node::new("render", &fake, HANG_GUARD, true).await);
     let address = format!("0x{}{}", unique(), &unique()[..8]);
@@ -771,17 +787,20 @@ async fn a_profile_render_sync_skips_stays_a_miss_for_the_content_route() {
         .unwrap();
     assert_eq!(docs.len(), 1);
     assert!(
-        !node.holds(&profile.file_hash).await,
-        "sync skips the render"
+        node.holds(&profile.file_hash).await,
+        "the render is stored with its entity"
     );
 
+    node.storage.delete(&profile.file_hash).await.unwrap();
+    assert!(!node.holds(&profile.file_hash).await);
     let content_calls = fake.content_calls();
-    let (status, _) = node
+    let (status, body) = node
         .get(&format!("/content/contents/{}", profile.file_hash))
         .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(fake.content_calls(), content_calls);
-    assert!(!node.holds(&profile.file_hash).await);
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(hash_bytes_v1(&body), profile.file_hash);
+    assert_eq!(fake.content_calls(), content_calls + 1);
+    assert!(node.holds(&profile.file_hash).await);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1044,4 +1063,14 @@ async fn read_through_is_off_by_default_and_needs_a_source() {
         "a worlds source naming this node is refused"
     );
     let _ = std::fs::remove_dir_all(tmp);
+}
+
+#[test]
+fn a_long_key_enters_the_negative_cache_as_its_digest() {
+    assert_eq!(negative_key("bafkreiabc"), "bafkreiabc");
+    let long = "a".repeat(10_000);
+    let key = negative_key(&long);
+    assert!(key.starts_with("sha256:") && key.len() == 71, "{key}");
+    assert_eq!(key, negative_key(&long));
+    assert_ne!(key, negative_key(&"b".repeat(10_000)));
 }

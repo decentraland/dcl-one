@@ -501,9 +501,9 @@ async fn a_pass_reuses_regenerates_prunes_and_rekeys() {
     );
 
     // An entity of the year window overwritten after the pass: the outdated
-    // probe sees active late arrivals only, so a pass keeps the window; the
-    // rebuild (the console's regenerate) rewrites every window, and only the
-    // year's CID moves.
+    // probe sees active late arrivals only, and the row is younger than a
+    // month, so a pass keeps the window; the rebuild (the console's
+    // regenerate) rewrites every window, and only the year's CID moves.
     sqlx::query("UPDATE content.deployments SET deleter_deployment = 0 WHERE entity_id = 'bafkreiprofile000001'")
         .execute(&db.pool)
         .await
@@ -531,7 +531,8 @@ async fn a_pass_reuses_regenerates_prunes_and_rekeys() {
         );
     }
 
-    // /snapshots lists what the table holds, newest window first.
+    // /snapshots lists what the table holds in division order, oldest window
+    // first, as upstream does.
     let listed = get_json(&content_router(state.clone()), "/content/snapshots").await;
     let hashes: Vec<&str> = listed
         .as_array()
@@ -539,9 +540,78 @@ async fn a_pass_reuses_regenerates_prunes_and_rekeys() {
         .iter()
         .map(|s| s["hash"].as_str().unwrap())
         .collect();
-    let mut want: Vec<&str> = rows.iter().map(|r| r.hash.as_str()).collect();
-    want.reverse();
+    let want: Vec<&str> = rows.iter().map(|r| r.hash.as_str()).collect();
     assert_eq!(hashes, want);
+
+    db.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Upstream's inactive-entities check: a window whose row is over a month
+/// (four weeks) old and lists more entities than are active now is
+/// regenerated with the old hash in `replacedSnapshotHashes`; a month-old
+/// row whose entities are all active, or a younger row with an overwritten
+/// entity, is reused.
+#[tokio::test]
+async fn a_month_old_window_listing_an_overwritten_entity_is_regenerated() {
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    sqlx::raw_sql(SEED).execute(&db.pool).await.unwrap();
+    let root = temp_dir("inactive");
+    let state = content_state(&db.pool, &root).await;
+    let generator = SnapshotGenerator::new(state.clone(), false, settings(1000));
+    let (end, golden) = golden_pass(0);
+    let year = golden[0].range;
+    let (first, _) = generator.generate(end).await.unwrap();
+    assert_eq!(first[0].hash, golden[0].hash);
+
+    // The year row as if generated one hour after the seed's local_timestamp
+    // (so the outdated probe stays quiet), and a pass four weeks and a day
+    // later: the year window is unchanged by the later division.
+    let generated = sqlx::query_scalar::<_, chrono::NaiveDateTime>(
+        "UPDATE content.snapshots SET generation_time = '2021-01-07 07:00'
+         WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'
+         RETURNING generation_time",
+    )
+    .bind(year.init_timestamp as f64)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap()
+    .and_utc()
+    .timestamp_millis();
+    let month = 28 * DAY;
+    let year_row =
+        |rows: &[SnapshotMetadata]| rows.iter().find(|r| r.time_range == year).cloned().unwrap();
+
+    // Every listed entity still active: the month-old row is reused.
+    let (rows, _) = generator.generate(generated + month + DAY).await.unwrap();
+    let kept = year_row(&rows);
+    assert_eq!(kept.hash, golden[0].hash);
+    assert_eq!(kept.generation_timestamp, generated);
+
+    // An entity overwritten, the row younger than a month: still reused.
+    sqlx::query("UPDATE content.deployments SET deleter_deployment = 0 WHERE entity_id = 'bafkreiprofile000001'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (rows, _) = generator.generate(generated + month - DAY).await.unwrap();
+    assert_eq!(year_row(&rows), kept);
+
+    // Over a month old with fewer active entities than it lists: regenerated.
+    let (rows, _) = generator.generate(generated + month + DAY).await.unwrap();
+    let rebuilt = year_row(&rows);
+    assert_eq!(rebuilt.number_of_entities, golden[0].entities - 1);
+    assert_ne!(rebuilt.hash, kept.hash);
+    assert_eq!(
+        rebuilt.replaced_snapshot_hashes.as_deref(),
+        Some(&[kept.hash.clone()][..])
+    );
+    assert!(rebuilt.generation_timestamp > generated);
+
+    // The new row is younger than a month: the next pass reuses it.
+    let (rows, _) = generator.generate(generated + month + DAY).await.unwrap();
+    assert_eq!(year_row(&rows), rebuilt);
 
     db.teardown().await;
     let _ = std::fs::remove_dir_all(root);
@@ -549,6 +619,86 @@ async fn a_pass_reuses_regenerates_prunes_and_rekeys() {
 
 fn content_router(state: Arc<ContentState>) -> Router {
     catalyst::content::build_router(state)
+}
+
+const STEP_0026: &str = include_str!(concat!(
+    env!("DCL_ONE_ROOT"),
+    "/schemas/migrations/0026_content_snapshots_outdated.sql"
+));
+
+/// A window's `outdated` mark and whether its generation time is the epoch.
+async fn mark_of(pool: &PgPool, hash: &str) -> (bool, bool) {
+    sqlx::query_as(
+        "SELECT outdated, generation_time = 'epoch'::timestamp FROM content.snapshots WHERE hash = $1",
+    )
+    .bind(hash)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// Step 0026 carries a window an older binary marked by stamping the epoch
+/// over its generation time into `outdated`, and leaves the others alone;
+/// run twice it changes nothing more.
+#[tokio::test]
+async fn step_0026_carries_an_epoch_mark_into_outdated() {
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    sqlx::raw_sql(SEED).execute(&db.pool).await.unwrap();
+    let root = temp_dir("step-0026");
+    let state = content_state(&db.pool, &root).await;
+    let generator = SnapshotGenerator::new(state, false, settings(1000));
+    let (end, _) = golden_pass(0);
+    let (rows, _) = generator.generate(end).await.unwrap();
+    let (marked, kept) = (&rows[2].hash, &rows[1].hash);
+    sqlx::query(
+        "UPDATE content.snapshots SET generation_time = 'epoch'::timestamp, outdated = false WHERE hash = $1",
+    )
+    .bind(marked)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    for _ in 0..2 {
+        sqlx::raw_sql(STEP_0026).execute(&db.pool).await.unwrap();
+        assert_eq!(mark_of(&db.pool, marked).await, (true, true));
+        assert_eq!(mark_of(&db.pool, kept).await, (false, false));
+    }
+    db.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A window an older binary marked with the epoch, which the new binary
+/// reads without the step having flagged it, regenerates at the next pass
+/// and comes back with a real generation time and no mark; the others are
+/// reused.
+#[tokio::test]
+async fn an_epoch_mark_from_an_older_binary_regenerates_its_window() {
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    sqlx::raw_sql(SEED).execute(&db.pool).await.unwrap();
+    let root = temp_dir("epoch-mark");
+    let state = content_state(&db.pool, &root).await;
+    let generator = SnapshotGenerator::new(state, false, settings(1000));
+    let (end, _) = golden_pass(0);
+    let (first, _) = generator.generate(end).await.unwrap();
+    sqlx::query(
+        "UPDATE content.snapshots SET generation_time = 'epoch'::timestamp, outdated = false WHERE hash = $1",
+    )
+    .bind(&first[2].hash)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (rows, summary) = generator.generate(end).await.unwrap();
+    assert_eq!((summary.generated, summary.reused), (1, 3), "{summary:?}");
+    assert!(rows[2].generation_timestamp > 0);
+    assert_eq!(mark_of(&db.pool, &rows[2].hash).await, (false, false));
+    for i in [0, 1, 3] {
+        assert_eq!(rows[i], first[i]);
+    }
+    db.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
 }
 
 async fn get_json(app: &Router, uri: &str) -> Value {
@@ -679,6 +829,7 @@ async fn spawn_stub_peer(now: i64) -> (String, tokio::task::JoinHandle<()>) {
 fn sync_settings(peer: &str) -> SyncSettings {
     SyncSettings {
         peers: vec![peer.to_string()],
+        dao: None,
         entity_types: None,
         from_timestamp_ms: 0,
         phased_sync: true,
@@ -1347,6 +1498,17 @@ async fn the_deleter_repair_regenerates_a_window_an_earlier_unpublish_restored()
             .await
             .unwrap();
     assert_eq!(a_pointer, None, "the repair empties the parcel");
+    // Upstream never publishes a generation time of 0: the mark is a flag and
+    // the window keeps its real generation time until the next pass.
+    let window = before
+        .iter()
+        .find(|r| r.number_of_entities == 1)
+        .unwrap()
+        .clone();
+    let (outdated, generated) = window_mark(&db_a.pool, &window.time_range).await;
+    assert!(outdated, "the repair marks the window");
+    assert_eq!(generated, window.generation_timestamp);
+    assert!(generated > 0);
 
     let (after, summary) = generator
         .generate(chrono::Utc::now().timestamp_millis())
@@ -1355,6 +1517,20 @@ async fn the_deleter_repair_regenerates_a_window_an_earlier_unpublish_restored()
     assert!(summary.generated >= 1, "{summary:?}");
     let in_files: u64 = after.iter().map(|r| r.number_of_entities).sum();
     assert_eq!(in_files, 0, "the regenerated window leaves the scene out");
+    let regenerated = after
+        .iter()
+        .find(|r| r.time_range == window.time_range)
+        .unwrap();
+    assert!(regenerated.generation_timestamp >= generated);
+    assert_eq!(
+        window_mark(&db_a.pool, &window.time_range).await,
+        (false, regenerated.generation_timestamp),
+        "the regenerated row is unmarked"
+    );
+    assert!(
+        after.iter().all(|r| r.generation_timestamp > 0),
+        "{after:?}"
+    );
 
     let (url, _, serve) = serve_node(node.clone()).await;
     let changes: Value = reqwest::Client::new()
@@ -1379,6 +1555,21 @@ async fn the_deleter_repair_regenerates_a_window_an_earlier_unpublish_restored()
     serve.abort();
     db_a.teardown().await;
     let _ = std::fs::remove_dir_all(root);
+}
+
+/// A window row's `outdated` mark and its generation time in milliseconds.
+async fn window_mark(pool: &PgPool, window: &TimeRange) -> (bool, i64) {
+    let (outdated, generated): (bool, chrono::NaiveDateTime) = sqlx::query_as(
+        "SELECT outdated, generation_time FROM content.snapshots
+         WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'
+           AND end_timestamp = to_timestamp($2 / 1000.0) AT TIME ZONE 'UTC'",
+    )
+    .bind(window.init_timestamp as f64)
+    .bind(window.end_timestamp as f64)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    (outdated, generated.and_utc().timestamp_millis())
 }
 
 /// Backends of this database waiting on a lock.
@@ -1464,21 +1655,11 @@ async fn a_window_written_beside_the_deleter_repair_keeps_its_mark() {
         .expect("the window's row");
     assert_eq!(row.number_of_entities, 1, "the pass read before the repair");
 
+    let (outdated, generated) = window_mark(&db_a.pool, &window).await;
+    assert!(outdated, "the window keeps the repair's mark");
     assert!(
-        snapshot_is_outdated(&db_a.pool, &window, {
-            let generated: chrono::NaiveDateTime = sqlx::query_scalar(
-                "SELECT generation_time FROM content.snapshots
-                 WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'",
-            )
-            .bind(window.init_timestamp as f64)
-            .fetch_one(&db_a.pool)
-            .await
-            .unwrap();
-            generated.and_utc().timestamp_millis()
-        })
-        .await
-        .unwrap(),
-        "the window keeps the repair's mark"
+        generated > 0,
+        "the mark leaves the generation time as it was"
     );
     let (after, _) = generator
         .generate(chrono::Utc::now().timestamp_millis())
@@ -1565,7 +1746,7 @@ async fn a_window_read_before_the_deleter_repair_commits_is_written_marked() {
         .time_range;
     // Only this window is regenerated, so the pass's first row write is its.
     sqlx::query(
-        "UPDATE content.snapshots SET generation_time = 'epoch'::timestamp
+        "UPDATE content.snapshots SET outdated = true
          WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'",
     )
     .bind(window.init_timestamp as f64)
@@ -1608,19 +1789,13 @@ async fn a_window_read_before_the_deleter_repair_commits_is_written_marked() {
         .find(|r| r.time_range == window)
         .expect("the window's row");
     assert_eq!(row.number_of_entities, 1, "the pass read before the repair");
-    let generated: chrono::NaiveDateTime = sqlx::query_scalar(
-        "SELECT generation_time FROM content.snapshots
-         WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'",
-    )
-    .bind(window.init_timestamp as f64)
-    .fetch_one(&db_a.pool)
-    .await
-    .unwrap();
+    let (outdated, generated) = window_mark(&db_a.pool, &window).await;
+    assert!(outdated, "the window carries the repair's mark");
     assert_eq!(
-        generated.and_utc().timestamp_millis(),
-        0,
-        "the window carries the repair's mark"
+        generated, row.generation_timestamp,
+        "the real generation time is published"
     );
+    assert!(generated > 0);
 
     let (after, _) = generator
         .generate(chrono::Utc::now().timestamp_millis())

@@ -23,7 +23,8 @@
 .list li + li {
   border-top: 1px solid var(--line);
 }
-.list a {
+.list a,
+.account {
   display: flex;
   flex-direction: column;
   gap: 2px;

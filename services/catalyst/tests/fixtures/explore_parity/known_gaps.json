@@ -1,0 +1,17 @@
+{
+  "about": "Fixture ids the explore router does not answer as the pinned source does (tests/explore_parity.rs); README.md, 'Known gaps', records each with the pinned source lines it diverges from and the answer the router gives. EXPLORE_PARITY_WRITE_GAPS=1 rewrites the list from a run and may only drop ids or refresh their observed difference; EXPLORE_PARITY_ALLOW_NEW_GAPS=1 (with it) also adds the entries that fail now and prints each added id, which the README then records the same way.",
+  "entries": [
+    {
+      "id": "events.status.envelope",
+      "observed": "data extra keys [\"catalogue\", \"configured_mirrors\", \"mirrors\"]"
+    },
+    {
+      "id": "events.create.image_bucket_unconfigured",
+      "observed": "body.error = \"Poster uploads are unavailable because this node has no blob store configured\" (expected \"Poster uploads are unavailable because AWS_BUCKET_URL is not configured\")"
+    },
+    {
+      "id": "places.status.shape",
+      "observed": "data extra keys [\"catalogue\", \"configured_mirrors\", \"mirrors\"]"
+    }
+  ]
+}
