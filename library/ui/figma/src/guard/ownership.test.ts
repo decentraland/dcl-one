@@ -32,7 +32,7 @@ describe('ownership of the committed tree', () => {
       (file) => path.basename(file) !== '.gitkeep' && ownerOf(ownership, file) === null
     )
 
-    expect(unowned).toHaveLength(124)
+    expect(unowned).toHaveLength(114)
     expect(
       unowned.every((file) =>
         /^figma\/review\/public\/dcl-ui-review\/(references|renders)\/[^/]+\.png$/.test(file)
