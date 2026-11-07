@@ -114,7 +114,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn("cron: '17 * * * *'", source)
         script = textwrap.dedent(source.split("python3 - <<'PY'\n", 1)[1].rsplit('\n          PY', 1)[0])
         prefix = 'foundation-dev-v2-smoke-decentraland/dcl-one-Linux-X64-'
-        deps = 'v0-rust-foundation-dev-tests-0123abcd-rust-'
+        deps = 'v0-rust-dev-tests-0123abcd-'
         caches = [
             {'id': 1, 'ref': 'refs/heads/main', 'key': prefix + 'old'},
             {'id': 2, 'ref': 'refs/heads/main', 'key': prefix + 'new'},

@@ -94,7 +94,7 @@ jobs:
           # stay in the entry; their output is tens of megabytes.
           # flake.lock joins the key because the action cannot see the Nix-provided libraries.
           workspaces: services/catalyst
-          key: foundation-dev-tests-${{ hashFiles('flake.lock') }}
+          shared-key: dev-tests-${{ hashFiles('flake.lock') }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
       - name: Run backend tests with PostgreSQL and isolated NATS

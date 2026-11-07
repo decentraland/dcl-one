@@ -55,7 +55,7 @@ jobs:
           cache_ids, closed, snapshots = set(), {}, {}
           namespace = re.compile(r'^foundation-dev-v2-smoke-' + re.escape(repository)
                                  + r'-(Linux|macOS)-(X64|ARM64)-'
-                                 r'|^v0-rust-foundation-dev-tests-[0-9a-f]+-rust-(Linux|Darwin)-(x64|arm64)-')
+                                 r'|^v0-rust-dev-tests-[0-9a-f]+-(Linux|Darwin)-(x64|arm64)-')
           for cache in caches:
               cache_ref = cache.get('ref', '')
               if targeted:
