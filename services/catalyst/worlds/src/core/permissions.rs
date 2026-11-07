@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::comms::world_identity::{Parcel, ParcelError, ParcelSet, WorldName};
+use crate::content::validation;
 use crate::policy::Permission;
 use crate::shared::identity::{Address, PermissionDecision};
 use crate::shared::signed_fetch::SignedPath;
@@ -245,7 +246,6 @@ pub async fn post_permissions(
     uri: Uri,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
-    let world = parse_world(&world_name)?;
     let auth = require_verified(
         &headers,
         "post",
@@ -255,6 +255,7 @@ pub async fn post_permissions(
     )
     .await
     .map_err(map_auth_error_api)?;
+    let world = parse_world(&world_name)?;
     owner_decision(&state, &world, &auth.signer).await?;
 
     let meta = &auth.metadata;
@@ -531,7 +532,7 @@ pub async fn delete_permissions_address(
         )));
     };
     let world = parse_world(&world_name)?;
-    verify_owner(&state, &world, signer).await?;
+    owner_decision(&state, &world, &signer).await?;
     if !store::world_is_valid(&state.pool, &state.policy, &state.names, &world).await? {
         return Err(ApiError::not_found(format!(
             "World \"{}\" not found.",
@@ -594,7 +595,7 @@ impl IntoResponse for ParcelsRefusal {
             Self::Validator { status, body } => (
                 status,
                 [(header::CONTENT_TYPE, "application/json")],
-                crate::content::validation::ordered_refusal_json(&body),
+                validation::ordered_refusal_json(&body),
             )
                 .into_response(),
         }
@@ -644,13 +645,10 @@ fn parcels_body(headers: &HeaderMap, body: &[u8]) -> Result<ParcelSet, ParcelsRe
     let value: Value = serde_json::from_slice(body).map_err(|e| {
         refuse(
             StatusCode::BAD_REQUEST,
-            json!({ "ok": false, "message": e.to_string() }),
+            json!({ "ok": false, "message": validation::json_parse_message(body, &e) }),
         )
     })?;
-    let keys = match &value {
-        Value::Object(_) => object_keys_in_order(body),
-        _ => Vec::new(),
-    };
+    let keys = validation::object_keys_in_order(&value, body);
     if let Some(error) = parcels_schema_error(&value, &keys) {
         return Err(refuse(
             StatusCode::BAD_REQUEST,
@@ -669,131 +667,23 @@ fn parcels_body(headers: &HeaderMap, body: &[u8]) -> Result<ParcelSet, ParcelsRe
 }
 
 /// The first error AJV 8 (`allErrors: false`) reports for
-/// `permissionParcelsSchema`, in its keyword order: type, required,
-/// additionalProperties, then the property's type, maxItems, minItems and
-/// each item's type and pattern.
+/// `permissionParcelsSchema`: `{parcels}` with 1-500 strings matching
+/// [`PARCEL_PATTERN`].
 fn parcels_schema_error(body: &Value, keys: &[String]) -> Option<Value> {
-    let error = |instance: String, schema: &str, keyword: &str, params: Value, message: String| {
-        Some(json!({
-            "instancePath": instance,
-            "schemaPath": format!("#/{schema}"),
-            "keyword": keyword,
-            "params": params,
-            "message": message,
-        }))
-    };
-    let Some(object) = body.as_object() else {
-        return error(
-            String::new(),
-            "type",
-            "type",
-            json!({ "type": "object" }),
-            "must be object".into(),
-        );
-    };
-    let Some(value) = object.get("parcels") else {
-        return error(
-            String::new(),
-            "required",
-            "required",
-            json!({ "missingProperty": "parcels" }),
-            "must have required property 'parcels'".into(),
-        );
-    };
-    if let Some(extra) = keys.iter().find(|k| k.as_str() != "parcels") {
-        return error(
-            String::new(),
-            "additionalProperties",
-            "additionalProperties",
-            json!({ "additionalProperty": extra }),
-            "must NOT have additional properties".into(),
-        );
-    }
-    let instance = "/parcels".to_string();
-    let Some(items) = value.as_array() else {
-        return error(
-            instance,
-            "properties/parcels/type",
-            "type",
-            json!({ "type": "array" }),
-            "must be array".into(),
-        );
-    };
-    if items.len() > MAX_PARCELS_PER_REQUEST {
-        return error(
-            instance,
-            "properties/parcels/maxItems",
-            "maxItems",
-            json!({ "limit": MAX_PARCELS_PER_REQUEST }),
-            format!("must NOT have more than {MAX_PARCELS_PER_REQUEST} items"),
-        );
-    }
-    if items.is_empty() {
-        return error(
-            instance,
-            "properties/parcels/minItems",
-            "minItems",
-            json!({ "limit": 1 }),
-            "must NOT have fewer than 1 items".into(),
-        );
-    }
-    items
-        .iter()
-        .enumerate()
-        .find_map(|(i, item)| match item.as_str() {
-            None => error(
-                format!("/parcels/{i}"),
-                "properties/parcels/items/type",
-                "type",
-                json!({ "type": "string" }),
-                "must be string".into(),
-            ),
+    validation::array_property_error(body, keys, "", "parcels", MAX_PARCELS_PER_REQUEST, |item| {
+        match item.as_str() {
+            None => Some(validation::ItemError::not_a_string()),
             // `Parcel::parse_strict`'s shape is the pattern (JS `$`: the end only).
             Some(raw) if matches!(Parcel::parse_strict(raw), Err(ParcelError::NotStrict(_))) => {
-                error(
-                    format!("/parcels/{i}"),
-                    "properties/parcels/items/pattern",
-                    "pattern",
-                    json!({ "pattern": PARCEL_PATTERN }),
-                    format!("must match pattern \"{PARCEL_PATTERN}\""),
-                )
+                Some(validation::ItemError {
+                    keyword: "pattern",
+                    params: json!({ "pattern": PARCEL_PATTERN }),
+                    message: format!("must match pattern \"{PARCEL_PATTERN}\""),
+                })
             }
             Some(_) => None,
-        })
-}
-
-/// A JSON object's keys in body order, each once, as `JSON.parse` keeps them
-/// (AJV names the first extra one).
-fn object_keys_in_order(bytes: &[u8]) -> Vec<String> {
-    struct Keys(Vec<String>);
-    impl<'de> serde::Deserialize<'de> for Keys {
-        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-            struct Visitor;
-            impl<'de> serde::de::Visitor<'de> for Visitor {
-                type Value = Keys;
-                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                    f.write_str("a JSON object")
-                }
-                fn visit_map<A: serde::de::MapAccess<'de>>(
-                    self,
-                    mut map: A,
-                ) -> Result<Keys, A::Error> {
-                    let mut keys: Vec<String> = Vec::new();
-                    let mut seen = std::collections::HashSet::new();
-                    while let Some((key, _)) = map.next_entry::<String, serde::de::IgnoredAny>()? {
-                        if seen.insert(key.clone()) {
-                            keys.push(key);
-                        }
-                    }
-                    Ok(Keys(keys))
-                }
-            }
-            deserializer.deserialize_map(Visitor)
         }
-    }
-    serde_json::from_slice::<Keys>(bytes)
-        .map(|k| k.0)
-        .unwrap_or_default()
+    })
 }
 
 fn validate_address_and_allow_list(
@@ -1243,10 +1133,9 @@ mod tests {
 
     fn refusal(content_type: &str, body: &[u8]) -> (StatusCode, String) {
         match parcels_body(&json_headers(content_type), body) {
-            Err(ParcelsRefusal::Validator { status, body }) => (
-                status,
-                crate::content::validation::ordered_refusal_json(&body),
-            ),
+            Err(ParcelsRefusal::Validator { status, body }) => {
+                (status, validation::ordered_refusal_json(&body))
+            }
             other => panic!("not a validator refusal: {other:?}"),
         }
     }
@@ -1402,11 +1291,24 @@ mod tests {
                 r#"{"ok":false,"message":"Content-Type must be application/json"}"#.to_string()
             )
         );
-        let (status, body) = refusal(json, b"{");
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        let body: Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(body["ok"], false);
-        assert!(body.get("data").is_none(), "{body}");
+        // An unparsable body answers `JSON.parse`'s V8 message.
+        for (body, message) in [
+            (
+                &b"{"[..],
+                "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
+            ),
+            (b"", "Unexpected end of JSON input"),
+            (b"oops", "Unexpected token 'o', \"oops\" is not valid JSON"),
+        ] {
+            assert_eq!(
+                refusal(json, body),
+                (
+                    StatusCode::BAD_REQUEST,
+                    format!(r#"{{"ok":false,"message":{}}}"#, Value::from(message))
+                ),
+                "{body:?}"
+            );
+        }
         // AJV passes it (pattern only); only i32 storage refuses it.
         assert!(matches!(
             parcels_body(&json_headers(json), br#"{"parcels":["99999999999,0"]}"#),

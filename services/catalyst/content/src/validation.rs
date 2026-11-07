@@ -192,14 +192,64 @@ pub fn ordered_refusal_json(value: &Value) -> String {
 }
 
 /// The first AJV error of `oneOf` branch `branch` (`{key: string[1..=1000]}`,
-/// `required`, `additionalProperties: false`), in AJV's keyword order: type,
-/// required, additionalProperties, then the property's type, item count and
-/// items.
+/// `required`, `additionalProperties: false`), in AJV's keyword order.
 fn selector_branch_error(body: &Value, keys: &[String], branch: usize, key: &str) -> Option<Value> {
-    let error = |instance: String, schema: &str, keyword: &str, params: Value, message: String| {
+    array_property_error(
+        body,
+        keys,
+        &format!("oneOf/{branch}/"),
+        key,
+        MAX_IDS_OR_POINTERS,
+        |item| match item.as_str() {
+            None => Some(ItemError::not_a_string()),
+            Some("") => Some(ItemError {
+                keyword: "minLength",
+                params: json!({ "limit": 1 }),
+                message: "must NOT have fewer than 1 characters".into(),
+            }),
+            Some(_) => None,
+        },
+    )
+}
+
+/// Why AJV refuses one array item: the keyword under the property's
+/// `items`, its params and its message.
+pub struct ItemError {
+    pub keyword: &'static str,
+    pub params: Value,
+    pub message: String,
+}
+
+impl ItemError {
+    /// `items: {type: "string"}` refusing a non-string.
+    pub fn not_a_string() -> Self {
+        Self {
+            keyword: "type",
+            params: json!({ "type": "string" }),
+            message: "must be string".into(),
+        }
+    }
+}
+
+/// The first error AJV 8 (`allErrors: false`) reports for an object schema
+/// with one required array property `key` (`additionalProperties: false`,
+/// 1..=`max_items` items), in AJV's keyword order: type, required,
+/// additionalProperties, then the property's type, maxItems, minItems and the
+/// first item `item_error` refuses. `schema` is the schema's path under `#/`
+/// (empty at the root, `oneOf/<n>/` for a branch); `keys` are the body's keys
+/// in order ([`object_keys_in_order`]).
+pub fn array_property_error(
+    body: &Value,
+    keys: &[String],
+    schema: &str,
+    key: &str,
+    max_items: usize,
+    item_error: impl Fn(&Value) -> Option<ItemError>,
+) -> Option<Value> {
+    let error = |instance: String, path: &str, keyword: &str, params: Value, message: String| {
         Some(json!({
             "instancePath": instance,
-            "schemaPath": format!("#/oneOf/{branch}/{schema}"),
+            "schemaPath": format!("#/{schema}{path}"),
             "keyword": keyword,
             "params": params,
             "message": message,
@@ -242,13 +292,13 @@ fn selector_branch_error(body: &Value, keys: &[String], branch: usize, key: &str
             "must be array".into(),
         );
     };
-    if items.len() > MAX_IDS_OR_POINTERS {
+    if items.len() > max_items {
         return error(
             format!("/{key}"),
             &format!("{property}/maxItems"),
             "maxItems",
-            json!({ "limit": MAX_IDS_OR_POINTERS }),
-            format!("must NOT have more than {MAX_IDS_OR_POINTERS} items"),
+            json!({ "limit": max_items }),
+            format!("must NOT have more than {max_items} items"),
         );
     }
     if items.is_empty() {
@@ -260,26 +310,16 @@ fn selector_branch_error(body: &Value, keys: &[String], branch: usize, key: &str
             "must NOT have fewer than 1 items".into(),
         );
     }
-    items
-        .iter()
-        .enumerate()
-        .find_map(|(i, item)| match item.as_str() {
-            None => error(
-                format!("/{key}/{i}"),
-                &format!("{property}/items/type"),
-                "type",
-                json!({ "type": "string" }),
-                "must be string".into(),
-            ),
-            Some("") => error(
-                format!("/{key}/{i}"),
-                &format!("{property}/items/minLength"),
-                "minLength",
-                json!({ "limit": 1 }),
-                "must NOT have fewer than 1 characters".into(),
-            ),
-            Some(_) => None,
-        })
+    items.iter().enumerate().find_map(|(i, item)| {
+        let refused = item_error(item)?;
+        error(
+            format!("/{key}/{i}"),
+            &format!("{property}/items/{}", refused.keyword),
+            refused.keyword,
+            refused.params,
+            refused.message,
+        )
+    })
 }
 
 /// A JSON object's keys in body order, each once (where JSON.parse keeps a

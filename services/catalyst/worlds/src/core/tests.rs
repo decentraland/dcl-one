@@ -57,7 +57,23 @@ struct Fixture {
 /// owner rule are covered there.
 /// `forward_to`: the publishes are queued for that (loopback) upstream.
 async fn fixture_with(personal: PersonalWorldsPolicy, forward_to: Option<&str>) -> Option<Fixture> {
-    fixture_full(personal, forward_to, None).await
+    fixture_full(personal, forward_to, None, test_settings()).await
+}
+
+fn test_settings() -> Settings {
+    Settings::for_tests(Some(ADMIN_TOKEN))
+}
+
+/// A fixture whose access allow-lists hold at most `wallets` wallets and
+/// `communities` communities (`ACCESS_MAX_WALLETS`, `ACCESS_MAX_COMMUNITIES`).
+async fn fixture_with_access_caps(wallets: u32, communities: u32) -> Option<Fixture> {
+    fixture_full(
+        PersonalWorldsPolicy::disabled(),
+        None,
+        None,
+        test_settings().with_access_caps(wallets, communities),
+    )
+    .await
 }
 
 /// ENS worlds on, over a fake chain with an ENS cap of `ens_cap` bytes.
@@ -67,6 +83,7 @@ async fn fixture_with_ens(ens_cap: i64) -> Option<(Fixture, crate::ens::test_sup
         PersonalWorldsPolicy::disabled(),
         None,
         Some((resolver, ens_cap)),
+        test_settings(),
     )
     .await?;
     Some((f, ens))
@@ -76,9 +93,10 @@ async fn fixture_full(
     personal: PersonalWorldsPolicy,
     forward_to: Option<&str>,
     ens: Option<(Arc<crate::ens::EnsResolver>, i64)>,
+    settings: Settings,
 ) -> Option<Fixture> {
     let pool = crate::db::scratch::pool(8).await?;
-    Some(fixture_on_pool(pool, personal, forward_to, ens).await)
+    Some(fixture_on_pool(pool, personal, forward_to, ens, settings).await)
 }
 
 async fn fixture_on_pool(
@@ -86,6 +104,7 @@ async fn fixture_on_pool(
     personal: PersonalWorldsPolicy,
     forward_to: Option<&str>,
     ens: Option<(Arc<crate::ens::EnsResolver>, i64)>,
+    settings: Settings,
 ) -> Fixture {
     let (market, names) = index_with_names().await;
     let dir = std::env::temp_dir().join(format!(
@@ -114,7 +133,7 @@ async fn fixture_on_pool(
             pool.clone(),
             storage.clone(),
             Arc::new(policy),
-            Settings::for_tests(Some(ADMIN_TOKEN)),
+            settings,
             None,
         )
         .with_forwarder(forwarder)
@@ -2897,6 +2916,23 @@ async fn single_statement_permission_routes_keep_their_row_shapes() {
     );
 }
 
+/// Seeds the name deny list and empties it again on drop, so a failed
+/// assertion leaves no entry behind.
+struct DenyListed<'a>(&'a super::names::NameDenyList);
+
+impl<'a> DenyListed<'a> {
+    fn seed(names: &'a super::names::NameDenyList, entries: Vec<String>) -> Self {
+        names.seed(entries);
+        Self(names)
+    }
+}
+
+impl Drop for DenyListed<'_> {
+    fn drop(&mut self) {
+        self.0.seed(Vec::new());
+    }
+}
+
 #[derive(Default)]
 struct RecordedRevocations(parking_lot::Mutex<Vec<super::Revocation>>);
 
@@ -3250,7 +3286,14 @@ async fn a_community_closure_rechecks_livekit_when_its_queue_insert_fails() {
             .await
             .unwrap();
         crate::db::apply_schema(&pool).await.unwrap();
-        let f = fixture_on_pool(pool, PersonalWorldsPolicy::disabled(), None, None).await;
+        let f = fixture_on_pool(
+            pool,
+            PersonalWorldsPolicy::disabled(),
+            None,
+            None,
+            test_settings(),
+        )
+        .await;
         community_closure_with_failed_queue_insert(f).await;
     })
     .catch_unwind()
@@ -3894,12 +3937,13 @@ async fn every_route_answers_its_contract() {
     .await;
     post_entity(app, &bad_thumb, 400).await;
     let banned = world_name();
-    f.state.names.seed(vec![banned.label().to_string()]);
-    f.names.set(&owner.address, banned.label());
-    let denied = deployment(&owner, &banned, "Denied", "0,0", &["0,0"]).await;
-    let body = post_entity(app, &denied, 400).await;
-    assert!(body["message"].as_str().unwrap().contains("name deny list"));
-    f.state.names.seed(Vec::new());
+    {
+        let _denied = DenyListed::seed(&f.state.names, vec![banned.label().to_string()]);
+        f.names.set(&owner.address, banned.label());
+        let denied = deployment(&owner, &banned, "Denied", "0,0", &["0,0"]).await;
+        let body = post_entity(app, &denied, 400).await;
+        assert!(body["message"].as_str().unwrap().contains("name deny list"));
+    }
 
     expect(app, Case::new("get", "/worlds"), 200).await;
     expect(app, Case::new("get", "/worlds?sort=bogus"), 400).await;
@@ -5398,6 +5442,46 @@ async fn deleting_an_address_grant_requires_a_valid_world() {
             .unwrap()
             .is_empty()
     );
+    // The `access` branch on the same world: the wallet leaves the
+    // allow-list and is re-decided (`RemoveWallet` + `revoke_unless_admitted`).
+    let recorded = Arc::new(RecordedRevocations::default());
+    f.state.add_revocation_sink(recorded.clone());
+    let allow = Case::new(
+        "post",
+        format!("/world/{}/permissions/access", sceneless.display()),
+    )
+    .signed_meta(
+        &sceneless_owner,
+        &json!({ "type": "allow-list", "wallets": [grantee.address.as_str()] }).to_string(),
+    )
+    .await;
+    expect(&f.app, allow, 204).await;
+    recorded.take();
+    let remove = Case::new(
+        "delete",
+        format!(
+            "/world/{}/permissions/access/{}",
+            sceneless.display(),
+            grantee.display()
+        ),
+    )
+    .signed(&sceneless_owner)
+    .await;
+    expect(&f.app, remove, 204).await;
+    let perms = expect(
+        &f.app,
+        Case::new("get", format!("/world/{}/permissions", sceneless.display())),
+        200,
+    )
+    .await;
+    assert_eq!(perms["permissions"]["access"]["wallets"], json!([]));
+    assert_eq!(
+        recorded.take(),
+        vec![super::Revocation::Address {
+            world: sceneless.clone(),
+            address: grantee.address.clone(),
+        }]
+    );
     let (unknown, unknown_owner) = (world_name(), Wallet::random());
     f.names.set(&unknown_owner.address, unknown.label());
     expect(&f.app, delete(&unknown).signed(&unknown_owner).await, 404).await;
@@ -5432,17 +5516,32 @@ async fn deleting_an_address_grant_requires_a_valid_world() {
             .unwrap()
     );
     assert_eq!(access().await, "nft-ownership");
-    f.state.names.seed(vec![format!("{}.dcl.eth", bare.key())]);
-    assert!(
-        !store::world_is_valid(&f.pool, &f.state.policy, &f.state.names, &bare)
-            .await
-            .unwrap()
-    );
-    // `getAccessForWorld` reads the filtered-out world as the default.
-    assert_eq!(access().await, "unrestricted");
-    f.state.names.seed(Vec::new());
+    {
+        let _denied = DenyListed::seed(&f.state.names, vec![format!("{}.dcl.eth", bare.key())]);
+        assert!(
+            !store::world_is_valid(&f.pool, &f.state.policy, &f.state.names, &bare)
+                .await
+                .unwrap()
+        );
+        // `getAccessForWorld` reads the filtered-out world as the default.
+        assert_eq!(access().await, "unrestricted");
+        // A bare name has no owner, so the route answers 401 before this check.
+        expect(&f.app, delete(&bare).signed(&bare_owner).await, 401).await;
+    }
 
     let world = owned_world(&f, &owner).await;
+    {
+        // The one entry an owned world's stored name equals once `.eth` and
+        // `.dcl` are stripped once each (`String.replace`): the owner's
+        // DELETE answers 404 through the route.
+        let entry = format!("{}.dcl.eth", world.key());
+        let _denied = DenyListed::seed(&f.state.names, vec![entry]);
+        let body = expect(&f.app, delete(&world).signed(&owner).await, 404).await;
+        assert_eq!(
+            body["message"],
+            json!(format!("World \"{}\" not found.", world.display()))
+        );
+    }
     assert!(
         store::admin_set_world_blocked(&f.pool, &world, true)
             .await
@@ -5459,6 +5558,75 @@ async fn deleting_an_address_grant_requires_a_valid_world() {
             .unwrap()
     );
     expect(&f.app, delete(&world).signed(&owner).await, 204).await;
+}
+
+/// `ACCESS_MAX_WALLETS` and `ACCESS_MAX_COMMUNITIES` reach the routes: the
+/// full-document POST (communities first) and both single-item PUTs.
+#[tokio::test]
+async fn access_allow_list_caps_from_settings_bound_every_route() {
+    let Some(f) = fixture_with_access_caps(1, 1).await else {
+        return;
+    };
+    let owner = Wallet::random();
+    let world = owned_world(&f, &owner).await;
+    let w = world.display();
+    let access_path = format!("/world/{w}/permissions/access");
+    let (a, b) = (Wallet::random().address, Wallet::random().address);
+    let c1 = seed_community(&f.pool, &[&owner.address]).await;
+    let c2 = seed_community(&f.pool, &[&owner.address]).await;
+    for (meta, message) in [
+        (
+            json!({ "type": "allow-list", "wallets": [a.as_str(), b.as_str()], "communities": [c1, c2] }),
+            "Too many communities. Maximum allowed is 1, but 2 were provided.",
+        ),
+        (
+            json!({ "type": "allow-list", "wallets": [a.as_str(), b.as_str()] }),
+            "Too many wallets in allow-list. Maximum allowed is 1, but 2 were provided.",
+        ),
+    ] {
+        let case = Case::new("post", access_path.as_str())
+            .signed_meta(&owner, &meta.to_string())
+            .await;
+        let body = expect(&f.app, case, 400).await;
+        assert_eq!(body["message"], message, "{meta}");
+    }
+    let full = json!({ "type": "allow-list", "wallets": [a.as_str()], "communities": [c1] });
+    let case = Case::new("post", access_path.as_str())
+        .signed_meta(&owner, &full.to_string())
+        .await;
+    expect(&f.app, case, 204).await;
+    for (path, message) in [
+        (
+            format!("{access_path}/{b}"),
+            "Cannot add wallet: allow-list would exceed the maximum of 1 wallets.",
+        ),
+        (
+            format!("{access_path}/communities/{c2}"),
+            "Too many communities. Maximum allowed is 1, cannot add more.",
+        ),
+    ] {
+        let case = Case::new("put", path.as_str()).signed(&owner).await;
+        let body = expect(&f.app, case, 400).await;
+        assert_eq!(body["message"], message, "{path}");
+    }
+}
+
+/// `POST /world/:n/permissions/:p` checks the signature before the world
+/// name, as the other owner-gated routes do.
+#[tokio::test]
+async fn posting_a_permission_checks_the_signature_before_the_world_name() {
+    let Some(f) = fixture().await else { return };
+    let path = "/world/not%20a%20world/permissions/deployment";
+    let body = expect(&f.app, Case::new("post", path), 400).await;
+    assert!(body.to_string().contains("Invalid Auth Chain"), "{body}");
+    let signed = Case::new("post", path).signed(&Wallet::random()).await;
+    let body = expect(&f.app, signed, 400).await;
+    assert!(
+        body["message"]
+            .as_str()
+            .is_some_and(|m| m.starts_with("Invalid world name")),
+        "{body}"
+    );
 }
 
 /// Upstream runs the signed fetch as middleware, ahead of the schema
@@ -6610,13 +6778,12 @@ async fn world_limits_report_what_a_publish_is_checked_against() {
     set_limit_override(&f.pool, &world, Some(5), None).await;
     post_entity(app, &signed_deployment(&owner, &entity, &[file]).await, 200).await;
 
-    f.state.names.seed(vec![world.label().to_string()]);
+    let _denied = DenyListed::seed(&f.state.names, vec![world.label().to_string()]);
     let denied = expect(app, limits_case(&world, ""), 404).await;
     assert_eq!(
         denied["message"],
         format!("World \"{}\" not found.", world.key())
     );
-    f.state.names.seed(Vec::new());
 }
 
 #[tokio::test]
