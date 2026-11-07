@@ -44,7 +44,10 @@ export default function handleRequest(
   }
   applyFrameIsolation(request, responseHeaders);
 
-  if (responseStatusCode === 404) {
+  const userAgent = request.headers.get("user-agent");
+  const bot = !!userAgent && isbot(userAgent);
+  // A crawler's misses are not a visitor's: no Segment request per scanned path.
+  if (responseStatusCode === 404 && !bot) {
     try {
       const { sid } = ensureSid(request);
       const u = new URL(request.url);
@@ -53,7 +56,7 @@ export default function handleRequest(
         {
           path: u.pathname + u.search,
           referrer: request.headers.get("referer") ?? "",
-          ua: request.headers.get("user-agent") ?? "",
+          ua: userAgent ?? "",
         },
         { sid, story: "sites-error" },
       );
@@ -63,10 +66,9 @@ export default function handleRequest(
 
   return new Promise((resolve, reject) => {
     let shellRendered = false;
-    const userAgent = request.headers.get("user-agent");
 
     const readyOption: keyof RenderToPipeableStreamOptions =
-      (userAgent && isbot(userAgent)) || routerContext.isSpaMode
+      bot || routerContext.isSpaMode
         ? "onAllReady"
         : "onShellReady";
 

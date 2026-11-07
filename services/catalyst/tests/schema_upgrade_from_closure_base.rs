@@ -747,6 +747,58 @@ async fn release_result(pool: &PgPool, sql: &str) -> Result<(), sqlx::Error> {
     result
 }
 
+const TELEMETRY_RETIRED: &str = include_str!(concat!(
+    env!("DCL_ONE_ROOT"),
+    "/schemas/releases/telemetry-retired.sql"
+));
+
+#[tokio::test]
+async fn the_telemetry_release_waits_for_the_migrated_layout_and_a_quiet_sink_then_drops_the_schema()
+ {
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    let pool = &old.pool;
+    release_result(pool, &release_v3()).await.unwrap();
+    let stop_on_error = "\\set ON_ERROR_STOP on\n";
+    assert_eq!(TELEMETRY_RETIRED.matches(stop_on_error).count(), 1);
+    let release = TELEMETRY_RETIRED.replace(stop_on_error, "");
+    let sink_schema = |pool: PgPool| async move {
+        sqlx::query_scalar::<_, bool>("SELECT to_regnamespace('telemetry') IS NOT NULL")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    assert!(
+        has_relation(pool, "telemetry.events").await,
+        "the fixture carries the sink's schema"
+    );
+    // Before the steps the release refuses and changes nothing.
+    assert!(release_result(pool, &release).await.is_err());
+    assert!(has_relation(pool, "telemetry.events").await);
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    // A row the sink took minutes ago means an old serve still writes.
+    sqlx::query("INSERT INTO telemetry.events (source, body) VALUES ('segment', '{}')")
+        .execute(pool)
+        .await
+        .unwrap();
+    assert!(release_result(pool, &release).await.is_err());
+    assert!(has_relation(pool, "telemetry.events").await);
+    sqlx::query("UPDATE telemetry.events SET received_at = received_at - interval '1 hour'")
+        .execute(pool)
+        .await
+        .unwrap();
+    release_result(pool, &release).await.unwrap();
+    assert!(!sink_schema(pool.clone()).await);
+    assert!(has_relation(pool, "ops.admin_audit").await);
+    release_result(pool, &release)
+        .await
+        .expect("a second run notes the schema is gone");
+    old.drop().await;
+}
+
 #[tokio::test]
 async fn private_voice_release_retains_rows_and_indexes_before_stamp_then_migrate_replays_nothing()
 {

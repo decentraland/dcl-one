@@ -11,7 +11,7 @@ import { SITES } from "./lib/paths.mts";
 
 // Every path production routes off the sites app, so a page's read reaches the replay (and is listed as a
 // miss when the recording lacks it) instead of rendering the app's 404 page.
-const MOUNTS = ["lambdas", "content", "builder-items", "auth-api", "builder-api", "shop-api", "marketplace-api", "transactions-api", "signatures-api", "rpc", "camera-reel", "media", "profile-images", "telemetry", "credits", "api/events", "api/places", "api/destinations", "api/schedules", "api/map"];
+const MOUNTS = ["lambdas", "content", "builder-items", "auth-api", "builder-api", "shop-api", "marketplace-api", "transactions-api", "signatures-api", "rpc", "camera-reel", "media", "profile-images", "credits", "api/events", "api/places", "api/destinations", "api/schedules", "api/map"];
 
 const arg = (name: string): string => {
   const i = process.argv.indexOf(name);

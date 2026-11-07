@@ -297,6 +297,8 @@ http {{
         default 0;
         "~*^/({blocked})(/|\\\\.|$)" 1;
     }}
+    # The telemetry dash entries guard the old serve's routes: they leave with the
+    # gateway redeploy once no old serve runs (DATABASE.md, the sink's rollout).
     map $uri $operator_path {{
         volatile;
         default 0;
