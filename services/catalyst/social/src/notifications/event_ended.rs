@@ -1,7 +1,15 @@
-//! Native equivalent of EVENT_ENDED's community metric effects. Facts and
-//! contributions commit together. An activation cutoff excludes historical
-//! imports; each occurrence contributes once, including after schedule edits.
-//! This does not calculate partial ranking scores.
+//! Native equivalent of EVENT_ENDED (`Event/cron.ts:150-192`,
+//! `Notifications/index.ts:149-189`): the old service published one message
+//! per ended event with `totalAttendees` and the `communityId`, whose consumer
+//! kept the community event metrics. Here the message is the durable
+//! `social.event_ended_occurrences` row (key, attendees, community) and the
+//! metric contribution commits with it. The window is the same
+//! `(last run, now]` over occurrence ends; the attendee count is the current
+//! RSVPs (`getEventsEndingInRangeWithAttendeeCount`, `Event/model.ts:331-350`,
+//! counts `event_attendees`); local events only, a mirrored event's ending
+//! belongs to its origin. An activation cutoff excludes historical imports;
+//! each occurrence contributes once, including after schedule edits. This does
+//! not calculate partial ranking scores.
 
 use chrono::NaiveDateTime;
 use sqlx::PgPool;
@@ -81,6 +89,15 @@ pub(super) async fn run_once(pool: &PgPool, now: NaiveDateTime) -> anyhow::Resul
         .bind(PAGE)
         .fetch_all(&mut *tx)
         .await?;
+    for row in &rows {
+        // `Event/cron.ts:176-182`
+        tracing::info!(
+            event_id = %row.event_id,
+            total_attendees = row.attendees,
+            community_id = ?row.community_id,
+            "event ended"
+        );
+    }
     let event_ids: Vec<&str> = rows.iter().map(|row| row.event_id.as_str()).collect();
     let starts: Vec<NaiveDateTime> = rows.iter().map(|row| row.starts_at).collect();
     let ends: Vec<NaiveDateTime> = rows.iter().map(|row| row.ends_at).collect();
@@ -526,14 +543,13 @@ mod tests {
             let start = now - Duration::days(pending_days) - Duration::minutes(30);
             let (id, community, state) = created_series_with_approval(&pool, start, false).await;
             assert_eq!(run_once(&pool, now).await.unwrap(), 0);
-            // An approval with a content field exercises store_locked; approval-only
-            // goes through moderate. Both use the same row-locked eligibility reset.
-            let patch = if pending_days == 0 {
-                json!({"approved":true,"name":"Approved live"})
-            } else {
-                json!({"approved":true})
-            };
-            edit_series(state, &id, patch).await;
+            // A content edit exercises store_locked, the approval goes through
+            // moderate; both use the same row-locked eligibility reset. The admin
+            // bearer takes them as separate bodies (`admin.ts:131-308`).
+            if pending_days == 0 {
+                edit_series(state.clone(), &id, json!({"name":"Approved live"})).await;
+            }
+            edit_series(state, &id, json!({"approved":true})).await;
             assert_eq!(run_once(&pool, now + Duration::hours(1)).await.unwrap(), 1);
             assert_eq!(run_once(&pool, now + Duration::hours(1)).await.unwrap(), 0);
             let recorded: chrono::NaiveDateTime = sqlx::query_scalar(
@@ -578,12 +594,10 @@ mod tests {
             sqlx::query("UPDATE explore.event SET raw=jsonb_set(raw,'{_metrics_schedule_after}',to_jsonb($2::text)) WHERE id=$1")
             .bind(&id).bind((now-Duration::days(4)).and_utc().to_rfc3339()).execute(&pool).await.unwrap();
             assert_eq!(run_once(&pool, now).await.unwrap(), 0);
-            let approval = if content_patch {
-                json!({"approved":true,"name":"Re-approved series"})
-            } else {
-                json!({"approved":true})
-            };
-            edit_series(state, &id, approval).await;
+            if content_patch {
+                edit_series(state.clone(), &id, json!({"name":"Re-approved series"})).await;
+            }
+            edit_series(state, &id, json!({"approved":true})).await;
             assert_eq!(run_once(&pool, now + Duration::hours(1)).await.unwrap(), 1);
             let count: i64 = sqlx::query_scalar(
                 "SELECT events_count FROM social.community_event_metrics WHERE community_id=$1",
@@ -615,18 +629,15 @@ mod tests {
         sqlx::query("UPDATE explore.event SET raw=jsonb_set(raw,'{_metrics_schedule_after}',to_jsonb($2::text)) WHERE id=$1")
             .bind(&id).bind((start-Duration::days(1)).and_utc().to_rfc3339()).execute(&pool).await.unwrap();
         assert_eq!(run_once(&pool, now).await.unwrap(), 1);
+        edit_series(state.clone(), &id, json!({"approved":false})).await;
         edit_series(
             state.clone(),
             &id,
-            json!({"start_at":(now-Duration::minutes(30)).and_utc().to_rfc3339(),"approved":false}),
+            json!({"start_at":(now-Duration::minutes(30)).and_utc().to_rfc3339()}),
         )
         .await;
-        edit_series(
-            state,
-            &id,
-            json!({"approved":true,"name":"Reviewed moved series"}),
-        )
-        .await;
+        edit_series(state.clone(), &id, json!({"name":"Reviewed moved series"})).await;
+        edit_series(state, &id, json!({"approved":true})).await;
         assert_eq!(run_once(&pool, now + Duration::hours(1)).await.unwrap(), 0);
         let count: i64 = sqlx::query_scalar(
             "SELECT events_count FROM social.community_event_metrics WHERE community_id=$1",
