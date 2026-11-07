@@ -175,6 +175,10 @@ describe("My items", () => {
     expect(screen.getByTestId("browse-sidebar")).toHaveAttribute("data-open", "true");
     fireEvent.click(screen.getByRole("button", { name: "Head" }));
     await waitFor(() => expect(m.shop.requests.some((r) => r.url.searchParams.get("isWearableHead") === "true")).toBe(true));
+    // A section without sub-categories closes the drawer on the way.
+    fireEvent.click(screen.getByRole("button", { name: "NAMEs" }));
+    await waitFor(() => expect(m.router.state.location.search).toContain("section=names"));
+    expect(screen.getByTestId("browse-sidebar")).not.toHaveAttribute("data-open");
   });
 
   it("an empty list says what is empty: nothing owned, nothing matching the filters, nothing on sale", async () => {
@@ -208,6 +212,8 @@ describe("My items", () => {
     });
     expect(await screen.findByTestId("shop-outage")).toHaveTextContent("the NFT index is still catching up");
     expect(screen.queryByTestId("owned-empty")).toBeNull();
+    // No count over an outage: "0 Items" would read as an empty backpack.
+    expect(screen.getByTestId("browse-count")).not.toHaveTextContent("0 Items");
   });
 
   it("with the store dashboard off, creations stay reachable from My items (as upstream)", async () => {

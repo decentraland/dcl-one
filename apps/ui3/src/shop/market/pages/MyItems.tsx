@@ -383,7 +383,8 @@ function OwnedMain({
         sort={sort}
         onSort={(k) => setSort(k as SortKey)}
         sortOptions={[...SORTS]}
-        total={owned.total}
+        // A failed read has no count: "0 Items" over an outage would read as an empty backpack.
+        total={owned.query.isError ? null : owned.total}
         loading={owned.query.isPending}
         query={search}
         onOpenFilters={() => setFiltersOpen(true)}
