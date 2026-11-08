@@ -104,9 +104,9 @@ impl HelperRuntime {
     ) {
         match &mut self.state {
             State::Pending { attempts } => {
-                if uuav::uuav_status().initialized {
-                    self.sample_rate
-                        .get_or_insert_with(audio::output_sample_rate);
+                let status = uuav::uuav_status();
+                if status.initialized {
+                    self.sample_rate = Some(status.audio_options.sample_rate as u32);
                     self.state = State::Ready;
                     return;
                 }
@@ -185,7 +185,9 @@ impl HelperRuntime {
         }
     }
 
-    /// Runs `uuav_init` on its own thread; the probe stays alive until it has answered.
+    /// Runs `uuav_init` on its own thread; the probe stays alive until it has answered. After a
+    /// successful start the thread stays parked for the life of the process: on Linux the helper
+    /// it spawned is killed when that thread exits (`PR_SET_PDEATHSIG`).
     fn spawn_init(&mut self, probe: platform::Probe) {
         // the pointer crosses as an address: the probe object itself stays here
         let probe_ptr = probe.ptr() as usize;
@@ -210,7 +212,14 @@ impl HelperRuntime {
                         LOG_LEVEL,
                     )
                 };
-                _ = done_tx.send(ffi::consume(result));
+                let result = ffi::consume(result);
+                let started = result.is_ok();
+                _ = done_tx.send(result);
+                if started {
+                    loop {
+                        std::thread::park();
+                    }
+                }
             });
         match spawned {
             Ok(_) => {

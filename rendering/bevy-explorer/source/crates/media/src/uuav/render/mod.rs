@@ -37,10 +37,11 @@ use super::{
 use nv12::Nv12Pipeline;
 
 /// Whether a player's next frame waits until the conversion that read its planes has executed.
-/// Only the Windows platform module leaves the copy into the planes unordered against the read,
-/// and nothing on the GPU stops the next copy from overwriting planes still being read; a fence
-/// the client's device waits on would replace this gate (#438).
-const GATE_COPY_ON_READ: bool = cfg!(windows);
+/// On Windows and macOS the client copies into the planes on its own queue, which nothing orders
+/// after the renderer's read, so the next copy could overwrite planes still being read. A fence
+/// the client's device waits on (#438) or the copy on the renderer's queue (#439) would replace
+/// this gate.
+const GATE_COPY_ON_READ: bool = cfg!(any(windows, target_os = "macos"));
 
 pub fn build(render_app: &mut SubApp, link: RenderLink) {
     render_app

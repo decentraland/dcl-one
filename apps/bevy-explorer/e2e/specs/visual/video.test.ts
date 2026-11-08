@@ -14,11 +14,11 @@
 // where `/entity_screen_position` puts the screen.
 import assert from 'node:assert/strict'
 import { decodePng, sleep, spec, until, type Image, type ScenarioOptions, type ScreenPosition } from '../../driver/index.ts'
-import { visualRealm } from './realm.ts'
+import { newOrCurrentVisualRealm } from './realm.ts'
 import { VIDEO_SCENE } from './scenes.ts'
 
 const scenario = spec(import.meta.url)
-const server = await visualRealm()
+const server = await newOrCurrentVisualRealm()
 
 const SESSION: ScenarioOptions['session'] = { realm: server.realm, position: '0,0', signIn: 'guest', windowSize: [960, 540] }
 const SCENARIO_TIMEOUT_MS = 600_000

@@ -237,14 +237,14 @@ export async function enterWorld(explorer: Explorer, timeoutMs = 300_000, heldRe
       const jump = await explorer.hud.find({ name: 'Jump In', role: 'button', index: 0 }).catch(() => undefined)
       if (jump?.actionable) {
         console.error('[e2e] entering the world through the HUD Jump In')
-        await explorer.hud.click({ name: 'Jump In', role: 'button', index: 0 })
         jumped = true
+        await explorer.hud.click({ name: 'Jump In', role: 'button', index: 0 })
       } else if (heldRealm && state.signedIn && state.worldHeld && state.realmConnected) {
         heldSince ??= Date.now()
         if (Date.now() - heldSince >= heldGraceMs) {
           console.error(`[e2e] no Jump In after ${heldGraceMs} ms of a held world: asking the console for ${heldRealm}`)
-          await explorer.run(`/changerealm ${heldRealm}`)
           jumped = true
+          await explorer.run(`/changerealm ${heldRealm}`)
         }
       } else {
         heldSince = undefined

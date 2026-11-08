@@ -1,7 +1,7 @@
 // The one loopback realm of the specs under this folder: every scene of `scenes/dcl-workspace.json`,
-// built and served at its own parcel. `visualRealm()` starts it once per process, on the realm
-// port, and registers its close for the end of the run; the spec files share the process
-// (`--test-isolation=none`), so a second server on that port would fail.
+// built and served at its own parcel. `newOrCurrentVisualRealm()` starts it once per process, on
+// the realm port, and registers its close for the end of the run; the spec files share the
+// process (`--test-isolation=none`), so a second server on that port would fail.
 import path from 'node:path'
 import { after } from 'node:test'
 import { buildScene, readTarget, serveRealm } from '../../driver/index.ts'
@@ -31,7 +31,7 @@ async function start(): Promise<RealmServer> {
 }
 
 /** The realm, serving every workspace scene; started once per process. */
-export function visualRealm(): Promise<RealmServer> {
+export function newOrCurrentVisualRealm(): Promise<RealmServer> {
   server ??= start()
   return server
 }

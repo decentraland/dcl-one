@@ -15,7 +15,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { comparePng, readTarget, sleep, spec, until, type Comparison, type ScenarioOptions } from '../../driver/index.ts'
 import { REFERENCES_DIR } from '../../driver/paths.ts'
-import { visualRealm } from './realm.ts'
+import { newOrCurrentVisualRealm } from './realm.ts'
 import { SCENES } from './scenes.ts'
 
 const scenario = spec(import.meta.url)
@@ -30,7 +30,7 @@ const SCENE_LIVE_TIMEOUT_MS = 60_000
 const SCENARIO_TIMEOUT_MS = 600_000
 const WINDOW_SIZE: [number, number] = [960, 540]
 
-const server = await visualRealm()
+const server = await newOrCurrentVisualRealm()
 
 const SESSION: ScenarioOptions['session'] = { realm: server.realm, position: '0,0', signIn: 'guest', windowSize: WINDOW_SIZE }
 
