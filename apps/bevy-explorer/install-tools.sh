@@ -16,16 +16,22 @@ if [ -s "$staging/out" ] && ! command -v nix > /dev/null; then
     exit 1
   fi
   if [ ! -e /nix ] && [ "$(uname)" = Darwin ]; then
+    # As the Nix installers do: both apfs.util forms, their exit status ignored; the link's presence counts.
     printf 'nix\t%s\n' "${staging#/}" | sudo tee -a /etc/synthetic.conf > /dev/null
-    sudo /System/Library/Filesystems/apfs.fs/Contents/Resources/apfs.util -t
+    sudo /System/Library/Filesystems/apfs.fs/Contents/Resources/apfs.util -t > /dev/null 2>&1 || true
+    sudo /System/Library/Filesystems/apfs.fs/Contents/Resources/apfs.util -B > /dev/null 2>&1 || true
+    [ -e /nix ] || { echo "install-tools.sh: /nix did not appear from /etc/synthetic.conf" >&2; exit 1; }
+    echo "/nix -> $(readlink /nix)"
   fi
   if [ ! -e /nix/store ]; then
     sudo install -d -o "$(id -u)" -g "$(id -g)" /nix /nix/store
   fi
+  linked=0
   for path in "${paths[@]}"; do
     # -e is false for a dangling link; -sfn replaces one instead of failing on it.
-    [ -e "/nix/store/${path##*/}" ] || ln -sfn "$path" "/nix/store/${path##*/}"
+    [ -e "/nix/store/${path##*/}" ] || { ln -sfn "$path" "/nix/store/${path##*/}"; linked=$((linked + 1)); }
   done
+  echo "$package: ${#paths[@]} cached store paths, $linked linked into /nix/store"
 else
   out=$(cd "$GITHUB_WORKSPACE" && nix build ".#$package" --no-link --print-out-paths)
   if [ ! -s "$staging/out" ]; then
@@ -34,6 +40,7 @@ else
     for path in $(nix-store -qR "$out"); do cp -a "$path" "$staging/store/"; done
     chmod -R u+w "$staging/store"
     printf '%s\n' "$out" > "$staging/out"
+    echo "$package: built $out, $(ls "$staging/store" | wc -l | tr -d ' ') store paths exported for the cache"
   fi
 fi
 out=$(< "$staging/out")
