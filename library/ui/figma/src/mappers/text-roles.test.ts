@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { loadConfig } from '../config.js'
 import type { ComponentSpec, TextRole, ViewNode } from '../ir/components.js'
 import { buildComponentSpecs } from './component-spec.js'
+import { RESERVED_IDENTIFIERS } from '../generators/naming.js'
 import { applyTextRoles } from './text-roles.js'
 
 const projectRoot = path.resolve(import.meta.dirname, '../..')
@@ -227,28 +228,29 @@ describe('applyTextRoles', () => {
     })
 
     // Role names and hrefs become bindings in the generated parameter destructure.
-    it.each([
-      ['class', 'a reserved word'],
-      ['default', 'a reserved word'],
-      ['arguments', 'a strict-mode binding'],
-      ['eval', 'a strict-mode binding'],
-      ['await', 'a reserved word in modules']
-    ])('should reject the role name %s, %s', (name) => {
-      const roles = rolesFor(list)
-      roles[name] = roles.shopLabel!
-      delete roles.shopLabel
-      expect(() => applyTextRoles(spec, roles)).toThrow(
-        `NavBar text roles: ${name} is not a valid prop name`
-      )
-    })
+    // Every word the shared validator reserves (keywords, strict-mode and module bindings such as eval, arguments, await).
+    it.each([...RESERVED_IDENTIFIERS].map((name) => [name]))(
+      'should reject the role name %s',
+      (name) => {
+        const roles = rolesFor(list)
+        roles[name] = roles.shopLabel!
+        delete roles.shopLabel
+        expect(() => applyTextRoles(spec, roles)).toThrow(
+          `NavBar text roles: ${name} is not a valid prop name`
+        )
+      }
+    )
 
-    it.each([['class'], ['eval']])('should reject the href %s', (href) => {
-      const roles = rolesFor(list)
-      roles.discoverLabel!.href = href
-      expect(() => applyTextRoles(spec, roles)).toThrow(
-        `discoverLabel: href ${href} is not a valid prop name`
-      )
-    })
+    it.each([...RESERVED_IDENTIFIERS].map((href) => [href]))(
+      'should reject the href %s',
+      (href) => {
+        const roles = rolesFor(list)
+        roles.discoverLabel!.href = href
+        expect(() => applyTextRoles(spec, roles)).toThrow(
+          `discoverLabel: href ${href} is not a valid prop name`
+        )
+      }
+    )
 
     it.each([['rest'], ['styles'], ['navBarViews'], ['navBarCases'], ['navBarSuppressedProps']])(
       'should reject the role name %s, which the generated module binds itself',

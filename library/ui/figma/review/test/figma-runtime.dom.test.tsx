@@ -4,7 +4,9 @@ import { renderToString } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FigmaView, type ViewNode } from '../src/components/figma-module-runtime'
 import { pickView } from '../src/components/figma-view-state'
-import { Button } from '../src/generated/components/buttons/Button'
+import * as generated from '../src/generated/components'
+import { Button, buttonCases, buttonViews } from '../src/generated/components/buttons/Button'
+import { tabsCases, tabsViews } from '../src/generated/components/tabs-bar/Tabs'
 import { NavBar, navBarCases } from '../src/generated/components/nav-bar/NavBar'
 
 afterEach(() => cleanup())
@@ -300,5 +302,120 @@ describe('caller isolation through real rendering', () => {
       expect(html).toContain('data-testid="bar"')
       expect(html).toContain('aria-describedby="help"')
     })
+  })
+})
+
+describe('pickView over generated views', () => {
+  const FLAGS = ['selected', 'disabled', 'loading']
+  const selectionOf = (props: Record<string, unknown>) => ({
+    values: Object.fromEntries(
+      Object.entries(props).filter(
+        ([name, value]) => !FLAGS.includes(name) && typeof value === 'string'
+      )
+    ) as Record<string, string>,
+    booleans: Object.fromEntries(
+      Object.entries(props).filter(
+        ([name, value]) => !FLAGS.includes(name) && typeof value === 'boolean'
+      )
+    ) as Record<string, boolean>,
+    flags: Object.fromEntries(
+      FLAGS.filter((flag) => flag in props).map((flag) => [flag, props[flag]])
+    ) as {
+      selected?: boolean
+      disabled?: boolean
+      loading?: boolean
+    }
+  })
+  const base = { variant: 'primary', size: 'md', viewport: 'desktop' }
+
+  it('should return the exact view object of every catalog case', () => {
+    for (const { key, props } of buttonCases)
+      expect(pickView(buttonViews, selectionOf(props), 'Button')).toBe(buttonViews[key])
+    for (const { key, props } of tabsCases)
+      expect(pickView(tabsViews, selectionOf(props), 'Tabs')).toBe(tabsViews[key])
+  })
+
+  it('should treat omitted, undefined and all-false flags as the base view', () => {
+    const expected = buttonViews['variant:primary|size:md|viewport:desktop']
+    expect(expected).toBeDefined()
+    for (const flags of [
+      {},
+      { disabled: undefined, loading: undefined },
+      { disabled: false, loading: false }
+    ])
+      expect(pickView(buttonViews, { values: base, booleans: {}, flags }, 'Button')).toBe(expected)
+  })
+
+  it('should drop flags from the end, in selected, disabled, loading order', () => {
+    expect(buttonViews['variant:primary|size:md|viewport:desktop|disabled|loading']).toBeUndefined()
+    expect(
+      pickView(
+        buttonViews,
+        { values: base, booleans: {}, flags: { disabled: true, loading: true } },
+        'Button'
+      )
+    ).toBe(buttonViews['variant:primary|size:md|viewport:desktop|disabled'])
+    expect(
+      pickView(buttonViews, { values: base, booleans: {}, flags: { loading: true } }, 'Button')
+    ).toBe(buttonViews['variant:primary|size:md|viewport:desktop|loading'])
+    expect(
+      pickView(
+        tabsViews,
+        { values: { device: 'mobile' }, booleans: {}, flags: { selected: true, disabled: true } },
+        'Tabs'
+      )
+    ).toBe(tabsViews['device:mobile|selected'])
+  })
+
+  it('should throw for an unknown axis value and for an axis the component does not have', () => {
+    expect(() =>
+      pickView(buttonViews, { values: { ...base, size: 'xxl' }, booleans: {}, flags: {} }, 'Button')
+    ).toThrow('Button has no captured view for variant="primary", size="xxl", viewport="desktop"')
+    expect(() =>
+      pickView(
+        buttonViews,
+        { values: { ...base, tone: 'warm' }, booleans: {}, flags: {} },
+        'Button'
+      )
+    ).toThrow('Button has no captured view for')
+  })
+
+  it('should throw for a component with no views even when only flags are set', () => {
+    expect(() =>
+      pickView({}, { values: {}, booleans: {}, flags: { disabled: true } }, 'Empty')
+    ).toThrow('Empty has no captured view for no variant axes')
+  })
+
+  // Per component: every generated component with interaction flags, every catalog case drawn without them.
+  it('should resolve omitted, undefined and all-false flags to the exact case view in every generated component', () => {
+    const exports = generated as Record<string, unknown>
+    let checked = 0
+    for (const [name, value] of Object.entries(exports)) {
+      if (!name.endsWith('Views')) continue
+      const views = value as Record<string, unknown>
+      const cases = (exports[`${name.slice(0, -5)}Cases`] ?? []) as {
+        key: string
+        props: Record<string, unknown>
+      }[]
+      const flags = FLAGS.filter((flag) => cases.some((item) => flag in item.props))
+      if (!flags.length) continue
+      for (const item of cases.filter((entry) =>
+        flags.every((flag) => entry.props[flag] !== true)
+      )) {
+        const selection = selectionOf(item.props)
+        for (const variant of [
+          {},
+          Object.fromEntries(flags.map((flag) => [flag, undefined])),
+          Object.fromEntries(flags.map((flag) => [flag, false]))
+        ]) {
+          expect(
+            pickView(views, { ...selection, flags: variant }, name),
+            `${name} ${item.key}`
+          ).toBe(views[item.key])
+          checked += 1
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(0)
   })
 })
