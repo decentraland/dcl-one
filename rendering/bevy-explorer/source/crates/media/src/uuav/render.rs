@@ -138,7 +138,12 @@ impl FromWorld for Nv12Pipeline {
 }
 
 impl Nv12Pipeline {
-    fn pipeline(&mut self, device: &wgpu::Device, format: TextureFormat) -> &wgpu::RenderPipeline {
+    /// The conversion pipeline for a target format, created on first use.
+    fn get_or_create_pipeline(
+        &mut self,
+        device: &wgpu::Device,
+        format: TextureFormat,
+    ) -> &wgpu::RenderPipeline {
         self.pipelines.entry(format).or_insert_with(|| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("uuav nv12"),
@@ -168,7 +173,7 @@ impl Nv12Pipeline {
         })
     }
 
-    fn bind_group(&self, device: &wgpu::Device, planes: &PlaneTextures) -> wgpu::BindGroup {
+    fn new_bind_group(&self, device: &wgpu::Device, planes: &PlaneTextures) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("uuav nv12"),
             layout: &self.bind_group_layout,
@@ -406,7 +411,7 @@ fn present_uuav_frames(
             ) else {
                 continue;
             };
-            let bind_group = pipeline.bind_group(device, &textures);
+            let bind_group = pipeline.new_bind_group(device, &textures);
             sources.0.insert(
                 id,
                 ConversionSource {
@@ -454,7 +459,7 @@ fn present_uuav_frames(
             source.frames = Some(presented.frames);
         }
 
-        let render_pipeline = pipeline.pipeline(device, gpu_image.texture_format);
+        let render_pipeline = pipeline.get_or_create_pipeline(device, gpu_image.texture_format);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("uuav nv12"),
         });
