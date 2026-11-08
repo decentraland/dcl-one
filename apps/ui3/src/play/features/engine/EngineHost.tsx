@@ -7,6 +7,7 @@
 import { useEffect } from 'react'
 import type { EngineRpc } from '../../engine/engineRpc'
 import { bridgeChannelName } from '../../engine/protocol'
+import { trackAudioContexts } from '../../lib/audioUnlock'
 import { engineServiceOptions } from '../../lib/baseDomain'
 import { bootMode } from '../../lib/bootMode'
 import { EDITOR_SCENE, editorSession, isEditorScene } from '../../lib/editorEmbed'
@@ -41,6 +42,11 @@ function injectEngine(): void {
   const editor = editorSession(bootMode().systemScene, location.hash)
   if (editor != null) (window as { __bridgeSession?: string }).__bridgeSession = editor
   bridgeChannelName()
+
+  // Before any module that creates an AudioContext loads: the engine's is born while the sign-in
+  // screen is up, and the first gesture — the sign-in or jump-in click — is what resumes it
+  // (lib/audioUnlock.ts). Above the guard too: it costs nothing when the engine was pre-booted.
+  trackAudioContexts()
 
   // Once per page — the engine is a singleton (StrictMode remounts and HMR must not double-boot).
   if (injected || window.__bevyBootConfig != null) return

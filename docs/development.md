@@ -29,6 +29,7 @@ monitor +9. An occupied saved port fails startup.
 | `logs`, `restart <service>` | After lockfile changes restart `web-install`, then `sites` |
 | `up`, `down` | Start or attach, stop (`--postgres-only`) |
 | `profile mirror\|testnet\|offline` | Switch profile while stopped |
+| `origin https://host[:port] [--cert … --key …]`, `origin local` | Serve behind a TLS front while stopped (below) |
 | `service install\|uninstall` | Login service (WSL: `systemd=true`) |
 | `trades-snapshot <file>` | Snapshot for `FOUNDATION_DEV_TRADES_SNAPSHOT` |
 | `env` | App URLs, `FOUNDATION_DEV_TEST_DATABASE_URL`, `FOUNDATION_DEV_STACK_PROFILE` |
@@ -66,6 +67,33 @@ gh workflow run bevy-explorer-ci.yml --ref main   # no matching or expired artif
 
 See [production rules](../infra/containers/README.md#sites-explorer-build-input).
 `/play/app.html?mock=1` runs the HUD without the WebGPU engine.
+
+## Serving over HTTPS
+
+The stack listens on loopback and advertises loopback. To reach it as other
+browsers and the native Explorer do, put a TLS front on its own origin:
+
+```sh
+FOUNDATION_DEV_PUBLIC_ORIGIN=https://dev.example.test:5443 \
+FOUNDATION_DEV_TLS_CERT=~/certs/dev.example.test.pem FOUNDATION_DEV_TLS_KEY=~/certs/dev.example.test-key.pem \
+foundation-dev up        # first startup; later: foundation-dev origin … while stopped
+```
+
+The front terminates TLS on the origin's port and forwards, with WebSocket
+upgrades: `/ws` to the API (+0), `/rtc` to LiveKit (+4), everything else to
+Sites (+2), whose dev server proxies the API routes and serves `/play`. The
+realm then advertises the origin (`PUBLIC_URL`, the comms adapter, LiveKit's
+client URL), and Vite accepts the origin's host and its subdomains. Pulse's WebTransport is UDP,
+which the front cannot carry: the web Explorer dials the page's host on the
+origin's port (7743 when the origin names none), so Pulse listens there on every
+interface, presenting the given certificate and key (mkcert, or the front's
+own). Without them it presents its self-signed certificate for the host, and
+`status` prints the Chrome flags. `foundation-dev env` adds
+`FOUNDATION_DEV_PUBLIC_URL`. The API trusts the forwarded client address from
+the front, its loopback peer (`HTTP_TRUSTED_PROXY_CIDRS`, see
+[the gateway](../infra/gateway/README.md)), so the `/contents` rate limit and the
+deploy and referral quotas count per client; a front that drops
+`X-Forwarded-For` leaves every client sharing one bucket.
 
 ## Validation
 
