@@ -13,6 +13,24 @@ pub fn query_param<'a>(q: &'a QueryPairs, key: &str) -> Option<&'a str> {
     q.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
 }
 
+/// The `authorized_deployer` filter of `GET /worlds` and the scene listings:
+/// absent or empty is no filter; otherwise `EthAddress.validate` (`0x` and 40
+/// hex digits, untrimmed).
+pub fn authorized_deployer(q: &QueryPairs) -> Result<Option<String>, ApiError> {
+    match query_param(q, "authorized_deployer") {
+        Some(d) if !d.is_empty() => Some(d)
+            .filter(|d| d.starts_with("0x"))
+            .and_then(|d| crate::shared::identity::Address::parse_untrimmed(d).ok())
+            .map(|a| Some(a.into_string()))
+            .ok_or_else(|| {
+                ApiError::bad_request(format!(
+                    "Invalid authorized_deployer address: {d}. Must be a valid Ethereum address."
+                ))
+            }),
+        _ => Ok(None),
+    }
+}
+
 /// JS `parseInt(s, 10)`, the shared parser: leading JavaScript whitespace,
 /// an optional sign, then the leading digits (saturating); `None` where JS
 /// gives `NaN`.

@@ -7,7 +7,8 @@ use serde_json::Value;
 
 use super::SharedState;
 use super::queries::{self, WorldScene};
-use crate::content::errors::{AppError, AppResult};
+use crate::core::http::ApiError;
+use crate::core::settings_policy::js_truthy;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,7 +27,11 @@ pub struct MinimapConfig {
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "worlds/"))]
 pub struct SkyboxConfig {
-    pub fixed_hour: Option<f64>,
+    /// Absent when neither the world row nor the scene fixes a time; the
+    /// number as stored or deployed (an integer stays an integer).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional, type = "number"))]
+    pub fixed_hour: Option<serde_json::Number>,
     pub textures: Vec<String>,
 }
 
@@ -117,23 +122,28 @@ impl std::fmt::Debug for ContentReadiness {
     }
 }
 
-/// GET /world/{world_name}/about.
+/// GET /world/{world_name}/about, answering in the worlds envelope.
 pub async fn get_about(
     State(state): State<SharedState>,
     Path(world_name): Path<String>,
-) -> AppResult<Json<AboutResponse>> {
+) -> Result<Json<AboutResponse>, ApiError> {
     if !state
         .names
         .check_name_deny_list(&state.pool, &world_name)
         .await
     {
-        return Err(AppError::not_found(format!(
+        return Err(ApiError::not_found(format!(
             "World \"{world_name}\" has no scene deployed."
         )));
     }
-    let mut about = queries::world_about(&state.pool, &world_name).await?;
+    let read = |e: crate::content::errors::AppError| ApiError::internal(e.to_string());
+    let mut about = queries::world_about(&state.pool, &world_name)
+        .await
+        .map_err(read)?;
     if about.scenes.is_empty() && state.fill_world(&world_name).await {
-        about = queries::world_about(&state.pool, &world_name).await?;
+        about = queries::world_about(&state.pool, &world_name)
+            .await
+            .map_err(read)?;
     }
     // The live NAME holder's quota block, not the stored owner's.
     if let (Some(policy), Some(world)) = (state.policy(), about.world.as_mut())
@@ -142,7 +152,7 @@ pub async fn get_about(
         world.quota_blocked_since = policy
             .quota_blocked_since(&name)
             .await
-            .map_err(|e| AppError::Internal(format!("quota block: {e}")))?;
+            .map_err(|e| ApiError::internal(format!("quota block: {e}")))?;
     }
     Ok(Json(build_about(&state.settings, &world_name, about)?))
 }
@@ -151,12 +161,12 @@ pub fn build_about(
     cfg: &super::Settings,
     world_name: &str,
     about: queries::WorldAbout,
-) -> AppResult<AboutResponse> {
+) -> Result<AboutResponse, ApiError> {
     let world = &about.world;
     let scenes = &about.scenes;
 
     if scenes.is_empty() {
-        return Err(AppError::not_found(format!(
+        return Err(ApiError::not_found(format!(
             "World \"{world_name}\" has no scenes deployed."
         )));
     }
@@ -171,11 +181,10 @@ pub fn build_about(
         } else {
             "as it exceeded its allowed storage space"
         };
-        return Err(AppError::Unauthorized(format!(
+        // Upstream interpolates a `Date`: `Date.prototype.toString()` in UTC.
+        return Err(ApiError::unauthorized(format!(
             "World \"{world_name}\" has been blocked since {} {cause}.",
-            since
-                .and_utc()
-                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+            since.format("%a %b %d %Y %H:%M:%S GMT+0000 (Coordinated Universal Time)")
         )));
     }
 
@@ -183,6 +192,7 @@ pub fn build_about(
     let contents_url = cfg.content_server_url();
     let scenes_urn: Vec<String> = scenes
         .iter()
+        .take(1)
         .map(|s| {
             format!(
                 "urn:decentraland:entity:{}?=&baseUrl={contents_url}/contents/",
@@ -203,21 +213,14 @@ pub fn build_about(
     );
     if let Some(w) = world {
         if let Some(t) = w.skybox_time {
-            rt.skybox_fixed_time = Some(t as f64);
+            rt.skybox_fixed_time = Some(t.into());
         }
         if w.single_player {
             rt.fixed_adapter = Some("offline:offline".to_string());
         }
     }
 
-    let spawn_coordinates = world
-        .as_ref()
-        .and_then(|w| w.spawn_coordinates.clone())
-        .or_else(|| {
-            primary.entity["metadata"]["scene"]["base"]
-                .as_str()
-                .map(str::to_string)
-        });
+    let spawn_coordinates = world.as_ref().and_then(|w| w.spawn_coordinates.clone());
 
     let url_for_file = |filename: &Option<String>, default_image: &str| -> String {
         match filename {
@@ -254,10 +257,15 @@ pub fn build_about(
             },
             skybox: SkyboxConfig {
                 fixed_hour: rt.skybox_fixed_time,
+                // An unresolved texture links as upstream's
+                // `urlForFile(undefined)`: `""`.
                 textures: rt
                     .skybox_textures
                     .iter()
-                    .map(|t| format!("{contents_url}/contents/{t}"))
+                    .map(|t| {
+                        t.as_ref()
+                            .map_or_else(String::new, |t| format!("{contents_url}/contents/{t}"))
+                    })
                     .collect(),
             },
             realm_name: rt.name,
@@ -338,35 +346,43 @@ struct RuntimeMeta {
     minimap_visible: bool,
     minimap_data_image: Option<String>,
     minimap_estate_image: Option<String>,
-    skybox_fixed_time: Option<f64>,
-    skybox_textures: Vec<String>,
+    skybox_fixed_time: Option<serde_json::Number>,
+    /// Each texture's content hash, `None` where it names no content entry.
+    skybox_textures: Vec<Option<String>>,
     fixed_adapter: Option<String>,
 }
 
 impl RuntimeMeta {
+    /// Upstream's `extractWorldRuntimeMetadata` after `migrateConfiguration`:
+    /// a truthy legacy `dclName` replaces `name`, `minimapVisible` replaces
+    /// the whole `miniMapConfig` and `skybox` the whole `skyboxConfig`.
     fn from_scene(world_name: &str, scene: &WorldScene) -> Self {
         let wc = scene
             .entity
             .get("metadata")
             .and_then(|m| m.get("worldConfiguration"));
-        let name = wc
-            .and_then(|c| c.get("name"))
+        let legacy = |key: &str| wc.and_then(|c| c.get(key)).filter(|v| js_truthy(v));
+        let name = legacy("dclName")
+            .or_else(|| wc.and_then(|c| c.get("name")))
             .and_then(Value::as_str)
+            .filter(|n| !n.is_empty())
             .map(str::to_string)
             .unwrap_or_else(|| world_name.to_string());
-        let mini_map = wc.and_then(|c| c.get("miniMapConfig"));
+        let legacy_mini_map = legacy("minimapVisible").map(|v| serde_json::json!({ "visible": v }));
+        let mini_map = legacy_mini_map
+            .as_ref()
+            .or_else(|| wc.and_then(|c| c.get("miniMapConfig")));
         let minimap_visible = mini_map
             .and_then(|m| m.get("visible"))
-            .and_then(Value::as_bool)
-            .or_else(|| {
-                wc.and_then(|c| c.get("minimapVisible"))
-                    .and_then(Value::as_bool)
-            })
-            .unwrap_or(false);
-        let skybox = wc.and_then(|c| c.get("skyboxConfig"));
+            .is_some_and(js_truthy);
+        let legacy_skybox = legacy("skybox").map(|v| serde_json::json!({ "fixedTime": v }));
+        let skybox = legacy_skybox
+            .as_ref()
+            .or_else(|| wc.and_then(|c| c.get("skyboxConfig")));
         let skybox_fixed_time = skybox
             .and_then(|s| s.get("fixedTime"))
-            .and_then(Value::as_f64);
+            .and_then(Value::as_number)
+            .cloned();
 
         let content = scene.entity.get("content").and_then(Value::as_array);
         let resolve = |filename: &str| -> Option<String> {
@@ -380,21 +396,18 @@ impl RuntimeMeta {
         let minimap_data_image = mini_map
             .and_then(|m| m.get("dataImage"))
             .and_then(Value::as_str)
-            .and_then(&resolve);
+            .and_then(resolve);
         let minimap_estate_image = mini_map
             .and_then(|m| m.get("estateImage"))
             .and_then(Value::as_str)
-            .and_then(&resolve);
+            .and_then(resolve);
         let skybox_textures = skybox
             .and_then(|s| s.get("textures"))
             .and_then(Value::as_array)
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(Value::as_str)
-                    .filter_map(resolve)
-                    .collect()
-            })
-            .unwrap_or_default();
+            .into_iter()
+            .flatten()
+            .map(|t| t.as_str().filter(|f| !f.is_empty()).and_then(resolve))
+            .collect();
         let fixed_adapter = wc
             .and_then(|c| c.get("fixedAdapter"))
             .and_then(Value::as_str)
@@ -583,7 +596,7 @@ mod tests {
             },
         )
         .unwrap();
-        let v = serde_json::to_value(&about).unwrap();
+        let mut v = serde_json::to_value(&about).unwrap();
         assert_eq!(
             v["configurations"]["scenesUrn"],
             json!([
@@ -592,13 +605,20 @@ mod tests {
         );
         assert_eq!(v["configurations"]["realmName"], "mirrored.dcl.eth");
         assert_eq!(
-            v["spawnCoordinates"], "1,2",
-            "the primary scene's base when the row has none"
+            v["spawnCoordinates"],
+            Value::Null,
+            "the world row's spawn, null when it has none"
         );
         assert_eq!(
-            v["configurations"]["skybox"]["fixedHour"], 43200.0,
-            "the world row overrides the scene"
+            v["configurations"]["skybox"]["fixedHour"],
+            json!(43200),
+            "the world row overrides the scene, as an integer"
         );
+        // The unresolved `missing.png` links as `""`, in its place; the rest below.
+        let textures = v["configurations"]["skybox"]["textures"]
+            .as_array_mut()
+            .unwrap();
+        assert_eq!(textures.pop(), Some(json!("")));
         assert_eq!(
             v["configurations"]["skybox"]["textures"],
             json!(["https://worlds.example.org/worlds-content-server/contents/bafkreisky1"]),
@@ -748,7 +768,7 @@ mod tests {
             },
         )
         .unwrap_err();
-        assert!(matches!(err, AppError::NotFound(m) if m.contains("no scenes deployed")));
+        assert!(err.status() == 404 && err.public_message().contains("no scenes deployed"));
 
         let blocked = WorldAbout {
             world: Some(WorldRecord {
@@ -767,8 +787,12 @@ mod tests {
             scenes: vec![scene(Some("https://up.example"))],
         };
         let err = build_about(&cfg, "b.dcl.eth", blocked.clone()).unwrap_err();
+        assert_eq!(err.status(), 401);
         assert!(
-            matches!(err, AppError::Unauthorized(m) if m.ends_with("blocked since 2023-11-14T22:13:20.000Z by an operator."))
+            err.public_message().ends_with(
+                "blocked since Tue Nov 14 2023 22:13:20 GMT+0000 (Coordinated Universal Time) by an operator."
+            ),
+            "{err}"
         );
 
         // A quota block refuses only after its two-day grace.
@@ -781,8 +805,11 @@ mod tests {
         };
         assert!(build_about(&cfg, "b.dcl.eth", quota(chrono::TimeDelta::hours(47))).is_ok());
         let err = build_about(&cfg, "b.dcl.eth", quota(chrono::TimeDelta::hours(49))).unwrap_err();
+        assert_eq!(err.status(), 401);
         assert!(
-            matches!(err, AppError::Unauthorized(m) if m.contains("as it exceeded its allowed storage space"))
+            err.public_message()
+                .contains("as it exceeded its allowed storage space"),
+            "{err}"
         );
     }
 
@@ -814,9 +841,10 @@ mod tests {
             .await
             .unwrap();
         let body: Value = serde_json::from_slice(&body).unwrap();
+        // http-commons' `NotFoundError` (`world-about-handler.spec.ts:30-37`).
         assert_eq!(
-            body["error"],
-            "World \"Banned.dcl.eth\" has no scene deployed."
+            body,
+            json!({"error": "Not Found", "message": "World \"Banned.dcl.eth\" has no scene deployed."})
         );
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -838,5 +866,116 @@ mod tests {
         let failed = local_about(&cfg, None);
         assert!(!failed.healthy && !failed.accepting_users);
         assert!(!failed.content.healthy && failed.lambdas.healthy);
+    }
+
+    fn scene_with(entity_id: &str, entity: Value) -> WorldScene {
+        WorldScene {
+            entity_id: entity_id.into(),
+            entity,
+            parcels: vec!["1,2".into()],
+            deployer: "0xabc".into(),
+            mirror_source: None,
+        }
+    }
+
+    /// `getMetadataForWorld` reads the newest scene only
+    /// (`world-about-handler.spec.ts:500-555` pins one URN for two scenes).
+    #[test]
+    fn scenes_urn_names_the_newest_scene_only() {
+        let cfg = super::super::Settings::for_tests("https://worlds.example.org");
+        let about = build_about(
+            &cfg,
+            "two.dcl.eth",
+            WorldAbout {
+                world: None,
+                scenes: vec![
+                    scene_with("bafkreinewest", entity("two.dcl.eth")),
+                    scene_with("bafkreiolder", entity("two.dcl.eth")),
+                ],
+            },
+        )
+        .unwrap();
+        assert_eq!(about.configurations.scenes_urn.len(), 1);
+        assert!(about.configurations.scenes_urn[0].contains("bafkreinewest"));
+    }
+
+    #[test]
+    fn runtime_metadata_follows_upstream_migrate_configuration() {
+        let cfg = super::super::Settings::for_tests("https://worlds.example.org");
+        let about_of = |wc: Value| {
+            let mut e = entity("x");
+            e["metadata"]["worldConfiguration"] = wc;
+            serde_json::to_value(
+                build_about(
+                    &cfg,
+                    "legacy-world",
+                    WorldAbout {
+                        world: None,
+                        scenes: vec![scene_with("bafkreientity", e)],
+                    },
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        };
+
+        // Legacy SDK6 keys: dclName, minimapVisible (drops miniMapConfig), skybox.
+        let v = about_of(json!({
+            "dclName": "Old Name",
+            "name": "ignored",
+            "minimapVisible": true,
+            "miniMapConfig": {"visible": false, "dataImage": "images/minimap.png"},
+            "skybox": 7200,
+            "skyboxConfig": {"fixedTime": 1, "textures": ["sky/1.png"]}
+        }));
+        let c = &v["configurations"];
+        assert_eq!(c["realmName"], "Old Name");
+        assert_eq!(c["minimap"]["enabled"], true);
+        assert_eq!(
+            c["minimap"]["dataImage"], "http://127.0.0.1:5162/v1/minimap.png",
+            "the legacy flag replaces the whole miniMapConfig"
+        );
+        assert_eq!(c["skybox"], json!({"fixedHour": 7200, "textures": []}));
+
+        // No fixed time: the key is absent; unresolved textures link as "".
+        let v = about_of(json!({
+            "name": "",
+            "skyboxConfig": {"textures": ["sky/1.png", "missing.png", 3]}
+        }));
+        let c = &v["configurations"];
+        assert_eq!(c["realmName"], "legacy-world", "an empty name is missing");
+        assert_eq!(c["skybox"].as_object().unwrap().len(), 1, "{c}");
+        let textures = c["skybox"]["textures"].as_array().unwrap();
+        assert_eq!(textures.len(), 3);
+        assert!(
+            textures[0]
+                .as_str()
+                .unwrap()
+                .ends_with("/contents/bafkreisky1")
+        );
+        assert_eq!(textures[1..], [json!(""), json!("")]);
+        assert_eq!(c["minimap"], json!({"enabled": false}));
+
+        // A falsy legacy key is skipped: the current configs answer.
+        let v = about_of(json!({
+            "dclName": "",
+            "name": "Current Name",
+            "minimapVisible": false,
+            "miniMapConfig": {"visible": true, "dataImage": "images/minimap.png"},
+            "skybox": 0,
+            "skyboxConfig": {"fixedTime": 3600, "textures": ["sky/1.png"]}
+        }));
+        let c = &v["configurations"];
+        assert_eq!(c["realmName"], "Current Name");
+        assert_eq!(c["minimap"]["enabled"], true);
+        assert!(
+            c["minimap"]["dataImage"]
+                .as_str()
+                .unwrap()
+                .ends_with("/contents/bafkreiminimap"),
+            "{c}"
+        );
+        assert_eq!(c["skybox"]["fixedHour"], 3600);
+        assert_eq!(c["skybox"]["textures"].as_array().unwrap().len(), 1);
     }
 }

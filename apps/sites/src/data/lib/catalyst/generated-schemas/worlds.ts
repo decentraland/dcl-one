@@ -69,7 +69,7 @@ export const MinimapConfigSchema = z.object({
 });
 
 export const SkyboxConfigSchema = z.object({
-  fixedHour: z.number().nullable(),
+  fixedHour: z.number().optional(),
   textures: z.array(z.string()),
 });
 

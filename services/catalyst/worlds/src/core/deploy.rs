@@ -108,7 +108,7 @@ pub(super) fn err_one(message: impl Into<String>) -> Response {
 
 /// A size or count limit of the multipart body: 413, as the old service.
 pub(super) fn payload_too_large(message: impl Into<String>) -> Response {
-    rejection(StatusCode::PAYLOAD_TOO_LARGE, message)
+    upload_limits::too_large(message).into_response()
 }
 
 /// A refused publish: its status and message.

@@ -1444,7 +1444,7 @@ async fn about_refuses(f: &Fixture, world: &WorldName) -> bool {
     let cfg = crate::Settings::for_tests("https://worlds.example.org");
     matches!(
         crate::about::build_about(&cfg, world.key(), about),
-        Err(crate::content::errors::AppError::Unauthorized(_))
+        Err(e) if e.status() == 401
     )
 }
 
@@ -1811,6 +1811,7 @@ async fn the_worlds_search_matches_full_text_and_escapes_wildcards() {
             authorized_deployer: Some(owner.as_str().to_string()),
             search: Some(term.to_string()),
             has_deployed_scenes: None,
+            banned_names: Vec::new(),
         };
         let pool = f.pool.clone();
         async move {
@@ -2053,6 +2054,7 @@ async fn deploy_populates_settings_and_read_surfaces() {
                 authorized_deployer,
                 search: Some(world.key().to_string()),
                 has_deployed_scenes,
+                banned_names: Vec::new(),
             },
             WorldsListOptions {
                 limit: 50,
@@ -3917,7 +3919,10 @@ async fn every_route_answers_its_contract() {
 
     let settings = expect(app, Case::new("get", format!("/world/{w}/settings")), 200).await;
     assert_eq!(settings["title"], "Gate World");
-    expect(app, Case::new("get", "/world/nope.dcl.eth/settings"), 404).await;
+    assert_eq!(
+        expect(app, Case::new("get", "/world/nope.dcl.eth/settings"), 404).await,
+        json!({ "error": "World \"nope.dcl.eth\" not found or has no settings configured." })
+    );
     let settings_path = format!("/world/{w}/settings");
     let (sbody, stype) = multipart_body(&[("title", None, b"Gate World Renamed")]);
     let updated = expect(
@@ -3939,29 +3944,36 @@ async fn every_route_answers_its_contract() {
     )
     .await;
     let (sbody, stype) = multipart_body(&[("title", None, b"Stranger Title")]);
-    expect(
-        app,
-        Case::new("put", &settings_path)
-            .signed(&stranger)
-            .await
-            .body(sbody, &stype),
-        403,
-    )
-    .await;
+    assert_eq!(
+        expect(
+            app,
+            Case::new("put", &settings_path)
+                .signed(&stranger)
+                .await
+                .body(sbody, &stype),
+            403,
+        )
+        .await,
+        json!({ "error": "Unauthorized. You do not have permission to update settings for this world." })
+    );
     let (big_body, big_type) = multipart_body(&[(
         "thumbnail",
         Some("thumbnail.png"),
         &vec![0u8; 2 * 1024 * 1024 + 1],
     )]);
-    expect(
-        app,
-        Case::new("put", &settings_path)
-            .signed(&owner)
-            .await
-            .body(big_body, &big_type),
-        400,
-    )
-    .await;
+    // `world-settings-handler.spec.ts:1045-1080`.
+    assert_eq!(
+        expect(
+            app,
+            Case::new("put", &settings_path)
+                .signed(&owner)
+                .await
+                .body(big_body, &big_type),
+            413,
+        )
+        .await,
+        json!({ "error": "Payload Too Large", "message": "An uploaded file exceeds the maximum allowed size." })
+    );
 
     let perms_path = format!("/world/{w}/permissions");
     let perms = expect(app, Case::new("get", &perms_path), 200).await;
@@ -5010,21 +5022,156 @@ async fn a_settings_thumbnail_is_stored_only_for_an_authorized_writer() {
     assert!(f.storage.exist(&hash).await.unwrap());
 }
 
+/// The body is read after the signed fetch: an unsigned request of any
+/// content type gets the signed-fetch refusal (`world-settings-handler.spec.ts:849-876`),
+/// not the multipart parser's 400.
+#[tokio::test]
+async fn an_unsigned_settings_put_is_refused_by_the_signed_fetch_before_the_body() {
+    let Some(f) = fixture().await else { return };
+    let owner = Wallet::random();
+    let world = owned_world(&f, &owner).await;
+    let path = format!("/world/{}/settings", world.display());
+    for content_type in ["application/json", "multipart/form-data", "text/plain"] {
+        let body = expect(
+            &f.app,
+            Case::new("put", &path).body(b"{}".to_vec(), content_type),
+            400,
+        )
+        .await;
+        let text = body.to_string();
+        assert!(
+            text.contains("Invalid Auth Chain"),
+            "{content_type}: {text}"
+        );
+        assert!(
+            !text.contains("Content-Type") && !text.contains("Boundary"),
+            "{text}"
+        );
+    }
+    // Signed, the parser then refuses what is not a multipart form, in busboy's words.
+    let body = expect(
+        &f.app,
+        Case::new("put", &path)
+            .signed(&owner)
+            .await
+            .body(b"{}".to_vec(), "application/json"),
+        400,
+    )
+    .await;
+    assert_eq!(
+        body,
+        json!({ "error": "Bad request", "message": "Unsupported content type: application/json" })
+    );
+}
+
+/// A declared `Content-Length` over the wire cap is refused before the body
+/// is read (`multipart/middleware.ts:159-166`).
+#[tokio::test]
+async fn a_settings_put_declaring_too_many_bytes_answers_413() {
+    let Some(f) = fixture().await else { return };
+    let owner = Wallet::random();
+    let world = owned_world(&f, &owner).await;
+    let body = expect(
+        &f.app,
+        Case::new("put", format!("/world/{}/settings", world.display()))
+            .signed(&owner)
+            .await
+            .header(
+                "content-length",
+                &(super::settings::MAX_SETTINGS_UPLOAD_WIRE_BYTES + 1).to_string(),
+            )
+            .body(Vec::new(), "multipart/form-data; boundary=x"),
+        413,
+    )
+    .await;
+    assert_eq!(
+        body,
+        json!({ "error": "Payload Too Large", "message": "The multipart request is too large." })
+    );
+}
+
+/// A body that stops arriving answers 408 with `describeUploadTimeout`'s
+/// text over the bytes received and the declared length.
+#[tokio::test]
+async fn a_stalled_settings_upload_answers_the_upstream_timeout_text() {
+    let Some(f) = fixture().await else { return };
+    let owner = Wallet::random();
+    let world = owned_world(&f, &owner).await;
+    let mut settings = Settings::for_tests(Some(ADMIN_TOKEN));
+    settings.upload_limits.multipart_upload_timeout_ms = 200;
+    let policy = Policy::new(
+        f.pool.clone(),
+        PersonalWorldsPolicy::disabled(),
+        Some(f.market.clone()),
+    );
+    let app = router(Arc::new(CoreState::new(
+        f.pool.clone(),
+        f.storage.clone(),
+        Arc::new(policy),
+        settings,
+        None,
+    )));
+    let path = format!("/world/{}/settings", world.display());
+    let first: &[u8] = b"--x\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nSlow";
+    use futures::StreamExt;
+    let stalled =
+        futures::stream::iter([Ok::<_, std::io::Error>(bytes::Bytes::from_static(first))])
+            .chain(futures::stream::pending());
+    let mut builder = Request::builder().method("PUT").uri(&path);
+    for (k, v) in signed_headers(&owner, "put", &path, "{}").await.iter() {
+        builder = builder.header(k, v);
+    }
+    let request = builder
+        .header(header::CONTENT_TYPE, "multipart/form-data; boundary=x")
+        .header(header::CONTENT_LENGTH, "4096")
+        .body(Body::from_stream(stalled))
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+    let body: Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        body,
+        json!({
+            "error": "Request Timeout",
+            "message": super::settings::describe_upload_timeout(200, first.len() as u64, Some(4096)),
+        })
+    );
+}
+
 #[tokio::test]
 async fn settings_empty_values_follow_the_upstream_handler() {
     let Some(f) = fixture().await else { return };
     let owner = Wallet::random();
     let world = owned_world(&f, &owner).await;
 
+    // The handler's own `{error: <message>}` (`world-settings-handler.ts:208-213`).
     let body = put_settings(&f, &world, &owner, &[("title", None, b"")], 400).await;
     assert_eq!(
-        body["message"],
-        "Invalid title: title cannot be empty. Expected between 3 and 100 characters."
+        body,
+        json!({ "error": "Invalid title: title cannot be empty. Expected between 3 and 100 characters." })
     );
     let body = put_settings(&f, &world, &owner, &[("description", None, b"")], 400).await;
     assert_eq!(
-        body["message"],
-        "Invalid description: description cannot be empty. Expected between 3 and 1000 characters."
+        body,
+        json!({ "error": "Invalid description: description cannot be empty. Expected between 3 and 1000 characters." })
+    );
+    let body = put_settings(
+        &f,
+        &world,
+        &owner,
+        &[("spawn_coordinates", None, b"9,9")],
+        400,
+    )
+    .await;
+    assert_eq!(
+        body,
+        json!({ "error": "Invalid spawnCoordinates \"9,9\". It must be within the world shape rectangle: (0,0) to (0,1)." }),
+        "the store's spawn refusal is a validation error too"
     );
 
     put_settings(
@@ -5797,13 +5944,55 @@ async fn world_scenes_page_filter_and_count_like_the_old_listing() {
     )
     .await;
     assert_eq!((ids(&page), page["total"].clone()), (vec![b], json!(2)));
-    expect(&app, post(json!({ "coordinates": [] })), 400).await;
-    expect(
+    // `@dcl/schema-validator-component` 1.0.1's bodies (`scenes-handler.spec.ts:153-156` asserts `message`).
+    assert_eq!(
+        expect(&app, post(json!({ "coordinates": [] })), 400).await,
+        json!({ "ok": false, "message": "Invalid JSON body", "data": [{
+            "instancePath": "/coordinates", "schemaPath": "#/properties/coordinates/minItems",
+            "keyword": "minItems", "params": { "limit": 1 }, "message": "must NOT have fewer than 1 items" }] })
+    );
+    assert_eq!(
+        expect(
+            &app,
+            Case::new("post", format!("/world/{w}/scenes")).body(b"{}".to_vec(), "text/plain"),
+            415,
+        )
+        .await,
+        json!({ "ok": false, "message": "Content-Type must be application/json" })
+    );
+    assert_eq!(
+        expect(
+            &app,
+            Case::new("post", format!("/world/{w}/scenes")).body(b"".to_vec(), "application/json"),
+            400,
+        )
+        .await,
+        json!({ "ok": false, "message": "Unexpected end of JSON input" })
+    );
+    let page = expect(&app, post(json!({ "coordinates": ["99999999999,0"] })), 200).await;
+    assert_eq!(
+        page["total"],
+        json!(0),
+        "a coordinate past i32 matches no scene"
+    );
+    // The Content-Type is checked before the body is read; a body over the
+    // cap answers `@dcl/http-server`'s own 413.
+    let over = vec![b' '; crate::scenes::MAX_SCENES_QUERY_BODY_BYTES + 1];
+    assert_eq!(
+        expect(
+            &app,
+            Case::new("post", format!("/world/{w}/scenes")).body(over.clone(), "text/plain"),
+            415,
+        )
+        .await,
+        json!({ "ok": false, "message": "Content-Type must be application/json" })
+    );
+    let (status, body) = hit(
         &app,
-        Case::new("post", format!("/world/{w}/scenes")).body(b"{}".to_vec(), "text/plain"),
-        415,
+        Case::new("post", format!("/world/{w}/scenes")).body(over, "application/json"),
     )
     .await;
+    assert_eq!((status.as_u16(), body), (413, json!("Payload Too Large")));
 }
 
 #[tokio::test]
@@ -5967,6 +6156,88 @@ async fn worlds_listing_pages_leniently_with_millisecond_timestamps() {
         "{at}"
     );
     expect(&f.app, Case::new("get", "/worlds?limit=5000"), 200).await;
+}
+
+/// `GET /worlds` as `worlds-handler.ts` reads its query, and the deny list as
+/// `getWorlds` applies it: `name != ALL(<entries without .eth/.dcl>)`, which
+/// hides a bare-name world and keeps `<banned>.dcl.eth`.
+#[tokio::test]
+async fn worlds_listing_reads_the_query_like_url_search_params_and_hides_banned_bare_names() {
+    let Some(f) = fixture().await else { return };
+    let label = format!("wl{}", &Uuid::new_v4().simple().to_string()[..10]);
+    let ens = format!("{label}.dcl.eth");
+    for name in [&label, &ens] {
+        sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1)")
+            .bind(name)
+            .execute(&f.pool)
+            .await
+            .unwrap();
+    }
+    let names = |body: &Value| -> Vec<String> {
+        let mut n: Vec<String> = body["worlds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|w| w["name"].as_str().unwrap().to_string())
+            .collect();
+        n.sort();
+        n
+    };
+    let list = format!("/worlds?search={label}");
+    let body = expect(&f.app, Case::new("get", &list), 200).await;
+    assert_eq!(names(&body), vec![label.clone(), ens.clone()]);
+    f.state.names.seed(vec![ens.clone()]);
+    let body = expect(&f.app, Case::new("get", &list), 200).await;
+    assert_eq!(
+        names(&body),
+        vec![ens.clone()],
+        "the stripped entry hides the bare name only"
+    );
+    assert_eq!(body["total"], json!(1));
+    f.state.names.seed(Vec::new());
+
+    // The first of a repeated key, as `searchParams.get` reads it.
+    let body = expect(
+        &f.app,
+        Case::new("get", format!("{list}&sort=name&sort=bogus&search=other")),
+        200,
+    )
+    .await;
+    assert_eq!(body["total"], json!(2));
+    // `EthAddress.validate`: no `0X`, no surrounding whitespace.
+    let address = Uuid::new_v4().simple().to_string() + "00000000";
+    for bad in [format!("0X{address}"), format!("%200x{address}")] {
+        expect(
+            &f.app,
+            Case::new("get", format!("/worlds?authorized_deployer={bad}")),
+            400,
+        )
+        .await;
+    }
+    expect(
+        &f.app,
+        Case::new("get", format!("/worlds?authorized_deployer=0x{address}")),
+        200,
+    )
+    .await;
+    // The 64 limit counts UTF-16 units: 30 CJK characters are 90 bytes.
+    let cjk = "%E6%97%A5".repeat(30);
+    expect(
+        &f.app,
+        Case::new("get", format!("/worlds?search={cjk}")),
+        200,
+    )
+    .await;
+    let long = "a".repeat(65);
+    assert_eq!(
+        expect(
+            &f.app,
+            Case::new("get", format!("/worlds?search={long}")),
+            400
+        )
+        .await["message"],
+        "Invalid search parameter: must be at most 64 characters."
+    );
 }
 
 /// A signed publish of `entity` uploading the entity file and `files`.

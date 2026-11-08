@@ -162,6 +162,9 @@ pub struct WorldsListFilters {
     pub authorized_deployer: Option<String>,
     pub search: Option<String>,
     pub has_deployed_scenes: Option<bool>,
+    /// The deny list with each entry's first `.eth` and `.dcl` removed
+    /// (upstream `getBannedNames`), compared with the stored name as is.
+    pub banned_names: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1918,6 +1921,7 @@ pub async fn list_worlds_public(
                 OR w.title ILIKE $4
                 OR w.description ILIKE $4
                 {similarity})
+          AND w.name <> ALL($5::text[])
     "#
     );
     let dir = match options.order_direction {
@@ -1939,7 +1943,7 @@ pub async fn list_worlds_public(
                   count(*) OVER () AS total
            {base_from}
            {order_clause}
-           LIMIT $5 OFFSET $6"#
+           LIMIT $6 OFFSET $7"#
     );
     let deployer = filters
         .authorized_deployer
@@ -1951,6 +1955,7 @@ pub async fn list_worlds_public(
         .bind(filters.has_deployed_scenes)
         .bind(&filters.search)
         .bind(&pattern)
+        .bind(&filters.banned_names)
         .bind(options.limit)
         .bind(options.offset)
         .fetch_all(pool)
@@ -1965,6 +1970,7 @@ pub async fn list_worlds_public(
             .bind(filters.has_deployed_scenes)
             .bind(&filters.search)
             .bind(&pattern)
+            .bind(&filters.banned_names)
             .fetch_one(pool)
             .await?
         }
