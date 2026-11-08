@@ -49,10 +49,10 @@ def save_json(path, value):
 def ports_free(base):
     sockets = []
     try:
-        # TCP (NATS on base+8 and +9), then the UDP ports: Pulse's WebTransport (the Sites port) and ENet ports,
-        # LiveKit's media.
-        for kind, port in [*((socket.SOCK_STREAM, port) for port in (base, base + 2, base + 3, base + 4, base + 5,
-                                                                      base + 7, base + 8, base + 9)),
+        # TCP (the API's metrics on base+1, NATS on base+8 and +9), then the UDP ports: Pulse's WebTransport
+        # (the Sites port) and ENet ports, LiveKit's media.
+        for kind, port in [*((socket.SOCK_STREAM, port) for port in (base, base + 1, base + 2, base + 3, base + 4,
+                                                                      base + 5, base + 7, base + 8, base + 9)),
                            *((socket.SOCK_DGRAM, port) for port in (base + 2, base + 6, base + 7))]:
             sock = socket.socket(socket.AF_INET, kind)
             sockets.append(sock)
@@ -251,6 +251,9 @@ def runtime_env(config):
         'DATABASE_URL': database_url(config), 'CATALYST_DATABASE_URL': database_url(config),
         'HTTP_SERVER_HOST': '127.0.0.1',
         'HTTP_SERVER_PORT': str(base), 'PUBLIC_URL': f'http://127.0.0.1:{base + 2}',
+        # In the stack's block, not the binary's default 5006: a second stack on the machine (a testnet
+        # worktree) would otherwise fail to start its API.
+        'SERVE_METRICS_BIND': f'127.0.0.1:{base + 1}',
         'PG_POOL_SIZE': '12', 'SERVE_UNSYNCED': 'true',
         # The stack's own livekit-server (the `livekit` task) and its generated pair.
         'LIVEKIT_HOST': f'ws://127.0.0.1:{livekit_ports(config)[0]}',

@@ -278,6 +278,15 @@ class DevTest(unittest.TestCase):
         self.assertEqual((program, argv), ('nats-server', dev.nats_argv(self.config)))
         self.assertNotIn('DATABASE_URL', env)
 
+    def test_two_stacks_on_one_machine_do_not_share_the_metrics_exporter(self):
+        env = dev.runtime_env(self.config)
+        self.assertEqual(env['SERVE_METRICS_BIND'], f"127.0.0.1:{self.config['port'] + 1}", "not the binary's default 5006")
+        with socket.socket() as busy:
+            busy.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            busy.bind(('127.0.0.1', self.config['port'] + 1))
+            busy.listen()
+            self.assertFalse(dev.ports_free(self.config['port']), 'a held metrics port is a held block')
+
     def test_a_busy_nats_port_moves_the_stack(self):
         base = self.config['port'] + 400
         if not dev.ports_free(base):
