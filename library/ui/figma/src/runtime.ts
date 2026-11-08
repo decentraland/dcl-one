@@ -87,15 +87,9 @@ async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
           : undefined
       })
       let figmaSets: ResolveContext['figmaSets'] = []
-      if (app) {
-        try {
-          figmaSets = await buildFigmaIndex(app.createSource('snapshot'), app.config)
-        } catch (error) {
-          // A missing capture means resolve-only mode; an unmaterialized one is a broken checkout.
-          if (error instanceof LfsPointerError) throw error
-          figmaSets = []
-        }
-      }
+      // Only a missing Figma configuration means resolve-only mode: a configured capture that fails to load
+      // (malformed, or an unmaterialized LFS pointer) is a broken checkout and fails closed.
+      if (app) figmaSets = await buildFigmaIndex(app.createSource('snapshot'), app.config)
       return {
         mappingRoot: contract.mappingRoot,
         libraryRange: contract.libraryRange,

@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { resolveComponent } from './contract/resolve.js'
+import { makeLibrary } from './contract/test-fixtures.js'
 import type { ComponentSpec } from './ir/components.js'
-import { supersessionCandidates } from './runtime.js'
+import { LfsPointerError } from './lfs.js'
+import { createRuntime, supersessionCandidates } from './runtime.js'
 
 const spec = (name: string, extra: Partial<ComponentSpec> = {}) =>
   ({ name, page: 'Buttons', needsManual: [], ...extra }) as ComponentSpec
@@ -41,6 +46,51 @@ describe('supersessionCandidates', () => {
   describe('when the named component was already promoted', () => {
     it('should not report it, since its mapping is the synced one', () => {
       expect(supersessionCandidates([spec('NavBar')], ['NavBar'], ['NavBar'])).toEqual(new Map())
+    })
+  })
+})
+
+// Ported from figma-design-system e730fbc (runtime part), keyless: the configuration carries no file key.
+describe('when distinguishing configured capture failures from resolve-only mode', () => {
+  let library: Awaited<ReturnType<typeof makeLibrary>>
+  beforeEach(async () => {
+    library = await makeLibrary()
+  })
+  afterEach(async () => {
+    await rm(library.root, { recursive: true, force: true })
+  })
+
+  it('should propagate a malformed configured snapshot instead of returning a mapping-only identity', async () => {
+    await writeFile(
+      path.join(library.root, 'figma.config.json'),
+      JSON.stringify({
+        outDir: 'generated',
+        pages: { Controls: { kind: 'components' } },
+        contract: { mappingRoot: 'src' }
+      })
+    )
+    await mkdir(path.join(library.root, 'figma-snapshot/components'), { recursive: true })
+    await writeFile(
+      path.join(library.root, 'figma-snapshot/components/Controls.json'),
+      '{malformed capture'
+    )
+    const runtime = await createRuntime({ cwd: library.root, env: {} })
+    const failure = runtime.resolveContext()
+    await expect(failure).rejects.toThrow()
+    await expect(failure).rejects.not.toBeInstanceOf(LfsPointerError)
+  })
+
+  it('should preserve mapping-only resolution when no Figma configuration exists', async () => {
+    const runtime = await createRuntime({
+      cwd: library.root,
+      env: {},
+      mappingRoot: library.mappingRoot
+    })
+    const context = await runtime.resolveContext()
+    expect(context.figmaSets).toEqual([])
+    expect(await resolveComponent(context, { nodeId: '1:1' })).toMatchObject({
+      ok: true,
+      warnings: [expect.objectContaining({ code: 'figma-identity-unverified' })]
     })
   })
 })
