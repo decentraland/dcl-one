@@ -116,6 +116,84 @@ describe('when mapping captured text geometry and overlapping layers', () => {
     }
   )
 
+  describe.each([
+    ['HORIZONTAL', 'margin-left', ['FILL', 'FIXED'], ['HUG', 'FIXED']],
+    ['VERTICAL', 'margin-top', ['FIXED', 'FILL'], ['FIXED', 'HUG']]
+  ] as const)('and a %s row has a negative item spacing', (mode, margin, fill, hug) => {
+    const row = (main: string, gap: number) =>
+      buildView(
+        {
+          type: 'FRAME',
+          w: 390,
+          h: 390,
+          sizing: hug,
+          layout: { mode, pad: [0, 0, 0, 0], gap, main, cross: 'MIN' },
+          children: [
+            { type: 'FRAME', name: 'first', w: 32, h: 32 },
+            { type: 'FRAME', name: 'fill', w: 32, h: 32, sizing: fill },
+            { type: 'FRAME', name: 'last', w: 32, h: 32 }
+          ]
+        } as RawNode,
+        env
+      )
+    const spacingDecls = (view: ReturnType<typeof buildView>) =>
+      [view, ...view.children!].flatMap((node) =>
+        node.css.decls.filter(([key]) => ['gap', margin, 'z-index', 'position'].includes(key))
+      )
+
+    it.each([-16, 0, 16])(
+      'should ignore an item spacing of %i under SPACE_BETWEEN, margins and paint order included',
+      (gap) => {
+        expect(spacingDecls(row('SPACE_BETWEEN', gap))).toEqual([])
+        expect(env.report.notes.has('negative-gap-ignored')).toBe(false)
+      }
+    )
+
+    it('should still overlap the children of a MIN row through margins and layer order', () => {
+      const view = row('MIN', -16)
+      expect(view.css.decls.some(([key]) => key === 'gap')).toBe(false)
+      expect(view.children![0]!.css.decls).not.toContainEqual([margin, '-16px'])
+      expect(view.children![1]!.css.decls).toEqual(
+        expect.arrayContaining([
+          ['position', 'relative'],
+          [margin, '-16px'],
+          ['z-index', '2']
+        ])
+      )
+      expect(view.children![2]!.css.decls).toContainEqual([margin, '-16px'])
+    })
+  })
+
+  it('should keep an independent absolute sibling in its layer order under SPACE_BETWEEN', () => {
+    const view = buildView(
+      {
+        type: 'FRAME',
+        w: 390,
+        h: 48,
+        layout: {
+          mode: 'HORIZONTAL',
+          pad: [0, 0, 0, 0],
+          gap: -16,
+          main: 'SPACE_BETWEEN',
+          cross: 'MIN'
+        },
+        children: [
+          { type: 'FRAME', name: 'scrim', w: 390, h: 48, absolute: true, x: 0, y: 0 },
+          { type: 'FRAME', name: 'logo', w: 32, h: 32 },
+          { type: 'FRAME', name: 'menu', w: 32, h: 32 }
+        ]
+      } as RawNode,
+      env
+    )
+    expect(view.children![0]!.css.decls).toContainEqual(['position', 'absolute'])
+    for (const child of view.children!.slice(1)) {
+      expect(child.css.decls).toContainEqual(['position', 'relative'])
+      expect(child.css.decls.some(([key]) => key === 'margin-left' || key === 'z-index')).toBe(
+        false
+      )
+    }
+  })
+
   it('should ignore a leading mask for spacing and paint a later absolute overlay on top', () => {
     const view = buildView(
       {

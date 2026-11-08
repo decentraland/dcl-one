@@ -333,7 +333,8 @@ const sharesParentWithAbsolute = (parent: Parent) =>
 // computes. Overlapping children paint in their captured layer order, later ones on top.
 function overlapDecls(node: RawNode, parent: Parent, env: ViewEnv): [string, string][] {
   const layout = parent?.node.layout
-  if (!layout || layout.gap >= 0 || layout.wrap || node.absolute) return []
+  if (!layout || layout.gap >= 0 || layout.wrap || layout.main === 'SPACE_BETWEEN' || node.absolute)
+    return []
   const flow = (parent.node.children ?? []).filter(
     (child) => !child.absolute && !child.hidden && !child.isMask
   )
@@ -398,9 +399,11 @@ function containerDecls(node: RawNode, env: ViewEnv): [string, string][] {
   ]
   if (node.clipsContent) decls.push(['overflow', 'hidden'])
   if (layout.wrap) decls.push(['flex-wrap', 'wrap'])
-  // With SPACE_BETWEEN, Figma distributes the free space and ignores itemSpacing (the captured value is only the spacing
-  // at the drawn width). A CSS gap would act as a minimum and push children out of a narrower container.
-  if (layout.gap > 0 && layout.main !== 'SPACE_BETWEEN')
+  // Figma ignores item spacing under space-between ("Auto" spacing) and keeps the last fixed value, which a
+  // CSS gap would turn into a minimum that pushes the trailing children out of a narrower frame. Wrapped
+  // frames keep it: their track spacing needs counterAxisSpacing, which the capture does not record yet.
+  const autoSpacing = layout.main === 'SPACE_BETWEEN' && !layout.wrap
+  if (layout.gap > 0 && !autoSpacing)
     decls.push(['gap', lengthValue(layout.gap, env.numbers.space)])
   // A negative gap overlaps the children through their margins (overlapDecls); wrapped rows stay unsupported.
   else if (layout.gap < 0 && layout.wrap) env.report.notes.add('negative-gap-ignored')
@@ -498,8 +501,10 @@ type BuildState = { text: number; icon: number }
 
 function positionDecls(node: RawNode, parent: Parent, env: ViewEnv): [string, string][] {
   const decls = offsetDecls(node, parent, env)
-  if (parent?.node.layout && parent.node.layout.gap < 0 && !parent.node.layout.wrap) {
-    const layers = (parent.node.children ?? []).filter((child) => !child.hidden && !child.isMask)
+  // Overlap paint order follows overlapDecls: no overlap under space-between, so no forced layer order either.
+  const layout = parent?.node.layout
+  if (layout && layout.gap < 0 && !layout.wrap && layout.main !== 'SPACE_BETWEEN') {
+    const layers = (parent?.node.children ?? []).filter((child) => !child.hidden && !child.isMask)
     const index = layers.indexOf(node)
     if (index >= 0) decls.push(['z-index', String(index + 1)])
   }
