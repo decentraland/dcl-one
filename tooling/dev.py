@@ -428,7 +428,17 @@ def testnet_env():
         # MANA only. This profile sets the mock card on Amoy alone, and the stack listens on 127.0.0.1.
         'CREDITS_MOCK_CARD': 'true',
         **credits_signer_env(),
+        **name_simulation_env(),
     }
+
+
+def name_simulation_env():
+    """The in-world Shop's NAME purchase rehearsal, off unless FOUNDATION_DEV_NAME_SIMULATION=1 asks for it.
+
+    It turns on VITE_SHOP_NAME_SIMULATION for the Sites build, whose /play shell then rehearses BUY NAME on
+    Amoy with the real price, balance and availability, and buys nothing (apps/ui3/src/play/shell/shop/
+    namePurchase.ts). Only this profile sets it, with VITE_SHOP_CHAIN_ID=80002, which the shell needs too."""
+    return {'VITE_SHOP_NAME_SIMULATION': 'true'} if os.environ.get('FOUNDATION_DEV_NAME_SIMULATION') == '1' else {}
 
 
 def credits_signer_env():

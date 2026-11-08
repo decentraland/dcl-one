@@ -29,6 +29,10 @@ import { createSpendGuard } from '../../../shop/checkout/purchase/spend-guard'
 import { fetchUserPurchases, getUsdBalance, type UsdBalance } from '../../../shop/credits/credits'
 import type { OfferSource } from '../../../shop/detail/offers'
 import { fetchShopListingForItem } from '../../../shop/detail/api'
+import { ethereumChainId, settlementChainId } from '../../../shop/checkout/chain/config'
+import { fetchBannedNames } from '../../../shop/names/api'
+import { checkNameAvailability } from '../../../shop/names/names'
+import { quoteNameCredits } from '../../../shop/names/offer'
 import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
 import { fetchRemoteFlags, primeRemoteFlags } from '../../../shop/discovery/lib/remoteFlags'
 import { parseEvmAddress } from '../../../shop/model/address'
@@ -55,13 +59,16 @@ import {
   type ShopCapabilities,
   type ShopOperation,
   type ShopOperationEvent,
+  type ShopItemOperation,
   type ShopLine,
+  type ShopNamesMode,
   type ShopOperationState,
   type ShopWalletKind
 } from '../../lib/shopProtocol'
 import { withUtm } from '../../lib/utm'
 import { trustedCreditsManager, type TrustedManager } from './config'
 import { createLedger, type OperationRecord } from './ledger'
+import { createNamePurchase, nameBuild, namesModeFor, type NameStanding } from './namePurchase'
 import { assertWalletAccount, guardedProvider, WalletRefusal, type PurchaseIntent } from './walletGuard'
 
 /** The buyer's wallet, as the page hosting the shell resolves it (Sites: its sign-in session). */
@@ -84,6 +91,8 @@ export interface ShellPurchaseHandlers {
   onConfirm?: () => void
   onBuyCredits?: () => void
   onBackpack?: () => void
+  /** A simulated NAME's success: see it over the avatar. */
+  onPreview?: () => void
   onRetry?: () => void
   onSignIn?: () => void
 }
@@ -93,6 +102,48 @@ export interface ShellShopUi {
   /** `opening.pointer`: the dialog opens from a pointer press in the app, so its first focus isn't rung. */
   show(view: ShellPurchaseView, handlers: ShellPurchaseHandlers, opening?: { pointer: boolean }): void
   hide(): void
+}
+
+/** An operation the dialog can be up for: an item purchase's or a NAME's. */
+export interface DialogOwner {
+  state: ShopOperationState
+}
+
+/**
+ * The one dialog over the app, which the item purchases and BUY NAME share. It is up for one operation at
+ * a time: whoever shows a step owns it, only its owner takes it away, and an operation that lost it (its
+ * dialog cancelled, or replaced by another's) shows nothing more, however late its answers come.
+ */
+export interface DialogSlot {
+  show(owner: DialogOwner, view: ShellPurchaseView, handlers: ShellPurchaseHandlers, opening?: { pointer: boolean }): void
+  /** Points the dialog at `owner` without drawing: its next step draws it (a fresh attempt taking over). */
+  hand(owner: DialogOwner): void
+  hide(owner: DialogOwner): void
+  holds(owner: DialogOwner): boolean
+  holder(): DialogOwner | null
+  /** A purchase is open in it: its operation is still being reviewed or processed. */
+  open(): boolean
+}
+
+export function createDialogSlot(ui: ShellShopUi): DialogSlot {
+  let holder: DialogOwner | null = null
+  return {
+    show(owner, view, handlers, opening) {
+      holder = owner
+      ui.show(view, handlers, opening)
+    },
+    hand(owner) {
+      holder = owner
+    },
+    hide(owner) {
+      if (holder !== owner) return
+      holder = null
+      ui.hide()
+    },
+    holds: (owner) => holder === owner,
+    holder: () => holder,
+    open: () => holder != null && (holder.state === 'reviewing' || holder.state === 'processing')
+  }
 }
 
 type Resolved = Parameters<typeof runGroup>[2]
@@ -131,6 +182,12 @@ export interface ShellShopServices {
   newId(): string
   /** The web Shop's credit packs, for BUY CREDITS. */
   creditsUrl(): string
+  /** A NAME's price (the credits quote of its 100 MANA) in US cents, or null while none can be given. */
+  namePrice(client: ShopClient): Promise<UsdCents | null>
+  /** Whether a NAME is free to register, taken, or on the banned list. */
+  nameStanding(name: string): Promise<NameStanding>
+  /** How this build buys NAMEs on the chains the page settles on now, or null where it doesn't (./namePurchase). */
+  namesMode(): ShopNamesMode | null
 }
 
 export interface ShellShopDeps {
@@ -148,6 +205,8 @@ export interface ShellShopDeps {
 }
 
 const FLAGS_TIMEOUT_MS = 3000
+/** How long BUY NAME waits on each of its reads (the price, the banned list, the registrar). */
+const NAME_READ_TIMEOUT_MS = 10_000
 /** How long a page reads an unsettled purchase often (backing off); then every WATCH_SLOW_MS. */
 const WATCH_FOR_MS = 30 * 60_000
 /** How often a purchase still unsettled after WATCH_FOR_MS is read again. */
@@ -217,7 +276,18 @@ const LIVE: ShellShopServices = {
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now: () => Date.now(),
   newId: () => crypto.randomUUID(),
-  creditsUrl: () => withUtm(siteUrl('/shop/credits'))
+  creditsUrl: () => withUtm(siteUrl('/shop/credits')),
+  namePrice: async (client) => {
+    const quote = await quoteNameCredits(client, AbortSignal.timeout(NAME_READ_TIMEOUT_MS))
+    return 'quoted' in quote ? quote.quoted : null
+  },
+  nameStanding: async (name) => {
+    const banned = await fetchBannedNames({ signal: AbortSignal.timeout(NAME_READ_TIMEOUT_MS) })
+    if (banned.some((b) => b.toLowerCase() === name.toLowerCase())) return 'banned'
+    // On the chain the gate checked (namesModeFor), never another the land override names.
+    return (await checkNameAvailability(name, { signal: AbortSignal.timeout(NAME_READ_TIMEOUT_MS), chainId: ethereumChainId() })) === 'available' ? 'available' : 'taken'
+  },
+  namesMode: () => namesModeFor(nameBuild(), { settles: settlementChainId(), ethereum: ethereumChainId() })
 }
 
 /** A watcher signs nothing: the wallet is never asked while a purchase is only followed. */
@@ -358,8 +428,13 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   const svc: ShellShopServices = { ...LIVE, ...deps.services }
   const ledger = createLedger(svc.storage)
   const operations = new Map<string, Operation>()
-  /** The operation whose dialog is up. */
-  let dialog: Operation | null = null
+  /** The dialog over the app, shared with BUY NAME. */
+  const slot = createDialogSlot(deps.ui)
+  /** The item operation whose dialog is up; none while it is up for a NAME. */
+  const dialogOp = (): Operation | null => {
+    const held = slot.holder() as Operation | null
+    return held != null && operations.get(held.id) === held ? held : null
+  }
   /** A purchase is being opened (its records read, its lock taken): one at a time. */
   let starting = false
   /** A confirmed purchase is running its groups: nothing else opens meanwhile. */
@@ -369,7 +444,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   /** Other tabs' operations whose lock this page is queued for. */
   const awaiting = new Set<string>()
 
-  const snapshot = (op: Operation): ShopOperation => ({
+  const snapshot = (op: Operation): ShopItemOperation => ({
     v: SHOP_PROTOCOL,
     operation: op.id,
     buyer: op.buyer,
@@ -400,17 +475,11 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       op.release = undefined
     }
   }
-  const show = (op: Operation, view: ShellPurchaseView, handlers: ShellPurchaseHandlers): void => {
-    dialog = op
-    deps.ui.show(view, handlers, { pointer: op.input === 'pointer' })
-  }
+  const show = (op: Operation, view: ShellPurchaseView, handlers: ShellPurchaseHandlers): void => slot.show(op, view, handlers, { pointer: op.input === 'pointer' })
   const hide = (op: Operation): void => {
     op.unwatchWallet?.()
     op.unwatchWallet = undefined
-    if (dialog === op) {
-      dialog = null
-      deps.ui.hide()
-    }
+    slot.hide(op)
   }
   const close = (op: Operation, state: ShopOperationState): void => {
     hide(op)
@@ -439,6 +508,35 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     show(op, { step: 'failed', message, retry: retry != null }, { onClose: () => close(op, 'failed'), ...(retry ? { onRetry: retry } : {}) })
   }
   const showPending = (op: Operation): void => show(op, { step: 'pending' }, { onClose: () => hide(op) })
+  /** The signed-in login that can buy here: its key held, and a wallet here that signs for its account. */
+  const usable = (): { login: StoredLogin; buyer: string } | null => {
+    const who = signedIn()
+    return who && deps.wallet?.kind(who.buyer) != null && deps.wallet.provider(who.buyer) != null ? who : null
+  }
+  /** How NAMEs are bought for the login that can buy here, or null: capabilities' `namesMode`, and all shop.buyName admits. */
+  const nameSession = (): { buyer: string; login: string; mode: ShopNamesMode } | null => {
+    const who = usable()
+    const mode = who ? svc.namesMode() : null
+    return who && mode ? { buyer: who.buyer, login: loginKey(who.login), mode } : null
+  }
+  /** BUY NAME (./namePurchase): its own operations, in memory only, in the same dialog as the items'. */
+  const names = createNamePurchase({
+    session: nameSession,
+    client: (key) => confirmedClient(key),
+    slot,
+    busy: () => starting || running,
+    post: deps.post,
+    openExternal: deps.openExternal,
+    services: {
+      balance: svc.balance,
+      price: svc.namePrice,
+      standing: svc.nameStanding,
+      sleep: svc.sleep,
+      now: svc.now,
+      newId: svc.newId,
+      creditsUrl: svc.creditsUrl
+    }
+  })
   /** Purchase successful, with what was bought (the operation's own, or a whole checkout's). */
   const showSuccess = (op: Operation, items: ShellPurchaseItem[] | undefined = op.displays): void => {
     if (!items || items.length === 0) {
@@ -463,10 +561,10 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     const co = op.checkout
     if (co) {
       if (state !== 'succeeded') co.failures.push(part ?? (state === 'cancelled' ? NEVER_WENT : PART_FAILED))
-      if (dialog?.checkout === co && !running) presentCheckout(co)
+      if (dialogOp()?.checkout === co && !running) presentCheckout(co)
       return
     }
-    if (dialog !== op) return
+    if (!slot.holds(op)) return
     if (state === 'succeeded') showSuccess(op)
     else if (state === 'failed') show(op, { step: 'failed', message: message ?? NOT_BOUGHT, retry: false }, { onClose: () => hide(op) })
     else hide(op)
@@ -724,7 +822,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     void create(req, signedIn()?.buyer ?? null)
       .then((fresh) => {
         fresh.input = op.input
-        dialog = fresh
+        slot.hand(fresh)
         void review(fresh, req)
       })
       .finally(() => {
@@ -761,11 +859,11 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
       quote = await readQuote(op, who.login, who.buyer, kind, req)
     } catch (e) {
       console.warn('[shell/shop] could not read the purchase terms', e)
-      if (op.state === 'reviewing' && dialog === op) fail(op, "We couldn't check this item's price. Try again in a moment.", () => restart(op, req, 'cancelled'))
+      if (op.state === 'reviewing' && slot.holds(op)) fail(op, "We couldn't check this item's price. Try again in a moment.", () => restart(op, req, 'cancelled'))
       return
     }
     // Cancelled while it loaded.
-    if (op.state !== 'reviewing' || dialog !== op) return
+    if (op.state !== 'reviewing' || !slot.holds(op)) return
     if (typeof quote === 'string') fail(op, quote)
     else present(op, req, quote)
   }
@@ -896,7 +994,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
   /** Operations whose BUY ITEM is being acted on: a second press, while the first awaits, does nothing. */
   const confirming = new Set<Operation>()
   const settle = async (op: Operation, req: ShopBuyRequest, quote: Quote): Promise<void> => {
-    if (op.state !== 'reviewing' || dialog !== op || running || confirming.has(op)) return
+    if (op.state !== 'reviewing' || !slot.holds(op) || running || confirming.has(op)) return
     confirming.add(op)
     try {
       await settleOnce(op, req, quote)
@@ -926,10 +1024,12 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     try {
       await assertWalletAccount(wallet, quote.buyer, quote.kind === 'web3')
     } catch (e) {
+      // Cancelled while the wallet answered, its dialog maybe another purchase's by now: nothing to say.
+      if (op.state !== 'reviewing' || !slot.holds(op)) return
       fail(op, e instanceof WalletRefusal ? e.message : "Your wallet didn't answer. Try again.", again)
       return
     }
-    if (op.state !== 'reviewing' || dialog !== op) return
+    if (op.state !== 'reviewing' || !slot.holds(op)) return
     // The login may have changed while the wallet answered.
     if (!current()) {
       fail(op, quote.stale ?? 'Your sign-in changed meanwhile. Open the item again to buy it.')
@@ -974,7 +1074,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         let run = op
         if (i > 0) {
           run = await create(req, quote.buyer, part.items)
-          dialog = run
+          slot.hand(run)
         }
         run.items = part.items
         run.displays = part.displays
@@ -1132,7 +1232,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
 
   const buy = async (params: unknown): Promise<ShopOperation> => {
     const req = parseBuyRequest(params)
-    if (starting || running || (dialog && (dialog.state === 'reviewing' || dialog.state === 'processing'))) throw new Error('a purchase is already open')
+    if (starting || running || slot.open()) throw new Error('a purchase is already open')
     starting = true
     try {
       const who = signedIn()
@@ -1165,9 +1265,10 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     const buyer = rootAddress(login.identity).toLowerCase()
     if (login.guest) return { v: SHOP_PROTOCOL, buyer, wallet: null, credits: false, reason: 'guest' }
     const wallet = deps.wallet?.kind(buyer) ?? null
-    const usable = wallet != null && deps.wallet?.provider(buyer) != null && !!login.identity.ephemeralIdentity.privateKey
-    const marketplace = usable && wallet === 'web3' && deps.wallet?.marketplace?.(buyer) === true
-    return { v: SHOP_PROTOCOL, buyer, wallet, credits: usable, marketplace, ...(usable ? {} : { reason: 'noWallet' as const }) }
+    const canPay = wallet != null && deps.wallet?.provider(buyer) != null && !!login.identity.ephemeralIdentity.privateKey
+    const marketplace = canPay && wallet === 'web3' && deps.wallet?.marketplace?.(buyer) === true
+    const namesMode = canPay ? nameSession()?.mode : undefined
+    return { v: SHOP_PROTOCOL, buyer, wallet, credits: canPay, marketplace, ...(namesMode ? { namesMode } : {}), ...(canPay ? {} : { reason: 'noWallet' as const }) }
   }
 
   const balance = async (): Promise<ShopBalance | null> => {
@@ -1184,12 +1285,19 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     const empty = params == null || (typeof params === 'object' && Object.keys(params as object).length === 0)
     if (empty) {
       if (!who) return []
-      // Newest first; the later of two made in the same millisecond first too (the sort is stable).
-      return [...operations.values()].filter((o) => o.buyer === who.buyer).reverse().sort((a, b) => b.createdAt - a.createdAt).map(snapshot)
+      // Newest first, the NAMEs' among the items'; the later of two made in the same millisecond first too
+      // (the sort is stable).
+      const mine = [...operations.values()].filter((o) => o.buyer === who.buyer).map((o) => ({ ...snapshot(o), createdAt: o.createdAt }))
+      return [...mine, ...names.list(who.buyer)]
+        .reverse()
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .map(({ createdAt: _c, ...op }) => op)
     }
-    const op = operations.get(parseOperationRef(params))
+    const id = parseOperationRef(params)
+    const op = operations.get(id)
     // Only the signed-in buyer's own.
-    return op && who && op.buyer === who.buyer ? snapshot(op) : null
+    if (!who) return null
+    return op && op.buyer === who.buyer ? snapshot(op) : names.get(id, who.buyer)
   }
 
   return {
@@ -1204,6 +1312,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           return balance()
         case SHOP_METHODS.buy:
           return buy(params)
+        case SHOP_METHODS.buyName:
+          return names.buy(params)
         case SHOP_METHODS.status:
           return status(params)
         default:

@@ -1,15 +1,16 @@
 // The purchase dialog's steps (features/shop/ui/ShopPurchaseDialog) and its host over the app
 // (shell/shop/overlay): what each step says and offers, and where the keyboard goes.
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { ShopPurchaseDialog, type ShopPurchaseStep } from '../features/shop/ui'
 import { ARM_MS } from '../features/shop/ui/ShopPurchaseDialog'
 import { createShopOverlay } from '../shell/shop/overlay'
 
 const item = { name: 'Golden Armor', creator: 'Aurora', rarity: 'epic', credits: 500 }
+const name = { kind: 'name' as const, name: 'Mojito', creator: '', rarity: '', credits: 94 }
 
 function show(view: ShopPurchaseStep) {
-  const handlers = { onClose: vi.fn(), onConfirm: vi.fn(), onBuyCredits: vi.fn(), onBackpack: vi.fn(), onRetry: vi.fn(), onSignIn: vi.fn() }
+  const handlers = { onClose: vi.fn(), onConfirm: vi.fn(), onBuyCredits: vi.fn(), onBackpack: vi.fn(), onAssign: vi.fn(), onPreview: vi.fn(), onRetry: vi.fn(), onSignIn: vi.fn() }
   render(<ShopPurchaseDialog view={view} {...handlers} />)
   return handlers
 }
@@ -107,6 +108,108 @@ describe('the purchase dialog', () => {
     const row = screen.getByRole('list', { name: '5 items bought' })
     expect(row.querySelectorAll('[data-rarity]')).toHaveLength(5)
     expect(screen.getAllByText('New')).toHaveLength(5)
+  })
+
+  it('Buy Name: the balance, the NAME and its price, then CANCEL or BUY NAME', () => {
+    vi.useFakeTimers()
+    const h = show({ step: 'confirm', items: [name], balance: 700 })
+    const dialog = screen.getByRole('dialog', { name: 'Buy Name' })
+    expect(dialog.textContent).toContain('Your Credits Balance:700')
+    expect(dialog.textContent).toContain('Mojito')
+    expect(dialog.textContent).toContain('Decentraland Name')
+    expect(dialog.textContent).toContain('94')
+    // A NAME has no rarity.
+    expect(dialog.textContent).not.toContain('base')
+    act(() => void vi.advanceTimersByTime(ARM_MS))
+    fireEvent.click(screen.getByRole('button', { name: 'Buy name' }))
+    vi.useRealTimers()
+    expect(h.onConfirm).toHaveBeenCalledTimes(1)
+  })
+
+  it('Insufficient Funds for a NAME: what is missing to purchase this Name', () => {
+    const h = show({ step: 'insufficient', items: [name], balance: 24, need: 70 })
+    expect(screen.getByRole('dialog', { name: 'Insufficient Funds' }).textContent).toContain('You will need to buy 70 Credits to purchase this Name.')
+    fireEvent.click(screen.getByRole('button', { name: 'Buy credits' }))
+    expect(h.onBuyCredits).toHaveBeenCalled()
+  })
+
+  it('names a NAME while loading and processing', () => {
+    show({ step: 'loading', subject: 'name' })
+    expect(screen.getByRole('dialog', { name: 'Buy Name' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Buy name' })).toBeDisabled()
+    cleanup()
+    show({ step: 'processing', balance: 700, subject: 'name' })
+    expect(screen.getByRole('dialog', { name: 'Buy Name' })).toBeInTheDocument()
+  })
+
+  it('Purchase successful for a NAME: the NAME tagged NEW, CONTINUE SHOPPING or ASSIGN TO AVATAR', () => {
+    const h = show({ step: 'success', items: [name] })
+    const dialog = screen.getByRole('dialog', { name: 'Purchase successful!' })
+    expect(dialog.textContent).toContain('New')
+    expect(screen.queryByRole('button', { name: 'Go to backpack' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Assign to avatar' }))
+    expect(h.onAssign).toHaveBeenCalled()
+    expect(h.onBackpack).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Continue shopping' }))
+    expect(h.onClose).toHaveBeenCalled()
+  })
+
+  describe('a simulated NAME purchase', () => {
+    const AHEAD = 'Simulation: no Credits will be spent, and this NAME won’t be registered or reserved.'
+    const DONE = 'This was a simulation: no Credits were spent, and this NAME wasn’t registered or reserved.'
+
+    it('says so before it runs, and its button simulates', () => {
+      vi.useFakeTimers()
+      const h = show({ step: 'confirm', items: [name], balance: 700, simulation: true })
+      const dialog = screen.getByRole('dialog', { name: 'Buy Name' })
+      expect(within(dialog).getByRole('note')).toHaveTextContent(AHEAD)
+      expect(screen.queryByRole('button', { name: 'Buy name' })).toBeNull()
+      act(() => void vi.advanceTimersByTime(ARM_MS))
+      fireEvent.click(screen.getByRole('button', { name: 'Simulate purchase' }))
+      vi.useRealTimers()
+      expect(h.onConfirm).toHaveBeenCalledTimes(1)
+    })
+
+    it('says so while it loads, short of Credits, and while it runs', () => {
+      show({ step: 'loading', subject: 'name', simulation: true })
+      expect(screen.getByRole('note')).toHaveTextContent(AHEAD)
+      expect(screen.getByRole('button', { name: 'Simulate purchase' })).toBeDisabled()
+      cleanup()
+      show({ step: 'insufficient', items: [name], balance: 24, need: 70, simulation: true })
+      expect(screen.getByRole('note')).toHaveTextContent(AHEAD)
+      cleanup()
+      show({ step: 'processing', balance: 700, subject: 'name', simulation: true })
+      expect(screen.getByRole('note')).toHaveTextContent(AHEAD)
+      expect(screen.getByRole('status', { name: 'Simulating your purchase' })).toBeInTheDocument()
+    })
+
+    it('ends as a simulation, not a purchase: no NEW tag, and PREVIEW ON AVATAR instead of ASSIGN TO AVATAR', () => {
+      const h = show({ step: 'success', items: [name], simulation: true })
+      expect(screen.queryByRole('dialog', { name: 'Purchase successful!' })).toBeNull()
+      const dialog = screen.getByRole('dialog', { name: 'Simulation complete' })
+      expect(within(dialog).getByRole('note')).toHaveTextContent(DONE)
+      expect(dialog.textContent).not.toContain('New')
+      expect(screen.queryByRole('button', { name: 'Assign to avatar' })).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Preview on avatar' }))
+      expect(h.onPreview).toHaveBeenCalledTimes(1)
+      expect(h.onAssign).not.toHaveBeenCalled()
+    })
+
+    it('says so when it fails', () => {
+      show({ step: 'failed', message: 'Your sign-in changed meanwhile. Open the NAME again.', retry: false, simulation: true })
+      const dialog = screen.getByRole('dialog', { name: 'Oops! Something went wrong' })
+      expect(within(dialog).getByRole('note')).toHaveTextContent(DONE)
+      expect(within(dialog).getByRole('alert')).toHaveTextContent("We couldn't complete the simulation this time.")
+    })
+
+    it('is said only for a simulation', () => {
+      show({ step: 'confirm', items: [name], balance: 700 })
+      expect(screen.queryByRole('note')).toBeNull()
+      cleanup()
+      show({ step: 'success', items: [name] })
+      expect(screen.queryByRole('note')).toBeNull()
+      expect(screen.getByRole('dialog', { name: 'Purchase successful!' }).textContent).toContain('New')
+    })
   })
 
   it('asks a guest to sign in', () => {
