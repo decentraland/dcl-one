@@ -447,6 +447,9 @@ fn open_vulkan(
 /// Orders the client's copy into the presentation texture before the renderer reads it: signals
 /// the decode device's fence behind the copy and waits up to [`COPY_WAIT_MS`] for it. `false`
 /// when the copy has not landed within that.
+///
+/// The wait is on the CPU because wgpu 24 offers no way to make the renderer's queue wait on this
+/// fence; a GPU-side wait (`ID3D12CommandQueue::Wait` on DX12) would replace it (#438).
 pub fn wait_for_client_copy() -> bool {
     let mut guard = INTEROP.lock();
     let Some(interop) = guard.as_mut() else {

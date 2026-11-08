@@ -30,7 +30,9 @@ use uuav::MAX_PIXELS;
 const MIN_EDGE: u32 = 16;
 
 /// Whether a player's next frame waits until the conversion that read its planes has executed.
-/// Only the Windows platform module leaves the copy into the planes unordered against the read.
+/// Only the Windows platform module leaves the copy into the planes unordered against the read,
+/// and nothing on the GPU stops the next copy from overwriting planes still being read; a fence
+/// the client's device waits on would replace this gate (#438).
 const GATE_COPY_ON_READ: bool = cfg!(windows);
 
 /// The main world's [`VideoPresentation`], read here.

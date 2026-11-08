@@ -74,6 +74,8 @@ impl kira::sound::streaming::Decoder for UuavKiraDecoder {
             if matches!(ffi::state(self.id), uuav::UUAVState::UUAV_UNKNOWN) {
                 return Err(AudioDecoderError::StreamClosed);
             }
+            // kira calls `decode` again as soon as it returns, so returning empty would spin a
+            // core; a custom kira `Sound` reading the ring on the audio thread would need no wait
             uuav::uuav_player_wait_audio(self.id, WAIT_FOR_AUDIO_MS);
         }
     }
