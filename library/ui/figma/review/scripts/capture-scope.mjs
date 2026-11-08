@@ -46,4 +46,13 @@ function staleCases(report, signature) {
     .filter(([, evidence]) => (evidence.signature ?? report.signature) !== signature)
     .map(([key]) => key)
 }
-export { captureScope, preserveFrozenCases, staleCases }
+// fidelity.json keeps the order its entries already have, so evidence a run did not select never moves when a
+// different subset is captured. Cases new to this run follow in capture order.
+function orderedCases(cases, previousOrder = []) {
+  const ordered = {}
+  for (const key of previousOrder) if (Object.hasOwn(cases, key)) ordered[key] = cases[key]
+  for (const [key, value] of Object.entries(cases))
+    if (!Object.hasOwn(ordered, key)) ordered[key] = value
+  return ordered
+}
+export { captureScope, orderedCases, preserveFrozenCases, staleCases }

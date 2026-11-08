@@ -355,6 +355,45 @@ describe('checkScope', () => {
     })
   })
 
+  describe('when visual evidence is rewritten', () => {
+    const FIDELITY = 'figma/review/public/dcl-ui-review/fidelity.json'
+    const evidence = {
+      'Button-0': { sourceId: '10:1', image: '/dcl-ui-review/renders/Button-0.png' },
+      'PlaceCard-0': {
+        sourceId: '20:1',
+        image: '/dcl-ui-review/renders/PlaceCard-0.png'
+      },
+      'PlaceCard-1': { sourceId: '20:2', image: '/dcl-ui-review/renders/PlaceCard-1.png' }
+    }
+    const fidelity = async (cases: Record<string, unknown>) => {
+      await put(base, FIDELITY, { cases: evidence })
+      await put(staged, FIDELITY, { cases })
+      return (await run()).violations
+        .filter((violation) => violation.path === FIDELITY)
+        .map((violation) => violation.cause)
+    }
+
+    it('should accept new evidence for the captured page that keeps the others in order', async () => {
+      const { 'Button-0': button, ...others } = evidence
+      expect(await fidelity({ ...others, 'Button-0': { ...button, status: 'different' } })).toEqual(
+        []
+      )
+    })
+
+    it('should reject changed evidence for a page that was not captured', async () => {
+      expect(
+        await fidelity({ ...evidence, 'PlaceCard-0': { ...evidence['PlaceCard-0'], status: 'x' } })
+      ).toEqual([`entry PlaceCard-0 belongs to ${PLACES}, which was not captured`])
+    })
+
+    it('should reject a reorder of evidence the run did not select', async () => {
+      const { 'PlaceCard-0': first, 'PlaceCard-1': second, ...rest } = evidence
+      expect(await fidelity({ ...rest, 'PlaceCard-1': second, 'PlaceCard-0': first })).toEqual([
+        'the order of unselected entries changed'
+      ])
+    })
+  })
+
   describe('when an unselected page changes', () => {
     it('should reject its component file', async () => {
       await put(staged, `${GEN}/components/places/PlaceCard.tsx`, 'place v2')

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { captureScope, preserveFrozenCases } from '../scripts/capture-scope.mjs'
+import { captureScope, orderedCases, preserveFrozenCases } from '../scripts/capture-scope.mjs'
 
 const first = { name: 'First', page: 'Alpha', variants: [{ id: '10:1' }] }
 const second = { name: 'Second', page: 'Beta', variants: [{ id: '10:2' }] }
@@ -85,4 +85,55 @@ describe('when limiting offline visual evidence to configured page IDs', () => {
     it('should reject incomplete frozen evidence', () => {
       assert.throws(() => preserveFrozenCases([second], previous), /Missing frozen visual evidence/)
     })
+})
+
+describe('when writing the cases of a capture run', () => {
+  const evidence = (sourceId: string) => ({ sourceId })
+  // After a run that recaptured only Places, Places sits at the end of fidelity.json.
+  const previousOrder = ['Button-0', 'SearchBar-0', 'TabsBar-0', 'PlaceCard-0']
+
+  it('should keep the order of the entries the run did not select', () => {
+    // The next run selects Button and Places: frozen entries come first in catalog order, captures after.
+    const run = {
+      'SearchBar-0': evidence('frozen'),
+      'TabsBar-0': evidence('frozen'),
+      'Button-0': evidence('new'),
+      'PlaceCard-0': evidence('new')
+    }
+    const unselected = (cases: Record<string, unknown>) =>
+      JSON.stringify(
+        Object.entries(cases).filter(([key]) => key === 'SearchBar-0' || key === 'TabsBar-0')
+      )
+
+    const ordered = orderedCases(run, previousOrder)
+
+    assert.deepEqual(Object.keys(ordered), previousOrder)
+    assert.equal(
+      unselected(ordered),
+      unselected(
+        Object.fromEntries(previousOrder.map((key) => [key, run[key as keyof typeof run]]))
+      )
+    )
+  })
+
+  it('should append cases new to this run in capture order, the same way every time', () => {
+    const run = {
+      'Tooltip-1': evidence('new'),
+      'Button-0': evidence('new'),
+      'Tooltip-0': evidence('new'),
+      'TabsBar-0': evidence('frozen')
+    }
+
+    const first = orderedCases(run, previousOrder)
+    const second = orderedCases(run, previousOrder)
+
+    assert.deepEqual(Object.keys(first), ['Button-0', 'TabsBar-0', 'Tooltip-1', 'Tooltip-0'])
+    assert.equal(JSON.stringify(first), JSON.stringify(second))
+  })
+
+  it('should keep capture order when there is no earlier evidence', () => {
+    const run = { 'Button-1': evidence('new'), 'Button-0': evidence('new') }
+
+    assert.deepEqual(Object.keys(orderedCases(run)), ['Button-1', 'Button-0'])
+  })
 })

@@ -1,4 +1,4 @@
-import { captureScope, preserveFrozenCases } from './capture-scope.mjs'
+import { captureScope, orderedCases, preserveFrozenCases } from './capture-scope.mjs'
 import process from 'node:process'
 import { Buffer } from 'node:buffer'
 import { setTimeout } from 'node:timers'
@@ -46,6 +46,13 @@ const scope = captureScope(
 let previous
 if (scope.frozen.length)
   previous = JSON.parse(await readFile(path.join(output, 'fidelity.json'), 'utf8'))
+const previousOrder = await readFile(path.join(output, 'fidelity.json'), 'utf8').then(
+  (text) => Object.keys(JSON.parse(text).cases ?? {}),
+  (error) => {
+    if (error.code === 'ENOENT') return []
+    throw error
+  }
+)
 const frozenCases = preserveFrozenCases(scope.frozen, previous)
 for (const evidence of Object.values(frozenCases))
   await readFile(path.join(root, 'public', evidence.image))
@@ -194,6 +201,7 @@ try {
         component.name + ': ' + component.variants.length + ' source comparisons captured'
       )
     }
+    report.cases = orderedCases(report.cases, previousOrder)
     await writeFile(path.join(staging, 'fidelity.json'), JSON.stringify(report, null, 2) + '\n')
   })
   console.log(
