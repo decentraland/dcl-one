@@ -88,7 +88,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn server_deadline_starts_only_after_admission() {
         let mut scene = SceneRequestBudget::for_scene(true);
         *scene.server_timeout.as_mut().unwrap() = Duration::from_millis(20);
@@ -102,7 +102,7 @@ mod tests {
         let mut next = Box::pin(scene.run(ready(())));
         assert!(poll!(&mut queued).is_pending());
         assert!(poll!(&mut next).is_pending());
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::advance(Duration::from_millis(50)).await;
         assert!(poll!(&mut queued).is_pending());
         assert!(!started.get());
         drop(last_slot);
