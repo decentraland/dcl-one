@@ -5,8 +5,8 @@ import ts from 'typescript'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { projectRoot } from '../../test/snapshot.js'
 import { loadConfig } from '../config.js'
-import type { ComponentSpec } from '../ir/components.js'
-import { buildComponentSpecs } from '../mappers/component-spec.js'
+import type { ComponentSpec, TextRole, ViewNode } from '../ir/components.js'
+import { buildComponentSpecs, withTextRoles } from '../mappers/component-spec.js'
 import { generateComponents } from './components.js'
 
 async function navbarSpec(): Promise<ComponentSpec> {
@@ -244,5 +244,130 @@ describe('when a JavaScript caller supplies suppressed text slots', () => {
       expect(suppressed).toContain(`'${slot.name}'`)
       expect(source).toContain(`${slot.name}?: never`)
     }
+  })
+})
+
+describe('when a component binds text roles', () => {
+  let source: string
+
+  // The fixture ids written onto the captured NavBar views, as a capture that records descendant ids would.
+  // The four menu tabs are links, so their roles declare the link prop names.
+  const HREFS: Record<string, string> = {
+    discoverLabel: 'discoverHref',
+    shopLabel: 'shopHref',
+    createLabel: 'createHref',
+    learnLabel: 'learnHref'
+  }
+
+  async function navbarWithRoles(hrefs: Record<string, string> = HREFS): Promise<ComponentSpec> {
+    const spec = await navbarSpec()
+    const { targets } = JSON.parse(
+      await readFile(path.join(projectRoot, 'test/fixtures/navbar-text-roles.json'), 'utf8')
+    ) as {
+      targets: { role: string; view: string; path: string; nodeId: string; namePath: string[] }[]
+    }
+    const roles: Record<string, TextRole> = {
+      notificationsLabel: { type: 'string', nodes: [] }
+    }
+    for (const target of targets) {
+      let node: ViewNode = spec.views.find((view) => view.key === target.view)!.root
+      for (const index of target.path.split('.').map(Number)) node = node.children![index]!
+      node.figmaId = target.nodeId
+      roles[target.role] ??=
+        target.role === 'notificationCount'
+          ? { type: 'count', label: 'notificationsLabel', nodes: [] }
+          : {
+              type: 'string',
+              nodes: [],
+              ...(hrefs[target.role] ? { href: hrefs[target.role] } : {})
+            }
+      roles[target.role]!.nodes.push({ nodeId: target.nodeId, namePath: target.namePath })
+    }
+    return withTextRoles(spec, roles)
+  }
+
+  beforeEach(async () => {
+    source = sourceFor(await navbarWithRoles())
+  })
+
+  it('should type each string role as an optional string prop', () => {
+    for (const name of [
+      'signInLabel',
+      'discoverLabel',
+      'shopLabel',
+      'createLabel',
+      'learnLabel',
+      'creditsBalance',
+      'manaBalance',
+      'polygonManaBalance'
+    ])
+      expect(source).toContain(`  ${name}?: string`)
+  })
+
+  it('should never emit a Figma node id', () => {
+    expect(source).not.toContain('90001:')
+    expect(source).not.toContain('figmaId')
+  })
+
+  it('should pass the role values and the count label to the runtime', () => {
+    expect(source).toMatch(/slots=\{\{ [^}]*signInLabel[^}]*notificationCount[^}]*\}\}/)
+    expect(source).toContain('counts={{ notificationCount: notificationsLabel }}')
+  })
+
+  it('should leave no positional text override once every text layer has a role', () => {
+    expect(source).not.toMatch(/^ {2}label\d*\?:/m)
+    expect(source).not.toContain('suppressed=')
+  })
+
+  it('should emit exactly the link prop names the roles declare', () => {
+    for (const href of ['discoverHref', 'shopHref', 'createHref', 'learnHref'])
+      expect(source).toContain(`  ${href}?: string`)
+    expect(source).not.toMatch(/labelHref|LabelHref/)
+  })
+
+  it('should fail generation when a declared href takes the name of a semantic handler', async () => {
+    const spec = await navbarWithRoles({ ...HREFS, shopLabel: 'onMenu' })
+    expect(() => sourceFor(spec)).toThrow('NavBar: generated prop onMenu is declared twice')
+  })
+
+  it('should fail generation when a role under a linked action declares no href', async () => {
+    const { shopLabel: _shop, ...withoutShop } = HREFS
+    void _shop
+    const spec = await navbarWithRoles(withoutShop)
+    expect(() => sourceFor(spec)).toThrow(
+      'Text role shopLabel sits under the linked action NavMenuTab: declare its href in textRoles'
+    )
+  })
+
+  it('should accept a count with its label, or neither', () => {
+    expect(
+      contractDiagnostics(
+        source,
+        [
+          'const none: NavBarProps = { signInLabel: "Entrar" };',
+          'const both: NavBarProps = { signedIn: true, notificationCount: 3, notificationsLabel: "3 notificaciones" };'
+        ].join('\n')
+      )
+    ).toEqual([])
+  })
+
+  it('should reject a count without its label and a count that is not a number', () => {
+    expect(
+      contractDiagnostics(
+        source,
+        [
+          '// @ts-expect-error a count needs its accessible label',
+          'const bare: NavBarProps = { signedIn: true, notificationCount: 3 };',
+          '// @ts-expect-error a count is a number',
+          'const text: NavBarProps = { signedIn: true, notificationCount: "3", notificationsLabel: "3" };',
+          '// @ts-expect-error a string role takes text, not a number',
+          'const label: NavBarProps = { signInLabel: 3 };'
+        ].join('\n')
+      )
+    ).toEqual([])
+  })
+
+  it('should pass the library lint once promoted', async () => {
+    expect(await lintAsPromoted('NavBar', source)).toEqual([])
   })
 })

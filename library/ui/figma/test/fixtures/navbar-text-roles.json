@@ -1,0 +1,814 @@
+{
+  "note": "Test-only NavBar text-role binding: the capture records no descendant text ids yet, so these ids are fixture values the test writes onto the captured views at each view key and path.",
+  "targets": [
+    {
+      "role": "signInLabel",
+      "view": "viewport:largeDesktop|balances:none|theme:dark",
+      "path": "1.0.0.0",
+      "nodeId": "90001:1",
+      "namePath": [
+        "viewport=large-desktop, signed-in=false, balances=none, theme=dark",
+        "Sign In / Profile",
+        "<Button>",
+        "Base",
+        "Button"
+      ]
+    },
+    {
+      "role": "discoverLabel",
+      "view": "viewport:largeDesktop|balances:none|theme:dark|signedIn",
+      "path": "0.0.1.0.0",
+      "nodeId": "90001:2",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=none, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "shopLabel",
+      "view": "viewport:largeDesktop|balances:none|theme:dark|signedIn",
+      "path": "0.0.1.1.0",
+      "nodeId": "90001:3",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=none, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "createLabel",
+      "view": "viewport:largeDesktop|balances:none|theme:dark|signedIn",
+      "path": "0.0.1.2.0",
+      "nodeId": "90001:4",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=none, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "learnLabel",
+      "view": "viewport:largeDesktop|balances:none|theme:dark|signedIn",
+      "path": "0.0.1.3.0",
+      "nodeId": "90001:5",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=none, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "notificationCount",
+      "view": "viewport:largeDesktop|balances:none|theme:dark|signedIn",
+      "path": "1.0.0.1.0",
+      "nodeId": "90001:6",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=none, theme=dark",
+        "Frame 1000001419",
+        "Frame 1000001448",
+        "NavNotificationsButton",
+        "Frame 1000001474",
+        "12"
+      ]
+    },
+    {
+      "role": "discoverLabel",
+      "view": "viewport:largeDesktop|balances:none|theme:light|signedIn",
+      "path": "0.0.1.0.0",
+      "nodeId": "90001:7",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=none, theme=light",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "shopLabel",
+      "view": "viewport:largeDesktop|balances:none|theme:light|signedIn",
+      "path": "0.0.1.1.0",
+      "nodeId": "90001:8",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=none, theme=light",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "createLabel",
+      "view": "viewport:largeDesktop|balances:none|theme:light|signedIn",
+      "path": "0.0.1.2.0",
+      "nodeId": "90001:9",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=none, theme=light",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "learnLabel",
+      "view": "viewport:largeDesktop|balances:none|theme:light|signedIn",
+      "path": "0.0.1.3.0",
+      "nodeId": "90001:10",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=none, theme=light",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "notificationCount",
+      "view": "viewport:largeDesktop|balances:none|theme:light|signedIn",
+      "path": "1.0.0.1.0",
+      "nodeId": "90001:11",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=none, theme=light",
+        "Frame 1000001419",
+        "Frame 1000001448",
+        "NavNotificationsButton",
+        "Frame 1000001474",
+        "12"
+      ]
+    },
+    {
+      "role": "signInLabel",
+      "view": "viewport:largeDesktop|balances:none|theme:light",
+      "path": "1.0.0.0",
+      "nodeId": "90001:12",
+      "namePath": [
+        "viewport=large-desktop, signed-in=false, balances=none, theme=light",
+        "Sign In / Profile",
+        "<Button>",
+        "Base",
+        "Button"
+      ]
+    },
+    {
+      "role": "discoverLabel",
+      "view": "viewport:largeDesktop|balances:creditsMana|theme:dark|signedIn",
+      "path": "0.0.1.0.0",
+      "nodeId": "90001:13",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=credits-mana, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "shopLabel",
+      "view": "viewport:largeDesktop|balances:creditsMana|theme:dark|signedIn",
+      "path": "0.0.1.1.0",
+      "nodeId": "90001:14",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=credits-mana, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "createLabel",
+      "view": "viewport:largeDesktop|balances:creditsMana|theme:dark|signedIn",
+      "path": "0.0.1.2.0",
+      "nodeId": "90001:15",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=credits-mana, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "learnLabel",
+      "view": "viewport:largeDesktop|balances:creditsMana|theme:dark|signedIn",
+      "path": "0.0.1.3.0",
+      "nodeId": "90001:16",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=credits-mana, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "creditsBalance",
+      "view": "viewport:largeDesktop|balances:creditsMana|theme:dark|signedIn",
+      "path": "1.0.0.0.1",
+      "nodeId": "90001:17",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=credits-mana, theme=dark",
+        "Frame 1000001419",
+        "Frame 1000001448",
+        "Frame 1000001478",
+        "Frame 1000001111",
+        "101.1"
+      ]
+    },
+    {
+      "role": "manaBalance",
+      "view": "viewport:largeDesktop|balances:creditsMana|theme:dark|signedIn",
+      "path": "1.0.0.2.0.1",
+      "nodeId": "90001:18",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=credits-mana, theme=dark",
+        "Frame 1000001419",
+        "Frame 1000001448",
+        "Frame 1000001478",
+        "Frame 1000001053",
+        "Frame 1000001111",
+        "101.1"
+      ]
+    },
+    {
+      "role": "polygonManaBalance",
+      "view": "viewport:largeDesktop|balances:creditsMana|theme:dark|signedIn",
+      "path": "1.0.0.2.1.1",
+      "nodeId": "90001:19",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=credits-mana, theme=dark",
+        "Frame 1000001419",
+        "Frame 1000001448",
+        "Frame 1000001478",
+        "Frame 1000001053",
+        "Frame 1000001110",
+        "101.1"
+      ]
+    },
+    {
+      "role": "notificationCount",
+      "view": "viewport:largeDesktop|balances:creditsMana|theme:dark|signedIn",
+      "path": "1.0.1.1.0",
+      "nodeId": "90001:20",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=credits-mana, theme=dark",
+        "Frame 1000001419",
+        "Frame 1000001448",
+        "NavNotificationsButton",
+        "Frame 1000001474",
+        "12"
+      ]
+    },
+    {
+      "role": "discoverLabel",
+      "view": "viewport:largeDesktop|balances:credits|theme:dark|signedIn",
+      "path": "0.0.1.0.0",
+      "nodeId": "90001:21",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=credits, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "shopLabel",
+      "view": "viewport:largeDesktop|balances:credits|theme:dark|signedIn",
+      "path": "0.0.1.1.0",
+      "nodeId": "90001:22",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=credits, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "createLabel",
+      "view": "viewport:largeDesktop|balances:credits|theme:dark|signedIn",
+      "path": "0.0.1.2.0",
+      "nodeId": "90001:23",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=credits, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "learnLabel",
+      "view": "viewport:largeDesktop|balances:credits|theme:dark|signedIn",
+      "path": "0.0.1.3.0",
+      "nodeId": "90001:24",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=credits, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "creditsBalance",
+      "view": "viewport:largeDesktop|balances:credits|theme:dark|signedIn",
+      "path": "1.0.0.1",
+      "nodeId": "90001:25",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=credits, theme=dark",
+        "Frame 1000001419",
+        "Frame 1000001448",
+        "Frame 1000001111",
+        "101.1"
+      ]
+    },
+    {
+      "role": "notificationCount",
+      "view": "viewport:largeDesktop|balances:credits|theme:dark|signedIn",
+      "path": "1.0.1.1.0",
+      "nodeId": "90001:26",
+      "namePath": [
+        "viewport=large-desktop, signed-in=true, balances=credits, theme=dark",
+        "Frame 1000001419",
+        "Frame 1000001448",
+        "NavNotificationsButton",
+        "Frame 1000001474",
+        "12"
+      ]
+    },
+    {
+      "role": "signInLabel",
+      "view": "viewport:mobile|balances:none|theme:dark",
+      "path": "1.0.0.0",
+      "nodeId": "90001:27",
+      "namePath": [
+        "viewport=mobile, signed-in=false, balances=none, theme=dark",
+        "Sign In / Profile",
+        "<Button>",
+        "Base",
+        "Button"
+      ]
+    },
+    {
+      "role": "signInLabel",
+      "view": "viewport:mobile|balances:none|theme:light",
+      "path": "1.0.0.0",
+      "nodeId": "90001:28",
+      "namePath": [
+        "viewport=mobile, signed-in=false, balances=none, theme=light",
+        "Sign In / Profile",
+        "<Button>",
+        "Base",
+        "Button"
+      ]
+    },
+    {
+      "role": "manaBalance",
+      "view": "viewport:mobile|balances:creditsMana|theme:dark|signedIn",
+      "path": "1.0.0.0.0.1",
+      "nodeId": "90001:29",
+      "namePath": [
+        "viewport=mobile, signed-in=true, balances=credits-mana, theme=dark",
+        "Frame 1000001419",
+        "Frame 1000001476",
+        "Frame 1000001477",
+        "Frame 1000001053",
+        "Frame 1000001111",
+        "101.1"
+      ]
+    },
+    {
+      "role": "polygonManaBalance",
+      "view": "viewport:mobile|balances:creditsMana|theme:dark|signedIn",
+      "path": "1.0.0.0.1.1",
+      "nodeId": "90001:30",
+      "namePath": [
+        "viewport=mobile, signed-in=true, balances=credits-mana, theme=dark",
+        "Frame 1000001419",
+        "Frame 1000001476",
+        "Frame 1000001477",
+        "Frame 1000001053",
+        "Frame 1000001110",
+        "101.1"
+      ]
+    },
+    {
+      "role": "creditsBalance",
+      "view": "viewport:mobile|balances:creditsMana|theme:dark|signedIn",
+      "path": "1.0.0.1.1",
+      "nodeId": "90001:31",
+      "namePath": [
+        "viewport=mobile, signed-in=true, balances=credits-mana, theme=dark",
+        "Frame 1000001419",
+        "Frame 1000001476",
+        "Frame 1000001477",
+        "CREDITS",
+        "30"
+      ]
+    },
+    {
+      "role": "creditsBalance",
+      "view": "viewport:mobile|balances:credits|theme:dark|signedIn",
+      "path": "1.0.0.1",
+      "nodeId": "90001:32",
+      "namePath": [
+        "viewport=mobile, signed-in=true, balances=credits, theme=dark",
+        "Frame 1000001419",
+        "Frame 1000001476",
+        "CREDITS",
+        "30"
+      ]
+    },
+    {
+      "role": "signInLabel",
+      "view": "viewport:desktop|balances:none|theme:dark",
+      "path": "1.0.0.0",
+      "nodeId": "90001:33",
+      "namePath": [
+        "viewport=desktop, signed-in=false, balances=none, theme=dark",
+        "Sign In / Profile",
+        "<Button>",
+        "Base",
+        "Button"
+      ]
+    },
+    {
+      "role": "discoverLabel",
+      "view": "viewport:desktop|balances:none|theme:dark|signedIn",
+      "path": "0.0.1.0.0",
+      "nodeId": "90001:34",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=none, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "shopLabel",
+      "view": "viewport:desktop|balances:none|theme:dark|signedIn",
+      "path": "0.0.1.1.0",
+      "nodeId": "90001:35",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=none, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "createLabel",
+      "view": "viewport:desktop|balances:none|theme:dark|signedIn",
+      "path": "0.0.1.2.0",
+      "nodeId": "90001:36",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=none, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "learnLabel",
+      "view": "viewport:desktop|balances:none|theme:dark|signedIn",
+      "path": "0.0.1.3.0",
+      "nodeId": "90001:37",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=none, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "notificationCount",
+      "view": "viewport:desktop|balances:none|theme:dark|signedIn",
+      "path": "1.0.0.1.0",
+      "nodeId": "90001:38",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=none, theme=dark",
+        "Frame 1000001419",
+        "Frame 1000001448",
+        "NavNotificationsButton",
+        "Frame 1000001474",
+        "12"
+      ]
+    },
+    {
+      "role": "discoverLabel",
+      "view": "viewport:desktop|balances:none|theme:light|signedIn",
+      "path": "0.0.1.0.0",
+      "nodeId": "90001:39",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=none, theme=light",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "shopLabel",
+      "view": "viewport:desktop|balances:none|theme:light|signedIn",
+      "path": "0.0.1.1.0",
+      "nodeId": "90001:40",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=none, theme=light",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "createLabel",
+      "view": "viewport:desktop|balances:none|theme:light|signedIn",
+      "path": "0.0.1.2.0",
+      "nodeId": "90001:41",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=none, theme=light",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "learnLabel",
+      "view": "viewport:desktop|balances:none|theme:light|signedIn",
+      "path": "0.0.1.3.0",
+      "nodeId": "90001:42",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=none, theme=light",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "notificationCount",
+      "view": "viewport:desktop|balances:none|theme:light|signedIn",
+      "path": "1.0.0.1.0",
+      "nodeId": "90001:43",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=none, theme=light",
+        "Frame 1000001419",
+        "Frame 1000001448",
+        "NavNotificationsButton",
+        "Frame 1000001474",
+        "12"
+      ]
+    },
+    {
+      "role": "signInLabel",
+      "view": "viewport:desktop|balances:none|theme:light",
+      "path": "1.0.0.0",
+      "nodeId": "90001:44",
+      "namePath": [
+        "viewport=desktop, signed-in=false, balances=none, theme=light",
+        "Sign In / Profile",
+        "<Button>",
+        "Base",
+        "Button"
+      ]
+    },
+    {
+      "role": "discoverLabel",
+      "view": "viewport:desktop|balances:creditsMana|theme:dark|signedIn",
+      "path": "0.0.1.0.0",
+      "nodeId": "90001:45",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=credits-mana, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "shopLabel",
+      "view": "viewport:desktop|balances:creditsMana|theme:dark|signedIn",
+      "path": "0.0.1.1.0",
+      "nodeId": "90001:46",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=credits-mana, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "createLabel",
+      "view": "viewport:desktop|balances:creditsMana|theme:dark|signedIn",
+      "path": "0.0.1.2.0",
+      "nodeId": "90001:47",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=credits-mana, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "learnLabel",
+      "view": "viewport:desktop|balances:creditsMana|theme:dark|signedIn",
+      "path": "0.0.1.3.0",
+      "nodeId": "90001:48",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=credits-mana, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "creditsBalance",
+      "view": "viewport:desktop|balances:creditsMana|theme:dark|signedIn",
+      "path": "1.0.0.0.1",
+      "nodeId": "90001:49",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=credits-mana, theme=dark",
+        "Frame 1000001419",
+        "Frame 1000001448",
+        "Frame 1000001478",
+        "Frame 1000001111",
+        "101.1"
+      ]
+    },
+    {
+      "role": "manaBalance",
+      "view": "viewport:desktop|balances:creditsMana|theme:dark|signedIn",
+      "path": "1.0.0.2.0.1",
+      "nodeId": "90001:50",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=credits-mana, theme=dark",
+        "Frame 1000001419",
+        "Frame 1000001448",
+        "Frame 1000001478",
+        "Frame 1000001053",
+        "Frame 1000001111",
+        "101.1"
+      ]
+    },
+    {
+      "role": "polygonManaBalance",
+      "view": "viewport:desktop|balances:creditsMana|theme:dark|signedIn",
+      "path": "1.0.0.2.1.1",
+      "nodeId": "90001:51",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=credits-mana, theme=dark",
+        "Frame 1000001419",
+        "Frame 1000001448",
+        "Frame 1000001478",
+        "Frame 1000001053",
+        "Frame 1000001110",
+        "101.1"
+      ]
+    },
+    {
+      "role": "notificationCount",
+      "view": "viewport:desktop|balances:creditsMana|theme:dark|signedIn",
+      "path": "1.0.1.1.0",
+      "nodeId": "90001:52",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=credits-mana, theme=dark",
+        "Frame 1000001419",
+        "Frame 1000001448",
+        "NavNotificationsButton",
+        "Frame 1000001474",
+        "12"
+      ]
+    },
+    {
+      "role": "discoverLabel",
+      "view": "viewport:desktop|balances:credits|theme:dark|signedIn",
+      "path": "0.0.1.0.0",
+      "nodeId": "90001:53",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=credits, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "shopLabel",
+      "view": "viewport:desktop|balances:credits|theme:dark|signedIn",
+      "path": "0.0.1.1.0",
+      "nodeId": "90001:54",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=credits, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "createLabel",
+      "view": "viewport:desktop|balances:credits|theme:dark|signedIn",
+      "path": "0.0.1.2.0",
+      "nodeId": "90001:55",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=credits, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "learnLabel",
+      "view": "viewport:desktop|balances:credits|theme:dark|signedIn",
+      "path": "0.0.1.3.0",
+      "nodeId": "90001:56",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=credits, theme=dark",
+        "Frame 1000001464",
+        "DCL Logo",
+        "Tabs",
+        "NavMenuTab",
+        "Marketplace"
+      ]
+    },
+    {
+      "role": "creditsBalance",
+      "view": "viewport:desktop|balances:credits|theme:dark|signedIn",
+      "path": "1.0.0.1",
+      "nodeId": "90001:57",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=credits, theme=dark",
+        "Frame 1000001419",
+        "Frame 1000001448",
+        "Frame 1000001111",
+        "101.1"
+      ]
+    },
+    {
+      "role": "notificationCount",
+      "view": "viewport:desktop|balances:credits|theme:dark|signedIn",
+      "path": "1.0.1.1.0",
+      "nodeId": "90001:58",
+      "namePath": [
+        "viewport=desktop, signed-in=true, balances=credits, theme=dark",
+        "Frame 1000001419",
+        "Frame 1000001448",
+        "NavNotificationsButton",
+        "Frame 1000001474",
+        "12"
+      ]
+    }
+  ]
+}

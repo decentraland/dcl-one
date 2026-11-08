@@ -105,7 +105,11 @@ function stateCss(
 
 // Props that opt-in semantics add to a component: link targets and activation handlers.
 type SemanticProps = { hrefs: Set<string>; handlers: Set<string> }
-type SemanticContext = { semantics: Record<string, Semantic>; props: SemanticProps }
+type SemanticContext = {
+  semantics: Record<string, Semantic>
+  props: SemanticProps
+  roles: Map<string, NonNullable<ComponentSpec['textRoles']>[number]>
+}
 
 function firstSlot(node: ViewNode): string | undefined {
   if (node.kind === 'text') return node.slot
@@ -120,6 +124,18 @@ function semanticProp(template: string, node: ViewNode): string {
   const slot = firstSlot(node)
   if (!slot) throw new Error(`Semantic prop ${template} needs a text slot inside ${node.name}`)
   return template.replace('{slot}', slot)
+}
+
+// A link around text bound to a role takes exactly the prop name the role declares, never one built from the role.
+function roleHref(node: ViewNode, context: SemanticContext): string | undefined {
+  const slot = firstSlot(node)
+  const role = slot ? context.roles.get(slot) : undefined
+  if (!role) return undefined
+  if (!role.href)
+    throw new Error(
+      `Text role ${role.name} sits under the linked action ${node.name}: declare its href in textRoles`
+    )
+  return role.href
 }
 
 const ROOT_SEMANTICS = '@root'
@@ -144,7 +160,7 @@ function emitSemantic(node: ViewNode, context: SemanticContext): string | undefi
   const resolved: Record<string, string | boolean> = { role: config.role }
   if (config.label) resolved.label = config.label
   if (config.href) {
-    resolved.href = semanticProp(config.href, node)
+    resolved.href = roleHref(node, context) ?? semanticProp(config.href, node)
     context.props.hrefs.add(resolved.href)
   }
   if (config.onActivate) {
@@ -294,8 +310,21 @@ function emitComponent(
   const booleans = spec.props.filter(
     (prop) => prop.kind === 'boolean' && !FLAG_PROPS.includes(prop.name)
   )
-  const slots = spec.slots.filter((slot) => spec.exposeTextSlots !== false || slot.kind !== 'text')
+  // Text roles are public typed props even when the positional text overrides are not.
+  const roles = new Map((spec.textRoles ?? []).map((role) => [role.name, role]))
+  const countRoles = (spec.textRoles ?? []).filter((role) => role.type === 'count')
+  const labelRoles = countRoles.map((role) => role.label!)
+  const slots = spec.slots.filter(
+    (slot) => spec.exposeTextSlots !== false || slot.kind !== 'text' || roles.has(slot.name)
+  )
   const omittedTextSlots = spec.slots.filter((slot) => !slots.includes(slot))
+  const reactNodeSlots = slots.filter((slot) => !roles.has(slot.name))
+  const countContract = countRoles
+    .map(
+      (role) =>
+        `({ ${role.name}?: undefined; ${role.label}?: string } | { ${role.name}: number; ${role.label}: string })`
+    )
+    .join(' & ')
   const contract = variantContract(spec)
 
   const refImports = [
@@ -314,7 +343,11 @@ function emitComponent(
 
   // Components without opt-in semantics emit exactly what they did before.
   const semantic: SemanticContext | undefined = spec.semantics
-    ? { semantics: spec.semantics, props: { hrefs: new Set(), handlers: new Set() } }
+    ? {
+        semantics: spec.semantics,
+        props: { hrefs: new Set(), handlers: new Set() },
+        roles: new Map((spec.textRoles ?? []).map((role) => [role.name, role]))
+      }
     : undefined
   const views = spec.views.map((view, index) => emitView(view, index, cssRules, semantic))
   const hrefProps = [...(semantic?.props.hrefs ?? [])].sort()
@@ -325,7 +358,12 @@ function emitComponent(
     ...spec.props
       .filter((prop) => !contract || FLAG_PROPS.includes(prop.name))
       .map((prop) => `  ${prop.name}?: ${propType(prop)}`),
-    ...slots.map((slot) => `  ${slot.name}?: ReactNode`),
+    ...slots
+      .map((slot) => {
+        const role = roles.get(slot.name)
+        return role?.type === 'count' ? null : `  ${slot.name}?: ${role ? 'string' : 'ReactNode'}`
+      })
+      .filter((line) => line !== null),
     ...omittedTextSlots.map((slot) => `  ${slot.name}?: never`),
     ...hrefProps.map((name) => `  ${name}?: string`),
     ...handlerProps.map((name) => `  ${name}?: () => void`),
@@ -337,10 +375,16 @@ function emitComponent(
         `${prop.name} = ${prop.kind === 'boolean' ? String(prop.default) : quote(String(prop.default))}`
     ),
     ...slots.map((slot) => slot.name),
+    ...labelRoles,
     ...semanticNames,
     'forceState',
     '...rest'
   ]
+  // Each binding of the parameter destructure is declared once: a role, a declared href and a semantic prop with the
+  // same name would otherwise generate invalid code.
+  const bindingNames = destructure.map((entry) => entry.replace(/^\.\.\./, '').split(' = ')[0]!)
+  const repeated = bindingNames.find((name, index) => bindingNames.indexOf(name) !== index)
+  if (repeated) throw new Error(`${spec.name}: generated prop ${repeated} is declared twice`)
   const selection = [
     `values: { ${enums.map((prop) => prop.name).join(', ')} }`,
     `booleans: { ${booleans.map((prop) => prop.name).join(', ')} }`,
@@ -359,7 +403,7 @@ function emitComponent(
   })
 
   const importLines = [
-    `import type { HTMLAttributes${slots.length > 0 ? ', ReactNode' : ''} } from 'react'`,
+    `import type { HTMLAttributes${reactNodeSlots.length > 0 ? ', ReactNode' : ''} } from 'react'`,
     `import styles from './${spec.name}.module.css'`,
     "import { FigmaView, registerComponent, type ForcedState, type ViewNode } from '../../../components/figma-module-runtime'",
     "import type { MatrixCase } from '../../../components/StateMatrix'",
@@ -376,7 +420,7 @@ function emitComponent(
     '',
     `export type ${spec.name}Props = {`,
     ...typeLines,
-    `}${contract ? ` & ${contract}` : ''} & Omit<HTMLAttributes<HTMLElement>, 'children'>`,
+    `}${contract ? ` & ${contract}` : ''}${countContract ? ` & ${countContract}` : ''} & Omit<HTMLAttributes<HTMLElement>, 'children'>`,
     '',
     `export const ${varName}Views: Record<string, ViewNode> = {`,
     views.join(',\n'),
@@ -404,6 +448,9 @@ function emitComponent(
     `      ${selection}`,
     '    }}',
     `    slots={${slotObject}}`,
+    ...(countRoles.length
+      ? [`    counts={{ ${countRoles.map((role) => `${role.name}: ${role.label}`).join(', ')} }}`]
+      : []),
     ...(semanticNames.length ? [`    semanticProps={{ ${semanticNames.join(', ')} }}`] : []),
     '    forceState={forceState}',
     ...(disabled ? ['    disabled={disabled}'] : []),

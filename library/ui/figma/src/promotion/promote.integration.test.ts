@@ -225,6 +225,40 @@ describe('promoteReviewed over a hand-written component', () => {
     }, 120_000)
   })
 
+  describe('when a text role name is not a valid binding', () => {
+    it('should fail the sync and leave the generated Review output untouched', async () => {
+      const { root } = await library(['TitleBar'])
+      const configFile = path.join(root, 'figma/figma.config.json')
+      const config = JSON.parse(await readFile(configFile, 'utf8'))
+      config.components = {
+        ...config.components,
+        TitleBar: {
+          ...config.components?.TitleBar,
+          textRoles: { class: { type: 'string', nodes: [{ nodeId: '90001:1', namePath: ['x'] }] } }
+        }
+      }
+      await writeFile(configFile, JSON.stringify(config, null, 2))
+      const generated = path.join(root, 'figma/review/src/generated')
+      const state = async () =>
+        Object.fromEntries(
+          await Promise.all(
+            (await files(generated)).sort().map(async (file) => [
+              file,
+              createHash('sha256')
+                .update(await readFile(path.join(generated, file)))
+                .digest('hex')
+            ])
+          )
+        )
+      const before = await state()
+
+      await expect(
+        runSync(await createApp(path.join(root, 'figma')), { source: 'snapshot', developer: true })
+      ).rejects.toThrow('TitleBar text roles: class is not a valid prop name')
+      expect(await state()).toEqual(before)
+    }, 120_000)
+  })
+
   describe('when a hand-written component has a synced name but is not selected', () => {
     it('should keep it and its exports while promoting the selected component', async () => {
       const { root, app } = await library(['TitleBar'], 'TabsBar')

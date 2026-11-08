@@ -3,11 +3,12 @@ import { expandVariants } from '../capture/expand-variants.js'
 import type { FigmaConfig } from '../config.js'
 import { TokenIndex } from '../generators/tokens.js'
 import { splitWords } from './variants.js'
-import type { ComponentSpec, SlotSpec, ViewNode, ViewSpec } from '../ir/components.js'
+import type { ComponentSpec, SlotSpec, TextRole, ViewNode, ViewSpec } from '../ir/components.js'
 import type { RawComponent, RawComponentPage } from '../ir/raw-components.js'
 import type { TextStyle, TokenCollection } from '../ir/schemas.js'
 import { ColorResolver } from './colors.js'
 import { stateMotion, variantLoops } from './motion.js'
+import { applyTextRoles } from './text-roles.js'
 import { mapVariants, viewKey, type MappedVariant, type VariantMapping } from './variants.js'
 import {
   buildView,
@@ -304,6 +305,10 @@ function buildComponentSpecsWithCollisions(input: SpecInput): {
     const spec = buildSpec(entry, env)
     const exposeTextSlots = input.config.components[entry.raw.name]?.exposeTextSlots
     if (exposeTextSlots !== undefined) spec.exposeTextSlots = exposeTextSlots
+    const textRoles = input.config.components[entry.raw.name]?.textRoles
+    if (textRoles) withTextRoles(spec, textRoles)
+    // Node ids only bind roles: they never reach the spec, its hash, generated code or comparisons.
+    spec.views.forEach((view) => dropFigmaIds(view.root))
     const semantics = input.config.components[entry.raw.name]?.semantics
     if (!semantics) return spec
     const names = new Set<string>()
@@ -323,9 +328,21 @@ function buildComponentSpecsWithCollisions(input: SpecInput): {
   return { specs, collisions }
 }
 
+function dropFigmaIds(node: ViewNode): void {
+  delete node.figmaId
+  node.children?.forEach(dropFigmaIds)
+}
+
+// Binds the configured text roles and recollects the slots, since bound nodes now carry the role as their slot.
+function withTextRoles(spec: ComponentSpec, roles: Record<string, TextRole>): ComponentSpec {
+  spec.textRoles = applyTextRoles(spec, roles)
+  spec.slots = collectSlots(spec.views)
+  return spec
+}
+
 function buildComponentSpecs(input: SpecInput): ComponentSpec[] {
   return buildComponentSpecsWithCollisions(input).specs
 }
 
-export { buildComponentSpecs, buildComponentSpecsWithCollisions, collisionReason }
+export { buildComponentSpecs, buildComponentSpecsWithCollisions, collisionReason, withTextRoles }
 export type { ComponentPageInput, NameCollision, SpecInput }

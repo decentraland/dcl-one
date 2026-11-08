@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
-import { semanticSchema } from './ir/components.js'
+import { semanticSchema, textRoleSchema } from './ir/components.js'
 
 const pageSchema = z.object({
   id: z.string().min(1).nullable().optional(),
@@ -16,7 +16,8 @@ const componentOverrideSchema = z.object({
   propNames: z.record(z.string(), z.string()).optional(),
   skipOptions: z.array(z.string()).optional(),
   exposeTextSlots: z.boolean().optional(),
-  semantics: z.record(z.string(), semanticSchema).optional()
+  semantics: z.record(z.string(), semanticSchema).optional(),
+  textRoles: z.record(z.string(), textRoleSchema).optional()
 })
 
 const contractSchema = z.object({

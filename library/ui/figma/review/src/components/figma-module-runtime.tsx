@@ -69,7 +69,8 @@ function renderSemantic(
   semantic: Semantic,
   { key, ...attributes }: { key: string; className: string; 'data-n': string },
   children: ReactNode,
-  props: SemanticProps
+  props: SemanticProps,
+  label = semantic.label
 ): ReactNode {
   let element: ReactNode
   if (semantic.role === 'navigation')
@@ -91,7 +92,7 @@ function renderSemantic(
     const action = {
       ...attributes,
       className: `${attributes.className} ${styles.action} ${styles.semanticAction}`,
-      'aria-label': semantic.label
+      'aria-label': label
     }
     if (typeof href === 'string')
       element = (
@@ -116,11 +117,21 @@ function renderSemantic(
   )
 }
 
+// The consumer's label for a count shown inside this node, which then names the node's action.
+function countLabel(node: ViewNode, countLabels: Record<string, string>): string | undefined {
+  if (node.slot && countLabels[node.slot]) return countLabels[node.slot]
+  for (const child of node.children ?? []) {
+    const label = countLabel(child, countLabels)
+    if (label) return label
+  }
+}
+
 function renderNode(
   node: ViewNode,
   slots: Record<string, ReactNode>,
   interaction: React.ContextType<typeof FigmaInteractions>,
-  semanticProps: SemanticProps = {}
+  semanticProps: SemanticProps = {},
+  countLabels: Record<string, string> = {}
 ): ReactNode {
   const common = {
     key: node.path || 'root',
@@ -140,13 +151,15 @@ function renderNode(
     )
     return (
       <div {...common}>
-        {leading?.map((child) => renderNode(child, slots, interaction, semanticProps))}
+        {leading?.map((child) => renderNode(child, slots, interaction, semanticProps, countLabels))}
         <span key="native-field" className={styles.fieldControl}>
           {cloneElement(interaction.field.control, {
             className: `${text?.className ?? ''} ${interaction.field.control.props.className ?? ''}`
           })}
         </span>
-        {trailing?.map((child) => renderNode(child, slots, interaction, semanticProps))}
+        {trailing?.map((child) =>
+          renderNode(child, slots, interaction, semanticProps, countLabels)
+        )}
       </div>
     )
   }
@@ -168,15 +181,20 @@ function renderNode(
         aria-pressed={action.pressed}
         onClick={action.onActivate}
       >
-        {node.children?.map((child) => renderNode(child, slots, null, semanticProps))}
+        {node.children?.map((child) => renderNode(child, slots, null, semanticProps, countLabels))}
       </button>
     )
   if (node.semantic && node.kind === 'box')
     return renderSemantic(
       node.semantic,
       common,
-      node.children?.map((child) => renderNode(child, slots, interaction, semanticProps)),
-      semanticProps
+      node.children?.map((child) =>
+        renderNode(child, slots, interaction, semanticProps, countLabels)
+      ),
+      semanticProps,
+      node.semantic.role === 'action'
+        ? (countLabel(node, countLabels) ?? node.semantic.label)
+        : undefined
     )
   const override = node.slot ? slots[node.slot] : undefined
   switch (node.kind) {
@@ -213,7 +231,9 @@ function renderNode(
     default:
       return (
         <div {...common} role={interaction?.tabList === node.name ? 'tablist' : undefined}>
-          {node.children?.map((child) => renderNode(child, slots, interaction, semanticProps))}
+          {node.children?.map((child) =>
+            renderNode(child, slots, interaction, semanticProps, countLabels)
+          )}
         </div>
       )
   }
@@ -223,6 +243,28 @@ type Attributes = Omit<HTMLAttributes<HTMLElement>, 'children'>
 
 // Everything except `attributes` comes from the generated component. The caller's own props arrive only through
 // `attributes`, so no prop a caller passes can replace the generated configuration.
+// A count must be a non-negative integer and comes with its label; the label replaces the action's accessible name,
+// so it has to say the count itself (for example "12 notifications").
+function resolveCounts(
+  slots: Record<string, ReactNode>,
+  counts: Record<string, string | undefined>,
+  component = 'A generated component'
+): Record<string, string> {
+  const labels: Record<string, string> = {}
+  for (const [role, label] of Object.entries(counts)) {
+    const value = slots[role]
+    if (value === undefined) continue
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 0)
+      throw new Error(
+        `${component}: ${role} must be a non-negative integer, got ${JSON.stringify(value)}`
+      )
+    if (typeof label !== 'string' || !label.trim())
+      throw new Error(`${component}: ${role} needs a non-empty accessible label`)
+    labels[role] = label
+  }
+  return labels
+}
+
 type FigmaViewProps = {
   as?: 'button' | 'div'
   views: Record<string, ViewNode>
@@ -234,6 +276,8 @@ type FigmaViewProps = {
   semanticProps?: SemanticProps
   // The component's name, for the error an uncaptured variant selection raises.
   component?: string
+  // Count text roles and the label each takes (the consumer's accessible text, which carries the count).
+  counts?: Record<string, string | undefined>
   // The caller's remaining props, forwarded to the root element.
   attributes?: Attributes
   // Props the component's type forbids (text overrides it does not expose). An untyped caller may still pass them
@@ -250,6 +294,7 @@ function FigmaView({
   disabled,
   semanticProps = {},
   component,
+  counts = {},
   attributes = {},
   suppressed = []
 }: FigmaViewProps) {
@@ -260,6 +305,7 @@ function FigmaView({
     Object.entries(attributes).filter(([name]) => !suppressed.includes(name))
   ) as Attributes
   const view = pickView(views, select, component)
+  const countLabels = resolveCounts(slots, counts, component)
   const disclosure = interaction?.disclosure
   useEffect(() => {
     if (!disclosure?.open) return
@@ -307,11 +353,11 @@ function FigmaView({
         >
           {view.children
             ?.slice(0, disclosure.headerCount)
-            .map((child) => renderNode(child, slots, null, semanticProps))}
+            .map((child) => renderNode(child, slots, null, semanticProps, countLabels))}
         </button>
         {view.children
           ?.slice(disclosure.headerCount)
-          .map((child) => renderNode(child, slots, interaction, semanticProps))}
+          .map((child) => renderNode(child, slots, interaction, semanticProps, countLabels))}
       </div>
     )
   // A root navigation landmark replaces the default div; button roots keep their element.
@@ -327,7 +373,9 @@ function FigmaView({
         ? { type: 'button', disabled }
         : { 'aria-disabled': disabled || undefined })}
     >
-      {view.children?.map((child) => renderNode(child, slots, interaction, semanticProps))}
+      {view.children?.map((child) =>
+        renderNode(child, slots, interaction, semanticProps, countLabels)
+      )}
     </Root>
   )
 }

@@ -2,6 +2,7 @@ import { cleanup, render } from '@testing-library/react'
 import type { ComponentType, ReactElement } from 'react'
 import { renderToString } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { FigmaView, type ViewNode } from '../src/components/figma-module-runtime'
 import { pickView } from '../src/components/figma-view-state'
 import { Button } from '../src/generated/components/buttons/Button'
 import { NavBar, navBarCases } from '../src/generated/components/nav-bar/NavBar'
@@ -142,5 +143,89 @@ describe('pickView', () => {
 
   it('should throw for a component with no views', () => {
     expect(() => pickView({}, select('md'), 'Chip')).toThrow('Chip has no captured view')
+  })
+})
+
+describe('text roles in the runtime', () => {
+  const bell: ViewNode = {
+    kind: 'box',
+    path: '',
+    name: 'root',
+    className: '',
+    children: [
+      {
+        kind: 'box',
+        path: '0',
+        name: 'Bell',
+        className: '',
+        semantic: { role: 'action', label: 'Notifications', onActivate: 'onNotifications' },
+        children: [
+          {
+            kind: 'text',
+            path: '0.0',
+            name: '12',
+            className: '',
+            text: '12',
+            slot: 'notificationCount'
+          }
+        ]
+      },
+      { kind: 'text', path: '1', name: 'Sign', className: '', text: 'Sign In', slot: 'signInLabel' }
+    ]
+  }
+  const view = (slots: Record<string, unknown>, label?: unknown) => (
+    <FigmaView
+      views={{ default: bell }}
+      component="Bell"
+      select={{ values: {}, booleans: {}, flags: {} }}
+      slots={slots as Record<string, never>}
+      counts={{ notificationCount: label as string | undefined }}
+      semanticProps={{ onNotifications: () => undefined }}
+    />
+  )
+
+  describe('when a count and its label are given', () => {
+    it('should show the count and name the action with the label', () => {
+      const { container } = render(
+        view({ notificationCount: 3, signInLabel: 'Entrar' }, '3 notificaciones')
+      )
+      const button = container.querySelector('button')!
+      expect(button.getAttribute('aria-label')).toBe('3 notificaciones')
+      expect(button.textContent).toBe('3')
+      expect(container.textContent).toContain('Entrar')
+    })
+
+    it('should accept zero', () => {
+      const { container } = render(view({ notificationCount: 0 }, 'No notifications'))
+      expect(container.querySelector('button')!.getAttribute('aria-label')).toBe('No notifications')
+    })
+  })
+
+  describe('when no count is given', () => {
+    it('should keep the captured text and the configured accessible name', () => {
+      const { container } = render(view({}, 'ignored'))
+      const button = container.querySelector('button')!
+      expect(button.getAttribute('aria-label')).toBe('Notifications')
+      expect(button.textContent).toBe('12')
+    })
+  })
+
+  describe('when an untyped caller passes an invalid count', () => {
+    it.each([[-1], [1.5], ['3'], [Number.NaN]])(
+      'should throw for %s, on the client and the server',
+      (count) => {
+        const message = `Bell: notificationCount must be a non-negative integer, got ${JSON.stringify(count)}`
+        expect(String(renderError(view({ notificationCount: count }, 'label')))).toContain(message)
+        expect(() => renderToString(view({ notificationCount: count }, 'label'))).toThrow(message)
+      }
+    )
+  })
+
+  describe('when a count comes without a usable label', () => {
+    it.each([[undefined], [''], ['  ']])('should throw for %j', (label) => {
+      expect(String(renderError(view({ notificationCount: 3 }, label)))).toContain(
+        'Bell: notificationCount needs a non-empty accessible label'
+      )
+    })
   })
 })

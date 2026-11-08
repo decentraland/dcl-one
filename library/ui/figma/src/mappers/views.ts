@@ -756,7 +756,20 @@ function capturedLines(node: RawNode, lineHeight: number): number | 'ambiguous' 
   return 'ambiguous'
 }
 
+// The only place that reads the raw node id: a rename in the capture format changes this line alone.
 function buildNode(
+  node: RawNode,
+  path: number[],
+  parent: Parent,
+  env: ViewEnv,
+  state: BuildState
+): ViewNode | undefined {
+  const built = buildViewNode(node, path, parent, env, state)
+  if (built && node.id) built.figmaId = node.id
+  return built
+}
+
+function buildViewNode(
   node: RawNode,
   path: number[],
   parent: Parent,
