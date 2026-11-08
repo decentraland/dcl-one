@@ -40,6 +40,7 @@ mod audio_decoder;
 mod ffutil;
 mod playback;
 mod player;
+pub mod trust;
 mod video_decoder;
 
 // Per-platform sibling modules: same names, same cross-platform-consumed
@@ -503,10 +504,13 @@ pub extern "C" fn uuav_set_log_level(level: c_int) {
 /// `ID3D11Texture2D*` on Windows) the decode device is derived from; on
 /// Linux nothing is derived from it and null is accepted.
 ///
-/// `protocol_whitelist` is a NUL-terminated, comma-separated FFmpeg protocol
-/// list; init fails if it is null or empty. Recommended baseline is
-/// `https,http,tls,tcp,crypto,data,udp,rtp,rtcp,rtsp`, adding `file` only for
-/// editor/local playback.
+/// `protocol_whitelist` is a NUL-terminated, comma-separated protocol list;
+/// init fails if it is null or empty. `https` and `http` are served by the
+/// runtime's own client (TLS verified against the OS roots plus Mozilla's
+/// bundle, HLS AES-128 segments decrypted in-process); the rest are FFmpeg
+/// protocols: `tcp,udp,rtp` for RTSP, `data` for inline media, `file` only
+/// for editor/local playback. Names FFmpeg does not know are ignored, so
+/// `https,http,tcp,udp,rtp,data` is the recommended baseline.
 ///
 /// `warning_callback` and `log_callback` receive FFmpeg's own diagnostics
 /// (already formatted, one line per call); `log_level` is the initial

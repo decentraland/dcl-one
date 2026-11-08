@@ -1,0 +1,37 @@
+--- a/libavformat/hls.c
++++ b/libavformat/hls.c
+@@ -679,6 +679,16 @@
+ #endif
+ }
+ 
++/* https is served by the embedding's own client through io_open, so no
++ * https protocol is registered; name it from the prefix. */
++static const char *uuav_protocol_name(const char *url)
++{
++    const char *name = avio_find_protocol_name(url);
++    if (!name && av_strstart(url, "https:", NULL))
++        name = "https";
++    return name;
++}
++
+ static int open_url(AVFormatContext *s, AVIOContext **pb, const char *url,
+                     AVDictionary **opts, AVDictionary *opts2, int *is_http_out)
+ {
+@@ -690,14 +700,14 @@
+ 
+     if (av_strstart(url, "crypto", NULL)) {
+         if (url[6] == '+' || url[6] == ':')
+-            proto_name = avio_find_protocol_name(url + 7);
++            proto_name = uuav_protocol_name(url + 7);
+     } else if (av_strstart(url, "data", NULL)) {
+         if (url[4] == '+' || url[4] == ':')
+-            proto_name = avio_find_protocol_name(url + 5);
++            proto_name = uuav_protocol_name(url + 5);
+     }
+ 
+     if (!proto_name)
+-        proto_name = avio_find_protocol_name(url);
++        proto_name = uuav_protocol_name(url);
+ 
+     if (!proto_name)
+         return AVERROR_INVALIDDATA;

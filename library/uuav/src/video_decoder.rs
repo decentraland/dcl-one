@@ -18,9 +18,7 @@
 use anyhow::{Context, Result, anyhow, ensure};
 use ffmpeg_sys_next as ff;
 use std::ffi::CStr;
-use std::os::raw::c_int;
-#[cfg(not(target_os = "linux"))]
-use std::os::raw::c_void;
+use std::os::raw::{c_int, c_void};
 use std::ptr;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -263,8 +261,7 @@ impl VideoDecoder {
     }
 
     fn open_hardware(stream: Stream, hw: &HwDeviceContext) -> Result<Self> {
-        let codec = stream.find_decoder().context("video stream")?;
-        ensure_hw_support(codec)?;
+        let codec = find_hw_decoder(stream.codec_id())?;
         let mut ctx = OwnedDecoder::new(codec)?;
 
         unsafe {
@@ -439,10 +436,36 @@ impl VideoDecoder {
     }
 }
 
-/// Rejects codecs without a matching hwaccel. Software-only decoders never
-/// invoke `get_format`, so without this probe the rejection would only
-/// happen after a software frame was already decoded.
-fn ensure_hw_support(codec: *const ff::AVCodec) -> Result<()> {
+/// The decoder for `id` whose hwaccel matches the platform device. The
+/// registry's first decoder for a codec can be an external software
+/// library (libdav1d for AV1) while the hwaccel hooks sit on the native
+/// one, so the choice goes by configuration, not by name. Software-only
+/// decoders never invoke `get_format`, so without this probe a missing
+/// hwaccel would only surface after a software frame was decoded.
+fn find_hw_decoder(id: ff::AVCodecID) -> Result<*const ff::AVCodec> {
+    let mut opaque: *mut c_void = ptr::null_mut();
+    loop {
+        let codec = unsafe { ff::av_codec_iterate(&mut opaque) };
+        if codec.is_null() {
+            break;
+        }
+        if unsafe { (*codec).id } == id
+            && unsafe { ff::av_codec_is_decoder(codec) } != 0
+            && has_hw_config(codec)
+        {
+            return Ok(codec);
+        }
+    }
+
+    let name = unsafe { CStr::from_ptr(ff::avcodec_get_name(id)) };
+    Err(anyhow!(
+        "codec {} has no {} hardware decoder",
+        name.to_string_lossy(),
+        hw::NAME
+    ))
+}
+
+fn has_hw_config(codec: *const ff::AVCodec) -> bool {
     for index in 0.. {
         let config = unsafe { ff::avcodec_get_hw_config(codec, index) };
         if config.is_null() {
@@ -452,16 +475,10 @@ fn ensure_hw_support(codec: *const ff::AVCodec) -> Result<()> {
         let by_device_ctx =
             config.methods & ff::AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX as c_int != 0;
         if by_device_ctx && config.device_type == hw::DEVICE_TYPE && config.pix_fmt == hw::PIX_FMT {
-            return Ok(());
+            return true;
         }
     }
-
-    let name = unsafe { CStr::from_ptr(ff::avcodec_get_name((*codec).id)) };
-    Err(anyhow!(
-        "codec {} has no {} hardware decoder",
-        name.to_string_lossy(),
-        hw::NAME
-    ))
+    false
 }
 
 /// Rejects everything but the hardware pixel format: returning NONE makes
@@ -482,4 +499,33 @@ unsafe extern "C" fn require_hw_format(
         }
     }
     ff::AVPixelFormat::AV_PIX_FMT_NONE
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn name(codec: *const ff::AVCodec) -> String {
+        unsafe { CStr::from_ptr((*codec).name) }
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[test]
+    fn hardware_lookup_goes_by_hwaccel_not_by_registry_order() -> Result<()> {
+        // AV1: libdav1d decodes in software and comes first in the registry;
+        // the hwaccel hooks sit on the native decoder
+        let software = unsafe { ff::avcodec_find_decoder(ff::AVCodecID::AV_CODEC_ID_AV1) };
+        ensure!(!software.is_null(), "no AV1 decoder");
+        assert_eq!(name(software), "libdav1d");
+        if let Ok(hardware) = find_hw_decoder(ff::AVCodecID::AV_CODEC_ID_AV1) {
+            assert_eq!(name(hardware), "av1");
+        }
+        assert_eq!(
+            name(find_hw_decoder(ff::AVCodecID::AV_CODEC_ID_H264)?),
+            "h264"
+        );
+        assert!(find_hw_decoder(ff::AVCodecID::AV_CODEC_ID_THEORA).is_err());
+        Ok(())
+    }
 }

@@ -7,33 +7,65 @@ let
   uuav = root + /library/uuav;
   manifest = builtins.fromTOML (builtins.readFile (uuav + /Cargo.toml));
   toolchain = (builtins.fromTOML (builtins.readFile (uuav + /rust-toolchain.toml))).toolchain;
-  windowsFfmpeg = builtins.fromJSON (builtins.readFile (root + /tooling/uuav/ffmpeg-windows.json));
   version = manifest.package.version;
 
   ffmpegSrc = pkgs.fetchFromGitHub {
     owner = "FFmpeg";
     repo = "FFmpeg";
-    rev = "9047fa1b084f76b1b4d065af2d743df1b40dfb56";
-    hash = "sha256-FdKhhCveEo5UodEoyUh3aBHABv3OT2VXmwBXE1ce3p0=";
+    rev = "946fcce07b6dcd0331c8cc609192aeff5e1924f8";
+    hash = "sha256-/c6cVfMSF6JJxCuJs58bxBlmBXDJ+jbnC4pELB97Qb0=";
   };
-  mbedtls = pkgs.mbedtls.overrideAttrs (old: {
-    cmakeFlags = old.cmakeFlags ++ [
-      "-DUSE_SHARED_MBEDTLS_LIBRARY=OFF"
-      "-DUSE_STATIC_MBEDTLS_LIBRARY=ON"
-      "-DENABLE_PROGRAMS=OFF"
-      "-DENABLE_TESTING=OFF"
-    ];
-    doCheck = false;
-    postConfigure = "";
-    postPatch = (old.postPatch or "") + ''
-      perl scripts/config.pl set MBEDTLS_THREADING_C
-      perl scripts/config.pl set MBEDTLS_THREADING_PTHREAD
-    '';
-  });
-  libxml2 = (pkgs.libxml2.override { enableShared = false; }).overrideAttrs { doCheck = false; };
+  ffmpegVersion = "9.0.2";
+  ffmpegPatches = [ ./uuav-ffmpeg-hls-https.patch ];
   libva = pkgs.libva-minimal;
-  runtimeLibraries = [ "avcodec" "avdevice" "avfilter" "avformat" "avutil" "swresample" "swscale" ]
+  staticDav1d = dav1d: (dav1d.override { withTools = false; withExamples = false; useVulkan = false; })
+    .overrideAttrs (old: { mesonFlags = (old.mesonFlags or [ ]) ++ [ "-Ddefault_library=static" ]; });
+  dav1d = staticDav1d pkgs.dav1d;
+  runtimeLibraries = [ "avcodec" "avformat" "avutil" "swresample" "swscale" ]
     ++ lib.optionals isLinux [ "va" "va-drm" ];
+  join = lib.concatStringsSep ",";
+  videoDecoders = [ "h264" "hevc" "vp8" "vp9" "av1" "libdav1d" "mpeg4" "mpeg2video" "mjpeg" "png" "theora" ];
+  audioDecoders = [ "aac" "aac_latm" "mp3" "mp3float" "opus" "vorbis" "flac" "ac3" "eac3"
+    "pcm_s16le" "pcm_s16be" "pcm_s24le" "pcm_f32le" "pcm_alaw" "pcm_mulaw" "pcm_u8" ];
+  demuxers = [ "mov" "matroska" "hls" "mpegts" "mpegps" "flv" "ogg" "wav" "mp3" "aac" "flac" "ac3" "image2" "rtsp" "sdp" ];
+  parsers = [ "h264" "hevc" "vp8" "vp9" "av1" "mpeg4video" "mpegvideo" "mjpeg" "png"
+    "aac" "aac_latm" "mpegaudio" "opus" "vorbis" "flac" "ac3" ];
+  protocols = [ "tcp" "udp" "rtp" "file" "data" ];
+  amxHeaderGuards = [
+    "__AMXINTRIN_H" "__AMX_FP16INTRIN_H" "__AMX_COMPLEXINTRIN_H" "__AMXFP8INTRIN_H"
+    "__AMX_TRANSPOSEINTRIN_H" "__AMXMOVRSINTRIN_H" "__AMX_MOVRS_TRANSPOSEINTRIN_H"
+    "__AMX_AVX512INTRIN_H" "__AMX_TF32INTRIN_H" "__AMX_TF32TRANSPOSEINTRIN_H"
+    "__AMX_BF16TRANSPOSEINTRIN_H" "__AMX_FP16TRANSPOSEINTRIN_H" "__AMX_COMPLEXTRANSPOSEINTRIN_H" ];
+  bindgenSkipsAmx = lib.concatMapStringsSep " " (guard: "-D${guard}") amxHeaderGuards;
+  bsfs = [ "extract_extradata" "h264_mp4toannexb" "hevc_mp4toannexb" "aac_adtstoasc"
+    "vp9_superframe_split" "av1_frame_split" "mpeg4_unpack_bframes" ];
+  hwaccels = {
+    vaapi = [ "h264" "hevc" "vp8" "vp9" "av1" "mpeg2" "mpeg4" "mjpeg" ];
+    videotoolbox = [ "h264" "hevc" "vp9" "av1" "mpeg2" "mpeg4" ];
+    d3d11va = [ "h264" "hevc" "vp9" "av1" "mpeg2" ];
+    d3d11va2 = [ "h264" "hevc" "vp9" "av1" "mpeg2" ];
+  };
+  componentFlags = apis: [
+    "--disable-everything"
+    "--disable-avdevice"
+    "--disable-avfilter"
+    "--enable-decoder=${join (videoDecoders ++ audioDecoders)}"
+    "--enable-demuxer=${join demuxers}"
+    "--enable-parser=${join parsers}"
+    "--enable-protocol=${join protocols}"
+    "--enable-bsf=${join bsfs}"
+    "--enable-hwaccel=${join (lib.concatMap (api: map (codec: "${codec}_${api}") hwaccels.${api}) apis)}"
+  ];
+  commonFlags = [
+    "--disable-autodetect"
+    "--disable-doc"
+    "--disable-programs"
+    "--disable-static"
+    "--enable-shared"
+    "--enable-zlib"
+    "--enable-libdav1d"
+    "--pkg-config-flags=--static"
+  ];
   systemIconv = ''
     install_name_tool -change ${lib.getLib pkgs.libiconv}/lib/libiconv.2.dylib /usr/lib/libiconv.2.dylib "$file"
     sign "$file"
@@ -47,31 +79,23 @@ let
 
   ffmpeg = stdenv.mkDerivation {
     pname = "uuav-ffmpeg";
-    version = "8.1";
+    version = ffmpegVersion;
     src = ffmpegSrc;
+    patches = ffmpegPatches;
     nativeBuildInputs = [ pkgs.nasm pkgs.pkg-config ] ++ signHook;
-    buildInputs = [ pkgs.zlib libxml2 mbedtls ] ++ lib.optionals isLinux [ pkgs.libdrm libva ];
+    buildInputs = [ pkgs.zlib dav1d ] ++ lib.optionals isLinux [ pkgs.libdrm libva ];
     configurePlatforms = [ ];
     configureFlags = [
       "--cc=${stdenv.cc.targetPrefix}cc"
-      "--disable-autodetect"
-      "--disable-doc"
-      "--disable-programs"
-      "--disable-static"
-      "--enable-shared"
       "--enable-pthreads"
-      "--enable-zlib"
-      "--enable-libxml2"
-      "--enable-mbedtls"
-      "--enable-version3"
-      "--pkg-config-flags=--static"
-    ] ++ lib.optionals isLinux [ "--enable-libdrm" "--enable-vaapi" ]
-    ++ lib.optionals isDarwin [ "--enable-videotoolbox" "--install-name-dir=@rpath" ];
+    ] ++ commonFlags
+    ++ lib.optionals isLinux ([ "--enable-libdrm" "--enable-vaapi" ] ++ componentFlags [ "vaapi" ])
+    ++ lib.optionals isDarwin ([ "--enable-videotoolbox" "--install-name-dir=@rpath" ] ++ componentFlags [ "videotoolbox" ]);
     enableParallelBuilding = true;
     postInstall = ''
       mkdir -p $out/share/uuav
-      cat LICENSE.md COPYING.LGPLv3 > $out/share/uuav/LICENSE-ffmpeg.txt
-      cp ${mbedtls.src}/LICENSE $out/share/uuav/LICENSE-mbedtls.txt
+      cat LICENSE.md COPYING.LGPLv2.1 > $out/share/uuav/LICENSE-ffmpeg.txt
+      cp ${dav1d.src}/COPYING $out/share/uuav/LICENSE-dav1d.txt
     '' + lib.optionalString isLinux ''
       cp ${libva.src}/COPYING $out/share/uuav/LICENSE-libva.txt
       ln -s ${lib.getLib libva}/lib/libva.so.2 ${lib.getLib libva}/lib/libva-drm.so.2 $out/lib/
@@ -136,6 +160,7 @@ let
       }); }
     { name = "test"; path = crane.cargoTest (common // {
         inherit cargoArtifacts;
+        doCheck = true;
         cargoTestExtraArgs = "--workspace";
       }); }
   ];
@@ -176,16 +201,41 @@ let
   };
 
   cross = pkgs.pkgsCross.mingwW64;
+  crossPrefix = cross.stdenv.cc.targetPrefix;
+  crossDav1d = staticDav1d cross.dav1d;
   windowsTarget = "x86_64-pc-windows-gnu";
-  ffmpegWindows = stdenv.mkDerivation {
+  ffmpegWindows = cross.stdenv.mkDerivation {
     pname = "uuav-ffmpeg-windows";
-    version = windowsFfmpeg.asset;
-    src = pkgs.fetchurl { inherit (windowsFfmpeg) url sha256; };
-    nativeBuildInputs = [ pkgs.unzip ];
+    version = ffmpegVersion;
+    src = ffmpegSrc;
+    patches = ffmpegPatches;
+    depsBuildBuild = [ cross.buildPackages.stdenv.cc ];
+    nativeBuildInputs = [ cross.buildPackages.nasm cross.buildPackages.pkg-config ];
+    buildInputs = [ (cross.zlib.override { shared = false; }) crossDav1d ];
+    configurePlatforms = [ ];
+    configureFlags = [
+      "--enable-cross-compile"
+      "--target-os=mingw32"
+      "--arch=x86_64"
+      "--cross-prefix=${crossPrefix}"
+      "--cc=${crossPrefix}cc"
+      "--host-cc=cc"
+      "--pkg-config=${crossPrefix}pkg-config"
+      "--extra-ldflags=-static-libgcc"
+      "--extra-ldflags=-Wl,--no-insert-timestamp"
+      "--disable-pthreads"
+      "--enable-w32threads"
+      "--enable-d3d11va"
+    ] ++ commonFlags ++ componentFlags [ "d3d11va" "d3d11va2" ];
+    enableParallelBuilding = true;
     dontFixup = true;
-    installPhase = ''
-      mkdir -p $out
-      cp -R . $out/
+    postInstall = ''
+      for archive in $out/lib/*.dll.a; do
+        ${crossPrefix}ranlib -D "$archive"
+      done
+      mkdir -p $out/share/uuav
+      cat LICENSE.md COPYING.LGPLv2.1 > $out/share/uuav/LICENSE-ffmpeg.txt
+      cp ${crossDav1d.src}/COPYING $out/share/uuav/LICENSE-dav1d.txt
     '';
   };
   windowsCommon = {
@@ -196,10 +246,12 @@ let
     nativeBuildInputs = [ cross.stdenv.cc ];
     CARGO_BUILD_TARGET = windowsTarget;
     CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS = "-C link-arg=-Wl,--no-insert-timestamp -L native=${cross.windows.pthreads}/lib";
+    CC_x86_64_pc_windows_gnu = "${crossPrefix}cc";
+    AR_x86_64_pc_windows_gnu = "${crossPrefix}ar";
     FFMPEG_DIR = "${ffmpegWindows}";
     CARGO_TARGET_DIR = "target";
     LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-    BINDGEN_EXTRA_CLANG_ARGS = "--target=x86_64-w64-mingw32 -isystem ${cross.windows.mingw_w64_headers}/include -isystem ${pkgs.llvmPackages.clang-unwrapped.lib}/lib/clang/${lib.versions.major pkgs.llvmPackages.clang-unwrapped.version}/include";
+    BINDGEN_EXTRA_CLANG_ARGS = "--target=x86_64-w64-mingw32 -isystem ${cross.windows.mingw_w64_headers}/include -isystem ${pkgs.llvmPackages.clang-unwrapped.lib}/lib/clang/${lib.versions.major pkgs.llvmPackages.clang-unwrapped.version}/include ${bindgenSkipsAmx}";
   };
   helperWindows = crane.buildPackage (windowsCommon // {
     cargoArtifacts = crane.buildDepsOnly windowsCommon;
@@ -218,7 +270,7 @@ let
       for lib in avcodec avformat avutil swresample swscale; do
         cp ${ffmpegWindows}/bin/$lib-*.dll $out/
       done
-      cp ${ffmpegWindows}/LICENSE.txt $out/LICENSE-ffmpeg.txt
+      cp ${ffmpegWindows}/share/uuav/LICENSE-*.txt $out/
     '';
   };
 in {

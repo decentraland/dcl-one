@@ -8,7 +8,6 @@
 ;; Parameters (always supplied by sandbox_macos.rs, never optional):
 ;;   SERVICE_NAME           per-session bootstrap name "uuav.<token>"
 ;;   PLUGIN_DIR             directory of uuav-helper and its dylibs
-;;   HOME                   user home, for user-installed root CAs
 ;;   ALLOW_MEDIA_FILE_READ  "1" only when the protocol whitelist contains
 ;;                          "file" (the host Editor local playback), else "0"
 
@@ -39,11 +38,6 @@
     (subpath "/private/var/db/dyld")
     ;; Rosetta runtime, for the x86_64 slice under a translated parent
     (subpath "/Library/Apple")
-    ;; TLS trust: admin trust store and Security MDS databases
-    (subpath "/Library/Keychains")
-    (subpath "/private/var/db/mds")
-    ;; TLS trust: user-installed root CAs (corporate TLS interception)
-    (subpath (string-append (param "HOME") "/Library/Keychains"))
     ;; resolver and time configuration
     (literal "/private/etc/hosts")
     (literal "/private/etc/services")
@@ -98,7 +92,9 @@
 (allow ipc-posix-shm-read-data
     (ipc-posix-name "apple.shm.notification_center"))
 
-;; ---- network: FFmpeg fetches media directly --------------------------------
+;; ---- network: the helper fetches media directly -----------------------------
+;; http(s) through its own client (TLS roots are read before this profile
+;; applies, see uuav-core's trust module), rtsp/rtp through FFmpeg
 
 ;; Loopback is deliberately NOT carved out of this allowance: local-realm
 ;; preview (Creator Hub / `dcl start`) serves scene content - media
@@ -109,15 +105,8 @@
 ;; DNS: unix-domain socket on older systems, XPC service on newer ones
 (allow network-outbound (literal "/private/var/run/mDNSResponder"))
 (allow mach-lookup (global-name "com.apple.dnssd.service"))
-;; SecureTransport: certificate evaluation is brokered by trustd and
-;; securityd; revocation fetches happen inside trustd, not in this process
-(allow mach-lookup
-    (global-name "com.apple.trustd")
-    (global-name "com.apple.trustd.agent")
-    (global-name "com.apple.SecurityServer")
-    (global-name "com.apple.ocspd")
-    ;; proxy and interface state queried during connect
-    (global-name "com.apple.SystemConfiguration.configd"))
+;; proxy and interface state queried during connect
+(allow mach-lookup (global-name "com.apple.SystemConfiguration.configd"))
 
 ;; ---- GPU: Metal blit, IOSurface, VideoToolbox hardware decode ---------------
 

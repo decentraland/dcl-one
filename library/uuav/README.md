@@ -1,6 +1,6 @@
 # UUAV
 
-A video/audio player for the Explorer built on a Rust core and FFmpeg 8.1,
+A video/audio player for the Explorer built on a Rust core and FFmpeg 9.0.2,
 with hardware-accelerated video decoding where the platform offers it and a
 software decoder otherwise: VideoToolbox on macOS (Metal), D3D11VA on
 Windows, VAAPI on Linux. Decoding runs **out of process**: FFmpeg never
@@ -85,7 +85,9 @@ visible gap. Software-decoded frames are converted to NV12 (`libswscale`)
 and uploaded into the same presentation planes the hardware path blits
 into, so the host sees one contract. `MediaInfo.decoder` names what is in
 use (`videotoolbox`, `d3d11va`, `vaapi`, `software`); the warning callback
-reports every fallback once.
+reports every fallback once. The hardware lookup goes by hwaccel, not by
+registry order: for AV1 the native decoder (hwaccel hooks only) is chosen
+on a capable GPU and libdav1d otherwise.
 
 On Linux the VAAPI surfaces are downloaded to system memory after decoding
 (nothing shares them with the host), so hardware and software frames take
@@ -182,15 +184,29 @@ from the repository root, stage `result` into a directory, copy
 The FFmpeg prefix lives in `.third_party/ffmpeg` (`FFMPEG_DIR` in
 `.cargo/config.toml`); `build.sh` links the helper against it and copies
 the runtime libraries into `dist/<target>/` from the same prefix, so the
-majors can never drift apart. FFmpeg is used as LGPL-3.0 shared libraries
-(`--enable-version3`, required by the Apache-2.0 mbedTLS that provides TLS
-on macOS and Linux); the license texts ship next to the binaries.
+majors can never drift apart. FFmpeg is configured from `--disable-everything`
+up with the decoders, demuxers, parsers, protocols, bitstream filters and
+hardware decoders scene media needs (the lists in
+[`infra/packages/uuav.nix`](../../infra/packages/uuav.nix)); libavfilter and
+libavdevice are not built, and neither is libxml2, so there is no `dash`
+demuxer. AV1 decodes in software through libdav1d (BSD-2-Clause, linked
+statically into libavcodec): FFmpeg's own `av1` decoder carries the hwaccel
+hooks only. FFmpeg is used as shared libraries under LGPL-2.1 on all three
+platforms; the license texts ship next to the binaries. The build has no
+https, tls or crypto protocol: the helper fetches `http(s)` itself
+(`src/playback/http.rs`: ureq over rustls, roots from the OS store plus
+Mozilla's bundle, HLS AES-128 segments decrypted in process) and hands
+FFmpeg custom I/O contexts; `tcp`, `udp` and `rtp` stay for RTSP, and
+FFmpeg's `http` protocol stays linked only because the `rtsp` demuxer
+selects it for HTTP tunnelling: no `http:` url reaches it. See the
+[ADR](../../docs/adr/2026-11-08-uuav-http-in-the-helper.md).
 
 ### Linux and macOS: Nix
 
 [`infra/packages/uuav.nix`](../../infra/packages/uuav.nix) builds FFmpeg
-`n8.1` with a statically linked mbedTLS 3.6 and libxml2, libva on Linux and
-VideoToolbox on macOS, then the helper with the compiler
+`n9.0.2` (with `uuav-ffmpeg-hls-https.patch`, which lets the HLS demuxer
+name `https` urls while no https protocol is registered), libva on Linux
+and VideoToolbox on macOS, then the helper with the compiler
 `rust-toolchain.toml` names. From the repository root:
 
 ```bash
@@ -234,22 +250,25 @@ libclang does not always find clang's builtin headers on Windows
 (`mm_malloc.h` missing from mingw's `malloc.h`); `build.sh` and the
 workflow export `BINDGEN_EXTRA_CLANG_ARGS` from
 `tooling/uuav/bindgen-clang-args.sh`, do the same before a bare `cargo`
-command.
+command. The same arguments predefine the guards of clang's AMX headers,
+which `winnt.h` pulls in through `immintrin.h` and whose tile struct
+bindgen cannot express; the Nix cross build passes the same defines.
 
 ```bash
 bash ../../tooling/uuav/fetch-ffmpeg-windows.sh   # the hash-pinned BtbN LGPL shared build
 bash build.sh                                     # dist/windows-x86_64
 ```
 
-The five DLLs in the helper's import closure ship (`avcodec`, `avformat`,
-`avutil`, `swresample`, `swscale`); the BtbN build links its support
-libraries statically. The pin is
-[`tooling/uuav/ffmpeg-windows.json`](../../tooling/uuav/ffmpeg-windows.json):
+The BtbN build is the prefix for the native cargo path (headers, import
+libraries, the full DLL set); `build.sh` stages the five DLLs the helper
+imports (`avcodec`, `avformat`, `avutil`, `swresample`, `swscale`). The pin
+is [`tooling/uuav/ffmpeg-windows.json`](../../tooling/uuav/ffmpeg-windows.json):
 a month-end `autobuild` release (the only ones BtbN keeps), its asset and
-sha256. On Linux, and on Windows inside a WSL2 distribution with Nix,
-`nix build .#uuav-dist-windows` cross-compiles the helper with mingw-w64 and
-assembles the same set from the same asset; the output is byte-identical
-across machines, so a `result-*` copied to the Windows side is the set.
+sha256. The shipped set is not that build: on Linux, and on Windows inside
+a WSL2 distribution with Nix, `nix build .#uuav-dist-windows` cross-compiles
+FFmpeg with the same component lists as the other platforms (D3D11VA for
+hardware decode) and the helper with mingw-w64; a `result-*` copied to the
+Windows side is the set.
 
 ## Runtime deployment
 
@@ -260,25 +279,23 @@ helper's libraries resolve from:
 ```
 macos-arm64/                   windows-x86_64/            linux-x86_64/
   uuav-helper                    uuav-helper.exe            uuav-helper
-  libavcodec.62.dylib            avcodec-62.dll             libavcodec.so.62
-  libavdevice.62.dylib           avformat-62.dll            libavdevice.so.62
-  libavfilter.11.dylib           avutil-60.dll              libavfilter.so.11
-  libavformat.62.dylib           swresample-6.dll           libavformat.so.62
-  libavutil.60.dylib             swscale-9.dll              libavutil.so.60
-  libswresample.6.dylib          LICENSE-ffmpeg.txt         libswresample.so.6
-  libswscale.9.dylib                                        libswscale.so.9
-  LICENSE-ffmpeg.txt                                        libva.so.2
-  LICENSE-mbedtls.txt                                       libva-drm.so.2
+  libavcodec.63.dylib            avcodec-63.dll             libavcodec.so.63
+  libavformat.63.dylib           avformat-63.dll            libavformat.so.63
+  libavutil.61.dylib             avutil-61.dll              libavutil.so.61
+  libswresample.7.dylib          swresample-7.dll           libswresample.so.7
+  libswscale.10.dylib            swscale-10.dll             libswscale.so.10
+  LICENSE-ffmpeg.txt             LICENSE-ffmpeg.txt         libva.so.2
+                                                            libva-drm.so.2
                                                             LICENSE-*.txt
 ```
 
 `tooling/uuav/stage-dist.py <set|host> <dir>` copies a set (a `nix build`
 result, or `dist/<host target>/` with `host`) next to a binary (a packaged
 app, a test binary, the smoke example) and refuses an incomplete one. The
-FFmpeg majors (avcodec **62**, avformat **62**, avutil **60**, swresample
-**6**, swscale **9**) are tied to the 8.1 release and must match what the
+FFmpeg majors (avcodec **63**, avformat **63**, avutil **61**, swresample
+**7**, swscale **10**) are tied to the 9.0 release and must match what the
 helper linked; keep the FFmpeg commit in `infra/packages/uuav.nix`, the
-Windows asset and `ffmpeg-sys-next = "8.1.0"` in `Cargo.toml` in lockstep.
+Windows asset and `ffmpeg-sys-next = "9.0.1"` in `Cargo.toml` in lockstep.
 If a library is missing on a user machine the helper dies at load - watch
 for the "uuav helper terminated" error with a loader exit code.
 
@@ -305,10 +322,11 @@ flake, and on `main`:
 `tooling/tests/test_uuav_workflow.py` pins the workflow's shape (the cache
 steps and key, the installables, the smoke after the roots, the Windows pin
 format) and `test_uuav_stage_dist.py` the staging tool. Nothing built is
-committed: the pins are `flake.lock`, the FFmpeg commit and hash in
-`infra/packages/uuav.nix`, nixpkgs' mbedTLS, libxml2 and libva, the
-workspace `Cargo.lock` and the BtbN asset digest. Bumping any of them is an
-ordinary pull request whose CI builds the result.
+committed: the pins are `flake.lock`, the FFmpeg commit, hash and component
+lists in `infra/packages/uuav.nix`, nixpkgs' libva, the workspace
+`Cargo.lock` and, for the native Windows path, the BtbN asset digest.
+Bumping any of them is an ordinary pull request whose CI builds the
+result.
 
 ## For the host
 
