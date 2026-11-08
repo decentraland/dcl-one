@@ -305,13 +305,13 @@ pub async fn apply_schema(pool: &PgPool) -> Result<(), ApplySchemaError> {
     Ok(())
 }
 
-/// The lib crate's database-backed tests share one throwaway database per
-/// test process, `catalyst_test_lib_<pid>_<rand>`, created on the cluster
-/// `CATALYST_TEST_DATABASE_URL` names (the database in that URL is never
-/// touched, so a live node's rows are out of reach) and seeded with
-/// schema.sql; the tests seed uuid-scoped rows inside it. There is no
-/// in-process teardown: the next test process drops every
-/// `catalyst_test_lib_<pid>_*` whose pid is gone.
+/// `pool` shares one throwaway database per test process for uuid-scoped
+/// fixtures; `isolated_pool` creates a fresh database per call for tests
+/// that read or rewrite whole tables. Both use `catalyst_test_lib_<pid>_<rand>`
+/// databases on the cluster `CATALYST_TEST_DATABASE_URL` names, seeded with
+/// schema.sql. The database in that URL is never touched, so a live node's
+/// rows are out of reach. There is no in-process teardown: the next test
+/// process drops every `catalyst_test_lib_<pid>_*` whose pid is gone.
 #[cfg(any(test, feature = "scratch"))]
 pub mod scratch {
     use super::*;
@@ -337,6 +337,24 @@ pub mod scratch {
             )
             .await
             .expect("connecting to the scratch test database"),
+        )
+    }
+
+    /// A fresh database for a test that reads or rewrites whole tables.
+    /// It follows the shared database's process-based cleanup lifecycle.
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn isolated_pool(max_connections: u32) -> Option<PgPool> {
+        let url = create().await?;
+        Some(
+            connect_pool(
+                &url,
+                &PoolSettings {
+                    max_connections,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("connecting to the isolated test database"),
         )
     }
 
@@ -442,6 +460,27 @@ pub mod scratch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn isolated_pools_do_not_share_facts() {
+        let Some(first) = scratch::isolated_pool(1).await else {
+            return;
+        };
+        let second = scratch::isolated_pool(1).await.unwrap();
+        sqlx::query("INSERT INTO content.system_properties(key,value) VALUES ('scratch_isolation_probe','first')")
+            .execute(&first)
+            .await
+            .unwrap();
+        let value: Option<String> = sqlx::query_scalar(
+            "SELECT value FROM content.system_properties WHERE key='scratch_isolation_probe'",
+        )
+        .fetch_optional(&second)
+        .await
+        .unwrap();
+        assert_eq!(value, None);
+        first.close().await;
+        second.close().await;
+    }
 
     #[cfg(unix)]
     #[test]
