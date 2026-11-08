@@ -837,7 +837,8 @@ function buildViewNode(
             : ([['white-space', 'nowrap']] as [string, string][])),
         ...decls,
         ...sizingDecls({ ...node, sizing: node.sizing ?? ['HUG', 'HUG'] }, parent, false).filter(
-          ([property]) => property !== 'height' && (wraps || property !== 'width')
+          ([property]) =>
+            property !== 'height' && (wraps || property !== 'width' || node.sizing?.[0] === 'FIXED')
         ),
         ...positionDecls(node, parent, env),
         ...(node.opacity !== undefined

@@ -31,6 +31,41 @@ const whiteSpace = (node: RawNode, env: ViewEnv) =>
     .children![0]!.css.decls.filter(([property]) => property === 'white-space')
     .map(([, value]) => value)
 
+const widths = (node: RawNode, env: ViewEnv) =>
+  buildView(node, env)
+    .children![0]!.css.decls.filter(([property]) => property === 'width')
+    .map(([, value]) => value)
+
+// A Search bar result row: a fixed-width, single-line label followed by the user count it pushes to the right.
+const resultRow = (sizing: RawNode['sizing']): RawNode => ({
+  type: 'FRAME',
+  name: 'Frame 3104',
+  w: 348,
+  h: 36,
+  layout: {
+    mode: 'HORIZONTAL',
+    pad: [0, 8, 0, 8],
+    gap: 7,
+    main: 'MIN',
+    cross: 'CENTER',
+    wrap: false
+  },
+  children: [
+    {
+      type: 'TEXT',
+      name: 'Search item',
+      text: 'Genesis Plaza',
+      textStyle: 'body/sm',
+      fontSize: 14,
+      w: 238,
+      h: 19,
+      sizing,
+      lineHeight: { unit: 'PIXELS', value: 19 }
+    },
+    { type: 'FRAME', name: 'Players', w: 34, h: 17, sizing: ['HUG', 'HUG'] }
+  ]
+})
+
 describe('when a text node carries its own line height', () => {
   let env: ViewEnv
   beforeEach(() => {
@@ -124,5 +159,33 @@ describe('when a text node carries its own line height', () => {
     const node = quest({ sizing: ['FILL', 'FIXED'], h, lineHeight: { unit: 'PIXELS', value } })
     expect(whiteSpace(node, env)).toEqual(['nowrap'])
     expect(env.report.manual.size).toBe(0)
+  })
+})
+
+describe('when a single-line text has a fixed width in an auto-layout row', () => {
+  let env: ViewEnv
+  beforeEach(() => {
+    env = {
+      colors: { resolve: () => ({ css: '#ffffff', via: 'literal' }) } as unknown as ColorResolver,
+      textStyles: new Map(),
+      textStyleAliases: {},
+      numbers: { space: new Map(), radius: new Map() },
+      icons: new Map(),
+      iconAliases: {},
+      refsById: new Map(),
+      report: { notes: new Set(), manual: new Set() }
+    }
+  })
+
+  it('should keep its captured width, so the siblings after it sit where Figma puts them', () => {
+    expect(widths(resultRow(['FIXED', 'HUG']), env)).toEqual(['238px'])
+  })
+
+  it('should keep a hugging text at its captured width', () => {
+    expect(widths(resultRow(['HUG', 'HUG']), env)).toEqual(['238px'])
+  })
+
+  it('should let a filling text take the remaining space instead of a fixed width', () => {
+    expect(widths(resultRow(['FILL', 'HUG']), env)).toEqual([])
   })
 })
