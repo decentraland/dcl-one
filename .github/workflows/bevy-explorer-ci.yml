@@ -150,7 +150,7 @@ jobs:
       matrix:
         os: ${{ (needs.changes.outputs.native-matrix == 'true' && github.actor != 'dependabot[bot]') && fromJSON('["windows-2025",
           "ubuntu-24.04", "macos-15"]') || fromJSON('["ubuntu-24.04"]') }}
-    runs-on: ${{ matrix.os == 'windows-2025' && 'windows-2025-16core' || matrix.os == 'ubuntu-24.04' && 'ubuntu-24.04-16core' || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2025' && 'windows-2025-16core' || matrix.os == 'ubuntu-24.04' && 'ubuntu-24.04-16core' || matrix.os == 'macos-15' && 'macos-15-xlarge' || matrix.os }}
     concurrency:
       group: ${{ github.workflow }}-test-${{ matrix.os }}-${{ github.ref }}
       cancel-in-progress: true
