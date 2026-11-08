@@ -359,15 +359,15 @@ dcl-one (`scenes.rs:46-102`): world name parsed first, the strict signed fetch, 
      `worlds/src/core/tests.rs` `signed_routes_refuse_with_the_crypto_middleware_body` (unsigned and wrong-payload requests on both routes).
    - Severity: P2 (the status matches; builder and CLI show `message` as text). Depends on: the permissions/settings areas, which share the mapper.
 
-3. **WD-03 · all routes of this area · the worlds writes switch is off by default.**
+3. **WD-03 · all routes of this area · the worlds writes switch is off by default.** Status: kept: intended (worlds-compatibility.md, "Writes switch").
    - Upstream: no switch.
    - dcl-one: `WORLDS_WRITES_ENABLED` defaults to `false`; while off every route here answers
      503 `{"ok":false,"error":"Service Unavailable","message":…}` with `Retry-After: 3600`
-     (`services/catalyst/worlds/src/writes.rs:33-76`, `config/src/worlds.rs:86`). It is not listed in
-     `docs/worlds-compatibility.md`.
+     (`services/catalyst/worlds/src/writes.rs:33-76`, `config/src/worlds.rs:86`).
    - Proposed fix: keep (DATABASE.md requires a demonstrated restore before local authority is
      accepted); add the row to `docs/worlds-compatibility.md` so an operator replacing upstream knows to
      set it.
+   - Documented under "Writes switch" in `docs/worlds-compatibility.md`, one line for every worlds write route (WW-27).
    - Severity: P1 (a node with the default answers 503 to every publish).
 
 4. **WD-04 · `POST /entities` · multipart field, part and file caps.**

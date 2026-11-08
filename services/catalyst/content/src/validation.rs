@@ -34,16 +34,9 @@ pub enum BodyRefusal {
 /// the `oneOf`: the first error of each branch, then the `oneOf` error.
 pub fn active_entities_body(bytes: &[u8]) -> Result<(bool, Vec<String>), BodyRefusal> {
     let body: Value = serde_json::from_slice(bytes).map_err(|e| {
-        let message = v8_parse_message(bytes).unwrap_or_else(|| e.to_string());
-        BodyRefusal::Schema(json!({ "ok": false, "message": message }))
+        BodyRefusal::Schema(json!({ "ok": false, "message": json_parse_message(bytes, &e) }))
     })?;
-    // JSON.parse keeps keys in body order; AJV names the first extra one.
-    let keys = match body {
-        Value::Object(_) => serde_json::from_slice::<OrderedKeys>(bytes)
-            .map(|k| k.0)
-            .unwrap_or_default(),
-        _ => Vec::new(),
-    };
+    let keys = object_keys_in_order(&body, bytes);
     let mut errors = Vec::new();
     for (branch, key) in ["ids", "pointers"].into_iter().enumerate() {
         match selector_branch_error(&body, &keys, branch, key) {
@@ -76,6 +69,45 @@ pub fn active_entities_body(bytes: &[u8]) -> Result<(bool, Vec<String>), BodyRef
         "message": "Invalid JSON body",
         "data": errors,
     })))
+}
+
+/// `@dcl/schema-validator-component` 1.0.1's `isJsonContentType`, the check
+/// behind its 415: the media type before the first `;`, trimmed and
+/// lowercased, is `application/json` or matches `^[^/\s]+\/[^/\s]+\+json$`
+/// (an RFC 6839 `type/subtype+json`). An absent header is not JSON.
+pub fn is_json_content_type(content_type: Option<&str>) -> bool {
+    let Some(raw) = content_type else {
+        return false;
+    };
+    let media = raw
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let token = |s: &str| !s.is_empty() && !s.contains('/') && !s.contains(char::is_whitespace);
+    media == "application/json"
+        || media
+            .split_once('/')
+            .is_some_and(|(kind, sub)| token(kind) && sub.strip_suffix("+json").is_some_and(token))
+}
+
+/// The message `JSON.parse` throws for a body that is not JSON: V8's text
+/// for the failures below, else serde's. The schema validator answers it as
+/// `{ok: false, message}`.
+pub fn json_parse_message(bytes: &[u8], error: &serde_json::Error) -> String {
+    v8_parse_message(bytes).unwrap_or_else(|| error.to_string())
+}
+
+/// An object body's keys in body order, as `JSON.parse` keeps them (AJV names
+/// the first extra one); empty for any other value.
+pub fn object_keys_in_order(body: &Value, bytes: &[u8]) -> Vec<String> {
+    match body {
+        Value::Object(_) => serde_json::from_slice::<OrderedKeys>(bytes)
+            .map(|k| k.0)
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
 }
 
 /// V8's `JSON.parse` message for the parse failures the production peer was
@@ -285,6 +317,24 @@ impl<'de> serde::Deserialize<'de> for OrderedKeys {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_content_types_follow_the_schema_validator() {
+        let ct = |v: &str| is_json_content_type(Some(v));
+        assert!(ct("application/json"));
+        assert!(ct("Application/JSON; charset=utf-8"));
+        assert!(ct("application/vnd.api+json"));
+        assert!(ct("text/x+json"));
+        assert!(ct("a/b+c+json"));
+        assert!(!ct("application/+json"));
+        assert!(!ct("/+json"));
+        assert!(!ct("a/b/c+json"));
+        assert!(!ct("a b/c+json"));
+        assert!(!ct("application/jsonfoo"));
+        assert!(!ct("text/plain"));
+        assert!(!ct("application/json-patch"));
+        assert!(!is_json_content_type(None));
+    }
 
     fn strings(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()

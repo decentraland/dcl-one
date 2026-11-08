@@ -17,7 +17,8 @@ difference not listed here is a gap, not a decision.
 - **Wallet storage allowance.** `GET /wallet/{wallet}/stats`, the publish
   size cap and `GET /world/{name}/limits` count only scenes published here:
   mirrored worlds and scenes are left out. Personal worlds are outside the
-  allowance and are not listed. A wallet's DCL NAME worlds are the NAMEs it
+  allowance and are not listed, nor are bare-name worlds (upstream lists
+  them under `ensNames`). A wallet's DCL NAME worlds are the NAMEs it
   holds now (the stored owner only without a names reader). A DCL NAME
   world's publish is capped at 500 MiB per scene (the upstream
   `MAX_SCENE_SIZE` default; not configurable here) and by what the owner's
@@ -315,6 +316,9 @@ difference not listed here is a gap, not a decision.
   `world` field).
 - **Last parcel removed.** Removing a parcel-scoped grant's last parcel
   sends `worlds_permission_revoked`, because the grant is deleted.
+- **Settings events.** `PUT /world/{name}/settings` publishes no
+  `WorldSettingsChangedEvent` or `WorldSpawnCoordinateSetEvent`; the
+  explore crate reads the worlds tables directly.
 
 ## Permissions
 
@@ -325,3 +329,53 @@ difference not listed here is a gap, not a decision.
   not only recorded.
 - **Shared-secret hashes** use bcrypt cost 12 (upstream: 10); existing
   hashes verify unchanged.
+
+## World metadata and settings
+
+- **Writes switch.** Every worlds write (publishes, undeploys, settings and
+  permission edits, the operator and storage routes) answers 503
+  `{"ok": false, "error": "Service Unavailable", "message": …}` with
+  `Retry-After: 3600` while `WORLDS_WRITES_ENABLED` is off, which is the
+  default, and while the restore stamps do not vouch for this node
+  (DATABASE.md, "Bootstrap, schema versions and local writes"). Reads,
+  `POST /entities/active`, the parcel-holder lookup and the comms mints stay
+  open. A node replacing the upstream service sets it once a restore of its
+  database, blobs and credentials has been shown to work.
+- **`/about` configuration.** `GLOBAL_SCENES_URN` is split on runs of
+  whitespace, so it never yields an empty URN, and an `ETH_NETWORK` other
+  than `sepolia` reports `networkId: 1` (upstream answers 500 for a network
+  it does not know). A visible minimap without its own images links this
+  node's `/api/v1/minimap.png` and `/api/v1/estatemap.png` unless
+  `MAP_PARCEL_VIEW_URL` / `MAP_ESTATE_VIEW_URL` name others; upstream links
+  `https://api.decentraland.org/v1/minimap.png` and `/v1/estatemap.png`.
+- **Settings superset.** `GET`/`PUT /world/{name}/settings` also carry
+  `realm_name_override` and `preview_wearable_urns` (always present, `null`
+  or a list), and the PUT form accepts both; `preview_wearable_urns` may
+  repeat, like `categories`.
+- **Settings uploads.** `spawn_coordinates` must be two integers (spaces
+  around them allowed); upstream's `parseInt` also takes `5abc,3` or
+  `5.9,3` and stores them as sent. The form must be `multipart/form-data`
+  (upstream's parser also reads `application/x-www-form-urlencoded`). The
+  upload takes a slot of `MAX_CONCURRENT_UPLOADS` (503 `Server is handling
+  too many concurrent uploads, please retry shortly.` when none is free)
+  and its processing runs under `DEPLOYMENT_PROCESSING_TIMEOUT_MS` (408
+  `Deployment processing exceeded the <n>ms deadline.`); upstream has
+  neither on this route. The per-source admission runs after the signed
+  fetch (upstream: before it).
+- **Scene queries.** `POST /world/{name}/scenes` checks the Content-Type
+  before it reads the body and reads at most 2 MiB; a larger body answers
+  413 `Payload Too Large` (plain text, `Connection: close`, as
+  `@dcl/http-server` answers a body over its `maxBodySize`). Upstream sets
+  no body limit on this route.
+- **Deny list in world listings (shared with upstream).** `GET /worlds`
+  filters the deny list as upstream's `getBannedNames` does: each entry
+  loses its first `.eth` and `.dcl` and is compared case-sensitively with
+  the stored name, so only a bare name equal to a stripped entry is hidden.
+  A deny-listed `<name>.dcl.eth` stays listed, with its title, description
+  and thumbnail, while `/about` and the manifest answer 404 for it. This is
+  a moderation gap both services have, kept for parity.
+- **World listings.** In `GET /worlds`, `blocked_since` is set only for a
+  storage-quota block of a DCL NAME or ENS world published here (upstream:
+  any block of the stored owner), and `owner` is `null` for a world with no
+  owner (bare names, mirrored worlds); `GET /wallet/contribute` answers the
+  same `owner`.

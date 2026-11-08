@@ -15,8 +15,8 @@ Pinned revisions:
   `@dcl/catalyst-api-specs` were not read; rows that depend on them say so.
 - dcl-one: origin main `2da8b8aea`, Rust workspace `services/catalyst`.
 
-Everything below is from reading the code and the upstream tests. Nothing was built, run or captured,
-and no line is "verified".
+The upstream side is from reading its code and tests; nothing upstream was built, run or captured. The
+dcl-one side names the test that pins each closed row.
 
 Files read:
 
@@ -59,16 +59,16 @@ Common notes:
   `400 {"error":"Bad request","message":…}`, `404 {"error":"Not Found","message":…}`,
   `401 {"error":"Not Authorized","message":…}` and `500 {"error":"Internal Server Error"}`. Handlers that build
   their own response (settings) answer `{"error":<message>}` with no `message`. dcl-one's worlds envelope
-  (`comms/src/worlds_envelope.rs:123-140`) reproduces the http-commons labels, but `about.rs` answers in the
-  content-server envelope `{"error":<message>}` (`content/src/errors.rs:74-76`, WW-02) and the settings routes
-  answer in the http-commons shape where upstream answers `{"error":<message>}` (WW-17, WW-19).
+  (`comms/src/worlds_envelope.rs:123-140`) reproduces the http-commons labels and serves `/about` too (WW-02);
+  the settings handlers answer their own `{"error":<message>}` (`core/settings.rs` `SettingsError`,
+  WW-17, WW-19, WW-20).
 - **Signed fetch.** Upstream's strict `signedFetchMiddleware` guards `PUT /world/:world_name/settings` and
   `GET /wallet/contribute` (`src/controllers/routes.ts:98,222,252`): current payload only,
   `rejectIfSigner('decentraland-kernel-scene')`, failures answer
   `{"error":<detail>,"message":"This endpoint requires a signed fetch request. See ADR-44."}` with the
   detail's status (400 `Invalid Auth Chain`, 401 `Invalid signature…` / `Expired signature…`).
   dcl-one calls `require_verified(…, &[], …)` (no legacy fallback, the scene gate included,
-  `comms/src/signed_fetch.rs`), so acceptance matches, and failures answer the same body (WW-24, fixed). The signed-fetch verifier itself belongs to the auth area.
+  `comms/src/signed_fetch.rs`), so acceptance matches, and failures answer the same body (WW-24). The signed-fetch verifier itself belongs to the auth area.
 - **Pagination.** `getPaginationParams` 2.0.0: limit 1..100 else 100, offset `parseInt` ≥ 0 else 0, no
   offset cap (the 100,000 cap arrived in 2.0.1, not the locked version). dcl-one `pagination_of`
   (`worlds/src/core/http.rs:27-41`) is the same, except that an offset beyond `i64` saturates (upstream
@@ -83,24 +83,27 @@ Common notes:
   (`worlds/src/writes.rs:29-75`). Every other route in this area is a read and stays open (WW-27).
 - **Deny list.** Both trees read the DAO `banned-names` list (upstream `DCL_LISTS_URL`, one-hour cache;
   dcl-one `explore_api.lists`, one-hour cache, `worlds/src/core/names.rs:16-78`) and normalize the name the
-  same way (`toLowerCase().replace('.eth','').replace('.dcl','')`, first occurrence only).
+  same way (`toLowerCase().replace('.eth','').replace('.dcl','')`, first occurrence only) for `/about`,
+  the settings, manifest and limits routes. `GET /worlds` instead strips the entries without lowercasing
+  them and compares them exactly with the stored name (upstream `getBannedNames`), so it hides only a bare
+  name; a moderation gap both trees share (WW-31).
 
 ## Endpoint inventory
 
 | # | method | upstream path | dcl-one route(s) | status |
 |---|---|---|---|---|
-| 1 | GET | `/world/:world_name/about` | `worlds/src/about.rs:121` `get_about` (route `worlds/src/lib.rs:344`) | DIVERGENT |
+| 1 | GET | `/world/:world_name/about` | `worlds/src/about.rs` `get_about` (route `worlds/src/lib.rs:344`) | DIVERGENT (intended only) |
 | 2 | GET | `/world/:world_name/scenes` | `worlds/src/scenes.rs:49` `list_scenes` (route `lib.rs:345-348`) | MATCH |
-| 3 | POST | `/world/:world_name/scenes` | `worlds/src/scenes.rs:58` `post_list_scenes` (same route) | DIVERGENT |
-| 4 | GET | `/world/:world_name/settings` | `worlds/src/core/settings.rs:54` (route `core/mod.rs:669-672`) | DIVERGENT |
-| 5 | PUT | `/world/:world_name/settings` | `worlds/src/core/settings.rs:84` (route `core/mod.rs:604-612`) | DIVERGENT |
+| 3 | POST | `/world/:world_name/scenes` | `worlds/src/scenes.rs` `post_list_scenes` (same route) | DIVERGENT (intended only) |
+| 4 | GET | `/world/:world_name/settings` | `worlds/src/core/settings.rs` `get_world_settings` (route `core/mod.rs:669-672`) | DIVERGENT (intended only) |
+| 5 | PUT | `/world/:world_name/settings` | `worlds/src/core/settings.rs` `update_world_settings` (route `core/mod.rs:604-612`) | DIVERGENT (intended only) |
 | 6 | GET | `/world/:world_name/manifest` | `worlds/src/core/manifest.rs:19` (route `core/mod.rs:637-640`) | DIVERGENT (intended only) |
 | 7 | GET | `/world/:world_name/limits` | `worlds/src/core/limits.rs:50` (route `core/mod.rs:673`) | DIVERGENT (intended only) |
-| 8 | GET | `/worlds` | `worlds/src/core/manifest.rs:69` `get_worlds` (route `core/mod.rs:636`) | DIVERGENT |
+| 8 | GET | `/worlds` | `worlds/src/core/manifest.rs` `get_worlds` (route `core/mod.rs:636`) | DIVERGENT (intended only) |
 | 9 | GET | `/wallet/:wallet/stats` | `worlds/src/core/wallet.rs:119` (route `core/mod.rs:679`) | DIVERGENT (intended only) |
-| 10 | GET | `/wallet/contribute` | `worlds/src/core/wallet.rs:42` (route `core/mod.rs:678`) | DIVERGENT |
+| 10 | GET | `/wallet/contribute` | `worlds/src/core/wallet.rs:42` (route `core/mod.rs:678`) | DIVERGENT (intended only) |
 
-Counts: 10 endpoints. MATCH 1, GAP 0, DIVERGENT 9 (4 of them on intended differences only), MISSING 0.
+Counts: 10 endpoints. MATCH 1, GAP 0, DIVERGENT 9 (all on intended differences only), MISSING 0.
 Every route exists at both dcl-one mounts.
 
 ---
@@ -121,10 +124,10 @@ from `worldsManager.getMetadataForWorld` (`src/adapters/worlds-manager.ts:384-43
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
-| Deny-listed name | 404 | upstream `{"error":"Not Found","message":"World \"<name>\" has no scene deployed."}`; dcl-one `{"error":"World \"<name>\" has no scene deployed."}` | `world-about-handler.ts:22-24` | `about.rs:125-133` | DIVERGENT: envelope (WW-02) |
-| No world row, or no scenes | 404 | same split, message `World "<name>" has no scenes deployed.` | `:26-29` | `about.rs:158-162` | DIVERGENT: envelope (WW-02). dcl-one first tries a federation fill (`lib.rs:273`, dcl-one only) |
-| Owner quota-blocked over 2 days | 401 | upstream `{"error":"Not Authorized","message":"World \"<name>\" has been blocked since <Date.toString()> as it exceeded its allowed storage space."}`; dcl-one `{"error":"World \"<name>\" has been blocked since <RFC 3339 ms> as it exceeded its allowed storage space."}` | `:31-35`, `logic/worlds/component.ts:52-60` | `about.rs:163-180` | DIVERGENT: envelope (WW-02), date text (WW-03). The grace matches; the live-holder rule and operator disable are intended (WW-13) |
-| `ETH_NETWORK` not in `l1Contracts` | 500 | `{"error":"Internal Server Error"}` | `:46-50` | `lib.rs:122-127` maps anything but `sepolia` to 1 | DIVERGENT, config only (WW-14) |
+| Deny-listed name | 404 | `{"error":"Not Found","message":"World \"<name>\" has no scene deployed."}` in both | `world-about-handler.ts:22-24` | `about.rs` `get_about` | MATCH (WW-02) |
+| No world row, or no scenes | 404 | the same, message `World "<name>" has no scenes deployed.` | `:26-29` | `about.rs` `build_about` | MATCH (WW-02). dcl-one first tries a federation fill (`lib.rs:273`, dcl-one only) |
+| Owner quota-blocked over 2 days | 401 | `{"error":"Not Authorized","message":"World \"<name>\" has been blocked since <Date.toString() in UTC> as it exceeded its allowed storage space."}` in both | `:31-35`, `logic/worlds/component.ts:52-60` | `about.rs` `build_about` | MATCH (WW-02, WW-03) for a UTC upstream. The grace matches; the live-holder rule and operator disable are intended (WW-13) |
+| `ETH_NETWORK` not in `l1Contracts` | 500 | `{"error":"Internal Server Error"}` | `:46-50` | `lib.rs:122-127` maps anything but `sepolia` to 1 | DIVERGENT, config only, intended (WW-14) |
 | Success | 200 | example below | `:121-124` | `about.rs:258-300` | DIVERGENT (fields below) |
 
 Upstream success body for one scene (from `world-about-handler.spec.ts:106-145`, which uses `toEqual`):
@@ -153,19 +156,19 @@ Upstream success body for one scene (from `world-about-handler.spec.ts:106-145`,
 
 | field | upstream | dcl-one | verdict |
 |---|---|---|---|
-| `scenesUrn` | the most recently deployed scene only: `getWorldScenes(…, {limit: 1, orderBy: created_at, desc})` (`worlds-manager.ts:403-407`); the spec pins length 1 (`world-about-handler.spec.ts:541-554`) | every deployed scene, newest first (`queries.rs:88-92`, `about.rs:183-191`) | DIVERGENT (WW-01) |
+| `scenesUrn` | the most recently deployed scene only: `getWorldScenes(…, {limit: 1, orderBy: created_at, desc})` (`worlds-manager.ts:403-407`); the spec pins length 1 (`world-about-handler.spec.ts:541-554`) | the newest scene only (`about.rs` `build_about`, `.take(1)` of the newest-first rows) | MATCH (WW-01) |
 | `baseUrl` in URNs, file URLs, adapter | `HTTP_BASE_URL`, else the request's host | URNs and file URLs: `Settings::content_server_url`, `<PUBLIC_URL>/worlds-content-server` (WR-12); adapter: `Settings.public_url` | MATCH when `HTTP_BASE_URL` is the worlds host |
-| `spawnCoordinates` | `worlds.spawn_coordinates`, `null` when unset | the column, else the newest scene's `metadata.scene.base` (`about.rs:212-219`) | DIVERGENT (WW-07) |
-| `realmName` | `worldConfiguration.name` (after the `dclName` migration) `|| worldName` | `worldConfiguration.name` as a string, else the path name (`about.rs:350-355`), then the ENS strip and override (`about.rs:197-205`) | DIVERGENT: legacy keys and empty name (WW-05, WW-06); strip intended (WW-12) |
-| `minimap.enabled` | `miniMapConfig.visible ?? false`, where a truthy legacy `minimapVisible` replaces the whole `miniMapConfig` | `miniMapConfig.visible`, else `minimapVisible` (`about.rs:357-364`) | DIVERGENT (WW-05) |
-| `minimap.dataImage` / `estateImage` | present when enabled or set; the file URL, else `https://api.decentraland.org/v1/minimap.png` / `estatemap.png` | same rule; defaults `map_parcel_view_url` (this node's `/api/v1/minimap.png` unless configured, `config/src/config.rs:570`) and `map_estate_view_url` | DIVERGENT: default URLs (WW-09) |
-| `skybox.fixedHour` | `worlds.skybox_time` when not NULL, else `skyboxConfig.fixedTime` (or legacy `skybox`); absent when neither | same precedence without legacy `skybox`; `null` when neither, and a JSON float (`36000.0`) when set (`about.rs:29,255`) | DIVERGENT (WW-04, WW-05) |
-| `skybox.textures` | each texture resolved to `<baseUrl>/contents/<hash>`; an unresolved file becomes `""`; `[]` when unset | unresolved files dropped (`about.rs:388-396`) | DIVERGENT (WW-06) |
-| `globalScenesUrn` | `GLOBAL_SCENES_URN.split(' ')` (two spaces give an empty element) | `split_whitespace` (`lib.rs:166-173`) | DIVERGENT, config only (WW-14) |
+| `spawnCoordinates` | `worlds.spawn_coordinates`, `null` when unset | the same | MATCH (WW-07) |
+| `realmName` | `worldConfiguration.name` (after the `dclName` migration) `|| worldName` | the same (`about.rs` `RuntimeMeta::from_scene`), then the ENS strip and override (`resolve_realm_name`) | MATCH (WW-05, WW-06); strip intended (WW-12) |
+| `minimap.enabled` | `miniMapConfig.visible ?? false`, where a truthy legacy `minimapVisible` replaces the whole `miniMapConfig` | the same, read as a boolean (JS truthiness) | MATCH (WW-05) |
+| `minimap.dataImage` / `estateImage` | present when enabled or set; the file URL, else `https://api.decentraland.org/v1/minimap.png` / `estatemap.png` | same rule; defaults `map_parcel_view_url` (this node's `/api/v1/minimap.png` unless configured, `config/src/config.rs:570`) and `map_estate_view_url` | DIVERGENT: default URLs, intended (WW-09) |
+| `skybox.fixedHour` | `worlds.skybox_time` when not NULL, else `skyboxConfig.fixedTime` (or legacy `skybox`); absent when neither | the same; the number as stored or deployed | MATCH (WW-04, WW-05) |
+| `skybox.textures` | each texture resolved to `<baseUrl>/contents/<hash>`; an unresolved file becomes `""`; `[]` when unset | the same | MATCH (WW-06) |
+| `globalScenesUrn` | `GLOBAL_SCENES_URN.split(' ')` (two spaces give an empty element) | `split_whitespace` (`lib.rs:166-173`) | DIVERGENT, config only, intended (WW-14) |
 | `networkId` | `l1Contracts[ETH_NETWORK].chainId` | `network_id_for` (`lib.rs:122-127`) | MATCH for mainnet and sepolia |
 | `map` | `{minimapEnabled:false, sizes:[]}` | same | MATCH |
 | `healthy`, `acceptingUsers`, `content.healthy`, `lambdas.healthy` | `GET <CONTENT_URL>/status` reports `Syncing`, and `GET <LAMBDAS_URL>/status` answers, cached 5 min (`adapters/status.ts`) | false only when this node's content sync failed; lambdas always true (`about.rs:93-118,262-276`) | DIVERGENT, intended (WW-10) |
-| `content.publicUrl`, `lambdas.publicUrl` | `new URL(CONTENT_URL).toString()` (`https://peer.com/content`, no trailing slash added) | `CONTENT_URL`/`LAMBDAS_URL`, else `<public_url>/content/` and `/lambdas/` with a trailing slash (`content/src/lib.rs:244-247`) | DIVERGENT (WW-08) |
+| `content.publicUrl`, `lambdas.publicUrl` | `new URL(CONTENT_URL).toString()` (`https://peer.com/content`, no trailing slash added) | `CONTENT_URL`/`LAMBDAS_URL` as set, else `<public_url>/content` and `/lambdas` (`lib.rs` `Settings::from_config`) | MATCH (WW-08) |
 | `comms.adapter` | `fixed-adapter:offline:offline` when `fixedAdapter` is `offline:offline` or `single_player`; otherwise `fixed-adapter:signed-login:<baseUrl>/worlds/<lowercase name>/comms` (`world-about-handler.ts:127-134`) | the same, and offline too while LiveKit has no credentials or the SFU probe fails (`about.rs:320-333`) | DIVERGENT, intended (WW-11) |
 | `comms.healthy`, `protocol` | `true`, `"v3"` | same | MATCH |
 | `content.synchronizationStatus` | `"Syncing"` | same | MATCH |
@@ -223,17 +226,21 @@ Upstream: `schemaValidator.withSchemaValidatorMiddleware(getWorldScenesSchema)` 
 `coordinates` from the body (`routes.ts:204-208`). Schema (`schemas/scenes-query-schemas.ts:10-26`):
 object, `additionalProperties:false`, required `coordinates`: array of 1..500 unique strings matching
 `^-?\d+,-?\d+$`. Coordinates are canonicalized before the `parcels && $1` match.
-dcl-one: `schema_coordinates` (`scenes.rs:75-97`) checks the same rules and canonicalizes with
-`Parcel::parse_strict` (`comms/src/world_identity.rs:348-360`).
+dcl-one: `post_list_scenes` (`scenes.rs:67-108`) checks the Content-Type before it reads the body, then
+`schema_coordinates` (`scenes.rs:150`) checks the same rules and canonicalizes with
+`Parcel::parse_strict` (`comms/src/world_identity.rs:348-360`). Upstream reads a body of any size
+(`@dcl/http-server` is created without `maxBodySize`); dcl-one reads at most
+`MAX_SCENES_QUERY_BODY_BYTES` (2 MiB).
 
 ### Responses
 
 | trigger | status | upstream body | dcl-one body | verdict |
 |---|---|---|---|---|
-| `Content-Type` not JSON (`application/json` or `type/sub+json`) | 415 | `{"ok":false,"message":"Content-Type must be application/json"}` | `{"error":"Unsupported Media Type","message":"Content-Type must be application/json"}` (axum's `Json` accepts the same types) | DIVERGENT (WW-15) |
-| Body is not JSON | 400 | `{"ok":false,"message":"<JSON.parse message>"}` | `{"error":"Bad request","message":"<axum rejection text>"}` | DIVERGENT (WW-15) |
-| Schema failure | 400 | `{"ok":false,"message":"Invalid JSON body","data":[<AJV errors>]}` | `{"error":"Bad request","message":"Invalid JSON body"}` | DIVERGENT (WW-15); the spec asserts only `message` (`scenes-handler.spec.ts:153-156`) |
-| A coordinate past the i32 range (`"99999999999,0"`) | upstream 200 (matches the pattern; no scene) | dcl-one 400 `Invalid JSON body` (`Parcel::parse` refuses it) | | DIVERGENT (WW-16) |
+| `Content-Type` not JSON (`application/json` or `type/sub+json`) | 415 | `{"ok":false,"message":"Content-Type must be application/json"}` | the same (`content::validation::is_json_content_type`), for a body of any size | MATCH (WW-15) |
+| Body is not JSON | 400 | `{"ok":false,"message":"<JSON.parse message>"}` | the same, V8's text for the captured cases (`content::validation::json_parse_message`), else serde's | MATCH (WW-15) |
+| Schema failure | 400 | `{"ok":false,"message":"Invalid JSON body","data":[<AJV errors>]}` | the same, the first AJV 8.17.1 error (`scenes.rs` `schema_coordinates`) | MATCH (WW-15); the spec asserts only `message` (`scenes-handler.spec.ts:153-156`) |
+| A coordinate past the i32 range (`"99999999999,0"`) | 200 (matches the pattern; no scene) | the same | | MATCH (WW-16) |
+| JSON body over 2 MiB | no cap: answered as any other body | 413, `@dcl/http-server`'s own `Payload Too Large` text with `Connection: close` (`scenes.rs` `payload_too_large`; `core/tests.rs` `world_scenes_page_filter_and_count_like_the_old_listing`) | | DIVERGENT, intended (worlds-compatibility.md, "Scene queries") |
 | Success, query filters, errors | as GET | as GET | | MATCH |
 
 ---
@@ -245,20 +252,20 @@ dcl-one: `schema_coordinates` (`scenes.rs:75-97`) checks the same rules and cano
 | trigger | status | upstream body | dcl-one body | verdict |
 |---|---|---|---|---|
 | Name that is not a valid world key | upstream 404 or 200 | dcl-one 400 `{"error":"Bad request","message":"Invalid world name: …"}` (`permissions::parse_world`) | | DIVERGENT, intended (WW-29) |
-| No `worlds` row | 404 | `{"error":"World \"<name>\" not found or has no settings configured."}` (`world-settings-handler.ts:168-174`, `logic/settings/errors.ts:8-13`) | `{"error":"Not Found","message":"World \"<name>\" not found."}` (`settings.rs:58-61`) | DIVERGENT (WW-17); the spec asserts `error` (`world-settings-handler.spec.ts:233-242`) |
-| Success | 200 | `toSnakeCaseSettings` (`world-settings-handler.ts:24-38`) | `settings_json` (`settings.rs:65-81`) | DIVERGENT (WW-18) |
+| No `worlds` row | 404 | `{"error":"World \"<name>\" not found or has no settings configured."}` (`world-settings-handler.ts:168-174`, `logic/settings/errors.ts:8-13`) | the same (`settings.rs` `get_world_settings`) | MATCH (WW-17); the spec asserts `error` (`world-settings-handler.spec.ts:233-242`) |
+| Success | 200 | `toSnakeCaseSettings` (`world-settings-handler.ts:24-38`) | `settings_json` | MATCH plus two keys, intended (WW-18) |
 
 Success fields:
 
 | key | upstream (`worlds-manager.ts:1236-1262`) | dcl-one | verdict |
 |---|---|---|---|
-| `title`, `description`, `content_rating`, `spawn_coordinates`, `thumbnail_hash` | the value, or **absent** when NULL or empty | the value or `null` | DIVERGENT (WW-18) |
-| `categories` | the array (`[]` kept), or absent when NULL | the array or `null` | DIVERGENT (WW-18) |
+| `title`, `description`, `content_rating`, `spawn_coordinates`, `thumbnail_hash` | the value, or **absent** when NULL or empty | the same | MATCH (WW-18) |
+| `categories` | the array (`[]` kept), or absent when NULL | the same | MATCH (WW-18) |
 | `skybox_time` | number or `null` | same | MATCH |
 | `single_player`, `show_in_places` | booleans, NULL read as `false` / `true` | NOT NULL columns with those defaults (`schemas/20_worlds.sql:85-86`) | MATCH |
 | `access_type` | `access.type` | `access_type` column | MATCH |
 | `settings_version` | number; bumped by every settings write that sets a column and by every access change, not by a spawn-only write (`world-settings-handler.spec.ts:96-199`) | same (`store.rs:1783`, `core/tests.rs:2308-2390`) | MATCH |
-| `realm_name_override`, `preview_wearable_urns` | not present | dcl-one only | DIVERGENT, superset (WW-18) |
+| `realm_name_override`, `preview_wearable_urns` | not present | dcl-one only, always present | DIVERGENT, superset, intended (WW-18) |
 
 No deny-list check in either tree.
 
@@ -272,9 +279,10 @@ Upstream chain (`routes.ts:214-233`): `stampRequestArrival`, per-source upload a
 fetch, multipart parser (2 MiB payload cap, wire cap 2 MiB + 10 MiB, `repeatableFields: ['categories']`,
 busboy limits 100 fields of 1 MiB), then the handler under the shared content lock.
 
-dcl-one order (`settings.rs:84-187`): world-name parse, signed fetch, `Content-Length` check against the
-12 MiB wire cap, per-source admission, a process-wide concurrent-upload slot, multipart parse under the
-upload timeout, then authorization, thumbnail store and the update under the processing deadline.
+dcl-one order (`settings.rs` `update_world_settings`): world-name parse, signed fetch, `Content-Length` check
+against the 12 MiB wire cap, per-source admission, a process-wide concurrent-upload slot, then the body: the
+content-type check and the multipart parse under the upload timeout, then authorization, thumbnail store and
+the update under the processing deadline. The body is not read before the signed fetch (WW-24).
 
 Fields (upstream `parseMultipartInput`, `world-settings-handler.ts:40-153`; dcl-one `parse_multipart`,
 `settings.rs:222-470`):
@@ -284,17 +292,17 @@ Fields (upstream `parseMultipartInput`, `world-settings-handler.ts:40-153`; dcl-
 | `title` | first value; 3..100 UTF-16 units; empty or out of range is 400 `Invalid title: <v or "title cannot be empty">. Expected between 3 and 100 characters.` | same (`text_len` counts UTF-16 units) | MATCH |
 | `description` | same with 3..1000 | same | MATCH |
 | `content_rating` | defined (every value non-empty) and in `RP, E, T, A, R`, else 400 `Invalid content rating: <v>. Expected one of: RP, E, T, A, R` | same | MATCH |
-| `spawn_coordinates` | defined; `parseCoordinate` (`split(',')` into exactly two, `parseInt`, bounds ±150), else 400 `Invalid spawnCoordinates format: "<v>".`; then inside the row lock: no deployed scene is 400 `Invalid spawnCoordinates "<v>". The world has no deployed scenes.`, outside the shape is 400 `…It must be within the world shape rectangle: (x,y) to (x,y).` | `Parcel::parse` plus bounds (`settings.rs:492-500`), same messages (`store.rs:1734,1742`), same lock | DIVERGENT: `parseInt` leniency (WW-25) |
+| `spawn_coordinates` | defined; `parseCoordinate` (`split(',')` into exactly two, `parseInt`, bounds ±150), else 400 `Invalid spawnCoordinates format: "<v>".`; then inside the row lock: no deployed scene is 400 `Invalid spawnCoordinates "<v>". The world has no deployed scenes.`, outside the shape is 400 `…It must be within the world shape rectangle: (x,y) to (x,y).` | `Parcel::parse` plus bounds (`settings.rs` `parse_coordinate`), same messages (`store.rs:1734,1742`), same lock | DIVERGENT: `parseInt` leniency, intended (WW-25) |
 | `skybox_time` | `"null"` clears; else `Number(v)` must be an integer in the i32 range, else 400 `Invalid skybox_time: <v>. Expected an integer between -2147483648 and 2147483647, or null.` | same (`settings.rs:390-400`) | MATCH |
 | `categories` | repeatable; `["null"]` clears to `[]`; more than 20 is 400 `Invalid categories: <n> items. Expected at most 20` | same (`settings.rs:418-431`) | MATCH |
 | `single_player`, `show_in_places` | defined; `=== 'true'` | same | MATCH |
 | `thumbnail` file | over 1 MiB is 400 `Invalid thumbnail: size <n> bytes exceeds maximum of 1048576 bytes (1MB).`; PNG/JPEG/GIF87a/GIF89a/WebP magic, else 400 `Invalid thumbnail: expected a PNG, JPEG, GIF or WebP image.`; stored as SHA-256 hex | same checks (`settings.rs:293-301,455-467`, `settings_policy.rs`); stored as CIDv1 after authorization | MATCH on checks; hash intended (WW-28) |
-| a non-repeatable field sent twice | 400 `Duplicate form field '<name>'` (`multipart/middleware.ts:233-240`) | the first value is used | DIVERGENT (WW-22) |
+| a non-repeatable field sent twice | 400 `Duplicate form field '<name>'` (`multipart/middleware.ts:233-240`) | the same (`categories` and the dcl-one `preview_wearable_urns` repeat) | MATCH (WW-22) |
 | `realm_name_override`, `preview_wearable_urns` | ignored | dcl-one only fields | dcl-one superset |
 
 Authorization: upstream `namePermissionChecker.checkPermission` (the NAME owner), else a world-wide
 `deployment` grant (`logic/settings/component.ts:49-57`); parcel-scoped grants are refused. dcl-one
-`policy.is_owner`, else `has_world_wide_permission(Deployment)` (`settings.rs:160-169`); an owner lookup
+`policy.is_owner`, else `has_world_wide_permission(Deployment)` (`settings.rs` `update_world_settings`); an owner lookup
 that cannot be decided answers 503 (`ApiError::from(undetermined)`), where upstream's checker throws a 500.
 MATCH on the decision.
 
@@ -302,22 +310,23 @@ MATCH on the decision.
 
 | trigger | status | upstream body | dcl-one body | verdict |
 |---|---|---|---|---|
-| Unsigned / malformed chain | 400 | `{"error":"Invalid Auth Chain","message":"This endpoint requires a signed fetch request. See ADR-44."}` (`world-settings-handler.spec.ts:849-876`) | the same, for a multipart request; a request that is not `multipart/form-data` is refused first by the multipart extractor (400, axum's text) | MATCH (fixed, WW-24); the extractor order is open (WW-24) |
-| Validation failure (fields above) | 400 | `{"error":"<message>"}` | `{"error":"Bad request","message":"<message>"}` (`core/tests.rs:5014-5025` asserts `message`) | DIVERGENT (WW-19) |
-| Not owner, no world-wide grant | 403 | `{"error":"Unauthorized. You do not have permission to update settings for this world."}` | `{"error":"You are not authorized to update the settings of this world.","message":<same>}` | DIVERGENT (WW-20) |
-| Body too large (declared `Content-Length` over the wire cap, payload over 2 MiB, a file over 2 MiB, a field over 1 MiB, too many parts or fields) | 413 | `{"error":"Payload Too Large","message":…}` (`multipart/middleware.ts:159-200`, `upload-error-handler.ts:49-51`); the spec pins 413 `An uploaded file exceeds the maximum allowed size.` (`world-settings-handler.spec.ts:1045-1080`) | 400 `{"error":"Bad request","message":…}` (`settings.rs:105-117,203-205,271-274,313-318`) | DIVERGENT (WW-21) |
+| Unsigned / malformed chain | 400 | `{"error":"Invalid Auth Chain","message":"This endpoint requires a signed fetch request. See ADR-44."}` (`world-settings-handler.spec.ts:849-876`) | the same; the body is read only after the signed fetch | MATCH (WW-24) |
+| Validation failure (fields above, and the two spawn refusals from `store::update_world_settings`) | 400 | `{"error":"<message>"}` | the same (`SettingsError::Handler`; `core/tests.rs` `settings_empty_values_follow_the_upstream_handler`) | MATCH (WW-19) |
+| Not owner, no world-wide grant | 403 | `{"error":"Unauthorized. You do not have permission to update settings for this world."}` | the same | MATCH (WW-20) |
+| Body too large (declared `Content-Length` over the wire cap, payload over 2 MiB, a file over 2 MiB, a field over 1 MiB, too many parts or fields) | 413 | `{"error":"Payload Too Large","message":…}` (`multipart/middleware.ts:159-200`, `upload-error-handler.ts:49-51`); the spec pins 413 `An uploaded file exceeds the maximum allowed size.` (`world-settings-handler.spec.ts:1045-1080`) | the same statuses and texts (`upload_limits::too_large`, `upload_limits::too_many_fields_message`; `core/tests.rs` `a_settings_put_declaring_too_many_bytes_answers_413`) | MATCH (WW-21) |
+| Not `multipart/form-data` (after the signed fetch) | 400 | busboy 1.6.0: `{"error":"Bad request","message":"Missing Content-Type"` / `"Unsupported content type: <ct>"` / `"Multipart: Boundary not found"}`; busboy also reads `application/x-www-form-urlencoded` | the same three texts; a urlencoded form is `Unsupported content type` | MATCH; urlencoded intended (worlds-compatibility.md, "Settings uploads") |
 | Invalid `Content-Length` | 400 | `{"error":"Bad request","message":"Invalid Content-Length header."}` | same | MATCH |
 | Source over its share | 429 + `Retry-After: 5` | `{"error":"Too Many Requests","message":"Too many uploads in progress from this client, please retry shortly."}` | same (`settings.rs:120-126`; keyed on `X-Real-IP`, intended in worlds-compatibility.md) | MATCH |
 | In-flight byte or file budget exhausted | 503 + `Retry-After: 5` | `{"error":"Service Unavailable","message":"Server is buffering too many uploads…"}` / `…upload files…` | same messages | MATCH |
-| Process-wide concurrent uploads exceeded | dcl-one 503 + `Retry-After: 5` `Server is handling too many concurrent uploads, please retry shortly.` | upstream has no such cap on this route | | DIVERGENT (WW-23) |
-| Body not received in time | 408 | `{"error":"Request Timeout","message":"The upload did not finish within <s> s: received …"}` | `{"error":"Request Timeout","message":"The multipart upload timed out."}` | DIVERGENT (WW-23) |
-| Processing over the deadline | dcl-one 408 `Deployment processing exceeded the <n>ms deadline.` | upstream has no processing deadline here | | DIVERGENT (WW-23) |
-| Writes switch off | dcl-one 503 `{"ok":false,"error":"Service Unavailable","message":…}`, `Retry-After: 3600` | not upstream | | DIVERGENT (WW-27) |
-| Success | 200 | `{"message":"World settings updated successfully","settings":<as GET>}` | same keys, with the GET differences (WW-18) | DIVERGENT (WW-18) |
+| Process-wide concurrent uploads exceeded | dcl-one 503 + `Retry-After: 5` `Server is handling too many concurrent uploads, please retry shortly.` | upstream has no such cap on this route | | DIVERGENT, intended (WW-23) |
+| Body not received in time | 408 | `{"error":"Request Timeout","message":"The upload did not finish within <s> s: received …"}` (`describeUploadTimeout`) | the same text over the bytes received (`settings.rs` `describe_upload_timeout`; `core/tests.rs` `a_stalled_settings_upload_answers_the_upstream_timeout_text`) | MATCH (WW-23) |
+| Processing over the deadline | dcl-one 408 `Deployment processing exceeded the <n>ms deadline.` | upstream has no processing deadline here | | DIVERGENT, intended (WW-23) |
+| Writes switch off | dcl-one 503 `{"ok":false,"error":"Service Unavailable","message":…}`, `Retry-After: 3600` | not upstream | | DIVERGENT, intended (WW-27) |
+| Success | 200 | `{"message":"World settings updated successfully","settings":<as GET>}` | the same, with the two extra keys (WW-18) | MATCH plus two keys, intended (WW-18) |
 
 Side effects: upstream publishes `WorldSettingsChangedEvent` and, when the spawn changed,
 `WorldSpawnCoordinateSetEvent` to SNS (`logic/settings/component.ts:102-134`); dcl-one publishes neither
-(WW-26). Upstream holds the shared content lock so a running GC cannot delete a just-stored thumbnail
+(WW-26, intended). Upstream holds the shared content lock so a running GC cannot delete a just-stored thumbnail
 before its row lands (`routes.ts:223`, `unit/settings-content-lock.spec.ts`); dcl-one's collector has an age
 floor (`core/admin.rs:7,66-108`), which closes the same race (WW-30).
 
@@ -356,19 +365,19 @@ floor (`core/admin.rs:7,66-108`), which closes the same race (WW-30).
 | param | upstream (`worlds-handler.ts:49-104`) | dcl-one (`manifest.rs:51-126`) | verdict |
 |---|---|---|---|
 | `limit`, `offset` | `getPaginationParams` | `pagination_of` | MATCH |
-| `authorized_deployer` | `EthAddress.validate` (no trim, `0x` only) | `Address::parse`: trims and accepts `0X` (`shared/src/identity.rs:61-71`) | DIVERGENT (WW-32) |
-| `search` | trimmed; empty is absent; over 64 UTF-16 units is 400 `Invalid search parameter: must be at most 64 characters.` | trimmed; 64 **bytes** (`s.len()`) | DIVERGENT (WW-32) |
+| `authorized_deployer` | `EthAddress.validate` (no trim, `0x` only) | `core::http::authorized_deployer` (`0x` check, then `Address::parse_untrimmed`), shared with the scene listings | MATCH (WW-32) |
+| `search` | trimmed; empty is absent; over 64 UTF-16 units is 400 `Invalid search parameter: must be at most 64 characters.` | the same (`text_len`) | MATCH (WW-32) |
 | `has_deployed_scenes` | present: `=== 'true'` | same | MATCH |
 | `sort` | `name` (default) or `last_deployed_at`, else 400 `Invalid sort parameter: <v>. Valid values are: name, last_deployed_at` | same | MATCH |
 | `order` | `asc` (default) or `desc`, else 400 `Invalid order parameter: <v>. Valid values are: asc, desc` | same | MATCH |
-| a repeated key | first value | serde `Query<WorldsQuery>` rejects a duplicate field: axum's plain-text 400 | DIVERGENT (WW-32) |
+| a repeated key | first value | the same (`QueryPairs`, `query_param`) | MATCH (WW-32) |
 
 ### Responses
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
 | Success | 200 | `{"worlds":[…],"total":<n>}` | `worlds-handler.ts:97-103`, `worlds-manager.ts:1366-1550` | `manifest.rs:123-125`, `store.rs:1880-1997` | DIVERGENT (fields below) |
-| Validation errors | 400 | `{"error":"Bad request","message":…}` | above | above | MATCH except WW-32 |
+| Validation errors | 400 | `{"error":"Bad request","message":…}` | above | above | MATCH |
 
 World objects, key order `name, owner, title, description, shape, content_rating, spawn_coordinates,
 skybox_time, categories, single_player, show_in_places, thumbnail_hash, last_deployed_at, blocked_since,
@@ -376,10 +385,10 @@ deployed_scenes` in both (`worlds-handler.ts:29-47`, `manifest.rs:133-157`).
 
 | field / behaviour | upstream | dcl-one | verdict |
 |---|---|---|---|
-| Deny-listed names | `w.name != ALL(<banned names with .eth/.dcl stripped>)` (`worlds-manager.ts:1409-1413`); since a stored name keeps its suffix, this hides only bare-name worlds | no exclusion | GAP (WW-31) |
+| Deny-listed names | `w.name != ALL(<banned names with .eth/.dcl stripped>)` (`worlds-manager.ts:1409-1413`); since a stored name keeps its suffix, this hides only bare-name worlds, case-sensitively | the same filter on the page and the count (`store.rs` `list_worlds_public`, `BannedNames::banned_names`) | MATCH; the gap is shared (WW-31) |
 | `shape`, `deployed_scenes`, `last_deployed_at` | denormalized columns kept by `recalculateWorldSceneStats`; `null` / `0` / `null` with no scene | computed from `world_scenes` (`store.rs:1894-1905`): the same values | MATCH |
-| `blocked_since` | any `blocked` row of the owner, no grace (`worlds-manager.ts:1404`) | `quota_blocks` row only for quota-blockable local DCL NAME and ENS worlds (`store.rs:1907`, `quota.rs:39-45`) | DIVERGENT (WW-33) |
-| `owner` | NOT NULL string | `null` for worlds with no owner (bare names, mirrors) | DIVERGENT (WW-33) |
+| `blocked_since` | any `blocked` row of the owner, no grace (`worlds-manager.ts:1404`) | `quota_blocks` row only for quota-blockable local DCL NAME and ENS worlds (`store.rs:1907`, `quota.rs:39-45`) | DIVERGENT, intended (WW-33) |
+| `owner` | NOT NULL string | `null` for worlds with no owner (bare names, mirrors) | DIVERGENT, intended (WW-33) |
 | `single_player`, `show_in_places` | `COALESCE(…, false/true)` | NOT NULL columns | MATCH |
 | `categories` | the column (`null` when unset) | same | MATCH |
 | timestamps | `Date.toISOString()` | RFC 3339 ms `Z` | MATCH |
@@ -408,7 +417,7 @@ NAMEs the wallet holds now, drops mirrored, personal and bare-name worlds, and c
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
-| Signed-fetch failure | 400/401 | crypto-middleware shape | `routes.ts:252` | `wallet.rs:48-56` | MATCH (fixed, WW-24) |
+| Signed-fetch failure | 400/401 | crypto-middleware shape | `routes.ts:252` | `wallet.rs:48-56` | MATCH (WW-24) |
 | Success | 200 | `{"domains":[{"name","user_permissions":[…],"size":"<n>","owner","parcelCount":<n>}],"count":<n>}` | `contributor-handler.ts:5-16`, `worlds-manager.ts:893-939` | `wallet.rs:42-91` | MATCH except `owner` (WW-36) |
 
 Both select the worlds where the signer holds a grant, with `user_permissions` sorted distinct,
@@ -420,255 +429,291 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
 
 ## Backlog (WW-)
 
-1. **WW-01 · `/about` · `scenesUrn` lists every deployed scene.** Status: open.
+1. **WW-01 · `/about` · `scenesUrn` names the newest scene.** Status: MATCH, no work.
    - Upstream: the newest scene only (`decentraland/worlds-content-server:src/adapters/worlds-manager.ts:403-407`,
      `src/logic/world-runtime-metadata-utils.ts:76-84`); the spec pins one URN for a two-scene world
      (`test/integration/world-about-handler.spec.ts:500-555`). Runtime metadata (realm name, minimap, skybox,
-     `fixedAdapter`) comes from that same newest scene.
-   - dcl-one: every row of `world_scenes`, newest first (`services/catalyst/worlds/src/queries.rs:88-92`,
-     `services/catalyst/worlds/src/about.rs:183-191`); runtime metadata from `scenes[0]`, the newest, as upstream.
-   - Left: an explorer pointed at dcl-one loads every scene of a multi-scene world where upstream loads one.
-   - Fix: in `about.rs::build_about` build `scenes_urn` from `scenes[0]` only (or `LIMIT 1` the scene side of
-     `queries::world_about`, keeping `is_locally_published` over all rows). If multi-scene loading is wanted,
-     record it in `docs/worlds-compatibility.md` instead.
-   - Severity: P1.
+     `fixedAdapter`) comes from that same scene.
+   - dcl-one: `build_about` takes the first of the newest-first rows (`worlds/src/about.rs:192-195`,
+     `worlds/src/queries.rs:78-92`); runtime metadata reads the same scene; `is_locally_published` reads every row.
+     Pinned by `about.rs` `scenes_urn_names_the_newest_scene_only` and `tests/worlds_mirror.rs`.
+   - Severity: none (closed).
 
-2. **WW-02 · `/about` · error envelope.** Status: open.
+2. **WW-02 · `/about` · error envelope.** Status: MATCH, no work.
    - Upstream: `NotFoundError`/`NotAuthorizedError` through http-commons: `{"error":"Not Found"|"Not Authorized","message":…}`;
      the specs assert `message` (`world-about-handler.spec.ts:30-37,571-578`) and `error: 'Not Authorized'` (`:604-614`).
-   - dcl-one: content-server `AppError` → `{"error":<message>}` (`services/catalyst/content/src/errors.rs:74-76`);
-     dcl-one's own test pins it (`about.rs:788-821`).
-   - Fix: return `core::http::ApiError` from `get_about`/`build_about` (`not_found`, `unauthorized`); update the test.
-   - Severity: P2 (statuses match).
+   - dcl-one: `get_about` and `build_about` answer `core::http::ApiError` (`not_found`, `unauthorized`;
+     `about.rs:126-195`). Pinned by `about.rs` `a_deny_listed_world_is_404_before_any_read` and
+     `a_world_without_scenes_is_404_and_a_blocked_world_401`.
+   - Severity: none (closed).
 
-3. **WW-03 · `/about` · blocked message date.** Status: open.
+3. **WW-03 · `/about` · blocked message date.** Status: MATCH, no work.
    - Upstream: `${blockedSince}` is `Date.prototype.toString()`, e.g. `Tue Oct 06 2026 10:00:00 GMT+0000 (Coordinated Universal Time)`.
-   - dcl-one: RFC 3339 with milliseconds, and `by an operator` for an operator disable (`about.rs:163-180`).
-   - Fix: format the quota case as `%a %b %d %Y %H:%M:%S GMT+0000 (Coordinated Universal Time)`; keep the operator text (WW-13).
-   - Severity: P2.
+   - dcl-one: both block messages format the date as `%a %b %d %Y %H:%M:%S GMT+0000 (Coordinated Universal Time)`
+     (`about.rs:187`); an operator disable says `by an operator` (WW-13). Upstream's text follows its process time
+     zone; production runs in UTC. Pinned by `about.rs` `a_world_without_scenes_is_404_and_a_blocked_world_401`.
+   - Severity: none (closed).
 
-4. **WW-04 · `/about` · `skybox.fixedHour` null and float.** Status: open.
+4. **WW-04 · `/about` · `skybox.fixedHour` absent or a number.** Status: MATCH, no work.
    - Upstream: the key is absent when no fixed time is set (the spec's `toEqual` body has no `fixedHour`); a set value is a JSON integer.
-   - dcl-one: `fixed_hour: Option<f64>` without `skip_serializing_if`, so `null`, and `36000.0` when set (`about.rs:29,255`).
-   - Fix: `#[serde(skip_serializing_if = "Option::is_none")]` and serialize an integral value as an integer
-     (store it as `serde_json::Number`).
-   - Severity: P2.
+   - dcl-one: `SkyboxConfig.fixed_hour` is a `serde_json::Number` left out when unset (`about.rs:29-36`);
+     `library/catalyst-api/worlds/SkyboxConfig.ts`, the sites zod schema and
+     `library/catalyst-api/openapi/worlds.openapi.json` type it as an optional number. Pinned by `about.rs`
+     `runtime_metadata_follows_upstream_migrate_configuration`.
+   - Severity: none (closed).
 
-5. **WW-05 · `/about` · legacy `worldConfiguration` keys.** Status: open.
-   - Upstream `migrateConfiguration` (`world-runtime-metadata-utils.ts:5-33`): `dclName` replaces `name`; a truthy
-     `minimapVisible` replaces the whole `miniMapConfig` with `{visible}` (dropping `dataImage`/`estateImage`); a
-     truthy `skybox` replaces `skyboxConfig` with `{fixedTime: skybox}`.
-   - dcl-one `RuntimeMeta::from_scene` (`about.rs:346-411`): no `dclName`, no `skybox`; `miniMapConfig.visible` wins over `minimapVisible`.
-   - Fix: port the three rules into `from_scene`. Old SDK6 world deployments carry these keys.
-   - Severity: P2.
+5. **WW-05 · `/about` · legacy `worldConfiguration` keys.** Status: MATCH, no work.
+   - Upstream `migrateConfiguration` (`world-runtime-metadata-utils.ts:5-33`): a truthy `dclName` replaces `name`; a
+     truthy `minimapVisible` replaces the whole `miniMapConfig` with `{visible}` (dropping `dataImage`/`estateImage`);
+     a truthy `skybox` replaces `skyboxConfig` with `{fixedTime: skybox}`. A falsy legacy key is skipped.
+   - dcl-one: `RuntimeMeta::from_scene` applies the three rules with JS truthiness (`about.rs:358-430`). Pinned by
+     `about.rs` `runtime_metadata_follows_upstream_migrate_configuration` (truthy and falsy legacy keys).
+   - Severity: none (closed).
 
-6. **WW-06 · `/about` · unresolved textures and an empty name.** Status: open.
+6. **WW-06 · `/about` · unresolved textures and an empty name.** Status: MATCH, no work.
    - Upstream: an unresolved texture is `""` in `textures`; `name || worldName` treats `""` as missing.
-   - dcl-one: unresolved textures are dropped (`about.rs:388-396`); a `""` name is kept (`about.rs:350-355`).
-   - Fix: map unresolved textures to `""`; filter an empty name.
-   - Severity: P2.
+   - dcl-one: each texture is resolved to `Option<hash>` in order and an unresolved (non-string, empty or unknown)
+     one links as `""` (`about.rs` `build_about`, `RuntimeMeta::from_scene`); an empty name falls back to the
+     world name. Same test as WW-05.
+   - Severity: none (closed).
 
-7. **WW-07 · `/about` · `spawnCoordinates` fallback.** Status: open.
+7. **WW-07 · `/about` · `spawnCoordinates`.** Status: MATCH, no work.
    - Upstream: `worlds.spawn_coordinates`, `null` when unset (`worlds-manager.ts:420-427`).
-   - dcl-one: falls back to the newest scene's `metadata.scene.base` (`about.rs:212-219`).
-   - Fix: drop the fallback, or keep it and record it (deploys set the column in both trees, so it only shows for rows written without it).
-   - Severity: P2.
+   - dcl-one: the column, `null` when unset (`about.rs:222`).
+   - Severity: none (closed).
 
-8. **WW-08 · `/about` · `publicUrl` trailing slash.** Status: open.
+8. **WW-08 · `/about` · `publicUrl` without a trailing slash.** Status: MATCH, no work.
    - Upstream: `new URL(CONTENT_URL).toString()`: `https://peer.com/content` (spec `world-about-handler.spec.ts:136-139`).
-   - dcl-one: `CONTENT_URL`/`LAMBDAS_URL` verbatim, else `<public_url>/content/` and `/lambdas/` (`services/catalyst/content/src/lib.rs:244-247`).
-   - Fix: give the worlds `Settings` its own `content_public_url`/`lambdas_public_url` without the trailing slash
-     (the content `/about` may keep its own). Clients join paths onto it.
-   - Severity: P2.
+   - dcl-one: the worlds `Settings::from_config` takes a set `CONTENT_URL`/`LAMBDAS_URL` as configured and this
+     node's own URLs without the trailing slash (`worlds/src/lib.rs:136-148`); the content `/about` keeps its own.
+     Pinned by `lib.rs` `settings_derive_the_worlds_urls_from_the_node_config`.
+   - Severity: none (closed).
 
-9. **WW-09 · `/about` · default minimap images.** Status: open.
+9. **WW-09 · `/about` · default minimap images.** Status: intended (worlds-compatibility.md).
    - Upstream: `https://api.decentraland.org/v1/minimap.png` and `/v1/estatemap.png`.
-   - dcl-one: this node's `/api/v1/minimap.png` unless `MAP_PARCEL_VIEW_URL` is set (`services/catalyst/config/src/config.rs:570-572`),
-     and `map_estate_view_url` (`worlds/src/lib.rs:148`, overridden in `serve.rs:511`).
-   - Fix: record it in `docs/worlds-compatibility.md` (a self-contained node serves its own map), or default to the upstream URLs.
-   - Severity: P2.
+   - dcl-one: this node's `/api/v1/minimap.png` and `/api/v1/estatemap.png` unless `MAP_PARCEL_VIEW_URL` /
+     `MAP_ESTATE_VIEW_URL` name others (`services/catalyst/config/src/config.rs:570-572`); worlds-compatibility.md,
+     "`/about` configuration". Setting both to the upstream URLs gives a byte-equal answer.
+   - Severity: none (closed).
 
-10. **WW-10 · `/about` · health fields.** Status: Kept by decision, intended (worlds-compatibility.md, "`/about` health").
-    - Upstream polls `CONTENT_URL/status` and `LAMBDAS_URL/status`; dcl-one reads its own sync state and reports lambdas healthy.
+10. **WW-10 · `/about` · health fields.** Status: intended (worlds-compatibility.md).
+    - Upstream polls `CONTENT_URL/status` and `LAMBDAS_URL/status`; dcl-one reads its own sync state and reports
+      lambdas healthy (worlds-compatibility.md, "`/about` health").
     - Drop-in: a stock explorer refuses a realm with `acceptingUsers:false`; dcl-one reports false less often, never more. No break.
-    - Severity: P2 (by design).
+    - Severity: none (closed).
 
-11. **WW-11 · `/about` · offline adapter while the SFU is down.** Status: Kept by decision, intended (worlds-compatibility.md, "Offline comms when the SFU is down").
-    - dcl-one: `comms_online && sfu.is_alive()` (`about.rs:226-231,320-333`).
-    - Drop-in: a client gets an offline realm instead of a handshake that fails. No break. Depends on the comms area (SFU liveness, the `/worlds/<name>/comms` mint).
-    - Severity: P2 (by design).
+11. **WW-11 · `/about` · offline adapter while the SFU is down.** Status: intended (worlds-compatibility.md).
+    - dcl-one: `comms_online && sfu.is_alive()` (`about.rs:239`, `resolve_fixed_adapter` `:328`);
+      worlds-compatibility.md, "Offline comms when the SFU is down". Pinned by `about.rs`
+      `an_unreachable_sfu_serves_the_offline_adapter`.
+    - Drop-in: a client gets an offline realm instead of a handshake that fails. No break.
+    - Severity: none (closed).
 
-12. **WW-12 · `/about` · `realmName` strip and override.** Status: Kept by decision, intended (worlds-compatibility.md, "Realm name").
-    - dcl-one strips `.dcl.eth` for locally published worlds (`WORLDS_REALM_NAME_STRIP_ENS`, default true) and applies `realm_name_override` (`about.rs:279-318`).
-    - Drop-in: a client that compares `realmName` with the world name gets a different string; set
-      `WORLDS_REALM_NAME_STRIP_ENS=false` for a byte-equal answer.
-    - Severity: P2 (by design).
+12. **WW-12 · `/about` · `realmName` strip and override.** Status: intended (worlds-compatibility.md).
+    - dcl-one strips `.dcl.eth` for locally published worlds (`WORLDS_REALM_NAME_STRIP_ENS`, default true) and applies
+      `realm_name_override` (`about.rs:209-210,303-326`); worlds-compatibility.md, "Realm name".
+    - Drop-in: a client that compares `realmName` with the world name gets a different string;
+      `WORLDS_REALM_NAME_STRIP_ENS=false` gives a byte-equal answer.
+    - Severity: none (closed).
 
-13. **WW-13 · `/about` · operator disable and live-holder quota block.** Status: Kept by decision, intended (worlds-compatibility.md, "Operator disables apply at once").
-    - Severity: P2 (by design).
+13. **WW-13 · `/about` · operator disable and live-holder quota block.** Status: intended (worlds-compatibility.md).
+    - dcl-one: worlds-compatibility.md, "Operator disables apply at once".
+    - Severity: none (closed).
 
-14. **WW-14 · `/about` · configuration edges.** Status: open.
-    - `GLOBAL_SCENES_URN` with repeated spaces: upstream keeps empty elements (`split(' ')`), dcl-one does not (`lib.rs:166-173`).
-    - An `ETH_NETWORK` other than mainnet/sepolia: upstream 500, dcl-one `networkId: 1` (`lib.rs:122-127`).
-    - Fix: none needed for production values; note in `docs/worlds-compatibility.md` if kept.
-    - Severity: P2.
+14. **WW-14 · `/about` · configuration edges.** Status: intended (worlds-compatibility.md).
+    - `GLOBAL_SCENES_URN` with repeated spaces: upstream keeps empty elements (`split(' ')`), dcl-one splits on runs of whitespace.
+    - An `ETH_NETWORK` other than mainnet/sepolia: upstream 500, dcl-one `networkId: 1` (`lib.rs:122`).
+    - Both under worlds-compatibility.md, "`/about` configuration"; production values answer the same.
+    - Severity: none (closed).
 
-15. **WW-15 · `POST /scenes` · schema-validator bodies.** Status: open.
+15. **WW-15 · `POST /scenes` · schema-validator bodies.** Status: MATCH, no work.
     - Upstream (`@dcl/schema-validator-component` 1.0.1): 415 `{"ok":false,"message":"Content-Type must be application/json"}`;
       400 `{"ok":false,"message":<JSON.parse error>}`; 400 `{"ok":false,"message":"Invalid JSON body","data":[<AJV errors>]}`.
-    - dcl-one: the worlds envelope for all three (`services/catalyst/worlds/src/scenes.rs:64-97`).
-    - Fix: answer the validator shape from `post_list_scenes`, and build `data` with the AJV-style builder the
-      content crate already uses for `POST /entities/active` (content-lambdas CR-2).
-    - Severity: P2 (the upstream spec checks only `message`).
+    - dcl-one: `post_list_scenes` (`worlds/src/scenes.rs:67-108`) checks the Content-Type with
+      `content::validation::is_json_content_type` before reading the body, then answers the validator's three
+      bodies, keys in its order (`content::validation::ordered_refusal_json`), the parse message from
+      `content::validation::json_parse_message` and the first AJV error from `schema_coordinates`
+      (`scenes.rs:150`), checked against AJV 8.17.1. Pinned by `scenes.rs` `schema_errors_are_the_first_ajv_error`,
+      `content/src/validation.rs` `json_content_types_follow_the_schema_validator` and `core/tests.rs`
+      `world_scenes_page_filter_and_count_like_the_old_listing`. A body over 2 MiB is the intended
+      difference under worlds-compatibility.md, "Scene queries".
+    - Severity: none (closed).
 
-16. **WW-16 · `POST /scenes` · coordinates past i32.** Status: open.
+16. **WW-16 · `POST /scenes` · coordinates past i32.** Status: MATCH, no work.
     - Upstream: the pattern accepts any digit count; such a coordinate matches no scene (200).
-    - dcl-one: `Parcel::parse` refuses it, so 400 (`comms/src/world_identity.rs:337-360`).
-    - Fix: in `schema_coordinates`, check the pattern only and keep the raw string when it does not fit i32.
-    - Severity: P2.
+    - dcl-one: the pattern alone decides (`scenes.rs` `matches_coordinate_pattern`); a coordinate past `i32` is
+      kept as sent and matches nothing. Pinned by `core/tests.rs` `world_scenes_page_filter_and_count_like_the_old_listing`.
+    - Severity: none (closed).
 
-17. **WW-17 · `GET /settings` · 404 body.** Status: open.
+17. **WW-17 · `GET /settings` · 404 body.** Status: MATCH, no work.
     - Upstream: `404 {"error":"World \"<name>\" not found or has no settings configured."}`
       (`src/logic/settings/errors.ts:8-13`, `world-settings-handler.ts:168-174`).
-    - dcl-one: `{"error":"Not Found","message":"World \"<name>\" not found."}` (`services/catalyst/worlds/src/core/settings.rs:58-61`).
-    - Fix: answer `{"error": "<upstream message>"}` (a dedicated response, not `ApiError::not_found`).
-    - Severity: P2.
+    - dcl-one: `SettingsError::Handler` answers `{error}` only (`worlds/src/core/settings.rs:65-92,105-119`).
+      Pinned by `core/tests.rs` `every_route_answers_its_contract` (the `nope.dcl.eth` read).
+    - Severity: none (closed).
 
-18. **WW-18 · `GET`/`PUT /settings` · null vs absent, and extra keys.** Status: open.
+18. **WW-18 · `GET`/`PUT /settings` · absent keys, and two extra keys.** Status: MATCH, no work; the extra keys intended (worlds-compatibility.md).
     - Upstream omits `title`, `description`, `content_rating`, `spawn_coordinates`, `thumbnail_hash` when NULL or
       empty, and `categories` when NULL (`worlds-manager.ts:1236-1262`).
-    - dcl-one writes `null`, and adds `realm_name_override` and `preview_wearable_urns` (`settings.rs:65-81`).
-    - Fix: skip `None` fields in `settings_json`; record the two extra keys as a superset in `docs/worlds-compatibility.md`.
-    - Severity: P2.
+    - dcl-one: `settings_json` leaves the same keys out (`settings.rs:122-150`) and adds `realm_name_override` and
+      `preview_wearable_urns` (worlds-compatibility.md, "Settings superset"). The sites settings reader
+      (`apps/sites/src/data/lib/catalyst/creator-hub/world-settings.ts`) accepts absent keys. Pinned by
+      `settings.rs` `settings_json_keeps_set_values_and_drops_empty_text` and `world-settings.test.ts`.
+    - Severity: none (closed).
 
-19. **WW-19 · `PUT /settings` · 400 body.** Status: open.
+19. **WW-19 · `PUT /settings` · 400 body.** Status: MATCH, no work.
     - Upstream: every validation failure is `400 {"error":"<message>"}` (`world-settings-handler.ts:208-213`); the spec asserts `error`
       for each message (`world-settings-handler.spec.ts:332-1160`).
-    - dcl-one: `{"error":"Bad request","message":"<message>"}`; a client that shows `error`, as upstream's shape invites, shows "Bad request".
-    - Fix: map the settings-validation `ApiError::bad_request`s (field checks and the two spawn errors from
-      `store::update_world_settings`) to `{"error": msg, "message": msg}` in `update_world_settings`; keep http-commons
-      400s for the middleware-stage errors (Content-Length) as upstream does.
-    - Severity: P1 (the settings form's error text).
+    - dcl-one: the field validations and the two spawn refusals of `store::update_world_settings` answer
+      `400 {error: <message>}` (`SettingsError::invalid`, `settings.rs:252-258`); the parser's refusals
+      (Content-Length, duplicates, content type) keep the http-commons shape, as upstream. Pinned by
+      `core/tests.rs` `settings_empty_values_follow_the_upstream_handler`.
+    - Severity: none (closed).
 
-20. **WW-20 · `PUT /settings` · 403 text.** Status: open.
+20. **WW-20 · `PUT /settings` · 403 text.** Status: MATCH, no work.
     - Upstream: `Unauthorized. You do not have permission to update settings for this world.` in `error` only.
-    - dcl-one: `You are not authorized to update the settings of this world.` in `error` and `message` (`settings.rs:167-169`).
-    - Fix: use the upstream string.
-    - Severity: P2.
+    - dcl-one: `NOT_ALLOWED_MESSAGE` in `error` only (`settings.rs:97-98,242`). Pinned by `core/tests.rs`
+      `every_route_answers_its_contract`.
+    - Severity: none (closed).
 
-21. **WW-21 · `PUT /settings` · size limits answer 400 instead of 413.** Status: open.
+21. **WW-21 · `PUT /settings` · size and count limits.** Status: MATCH, no work.
     - Upstream: a declared length over the wire cap, a payload, file or field over its limit, too many parts or fields:
       `413 {"error":"Payload Too Large","message":…}`; a field over 1 MiB says
       `Field '<name>' is too large. The maximum allowed size per field is 1048576 bytes.`
       (`src/controllers/multipart/middleware.ts:159-200,330-336`).
-    - dcl-one: `400 {"error":"Bad request",…}` with `The multipart request is too large.` (`settings.rs:105-117,203-205,271-274,313-318`).
-    - Fix: answer 413 with the upstream label and messages from these branches (the same helper `POST /entities` would use).
-    - Severity: P2.
+    - dcl-one: every size and count branch answers `upload_limits::too_large` with upstream's text; the fields
+      cap is `upload_limits::too_many_fields_message` (`settings.rs:178-183,384-495`,
+      `worlds/src/core/upload_limits.rs`). Pinned by `settings.rs` `parse_multipart_caps_each_field_value_at_one_megabyte`,
+      `parse_multipart_rejects_more_than_one_hundred_fields`, `parse_multipart_rejects_more_than_the_parts_limit`,
+      and `core/tests.rs` `a_settings_put_declaring_too_many_bytes_answers_413` and `every_route_answers_its_contract`
+      (a file over 2 MiB).
+    - Severity: none (closed).
 
-22. **WW-22 · `PUT /settings` · duplicate fields.** Status: open.
+22. **WW-22 · `PUT /settings` · duplicate fields.** Status: MATCH, no work.
     - Upstream: a second `title` (any field but `categories`, or any file name seen twice) is
       `400 {"error":"Bad request","message":"Duplicate form field 'title'"}`.
-    - dcl-one: keeps every value and reads the first (`settings.rs:334-337,472-474`).
-    - Fix: reject a repeated name other than `categories` (and the dcl-one `preview_wearable_urns`) in `parse_multipart`.
-    - Severity: P2.
+    - dcl-one: `parse_multipart` refuses a name seen before unless both parts are fields of `categories` or the
+      dcl-one `preview_wearable_urns` (`settings.rs:102,398-403`). Pinned by `settings.rs` `a_repeated_form_field_is_refused`.
+    - Severity: none (closed).
 
-23. **WW-23 · `PUT /settings` · timeouts and the concurrency slot.** Status: open.
+23. **WW-23 · `PUT /settings` · timeouts and the concurrency slot.** Status: MATCH, no work, for the timeout text; the slot and the processing deadline intended (worlds-compatibility.md).
     - Upstream: 408 with `describeUploadTimeout`'s text (`multipart/errors.ts:32-50`); no processing deadline and no
       process-wide upload count on this route.
-    - dcl-one: 408 `The multipart upload timed out.`; a processing deadline (408 `Deployment processing exceeded…`) and
-      `try_acquire_upload_slot` (503 `Server is handling too many concurrent uploads…`) (`settings.rs:127-186`).
-    - Fix: reuse the upstream timeout message; drop the slot and the processing deadline from this route or record them.
-    - Severity: P2.
+    - dcl-one: 408 with `describe_upload_timeout`'s text over the body bytes received and the declared length
+      (`settings.rs:206-228,318-329`); the `MAX_CONCURRENT_UPLOADS` slot and the
+      `DEPLOYMENT_PROCESSING_TIMEOUT_MS` deadline are under worlds-compatibility.md, "Settings uploads". Pinned by
+      `settings.rs` `the_timeout_message_is_upstreams` and `core/tests.rs`
+      `a_stalled_settings_upload_answers_the_upstream_timeout_text`.
+    - Severity: none (closed).
 
-24. **WW-24 · `PUT /settings`, `/wallet/contribute` · signed-fetch failure bodies.** Status: open, bodies fixed.
+24. **WW-24 · `PUT /settings`, `/wallet/contribute` · signed-fetch failures.** Status: MATCH, no work.
     - Upstream: `{"error":<detail>,"message":"This endpoint requires a signed fetch request. See ADR-44."}`, detail
-      e.g. `Invalid Auth Chain` (`src/controllers/routes.ts:89-92`, spec `world-settings-handler.spec.ts:849-876`).
-    - dcl-one: `map_auth_error_api` → worlds envelope `{"error":"Bad request","message":"Invalid Auth Chain"}`
-      (`services/catalyst/comms/src/signed_fetch.rs:187-190`, `shared/src/signed_fetch.rs:76-87`).
-    - Fix: one change in `map_auth_error_api` for every strict worlds route; owned by the auth/permissions area.
-    - Fixed: the bodies, `{error: <crypto-middleware 6.3.0 text>, message: <ADR-44 line>}` (worlds-comms.md
-      WC-01), pinned by `worlds/src/core/tests.rs` `signed_routes_refuse_with_the_crypto_middleware_body`.
-    - Left: `PUT /settings` takes its `Multipart` extractor before the signed fetch, so an unsigned request that is
-      not `multipart/form-data` answers axum's 400 text (``Invalid `boundary` for `multipart/form-data` request``)
-      where upstream answers the ADR-44 body. Moving the check ahead of the extractor is the settings
-      handler's change (world area).
-    - Severity: P2. Depends on: auth (signed fetch).
+      e.g. `Invalid Auth Chain` (`src/controllers/routes.ts:89-92`, spec `world-settings-handler.spec.ts:849-876`),
+      before the body is parsed.
+    - dcl-one: `map_auth_error_api` answers the crypto-middleware body (worlds-comms.md WC-01); the settings handler
+      takes the raw request and reads the body only after the signed fetch (`settings.rs:153-169`), so an unsigned
+      request of any content type gets the signed-fetch refusal. Pinned by `core/tests.rs`
+      `signed_routes_refuse_with_the_crypto_middleware_body` and
+      `an_unsigned_settings_put_is_refused_by_the_signed_fetch_before_the_body`.
+    - Severity: none (closed).
 
-25. **WW-25 · `PUT /settings` · `spawn_coordinates` parsing.** Status: open.
+25. **WW-25 · `PUT /settings` · `spawn_coordinates` parsing.** Status: intended (worlds-compatibility.md).
     - Upstream `parseCoordinate` splits on `,` and uses `parseInt`, so `5abc,3`, `5.9,3` and ` 5,3` pass and are stored as sent.
-    - dcl-one: `Parcel::parse` refuses trailing garbage and fractions (`settings.rs:381-388,492-500`).
-    - Fix: keep (refusing garbage is safer) and record it, or port `parseInt` semantics.
-    - Severity: P2.
+    - dcl-one: `Parcel::parse` refuses trailing garbage and fractions (`settings.rs:659`); worlds-compatibility.md,
+      "Settings uploads".
+    - Severity: none (closed).
 
-26. **WW-26 · `PUT /settings` · no settings events.** Status: open.
+26. **WW-26 · `PUT /settings` · no settings events.** Status: intended (worlds-compatibility.md).
     - Upstream publishes `WorldSettingsChangedEvent` and `WorldSpawnCoordinateSetEvent` to SNS (`src/logic/settings/component.ts:102-134`).
-    - dcl-one publishes nothing; its explore crate reads the worlds tables directly.
-    - Fix: record under "Notifications" in `docs/worlds-compatibility.md`; emit on NATS only if an external consumer needs it.
-    - Severity: P2. Depends on: notifications/explore.
+    - dcl-one publishes nothing; its explore crate reads the worlds tables directly (worlds-compatibility.md,
+      Notifications, "Settings events").
+    - Severity: none (closed).
 
-27. **WW-27 · `PUT /settings` · the writes switch is off by default.** Status: open (docs).
+27. **WW-27 · `PUT /settings` · the writes switch is off by default.** Status: intended (worlds-compatibility.md).
     - dcl-one: 503 `{"ok":false,"error":"Service Unavailable","message":…}` with `Retry-After: 3600` until
-      `WORLDS_WRITES_ENABLED` is on (`services/catalyst/worlds/src/writes.rs:29-75`). Not listed in `docs/worlds-compatibility.md`.
-    - Drop-in: a node started with defaults refuses every settings edit.
-    - Fix: list the switch in `docs/worlds-compatibility.md`; operators replacing upstream set it after the restore drill.
-    - Severity: P1 (configuration).
+      `WORLDS_WRITES_ENABLED` is on (`services/catalyst/worlds/src/writes.rs:29-75`); worlds-compatibility.md,
+      "Writes switch", once for every worlds write route (WD-03 too).
+    - Drop-in: a node started with defaults refuses every settings edit until the operator sets the switch.
+    - Severity: none (closed).
 
-28. **WW-28 · `PUT /settings` · thumbnail hash is CIDv1.** Status: Kept by decision, intended (worlds-compatibility.md, "Thumbnails").
-    - Upstream stores SHA-256 hex (spec `world-settings-handler.spec.ts:424-447`); dcl-one CIDv1 (`settings.rs:170-178`). Both serve it from `/contents/<hash>`.
-    - Severity: P2 (by design).
+28. **WW-28 · `PUT /settings` · thumbnail hash is CIDv1.** Status: intended (worlds-compatibility.md).
+    - Upstream stores SHA-256 hex (spec `world-settings-handler.spec.ts:424-447`); dcl-one CIDv1 (`settings.rs:245`),
+      worlds-compatibility.md, "Thumbnails". Both serve it from `/contents/<hash>`.
+    - Severity: none (closed).
 
-29. **WW-29 · settings, manifest, limits · invalid world name is 400.** Status: Kept by decision, intended (worlds-compatibility.md, "Invalid world names").
-    - Severity: P2 (by design).
+29. **WW-29 · settings, manifest, limits · invalid world name is 400.** Status: intended (worlds-compatibility.md).
+    - dcl-one: worlds-compatibility.md, "Invalid world names".
+    - Severity: none (closed).
 
 30. **WW-30 · `PUT /settings` · content lock.** Status: MATCH, no work.
     - Upstream holds the shared content lock across the thumbnail write and the row update.
     - dcl-one's collector skips blobs younger than its age floor (`services/catalyst/worlds/src/core/admin.rs:7,66-108`), so a just-stored thumbnail cannot be collected before its row lands.
     - Severity: none (closed).
 
-31. **WW-31 · `/worlds` · deny-listed names are listed.** Status: open.
-    - Upstream: `w.name != ALL(getBannedNames())` (`worlds-manager.ts:1409-1413`); with suffixes stripped from the list, this hides bare-name worlds.
-    - dcl-one: no filter (`store.rs:1880-1997`).
-    - Fix: pass `names.snapshot().banned_names()` to `list_worlds_public` and add `AND w.name <> ALL($n)` to both the page and the count.
-      (Hiding `<banned>.dcl.eth` too would be stricter than upstream.)
-    - Severity: P2.
+31. **WW-31 · `/worlds` · deny-listed names.** Status: MATCH, no work.
+    - Upstream: `w.name != ALL(getBannedNames())` (`worlds-manager.ts:1409-1413`); `getBannedNames` strips the first
+      `.eth` and `.dcl` of each entry without lowercasing it (`src/adapters/name-deny-list-checker.ts:51-54`), and
+      Postgres compares case-sensitively, so only a bare name equal to a stripped entry is hidden.
+    - dcl-one: `list_worlds_public` adds `w.name <> ALL($5)` to the page and the count
+      (`worlds/src/core/store.rs:1923`) with `BannedNames::banned_names()` (`core/names.rs:38-40`), the same
+      stripping and no lowercasing. Pinned by `core/tests.rs`
+      `worlds_listing_reads_the_query_like_url_search_params_and_hides_banned_bare_names`.
+    - Both trees list `<banned>.dcl.eth` while `/about` and the manifest answer 404 for it; recorded as a shared
+      moderation gap in worlds-compatibility.md, "Deny list in world listings".
+    - Severity: none (closed).
 
-32. **WW-32 · `/worlds` · query parsing.** Status: open.
-    - Repeated keys: serde `Query` answers axum's plain-text 400; upstream reads the first.
-    - `authorized_deployer`: `Address::parse` trims and accepts `0X`; upstream's `EthAddress` refuses both.
-    - `search`: the 64 limit counts bytes; upstream counts UTF-16 units, so a 30-character non-Latin term is refused here.
-    - Fix: in `manifest.rs::get_worlds` read `QueryPairs` with `query_param`, validate with `parse_untrimmed` behind a `0x` check
-      (as `scenes.rs` does), and use `settings_policy::text_len` for the search limit.
-    - Severity: P2.
+32. **WW-32 · `/worlds` · query parsing.** Status: MATCH, no work.
+    - Upstream reads each parameter with `URLSearchParams.get` (the first of a repeated key), validates
+      `authorized_deployer` with `EthAddress` (no trim, `0x` only) and counts the 64-character `search` limit in UTF-16 units.
+    - dcl-one: `get_worlds` reads `QueryPairs` with `query_param` (`core/manifest.rs:51-105`), validates the deployer
+      with `core::http::authorized_deployer` (`core/http.rs:19-35`, shared with the scene listings) and counts with
+      `settings_policy::text_len`. Same test as WW-31.
+    - Severity: none (closed).
 
-33. **WW-33 · `/worlds` · `blocked_since` and `owner`.** Status: open (docs).
+33. **WW-33 · `/worlds` · `blocked_since` and `owner`.** Status: intended (worlds-compatibility.md).
     - Upstream: `blocked_since` is any block of the stored owner; `owner` is never null.
-    - dcl-one: only quota-blockable local DCL NAME and ENS worlds show a block (`store.rs:1907`, `quota.rs:39-45`); `owner` is `null` for ownerless worlds.
-    - Fix: record both in `docs/worlds-compatibility.md` next to "Operator disables apply at once".
-    - Severity: P2.
+    - dcl-one: only quota-blockable local DCL NAME and ENS worlds show a block (`store.rs:1895`, `quota.rs:39-45`);
+      `owner` is `null` for ownerless worlds; worlds-compatibility.md, "World listings".
+    - Severity: none (closed).
 
-34. **WW-34 · `/wallet/:wallet/stats` · allowance and listed worlds.** Status: Kept by decision, intended (worlds-compatibility.md, "Wallet storage allowance").
-    - Not in the page: bare-name worlds, which upstream lists under `ensNames`, are dropped (`quota.rs:156-161`).
-    - Fix: add the bare-name line to `docs/worlds-compatibility.md`.
-    - Severity: P2 (by design).
+34. **WW-34 · `/wallet/:wallet/stats` · allowance and listed worlds.** Status: intended (worlds-compatibility.md).
+    - Bare-name worlds, which upstream lists under `ensNames`, are not in the page (`quota.rs:156-161`);
+      worlds-compatibility.md, "Wallet storage allowance".
+    - Severity: none (closed).
 
-35. **WW-35 · `/limits` · allowance sources and the header limit.** Status: Kept by decision, intended (worlds-compatibility.md, "Wallet storage allowance", "Per-world limits", "Unowned names").
-    - dcl-one answers 503 while the allowance or owner cannot be read; upstream retries the stats service and then fails.
+35. **WW-35 · `/limits` · allowance sources and the header limit.** Status: intended (worlds-compatibility.md).
+    - dcl-one answers 503 while the allowance or owner cannot be read; upstream retries the stats service and then fails
+      (worlds-compatibility.md, "Wallet storage allowance", "Per-world limits", "Unowned names").
     - The 431 upstream gets from Node's 16 KB header limit for very long `parcels` lists depends on the gateway and hyper here; not compared.
-    - Severity: P2 (by design).
+    - Severity: none (closed).
 
-36. **WW-36 · `/wallet/contribute` · `owner` null.** Status: open.
+36. **WW-36 · `/wallet/contribute` · `owner` null.** Status: intended (worlds-compatibility.md).
     - dcl-one returns `owner: null` for worlds with no stored owner (`wallet.rs:23-31`); upstream's column is NOT NULL.
-    - Fix: none for owned worlds; record it with WW-33.
-    - Severity: P2.
+      Recorded with WW-33 under "World listings".
+    - Severity: none (closed).
 
-37. **WW-37 · all routes · CORS.** Status: open (cross-cutting).
-    - Upstream `Access-Control-Allow-Origin: *`; dcl-one echoes the origin with credentials (`services/catalyst/shared/src/cors.rs:72-79`).
-    - Fix: the shared CORS decision (content-lambdas theme "CORS"); no per-route work.
-    - Severity: P2. Depends on: shared CORS.
+37. **WW-37 · all routes · CORS.** Status: intended (worlds-compatibility.md).
+    - Upstream `Access-Control-Allow-Origin: *`; dcl-one echoes the origin with credentials (`services/catalyst/shared/src/cors.rs:72-79`),
+      the CORS layer shared with the content server (content-lambdas theme "CORS"); worlds-compatibility.md, "CORS".
+    - Severity: none (closed).
 
 38. **WW-38 · paged routes · offset past i64.** Status: Kept by decision.
-    - Upstream (http-commons 2.0.0) passes it to Postgres, which answers 500; dcl-one saturates and answers an empty page (`core/http.rs:31-41`).
-    - Severity: P2 (by design).
+    - Upstream (http-commons 2.0.0) passes it to Postgres, which answers 500; dcl-one saturates and answers an empty page (`core/http.rs:49-60`).
+    - Severity: none (closed).
+
+39. **WW-39 · mirror · a multi-scene world keeps only its newest scene.** Status: open.
+    - Upstream `/about` lists the newest scene only (WW-01), and so does this node's.
+    - dcl-one: the mirror builds a world's scene set from the source's `/about` `scenesUrn`
+      (`worlds/src/mirror.rs:1276-1291`, `scene_refs` `:1537`) and deletes the mirrored scenes it does not list
+      (`:1500-1508`). Mirroring a multi-scene world from either source keeps one scene, and the pass's
+      `holds_every_scene` check against the `/index` catalogue never holds, so the world is fetched on every pass.
+      The read-through fill (`mirror_one`) has the same scene set. `tests/worlds_mirror.rs`'s fake upstream serves
+      every URN in `/about`, which hides this.
+    - Proposed fix: read the scene set from `{source}/world/{name}/scenes` (paged, as the Bevy explorer's
+      `ipfs/src/lib.rs` `update_scene_urns` does), keep `/about` for the world configuration and the content
+      `baseUrl`, and make the fakes in `tests/worlds_mirror.rs` and `tests/worlds_read_through.rs` answer `/about`
+      with the newest URN only.
+    - Severity: P1 (a mirrored multi-scene world loses its other scenes).
 
 ## Endpoints dcl-one serves in this area that upstream does not
 
