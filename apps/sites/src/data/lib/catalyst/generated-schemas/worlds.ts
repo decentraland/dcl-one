@@ -313,7 +313,7 @@ export const WorldPermissionsBlockSchema = z.object({
 
 export const PermissionsResponseSchema = z.object({
   permissions: WorldPermissionsBlockSchema,
-  owner: z.string().nullable(),
+  owner: z.string().optional(),
   summary: z.record(z.string(), z.array(PermissionSummaryEntrySchema)),
 });
 

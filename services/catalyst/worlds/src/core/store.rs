@@ -26,8 +26,22 @@ use super::settings_policy::{
     text_len,
 };
 
-pub const MAX_ACCESS_WALLETS: i64 = 1000;
-pub const MAX_ACCESS_COMMUNITIES: i64 = 50;
+/// The allow-list caps (`ACCESS_MAX_WALLETS`, `ACCESS_MAX_COMMUNITIES`;
+/// upstream's defaults 1000 and 50).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccessCaps {
+    pub wallets: i64,
+    pub communities: i64,
+}
+
+impl Default for AccessCaps {
+    fn default() -> Self {
+        Self {
+            wallets: 1000,
+            communities: 50,
+        }
+    }
+}
 
 /// The world's access setting as the wire carries it (the old JSONB
 /// document): the typed columns plus the `access` grants and communities.
@@ -425,27 +439,41 @@ pub async fn get_world(pool: &PgPool, world: &WorldName) -> Result<Option<WorldR
     Ok(row.as_ref().map(world_from_row))
 }
 
-/// Upstream's `isWorldValid`: the world has scenes and is neither disabled
-/// nor its owner quota-blocked past the grace.
+/// Whether upstream's `getRawWorldRecords` leaves `world` out:
+/// `name != ALL(<deny-list entries without the first .eth and .dcl>)`, so
+/// only a world named exactly like a stripped entry (a bare name) is left out.
+pub async fn raw_records_exclude(
+    pool: &PgPool,
+    names: &super::names::NameDenyList,
+    world: &WorldName,
+) -> bool {
+    let banned = names.snapshot(pool).await.banned_names();
+    banned.iter().any(|n| n == world.key())
+}
+
+/// Upstream's `isWorldValid`: the `worlds` row exists, `getRawWorldRecords`
+/// keeps it ([`raw_records_exclude`]), and it is neither disabled nor its
+/// owner quota-blocked past the grace. A deployed scene is not required.
 pub async fn world_is_valid(
     pool: &PgPool,
     policy: &crate::policy::Policy,
+    names: &super::names::NameDenyList,
     world: &WorldName,
 ) -> Result<bool, ApiError> {
-    let row: Option<(bool, Option<NaiveDateTime>)> = sqlx::query_as(
-        "SELECT EXISTS (SELECT 1 FROM worlds.world_scenes s WHERE s.world_name = w.name), \
-                w.blocked_since \
-           FROM worlds.worlds w WHERE w.name = $1",
-    )
-    .bind(world.key())
-    .fetch_optional(pool)
-    .await?;
-    let Some((has_scenes, disabled)) = row else {
+    let disabled: Option<Option<NaiveDateTime>> =
+        sqlx::query_scalar("SELECT blocked_since FROM worlds.worlds WHERE name = $1")
+            .bind(world.key())
+            .fetch_optional(pool)
+            .await?;
+    let Some(disabled) = disabled else {
         return Ok(false);
     };
+    if raw_records_exclude(pool, names, world).await {
+        return Ok(false);
+    }
     let quota = policy.quota_blocked_since(world).await?;
     let now = chrono::Utc::now().naive_utc();
-    Ok(has_scenes && !crate::comms::access::world_blocked(disabled, quota, now))
+    Ok(!crate::comms::access::world_blocked(disabled, quota, now))
 }
 
 pub async fn ensure_world(
@@ -1580,11 +1608,12 @@ pub async fn store_access_for_owner(
 }
 
 /// One allow-list edit under the world row's lock: refused unless the row
-/// exists and is an allow-list, capped at 1000 wallets / 50 communities; the
+/// exists and is an allow-list, capped at `caps` wallets / communities; the
 /// settings version bumps on every applied edit, as the old upsert did.
 pub async fn modify_allow_list_access(
     pool: &PgPool,
     world: &WorldName,
+    caps: AccessCaps,
     edit: AllowListEdit<'_>,
 ) -> Result<AllowListEditOutcome, ApiError> {
     let mut tx = pool.begin().await?;
@@ -1607,7 +1636,7 @@ pub async fn modify_allow_list_access(
             .fetch_one(&mut *tx)
             .await?;
             if !present {
-                if count >= MAX_ACCESS_WALLETS {
+                if count >= caps.wallets {
                     return Ok(AllowListEditOutcome::CapExceeded);
                 }
                 sqlx::query("INSERT INTO worlds.world_permissions (world_name, permission, address) VALUES ($1, 'access', $2)")
@@ -1634,7 +1663,7 @@ pub async fn modify_allow_list_access(
             .fetch_one(&mut *tx)
             .await?;
             if !present {
-                if count >= MAX_ACCESS_COMMUNITIES {
+                if count >= caps.communities {
                     return Ok(AllowListEditOutcome::CapExceeded);
                 }
                 sqlx::query("INSERT INTO worlds.world_access_communities (world_name, community_id) VALUES ($1, $2)")
