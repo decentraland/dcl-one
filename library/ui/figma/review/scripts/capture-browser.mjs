@@ -6,6 +6,7 @@ import { access, readFile, mkdtemp } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { setTimeout as delay } from 'node:timers/promises'
+import { browserArgs } from './browser-args.mjs'
 import { CaptureTimeout } from './capture-retry.mjs'
 import { cleanupCapture, removeProfile, stopBrowser } from './capture-teardown.mjs'
 
@@ -23,19 +24,7 @@ async function findBrowser(candidates) {
 
 async function openSession(executable, { signal } = {}) {
   const profile = await mkdtemp(path.join(os.tmpdir(), 'dcl-visual-'))
-  const browser = spawn(
-    executable,
-    [
-      '--headless=new',
-      '--no-sandbox',
-      '--disable-extensions',
-      '--disable-background-networking',
-      '--force-color-profile=srgb',
-      '--remote-debugging-port=0',
-      '--user-data-dir=' + profile
-    ],
-    { stdio: 'ignore' }
-  )
+  const browser = spawn(executable, browserArgs(profile), { stdio: 'ignore' })
   let socket
   let closing
   const pending = new Map()
