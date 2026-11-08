@@ -59,8 +59,7 @@ fn create(device: &RenderDevice, format: TextureFormat, width: u32, height: u32)
 /// Copies the client's CPU planes into the textures through the render queue, which orders the
 /// copy before the conversion that samples them. `width` and `height` are the planes' own size,
 /// read together with the pointers. Both planes are `width` bytes per row: the CbCr plane is
-/// half as wide with two bytes per texel. `false` for a null plane or textures of another
-/// layout.
+/// half as wide with two bytes per texel. `false` for a null plane.
 pub fn upload(
     queue: &RenderQueue,
     planes: &PlaneTextures,
@@ -72,9 +71,7 @@ pub fn upload(
     if y.is_null() || uv.is_null() {
         return false;
     }
-    let [y_texture, uv_texture] = planes.textures() else {
-        return false;
-    };
+    let [y_texture, uv_texture] = planes.textures();
     let row = width as usize;
     // SAFETY: the client created the planes for this size, `height` rows of `width` bytes
     // behind the Y pointer and half as many behind the CbCr pointer, and keeps them alive until

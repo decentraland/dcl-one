@@ -1,15 +1,15 @@
-//! Windows: the client presents each frame into one NV12 `ID3D11Texture2D` on a D3D11 device
-//! this module creates on the renderer's adapter (the decode device the helper shares its slots
-//! with). The probe texture asks for NT-handle sharing, so the client creates its presentation
-//! textures shareable too, and the renderer imports each one without a copy: a DX12 renderer
-//! opens the handle on its `ID3D12Device`, a Vulkan renderer imports it as external memory
-//! (`VK_KHR_external_memory_win32`). Either way it becomes one `NV12` wgpu texture whose two
-//! plane views the conversion samples.
+//! Windows: a frame reaches the renderer in three steps.
 //!
-//! Nothing orders the two devices on its own: [`wait_for_client_copy`] signals a D3D11 fence on
-//! the immediate context after the client's copy and waits, bounded, for the copy to land before
-//! the conversion is submitted, and the renderer holds a player's next copy until that
-//! conversion has executed.
+//! 1. The helper decodes it with FFmpeg's D3D11VA and copies it into an NV12 texture shared
+//!    across processes.
+//! 2. The uuav client copies that into its NV12 presentation texture, on a D3D11 device this
+//!    module creates on the renderer's adapter.
+//! 3. The renderer opens the presentation texture through an NT handle without a copy: on DX12
+//!    with `ID3D12Device::OpenSharedHandle`, on Vulkan as external memory
+//!    (`VK_KHR_external_memory_win32`). It becomes one `NV12` wgpu texture whose two plane views
+//!    the conversion samples.
+//!
+//! [`wait_for_client_copy`] orders step 2 before the renderer's read with a D3D11 fence.
 
 use std::{os::raw::c_void, sync::Once};
 

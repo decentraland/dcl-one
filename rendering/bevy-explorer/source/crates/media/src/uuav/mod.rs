@@ -70,12 +70,12 @@ pub struct UuavPlugin;
 
 impl Plugin for UuavPlugin {
     fn build(&self, app: &mut App) {
-        let shared = Arc::new(Shared::default());
-        app.insert_resource(UuavRuntime::new(shared.clone()))
+        let presentation = Arc::new(VideoPresentation::default());
+        app.insert_resource(UuavRuntime::new(presentation.clone()))
             .add_systems(PreUpdate, serve_uuav_players);
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            shared.render_world.store(true, Ordering::Release);
-            render::build(render_app, shared);
+            presentation.render_world.store(true, Ordering::Release);
+            render::build(render_app, presentation);
         } else {
             warn!("no render app: uuav video frames will not be presented");
         }
@@ -123,7 +123,7 @@ pub(crate) struct Target {
 /// What the main and render worlds share: the video players to present, and the closed ones
 /// the render world still has to let go of.
 #[derive(Default)]
-pub(crate) struct Shared {
+pub(crate) struct VideoPresentation {
     pub targets: Mutex<HashMap<PlayerId, Arc<Target>>>,
     /// Closed players whose planes the render world may still be reading, left for it to free.
     retired: Mutex<Vec<PlayerId>>,
@@ -133,7 +133,7 @@ pub(crate) struct Shared {
     pub max_dimension: AtomicU32,
 }
 
-impl Shared {
+impl VideoPresentation {
     pub fn take_retired(&self) -> Vec<PlayerId> {
         std::mem::take(&mut *self.retired.lock())
     }
@@ -233,18 +233,18 @@ struct UuavRuntime {
     requested_sample_rate: u32,
     creating: Vec<Creating>,
     players: Vec<Player>,
-    shared: Arc<Shared>,
+    presentation: Arc<VideoPresentation>,
 }
 
 impl UuavRuntime {
-    fn new(shared: Arc<Shared>) -> Self {
+    fn new(presentation: Arc<VideoPresentation>) -> Self {
         Self {
             runtime: Runtime::Pending { attempts: 0 },
             init_failures: 0,
             requested_sample_rate: audio::output_sample_rate(),
             creating: Vec::new(),
             players: Vec::new(),
-            shared,
+            presentation,
         }
     }
 
@@ -426,7 +426,7 @@ impl UuavRuntime {
         debug!("uuav player {id}: open `{}`", source.url);
         if let Err(e) = ffi::open_media(id, &source.url) {
             warn!("uuav player {id}: open `{}` failed: {e}", source.url);
-            self.shared.retire(id);
+            self.presentation.retire(id);
             source.state.send_replace(VideoState::VsError);
             return;
         }
@@ -444,7 +444,7 @@ impl UuavRuntime {
                 presented_size: AtomicU64::new(0),
                 failed: AtomicBool::new(false),
             });
-            self.shared.targets.lock().insert(id, target.clone());
+            self.presentation.targets.lock().insert(id, target.clone());
             target
         });
 
@@ -620,7 +620,7 @@ impl Player {
         }
     }
 
-    /// Ends the sound; the player itself is freed by [`Shared::retire`].
+    /// Ends the sound; the player itself is freed by [`VideoPresentation::retire`].
     fn close(&mut self) {
         debug!("uuav player {}: close", self.id);
         if let Some(mut handle) = self.handle.take() {
@@ -662,12 +662,12 @@ fn serve_uuav_players(
     runtime.poll_creating();
 
     let runtime = &mut *runtime;
-    let shared = &runtime.shared;
-    let max_dimension = shared.max_dimension.load(Ordering::Acquire);
+    let presentation = &runtime.presentation;
+    let max_dimension = presentation.max_dimension.load(Ordering::Acquire);
     runtime.players.retain_mut(|player| {
         let keep = player.serve(max_dimension);
         if !keep {
-            shared.retire(player.id);
+            presentation.retire(player.id);
         }
         keep
     });
@@ -726,29 +726,29 @@ mod tests {
 
     #[test]
     fn without_a_render_world_a_closed_player_is_freed_at_once() {
-        let shared = Shared::default();
-        shared.targets.lock().insert(7, target());
-        assert!(!shared.retire(7));
-        assert!(shared.targets.lock().is_empty());
-        assert!(shared.take_retired().is_empty());
+        let presentation = VideoPresentation::default();
+        presentation.targets.lock().insert(7, target());
+        assert!(!presentation.retire(7));
+        assert!(presentation.targets.lock().is_empty());
+        assert!(presentation.take_retired().is_empty());
     }
 
     #[test]
     fn under_a_render_world_the_free_waits_for_it() {
-        let shared = Shared::default();
-        shared.render_world.store(true, Ordering::Release);
-        shared.targets.lock().insert(7, target());
-        assert!(shared.retire(7));
-        assert!(shared.targets.lock().is_empty());
-        assert_eq!(shared.take_retired(), vec![7]);
-        assert!(shared.take_retired().is_empty());
+        let presentation = VideoPresentation::default();
+        presentation.render_world.store(true, Ordering::Release);
+        presentation.targets.lock().insert(7, target());
+        assert!(presentation.retire(7));
+        assert!(presentation.targets.lock().is_empty());
+        assert_eq!(presentation.take_retired(), vec![7]);
+        assert!(presentation.take_retired().is_empty());
     }
 
     #[test]
     fn a_player_without_frames_is_freed_at_once() {
-        let shared = Shared::default();
-        shared.render_world.store(true, Ordering::Release);
-        assert!(!shared.retire(9));
-        assert!(shared.take_retired().is_empty());
+        let presentation = VideoPresentation::default();
+        presentation.render_world.store(true, Ordering::Release);
+        assert!(!presentation.retire(9));
+        assert!(presentation.take_retired().is_empty());
     }
 }

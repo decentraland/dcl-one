@@ -23,27 +23,24 @@ use bevy::{
     },
 };
 
-use super::{Shared, ffi, ffi::PlayerId, platform};
+use super::{VideoPresentation, ffi, ffi::PlayerId, platform};
 use uuav::MAX_PIXELS;
 
 /// The smallest edge a video may have; a smaller one is refused before it reaches the device.
 const MIN_EDGE: u32 = 16;
 
 /// Whether a player's next frame waits until the conversion that read its planes has executed.
-/// `render_callback` moves each frame into the planes: on macOS the client copies on its own
-/// Metal queue and waits for the copy before returning, and on Linux the CPU planes go through
-/// the render queue, which orders them against the conversion. On Windows the client's copy
-/// runs on the D3D11 decode device, which nothing orders against the renderer's reads.
+/// Only the Windows platform module leaves the copy into the planes unordered against the read.
 const GATE_COPY_ON_READ: bool = cfg!(windows);
 
-/// The player table the main world maintains ([`super::UuavRuntime`]), read here.
+/// The main world's [`VideoPresentation`], read here.
 #[derive(Resource)]
-struct UuavRenderShared(Arc<Shared>);
+struct Presentation(Arc<VideoPresentation>);
 
-pub fn build(render_app: &mut SubApp, shared: Arc<Shared>) {
+pub fn build(render_app: &mut SubApp, presentation: Arc<VideoPresentation>) {
     render_app
-        .insert_resource(UuavRenderShared(shared))
-        .init_resource::<PlayerPlanes>()
+        .insert_resource(Presentation(presentation))
+        .init_resource::<ConversionSources>()
         .add_systems(
             Render,
             // before the gpu images are (re)prepared, so a material rebind the same frame
@@ -55,13 +52,13 @@ pub fn build(render_app: &mut SubApp, shared: Arc<Shared>) {
 }
 
 /// Runs once the render device exists; publishes the device's texture edge limit through
-/// [`Shared`].
+/// [`VideoPresentation`].
 pub fn finish(render_app: &mut SubApp) {
     if let Some(device) = render_app.world().get_resource::<RenderDevice>() {
         let max_dimension = device.limits().max_texture_dimension_2d;
         render_app
             .world()
-            .resource::<UuavRenderShared>()
+            .resource::<Presentation>()
             .0
             .max_dimension
             .store(max_dimension, std::sync::atomic::Ordering::Release);
@@ -198,10 +195,9 @@ impl Nv12Pipeline {
 pub(super) struct PlaneTextures {
     pub y: wgpu::TextureView,
     pub uv: wgpu::TextureView,
-    /// The textures behind the views, uploaded into on Linux; the views hold them alive
-    /// everywhere.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    textures: Vec<wgpu::Texture>,
+    /// The Y and CbCr textures behind the views, which the upload writes into.
+    #[cfg(target_os = "linux")]
+    textures: [wgpu::Texture; 2],
 }
 
 impl PlaneTextures {
@@ -211,7 +207,8 @@ impl PlaneTextures {
         Self {
             y: y.create_view(&Default::default()),
             uv: uv.create_view(&Default::default()),
-            textures: vec![y, uv],
+            #[cfg(target_os = "linux")]
+            textures: [y, uv],
         }
     }
 
@@ -229,26 +226,24 @@ impl PlaneTextures {
         Self {
             y: plane(wgpu::TextureAspect::Plane0, TextureFormat::R8Unorm),
             uv: plane(wgpu::TextureAspect::Plane1, TextureFormat::Rg8Unorm),
-            textures: vec![texture],
         }
     }
 
-    /// The textures behind the views, in the order given to the constructor.
     #[cfg(target_os = "linux")]
-    pub fn textures(&self) -> &[wgpu::Texture] {
+    pub fn textures(&self) -> &[wgpu::Texture; 2] {
         &self.textures
     }
 }
 
-/// A player's wrapped (or uploaded-into) planes, rebuilt when the client hands out new plane
-/// pointers or a new size. The pointers are kept as addresses: they are only compared.
-struct Planes {
+/// What the NV12 conversion reads for one player: the client's presentation planes as wgpu
+/// textures, rebuilt when the client hands out new plane pointers or a new size. The pointers
+/// are kept as addresses: they are only compared.
+struct ConversionSource {
     y: usize,
     uv: usize,
     width: u32,
     height: u32,
-    /// Uploaded into on Linux; elsewhere the bind group's views are all that read them.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    #[cfg(target_os = "linux")]
     textures: PlaneTextures,
     bind_group: wgpu::BindGroup,
     /// The client's frame count at the last upload; `None` before the first.
@@ -260,7 +255,7 @@ struct Planes {
     read_done: Arc<AtomicBool>,
 }
 
-impl Planes {
+impl ConversionSource {
     fn holds(&self, presented: &ffi::Presented) -> bool {
         self.y == presented.y as usize
             && self.uv == presented.uv as usize
@@ -270,7 +265,7 @@ impl Planes {
 }
 
 #[derive(Resource, Default)]
-struct PlayerPlanes(HashMap<PlayerId, Planes>);
+struct ConversionSources(HashMap<PlayerId, ConversionSource>);
 
 /// Why a video of this size cannot be shown: an edge under [`MIN_EDGE`], over the device's
 /// `max_dimension` (0 for a device not known yet: no edge limit), or more than the client's
@@ -303,17 +298,17 @@ fn check_size(width: u32, height: u32, max_dimension: u32) -> Result<(), String>
 }
 
 fn present_uuav_frames(
-    shared: Res<UuavRenderShared>,
+    presentation: Res<Presentation>,
     pipeline: Option<ResMut<Nv12Pipeline>>,
-    mut planes: ResMut<PlayerPlanes>,
+    mut sources: ResMut<ConversionSources>,
     mut images: ResMut<RenderAssets<GpuImage>>,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
 ) {
     // Players the main world closed: their textures go first, then the client may release the
     // planes behind them. Nothing below reads a retired player.
-    for id in shared.0.take_retired() {
-        planes.0.remove(&id);
+    for id in presentation.0.take_retired() {
+        sources.0.remove(&id);
         uuav::uuav_player_free(id);
     }
 
@@ -321,7 +316,7 @@ fn present_uuav_frames(
         return;
     };
 
-    let targets: Vec<_> = shared
+    let targets: Vec<_> = presentation
         .0
         .targets
         .lock()
@@ -345,10 +340,10 @@ fn present_uuav_frames(
             continue;
         };
         if GATE_COPY_ON_READ
-            && planes
+            && sources
                 .0
                 .get(&id)
-                .is_some_and(|planes| !planes.read_done.load(Ordering::Acquire))
+                .is_some_and(|source| !source.read_done.load(Ordering::Acquire))
         {
             // the renderer may still be reading the planes the copy would overwrite
             continue;
@@ -364,7 +359,7 @@ fn present_uuav_frames(
             target
                 .failed
                 .store(true, std::sync::atomic::Ordering::Release);
-            planes.0.remove(&id);
+            sources.0.remove(&id);
             continue;
         }
 
@@ -397,10 +392,10 @@ fn present_uuav_frames(
             continue;
         }
 
-        if !planes
+        if !sources
             .0
             .get(&id)
-            .is_some_and(|planes| planes.holds(&presented))
+            .is_some_and(|source| source.holds(&presented))
         {
             let Some(textures) = platform::make_planes(
                 &render_device,
@@ -412,13 +407,14 @@ fn present_uuav_frames(
                 continue;
             };
             let bind_group = pipeline.bind_group(device, &textures);
-            planes.0.insert(
+            sources.0.insert(
                 id,
-                Planes {
+                ConversionSource {
                     y: presented.y as usize,
                     uv: presented.uv as usize,
                     width: presented.width,
                     height: presented.height,
+                    #[cfg(target_os = "linux")]
                     textures,
                     bind_group,
                     frames: None,
@@ -427,20 +423,20 @@ fn present_uuav_frames(
                 },
             );
         }
-        let Some(planes) = planes.0.get_mut(&id) else {
+        let Some(source) = sources.0.get_mut(&id) else {
             continue;
         };
 
         // nothing new to show and the target still holds the last conversion
         let target_texture = gpu_image.texture.id();
-        if planes.frames == Some(presented.frames) && planes.drawn_into == Some(target_texture) {
+        if source.frames == Some(presented.frames) && source.drawn_into == Some(target_texture) {
             continue;
         }
-        if planes.frames != Some(presented.frames) {
+        if source.frames != Some(presented.frames) {
             #[cfg(target_os = "linux")]
             let in_planes = platform::upload(
                 &render_queue,
-                &planes.textures,
+                &source.textures,
                 presented.y,
                 presented.uv,
                 presented.width,
@@ -455,7 +451,7 @@ fn present_uuav_frames(
                 // the frame is not in the planes yet; it is tried again next poll
                 continue;
             }
-            planes.frames = Some(presented.frames);
+            source.frames = Some(presented.frames);
         }
 
         let render_pipeline = pipeline.pipeline(device, gpu_image.texture_format);
@@ -478,16 +474,16 @@ fn present_uuav_frames(
                 occlusion_query_set: None,
             });
             pass.set_pipeline(render_pipeline);
-            pass.set_bind_group(0, &planes.bind_group, &[]);
+            pass.set_bind_group(0, &source.bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
         render_queue.submit(std::iter::once(encoder.finish()));
         if GATE_COPY_ON_READ {
-            planes.read_done.store(false, Ordering::Release);
-            let read_done = planes.read_done.clone();
+            source.read_done.store(false, Ordering::Release);
+            let read_done = source.read_done.clone();
             render_queue.on_submitted_work_done(move || read_done.store(true, Ordering::Release));
         }
-        planes.drawn_into = Some(target_texture);
+        source.drawn_into = Some(target_texture);
         target
             .presented
             .fetch_add(1, std::sync::atomic::Ordering::Release);
