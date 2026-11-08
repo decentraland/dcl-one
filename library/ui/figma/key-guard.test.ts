@@ -567,13 +567,27 @@ describe('when selecting a main push range', () => {
       )
     ) as { jobs: Record<string, { steps: { run?: string; id?: string }[] }> }
 
-  async function boundary(head: string, name: string) {
+  type Job = { run_id: number; head_sha: string; conclusion: string; name: string }
+
+  // The jobs endpoint returns JSON and the workflow filters it with --jq: the mock applies that exact filter with jq,
+  // so the trust conditions (run id, head, conclusion, name prefix) run in the test.
+  async function boundary(head: string, name: string, decoys: Job[] = []) {
     const output = path.join(root, 'workflow-output')
     await writeFile(output, '')
+    const genuine = name
+      ? name
+          .split('\n')
+          .map((line) => ({ run_id: 123, head_sha: head, conclusion: 'success', name: line }))
+      : []
     const mock = `gh() {
+      local filter='' previous=''
+      for argument in "$@"; do
+        [ "$previous" = --jq ] && filter="$argument"
+        previous="$argument"
+      done
       case "$*" in
         *actions/workflows/ui-library.yml*) echo 42 ;;
-        */jobs*) printf '%s\\n' "$BOUNDARY_NAME" ;;
+        */jobs*) printf '%s' "$JOBS_JSON" | jq -r "$filter" ;;
         */artifacts*) echo 1 ;;
         *) return 1 ;;
       esac
@@ -596,7 +610,7 @@ describe('when selecting a main push range', () => {
           HEAD_SHA: head,
           HEAD_BRANCH: 'main',
           DEFAULT_BRANCH: 'main',
-          BOUNDARY_NAME: name,
+          JOBS_JSON: JSON.stringify({ jobs: [...decoys, ...genuine] }),
           GITHUB_OUTPUT: output
         }
       }
@@ -644,6 +658,58 @@ describe('when selecting a main push range', () => {
       expect(result.output).not.toContain('scan=true')
     }
   )
+
+  describe('when the jobs list holds boundary-named jobs the trust filter must reject', () => {
+    const decoysFor = (head: string, other: string): Job[] => [
+      {
+        run_id: 999,
+        head_sha: head,
+        conclusion: 'success',
+        name: `UI key push boundary ${other}..${head}`
+      },
+      {
+        run_id: 123,
+        head_sha: other,
+        conclusion: 'success',
+        name: `UI key push boundary ${other}..${head}`
+      },
+      {
+        run_id: 123,
+        head_sha: head,
+        conclusion: 'failure',
+        name: `UI key push boundary ${other}..${head}`
+      },
+      {
+        run_id: 123,
+        head_sha: head,
+        conclusion: 'success',
+        name: `Decoy UI key push boundary ${other}..${head}`
+      }
+    ]
+
+    it('should fail closed when only another run, another head, a failed job or an unprefixed name carries one', async () => {
+      const head = git('rev-parse', 'HEAD')
+      const result = await boundary(head, '', decoysFor(head, 'a'.repeat(40)))
+
+      expect(result.status).not.toBe(0)
+      expect(result.output).not.toContain('scan=true')
+    })
+
+    it('should take the base from the one trusted job and ignore the decoys', async () => {
+      const before = git('rev-parse', 'HEAD')
+      await put('library/ui/clean.txt', 'clean tip\n')
+      commit('advance the pushed branch')
+      const head = git('rev-parse', 'HEAD')
+      const result = await boundary(
+        head,
+        `UI key push boundary ${before}..${head}`,
+        decoysFor(head, 'a'.repeat(40))
+      )
+
+      expect(result.status, result.stderr).toBe(0)
+      expect(result.base).toBe(before)
+    })
+  })
 
   it('should include the root commit when the first push has no previous head', async () => {
     await put('README.md', FAKE_KEY)
