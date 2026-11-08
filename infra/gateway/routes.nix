@@ -95,5 +95,10 @@
       path = "/events/sitemap.schedules.xml";
       probe = "/events/sitemap.schedules.xml";
     }
+    {
+      path = "/events-notifier";
+      probe = "/events-notifier/forward";
+      webhook = true;
+    }
   ];
 }

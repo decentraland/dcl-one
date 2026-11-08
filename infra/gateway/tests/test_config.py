@@ -226,6 +226,21 @@ class ConfigurationTest(unittest.TestCase):
         self.assertGreaterEqual(burst, 200)
         self.assertGreater(rate * 60, 200)
 
+    def test_a_webhook_route_takes_its_own_rate_zone(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": [], "internal": [], "aliases": [], "deploy": [],
+                 "node": [{"path": "/events-notifier", "probe": "/events-notifier/forward", "webhook": True},
+                          {"path": "/places", "probe": "/places"}]}
+        text = gateway.render(table, cfg, "/mime.types")
+        # Segment's deliveries, one POST per event, above the sink's 280 inserts/s sizing.
+        rate = int(re.search(r"zone=webhook:10m rate=(\d+)r/s;", text)[1])
+        self.assertGreaterEqual(rate, 280)
+        for key in ["= /events-notifier", "^~ /events-notifier/"]:
+            body = re.search(r"location " + re.escape(key) + r" \{\n(.*?)\n\}", text, re.S)[1]
+            self.assertIn("limit_req zone=webhook burst=", body)
+        body = re.search(r"location \^~ /places/ \{\n(.*?)\n\}", text, re.S)[1]
+        self.assertNotIn("zone=webhook", body)
+
     def test_social_cards_keep_exact_backend_routes_without_shadowing_discovery_pages(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
         table = {"sites": ["places.tsx", "places_.place.$position.tsx", "places_.world.$name.tsx"],

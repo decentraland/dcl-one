@@ -1,0 +1,4 @@
+{
+  "about": "Fixture ids the Segment webhooks do not answer as the pinned events-notifier does (tests/notifier_parity.rs); README.md, 'Known gaps', records each with the pinned source lines it diverges from and the answer the router gives. NOTIFIER_PARITY_WRITE_GAPS=1 rewrites the list from a run and may only drop ids or refresh their observed difference; NOTIFIER_PARITY_ALLOW_NEW_GAPS=1 (with it) also adds the entries that fail now and prints each added id, which the README then records the same way. The ACCEPTED_ENTRIES of the harness (source.kind 'accepted') are never listed.",
+  "entries": []
+}

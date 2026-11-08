@@ -58,6 +58,25 @@ CREATE TABLE credits.wallets (
     CONSTRAINT wallets_earned_bound_check CHECK (earned_available >= 0 AND earned_available <= available)
 );
 
+-- The multi-accounting flag notified on the `credits.wallet_flags` channel
+-- (`{action: "flag", addresses, source, ip}`, the shape the events-notifier
+-- posted to the credits server's `/flag`) or posted through the admin's
+-- `POST /credits/admin/flags` (the same body): one row per
+-- flagged wallet with the source that raised it, the IP it reported and the
+-- wallets it was linked with. The claim reads it as part of its block
+-- (shop/src/credits/store.rs `is_blocked_for_claiming`): a flagged wallet
+-- claims no credits and keeps spending the ones it holds. Rows never expire;
+-- the admin's unflag and the operator's unblock delete them.
+CREATE TABLE credits.wallet_flags (
+    address text NOT NULL,
+    source text NOT NULL,
+    ip text,
+    linked_addresses text[] NOT NULL DEFAULT '{}',
+    flagged_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT wallet_flags_pkey PRIMARY KEY (address),
+    CONSTRAINT wallet_flags_address_check CHECK (address ~ '^0x[0-9a-f]{40}$')
+);
+
 -- The append-only money fact: every movement of a wallet's balance, tagged
 -- with the bucket it moved. credit = grant, claim, purchase, refund; debit =
 -- spend, consume, expire (the sign is the kind's, `amount` is never

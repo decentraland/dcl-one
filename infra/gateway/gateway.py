@@ -20,6 +20,12 @@ CONTENT_DEPLOY_CAP = "248m"
 # body before proxying it, and the app's limits only answer after that. Above
 # upstream catalyst's 4 per source, so it stays a coarse guard.
 DEPLOY_CONNECTIONS_PER_ADDRESS = 10
+# Segment delivers each webhook event as its own POST from a few egress
+# addresses, and the HMAC in the app is the gate: this guard sits above the
+# sink's sizing (DATABASE.md, about 280 inserts/s) so a delivery is never
+# answered 429 and retried.
+WEBHOOK_RATE = 300
+WEBHOOK_BURST = 600
 
 
 def words(value):
@@ -143,9 +149,9 @@ def render(table, cfg, mime):
         # list in a location, which would discard that trusted set.
         return f"proxy_pass http://{target};\n{extra}"
 
-    def pair(path, target, final=False):
-        return (location("= " + path, proxy(target))
-                + location(("^~ " if final else "") + path + "/", proxy(target)))
+    def pair(path, target, final=False, extra=""):
+        return (location("= " + path, proxy(target, extra))
+                + location(("^~ " if final else "") + path + "/", proxy(target, extra)))
 
     security_headers = ('add_header X-Content-Type-Options nosniff always;\n'
                         'add_header Referrer-Policy strict-origin-when-cross-origin always;\n'
@@ -158,9 +164,11 @@ def render(table, cfg, mime):
     for row in table["node"]:
         # The query-based places social cards own only their exact endpoints;
         # /places/place/<position> and /places/world/<name> are Sites pages.
-        locations += (location("= " + row["path"], proxy("apis"))
-                      + location("= " + row["path"] + "/", proxy("apis"))
-                      if row.get("exact") else pair(row["path"], "apis", True))
+        # A webhook route (Segment's deliveries) takes its own rate zone.
+        extra = f"limit_req zone=webhook burst={WEBHOOK_BURST} nodelay;" if row.get("webhook") else ""
+        locations += (location("= " + row["path"], proxy("apis", extra))
+                      + location("= " + row["path"] + "/", proxy("apis", extra))
+                      if row.get("exact") else pair(row["path"], "apis", True, extra))
     for row in table["aliases"]:
         rewrite = row.get("rewrite") or "^(.*)$ " + row["to"].replace("$uri", "$1")
         # These aliases belong to APIs. Re-selecting a location after the
@@ -329,6 +337,7 @@ http {{
     limit_req_zone $storage_write_key zone=storage_write:10m rate=30r/s;
     limit_req_zone $storage_trusted_key zone=storage_trusted:10m rate=1000r/s;
     limit_req_zone $binary_remote_addr zone=read:10m rate=30r/s;
+    limit_req_zone $binary_remote_addr zone=webhook:10m rate={WEBHOOK_RATE}r/s;
     limit_req_zone $content_limit_key zone=content:10m rate=100r/s;
     limit_req_zone $storage_limit_key zone=storage:10m rate=100r/s;
     limit_req_zone $binary_remote_addr zone=deploy:10m rate=5r/s;
