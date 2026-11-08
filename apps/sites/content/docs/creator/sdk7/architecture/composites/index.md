@@ -44,7 +44,7 @@ export async function spawnBarrel() {
 
 > [!WARNING]
 > **📔 Note**: You must load a composite before you spawn it. `Composite.instance()` is synchronous and can only spawn a composite that's already in memory. Only `main.composite` is bundled with your scene and available from the start; any other composite file must be loaded with `loadComposite()` first. To check synchronously whether a composite is already available, use `provider.getCompositeOrNull(src)`.
-> 
+>
 > `loadComposite()` is idempotent: it keys each composite by its `src` string, so calling it again with the same path doesn't reload the file, it returns the already-loaded composite. You can safely call it before every spawn without worrying about loading the same file twice.
 
 

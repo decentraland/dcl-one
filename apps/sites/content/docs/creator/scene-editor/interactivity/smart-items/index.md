@@ -36,6 +36,8 @@ Here are some common items and their default behaviors:
 - **Video Player**: A screen for showing videos or live streams. See [Playing Videos](/docs/creator/scene-editor/interactivity/smart-items/#playing-videos).
 - **Audio Stream**: Play audio from a live stream. See [Playing Audio Streams](/docs/creator/scene-editor/interactivity/smart-items/#playing-audio-streams)
 - **NFT**: Display an NFT image as a portrait. See [Displaying NFTs](/docs/creator/scene-editor/interactivity/smart-items/#displaying-nfts)
+- **Floor Pressure Button**: A round plate that sinks while a player stands on it and pops back up when they step off. Use its **On Press** and **On Release** hooks to run actions, for example to hold a door open while someone stands on it.
+- **Water Plane** and **Water Cylinder**: Water surfaces that splash when a player walks or jumps into them. See [Water](#water).
 
 All smart items can be configured to behave in custom ways. For example how far a platform moves, or what a button activates.
 
@@ -100,7 +102,7 @@ Use the Trigger Area smart item to trigger an action when the player walks into 
 
 ![ ](/docs/creator/images/editor/trigger.webp)
 
-Use the **Player Enters Area** and **Player Leaves Area** trigger types on the item's **Triggers** components. The actions on these trigger events are activated every time that the player enters or leaves the area.
+Drag it in, resize the box or sphere to cover the area you want, then use the **When a player enters…** and **When a player leaves…** buttons in its **Reactions** section to describe what should happen. The [AI Assistant](/docs/creator/scene-editor/code/ai-assistant/) writes the script for you. See [Trigger area](/docs/creator/scene-editor/interactivity/trigger-area/) for the full walkthrough.
 
 ![ ](/docs/creator/images/editor/on_player_enters.webp)
 
@@ -127,6 +129,27 @@ Chairs, benches, and other seats let a player sit down by clicking them.
 - A seat only frees up when the player who took it **walks away** from it, more than 1.5 meters.
 - On an item with several spots, such as a bench, clicking it seats you on the **nearest free spot**.
 - When every spot is taken, the hover text reads **Seat is taken** and clicking does nothing.
+
+### Water
+
+Two items under the **Materials** category give you water the player can splash in:
+
+- **Water Plane**: a flat 16 x 16 m surface. Scale it to cover a pond, a canal, or a sea.
+- **Water Cylinder**: a round pool, 8 m wide and 2 m deep.
+
+Both splash when a player walks or jumps into them. You can set:
+
+- **Activated By**: `my player` so only you see your own splashes, or `all players` so every avatar splashes.
+- **Depth**: how far below the surface the splash area reaches, in meters. It never reaches past the bottom of a pool.
+- **Splash Size**: the size of the splash effect, in meters.
+- **Sound**: the name of an audio file inside the item's folder, played on each splash. Leave it empty for silent water.
+
+They also expose **enter** and **exit** events, and a **Splash** action that makes a splash in the middle of the water on demand.
+
+
+> [!WARNING]
+> **📔 Note**: Each water layer needs its normal map. A layer without one is no longer animated, and if none are left the splash area shrinks to 1 x 1 m.
+
 
 ### Teleports
 
@@ -191,14 +214,14 @@ Play an audio stream from a URL, using the **Audio Stream** smart item.
 
 > [!NOTE]
 > **📔 Note**: Not all streaming services allow you to play their audio outside their site. The following are some examples that work in Decentraland:
-> 
+>
 > ```ts
 > GRAFFITI = 'https://n07.radiojar.com/2qm1fc5kb.m4a?1617129761=&rj-tok=AAABeIR7VqwAilDFeUM39SDjmw&rj-ttl=5'
 > SIGNS = 'https://edge.singsingmusic.net/MC2.mp3'
 > DELTA = 'https://cdn.instream.audio/:9069/stream?_=171cd6c2b6e'
 > JAZZ = 'https://live.vegascity.fm/radio/8010/the_flamingos.mp3'
 > ```
-> 
+>
 
 
 You can adjust the volume of your stream. Note that the audio from the stream is not positional, it is heard at an even volume through all your scene.
@@ -226,11 +249,11 @@ You can obtain this information from [OpenSea](https://opensea.io), by checking 
 
 > [!NOTE]
 > **📔 Note**: You can also obtain this information from the opensea URL. For example, if the NFT's URL is the following:
-> 
+>
 > > `https://opensea.io/assets/ethereum/0x32b7495895264ac9d0b12d32afd435453458b1c6/1956`
-> 
+>
 > You can complete the fields with the following:
-> 
+>
 > - Network: ethereum
 > - Contract: 0x32b7495895264ac9d0b12d32afd435453458b1c6
 > - Token: 1956

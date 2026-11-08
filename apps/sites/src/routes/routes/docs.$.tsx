@@ -50,7 +50,7 @@ export function meta({ loaderData: view }: Route.MetaArgs) {
     { title },
     ...(view.description ? [{ name: "description", content: view.description }] : []),
     { name: "robots", content: "index,follow" },
-    { tagName: "link", rel: "icon", href: "/docs/player/images/favicon.png" },
+    { tagName: "link", rel: "icon", href: "/docs/player/images/favicon.ico" },
     { tagName: "link", rel: "alternate", type: "text/markdown", href: view.mdUrl },
   ];
 }

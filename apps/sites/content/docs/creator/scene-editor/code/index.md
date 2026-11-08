@@ -12,8 +12,8 @@ See [Reference items in code](/docs/creator/scene-editor/code/reference-items/) 
 
 You must install a code editor on your machine to edit the code of your scene. The recommended options are:
 
-* ![](/docs/creator/images/editor/vscode.webp) [Visual Studio Code](https://code.visualstudio.com/): This is the recommended option for experienced developers.
-* ![](/docs/creator/images/editor/cursor-icon.webp) [Cursor AI](https://www.cursor.com/): This is a powerful code editor that is integrated with AI. It lets you pick different AI models to help you write code; a free tier is available, and more advanced models require a paid plan. This is a good option for developers who are new to Decentraland or TypeScript, or if you want to save time writing code.
+* ![](/docs/creator/images/editor/vscode.webp) [Visual Studio Code](https://code.visualstudio.com/): This is the recommended option for experienced developers.
+* ![](/docs/creator/images/editor/cursor-icon.webp) [Cursor AI](https://www.cursor.com/): This is a powerful code editor that is integrated with AI. It lets you pick different AI models to help you write code; a free tier is available, and more advanced models require a paid plan. This is a good option for developers who are new to Decentraland or TypeScript, or if you want to save time writing code.
 
 
 > [!WARNING]
@@ -32,11 +32,11 @@ Once installed, you may need to select your Code Editor in the settings of the C
 
 Once you installed a code editor on your machine, and selected it in the settings of the Creator Hub, you can click the **< > CODE** button to open it on your scene project.
 
-![](/docs/creator/images/editor/code-button.webp)
+![](/docs/creator/images/editor/code-button.webp)
 
 This opens a separate window with the code editor. On the left margin you can navigate the files and folder structure of your project.
 
-![](/docs/creator/images/editor/files-on-vs-studio.webp)
+![](/docs/creator/images/editor/files-on-vs-studio.webp)
 
 Add your custom code in the `index.ts` file under `/src`, inside the `main()` function. You can otherwise add custom code outside that function or create new `.ts` files inside the `/src` folder, but these must be somehow referenced inside the `main()` function of `index.ts`.
 
@@ -57,7 +57,7 @@ If you are using Cursor, you can use the AI assistant to help you write code. To
 
 1.  Open the Cursor AI assistant by clicking the **AI** button in the top-right of the screen
 
-    ![](/docs/creator/images/editor/cursor-icon.webp)
+    ![](/docs/creator/images/editor/cursor-icon.webp)
 2. There you can prompt the AI assistant to help you write code. You can also select a model to use from the dropdown.
 
 To give your AI assistant Decentraland context, install the official Decentraland SDK Skills. These are ready-made instruction sets, maintained by the Decentraland Foundation, that teach your AI agent verified SDK7 patterns for every topic: scaffolding entire scenes, adding 3D models, multiplayer, deployment, and more.
@@ -92,4 +92,4 @@ If you're not familiar with how to do this, see [Quickstart for repositories](ht
 * [Making any item smart](/docs/creator/scene-editor/interactivity/make-any-item-smart/)
 * [SDK Quick start](/docs/creator/sdk7/getting-started/sdk-101/): follow this mini tutorial for a quick crash course.
 * [Development workflow](/docs/creator/sdk7/getting-started/dev-workflow/): read this to understand scene creation from end to end.
-* [Examples](https://studios.decentraland.org/resources?sdk_version=SDK7): dive right into working example scenes.
+* [Examples](/docs/creator/tutorials/examples/): dive right into working example scenes.

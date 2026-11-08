@@ -8,7 +8,7 @@ You can add links from your scene out to other content, either to other scenes o
 
 The easiest way to add an external link or a teleport is to use the Scene Editor. Use the **Teleport** [Smart Item](/docs/creator/scene-editor/interactivity/smart-items/) to add teleport to another scene in Genesis City, or use any of the **Social Links** smart items to add links to external sites.
 
-![](/docs/creator/images/editor/social-links.webp)
+![](/docs/creator/images/editor/social-links.webp)
 
 ## Teleports
 
@@ -30,22 +30,42 @@ To move a player to another set of coordinates inside the current scene, use the
 
 ## Teleport to a WORLD
 
-To send a player to a scene that is not published in the open world Genesis City map, but instead to an isolated [Decentraland WORLD](/docs/creator/sdk7/publishing/publishing-options/#decentraland-worlds), use the function `changeRealm()`.
+To send a player to a scene that is not published on the open Genesis City map, but instead to an isolated [Decentraland WORLD](/docs/creator/sdk7/publishing/publishing-options/#decentraland-worlds), pass a `realm` to `teleportTo()`.
 
 ```ts
-import { changeRealm } from "~system/RestrictedActions"
+import { teleportTo } from "~system/RestrictedActions"
 
 (...)
 
-changeRealm({realm: 'mannakia.dcl.eth'})
+teleportTo({ realm: 'mannakia.dcl.eth' })
 ```
 
-Players are presented a confirmation screen before they are teleported, this screen displays information from the destination scene’s `scene.json file`, including the scene `name`, `description` and `navmapThumbnail`. See [scene metadata](/docs/creator/sdk7/projects/scene-metadata/) for details on how to set this data.
+`realm` accepts either a world name such as `mannakia.dcl.eth`, or a realm URL.
 
-The player will spawn in one of the spawn points of the scene in that world, regardless of their current coordinates on the map.
+With no `worldCoordinates`, the player lands on one of the destination's spawn points. Add coordinates to pick a specific parcel inside that world:
 
-To send a player back to Genesis City from a world, use `changeRealm` setting the `realm` field to _'https://realm-provider-ea.decentraland.org/main'_.
+```ts
+// Land on parcel 12,34 of a specific world
+teleportTo({
+	realm: 'mannakia.dcl.eth',
+	worldCoordinates: { x: 12, y: 34 },
+})
+```
 
+Players are presented a confirmation screen before they change realm. It asks _"Are you sure you want to enter this World?"_ and shows the destination (the world name, or the host of the realm URL). The player is only moved if they accept.
+
+To send a player back to Genesis City from a world, don't include the `realm` field, which defaults to Genesis City.
+
+
+> [!WARNING]
+> **📔 Note**: The `realm` field requires `@dcl/sdk` version 7.28.0 or newer.
+
+
+### changeRealm is deprecated
+
+Older scenes used `changeRealm()` to reach a world. It still works, but use `teleportTo({ realm })` instead. `changeRealm()` also shows a confirmation screen; its optional `message` field only replaces the default prompt text.
+
+`changeRealm()` resolves as soon as the player accepts the prompt, not when the new realm is actually live. A `teleportTo()` call right after it would run against the **old** realm and land the player in the wrong place. `teleportTo({ realm })` does both steps in one call, so that gap doesn't exist.
 
 ## External links
 
@@ -64,7 +84,6 @@ When `openExternalUrl` is called, players are prompted with a confirmation scree
 The link is opened in a new tab, keeping the original tab in Decentraland.
 
 If players tick the _trust this domain_ checkbox, they won't be prompted again during their session, as long as the link comes from the same scene and is to the same domain.
-
 
 ## Copy to clipboard
 

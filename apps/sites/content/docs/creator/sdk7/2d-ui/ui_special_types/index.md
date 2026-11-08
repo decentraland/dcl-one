@@ -13,7 +13,7 @@ A `Dropdown` entity must have at least the following properties:
 * `options`: What values to display when the dropdown is expanded. Provide an array with a string value for each option. The first value in the array is displayed as the default option.
 * `onChange`: A function that is executed every time that a value is selected in the dropdown, using
 
-You can also configure other comopnents of the `Dropdown` entity, like a `uiTransform`, as in other UI entities.
+You can also configure other comopnents of the `Dropdown` entity, like a `uiTransform`, as in other UI entities. The text of the dropdown accepts the same styling properties as a `Label`, like `color`, `fontSize`, `font` and `fontSrc` for a [custom font](/docs/creator/sdk7/2d-ui/ui_text/#custom-fonts).
 
 _**ui.tsx file:**_
 
@@ -221,6 +221,8 @@ The following properties are also available to customize the look of the text fi
 
 
 * `font`: The font to use. Supported values are: - `'sans-serif'` _(default)_ - `'serif'` - `'monospace'`
+
+* `fontSrc`: Path to a `.ttf` font file in your scene, to render the text with a custom font. `font` is used as the fallback. See [Custom fonts](/docs/creator/sdk7/2d-ui/ui_text/#custom-fonts).
 
 * `textAlign`: How the text will align with its parent. It takes a value from the \`TextAlignType\`. TextAlignType = 'top-left' | 'top-center' | 'top-right' | 'middle-left' | 'middle-center' | 'middle-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
 

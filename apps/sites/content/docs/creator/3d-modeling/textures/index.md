@@ -65,7 +65,7 @@ In the [materials section](/docs/creator/3d-modeling/materials/) we explained ho
 
 This is the base color of the object's surface. Having a balanced color palette between your models is key to achieve a cohesive look and feel for your experience.
 
-![](/docs/.gitbook/assets/58-difusemap.webp)
+![](/docs/creator/images/3d-models-and-animations/3d-essentials/58-difusemap.webp)
 
 Here it is a cool free palette generator in case you need it!
 
@@ -79,7 +79,7 @@ Or some palette inspiration provided by awesome films:
 
 In a Metallic map, the grayscale map represents the grade of metalness an object posess, being white full metallic and black non metallic. In the following example we see how the light affects the model and how interacts with the environment.
 
-![](/docs/.gitbook/assets/64-metallic-map.webp)
+![](/docs/creator/images/3d-models-and-animations/3d-essentials/64-metallic-map.webp)
 
 _In the image we can see how the dark parts of the texture affect the model. The dark stripes are opaque, while the white stripe is beahving under the metallic shader properties and gray being a mixture between both._
 
@@ -87,7 +87,7 @@ _In the image we can see how the dark parts of the texture affect the model. The
 
 In a roughness map, darker areas correspond to smoother surfaces, while brighter areas correspond to rough surfaces. This grayscale representation is used by rendering engines to determine how light should be scattered or reflected at different points on the surface.
 
-![](/docs/.gitbook/assets/48-roughness.webp) ![](/docs/.gitbook/assets/49-roughness.webp)
+![](/docs/creator/images/3d-models-and-animations/3d-essentials/48-roughness.webp) ![](/docs/creator/images/3d-models-and-animations/3d-essentials/49-roughness.webp)
 
 ## Transparent Maps
 
@@ -97,9 +97,9 @@ Alpha Clip in Blender, when used with a texture, involves using the alpha channe
 
 In the following example we used a material with alpha clip, using 2 textures, the diffuse color and the alpha texture in black and white connecting the color to the alpha channel.
 
-![](/docs/.gitbook/assets/33-alpha-clip-leave.webp) ![](/docs/.gitbook/assets/33-alpha-clip-mask.webp)
+![](/docs/creator/images/3d-models-and-animations/3d-essentials/33-alpha-clip-leave.webp) ![](/docs/creator/images/3d-models-and-animations/3d-essentials/33-alpha-clip-mask.webp)
 
-![](/docs/.gitbook/assets/33-alpha-blender.webp)
+![](/docs/creator/images/3d-models-and-animations/3d-essentials/33-alpha-blender.webp)
 
 _As a result we can see the areas painted in black are discarted while the white area are being rendered_
 
@@ -109,14 +109,14 @@ _Alpha Blend_ allows you to pick intermediate values per region.
 
 Alpha Blend in Blender, when used with a texture, involves blending the transparent and opaque areas of the texture based on its alpha channel. This allows the texture to smoothly combine both visible and see-through portions, interacting naturally with the background or other objects in the scene.
 
-![](/docs/.gitbook/assets/33-alpha-blend.webp)
+![](/docs/creator/images/3d-models-and-animations/3d-essentials/33-alpha-blend.webp)
 
 _While Alpha Clip render values being 0 or 1 (in a specific threshold) Alpha Blend interpolates the values between 0 and 1. In the example above the alpha blend material shows the complete gradient transition while the alpha clip excludes part of the texture set by the clip threshold_
 
 
 > [!WARNING]
 > **🔥Optimization Tip🔥**
-> 
+>
 > * Take into account that transparent textures (RGB+A) are always more expensive in termns of performance that using a grayscale value for transparencies.
 > * Transparency is always an expensive operation when rendering the scene. Try always to keep the transparencies at minimun and use Alpha Blend only when it's necessary, otherwise Alpha Clip is preferred rather than Alpha Blend.
 
@@ -125,7 +125,7 @@ _While Alpha Clip render values being 0 or 1 (in a specific threshold) Alpha Ble
 
 An emissive map is a type of texture map used to control the self-illumination or the emitted light of a surface in a 3D scene. It's a component of the shader that determines how much light (and color of light) a particular part of a 3D model emits, independently of external light sources. Emissive maps are commonly used to simulate materials or objects that appear to emit their own light.
 
-![](/docs/.gitbook/assets/57-emissive-map.webp)
+![](/docs/creator/images/3d-models-and-animations/3d-essentials/57-emissive-map.webp)
 
 _In this example we can see the use of an emissive map combined with emissive strenght in an environment that uses glow postprocessing to test approxivamtely how the emissive behavies in world._
 
@@ -133,11 +133,11 @@ _In this example we can see the use of an emissive map combined with emissive st
 
 A normal map is a type of texture used in 3D graphics to simulate fine surface details and create the illusion of complex geometry without actually altering the underlying geometry of a model. It's commonly used to enhance the realism of low-poly models by adding the appearance of bumps, crevices, and other surface irregularities. It also allows you to keep the object themselves lighter, as lots of details can be provided on the normal map layer instead of complex geometry.
 
-![](/docs/.gitbook/assets/51-normal-map.webp) ![](/docs/.gitbook/assets/50-normal.webp)
+![](/docs/creator/images/3d-models-and-animations/3d-essentials/51-normal-map.webp) ![](/docs/creator/images/3d-models-and-animations/3d-essentials/50-normal.webp)
 
 To add a normal map to your material using the _Shader Editor_, you will need to connect the _**Normal Map**_ node between the texture and the _Principled BSDF_ shader.
 
-![](/docs/.gitbook/assets/56-normal-map.webp)
+![](/docs/creator/images/3d-models-and-animations/3d-essentials/56-normal-map.webp)
 
 
 > [!WARNING]
@@ -160,9 +160,9 @@ A wise and common practice for optimizing your scene is sharing textures and mat
 
 The following tool based on [**glTF pipeline**](https://github.com/AnalyticalGraphicsInc/gltf-pipeline)**,** offers some optimizations that will make 3D models lighter and faster to download for players in your scene.
 
-**Mac:** [MAC GLB Extractor](https://github.com/decentraland/docs-creator/blob/main/images/3d-models-and-animations/glb-extractor/texture_extractor.sh)
+**Mac:** [MAC GLB Extractor](https://github.com/decentraland/docs/blob/main/creator/images/3d-models-and-animations/glb-extractor/texture_extractor.sh)
 
-**PC:** [PC GLB Extractor](https://github.com/decentraland/docs-creator/blob/main/images/3d-models-and-animations/glb-extractor/glb_texture_extract.bat)
+**PC:** [PC GLB Extractor](https://github.com/decentraland/docs/blob/main/creator/images/3d-models-and-animations/glb-extractor/glb_texture_extract.bat)
 
 It converts .gltf format into .glb, which is binary and so occupies a lot less. It also places texture files outside the 3D model, which allows you to use the same texture on multiple models.
 
@@ -172,15 +172,15 @@ It converts .gltf format into .glb, which is binary and so occupies a lot less. 
 
 In this example scene, we have a simple sci-fi scene in Blender.
 
-![](/docs/.gitbook/assets/01-scene-base.webp)
+![](/docs/creator/images/3d-models-and-animations/glb-extractor/01-scene-base.webp)
 
 This scene contains the base environment for the static models but there are also two other assets, a droid and a spaceship that we want to export separately in order to move them later by code, so they can interact with the players. In this case we used 4 textures (one for the floor, one atlas color map for most of the assets, one emissive and a UI sci-fi texture for the panels)
 
-![](/docs/.gitbook/assets/02-model-01.webp) ![](/docs/.gitbook/assets/03-model-02.webp)
+![](/docs/creator/images/3d-models-and-animations/glb-extractor/02-model-01.webp) ![](/docs/creator/images/3d-models-and-animations/glb-extractor/03-model-02.webp)
 
 Once we export all of these assets to the models folder we have 3 models, the environment static scene, the spaceship and the droid.
 
-![](/docs/.gitbook/assets/04-models-folder.webp)
+![](/docs/creator/images/3d-models-and-animations/glb-extractor/04-models-folder.webp)
 
 But we have a problem, the .glb files have the textures embedded in them, so if you are exporting different assets that reuse the textures, these would be duplicated each time there is a new asset in the folder. To avoid having duplicated textures we can use this helpful tool.
 
@@ -193,41 +193,41 @@ But we have a problem, the .glb files have the textures embedded in them, so if 
 
 Once you have exported all the assets to your models folder you can drag the script file to it.
 
-![](/docs/.gitbook/assets/05-texture-extractor.webp)
+![](/docs/creator/images/3d-models-and-animations/glb-extractor/05-texture-extractor.webp)
 
 1 - Open the folder in the terminal by dragging the folder to it.
 
-![](/docs/.gitbook/assets/06-move-to-terminal.webp)
+![](/docs/creator/images/3d-models-and-animations/glb-extractor/06-move-to-terminal.webp)
 
 2 - Drag the texture-extractor.sh to the terminal.
 
-![](/docs/.gitbook/assets/06-terminal.webp)
+![](/docs/creator/images/3d-models-and-animations/glb-extractor/06-terminal.webp)
 
 3 - Run the command. It may take some seconds to process all the assets. After that, you will see something like this:
 
-![](/docs/.gitbook/assets/07-run-terminal.webp)
+![](/docs/creator/images/3d-models-and-animations/glb-extractor/07-run-terminal.webp)
 
 4 - Go to your models folder and there will be one new folder called "out" in which you will see your new assets with the textures extracted.
 
-![](/docs/.gitbook/assets/08-out-folder.webp)
+![](/docs/creator/images/3d-models-and-animations/glb-extractor/08-out-folder.webp)
 
 5 - Replace all the assets for the new ones! Also once you finished erase the "texture-extractor.sh" and the empty folder "out".
 
-![](/docs/.gitbook/assets/09-replace-assets.webp)
+![](/docs/creator/images/3d-models-and-animations/glb-extractor/09-replace-assets.webp)
 
 **On Windows**
 
 Once you have exported all the assets to your models folder you can drag the script file into it.
 
-![](/docs/.gitbook/assets/10-windows-01.webp)
+![](/docs/creator/images/3d-models-and-animations/glb-extractor/10-windows-01.webp)
 
 1 - Double click on glb\_texture\_extract.bat to extract the files. If Windows warns you about unrecognized app, go to **More Info** and then **Run anyway**.
 
-![](/docs/.gitbook/assets/11-windows-02.webp) ![](/docs/.gitbook/assets/12-windows-03.webp)
+![](/docs/creator/images/3d-models-and-animations/glb-extractor/11-windows-02.webp) ![](/docs/creator/images/3d-models-and-animations/glb-extractor/12-windows-03.webp)
 
 2 - The script will generate a folder called out , there you will fid all new .glb files with its extracted textures.
 
-![](/docs/.gitbook/assets/13-windows-03.webp)
+![](/docs/creator/images/3d-models-and-animations/glb-extractor/13-windows-03.webp)
 
 5 - Replace all assets with the new ones. Once finished, delete the "texture-extractor.bat" script and the empty "out" folder.
 
@@ -248,11 +248,11 @@ Alternatively, you can create the texture atlas after the asset is finished by m
 
 Below is an image showing several 3D objects that use one texture set:
 
-![](/docs/.gitbook/assets/37-atlas-texture.webp) ![](/docs/.gitbook/assets/38-uv-atlas.webp)
+![](/docs/creator/images/3d-models-and-animations/3d-essentials/37-atlas-texture.webp) ![](/docs/creator/images/3d-models-and-animations/3d-essentials/38-uv-atlas.webp)
 
 Another way to do Atlases is the use of Trim Sheets, a common technique in 3D modeling and game development that big studios and game industry use to ensure visual consistency and efficent art pipeline. Trim Sheets is the usage of a single image or texture that contains multiple small details or elements that can be applied to different parts of a model. This technique is very useful when creating large scenes and it needs to be considered in the first stage of the art pipeline.
 
-![](/docs/.gitbook/assets/39-trim-sheets.webp)
+![](/docs/creator/images/3d-models-and-animations/3d-essentials/39-trim-sheets.webp)
 
 _A collage example of a Trim Sheet that uses a diffuse texture, normal and emissive._
 
