@@ -17,7 +17,7 @@ Pinned revisions:
   The fixes read `@dcl/crypto` 3.7.0 (`Authenticator.validateSignature`), `busboy` 1.6.0 (limits,
   content-type and end-of-form texts) and `@dcl/schemas` 27.1.0 (`AuthChain`, `IPFSv2`, the AJV
   options) from their tarballs.
-- dcl-one: `fix/worlds-content-parity` @ `2da8b8aea` (origin/main), Rust workspace `services/catalyst`.
+- dcl-one: origin main `2da8b8aea`, Rust workspace `services/catalyst`.
 
 The rows were reached by reading the code and tests of both trees; nothing was captured from a
 live upstream. The fixes are pinned by the dcl-one tests each item names, and the gateway's JSON
@@ -106,7 +106,7 @@ names").
 
 ### Request
 
-Upstream chain (`src/controllers/routes.ts:169-185`):
+Upstream chain (`src/controllers/routes.ts:181-197`):
 
 1. `stampRequestArrival()` stamps `requestArrivedAt` before the body is read (`request-arrival.ts:11-20`).
 2. `createSourceUploadAdmission` charges the client source (`cf-connecting-ip`, `TRUSTED_CLIENT_IP_HEADER`)
@@ -277,7 +277,7 @@ request's arrival at the handler, which the gateway reaches only once it holds t
 
 ### Request
 
-Upstream (`routes.ts:187`, `handlers/undeploy-entity-handler.ts:6-38`): strict signed fetch; the owner
+Upstream (`routes.ts:199`, `handlers/undeploy-entity-handler.ts:6-38`): strict signed fetch; the owner
 (`namePermissionChecker.checkPermission`) or a world-wide deployment grantee
 (`permissions.hasWorldWidePermission`); `worlds.undeployWorld` soft-deletes every scene, clears the
 spawn and the stats, publishes `WorldUndeploymentEvent` and re-checks the owner's block
@@ -303,7 +303,7 @@ spawn recomputed, `store.rs:950-972,1089-1098`), quota re-check off the request.
 
 ### Request
 
-Upstream (`routes.ts:198`, `scenes-handler.ts:87-133`): strict signed fetch; the coordinate must match
+Upstream (`routes.ts:210`, `scenes-handler.ts:87-133`): strict signed fetch; the coordinate must match
 `^-?\d+,-?\d+$` (no bounds check); the owner removes every scene on the parcel; anyone else needs a
 deployment grant over the whole footprint of every scene on it (else 401), and only those scene
 identities are removed; `undeployWorldScenes` recomputes the spawn and publishes
@@ -335,7 +335,8 @@ dcl-one (`scenes.rs:46-102`): world name parsed first, the strict signed fetch, 
    - Upstream: `{ creationTimestamp: Date.now(), ...result }`, where `result.creationTimestamp` is the
      time `deployScene` wrote into `world_scenes.created_at` under the world lock
      (`decentraland/worlds-content-server:src/logic/scene-deployments/component.ts:219`,
-     `src/adapters/worlds-manager.ts:558-572,731,764`). A later partial batch of the same entity
+     `src/adapters/worlds-manager.ts:558-572,731,764`), pinned by
+     `test/unit/scene-deployments.spec.ts:1029-1110`. A later partial batch of the same entity
      answers that same value (`test/integration/partial-deploy.spec.ts:1020-1043`,
      `test/contracts/partial-deployment.ts:51-75`).
    - dcl-one: `deploy_entity_inner` answers the `created_at_ms` that `publish` returns
@@ -356,16 +357,14 @@ dcl-one (`scenes.rs:46-102`): world name parsed first, the strict signed fetch, 
      both routes).
    - Severity: none (closed).
 
-3. **WD-03 · all routes of this area · the worlds writes switch is off by default.**
+3. **WD-03 · all routes of this area · the worlds writes switch is off by default.** Status: intended (worlds-compatibility.md).
    - Upstream: no switch.
    - dcl-one: `WORLDS_WRITES_ENABLED` defaults to `false`; while off every route here answers
      503 `{"ok":false,"error":"Service Unavailable","message":…}` with `Retry-After: 3600`
-     (`services/catalyst/worlds/src/writes.rs:33-76`, `config/src/worlds.rs:86`). It is not listed in
-     `docs/worlds-compatibility.md`.
-   - Proposed fix: keep (DATABASE.md requires a demonstrated restore before local authority is
-     accepted); add the row to `docs/worlds-compatibility.md` so an operator replacing upstream knows to
-     set it.
-   - Severity: P1 (a node with the default answers 503 to every publish).
+     (`services/catalyst/worlds/src/writes.rs:33-76`, `config/src/worlds.rs:86`). Listed under "Writes
+     switch", one line for every worlds write route (WW-27): DATABASE.md requires a demonstrated
+     restore before local authority is accepted.
+   - Severity: none (closed).
 
 4. **WD-04 · `POST /entities` · multipart field, part and file caps.** Status: MATCH, no work.
    - Upstream: `DEPLOYMENT_FIELD_LIMITS` over busboy 1.6.0: 32 fields, 32 KiB per field, 10,032

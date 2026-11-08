@@ -45,12 +45,6 @@ pub fn field_too_large_message(name: &str, max_field_bytes: usize) -> String {
     )
 }
 
-/// Upstream's `fieldsLimit` text (`src/controllers/multipart/middleware.ts`), naming the
-/// route's field cap.
-pub fn too_many_fields_message(max_fields: usize) -> String {
-    format!("{TOO_MANY_FIELDS_MESSAGE} The maximum allowed is {max_fields}.")
-}
-
 pub const MAX_MULTIPART_FIELD_VALUE_BYTES: usize = 1024 * 1024;
 
 pub const MAX_MULTIPART_FIELDS: usize = 100;

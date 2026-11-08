@@ -31,22 +31,26 @@ row says whether it breaks a drop-in replacement.
 
 ## Files
 
-Upstream registers 43 routes; the files compare them in 40 endpoint sections (GET and HEAD of a path
-share a section where they share a handler).
+Upstream's `src/controllers/routes.ts` registers 39 routes (`/reprocess-ab` and `/gc` only when
+`AUTH_SECRET` is set; the http-server `/health/*` and `/metrics` routes are not counted). The files count
+40 endpoints: `POST /entities` is two, the single request and `partial=true`. GET and HEAD of
+`/contents/:hashId` and `/ipfs/:hashId` are separate endpoints described in one section.
 
 | file | area | endpoints | MATCH | GAP | DIVERGENT | MISSING | backlog |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [worlds-deploy.md](worlds-deploy.md) | `POST /entities` (single and `partial=true`), `DELETE /entities/:world_name`, `DELETE /world/:world_name/scenes/:coordinate` | 4 | 0 | 0 | 4 | 0 | WD-01..27 |
-| [worlds-reads.md](worlds-reads.md) | `/contents/:hashId`, `/ipfs/:hashId` (GET/HEAD), `/available-content`, `POST /entities/active`, `/index`, `/status`, `/reprocess-ab`, `/gc`; mounts, 404/405, CORS | 10 | 0 | 1 | 8 | 1 | WR-01..34 |
-| [worlds-world.md](worlds-world.md) | `/world/:n/{about,scenes,settings,manifest,limits}`, `/worlds`, `/wallet/:w/stats`, `/wallet/contribute` | 10 | 1 | 0 | 9 | 0 | WW-01..38 |
-| [worlds-permissions.md](worlds-permissions.md) | the ten `/world/:n/permissions*` routes | 10 | 0 | 0 | 10 | 0 | WP-01..19 |
+| [worlds-reads.md](worlds-reads.md) | `/contents/:hashId`, `/ipfs/:hashId` (GET/HEAD), `/available-content`, `POST /entities/active`, `/index`, `/status`, `/reprocess-ab`, `/gc`; mounts, 404/405, CORS | 10 | 0 | 0 | 9 | 1 | WR-01..34 |
+| [worlds-world.md](worlds-world.md) | `/world/:n/{about,scenes,settings,manifest,limits}`, `/worlds`, `/wallet/:w/stats`, `/wallet/contribute` | 10 | 1 | 0 | 9 | 0 | WW-01..39 |
+| [worlds-permissions.md](worlds-permissions.md) | the ten `/world/:n/permissions*` routes | 10 | 2 | 0 | 8 | 0 | WP-01..19 |
 | [worlds-comms.md](worlds-comms.md) | `/worlds/:w/comms`, `/worlds/:w/scenes/:id/comms`, `/get-comms-adapter/:roomId`, `/livekit-webhook`, `/live-data`, `/wallet/:w/connected-world` | 6 | 0 | 0 | 6 | 0 | WC-01..27 |
-| **total** | | **40** | **1** | **1** | **37** | **1** | **145** |
+| **total** | | **40** | **3** | **0** | **36** | **1** | **146** |
 
 Every upstream route has a route at the same method and path in this tree except `POST /reprocess-ab`
-(WR-22). `POST /entities` and `DELETE /entities/:world_name` answer only under `/worlds-content-server`
-at the root host: at the root those paths belong to the catalyst content server, and the gateway maps
-the worlds host onto the prefix (WD, WR-12, WR-23).
+(WR-22). At the root host, eight worlds handlers answer only under `/worlds-content-server`. At the root,
+`POST /entities`, `DELETE /entities/:world_name`, `POST /entities/active`, `/contents/:hashId`,
+`/available-content` and `/status` are the catalyst content server's; `/ipfs/:hashId` and `POST /gc`
+have no root route (`worlds/src/core/mod.rs:588-603`, `worlds/src/lib.rs:403-447`). The gateway maps the
+worlds host onto the prefix (WD, WR-12, WR-23, WR-27).
 
 ## P0 and P1
 
@@ -54,28 +58,21 @@ No item is P0. The P1 items:
 
 | id | endpoint | what differs |
 | --- | --- | --- |
-| WD-03, WW-27 | every write route | `WORLDS_WRITES_ENABLED` is off by default, so publish, undeploy, settings and permission edits answer 503 with `Retry-After: 3600`; the switch is not in `docs/worlds-compatibility.md`. |
-| WR-06 | `/worlds-content-server/{status,contents,ipfs,openapi.json}` | Added after the CORS layer: no CORS headers, a preflight answers 405. |
-| WR-12 | `/about`, `/index` links | Content links point at the root `/contents`, the catalyst handler (no content-type sniffing, no sha256 keys, the content GET quota). |
-| WR-17 | `GET /index` | The name deny list is not applied. |
-| WR-18 | `GET /index` | `null` where upstream answers `''`, leaves the key out or answers `Date.now()`. |
-| WR-22 | `POST /reprocess-ab` | Missing. |
-| WW-01 | `GET /world/:n/about` | `scenesUrn` lists every deployed scene; upstream lists the newest. |
-| WW-19 | `PUT /world/:n/settings` | A 400 answers `{error:"Bad request",message}`; upstream answers `{error:<message>}`. |
-| WP-11 | `DELETE /world/:n/permissions/:p/:address` | A world with no deployed scene answers 404; upstream answers 204. |
+| WR-22 | `POST /reprocess-ab` | Missing: no in-tree hand-off re-converts a world scene (abgen exposes no world-reprocess call). |
+| WW-39 | the worlds mirror | A multi-scene world is mirrored with its newest scene only: the scene set is read from the source's `/about`, which lists one. |
 
 ## Themes that cut across files
 
-- **Signed-fetch refusals** (WD-02, WP-01, WW-24, WC-01, fixed): one mapper, `comms/src/signed_fetch.rs`
+- **Signed-fetch refusals** (WD-02, WP-01, WW-24, WC-01): one mapper, `comms/src/signed_fetch.rs`
   `map_auth_error_api`, answers every signed worlds route with the crypto-middleware 6.3.0 text and the
-  ADR-44 line. `PUT /settings` still reads its multipart body first (WW-24).
-- **Validator bodies** (WP-02, WW-15): schema-validated routes answer the worlds envelope where
-  upstream answers `{ok:false,message,data}`; the content crate already rebuilds that body (CR-2).
-- **Absent vs `null`** (WP-03, WW-04, WW-18, WR-15, WR-18): several bodies write `null` where upstream
+  ADR-44 line. `PUT /settings` reads its multipart body only after the signed fetch (WW-24).
+- **Validator bodies** (WP-02, WW-15): the schema-validated routes answer upstream's
+  `{ok:false,message,data}`, built with the content crate's validator (`content::validation`, CR-2).
+- **Absent vs `null`** (WP-03, WR-15, WR-18): several bodies write `null` where upstream
   leaves the key out, or the reverse.
-- **Multipart limits and texts** (WD-04..11, WW-21..23): `POST /entities` answers upstream's caps,
-  duplicate-field rule, 413 and timeout texts; the settings route is WW-21..23.
-- **CORS** (WR-06, WW-37, WR-32): one router misses the layer (WR-06; the mints have it, WC-02);
-  elsewhere the origin is echoed with credentials where upstream answers `*`.
-- **Undocumented intended differences**: the write switch, events not published on SNS (WD-19, WW-26,
-  WP-13) and root mount collisions (WR-23) need lines in `docs/worlds-compatibility.md`.
+- **Multipart limits and texts** (WD-04..11, WW-21..23): both multipart routes answer upstream's caps,
+  duplicate-field rule, 413 and timeout texts, apart from the intended WD-08, WD-09 and WD-11.
+- **CORS** (WR-06, WW-37, WR-32): every worlds router carries the layer (WR-06; the mints, WC-02);
+  the origin is echoed with credentials where upstream answers `*`.
+- **Intended differences** (WD-03, WD-19, WW-26, WP-13, WR-23): the write switch, events not published
+  on SNS and root mount collisions are listed in `docs/worlds-compatibility.md`.
