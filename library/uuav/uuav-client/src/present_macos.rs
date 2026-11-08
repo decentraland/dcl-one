@@ -5,6 +5,7 @@
 //! resolution change) the in-process plugin had, so the the host poll-and-rewrap
 //! flow is untouched.
 
+use crate::announced_size::check_announced_size;
 use crate::platform::UnityDevice;
 use anyhow::{Context as _, Result, anyhow, ensure};
 use objc2::rc::Retained;
@@ -20,16 +21,6 @@ use std::os::raw::c_void;
 use uuav_ipc::mach_channel::SurfaceTag;
 
 type Texture = Retained<ProtocolObject<dyn MTLTexture>>;
-
-/// Pixels a generation may announce: 4096 x 4096, DCI 4K and a little more.
-/// The helper is the untrusted side of this channel and its dimensions size
-/// what this side allocates or wraps per slot, so a frame past this is
-/// refused before anything is allocated.
-const MAX_PIXELS: u64 = 4096 * 4096;
-
-/// Largest edge a generation may announce; the helper is the untrusted side
-/// of this channel.
-const MAX_DIMENSION: u32 = 16_384;
 
 const SLOTS: usize = 3;
 const PLANES: usize = 2;
@@ -260,14 +251,7 @@ fn wrap_generation(unity: &UnityDevice, pending: &PendingGen) -> Result<ActiveGe
     // the macOS helper announces the stream's size unrounded (the Linux one
     // rounds it, video_linux.rs); NV12 presents the even extent the surfaces hold
     let (width, height) = (width & !1, height & !1);
-    ensure!(
-        (2..=MAX_DIMENSION).contains(&width) && (2..=MAX_DIMENSION).contains(&height),
-        "helper announced an unpresentable size {width}x{height}"
-    );
-    ensure!(
-        u64::from(width).saturating_mul(u64::from(height)) <= MAX_PIXELS,
-        "helper announced {width}x{height}, past the {MAX_PIXELS} pixel cap"
-    );
+    check_announced_size(width, height)?;
 
     let wrap_slot =
         |slot: &[Option<CFRetained<IOSurfaceRef>>; PLANES]| -> Result<[Texture; PLANES]> {

@@ -37,6 +37,7 @@
     clippy::doc_markdown
 )]
 
+mod announced_size;
 mod audio_ring;
 mod connection;
 mod registry;
@@ -69,6 +70,7 @@ mod present;
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 compile_error!("uuav supports Windows (D3D11), macOS (Metal) and Linux (shared memory) only");
 
+pub use announced_size::MAX_PIXELS;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use connection::{Connection, EventSinks, Lifecycle, LifecycleCell};
 use registry::{IntendedPlayback, PlayerMirror, Registry};

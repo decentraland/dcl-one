@@ -25,10 +25,8 @@ use bevy::{
 use common::structs::SnapshotInProgress;
 
 use super::{Shared, ffi, ffi::PlayerId, platform};
+use uuav::MAX_PIXELS;
 
-/// Pixels a player's planes may hold: DCI 4K and a little more. A larger stream is refused
-/// before it reaches the device.
-const MAX_PIXELS: u64 = 4096 * 4096;
 /// The smallest edge a video may have; a smaller one is refused before it reaches the device.
 const MIN_EDGE: u32 = 16;
 
@@ -267,7 +265,8 @@ impl Planes {
 struct PlayerPlanes(HashMap<PlayerId, Planes>);
 
 /// Why a video of this size cannot be shown: an edge under [`MIN_EDGE`], over the device's
-/// `max_dimension` (0 for a device not known yet: no edge limit), or more than [`MAX_PIXELS`].
+/// `max_dimension` (0 for a device not known yet: no edge limit), or more than the client's
+/// [`MAX_PIXELS`].
 pub(super) fn check_bounds(width: u32, height: u32, max_dimension: u32) -> Result<(), String> {
     if width < MIN_EDGE || height < MIN_EDGE {
         return Err(format!("{width}x{height} is under {MIN_EDGE} px"));
