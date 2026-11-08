@@ -751,6 +751,8 @@ function instanceNode(
 
 const LINE_TOLERANCE = 0.1
 
+const BOX_ALIGNMENTS = new Set(['CENTER', 'RIGHT', 'JUSTIFIED'])
+
 // How many lines a text node holds, read from its geometry: a hugging height is a whole number of its captured
 // line height. Whole-line geometry remains meaningful in a fixed-height box too. A height between whole
 // lines remains ambiguous.
@@ -816,6 +818,10 @@ function buildViewNode(
         : typeof geometryLines === 'number'
           ? widthBound && geometryLines >= 2
           : styleWraps
+    // A single line drops its captured width unless the box matters: wrapped text breaks at it, a FIXED box
+    // occupies it, and centered, right or justified text aligns within it. FILL stays with sizingDecls' flex.
+    const keepsBoxWidth =
+      wraps || node.sizing?.[0] === 'FIXED' || BOX_ALIGNMENTS.has(node.textAlignHorizontal ?? '')
     // Figma text nodes sometimes carry a line height that differs from the matched text style's, which
     // changes the height of hugging containers by a pixel or two; the measured node height is the truth.
     if (!node.lineHeight && node.text && !/[\n\u2028\u2029]/.test(node.text)) {
@@ -837,8 +843,7 @@ function buildViewNode(
             : ([['white-space', 'nowrap']] as [string, string][])),
         ...decls,
         ...sizingDecls({ ...node, sizing: node.sizing ?? ['HUG', 'HUG'] }, parent, false).filter(
-          ([property]) =>
-            property !== 'height' && (wraps || property !== 'width' || node.sizing?.[0] === 'FIXED')
+          ([property]) => property !== 'height' && (keepsBoxWidth || property !== 'width')
         ),
         ...positionDecls(node, parent, env),
         ...(node.opacity !== undefined
