@@ -602,41 +602,16 @@ impl IntoResponse for ParcelsRefusal {
     }
 }
 
-/// The validator's `isJsonContentType`: `application/json` or a `+json`
-/// structured suffix, before any `;` parameters.
-fn is_json_content_type(headers: &HeaderMap) -> bool {
-    let Some(raw) = headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-    else {
-        return false;
-    };
-    let media = raw
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
-    if media == "application/json" {
-        return true;
-    }
-    let Some((kind, subtype)) = media.split_once('/') else {
-        return false;
-    };
-    let plain = |p: &str| !p.is_empty() && !p.contains('/') && !p.contains(char::is_whitespace);
-    match subtype.strip_suffix("+json") {
-        Some(base) => plain(kind) && plain(base),
-        None => false,
-    }
-}
-
 /// Upstream's `withSchemaValidatorMiddleware(permissionParcelsSchema)`: a
 /// JSON content type (415), a JSON body (400 with the parse error), then
 /// exactly `{parcels}` with 1-500 `x,y` strings (400 `Invalid JSON body` and
 /// AJV's first error).
 fn parcels_body(headers: &HeaderMap, body: &[u8]) -> Result<ParcelSet, ParcelsRefusal> {
     let refuse = |status: StatusCode, body: Value| ParcelsRefusal::Validator { status, body };
-    if !is_json_content_type(headers) {
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok());
+    if !crate::content::validation::is_json_content_type(content_type) {
         return Err(refuse(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             json!({ "ok": false, "message": "Content-Type must be application/json" }),

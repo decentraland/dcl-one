@@ -247,7 +247,7 @@ Upstream: `permissions-handlers.ts:294-366`, unsigned. Stage order:
 4. the bounding box (all four or none; `parseInt`);
 5. `getParcelsForPermission`: `ORDER BY parcel`, inclusive box, corners in any order (`permissions-manager.ts:159-227`).
 
-dcl-one: `permissions.rs:642-693`, `pagination` (`core/http.rs:27-41`), `store.rs:1388-1444`.
+dcl-one: `permissions.rs:737-788`, `pagination` (`core/http.rs:27-41`), `store.rs:1388-1444`.
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
@@ -290,7 +290,7 @@ dcl-one: `post_permission_parcels`. Stage order:
 | Valid | 204 | empty | `:247` | `:598` | MATCH (canonical storage: unit `parcels_body_matches_the_upstream_schema`) |
 | Grant already world-wide | 204; the grant becomes parcel-scoped | | | | MATCH |
 | Body fails the schema (empty, more than 500, extra key, bad pattern) | 400 | `{"ok":false,"message":"Invalid JSON body","data":[<ajv error>]}`, keys in the validator's order | schema-validator-component `withSchemaValidatorMiddleware` | `parcels_body`; unit `parcels_body_matches_the_upstream_schema` (AJV 8 answers, run against the schema); test `parcel_bodies_are_schema_validated_on_every_parcel_route` | MATCH (WP-02) |
-| Content-Type not JSON (`application/json` or `*/*+json` accepted) | 415 | `{"ok":false,"message":"Content-Type must be application/json"}` | | `is_json_content_type` | MATCH (WP-02) |
+| Content-Type not JSON (`application/json` or `*/*+json` accepted) | 415 | `{"ok":false,"message":"Content-Type must be application/json"}` | | `content::validation::is_json_content_type` | MATCH (WP-02) |
 | Body not JSON | 400 | `{"ok":false,"message":"<JSON.parse message>"}`: V8's text for an empty body, a `{` not followed by a key, and a short source with a bad first token; serde_json's for any other | | `content::validation::json_parse_message`; unit `parcels_body_matches_the_upstream_schema` | MATCH (WP-02) |
 | A coordinate outside i32 (`99999999999,0`) | upstream 204 (stored); dcl-one 400 `Invalid parcels: …` | | pattern only | `ParcelError::Malformed` | intended (worlds-compatibility.md "Permission payloads", WP-10) |
 | Unsigned request with a bad body or path | 400, the signed-fetch refusal (the signature is checked first) | | middleware order (`routes.ts:269-274`) | `verify_signer` first | MATCH (WP-07, WP-01; test `owner_gated_permission_routes_check_the_signature_first`) |
@@ -302,7 +302,7 @@ dcl-one: `post_permission_parcels`. Stage order:
 Upstream: `permissions-handlers.ts:254-288`. It has the same middleware and stage order as route 4, then
 `removeParcelsFromPermission` (`permissions/component.ts:347-362`, `permissions-manager.ts:376-397`).
 
-dcl-one: `permissions.rs:602-640`, `store.rs:1322-1385`.
+dcl-one: `permissions.rs:702-735`, `store.rs:1322-1385`.
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
@@ -322,7 +322,7 @@ Upstream: `permissions-handlers.ts:372-396`, **unsigned**. Stage order:
 4. `getAddressesForParcelPermission` (`permissions-manager.ts:404-453`), which matches world-wide holders or a
    parcel in `ANY($parcels)`, ordered by address. The **raw** parcels are used, not canonicalized.
 
-dcl-one: `permissions.rs:696-723`, `store.rs:1447-1490`. It also stays open while writes are off
+dcl-one: `permissions.rs:791-820`, `store.rs:1447-1490`. It also stays open while writes are off
 (`writes.rs:45-52`).
 
 | trigger | status | body | upstream | dcl-one | verdict |
@@ -377,7 +377,7 @@ Upstream: `permissions-handlers.ts:495-523`. Stage order:
 4. `removeCommunityFromAccessAllowList`;
 5. `handleAccessChange`: rule (3), kick the participants without access (`access/component.ts:241-251`).
 
-dcl-one: `permissions.rs:752-782`. It applies the edit, then `Revocation::AccessSetting`.
+dcl-one: `permissions.rs:876-900`. It applies the edit, then `Revocation::AccessSetting`.
 
 | trigger | status | upstream | dcl-one | verdict |
 |---|---|---|---|---|
@@ -489,10 +489,10 @@ deny-list filter keeps it (`store::raw_records_exclude`), and no operator disabl
      - a wrong content type: `415 {"ok":false,"message":"Content-Type must be application/json"}`;
      - unparsable JSON: `400 {"ok":false,"message":<JSON.parse message>}`;
      - a schema failure: `400 {"ok":false,"message":"Invalid JSON body","data":[ajv errors]}`.
-   - dcl-one: `parcels_body` (`services/catalyst/worlds/src/core/permissions.rs:637-668`) answers the 415, the
+   - dcl-one: `parcels_body` (`services/catalyst/worlds/src/core/permissions.rs:609-640`) answers the 415, the
      parse error through `content::validation::json_parse_message` (V8's text for the captured failures, serde's
-     otherwise; `content/src/validation.rs:77-79`), and AJV 8's first error for `permissionParcelsSchema`
-     (`parcels_schema_error`, `permissions.rs:672-687`, over `content::validation::array_property_error` and
+     otherwise; `content/src/validation.rs:98-100`), and AJV 8's first error for `permissionParcelsSchema`
+     (`parcels_schema_error`, `permissions.rs:645-660`, over `content::validation::array_property_error` and
      `object_keys_in_order`), written in the validator's key order by `ordered_refusal_json`. Pinned by the unit
      `parcels_body_matches_the_upstream_schema` (expected answers produced by running AJV 8 on the schema) and the
      test `parcel_bodies_are_schema_validated_on_every_parcel_route`. `Malformed` parcels (past i32) answer
@@ -627,7 +627,7 @@ deny-list filter keeps it (`store::raw_records_exclude`), and no operator disabl
       `… communities.`).
     - dcl-one: matchit backtracks from `access/communities/{id}` for `access/parcels` and `access/communities`;
       `{permission_name}/parcels` hands PUT and DELETE to routes 9 and 10 with the address `parcels`
-      (`put_permissions_parcels_address`, `permissions.rs:852-872`; routes `worlds/src/core/mod.rs:673-679`).
+      (`put_permissions_parcels_address`, `permissions.rs:825-845`; routes `worlds/src/core/mod.rs:673-679`).
       Pinned by the test `permission_paths_between_the_static_and_named_routes_route_like_upstream`.
     - Severity: none (closed).
 
