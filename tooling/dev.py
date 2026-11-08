@@ -1082,7 +1082,10 @@ def down():
                 raise RuntimeError('Supervisor is unavailable while development ports are occupied. '
                                    'Inspect .cache/dev/supervisor.log; no processes were stopped.')
             return 0
-        pc('down', check=True)
+        # process-compose can close the connection before it answers the stop
+        # request ("failed to stop project ... EOF"); the socket and the ports
+        # say whether it stopped, not the exit code.
+        pc('down')
         deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
             if not control_socket.exists() and (config is None or ports_free(config['port'])):
