@@ -16,7 +16,6 @@ use ipfs::IpfsResource;
 use livestream_manager::{ReceiverImage, ReceiverVolume};
 use media::{AVCommand, VideoData, VideoInfo};
 use scene_runner::{
-    automatic_testing::SnapshotInProgress,
     renderer_context::RendererSceneContext,
     update_world::material::{update_materials, VideoTextureOutput},
     ContainerEntity, ContainingScene, SceneEntity,
@@ -365,14 +364,7 @@ fn av_player_should_be_playing_on_remove<T: AVPlayer>(
 fn play_videos(
     mut images: ResMut<Assets<Image>>,
     mut q: Query<(&mut AVSinks<VideoPlayer>, &mut VideoTextureOutput)>,
-    snapshot: Option<Res<SnapshotInProgress>>,
 ) {
-    // A software-rendered capture can take several video frames to become ready.
-    // Keep the requested frame until readback, then resume consuming the bounded queue.
-    if snapshot.is_some_and(|snapshot| snapshot.0) {
-        return;
-    }
-
     for (mut video_player_sinks, mut output) in q.iter_mut() {
         let AVSinks {
             #[cfg(feature = "uuav")]
@@ -500,7 +492,7 @@ fn publish_stream_state(
 }
 
 #[cfg(test)]
-mod snapshot_tests {
+mod tests {
     use super::*;
     use dcl_component::{proto_components::sdk::components::VideoState, SceneEntityId};
 
@@ -526,92 +518,5 @@ mod snapshot_tests {
                 .rate,
             Some(24.0)
         );
-    }
-
-    #[test]
-    fn holds_video_updates_until_snapshot_readback_finishes() {
-        let mut app = App::new();
-        app.init_resource::<Assets<Image>>()
-            .init_resource::<FrameCount>()
-            .add_systems(Update, play_videos);
-        let image = app
-            .world_mut()
-            .resource_mut::<Assets<Image>>()
-            .add(Image::new_fill(
-                Extent3d {
-                    width: 16,
-                    height: 16,
-                    depth_or_array_layers: 1,
-                },
-                TextureDimension::D2,
-                &[0, 0, 0, 255],
-                TextureFormat::Rgba8UnormSrgb,
-                RenderAssetUsages::all(),
-            ));
-        let (sender, receiver) = tokio::sync::mpsc::channel(10);
-        let (commands, _commands_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (_state_sender, state_receiver) = tokio::sync::watch::channel(VideoState::VsLoading);
-        app.world_mut().spawn((
-            AVSinks::<VideoPlayer> {
-                #[cfg(feature = "uuav")]
-                audio: None,
-                video: Some(crate::sinks::VideoSink {
-                    source: "fixture.mp4".to_owned(),
-                    video_receiver: receiver,
-                    image: image.clone(),
-                    current_time: -1.0,
-                    length: None,
-                    resized: false,
-                }),
-                command_sender: commands,
-                rate: None,
-                state: state_receiver,
-                sent_event: 0.,
-                sent_state: VideoState::VsLoading,
-                sent_volume: None,
-                _phantom: Default::default(),
-            },
-            ContainerEntity {
-                container: Entity::PLACEHOLDER,
-                root: Entity::PLACEHOLDER,
-                container_id: SceneEntityId::ROOT,
-            },
-            VideoTextureOutput(image.clone()),
-        ));
-        let queue_size = |width| {
-            assert!(sender
-                .try_send(VideoData::Info(VideoInfo {
-                    width,
-                    height: 16,
-                    rate: 30.0,
-                    length: 4.0,
-                }))
-                .is_ok());
-        };
-        let width = |app: &App| {
-            app.world()
-                .resource::<Assets<Image>>()
-                .get(&image)
-                .unwrap()
-                .texture_descriptor
-                .size
-                .width
-        };
-
-        // Normal playback has no capture resource and consumes queued updates.
-        queue_size(32);
-        app.update();
-        assert_eq!(width(&app), 32);
-
-        app.insert_resource(SnapshotInProgress(true));
-        queue_size(64);
-        for _ in 0..4 {
-            app.update();
-            assert_eq!(width(&app), 32);
-        }
-
-        app.world_mut().resource_mut::<SnapshotInProgress>().0 = false;
-        app.update();
-        assert_eq!(width(&app), 64);
     }
 }

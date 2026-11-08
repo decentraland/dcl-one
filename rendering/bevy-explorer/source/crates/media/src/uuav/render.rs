@@ -22,7 +22,6 @@ use bevy::{
         texture::GpuImage,
     },
 };
-use common::structs::SnapshotInProgress;
 
 use super::{Shared, ffi, ffi::PlayerId, platform};
 use uuav::MAX_PIXELS;
@@ -310,7 +309,6 @@ fn present_uuav_frames(
     mut images: ResMut<RenderAssets<GpuImage>>,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
-    snapshot: Option<Res<SnapshotInProgress>>,
 ) {
     // Players the main world closed: their textures go first, then the client may release the
     // planes behind them. Nothing below reads a retired player.
@@ -322,10 +320,6 @@ fn present_uuav_frames(
     let Some(mut pipeline) = pipeline else {
         return;
     };
-    // A capture holds the frame it was requested on until it is read back.
-    if snapshot.is_some_and(|snapshot| snapshot.0) {
-        return;
-    }
 
     let targets: Vec<_> = shared
         .0

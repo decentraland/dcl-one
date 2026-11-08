@@ -13,7 +13,7 @@ use bevy::{
     math::DVec3,
     platform::collections::{HashMap, HashSet},
     prelude::*,
-    render::{extract_resource::ExtractResource, primitives::Aabb, view::RenderLayers},
+    render::{primitives::Aabb, view::RenderLayers},
 };
 use dcl_component::proto_components::{
     sdk::{
@@ -1072,11 +1072,6 @@ pub enum AudioDecoderError {
     StreamClosed,
     Other(String),
 }
-
-/// True while a scene test snapshot is being captured; video textures keep their current frame
-/// until it is read back. Present only under the scene test harness.
-#[derive(Resource, Clone, Default, ExtractResource)]
-pub struct SnapshotInProgress(pub bool);
 
 #[derive(Resource)]
 pub struct SceneLoadDistance {
