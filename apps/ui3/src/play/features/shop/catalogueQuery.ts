@@ -101,7 +101,7 @@ export const statusOf = (filters: Pick<CatalogueFilters, 'status' | 'search'>): 
 /** Deals are on-sale listings, so they read the listings feed whatever the status says. */
 export const readsListings = (filters: CatalogueFilters, creatorSales: boolean): boolean => statusOf(filters) === 'on_sale' || (creatorSales && filters.deals)
 
-export const pageCount = (total: number): number => Math.max(1, Math.ceil(total / SHOP_PAGE_SIZE))
+export const pageCount = (total: number, size: number = SHOP_PAGE_SIZE): number => Math.max(1, Math.ceil(total / size))
 
 export const shopQueries = {
   /**

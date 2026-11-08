@@ -33,7 +33,7 @@ export function webNameUrl(name: string): string {
 
 /** A NAME's page on the web Shop (the Marketplace's), where its resale is bought. */
 export function webNameTokenUrl(contract: string, tokenId: string): string {
-  return withUtm(siteUrl(`/shop/token/${contract.toLowerCase()}/${encodeURIComponent(tokenId)}`))
+  return withUtm(siteUrl(`/shop/token/${encodeURIComponent(contract.toLowerCase())}/${encodeURIComponent(tokenId)}`))
 }
 
 /** A registered NAME's bid page on the web Shop: an offer to its owner, whether or not they list it. */
