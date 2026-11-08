@@ -1,7 +1,7 @@
 [env]
-# the FFmpeg 8.1 prefix the helper links: built by scripts/build-ffmpeg-*.sh
-# (macOS, Linux) or fetched by tooling/uuav/fetch-ffmpeg-windows.sh (the
-# BtbN LGPL shared build); see .third_party/ffmpeg/LICENSE*
+# the FFmpeg 8.1 prefix the helper links: `nix build .#uuav-ffmpeg -o
+# library/uuav/.third_party/ffmpeg` (macOS, Linux) or
+# tooling/uuav/fetch-ffmpeg-windows.sh (the BtbN LGPL shared build)
 FFMPEG_DIR = { value = ".third_party/ffmpeg", relative = true }
 
 [build]
@@ -9,11 +9,8 @@ target-dir = ".target"
 
 # The GNU toolchain rather than MSVC: GNU ld can be told not to stamp the
 # PE header, which is what makes two builds byte-identical. The linker is
-# resolved from PATH (MSYS2's mingw-w64-x86_64-gcc provides it; the native
-# build workflow prepends C:\msys64\mingw64\bin).
-# --no-insert-timestamp: GNU ld stamps the PE COFF TimeDateStamp (offset 136)
-# with the wall clock, making every build byte-unique; zeroing it is required
-# for the reproducibility gates (tooling/uuav/repro-gate.sh)
+# resolved from PATH (MSYS2's mingw-w64-x86_64-gcc on Windows, pkgsCross
+# mingw-w64 in the Nix cross build).
 [target.x86_64-pc-windows-gnu]
 linker = "x86_64-w64-mingw32-gcc"
 rustflags = ["-C", "link-arg=-Wl,--no-insert-timestamp"]
@@ -23,12 +20,8 @@ rustflags = ["-C", "link-arg=-Wl,--no-insert-timestamp"]
 [target.aarch64-apple-darwin]
 rustflags = ["-C", "link-arg=-Wl,-rpath,@loader_path"]
 
-# same @loader_path rpath for the x86_64 slice of the universal binary
-[target.x86_64-apple-darwin]
-rustflags = ["-C", "link-arg=-Wl,-rpath,@loader_path"]
-
 # $ORIGIN RUNPATH: the Linux analog; every shipped .so carries the same
-# entry (scripts/build-ffmpeg-linux.sh) so the whole set resolves from the
+# entry (infra/packages/uuav.nix) so the whole set resolves from the
 # helper's directory
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-Wl,-rpath,$ORIGIN"]
