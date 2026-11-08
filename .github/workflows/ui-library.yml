@@ -26,9 +26,11 @@ jobs:
     outputs:
       ui_changed: ${{ steps.scope.outputs.ui_changed }}
     steps:
+      # The scripts run from the merge commit, so a pull request branched before they existed still gets them.
+      # The scanned range stays on the pull request head, an ancestor of that commit in the full history.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           # LFS content is fetched by oid below, only for the blobs the range adds or changes.
           lfs: false

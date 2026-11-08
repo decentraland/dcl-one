@@ -47,6 +47,12 @@ export function parseObjects(text) {
   return [...objects.values()]
 }
 
+// Releases an error response's connection: an unread body keeps its socket busy while later requests run.
+// A failed cancel is ignored so the status stays the reported failure.
+async function discard(response) {
+  await response.body?.cancel().catch(() => {})
+}
+
 const objectPath = (store, oid) => join(store, oid.slice(0, 2), oid.slice(2, 4), oid)
 
 function verified(file, { oid, size }) {
@@ -65,7 +71,10 @@ async function batch(endpoint, authorization, objects, fetchFn) {
     headers: { Accept: LFS_JSON, 'Content-Type': LFS_JSON, Authorization: authorization },
     body: JSON.stringify({ operation: 'download', transfers: ['basic'], objects })
   })
-  if (!response.ok) throw new Error(`the LFS batch request answered ${response.status}`)
+  if (!response.ok) {
+    await discard(response)
+    throw new Error(`the LFS batch request answered ${response.status}`)
+  }
   const body = await response.json()
   return new Map((body.objects ?? []).map((item) => [item.oid, item]))
 }
@@ -76,7 +85,10 @@ async function download(store, object, answer, fetchFn) {
   const action = answer.actions?.download
   if (!action?.href || !allowedUrl(action.href)) return 'no usable download action'
   const response = await fetchFn(action.href, { headers: action.header ?? {} })
-  if (!response.ok) return `the download answered ${response.status}`
+  if (!response.ok) {
+    await discard(response)
+    return `the download answered ${response.status}`
+  }
   const content = Buffer.from(await response.arrayBuffer())
   if (content.length !== object.size) return 'the payload size does not match the pointer'
   if (createHash('sha256').update(content).digest('hex') !== object.oid)

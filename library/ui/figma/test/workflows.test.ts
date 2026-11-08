@@ -288,6 +288,18 @@ describe('when key scanning covers the whole repository', () => {
     )
     expect((ui.jobs.library as unknown as { if: string }).if).toContain('ui_changed')
   })
+  it('should run the key guard from the merge commit so a branch older than the scripts still has them', () => {
+    const job = load('ui-library.yml').jobs['key-guard']!
+    const checkout = job.steps.find((step) => step.uses?.startsWith('actions/checkout@'))!
+    expect(checkout.with).toMatchObject({ ref: '${{ github.sha }}', 'fetch-depth': 0 })
+    expect(JSON.stringify(checkout.with)).not.toContain('pull_request.head')
+    const scope = job.steps.find((step) => step.run?.includes('range="$base..$HEAD_SHA"'))!
+    expect(scope.env).toMatchObject({
+      HEAD_SHA: '${{ github.event.pull_request.head.sha || github.sha }}',
+      PR_BASE: '${{ github.event.pull_request.base.sha }}'
+    })
+  })
+
   it('should let checkout use its temporary global config while isolating the Git run steps', () => {
     const ui = load('ui-library-key-scan.yml')
     expect(ui.env?.GIT_CONFIG_GLOBAL).toBeUndefined()

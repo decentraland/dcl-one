@@ -131,6 +131,68 @@ describe('when prefetching listed LFS objects', () => {
     await expect(readFile(stored(store, a.oid))).rejects.toThrow()
   })
 
+  // An error response whose body is never read keeps its connection busy; each one must be released.
+  const errorResponse = (status: number, cancel: () => Promise<void>) => {
+    const body = new ReadableStream({ cancel })
+    return new Response(body, { status })
+  }
+
+  it('should release the body of a failed batch response and report its status', async () => {
+    const cancel = vi.fn(() => Promise.resolve())
+    const fetchFn = vi.fn(async () => errorResponse(503, cancel))
+
+    await expect(
+      prefetch({ store, endpoint, authorization: AUTHORIZATION, objects: [object('a')], fetchFn })
+    ).rejects.toThrow('the LFS batch request answered 503')
+    expect(cancel).toHaveBeenCalledTimes(1)
+  })
+
+  it('should release the body of every failed download and still try the remaining objects', async () => {
+    const listed = ['a', 'b', 'c', 'd', 'e'].map(object)
+    const cancel = vi.fn(() => Promise.resolve())
+    const fetchFn = vi.fn(async (url: string) =>
+      url.endsWith('/objects/batch')
+        ? Response.json({
+            objects: listed.map(({ oid, size }) => ({
+              oid,
+              size,
+              actions: { download: { href: `${endpoint}/download/${oid}` } }
+            }))
+          })
+        : errorResponse(500, cancel)
+    )
+
+    const result = await prefetch({
+      store,
+      endpoint,
+      authorization: AUTHORIZATION,
+      objects: listed,
+      fetchFn
+    })
+    expect(result.failures).toEqual(
+      listed.map(({ oid }) => ({ oid, reason: 'the download answered 500' }))
+    )
+    expect(cancel).toHaveBeenCalledTimes(listed.length)
+  })
+
+  it('should keep the status as the failure when releasing the body itself fails', async () => {
+    const a = object('a')
+    const cancel = vi.fn(() => Promise.reject(new Error('stream already closed')))
+    const fetchFn = vi.fn(async (url: string) =>
+      url.endsWith('/objects/batch')
+        ? Response.json({
+            objects: [{ ...a, actions: { download: { href: `${endpoint}/download/${a.oid}` } } }]
+          })
+        : errorResponse(502, cancel)
+    )
+
+    expect(
+      (await prefetch({ store, endpoint, authorization: AUTHORIZATION, objects: [a], fetchFn }))
+        .failures
+    ).toEqual([{ oid: a.oid, reason: 'the download answered 502' }])
+    expect(cancel).toHaveBeenCalledTimes(1)
+  })
+
   it('should reject a payload whose size does not match', async () => {
     const a = object('alpha')
     payloads.set(a.oid, 'alpha')
