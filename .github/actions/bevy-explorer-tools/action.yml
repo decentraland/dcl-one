@@ -1,18 +1,23 @@
-name: Install the Explorer tools from the flake
+name: Install a tool package from the flake
 description: >-
-  protoc, taplo and wasm-pack as the flake's bevy-tools package builds them, delivered from the
-  Actions cache: a hit links the closure under /nix/store without installing Nix; a miss, after
-  a pin change, installs Nix, builds the package from the lock and exports the closure for the
-  save. Puts the package's bin directory on PATH for the steps that follow.
+  A package of the flake (bevy-tools: protoc, taplo and wasm-pack; bevy-ffmpeg: the ffmpeg 6
+  libraries) as the pinned nixpkgs builds it, delivered from the Actions cache: a hit puts the
+  closure under /nix/store without installing Nix; a miss, after a pin change, installs Nix,
+  builds the package from the lock and exports the closure for the save. bevy-tools goes on
+  PATH, bevy-ffmpeg into PKG_CONFIG_PATH, for the steps that follow.
+inputs:
+  package:
+    description: The flake package to install
+    default: bevy-tools
 runs:
   using: composite
   steps:
     - id: tools
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ${{ runner.temp }}/bevy-tools
-        key: bevy-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock', 'infra/packages/default.nix') }}
+        path: ${{ runner.temp }}/${{ inputs.package }}
+        key: ${{ inputs.package }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock', 'infra/packages/tools.nix') }}
     - if: steps.tools.outputs.cache-hit != 'true'
       uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
-    - run: bash "$GITHUB_WORKSPACE/apps/bevy-explorer/install-tools.sh" "$RUNNER_TEMP/bevy-tools"
+    - run: bash "$GITHUB_WORKSPACE/apps/bevy-explorer/install-tools.sh" "$RUNNER_TEMP/${{ inputs.package }}" "${{ inputs.package }}"
       shell: bash
