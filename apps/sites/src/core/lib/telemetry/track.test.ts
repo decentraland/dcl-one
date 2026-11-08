@@ -7,6 +7,7 @@ import {
   segmentTrackUrl,
   track,
   type TrackContext,
+  withoutSensitiveParams,
 } from "./track";
 
 const CTX: TrackContext = {
@@ -115,10 +116,10 @@ describe("track (fetch mocked)", () => {
     }
   });
 
-  it("sends the browser page and referrer as the browser has them", async () => {
+  it("sends the browser page and referrer as the browser has them, less the credential parameters", async () => {
     vi.stubGlobal("window", {
       location: {
-        href: "https://sites.example/shop/items?q=secret#top",
+        href: "https://sites.example/shop/items?utm_source=x&code=abc&q=secret#top",
         pathname: "/shop/items",
       },
       __DCL_PUBLIC__: { SEGMENT_WRITE_KEY: "key-1" },
@@ -134,23 +135,63 @@ describe("track (fetch mocked)", () => {
     const sent = JSON.parse(init.body as string);
     expect(sent.context.direct).toBe(true);
     expect(sent.context.page).toEqual({
-      url: "https://sites.example/shop/items?q=secret#top",
+      url: "https://sites.example/shop/items?utm_source=x&q=secret#top",
       path: "/shop/items",
-      referrer: "https://ref.example/from?token=private#x",
+      referrer: "https://ref.example/from#x",
       title: "Items",
     });
   });
 
-  it("sends at most 60 server events a minute and resumes with the next minute", async () => {
+  it("drops only the credential parameters, in the query or a query-shaped fragment, in any position or case, and leaves a path without any alone", () => {
+    expect(withoutSensitiveParams("/cast-stream?token=abc")).toBe("/cast-stream");
+    expect(withoutSensitiveParams("/a?x=1&Access_Token=t&y=2#h")).toBe("/a?x=1&y=2#h");
+    expect(withoutSensitiveParams("/a?%74oken=t&utm_medium=m")).toBe("/a?utm_medium=m");
+    expect(withoutSensitiveParams("/a?signature&key=")).toBe("/a");
+    expect(withoutSensitiveParams("/auth/callback?authResult=%7B%7D&next=%2Fshop")).toBe("/auth/callback?next=%2Fshop");
+    expect(withoutSensitiveParams("/auth/callback?magic_credential=m&state=s")).toBe("/auth/callback?state=s");
+    expect(withoutSensitiveParams("/a?token=x&")).toBe("/a");
+    expect(withoutSensitiveParams("/a?token=x&&y=1")).toBe("/a?y=1");
+    expect(withoutSensitiveParams("/a?q=token#token=1")).toBe("/a?q=token");
+    expect(withoutSensitiveParams("/create/scene-editor?project=p#token=abc&x=1")).toBe("/create/scene-editor?project=p#x=1");
+    expect(withoutSensitiveParams("/a#top")).toBe("/a#top");
+    expect(withoutSensitiveParams("/a?#token")).toBe("/a?#token");
+    expect(withoutSensitiveParams("")).toBe("");
+  });
+
+  it("budgets server 404s, reports and other events apart, 60 a minute each, and resumes with the next minute", async () => {
     process.env.SEGMENT_WRITE_KEY = "key-1";
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
-      for (let i = 0; i < 61; i += 1) trackAny("evt", {}, CTX);
+      for (let i = 0; i < 61; i += 1) trackAny("page_not_found", {}, CTX);
       await Promise.resolve();
       expect(fetchMock).toHaveBeenCalledTimes(60);
+      for (let i = 0; i < 61; i += 1) trackAny("catalyst_schema_drift", {}, CTX);
+      await Promise.resolve();
+      expect(fetchMock).toHaveBeenCalledTimes(120);
+      trackAny("client_error", {}, CTX);
+      await Promise.resolve();
+      expect(fetchMock).toHaveBeenCalledTimes(121);
       vi.setSystemTime(new Date("2030-01-01T00:01:00.000Z"));
-      trackAny("evt", {}, CTX);
+      trackAny("page_not_found", {}, CTX);
+      trackAny("catalyst_schema_drift", {}, CTX);
+      await Promise.resolve();
+      expect(fetchMock).toHaveBeenCalledTimes(123);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("opens a new window when the clock is behind the window's start", async () => {
+    process.env.SEGMENT_WRITE_KEY = "key-1";
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2030-06-01T00:00:00.000Z"));
+      for (let i = 0; i < 61; i += 1) trackAny("page_not_found", {}, CTX);
+      await Promise.resolve();
+      expect(fetchMock).toHaveBeenCalledTimes(60);
+      vi.setSystemTime(new Date("2030-05-31T23:59:30.000Z"));
+      trackAny("page_not_found", {}, CTX);
       await Promise.resolve();
       expect(fetchMock).toHaveBeenCalledTimes(61);
     } finally {

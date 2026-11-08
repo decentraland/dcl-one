@@ -10,7 +10,7 @@ import { renderToPipeableStream } from "react-dom/server";
 import { markdownResponse, wantsMarkdown } from "@/data/lib/agent/markdown";
 import { renderAgentMarkdown } from "@/data/lib/agent/dispatch.server";
 import { ensureSid } from "@/core/lib/telemetry/session";
-import { track } from "@/core/lib/telemetry/track";
+import { track, withoutSensitiveParams } from "@/core/lib/telemetry/track";
 
 import { applyFrameIsolation } from "./lib/frame-isolation";
 
@@ -54,8 +54,8 @@ export default function handleRequest(
       track(
         "page_not_found",
         {
-          path: u.pathname + u.search,
-          referrer: request.headers.get("referer") ?? "",
+          path: withoutSensitiveParams(u.pathname + u.search),
+          referrer: withoutSensitiveParams(request.headers.get("referer") ?? ""),
           ua: userAgent ?? "",
         },
         { sid, story: "sites-error" },
