@@ -27,6 +27,14 @@ pub(super) fn register(app: &mut App) {
         });
 }
 
+const PLAYBACK_BACKEND: &str = if cfg!(feature = "html") {
+    "HTML media"
+} else if cfg!(feature = "uuav") {
+    "UUAV"
+} else {
+    "No playback backend"
+};
+
 /// Inspect scene media players and their requested and scheduled playback states.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/media_state")]
@@ -95,14 +103,7 @@ fn media_state(
         add_sink(&mut item, audio_sinks.get(_ent).ok(), &images);
         rows.push(item);
     }
-    let backend = if cfg!(feature = "html") {
-        "HTML media"
-    } else if cfg!(feature = "uuav") {
-        "UUAV"
-    } else {
-        "No playback backend"
-    };
-    cmd.reply_ok(json!({"backend":backend, "scene":scene, "video":video.iter().len(), "audio":audio.iter().len(), "parcelVideo":parcel_video, "parcelAudio":parcel_audio, "parcelExternal":parcel_external, "players":rows,
+    cmd.reply_ok(json!({"backend":PLAYBACK_BACKEND, "scene":scene, "video":video.iter().len(), "audio":audio.iter().len(), "parcelVideo":parcel_video, "parcelAudio":parcel_audio, "parcelExternal":parcel_external, "players":rows,
         "unavailable":{"scene":"No loaded scene at the player's parcel."}}).to_string());
 }
 
