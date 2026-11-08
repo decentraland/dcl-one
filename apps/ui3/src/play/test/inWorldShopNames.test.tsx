@@ -413,6 +413,7 @@ describe('the in-world Shop’s Names', () => {
     const firstPage = Array.from({ length: 24 }, (_, i) => ({ name: i === 0 ? 'Mojito' : `Name${i}`, priceWei: '1000000000000000000' }))
     let state: 'listed' | 'sold' | 'relisted' = 'listed'
     serve({
+      flags: MARKETPLACE_ON,
       resales: (skip) => {
         const total = state === 'sold' ? 24 : 25
         if (skip === 0) return { names: firstPage, total }
@@ -440,7 +441,7 @@ describe('the in-world Shop’s Names', () => {
     const second = new Promise<ResalePage>((resolve) => {
       release = () => resolve({ names: page('Second'), total: 48 })
     })
-    serve({ resales: (skip) => (skip === 0 ? { names: page('First'), total: 49 } : skip === 24 ? second : { names: [], total: 48 }) })
+    serve({ flags: MARKETPLACE_ON, resales: (skip) => (skip === 0 ? { names: page('First'), total: 49 } : skip === 24 ? second : { names: [], total: 48 }) })
     renderShop()
     await openNames()
     await userEvent.click(screen.getByRole('button', { name: 'Resale name' }))
@@ -473,10 +474,12 @@ describe('the in-world Shop’s Names', () => {
     expect(nametag()).toHaveTextContent(/^Guest#b47f$/)
     expect(nametag()!.querySelector('img')).toBeNull()
     // No nametag until the profile has a name: the empty one's placeholder and badge would claim a NAME.
-    rerender({ profile: { ...props.profile, data: null } })
-    expect(nametag()).toBeNull()
     rerender({ profile: { ...props.profile, data: { ...ME, name: '', hasClaimedName: false } } })
+    expect(screen.getByRole('button', { name: 'Resale name' })).toBeInTheDocument()
     expect(nametag()).toBeNull()
+    // Signed out, the Marketplace is gone (RESALE NAME with it), and UNIQUE NAME shows its own nametag.
+    rerender({ profile: { ...props.profile, data: null } })
+    expect(screen.queryByRole('button', { name: 'Resale name' })).toBeNull()
   })
 
   it('hides the nametag while the avatar is zoomed, and shows it once back out', async () => {
