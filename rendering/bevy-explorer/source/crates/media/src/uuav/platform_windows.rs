@@ -11,10 +11,7 @@
 //! the conversion is submitted, and the renderer holds a player's next copy until that
 //! conversion has executed.
 
-use std::{
-    os::raw::c_void,
-    sync::{Mutex, Once},
-};
+use std::{os::raw::c_void, sync::Once};
 
 use bevy::{
     log::{debug, warn},
@@ -23,6 +20,7 @@ use bevy::{
         renderer::{RenderAdapter, RenderDevice},
     },
 };
+use parking_lot::Mutex;
 use windows::{
     Win32::{
         Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0},
@@ -88,12 +86,6 @@ impl Drop for Interop {
 
 /// The decode device of the running runtime; replaced by [`Probe::new`] on a restart.
 static INTEROP: Mutex<Option<Interop>> = Mutex::new(None);
-
-fn interop() -> std::sync::MutexGuard<'static, Option<Interop>> {
-    INTEROP
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
 
 /// A 1x1 texture on the decode device, created `SHARED | SHARED_NTHANDLE` so the client creates
 /// its presentation textures the same way. The client captures the device from it and retains
@@ -194,7 +186,7 @@ impl Probe {
             .map_err(InteropError::caused("probe CreateTexture2D failed"))?;
         let texture = texture.ok_or("CreateTexture2D returned no texture")?;
 
-        *interop() = Some(Interop {
+        *INTEROP.lock() = Some(Interop {
             _device: d3d11,
             context,
             fence,
@@ -358,7 +350,7 @@ fn import(
         depth_or_array_layers: 1,
     };
     let imported = {
-        let guard = interop();
+        let guard = INTEROP.lock();
         let interop = guard.as_ref().ok_or("no decode device")?;
         match &interop.renderer {
             Renderer::Dx12(d3d12) => open_dx12(device, d3d12, handle, size),
@@ -456,7 +448,7 @@ fn open_vulkan(
 /// the decode device's fence behind the copy and waits up to [`COPY_WAIT_MS`] for it. `false`
 /// when the copy has not landed within that.
 pub fn wait_for_client_copy() -> bool {
-    let mut guard = interop();
+    let mut guard = INTEROP.lock();
     let Some(interop) = guard.as_mut() else {
         return false;
     };

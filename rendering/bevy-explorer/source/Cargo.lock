@@ -8105,6 +8105,7 @@ dependencies = [
  "kira",
  "metal",
  "once_cell",
+ "parking_lot",
  "reqwest",
  "thiserror 2.0.18",
  "tokio",

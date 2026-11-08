@@ -325,7 +325,6 @@ fn present_uuav_frames(
         .0
         .targets
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .iter()
         .map(|(id, target)| (*id, target.clone()))
         .collect();

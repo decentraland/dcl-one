@@ -7,7 +7,7 @@ edition = "2024"
 workspace = true
 
 [features]
-uuav = ["dep:uuav", "dep:metal", "dep:cpal"]
+uuav = ["dep:uuav", "dep:metal", "dep:cpal", "dep:parking_lot"]
 html = ["dep:web-sys"]
 
 [dependencies]
@@ -29,6 +29,7 @@ reqwest = { workspace = true }
 kira = { workspace = true }
 # the default output device's sample rate, for the audio the helper delivers (uuav/audio.rs)
 cpal = { version = "0.15.2", optional = true }
+parking_lot = { version = "0.12", optional = true }
 wgpu = { workspace = true }
 uuav = { workspace = true, optional = true }
 

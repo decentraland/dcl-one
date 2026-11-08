@@ -21,7 +21,7 @@ use std::{
     ffi::CStr,
     os::raw::{c_char, c_void},
     sync::{
-        Arc, Mutex, MutexGuard,
+        Arc,
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -36,6 +36,7 @@ use bevy::{
 use common::{structs::AudioDecoderError, util::watch_send_if_modified};
 use dcl_component::proto_components::sdk::components::VideoState;
 use kira::{sound::streaming::StreamingSoundData, tween::Tween};
+use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot, watch};
 
 pub use audio::AudioHandle;
@@ -92,12 +93,6 @@ pub fn uuav_shutdown() {
     uuav::uuav_deinit();
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
 /// `(width, height)` in one atomic: 0 is "no size yet".
 pub(crate) fn pack_size(width: u32, height: u32) -> u64 {
     (u64::from(width) << 32) | u64::from(height)
@@ -140,16 +135,16 @@ pub(crate) struct Shared {
 
 impl Shared {
     pub fn take_retired(&self) -> Vec<PlayerId> {
-        std::mem::take(&mut *lock(&self.retired))
+        std::mem::take(&mut *self.retired.lock())
     }
 
     /// Ends a player's presentation and frees it: at once when no render world can be reading
     /// its planes, otherwise from the render world ([`take_retired`](Self::take_retired)).
     /// Returns whether the free was deferred.
     fn retire(&self, id: PlayerId) -> bool {
-        let had_target = lock(&self.targets).remove(&id).is_some();
+        let had_target = self.targets.lock().remove(&id).is_some();
         if had_target && self.render_world.load(Ordering::Acquire) {
-            lock(&self.retired).push(id);
+            self.retired.lock().push(id);
             true
         } else {
             uuav::uuav_player_free(id);
@@ -184,7 +179,7 @@ pub fn spawn_av(
     audio: mpsc::Sender<StreamingSoundData<AudioDecoderError>>,
     audio_handle: oneshot::Receiver<AudioHandle>,
 ) {
-    lock(&NEW_SOURCES).push(NewSource {
+    NEW_SOURCES.lock().push(NewSource {
         commands,
         video,
         state,
@@ -376,7 +371,7 @@ impl UuavRuntime {
             Runtime::Ready => {}
             Runtime::Pending { .. } | Runtime::Starting { .. } if has_renderer => {
                 // the runtime is still coming up; look again next frame
-                lock(&NEW_SOURCES).push(source);
+                NEW_SOURCES.lock().push(source);
                 return;
             }
             _ => {
@@ -449,7 +444,7 @@ impl UuavRuntime {
                 presented_size: AtomicU64::new(0),
                 failed: AtomicBool::new(false),
             });
-            lock(&self.shared.targets).insert(id, target.clone());
+            self.shared.targets.lock().insert(id, target.clone());
             target
         });
 
@@ -660,7 +655,7 @@ fn serve_uuav_players(
         adapter.as_deref(),
     );
 
-    let new_sources = std::mem::take(&mut *lock(&NEW_SOURCES));
+    let new_sources = std::mem::take(&mut *NEW_SOURCES.lock());
     for source in new_sources {
         runtime.adopt(source, device.is_some());
     }
@@ -732,9 +727,9 @@ mod tests {
     #[test]
     fn without_a_render_world_a_closed_player_is_freed_at_once() {
         let shared = Shared::default();
-        lock(&shared.targets).insert(7, target());
+        shared.targets.lock().insert(7, target());
         assert!(!shared.retire(7));
-        assert!(lock(&shared.targets).is_empty());
+        assert!(shared.targets.lock().is_empty());
         assert!(shared.take_retired().is_empty());
     }
 
@@ -742,9 +737,9 @@ mod tests {
     fn under_a_render_world_the_free_waits_for_it() {
         let shared = Shared::default();
         shared.render_world.store(true, Ordering::Release);
-        lock(&shared.targets).insert(7, target());
+        shared.targets.lock().insert(7, target());
         assert!(shared.retire(7));
-        assert!(lock(&shared.targets).is_empty());
+        assert!(shared.targets.lock().is_empty());
         assert_eq!(shared.take_retired(), vec![7]);
         assert!(shared.take_retired().is_empty());
     }
