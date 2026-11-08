@@ -1,0 +1,129 @@
+# UUAV runtime set: builds uuav-dist, the smoke harness and the checks from the
+# cached store on Linux and macOS, cross-builds the Windows set on Linux and smokes
+# it on a Windows runner, which also runs the cargo checks.
+name: UUAV
+'on':
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - library/uuav/**
+      - tooling/uuav/**
+      - tooling/tests/test_uuav_*.py
+      - infra/packages/uuav.nix
+      - flake.nix
+      - flake.lock
+      - .github/workflows/uuav.yml
+  push:
+    branches: [main]
+    paths:
+      - library/uuav/**
+      - tooling/uuav/**
+      - tooling/tests/test_uuav_*.py
+      - infra/packages/uuav.nix
+      - flake.nix
+      - flake.lock
+      - .github/workflows/uuav.yml
+permissions:
+  contents: read
+concurrency:
+  group: uuav-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  nix:
+    name: Runtime set (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-26.04, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ runner.arch }}-uuav-${{ hashFiles('flake.nix', 'flake.lock', 'infra/packages/uuav.nix', 'library/uuav/Cargo.lock', 'library/uuav/rust-toolchain.toml', 'tooling/uuav/ffmpeg-windows.json') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-${{ runner.arch }}-uuav-
+          save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          gc-max-store-size: 0
+      - name: Test the staging tool and the workflow contract
+        run: python3 -m unittest discover -s tooling/tests -p 'test_uuav_*.py'
+      - name: Build the runtime set, the smoke harness and the checks
+        run: |
+          mkdir -p .cache/nix-roots
+          nix build .#uuav-dist -o .cache/nix-roots/dist
+          nix build .#uuav-smoke -o .cache/nix-roots/smoke
+          nix build .#uuav-checks -o .cache/nix-roots/checks
+          echo "target=$(nix eval --raw .#uuav-dist.target)" >> "$GITHUB_OUTPUT"
+        id: build
+      - name: Cross-build the Windows runtime set
+        if: runner.os == 'Linux'
+        run: nix build .#uuav-dist-windows -o .cache/nix-roots/dist-windows
+      - name: Root the build inputs for the store snapshot
+        run: nix build .#uuav-ffmpeg.inputDerivation .#uuav-helper.inputDerivation ${{ runner.os == 'Linux' && '.#uuav-helper-windows.inputDerivation' || '' }} -o .cache/nix-roots/inputs
+      - name: Stage the runtime set
+        run: python3 tooling/uuav/stage-dist.py .cache/nix-roots/dist "$RUNNER_TEMP/dist"
+      - name: Smoke the runtime set (software decode)
+        if: runner.os == 'Linux'
+        env:
+          UUAV_FORCE_SW_DECODE: '1'
+        run: |
+          cp .cache/nix-roots/smoke/bin/smoke "$RUNNER_TEMP/dist/"
+          timeout 300 "$RUNNER_TEMP/dist/smoke"
+          rm "$RUNNER_TEMP/dist/smoke"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: uuav-${{ steps.build.outputs.target }}
+          path: ${{ runner.temp }}/dist/*
+          if-no-files-found: error
+      - name: Stage the Windows runtime set
+        if: runner.os == 'Linux'
+        run: python3 tooling/uuav/stage-dist.py .cache/nix-roots/dist-windows "$RUNNER_TEMP/dist-windows"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: runner.os == 'Linux'
+        with:
+          name: uuav-windows-x86_64
+          path: ${{ runner.temp }}/dist-windows/*
+          if-no-files-found: error
+
+  windows:
+    name: Cargo checks and the cross set's smoke (windows-2025)
+    needs: nix
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+        working-directory: library/uuav
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch the pinned FFmpeg build
+        run: bash ../../tooling/uuav/fetch-ffmpeg-windows.sh
+      - name: Install the mingw toolchain the crates link with
+        shell: cmd
+        run: C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-gcc
+      - run: echo 'C:\msys64\mingw64\bin' >> "$GITHUB_PATH"
+      - name: Install the pinned toolchain and the GNU target
+        run: rustup target add x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: library/uuav -> .target
+          shared-key: uuav-windows
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+      - name: Point bindgen at clang's builtin headers
+        run: echo "BINDGEN_EXTRA_CLANG_ARGS=$(bash ../../tooling/uuav/bindgen-clang-args.sh)" >> "$GITHUB_ENV"
+      - name: Format, lint and test the workspace
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings
+          PATH="$PWD/.third_party/ffmpeg/bin:$PATH" cargo test --workspace --target x86_64-pc-windows-gnu
+      - name: Download the Nix-built Windows set
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: uuav-windows-x86_64
+          path: ${{ runner.temp }}/dist
+      - name: Smoke the set with the natively built harness
+        run: |
+          cargo build --release -p uuav-client --example smoke --target x86_64-pc-windows-gnu
+          cp .target/x86_64-pc-windows-gnu/release/examples/smoke.exe "$RUNNER_TEMP/dist/"
+          cd "$RUNNER_TEMP/dist" && UUAV_FORCE_SW_DECODE=1 timeout 300 ./smoke.exe

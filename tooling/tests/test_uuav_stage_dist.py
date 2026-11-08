@@ -1,14 +1,13 @@
-"""stage-dist.py copies a complete runtime set and refuses LFS pointers and bytes the lock
-does not pin."""
-import hashlib
+"""stage-dist.py copies a complete runtime set and refuses an incomplete one."""
 import importlib.util
-import json
 import os
 from pathlib import Path
 import tempfile
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "uuav" / "stage-dist.py"
+COMPLETE = ("uuav-helper", "libavcodec.so.62", "libavformat.so.62", "libavutil.so.60",
+            "libswresample.so.6", "libswscale.so.9", "LICENSE-ffmpeg.txt")
 
 
 def load():
@@ -21,75 +20,43 @@ def load():
 class StageDistTests(unittest.TestCase):
     def setUp(self):
         self.module = load()
-        self.repo = tempfile.TemporaryDirectory()
-        self.dist = Path(self.repo.name) / "library" / "uuav" / "dist" / "linux-x86_64"
-        self.dist.mkdir(parents=True)
-        self.lock = Path(self.repo.name) / "tooling" / "uuav" / "uuav-binaries.lock.json"
-        self.lock.parent.mkdir(parents=True)
+        self.source = tempfile.TemporaryDirectory()
+        self.dist = Path(self.source.name)
 
     def tearDown(self):
-        self.repo.cleanup()
+        self.source.cleanup()
 
-    def write_lock(self, files: dict[str, bytes]):
-        """A lock pinning `files` (name -> bytes) as the Linux runtime set."""
-        artifacts = [{"path": f"library/uuav/dist/linux-x86_64/{name}",
-                      "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
-                     for name, data in files.items()]
-        self.lock.write_text(json.dumps({"targets": {"linux-x86_64": {"artifacts": artifacts}}}))
+    def write_set(self, names=COMPLETE):
+        for name in names:
+            (self.dist / name).write_bytes(b"\x7fELF" + name.encode())
+            if name.startswith("uuav-helper"):
+                (self.dist / name).chmod(0o755)
 
     def test_stages_every_file_and_keeps_the_helper_executable(self):
-        helper = self.dist / "uuav-helper"
-        helper.write_bytes(b"\x7fELF")
-        helper.chmod(0o755)
-        (self.dist / "libavcodec.so.62").write_bytes(b"\x7fELF\x01")
-        (self.dist / "uuav-linux-x86_64.sha256").write_text("ignored report\n")
-        self.write_lock({"uuav-helper": b"\x7fELF", "libavcodec.so.62": b"\x7fELF\x01"})
+        self.write_set()
         with tempfile.TemporaryDirectory() as out:
-            self.assertEqual(self.module.stage(self.repo.name, "linux-x86_64", out), [])
-            staged = sorted(os.listdir(out))
-            self.assertEqual(staged, ["libavcodec.so.62", "uuav-helper"])
+            self.assertEqual(self.module.stage(self.source.name, out), [])
+            self.assertEqual(sorted(os.listdir(out)), sorted(COMPLETE))
             self.assertTrue(os.access(os.path.join(out, "uuav-helper"), os.X_OK))
 
-    def test_refuses_an_lfs_pointer(self):
-        (self.dist / "uuav-helper").write_text(
-            "version https://git-lfs.github.com/spec/v1\noid sha256:00\nsize 1\n")
+    def test_windows_set_names(self):
+        self.write_set(("uuav-helper.exe", "avcodec-62.dll", "avformat-62.dll", "avutil-60.dll",
+                        "swresample-6.dll", "swscale-9.dll", "LICENSE-ffmpeg.txt"))
         with tempfile.TemporaryDirectory() as out:
-            problems = self.module.stage(self.repo.name, "linux-x86_64", out)
-            self.assertEqual(len(problems), 1)
-            self.assertIn("LFS pointer", problems[0])
+            self.assertEqual(self.module.stage(self.source.name, out), [])
+
+    def test_refuses_an_incomplete_set(self):
+        self.write_set(("uuav-helper", "libavcodec.so.62"))
+        with tempfile.TemporaryDirectory() as out:
+            problems = self.module.stage(self.source.name, out)
+            self.assertEqual(len(problems), 5)
+            self.assertIn("no avformat library", problems[0])
+            self.assertIn("no license text", problems[-1])
             self.assertEqual(os.listdir(out), [])
 
-    def test_refuses_bytes_the_lock_does_not_pin(self):
-        (self.dist / "uuav-helper").write_bytes(b"\x7fELF")
-        (self.dist / "libavcodec.so.62").write_bytes(b"patched")
-        (self.dist / "extra.so").write_bytes(b"\x7fELF")
-        self.write_lock({"uuav-helper": b"\x7fELF", "libavcodec.so.62": b"\x7fELF\x01",
-                         "libavutil.so.60": b"\x7fELF"})
+    def test_missing_set_is_reported(self):
         with tempfile.TemporaryDirectory() as out:
-            problems = self.module.stage(self.repo.name, "linux-x86_64", out)
-            self.assertEqual(len(problems), 3)
-            self.assertIn("extra.so is not in the lock", problems[0])
-            self.assertIn("libavcodec.so.62 differs from the lock", problems[1])
-            self.assertIn("libavutil.so.60 is in the lock but missing", problems[2])
-            self.assertEqual(os.listdir(out), [])
-
-    def test_a_license_text_with_crlf_line_ends_matches_its_lf_lock_entry(self):
-        (self.dist / "uuav-helper").write_bytes(b"\x7fELF")
-        (self.dist / "LICENSE-ffmpeg.txt").write_bytes(b"GNU\r\nLESSER\r\n")
-        self.write_lock({"uuav-helper": b"\x7fELF", "LICENSE-ffmpeg.txt": b"GNU\nLESSER\n"})
-        with tempfile.TemporaryDirectory() as out:
-            self.assertEqual(self.module.stage(self.repo.name, "linux-x86_64", out), [])
-
-    def test_a_missing_lock_is_reported(self):
-        (self.dist / "uuav-helper").write_bytes(b"\x7fELF")
-        with tempfile.TemporaryDirectory() as out:
-            problems = self.module.stage(self.repo.name, "linux-x86_64", out)
-            self.assertEqual(len(problems), 1)
-            self.assertIn("cannot read", problems[0])
-
-    def test_missing_target_is_reported(self):
-        with tempfile.TemporaryDirectory() as out:
-            problems = self.module.stage(self.repo.name, "windows-x86_64", out)
+            problems = self.module.stage(os.path.join(self.source.name, "none"), out)
             self.assertEqual(len(problems), 1)
             self.assertIn("no runtime set", problems[0])
 

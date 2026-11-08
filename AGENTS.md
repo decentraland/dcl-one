@@ -92,7 +92,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 
 - Never add a dependency on a sibling checkout.
 - `rendering/bevy-explorer/source` is its own workspace; integration lives in `apps/bevy-explorer`.
-- Keep component licenses and pins (`upstream.lock.json`, `abgen-release.lock`, `livekit-release.lock`, `tooling/uuav/uuav-binaries.lock.json`).
+- Keep component licenses and pins (`upstream.lock.json`, `abgen-release.lock`, `livekit-release.lock`, `tooling/uuav/ffmpeg-windows.json`).
 - Regenerate `.github/CODEOWNERS` from `ownership.json` with `tooling/owners.py`.
 - No machine names, private addresses, home paths, personal emails or the operator's domain; deployments supply them via gitignored config.
 - Never delete the gitignored `credentials` and `data` directories.

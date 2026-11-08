@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-03
+- Amended by: [the runtime set is built with Nix](2026-11-08-uuav-nix-built-runtime.md) (the committed set, its lock and the two workflows below are gone)
 
 ## Context
 

@@ -28,6 +28,9 @@
 result
 result-*
 
+# UUAV runtime sets are built (nix build .#uuav-dist, library/uuav/build.sh), never committed.
+/library/uuav/dist/
+
 # The dependency drift map (research, review, rendered site): built locally or as a CI artifact, never committed.
 /rendering/bevy-explorer/drift/
 /rendering/bevy-explorer/source/ffmpeg*/
