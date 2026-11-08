@@ -107,10 +107,7 @@ impl ConversionSource {
     }
 
     fn holds(&self, presented: &ffi::Presented) -> bool {
-        self.y == presented.y as usize
-            && self.uv == presented.uv as usize
-            && self.width == presented.width
-            && self.height == presented.height
+        (self.y, self.uv, self.width, self.height) == planes_key(presented)
     }
 }
 
@@ -121,6 +118,21 @@ struct RenderPlayer {
     size: Option<(u32, u32)>,
     /// `None` until the client hands out planes this side can read.
     source: Option<ConversionSource>,
+    /// The planes that last failed to become textures, not tried again until the client hands
+    /// out others.
+    refused: Option<PlanesKey>,
+}
+
+/// Which planes the client handed out: their addresses and size.
+type PlanesKey = (usize, usize, u32, u32);
+
+fn planes_key(presented: &ffi::Presented) -> PlanesKey {
+    (
+        presented.y as usize,
+        presented.uv as usize,
+        presented.width,
+        presented.height,
+    )
 }
 
 /// The players the main world asked to present.
@@ -154,6 +166,7 @@ fn present_uuav_frames(
                         image,
                         size: None,
                         source: None,
+                        refused: None,
                     },
                 );
             }
@@ -216,6 +229,14 @@ fn present_uuav_frames(
             .as_ref()
             .is_some_and(|source| source.holds(&presented))
         {
+            let key = planes_key(&presented);
+            if player.refused == Some(key) {
+                continue;
+            }
+            #[cfg(windows)]
+            let Some(decode_device) = decode_device.as_ref() else {
+                continue;
+            };
             #[cfg(not(windows))]
             let textures = platform::make_planes(
                 &render_device,
@@ -225,20 +246,20 @@ fn present_uuav_frames(
                 presented.height,
             );
             #[cfg(windows)]
-            let textures = decode_device.as_ref().and_then(|decode_device| {
-                platform::make_planes(
-                    &render_device,
-                    decode_device,
-                    presented.y,
-                    presented.uv,
-                    presented.width,
-                    presented.height,
-                )
-            });
-            // a failed import keeps the previous source and its read gate until the next try
+            let textures = platform::make_planes(
+                &render_device,
+                decode_device,
+                presented.y,
+                presented.uv,
+                presented.width,
+                presented.height,
+            );
+            // a failed import keeps the previous source and its read gate
             let Some(textures) = textures else {
+                player.refused = Some(key);
                 continue;
             };
+            player.refused = None;
             player.source = Some(ConversionSource::new(
                 &presented,
                 textures,

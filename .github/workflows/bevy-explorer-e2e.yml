@@ -255,7 +255,7 @@ jobs:
         with:
           workspaces: rendering/bevy-explorer/source -> target
           key: e2e-standalone-windows
-          save-if: ${{ needs.inputs.outputs.pr == '' }}
+          save-if: ${{ needs.inputs.outputs.pr == '' && needs.inputs.outputs.sha == github.sha && github.run_attempt == '1' }}
       - name: Install protoc
         run: python ../../../apps/bevy-explorer/install-protoc.py
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
