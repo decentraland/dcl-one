@@ -26,6 +26,9 @@ impl Plugin for PreviewPlugin {
 /// The wait before a reconnect: 250 ms, doubling with each failed connection, at most 5 s.
 const RECONNECT_START: Duration = Duration::from_millis(250);
 const RECONNECT_CAP: Duration = Duration::from_secs(5);
+/// A connection that ended sooner counts as a failure, so a server that accepts the upgrade
+/// and closes at once does not reset the wait.
+const MIN_SESSION: Duration = Duration::from_secs(1);
 
 #[allow(clippy::type_complexity)]
 fn connect_preview_server(
@@ -34,7 +37,7 @@ fn connect_preview_server(
     mut retry_at: Local<Option<web_time::Instant>>,
     mut task: Local<
         Option<(
-            Task<Result<(), anyhow::Error>>,
+            Task<Result<Duration, anyhow::Error>>,
             tokio::sync::mpsc::UnboundedReceiver<PreviewCommand>,
         )>,
     >,
@@ -62,7 +65,11 @@ fn connect_preview_server(
     if let Some(result) = task.as_mut().and_then(|t| t.0.complete()) {
         *task = None;
         *failures = match result {
-            Ok(()) => 0,
+            Ok(lasted) if lasted >= MIN_SESSION => 0,
+            Ok(lasted) => {
+                warn!("preview socket closed after {lasted:?}");
+                failures.saturating_add(1)
+            }
             Err(err) => {
                 warn!("preview socket error: {err}");
                 failures.saturating_add(1)
@@ -96,11 +103,11 @@ fn connect_preview_server(
 }
 
 /// Connects to the preview server and forwards its messages until the socket ends.
-/// Ok once a connection was made, however it ended; Err when none was.
+/// Ok with the time the connection lasted, however it ended; Err when none was made.
 pub async fn handle_preview_socket(
     server: String,
     sender: tokio::sync::mpsc::UnboundedSender<PreviewCommand>,
-) -> Result<(), anyhow::Error> {
+) -> Result<Duration, anyhow::Error> {
     let (protocol, rest) = server
         .split_once("//")
         .ok_or(anyhow!("invalid preview server address `{server}`"))?;
@@ -114,6 +121,7 @@ pub async fn handle_preview_socket(
 
     let request = remote_address.into_client_request()?;
     let stream = platform::websocket(request).await?;
+    let connected_at = web_time::Instant::now();
     debug!("preview socket connected");
 
     let (_, mut read) = stream.split();
@@ -143,5 +151,5 @@ pub async fn handle_preview_socket(
     }
 
     warn!("preview socket disconnected");
-    Ok(())
+    Ok(connected_at.elapsed())
 }

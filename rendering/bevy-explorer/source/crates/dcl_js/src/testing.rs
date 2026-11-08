@@ -88,6 +88,16 @@ pub struct TakeAndCompareSnapshotResponse {
     pub grey_pixel_diff: Option<GreyPixelDiffResult>,
 }
 
+/// The wait for the renderer's snapshot comparison: 300 s, or `DCL_SNAPSHOT_TIMEOUT_SECS`
+/// when set; a cold GPU can take long over the first one.
+fn snapshot_timeout() -> Duration {
+    std::env::var("DCL_SNAPSHOT_TIMEOUT_SECS")
+        .ok()
+        .and_then(|secs| secs.parse().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(300))
+}
+
 pub fn op_take_and_compare_snapshot(
     state: &mut impl State,
     name: String,
@@ -119,7 +129,7 @@ pub fn op_take_and_compare_snapshot(
         }))
         .expect("failed to send to renderer");
 
-    let deadline = bevy::platform::time::Instant::now() + Duration::from_secs(60);
+    let deadline = bevy::platform::time::Instant::now() + snapshot_timeout();
     let mut backoff = Backoff::new(Duration::from_millis(1), Duration::from_millis(100));
     let (error, stored_snapshot_found, similarity) = loop {
         match rx.try_recv() {

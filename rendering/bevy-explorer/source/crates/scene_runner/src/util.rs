@@ -291,6 +291,46 @@ async fn retry_storage_operation(
     }
 }
 
+const DELETE_MARK: &str = "_delete_";
+
+fn unix_millis() -> u128 {
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
+        .map(|since| since.as_millis())
+        .unwrap_or_default()
+}
+
+fn remove_dir_if_present(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_dir_all(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
+}
+
+/// Removes the renamed stores of earlier runs under `parent`, except `current`, within 10 s.
+async fn remove_stale_stores(parent: &Path, file: &str, current: &Path) {
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return;
+    };
+    let prefix = format!("{file}{DELETE_MARK}");
+    let deadline = web_time::Instant::now() + Duration::from_secs(10);
+    for path in entries.flatten().map(|entry| entry.path()) {
+        let is_stale = path != current
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(&prefix));
+        if !is_stale {
+            continue;
+        }
+        if let Err(error) =
+            retry_storage_operation("stale delete", || remove_dir_if_present(&path), deadline).await
+        {
+            warn!("can't delete stale {path:?}: {error}");
+        }
+    }
+}
+
 fn clear_store_command(
     mut input: ConsoleCommand<ClearStoreCommand>,
     mut live_scenes: ResMut<LiveScenes>,
@@ -310,20 +350,12 @@ fn clear_store_command(
         let storage_folder = parent.join(file);
 
         if std::fs::exists(&storage_folder).unwrap_or_default() {
-            let temp = parent.join(format!("{file}_delete"));
+            // a name of this run's own, so a leftover of an earlier run cannot block the clear
+            let temp = parent.join(format!("{file}{DELETE_MARK}{}", unix_millis()));
+            let parent = parent.to_path_buf();
+            let file = file.to_string();
             *clear_task = Some(IoTaskPool::get().spawn(async move {
                 let deadline = web_time::Instant::now() + Duration::from_secs(60);
-                let remove_temp = || match std::fs::remove_dir_all(&temp) {
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                    result => result,
-                };
-                // an earlier run may have renamed the store and then failed to delete it
-                if let Err(error) =
-                    retry_storage_operation("stale delete", &remove_temp, deadline).await
-                {
-                    error!("can't delete stale {temp:?}: {error}");
-                    return;
-                }
                 if let Err(error) = retry_storage_operation(
                     "rename",
                     || std::fs::rename(&storage_folder, &temp),
@@ -334,10 +366,14 @@ fn clear_store_command(
                     error!("can't rename {storage_folder:?} to {temp:?}: {error}");
                     return;
                 }
-                if let Err(error) = retry_storage_operation("delete", &remove_temp, deadline).await
+                if let Err(error) =
+                    retry_storage_operation("delete", || remove_dir_if_present(&temp), deadline)
+                        .await
                 {
                     error!("can't delete {temp:?}: {error}");
                 }
+                // leftovers of earlier runs that failed to delete: best effort, on its own budget
+                remove_stale_stores(&parent, &file, &temp).await;
             }));
         }
     };
@@ -405,5 +441,55 @@ fn handle_preview_command(
                 live_scenes.scenes.remove(hash);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod storage_retry_tests {
+    use std::io::{Error, ErrorKind};
+
+    use super::*;
+
+    fn locked() -> Error {
+        Error::new(ErrorKind::PermissionDenied, "locked")
+    }
+
+    #[test]
+    fn retries_until_the_operation_succeeds() {
+        let mut attempts = 0;
+        let deadline = web_time::Instant::now() + Duration::from_secs(5);
+        let result = async_std::task::block_on(retry_storage_operation(
+            "test",
+            || {
+                attempts += 1;
+                if attempts < 3 {
+                    Err(locked())
+                } else {
+                    Ok(())
+                }
+            },
+            deadline,
+        ));
+        assert!(result.is_ok());
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn returns_the_last_error_once_the_deadline_passes() {
+        let mut attempts = 0;
+        let started = web_time::Instant::now();
+        let deadline = started + Duration::from_millis(80);
+        let result = async_std::task::block_on(retry_storage_operation(
+            "test",
+            || {
+                attempts += 1;
+                Err(locked())
+            },
+            deadline,
+        ));
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::PermissionDenied);
+        // waits of 25 and 50 ms fit the budget, the next is clipped to what is left
+        assert!(attempts >= 3, "{attempts} attempts");
+        assert!(started.elapsed() >= Duration::from_millis(80));
     }
 }
