@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Select Explorer jobs from their inputs and validate image-producing runs."""
 import argparse
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -18,7 +19,7 @@ GATEWAY_HUD_INPUTS = ('apps/ui3/src/play/lib/baseDomain.ts',
                       'apps/ui3/src/play/engine/generated/serviceTable.ts')
 INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/bevy', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
           'infra/gateway', *GATEWAY_HUD_INPUTS,
-          'tooling/bevy-ci.py', 'tooling/bevy-mtimes.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
+          'tooling/bevy-ci.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
           'tooling/tests/test_bevy_*.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
           '.github/workflows/bevy-explorer-headless.yml',
@@ -54,6 +55,7 @@ IMAGES_INPUTS = (
     'apps/ui3/**',
     'tooling/image-*',
     'tooling/ci-publication.py',
+    'tooling/ci_paths.py',
     'tooling/tests/test_ci_publication.py',
     'tooling/tests/test_image_publish.py',
     '.github/workflows/apis-sites-images.yml',
@@ -199,11 +201,21 @@ def locked_packages(rev):
         return None
 
 
+def changed_inputs(base, head, inputs):
+    spec = importlib.util.spec_from_file_location('ci_paths', Path(__file__).with_name('ci_paths.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    changed = git('diff', '--name-only', '--no-renames', '-z', base, head, '--', *inputs).split('\0')
+    removed = git('diff', '--name-only', '--no-renames', '--diff-filter=D', '-z',
+                  base, head, '--', *inputs).split('\0')
+    removed = module.matching_paths(removed, ('**/*.md', *('!' + path for path in module.PROSE_TREES)))
+    return set(module.non_documentation(filter(None, changed))) | set(removed)
+
+
 def select(base, head):
     ensure_commit(base)
     ensure_commit(head)
-    paths = set(filter(None, git('diff', '--name-only', '--no-renames', '-z', base, head,
-                                 '--', *INPUTS).split('\0')))
+    paths = changed_inputs(base, head, INPUTS)
     selected = dict.fromkeys((*LANES, 'native-matrix', 'scenes'), False)
     for path in paths:
         if path == SCENES_WORKFLOW:
@@ -326,7 +338,7 @@ def consumer_changed(base, head, consumer):
         raise ValueError('Unknown publication consumer')
     ensure_commit(base)
     ensure_commit(head)
-    return bool(git('diff', '--name-only', '--no-renames', base, head, '--', *IMAGES_INPUTS))
+    return bool(changed_inputs(base, head, IMAGES_INPUTS))
 
 
 def consumer_plan(event, base, head, repo):
@@ -348,7 +360,7 @@ def consumer_plan(event, base, head, repo):
             raise ValueError('Unknown image selection event')
         ensure_commit(base)
         ensure_commit(head)
-        changed = git('diff', '--name-only', '--no-renames', base, head, '--', *IMAGES_INPUTS)
+        changed = changed_inputs(base, head, IMAGES_INPUTS)
         return {'images': bool(changed), 'reason': 'Image consumer inputs changed' if changed else 'Image consumer inputs unchanged'}
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         print(f'Conservative image build: {exc}')

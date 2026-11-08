@@ -108,7 +108,7 @@ class SelectionTest(unittest.TestCase):
         for name in ('rendering/bevy-explorer/source/src/lib.rs',
                      'rendering/bevy-explorer/source/react-web/package-lock.json',
                      'apps/bevy-explorer/build-web.py', 'apps/bevy-explorer/Dockerfile.web',
-                     'tooling/bevy-ci.py', ci.WORKFLOW,
+                     'tooling/bevy-ci.py', 'tooling/ci_paths.py', ci.WORKFLOW,
                      '.github/workflows/bevy-explorer-images.yml'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
@@ -371,8 +371,100 @@ class SelectionTest(unittest.TestCase):
         self.assertFalse(any(ci.select(self.base, head)[lane] for lane in ci.LANES))
 
     def test_docs_only_change_skips_image_consumer(self):
-        self.write('docs/example.md', 'changed')
-        self.assertFalse(ci.consumer_plan('pull_request', self.base, self.commit(), '')['images'])
+        for name in ('DATABASE.md', 'docs/example.md', 'services/catalyst/docs/events.md',
+                     'services/catalyst/docs/example.json', 'rendering/bevy-explorer/docs/example.json',
+                     'rendering/bevy-explorer/source/README.md',
+                     'apps/bevy-explorer/README.md', 'library/vendor/rusty_enet/README.md'):
+            self.write(name, 'changed')
+        head = self.commit()
+        self.assertFalse(ci.consumer_plan('pull_request', self.base, head, '')['images'])
+        self.assertFalse(ci.consumer_changed(self.base, head, 'images'))
+        result = ci.select(self.base, head)
+        self.assertFalse(any(result[lane] for lane in (*ci.LANES, 'native-matrix', 'scenes')))
+        self.write('services/catalyst/explore/src/lib.rs', 'source')
+        self.assertTrue(ci.consumer_plan('pull_request', self.base, self.commit(), '')['images'])
+
+    def test_docs_source_embedded_data_and_published_content_rebuild_images(self):
+        for name in ('apps/sites/src/features/docs/DocsPage.tsx',
+                     'apps/sites/src/data/lib/docs/render.ts',
+                     'library/dcl-scene-authoring/docs/composite-component-schemas.json',
+                     'library/dcl-scene-authoring/docs/composite-tojson-edge-cases.json',
+                     'apps/sites/content/docs/example.md', 'apps/sites/content/docs/page.mdx',
+                     'apps/sites/content/docs/manifest.json', 'apps/sites/content/docs/search-index.json',
+                     'apps/sites/content/docs/_media.json'):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write(name, 'changed')
+                head = self.commit()
+                self.assertTrue(ci.consumer_changed(before, head, 'images'))
+                self.assertTrue(ci.consumer_plan('pull_request', before, head, '')['images'])
+                with patch.object(ci, 'api', return_value={'workflow_runs': [{'head_sha': before, 'id': 1}]}), \
+                        patch.object(ci, 'trusted_run', return_value=True), \
+                        patch.object(ci, 'run_jobs', return_value=[]), \
+                        patch.object(ci, 'consumer_ready', return_value=True):
+                    result = ci.consumer_plan('push', before, head, 'example/project')
+                self.assertTrue(result['images'])
+                self.assertEqual(result['reason'], 'Image consumer inputs changed')
+
+    def test_source_renamed_to_documentation_still_selects_builds(self):
+        (self.root / 'rendering/bevy-explorer/source/src/lib.rs').rename(
+            self.root / 'rendering/bevy-explorer/source/source.md')
+        head = self.commit()
+        self.assertTrue(ci.consumer_changed(self.base, head, 'images'))
+        self.assertTrue(ci.select(self.base, head)['test'])
+
+    def test_markdown_golden_changes_select_tests_and_images(self):
+        self.write('rendering/bevy-explorer/source/local-harness/benchmark/tests/fixtures/report/ok.md',
+                   'broken report golden')
+        head = self.commit()
+        self.assertTrue(ci.select(self.base, head)['test'])
+        self.assertTrue(ci.consumer_changed(self.base, head, 'images'))
+
+    def test_unwatched_fixtures_do_not_select_images(self):
+        self.write('apps/creator-hub/tests/fixtures/example.md', 'fixture')
+        self.write('apps/creator-hub/tests/fixtures/example.json', '{}')
+        head = self.commit()
+        self.assertFalse(ci.consumer_changed(self.base, head, 'images'))
+        self.assertFalse(ci.consumer_plan('pull_request', self.base, head, '')['images'])
+
+    def test_deleted_prose_documentation_does_not_select_images(self):
+        for path in ('services/catalyst/docs/example.md', 'rendering/bevy-explorer/docs/example.md',
+                     'docs/example.md'):
+            with self.subTest(path=path):
+                self.write(path, 'prose')
+                before = self.commit()
+                (self.root / path).unlink()
+                head = self.commit()
+                self.assertFalse(ci.consumer_changed(before, head, 'images'))
+                self.assertFalse(ci.consumer_plan('pull_request', before, head, '')['images'])
+
+    def test_removed_or_renamed_embedded_markdown_selects_builds(self):
+        for path in ('rendering/bevy-explorer/bevy/crates/example/README.md',
+                     'rendering/bevy-explorer/bevy/crates/bevy_color/docs/conversion.md',
+                     'rendering/bevy-explorer/bevy/errors/B0001.md'):
+            for rename in (False, True):
+                with self.subTest(path=path, rename=rename):
+                    self.write(path, 'original')
+                    before = self.commit()
+                    self.write(path, 'edited rustdoc')
+                    edited = self.commit()
+                    self.assertFalse(ci.select(before, edited)['test'])
+                    self.assertFalse(ci.consumer_changed(before, edited, 'images'))
+                    source = self.root / path
+                    if rename:
+                        source.rename(source.with_name('renamed.md'))
+                    else:
+                        source.unlink()
+                    removed = self.commit()
+                    self.assertTrue(ci.select(edited, removed)['test'])
+                    self.assertTrue(ci.consumer_changed(edited, removed, 'images'))
+
+    def test_local_hook_changes_do_not_select_engine_or_images(self):
+        self.write('tooling/ci-local.py', 'unrelated local hook change')
+        head = self.commit()
+        result = ci.select(self.base, head)
+        self.assertFalse(any(result[lane] for lane in (*ci.LANES, 'native-matrix', 'scenes')))
+        self.assertFalse(ci.consumer_changed(self.base, head, 'images'))
 
     def test_wildcard_inputs_stay_in_their_directory(self):
         self.write('tooling/dev-regressions-x/y.json', '{}')

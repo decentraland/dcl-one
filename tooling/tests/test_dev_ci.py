@@ -77,7 +77,8 @@ class DevCiTest(unittest.TestCase):
             self.assertTrue(self.macos('services/new/src/lib.rs'))
             self.assertFalse(self.macos('apps/ui3/src/a.ts'))
         with patch.object(self.dev, 'workflow_paths', return_value=None):
-            self.assertTrue(self.macos('docs/development.md'))
+            self.assertTrue(self.macos('unknown/source.rs'))
+            self.assertFalse(self.macos('docs/development.md'))
 
     def test_other_events_and_failures_run_macos(self):
         self.assertTrue(dev.plan('push', 'HEAD^1', 'HEAD')[0])
@@ -97,7 +98,40 @@ class DevCiTest(unittest.TestCase):
         # No change and an unfiltered workflow: nothing to skip on, so everything runs.
         self.assertFalse(dev.plan('local', 'HEAD', 'HEAD')[2])
         with patch.object(self.dev, 'workflow_paths', return_value=None):
-            self.assertEqual(dev.watched_changes(['docs/a.md'], self.dev), ['docs/a.md'])
+            self.assertEqual(dev.watched_changes(['docs/a.md'], self.dev), [])
+
+    def test_documentation_under_watched_roots_does_not_select_jobs(self):
+        paths = ['DATABASE.md', 'docs/adr/decision.md', 'services/catalyst/docs/events.md',
+                 'services/catalyst/docs/example.json', 'rendering/bevy-explorer/docs/example.json',
+                 'library/example/README.md', 'tooling/dev-notes.md']
+        self.assertEqual(dev.watched_changes(paths, self.dev), [])
+        self.assertFalse(self.macos(*paths))
+        with patch.object(dev.subprocess, 'check_output', return_value='\0'.join(paths)):
+            self.assertFalse(dev.plan('pull_request', 'base', 'head')[2])
+        paths.append('services/catalyst/explore/src/lib.rs')
+        self.assertEqual(dev.watched_changes(paths, self.dev), [paths[-1]])
+
+    def test_watched_changes_respects_negative_workflow_patterns(self):
+        with patch.object(self.dev, 'workflow_paths', return_value=['apps/ui3/**', '!apps/ui3/skip.ts']):
+            self.assertEqual(dev.watched_changes(['apps/ui3/skip.ts', 'apps/ui3/keep.ts'], self.dev),
+                             ['apps/ui3/keep.ts'])
+
+    def test_unwatched_fixtures_do_not_select_development(self):
+        paths = ['rendering/bevy-explorer/source/local-harness/benchmark/tests/fixtures/report/ok.md',
+                 'apps/creator-hub/tests/fixtures/example.md',
+                 'apps/creator-hub/tests/fixtures/example.json']
+        self.assertEqual(dev.watched_changes(paths, self.dev), [])
+        with patch.object(dev.subprocess, 'check_output', return_value='\0'.join(paths)):
+            self.assertFalse(dev.plan('pull_request', 'base', 'head')[2])
+
+    def test_docs_source_embedded_data_and_published_content_select_jobs(self):
+        for path in ('apps/sites/src/features/docs/DocsPage.tsx',
+                     'apps/sites/src/data/lib/docs/render.ts',
+                     'library/dcl-scene-authoring/docs/composite-component-schemas.json',
+                     'apps/sites/content/docs/example.md', 'apps/sites/content/docs/manifest.json',
+                     'services/catalyst/tests/fixtures/example.md'):
+            with self.subTest(path=path):
+                self.assertEqual(dev.watched_changes([path], self.dev), [path])
 
     def test_a_failed_or_missing_plan_runs_everything(self):
         self.assertTrue(dev.plan('push', 'HEAD^1', 'HEAD')[2])
@@ -179,11 +213,12 @@ class FrontendSelectionTest(unittest.TestCase):
     def selected(self, head, base=None, event='pull_request'):
         return dev.web_plan(event, base or self.base, head)['run-web-unit-tests']
 
-    def test_backend_implementation_and_explicit_companion_docs_skip_units(self):
+    def test_backend_implementation_and_prose_documentation_skip_units(self):
         self.write(self.backend, 'changed')
         self.write('services/catalyst/src/serve.rs', 'backend')
         self.write('services/catalyst/tests/storage.rs', 'backend test')
-        for name in dev.COMPANION_DOCS:
+        for name in ('DATABASE.md', 'METRICS.md', 'docs/readiness.md',
+                     'services/catalyst/docs/events.md', 'rendering/bevy-explorer/docs/example.json'):
             self.write(name, 'documentation')
         self.assertFalse(self.selected(self.commit()))
 
@@ -196,16 +231,34 @@ class FrontendSelectionTest(unittest.TestCase):
                      'services/catalyst/new-crate/src/lib.rs', 'services/catalyst/worlds/schema.sql',
                      'flake.lock', 'Makefile', '.cargo/config.toml',
                      '.github/workflows/development.yml', 'tooling/dev-ci.py',
-                     'apps/sites/content/docs/example.md', 'docs/unknown.md'):
+                     'apps/sites/src/features/docs/DocsPage.tsx',
+                     'apps/sites/src/features/docs/docs.css',
+                     'apps/sites/src/data/lib/docs/render.ts',
+                     'apps/sites/src/data/lib/docs/content.test.ts',
+                     'library/dcl-scene-authoring/docs/composite-component-schemas.json',
+                     'library/dcl-scene-authoring/docs/composite-tojson-edge-cases.json',
+                     'apps/sites/content/docs/example.md', 'apps/sites/content/docs/page.mdx',
+                     'apps/sites/content/docs/manifest.json', 'apps/sites/content/docs/search-index.json',
+                     'apps/sites/content/docs/_media.json'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(self.backend, name)
                 self.write(name, 'changed')
                 self.assertTrue(self.selected(self.commit(), before))
 
-    def test_empty_and_documentation_only_diffs_keep_units(self):
-        self.assertTrue(self.selected(self.base))
-        self.write('DATABASE.md', 'documentation')
+    def test_empty_and_documentation_only_diffs_skip_units(self):
+        self.assertEqual(dev.web_plan('pull_request', self.base, self.base),
+                         {'run-web-unit-tests': False, 'reason': 'No changed files'})
+        for name in ('DATABASE.md', 'services/catalyst/docs/events.md', 'docs/unknown.md',
+                     'rendering/bevy-explorer/docs/example.json', 'apps/ui3/README.md',
+                     'services/catalyst/docs/example.json'):
+            self.write(name, 'documentation')
+        head = self.commit()
+        self.assertEqual(dev.web_plan('pull_request', self.base, head),
+                         {'run-web-unit-tests': False, 'reason': 'Documentation-only changes'})
+
+    def test_renaming_frontend_source_to_markdown_keeps_units(self):
+        (self.root / 'apps/ui3/src/example.test.ts').rename(self.root / 'apps/ui3/example.md')
         self.assertTrue(self.selected(self.commit()))
 
     def test_backend_deletion_can_skip_but_frontend_deletion_cannot(self):
