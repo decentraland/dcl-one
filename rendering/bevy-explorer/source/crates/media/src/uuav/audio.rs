@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use common::structs::AudioDecoderError;
 use cpal::traits::{DeviceTrait, HostTrait};
 use kira::sound::streaming::StreamingSoundData;
@@ -15,12 +17,16 @@ const FALLBACK_SAMPLE_RATE: u32 = 48_000;
 /// Longest wait for audio before the player is looked up again.
 const WAIT_FOR_AUDIO_MS: u32 = 20;
 
-/// The default output device's sample rate, the device kira's default backend opens.
+/// The default output device's sample rate, the device kira's default backend opens. Read once
+/// per process.
 pub fn output_sample_rate() -> u32 {
-    cpal::default_host()
-        .default_output_device()
-        .and_then(|device| device.default_output_config().ok())
-        .map_or(FALLBACK_SAMPLE_RATE, |config| config.sample_rate().0)
+    static RATE: OnceLock<u32> = OnceLock::new();
+    *RATE.get_or_init(|| {
+        cpal::default_host()
+            .default_output_device()
+            .and_then(|device| device.default_output_config().ok())
+            .map_or(FALLBACK_SAMPLE_RATE, |config| config.sample_rate().0)
+    })
 }
 
 /// Feeds a player's audio to kira. `decode` blocks until the player has audio, so kira never
