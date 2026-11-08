@@ -1,0 +1,24 @@
+name: Install the Explorer tools from the flake
+description: >-
+  protoc, taplo and wasm-pack as the flake's bevy-tools package builds them, delivered from the
+  Actions cache: a hit links the closure under /nix/store without installing Nix; a miss, after
+  a pin change, installs Nix, builds the package from the lock and, on main, saves the closure
+  right away, before any build step runs beside it. Puts the package's bin directory on PATH for
+  the steps that follow.
+runs:
+  using: composite
+  steps:
+    - id: tools
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/bevy-tools
+        key: bevy-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock', 'infra/packages/default.nix', 'apps/bevy-explorer/install-tools.sh', '.github/actions/bevy-explorer-tools/action.yml') }}
+    - if: steps.tools.outputs.cache-hit != 'true'
+      uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+    - run: bash "$GITHUB_WORKSPACE/apps/bevy-explorer/install-tools.sh" "$RUNNER_TEMP/bevy-tools"
+      shell: bash
+    - if: steps.tools.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/bevy-tools
+        key: ${{ steps.tools.outputs.cache-primary-key }}
