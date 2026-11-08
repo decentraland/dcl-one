@@ -1,4 +1,4 @@
-import { copyFile, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, stat } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -7,6 +7,7 @@ import process from 'node:process'
 import { build } from 'vite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { findBrowser, openSession } from '../figma/review/scripts/capture-browser.mjs'
+import { releaseHarness } from './release-harness'
 
 // Every NavBar combination, rendered by the built Review in Chromium at its captured size: no descendant may extend
 // past the root's box. A CSS gap under space-between distribution used to push the controls out of the nav.
@@ -79,11 +80,8 @@ beforeAll(async () => {
   await session.send('Page.enable')
 }, 300_000)
 
-afterAll(async () => {
-  await session?.close()
-  await new Promise((resolve) => server?.close(resolve))
-  await rm(scratch, { recursive: true, force: true })
-})
+// Setup can fail before the server or browser exist (a Vite build failure); release only what started.
+afterAll(() => releaseHarness({ session, server, scratch }))
 
 type Bounds = {
   width: number
