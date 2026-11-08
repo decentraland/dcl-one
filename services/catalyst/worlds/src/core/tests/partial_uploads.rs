@@ -528,19 +528,6 @@ async fn gc_reports_the_expired_upload_cleanup() {
     assert_eq!(dry["expiredUploads"], Value::Null);
 }
 
-/// `/gc`'s answer; another test may hold the fleet-wide run lock for a moment.
-async fn gc(app: &Router, path: &str) -> Value {
-    for _ in 0..50 {
-        let (status, body) = hit(app, Case::new("post", path).bearer(ADMIN_TOKEN)).await;
-        if status != StatusCode::SERVICE_UNAVAILABLE {
-            assert_eq!(status, StatusCode::OK, "{body}");
-            return body;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    panic!("{path} stayed busy");
-}
-
 fn limits(edit: impl FnOnce(&mut PartialUploadLimits)) -> PartialUploadLimits {
     let mut limits = PartialUploadLimits::default();
     edit(&mut limits);
