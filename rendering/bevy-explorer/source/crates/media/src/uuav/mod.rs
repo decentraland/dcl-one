@@ -235,6 +235,7 @@ struct UuavRuntime {
     runtime: Runtime,
     /// Failed starts so far, for the retry wait.
     init_failures: u32,
+    requested_sample_rate: u32,
     creating: Vec<Creating>,
     players: Vec<Player>,
     shared: Arc<Shared>,
@@ -245,6 +246,7 @@ impl UuavRuntime {
         Self {
             runtime: Runtime::Pending { attempts: 0 },
             init_failures: 0,
+            requested_sample_rate: audio::output_sample_rate(),
             creating: Vec::new(),
             players: Vec::new(),
             shared,
@@ -297,6 +299,7 @@ impl UuavRuntime {
                 };
                 // the pointer crosses as an address: the probe object itself stays here
                 let probe_ptr = probe.ptr() as usize;
+                let sample_rate = self.requested_sample_rate;
                 let (done_tx, done) = oneshot::channel();
                 let spawned = std::thread::Builder::new()
                     .name("uuav-init".to_owned())
@@ -305,7 +308,7 @@ impl UuavRuntime {
                             uuav::uuav_init(
                                 probe_ptr as *const c_void,
                                 uuav::AudioOptionsRaw {
-                                    sample_rate: audio::SAMPLE_RATE as i32,
+                                    sample_rate: sample_rate as i32,
                                     channels: audio::CHANNELS as i32,
                                 },
                                 Some(on_error),
@@ -433,8 +436,8 @@ impl UuavRuntime {
             return;
         }
 
-        let alive = Arc::new(AtomicBool::new(true));
-        let sound = StreamingSoundData::from_decoder(UuavKiraDecoder::new(id, alive.clone()));
+        let sound =
+            StreamingSoundData::from_decoder(UuavKiraDecoder::new(id, self.requested_sample_rate));
         if source.audio.try_send(sound).is_err() {
             debug!("uuav player {id}: audio sink gone before the sound started");
         }
@@ -458,7 +461,6 @@ impl UuavRuntime {
             audio_handle: Some(source.audio_handle),
             handle: None,
             volume: None,
-            alive,
             target,
             seeking: false,
             last_info: None,
@@ -479,7 +481,6 @@ struct Player {
     /// The last volume commanded, applied once the sound handle arrives.
     volume: Option<f32>,
     /// Cleared on close.
-    alive: Arc<AtomicBool>,
     target: Option<Arc<Target>>,
     /// A seek went out this frame: the helper's state is read again next frame, so Seeking is
     /// sent before the state the seek lands in.
@@ -627,7 +628,6 @@ impl Player {
     /// Ends the sound; the player itself is freed by [`Shared::retire`].
     fn close(&mut self) {
         debug!("uuav player {}: close", self.id);
-        self.alive.store(false, Ordering::Release);
         if let Some(mut handle) = self.handle.take() {
             handle.stop(Tween::default());
         }

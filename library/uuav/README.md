@@ -75,7 +75,9 @@ From then on the helper adapts IPC messages onto the core's C API:
 - **Audio** crosses the boundary as messages: the helper pulls interleaved
   `f32` from the core every 10 ms and the client feeds a ~50 ms jitter ring
   that the host's audio callback drains with `uuav_player_read_audio`
-  (never blocks, pads silence). UUAV opens no audio device.
+  (never blocks, pads silence). A host that pulls from its own thread instead
+  can block on `uuav_player_wait_audio` until the ring has audio. UUAV opens
+  no audio device.
 
 ### Decoding: hardware first, software otherwise
 

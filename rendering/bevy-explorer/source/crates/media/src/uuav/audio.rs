@@ -1,53 +1,44 @@
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
-
 use common::structs::AudioDecoderError;
+use cpal::traits::{DeviceTrait, HostTrait};
 use kira::sound::streaming::StreamingSoundData;
 
-use super::ffi::PlayerId;
+use super::{ffi, ffi::PlayerId};
 
 pub type AudioHandle = <StreamingSoundData<AudioDecoderError> as kira::sound::SoundData>::Handle;
 
-/// The sample rate and channel count negotiated with the helper at init; every player's audio
-/// arrives in this format.
-pub const SAMPLE_RATE: u32 = 48_000;
+/// kira's `Frame` is stereo; the helper converts every source to this layout.
 pub const CHANNELS: usize = 2;
 
-/// Frames pulled per decode call: 10 ms, the helper's own pump cadence.
-const PULL_FRAMES: usize = 480;
+/// For an output device that reports no format.
+const FALLBACK_SAMPLE_RATE: u32 = 48_000;
 
-/// A read that found nothing waits this long before trying again while the player plays, within
-/// the helper's 10 ms pump, instead of returning empty.
-const EMPTY_WAIT: Duration = Duration::from_millis(2);
-/// The wait while the player is not playing (paused, opening, ended, no runtime): nothing is
-/// expected, so the thread polls at a fraction of the rate.
-const IDLE_WAIT: Duration = Duration::from_millis(20);
+/// Longest wait for audio before the player is looked up again.
+const WAIT_FOR_AUDIO_MS: u32 = 20;
 
-/// Pulls a player's audio out of the uuav client's jitter ring for kira.
-///
-/// The helper releases audio at the media clock and the ring pads silence when read ahead of it,
-/// so a decode that would return nothing blocks until real frames arrive: the sound is fed at
-/// realtime delivery, never the silence of a ring read ahead of its clock.
+/// The default output device's sample rate, the device kira's default backend opens.
+pub fn output_sample_rate() -> u32 {
+    cpal::default_host()
+        .default_output_device()
+        .and_then(|device| device.default_output_config().ok())
+        .map_or(FALLBACK_SAMPLE_RATE, |config| config.sample_rate().0)
+}
+
+/// Feeds a player's audio to kira. `decode` blocks until the player has audio, so kira never
+/// receives padded silence, and ends the sound once the player is freed.
 pub struct UuavKiraDecoder {
     id: PlayerId,
-    /// Cleared when the player is disposed; the next decode ends the sound.
-    alive: Arc<AtomicBool>,
+    sample_rate: u32,
     started: bool,
-    buffer: Vec<f32>,
+    samples_10ms: Vec<f32>,
 }
 
 impl UuavKiraDecoder {
-    pub fn new(id: PlayerId, alive: Arc<AtomicBool>) -> Self {
+    pub fn new(id: PlayerId, sample_rate: u32) -> Self {
         Self {
             id,
-            alive,
+            sample_rate,
             started: false,
-            buffer: vec![0.0; PULL_FRAMES * CHANNELS],
+            samples_10ms: vec![0.0; sample_rate as usize / 100 * CHANNELS],
         }
     }
 }
@@ -56,38 +47,34 @@ impl kira::sound::streaming::Decoder for UuavKiraDecoder {
     type Error = AudioDecoderError;
 
     fn sample_rate(&self) -> u32 {
-        SAMPLE_RATE
+        self.sample_rate
     }
 
     fn num_frames(&self) -> usize {
-        // open-ended: `decode` ends the sound once the player is cleared
+        // open-ended: `decode` ends the sound once the player is freed
         u32::MAX as usize
     }
 
     fn decode(&mut self) -> Result<Vec<kira::Frame>, Self::Error> {
         self.started = true;
+        let frames = self.samples_10ms.len() / CHANNELS;
         loop {
-            if !self.alive.load(Ordering::Acquire) {
-                return Err(AudioDecoderError::StreamClosed);
-            }
-            // never blocks; returns the frames actually copied and pads the rest with silence
             let copied = unsafe {
-                uuav::uuav_player_read_audio(self.id, self.buffer.as_mut_ptr(), PULL_FRAMES as i32)
+                uuav::uuav_player_read_audio(self.id, self.samples_10ms.as_mut_ptr(), frames as i32)
             };
             if copied > 0 {
-                let samples = (copied as usize).min(PULL_FRAMES) * CHANNELS;
-                return Ok(self.buffer[..samples]
+                let samples = (copied as usize).min(frames) * CHANNELS;
+                return Ok(self.samples_10ms[..samples]
                     .as_chunks::<CHANNELS>()
                     .0
                     .iter()
                     .map(|frame| kira::Frame::new(frame[0], frame[1]))
                     .collect());
             }
-            let wait = match super::ffi::state(self.id) {
-                uuav::UUAVState::UUAV_PLAYING => EMPTY_WAIT,
-                _ => IDLE_WAIT,
-            };
-            std::thread::sleep(wait);
+            if matches!(ffi::state(self.id), uuav::UUAVState::UUAV_UNKNOWN) {
+                return Err(AudioDecoderError::StreamClosed);
+            }
+            uuav::uuav_player_wait_audio(self.id, WAIT_FOR_AUDIO_MS);
         }
     }
 

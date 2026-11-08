@@ -8096,6 +8096,7 @@ dependencies = [
  "ash",
  "bevy",
  "common",
+ "cpal",
  "dcl_component",
  "futures-channel",
  "futures-lite",

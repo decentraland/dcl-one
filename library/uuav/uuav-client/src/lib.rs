@@ -1657,6 +1657,21 @@ pub unsafe extern "C" fn uuav_player_read_audio(
     read
 }
 
+/// [audio thread] Blocks until `uuav_player_read_audio` would return audio, or for at most
+/// `timeout_ms`; returns at once for an unknown player.
+#[unsafe(no_mangle)]
+pub extern "C" fn uuav_player_wait_audio(player_id: PlayerId, timeout_ms: u32) {
+    let mirror = CLIENT
+        .load()
+        .as_ref()
+        .and_then(|client| client.mirror(player_id));
+    if let Some(mirror) = mirror {
+        mirror
+            .audio
+            .wait_readable(Duration::from_millis(u64::from(timeout_ms)));
+    }
+}
+
 /// [audio thread] Throttled, fire-and-forget consumption report: the pull
 /// pacing on the helper sizes its pulls by it. The outbound queue is an
 /// unbounded in-proc channel — no blocking, no syscall on this thread.

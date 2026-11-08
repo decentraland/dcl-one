@@ -7,7 +7,7 @@ edition = "2024"
 workspace = true
 
 [features]
-uuav = ["dep:uuav", "dep:metal"]
+uuav = ["dep:uuav", "dep:metal", "dep:cpal"]
 html = ["dep:web-sys"]
 
 [dependencies]
@@ -27,6 +27,8 @@ urlencoding = { workspace = true }
 reqwest = { workspace = true }
 
 kira = { workspace = true }
+# the default output device's sample rate, for the audio the helper delivers (uuav/audio.rs)
+cpal = { version = "0.15.2", optional = true }
 wgpu = { workspace = true }
 uuav = { workspace = true, optional = true }
 
