@@ -20,10 +20,12 @@ PROTO = 'library/protocol/proto/'
 HUD = SOURCE + 'react-web/src/'
 MANIFEST = 'sites-play.json'
 PARTS = ('engine', 'bridge-scene', 'service_worker.js', 'preview_realm.js')
-# Source is maintained here. Hash its tracked files directly, alongside the
-# build tools and configuration; generated outputs and local overrides are excluded.
+# Source is maintained here. Hash its tracked files directly, alongside the build tools and
+# configuration (the flake lock and package set pin the protoc and wasm-pack the web job
+# builds with); generated outputs and local overrides are excluded.
 INPUTS = ('apps/bevy-explorer/build-web.py',
-          'apps/bevy-explorer/install-linux-deps.py', 'apps/bevy-explorer/install-protoc.py',
+          'apps/bevy-explorer/install-linux-deps.py', 'apps/bevy-explorer/install-tools.sh',
+          '.github/actions/bevy-explorer-tools/action.yml', 'flake.lock', 'infra/packages/default.nix',
           'tooling/play-artifact.py',
           '.github/workflows/bevy-explorer-ci.yml')
 TOOLCHAINS = ('rust-toolchain', 'rust-toolchain.toml')
