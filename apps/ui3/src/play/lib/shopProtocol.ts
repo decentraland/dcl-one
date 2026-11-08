@@ -24,6 +24,12 @@ export const SHOP_METHODS = {
   status: 'shop.status'
 } as const
 
+/**
+ * The error `shop.buy` and `shop.buyName` answer while another purchase is open. CLAIM NAME leaves that
+ * purchase's dialog to say what is going on, rather than send the buyer to the web Shop.
+ */
+export const SHOP_BUSY = 'a purchase is already open'
+
 /** The message the shell posts as an operation moves on. */
 export const SHOP_EVENT = 'bevy-shell:shop'
 

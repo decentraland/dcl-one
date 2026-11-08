@@ -25,7 +25,7 @@ vi.mock('../lib/shell', () => ({
 import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop'
 import { webNameUrl } from '../features/shop/itemLinks'
 import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
-import { SHOP_EVENT } from '../lib/shopProtocol'
+import { SHOP_BUSY, SHOP_EVENT } from '../lib/shopProtocol'
 import type { Profile } from '../engine/protocol'
 import { PopupHost, resetPopups, ToastHost } from '../design'
 import { fakeProfileState } from './harness'
@@ -54,8 +54,12 @@ function serve(): void {
 }
 
 let balanceReads = 0
-/** The shell's answers: its capabilities (`namesMode` as given), and BUY NAME refused when said. */
-function answerShell(namesMode?: string, opts: { refuse?: boolean; status?: unknown[] } = {}): void {
+/**
+ * The shell's answers: its capabilities (`namesMode` as given), and BUY NAME refused when said, or busy
+ * once `busyAfter` of them have opened (their dialog is up).
+ */
+function answerShell(namesMode?: string, opts: { refuse?: boolean; busyAfter?: number; status?: unknown[] } = {}): void {
+  let opened = 0
   shell.request.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
     if (method === 'shop.capabilities') return { v: 1, buyer: BUYER, wallet: 'web3', credits: true, marketplace: false, ...(namesMode ? { namesMode } : {}) }
     if (method === 'shop.balance') {
@@ -64,6 +68,8 @@ function answerShell(namesMode?: string, opts: { refuse?: boolean; status?: unkn
     }
     if (method === 'shop.buyName') {
       if (opts.refuse) throw new Error('NAMEs are not bought here')
+      if (opts.busyAfter != null && opened >= opts.busyAfter) throw new Error(SHOP_BUSY)
+      opened++
       return { v: 1, operation: 'n1', buyer: BUYER, state: 'reviewing', items: [], name: params?.name, mode: params?.mode }
     }
     if (method === 'shop.status') return opts.status ?? []
@@ -161,6 +167,21 @@ describe('CLAIM NAME in the web shell', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: 'CONTINUE' }))
     expect(open).toHaveBeenCalledWith(webNameUrl('Carolo'), '_blank', 'noopener')
     expect(buyNameCalls()).toHaveLength(refuse ? 1 : 0)
+  })
+
+  it('sends nowhere when the shell is busy with another purchase: a second CLAIM NAME while the rehearsal’s dialog is up', async () => {
+    serve()
+    answerShell('simulation', { busyAfter: 1 })
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    renderShop()
+    await claimName()
+    await waitFor(() => expect(buyNameCalls()).toHaveLength(1))
+    await userEvent.click(claim())
+    await waitFor(() => expect(buyNameCalls()).toHaveLength(2))
+    // Long enough for a refusal to have asked about the web Shop.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(screen.queryByText('You will be redirected to the web Shop')).toBeNull()
+    expect(open).not.toHaveBeenCalled()
   })
 
   it('previews a rehearsed NAME over the avatar once, however often its choice is heard, and saves nothing', async () => {

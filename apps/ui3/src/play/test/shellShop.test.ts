@@ -12,7 +12,7 @@ import type { UsdCents } from '../../shop/model/money'
 import type { GroupProgress } from '../../shop/model/purchase'
 import { BOOK, creatorOrder, ITEM, storeMint } from '../../shop/payment/fixtures'
 import type { StoredLogin } from '../features/auth/sso'
-import { SHOP_EVENT, SHOP_PROTOCOL, type ShopNamesMode, type ShopOperation, type ShopOperationEvent } from '../lib/shopProtocol'
+import { SHOP_BUSY, SHOP_EVENT, SHOP_PROTOCOL, type ShopNamesMode, type ShopOperation, type ShopOperationEvent } from '../lib/shopProtocol'
 import { claimLock, createShellShop, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices, type ShellShopWallet } from '../shell/shop/purchase'
 import { NAME_SIMULATION_MS } from '../shell/shop/namePurchase'
 import { createLedger, type OperationRecord } from '../shell/shop/ledger'
@@ -1649,13 +1649,13 @@ describe('BUY NAME, simulated', () => {
   it('opens one purchase at a time: a second BUY NAME, or an item, waits for the open one', async () => {
     const t = setup(SIM)
     await t.buyName()
-    await expect(t.buyName('Carolo')).rejects.toThrow(/already open/)
-    await expect(t.buy()).rejects.toThrow(/already open/)
+    await expect(t.buyName('Carolo')).rejects.toThrow(SHOP_BUSY)
+    await expect(t.buy()).rejects.toThrow(SHOP_BUSY)
     ;(await t.until('confirm')).handlers.onClose()
     // And an item purchase open keeps BUY NAME out.
     await t.buy()
     await t.until('confirm')
-    await expect(t.buyName()).rejects.toThrow(/already open/)
+    await expect(t.buyName()).rejects.toThrow(SHOP_BUSY)
   })
 
   it('reopens nothing when its reads answer after it was cancelled', async () => {

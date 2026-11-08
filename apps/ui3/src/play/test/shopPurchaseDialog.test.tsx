@@ -10,7 +10,7 @@ const item = { name: 'Golden Armor', creator: 'Aurora', rarity: 'epic', credits:
 const name = { kind: 'name' as const, name: 'Mojito', creator: '', rarity: '', credits: 94 }
 
 function show(view: ShopPurchaseStep) {
-  const handlers = { onClose: vi.fn(), onConfirm: vi.fn(), onBuyCredits: vi.fn(), onBackpack: vi.fn(), onAssign: vi.fn(), onPreview: vi.fn(), onRetry: vi.fn(), onSignIn: vi.fn() }
+  const handlers = { onClose: vi.fn(), onConfirm: vi.fn(), onBuyCredits: vi.fn(), onBackpack: vi.fn(), onPreview: vi.fn(), onRetry: vi.fn(), onSignIn: vi.fn() }
   render(<ShopPurchaseDialog view={view} {...handlers} />)
   return handlers
 }
@@ -142,16 +142,17 @@ describe('the purchase dialog', () => {
     expect(screen.getByRole('dialog', { name: 'Buy Name' })).toBeInTheDocument()
   })
 
-  it('Purchase successful for a NAME: the NAME tagged NEW, CONTINUE SHOPPING or ASSIGN TO AVATAR', () => {
+  it('Purchase successful for a NAME: the NAME tagged NEW and named, then CONTINUE SHOPPING and nothing past it', () => {
     const h = show({ step: 'success', items: [name] })
     const dialog = screen.getByRole('dialog', { name: 'Purchase successful!' })
     expect(dialog.textContent).toContain('New')
-    expect(screen.queryByRole('button', { name: 'Go to backpack' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Assign to avatar' }))
-    expect(h.onAssign).toHaveBeenCalled()
-    expect(h.onBackpack).not.toHaveBeenCalled()
+    expect(within(dialog).getByRole('img', { name: 'Mojito.dcl.eth' })).toBeInTheDocument()
+    // Only the simulation is bought here: no button that would do nothing, and no backpack for a NAME.
+    expect(screen.queryByRole('button', { name: 'Assign to avatar' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Go to backpack' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Continue shopping' }))
     expect(h.onClose).toHaveBeenCalled()
+    expect(h.onBackpack).not.toHaveBeenCalled()
   })
 
   describe('a simulated NAME purchase', () => {
@@ -163,6 +164,9 @@ describe('the purchase dialog', () => {
       const h = show({ step: 'confirm', items: [name], balance: 700, simulation: true })
       const dialog = screen.getByRole('dialog', { name: 'Buy Name' })
       expect(within(dialog).getByRole('note')).toHaveTextContent(AHEAD)
+      // The row names the NAME beside its tile, so the tile itself stays out of the way.
+      expect(within(dialog).getByText('Mojito')).toBeInTheDocument()
+      expect(within(dialog).queryByRole('img', { name: 'Mojito.dcl.eth' })).toBeNull()
       expect(screen.queryByRole('button', { name: 'Buy name' })).toBeNull()
       act(() => void vi.advanceTimersByTime(ARM_MS))
       fireEvent.click(screen.getByRole('button', { name: 'Simulate purchase' }))
@@ -183,16 +187,16 @@ describe('the purchase dialog', () => {
       expect(screen.getByRole('status', { name: 'Simulating your purchase' })).toBeInTheDocument()
     })
 
-    it('ends as a simulation, not a purchase: no NEW tag, and PREVIEW ON AVATAR instead of ASSIGN TO AVATAR', () => {
+    it('ends as a simulation, not a purchase: the NAME it ran for, no NEW tag, and PREVIEW ON AVATAR', () => {
       const h = show({ step: 'success', items: [name], simulation: true })
       expect(screen.queryByRole('dialog', { name: 'Purchase successful!' })).toBeNull()
       const dialog = screen.getByRole('dialog', { name: 'Simulation complete' })
-      expect(within(dialog).getByRole('note')).toHaveTextContent(DONE)
+      expect(within(dialog).getByRole('note')).toHaveTextContent('This was a simulation: no Credits were spent, and Mojito wasn’t registered or reserved.')
+      expect(within(dialog).getByRole('img', { name: 'Mojito.dcl.eth' })).toBeInTheDocument()
       expect(dialog.textContent).not.toContain('New')
       expect(screen.queryByRole('button', { name: 'Assign to avatar' })).toBeNull()
       fireEvent.click(screen.getByRole('button', { name: 'Preview on avatar' }))
       expect(h.onPreview).toHaveBeenCalledTimes(1)
-      expect(h.onAssign).not.toHaveBeenCalled()
     })
 
     it('says so when it fails', () => {

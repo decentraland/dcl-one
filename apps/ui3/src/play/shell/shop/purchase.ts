@@ -46,6 +46,7 @@ import { siteUrl } from '../../lib/baseDomain'
 import {
   parseBuyRequest,
   parseOperationRef,
+  SHOP_BUSY,
   SHOP_EVENT,
   SHOP_METHODS,
   SHOP_PROTOCOL,
@@ -1232,7 +1233,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
 
   const buy = async (params: unknown): Promise<ShopOperation> => {
     const req = parseBuyRequest(params)
-    if (starting || running || slot.open()) throw new Error('a purchase is already open')
+    if (starting || running || slot.open()) throw new Error(SHOP_BUSY)
     starting = true
     try {
       const who = signedIn()

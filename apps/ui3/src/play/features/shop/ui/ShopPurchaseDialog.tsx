@@ -2,11 +2,12 @@
 // and its modals sheet draw it: Buy Item, Buy N Items or Buy Name (the balance, what is bought and its
 // price), Insufficient Funds (what is missing, BUY CREDITS), Processing, Purchase successful, and the Error
 // modal ("Oops! Something went wrong": what happened, CANCEL and TRY AGAIN when it may be tried again, else
-// CLOSE). A NAME is one row whose tile is the NAME's art; its success offers ASSIGN TO AVATAR.
+// CLOSE). A NAME is one row whose tile is the NAME's art. Only its simulation is bought here, so a NAME's
+// Purchase successful has no next step past CONTINUE SHOPPING.
 // A simulated NAME purchase (`simulation`, a testnet rehearsal that buys nothing) says so on every step it
 // shows, its failures included: a note that no Credits are spent and the NAME isn't registered or reserved,
-// SIMULATE PURCHASE for BUY NAME, and "Simulation complete" (the NAME without its NEW tag, PREVIEW ON AVATAR)
-// for Purchase successful.
+// SIMULATE PURCHASE for BUY NAME, and "Simulation complete" (the NAME without its NEW tag, named in its
+// note, PREVIEW ON AVATAR) for Purchase successful.
 // Loading, a purchase still being confirmed and the sign-in request aren't drawn; they use the same dialog. Presentational: whoever
 // shows it (the web Explorer's shell, which signs the purchase) decides the step and acts on the choice.
 //
@@ -75,8 +76,6 @@ export interface ShopPurchaseDialogProps {
   onConfirm?: () => void
   onBuyCredits?: () => void
   onBackpack?: () => void
-  /** A bought NAME's ASSIGN TO AVATAR. */
-  onAssign?: () => void
   /** A simulated NAME's PREVIEW ON AVATAR. */
   onPreview?: () => void
   onRetry?: () => void
@@ -96,6 +95,9 @@ const buyLabel = (count: number, name = false, simulation = false): string => (s
 /** What a simulation spends and keeps: nothing, said before it runs and once it has. */
 const SIMULATION_AHEAD = 'Simulation: no Credits will be spent, and this NAME won’t be registered or reserved.'
 const SIMULATION_DONE = 'This was a simulation: no Credits were spent, and this NAME wasn’t registered or reserved.'
+/** The same, once it ran, naming the NAME it ran for. */
+const simulationDone = (items: readonly ShopPurchaseItem[]): string =>
+  isName(items) ? `This was a simulation: no Credits were spent, and ${items[0].name} wasn’t registered or reserved.` : SIMULATION_DONE
 /** Whether a step's rows are a NAME. */
 const isName = (items: readonly ShopPurchaseItem[]): boolean => items.length === 1 && items[0].kind === 'name'
 
@@ -116,7 +118,7 @@ function ArmedButton({ onClick, children }: { onClick?: () => void; children: Re
   )
 }
 
-export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onBackpack, onAssign, onPreview, onRetry, onSignIn }: ShopPurchaseDialogProps): React.JSX.Element {
+export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onBackpack, onPreview, onRetry, onSignIn }: ShopPurchaseDialogProps): React.JSX.Element {
   const cancel = (
     <Button variant="dark" size="modal" onClick={onClose}>
       Cancel
@@ -199,11 +201,7 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
                 <Button size="modal" onClick={onPreview}>
                   Preview on avatar
                 </Button>
-              ) : isName(view.items) ? (
-                <Button size="modal" onClick={onAssign}>
-                  Assign to avatar
-                </Button>
-              ) : (
+              ) : isName(view.items) ? null : (
                 <Button size="modal" onClick={onBackpack}>
                   Go to backpack
                 </Button>
@@ -219,7 +217,7 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
           {view.simulation && (
             <>
               <p className={styles.simulation} role="note">
-                {SIMULATION_DONE}
+                {simulationDone(view.items)}
               </p>
               <ShopModalGap />
             </>
@@ -338,7 +336,7 @@ function BoughtTiles({ items, isNew = true }: { items: ShopPurchaseItem[]; isNew
               <Tile item={item} isNew={isNew} />
             </span>
           ) : (
-            <Tile key={i} item={item} isNew={isNew} />
+            <Tile key={i} item={item} isNew={isNew} labelled />
           )
         )}
       </span>
@@ -373,9 +371,16 @@ function ItemList({ items }: { items: ShopPurchaseItem[] }): React.JSX.Element {
   )
 }
 
-/** An item's tile, or a NAME's art. */
-function Tile({ item, isNew = false }: { item: ShopPurchaseItem; isNew?: boolean }): React.JSX.Element {
-  return item.kind === 'name' ? <ShopNameTile isNew={isNew} /> : <ShopItemTile thumbnail={item.thumbnail} rarity={item.rarity} categoryIcon={item.categoryIcon} isNew={isNew} />
+/**
+ * An item's tile, or a NAME's art. The NAME's art is the same for every NAME, so where nothing beside it
+ * names the NAME (`labelled`: a bought tile on its own), it carries the NAME as its label.
+ */
+function Tile({ item, isNew = false, labelled = false }: { item: ShopPurchaseItem; isNew?: boolean; labelled?: boolean }): React.JSX.Element {
+  return item.kind === 'name' ? (
+    <ShopNameTile isNew={isNew} label={labelled ? `${item.name}.dcl.eth` : undefined} />
+  ) : (
+    <ShopItemTile thumbnail={item.thumbnail} rarity={item.rarity} categoryIcon={item.categoryIcon} isNew={isNew} />
+  )
 }
 
 /**
