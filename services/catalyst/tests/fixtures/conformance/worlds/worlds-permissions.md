@@ -85,14 +85,14 @@ Common notes:
   (`worlds_envelope.rs:197-203`). The signed-fetch and schema-validator refusals do not go through
   `errorHandler` upstream, so they have their own shapes (WP-01, WP-02).
 - **Signed fetch.** Upstream builds every signed route from `createSignedFetchMiddleware`
-  (`decentraland/worlds-content-server:src/controllers/routes.ts:44-64`):
+  (`decentraland/worlds-content-server:src/controllers/routes.ts:74-96`):
   - `optional:false`;
   - the scene gate `rejectIfSigner('decentraland-kernel-scene')`;
   - `onError → {error: err.message, message: 'This endpoint requires a signed fetch request. See ADR-44.'}`.
 
   `POST /world/:world_name/permissions/:permission_name` is the only route on the instance that accepts the
   folded pre-6.0.0 payload. Its canonical keys are `signer,type,secret,wallets,communities,nft`
-  (`routes.ts:158-165`). The other seven signed routes here use the strict instance (`routes.ts:98`).
+  (`routes.ts:158-165`). The other six signed routes here use the strict instance (`routes.ts:98`).
 
   dcl-one's `require_verified` (`services/catalyst/comms/src/signed_fetch.rs:131-185`) runs the same
   stages in the same order:
@@ -132,19 +132,19 @@ Common notes:
 | 1 | GET | `/world/:world_name/permissions` (`:255`) | `get_permissions` | MATCH |
 | 2 | POST | `/world/:world_name/permissions/:permission_name` (`:256-260`, legacy-payload instance) | `post_permissions` `:242` | DIVERGENT |
 | 3 | GET | `/world/:world_name/permissions/:permission_name/address/:address/parcels` (`:264-267`) | `get_allowed_parcels_for_permission` | MATCH |
-| 4 | POST | `/world/:world_name/permissions/:permission_name/address/:address/parcels` (`:269-274`) | `post_permission_parcels` `:703` | DIVERGENT |
-| 5 | DELETE | `/world/:world_name/permissions/:permission_name/address/:address/parcels` (`:276-281`) | `delete_permission_parcels` `:729` | DIVERGENT |
-| 6 | POST | `/world/:world_name/permissions/:permission_name/parcels` (`:284-288`, unsigned) | `get_addresses_for_parcel_permission` `:818` | DIVERGENT |
-| 7 | PUT | `/world/:world_name/permissions/access/communities/:communityId` (`:292-296`) | `put_permissions_access_community` `:875` | DIVERGENT |
-| 8 | DELETE | `/world/:world_name/permissions/access/communities/:communityId` (`:297-301`) | `delete_permissions_access_community` `:903` | DIVERGENT |
+| 4 | POST | `/world/:world_name/permissions/:permission_name/address/:address/parcels` (`:269-274`) | `post_permission_parcels` `:676` | DIVERGENT |
+| 5 | DELETE | `/world/:world_name/permissions/:permission_name/address/:address/parcels` (`:276-281`) | `delete_permission_parcels` `:702` | DIVERGENT |
+| 6 | POST | `/world/:world_name/permissions/:permission_name/parcels` (`:284-288`, unsigned) | `get_addresses_for_parcel_permission` `:791` | DIVERGENT |
+| 7 | PUT | `/world/:world_name/permissions/access/communities/:communityId` (`:292-296`) | `put_permissions_access_community` `:848` | DIVERGENT |
+| 8 | DELETE | `/world/:world_name/permissions/access/communities/:communityId` (`:297-301`) | `delete_permissions_access_community` `:876` | DIVERGENT |
 | 9 | PUT | `/world/:world_name/permissions/:permission_name/:address` (`:304-308`) | `put_permissions_address` `:475` | DIVERGENT |
 | 10 | DELETE | `/world/:world_name/permissions/:permission_name/:address` (`:311-315`) | `delete_permissions_address` `:520` | DIVERGENT |
 
 Counts: 10 endpoints. MATCH 2, GAP 0, DIVERGENT 8, MISSING 0. Every route exists in dcl-one at the same method
 and path, on both mounts. On the success path, each route answers the upstream status and body shape.
-The two unsigned reads (routes 1 and 3) differ only where `docs/worlds-compatibility.md` says so. The eight
-signed routes share the signed-fetch error bodies (WP-01), and the three parcel routes the schema-validator
-bodies (WP-02). Each DIVERGENT route keeps at least one intended difference.
+Routes 1 and 3, two of the three unsigned routes (1, 3 and 6), differ only where
+`docs/worlds-compatibility.md` says so. The seven signed routes (six strict, one legacy) share the
+signed-fetch error bodies (WP-01), and the three parcel routes the schema-validator bodies (WP-02). Each DIVERGENT route keeps at least one intended difference.
 
 ---
 
@@ -468,12 +468,12 @@ deny-list filter keeps it (`store::raw_records_exclude`), and no operator disabl
 
 ## Backlog (WP-)
 
-1. **WP-01 · all eight signed routes · signed-fetch refusal bodies.** Status: MATCH, no work.
+1. **WP-01 · all seven signed routes · signed-fetch refusal bodies.** Status: MATCH, no work.
    - Upstream: `{"error": <middleware message>, "message": "This endpoint requires a signed fetch request. See ADR-44."}`.
      The middleware messages are `Invalid Auth Chain`, `Invalid signature: <detail>`,
      `Expired signature: signature timestamp: …`, `Invalid metadata content: {…}` and
      `Invalid chain metadata: expected "<k>", got "<K>"`. A 5xx keeps `err.message`
-     (`decentraland/worlds-content-server:src/controllers/routes.ts:59-62`; `@dcl/crypto-middleware@6.3.0`
+     (`decentraland/worlds-content-server:src/controllers/routes.ts:89-92`; `@dcl/crypto-middleware@6.3.0`
      `dist/verify.js:69-93,161-205,285-312,331-333`).
      Pinned by `post-permissions.spec.ts:355-365,393-402`, `post-permissions-legacy-payload.spec.ts` and
      `explorer-legacy-payload.spec.ts:116-171`.

@@ -31,8 +31,10 @@ row says whether it breaks a drop-in replacement.
 
 ## Files
 
-Upstream registers 43 routes; the files compare them in 40 endpoint sections (GET and HEAD of a path
-share a section where they share a handler).
+Upstream's `src/controllers/routes.ts` registers 39 routes (`/reprocess-ab` and `/gc` only when
+`AUTH_SECRET` is set; the http-server `/health/*` and `/metrics` routes are not counted). The files count
+40 endpoints: `POST /entities` is two, the single request and `partial=true`. GET and HEAD of
+`/contents/:hashId` and `/ipfs/:hashId` are separate endpoints described in one section.
 
 | file | area | endpoints | MATCH | GAP | DIVERGENT | MISSING | backlog |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -44,9 +46,11 @@ share a section where they share a handler).
 | **total** | | **40** | **3** | **0** | **36** | **1** | **146** |
 
 Every upstream route has a route at the same method and path in this tree except `POST /reprocess-ab`
-(WR-22). `POST /entities` and `DELETE /entities/:world_name` answer only under `/worlds-content-server`
-at the root host: at the root those paths belong to the catalyst content server, and the gateway maps
-the worlds host onto the prefix (WD, WR-12, WR-23).
+(WR-22). At the root host, eight worlds handlers answer only under `/worlds-content-server`. At the root,
+`POST /entities`, `DELETE /entities/:world_name`, `POST /entities/active`, `/contents/:hashId`,
+`/available-content` and `/status` are the catalyst content server's; `/ipfs/:hashId` and `POST /gc`
+have no root route (`worlds/src/core/mod.rs:588-603`, `worlds/src/lib.rs:403-447`). The gateway maps the
+worlds host onto the prefix (WD, WR-12, WR-23, WR-27).
 
 ## P0 and P1
 
