@@ -26,7 +26,7 @@ Darwin)
     rm -rf "$DEST"
     mkdir -p "$DEST"
     cp ".target/$TARGET/release/uuav-helper" "$DEST/"
-    for lib in avcodec avdevice avfilter avformat avutil swresample swscale; do
+    for lib in avcodec avformat avutil swresample swscale; do
         major=$(find "$FFMPEG/lib/" -name "lib$lib.*.dylib" | grep -E "lib$lib\.[0-9]+\.dylib$")
         cp -L "$major" "$DEST/"
     done
@@ -47,7 +47,7 @@ Linux)
     rm -rf "$DEST"
     mkdir -p "$DEST"
     cp ".target/$TARGET/release/uuav-helper" "$DEST/"
-    for lib in avcodec avdevice avfilter avformat avutil swresample swscale va va-drm; do
+    for lib in avcodec avformat avutil swresample swscale va va-drm; do
         major=$(find "$FFMPEG/lib/" -name "lib$lib.so.*" | grep -E "lib$lib\.so\.[0-9]+$")
         cp -L "$major" "$DEST/"
     done

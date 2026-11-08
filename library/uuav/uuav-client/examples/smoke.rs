@@ -113,11 +113,42 @@ fn with_probe<T>(init: impl FnOnce(*const std::ffi::c_void) -> T) -> T {
     use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC};
     use windows::core::Interface as _;
 
+    use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_UNKNOWN;
+    use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIAdapter, IDXGIFactory1};
+
+    let wanted = std::env::var("UUAV_SMOKE_ADAPTER_LUID")
+        .ok()
+        .and_then(|v| u64::from_str_radix(v.trim_start_matches("0x"), 16).ok());
+    let adapter: Option<IDXGIAdapter> = wanted.map(|luid| {
+        let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1() }.expect("CreateDXGIFactory1");
+        let mut index = 0;
+        loop {
+            let candidate = unsafe { factory.EnumAdapters1(index) }
+                .expect("no adapter matches UUAV_SMOKE_ADAPTER_LUID");
+            let desc = unsafe { candidate.GetDesc1() }.expect("GetDesc1");
+            let packed = (u64::from(desc.AdapterLuid.HighPart as u32) << 32)
+                | u64::from(desc.AdapterLuid.LowPart);
+            if packed == luid {
+                let name = String::from_utf16_lossy(&desc.Description)
+                    .trim_end_matches('\0')
+                    .to_owned();
+                println!("probe adapter: {name} luid=0x{luid:x}");
+                break candidate.cast().expect("IDXGIAdapter");
+            }
+            index += 1;
+        }
+    });
+    let driver_type = if adapter.is_some() {
+        D3D_DRIVER_TYPE_UNKNOWN
+    } else {
+        D3D_DRIVER_TYPE_HARDWARE
+    };
+
     let mut device: Option<ID3D11Device> = None;
     unsafe {
         D3D11CreateDevice(
-            None,
-            D3D_DRIVER_TYPE_HARDWARE,
+            adapter.as_ref(),
+            driver_type,
             HMODULE::default(),
             D3D11_CREATE_DEVICE_FLAG(0),
             None,
@@ -205,7 +236,12 @@ fn main() {
                 Some(on_warning),
                 Some(on_log),
                 whitelist.as_ptr(),
-                24, // AV_LOG_WARNING
+                // AV_LOG_WARNING unless UUAV_SMOKE_LOG_LEVEL says otherwise
+                // (40 = AV_LOG_VERBOSE shows the hwaccel negotiation)
+                std::env::var("UUAV_SMOKE_LOG_LEVEL")
+                    .ok()
+                    .and_then(|v| v.parse::<i32>().ok())
+                    .unwrap_or(24),
             )
         }),
     );
@@ -246,6 +282,55 @@ fn main() {
         None
     })
     .expect("player never reached PLAYING with advancing media time");
+
+    // which decoder the helper's core picked for this media
+    // (MediaInfo.decoder: the platform hardware decoder name or "software")
+    let decoder_deadline = Instant::now();
+    let mut decoder = String::new();
+    while decoder_deadline.elapsed() < Duration::from_secs(10) {
+        let mut info: uuav::MediaInfo = unsafe { std::mem::zeroed() };
+        let r = unsafe { uuav::uuav_player_get_media_info(player, &mut info) };
+        if r.error_message.is_null() {
+            decoder = to_str(info.decoder.as_ptr());
+            if !decoder.is_empty() {
+                break;
+            }
+        } else {
+            unsafe { uuav::uuav_string_free(r.error_message.cast_mut()) };
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    println!("decoder: {decoder}");
+
+    // UUAV_SMOKE_HOLD_SECS=N keeps the stream playing (render events
+    // driven) for N seconds, re-reading the decoder every 2 s
+    if let Some(hold) = std::env::var("UUAV_SMOKE_HOLD_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        let render = uuav::uuav_get_render_callback();
+        let hold_until = Instant::now() + Duration::from_secs(hold);
+        let mut last_print = Instant::now() - Duration::from_secs(2);
+        while Instant::now() < hold_until {
+            render(player as i32);
+            if last_print.elapsed() >= Duration::from_secs(2) {
+                last_print = Instant::now();
+                let mut info: uuav::MediaInfo = unsafe { std::mem::zeroed() };
+                let r = unsafe { uuav::uuav_player_get_media_info(player, &mut info) };
+                let mut t = 0.0_f64;
+                let rt = unsafe { uuav::uuav_player_current_time(player, &mut t) };
+                if !rt.error_message.is_null() {
+                    unsafe { uuav::uuav_string_free(rt.error_message.cast_mut()) };
+                }
+                if r.error_message.is_null() {
+                    println!("hold: decoder={} t={t:.2}s", to_str(info.decoder.as_ptr()));
+                } else {
+                    unsafe { uuav::uuav_string_free(r.error_message.cast_mut()) };
+                }
+            }
+            std::thread::sleep(Duration::from_millis(16));
+        }
+    }
 
     // video: drive the render callback like the host's render thread would and
     // expect the shared-texture pipeline to surface presentation textures
@@ -302,26 +387,32 @@ fn main() {
     println!("plane pointers stable across frames");
 
     // audio: pull like the host's audio thread would (10ms chunks at the
-    // format negotiated at init) and expect real, non-silent samples
-    let frames_per_pull = AUDIO.sample_rate / 100;
-    let mut buffer = vec![0.0f32; (frames_per_pull * AUDIO.channels) as usize];
-    let heard_signal = wait_until(Duration::from_secs(10), || {
-        let frames =
-            unsafe { uuav::uuav_player_read_audio(player, buffer.as_mut_ptr(), frames_per_pull) };
-        if frames > 0 && buffer.iter().any(|s| s.abs() > 1e-4) {
-            println!(
-                "audio flowing: {frames} frames, peak {:.4}",
-                buffer.iter().fold(0.0f32, |a, s| a.max(s.abs()))
-            );
-            Some(())
-        } else {
-            None
-        }
-    });
-    assert!(
-        heard_signal.is_some(),
-        "no audible samples arrived within 10s"
-    );
+    // format negotiated at init) and expect real, non-silent samples;
+    // UUAV_SMOKE_NO_AUDIO=1 skips this for video-only samples
+    if std::env::var_os("UUAV_SMOKE_NO_AUDIO").is_some() {
+        println!("audio: not expected (UUAV_SMOKE_NO_AUDIO)");
+    } else {
+        let frames_per_pull = AUDIO.sample_rate / 100;
+        let mut buffer = vec![0.0f32; (frames_per_pull * AUDIO.channels) as usize];
+        let heard_signal = wait_until(Duration::from_secs(10), || {
+            let frames = unsafe {
+                uuav::uuav_player_read_audio(player, buffer.as_mut_ptr(), frames_per_pull)
+            };
+            if frames > 0 && buffer.iter().any(|s| s.abs() > 1e-4) {
+                println!(
+                    "audio flowing: {frames} frames, peak {:.4}",
+                    buffer.iter().fold(0.0f32, |a, s| a.max(s.abs()))
+                );
+                Some(())
+            } else {
+                None
+            }
+        });
+        assert!(
+            heard_signal.is_some(),
+            "no audible samples arrived within 10s"
+        );
+    }
 
     let status = uuav::uuav_status();
     println!(

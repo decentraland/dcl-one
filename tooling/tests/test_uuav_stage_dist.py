@@ -9,8 +9,8 @@ import tempfile
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "uuav" / "stage-dist.py"
-COMPLETE = ("uuav-helper", "libavcodec.so.62", "libavformat.so.62", "libavutil.so.60",
-            "libswresample.so.6", "libswscale.so.9", "LICENSE-ffmpeg.txt")
+COMPLETE = ("uuav-helper", "libavcodec.so.63", "libavformat.so.63", "libavutil.so.61",
+            "libswresample.so.7", "libswscale.so.10", "LICENSE-ffmpeg.txt")
 
 
 def load():
@@ -43,13 +43,13 @@ class StageDistTests(unittest.TestCase):
             self.assertTrue(os.access(os.path.join(out, "uuav-helper"), os.X_OK))
 
     def test_windows_set_names(self):
-        self.write_set(("uuav-helper.exe", "avcodec-62.dll", "avformat-62.dll", "avutil-60.dll",
-                        "swresample-6.dll", "swscale-9.dll", "LICENSE-ffmpeg.txt"))
+        self.write_set(("uuav-helper.exe", "avcodec-63.dll", "avformat-63.dll", "avutil-61.dll",
+                        "swresample-7.dll", "swscale-10.dll", "LICENSE-ffmpeg.txt"))
         with tempfile.TemporaryDirectory() as out:
             self.assertEqual(self.module.stage(self.source.name, out), [])
 
     def test_refuses_an_incomplete_set(self):
-        self.write_set(("uuav-helper", "libavcodec.so.62"))
+        self.write_set(("uuav-helper", "libavcodec.so.63"))
         with tempfile.TemporaryDirectory() as out:
             problems = self.module.stage(self.source.name, out)
             self.assertEqual(len(problems), 5)
@@ -58,22 +58,22 @@ class StageDistTests(unittest.TestCase):
             self.assertEqual(os.listdir(out), [])
 
     def test_macos_set_names(self):
-        self.write_set(("uuav-helper", "libavcodec.62.dylib", "libavformat.62.dylib",
-                        "libavutil.60.dylib", "libswresample.6.dylib", "libswscale.9.dylib",
+        self.write_set(("uuav-helper", "libavcodec.63.dylib", "libavformat.63.dylib",
+                        "libavutil.61.dylib", "libswresample.7.dylib", "libswscale.10.dylib",
                         "LICENSE-ffmpeg.txt"))
         with tempfile.TemporaryDirectory() as out:
             self.assertEqual(self.module.stage(self.source.name, out), [])
 
     def test_refuses_two_majors_of_one_library(self):
-        self.write_set(COMPLETE + ("libavcodec.so.61",))
+        self.write_set(COMPLETE + ("libavcodec.so.62",))
         with tempfile.TemporaryDirectory() as out:
             problems = self.module.stage(self.source.name, out)
             self.assertEqual(len(problems), 1)
-            self.assertIn("more than one avcodec library: libavcodec.so.61, libavcodec.so.62", problems[0])
+            self.assertIn("more than one avcodec library: libavcodec.so.62, libavcodec.so.63", problems[0])
             self.assertEqual(os.listdir(out), [])
 
     def test_refuses_a_set_of_two_platforms(self):
-        self.write_set(COMPLETE + ("avcodec-62.dll",))
+        self.write_set(COMPLETE + ("avcodec-63.dll",))
         with tempfile.TemporaryDirectory() as out:
             problems = self.module.stage(self.source.name, out)
             self.assertEqual(len(problems), 1)
@@ -81,8 +81,8 @@ class StageDistTests(unittest.TestCase):
             self.assertEqual(os.listdir(out), [])
 
     def test_refuses_a_name_that_only_contains_a_library_name(self):
-        names = tuple(n for n in COMPLETE if n != "libavcodec.so.62")
-        for stray in ("libavcodec.so", "libavcodec.so.62.11.100", "avcodec.txt", "libavcodec.62.so"):
+        names = tuple(n for n in COMPLETE if n != "libavcodec.so.63")
+        for stray in ("libavcodec.so", "libavcodec.so.63.11.100", "avcodec.txt", "libavcodec.63.so"):
             with self.subTest(stray=stray), tempfile.TemporaryDirectory() as source:
                 for name in names + (stray,):
                     (Path(source) / name).write_bytes(b"x")

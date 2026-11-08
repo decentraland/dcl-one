@@ -1,5 +1,5 @@
 [env]
-# the FFmpeg 8.1 prefix the helper links: `nix build .#uuav-ffmpeg -o
+# the FFmpeg prefix the helper links: `nix build .#uuav-ffmpeg -o
 # library/uuav/.third_party/ffmpeg` (macOS, Linux) or
 # tooling/uuav/fetch-ffmpeg-windows.sh (the BtbN LGPL shared build)
 FFMPEG_DIR = { value = ".third_party/ffmpeg", relative = true }
