@@ -1,18 +1,9 @@
-//! Video sizes: the bounds a size must meet, and its packed form for an atomic.
+//! Video sizes: the bounds a size must meet.
 
 use uuav::MAX_PIXELS;
 
 /// The smallest edge a video may have; a smaller one is refused before it reaches the device.
 const MIN_EDGE: u32 = 16;
-
-/// `(width, height)` in one atomic: 0 is "no size yet".
-pub(super) fn pack_size(width: u32, height: u32) -> u64 {
-    (u64::from(width) << 32) | u64::from(height)
-}
-
-pub(super) fn unpack_size(packed: u64) -> Option<(u32, u32)> {
-    (packed != 0).then_some(((packed >> 32) as u32, packed as u32))
-}
 
 /// A stream header's size when it has one: FFmpeg leaves an edge at 0 when the probe decoded
 /// no frame (live HLS and RTMP, often), and the planes bring the size later.
@@ -60,13 +51,6 @@ mod tests {
         assert_eq!(known_size((1920, 0)), None);
         assert_eq!(known_size((0, 1080)), None);
         assert_eq!(known_size((1920, 1080)), Some((1920, 1080)));
-    }
-
-    #[test]
-    fn a_size_round_trips_and_zero_is_none() {
-        assert_eq!(unpack_size(pack_size(852, 480)), Some((852, 480)));
-        assert_eq!(unpack_size(pack_size(4096, 4096)), Some((4096, 4096)));
-        assert_eq!(unpack_size(0), None);
     }
 
     #[test]

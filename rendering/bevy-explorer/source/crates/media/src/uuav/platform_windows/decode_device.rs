@@ -1,16 +1,21 @@
 //! The D3D11 decode device on the renderer's adapter, the probe the client captures it from, and
 //! the fence that orders the client's copies before the renderer's reads.
 
-use std::os::raw::c_void;
+use std::{
+    os::{
+        raw::c_void,
+        windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle},
+    },
+    sync::Once,
+};
 
 use bevy::{
     log::warn,
     render::renderer::{RenderAdapter, RenderDevice},
 };
-use parking_lot::Mutex;
 use windows::{
     Win32::{
-        Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0},
+        Foundation::{HANDLE, WAIT_FAILED},
         Graphics::{
             Direct3D::D3D_DRIVER_TYPE_UNKNOWN,
             Direct3D11::{
@@ -32,7 +37,8 @@ use windows::{
 
 use super::InteropError;
 
-/// How long [`wait_for_client_copy`] waits for a copy to land before returning `false`.
+/// How long [`DecodeDevice::wait_for_client_copy`] waits for a copy to land before returning
+/// `false`.
 const COPY_WAIT_MS: u32 = 4;
 
 /// The renderer's API, read once from the render device: where a presentation texture is
@@ -42,36 +48,26 @@ pub(super) enum Renderer {
     Vulkan,
 }
 
-/// The decode device and the fence that orders its copies before the renderer's reads.
-pub(super) struct Interop {
+/// The decode device and the fence that orders its copies before the renderer's reads. The
+/// render world owns it.
+pub struct DecodeDevice {
     /// Kept so the device outlives the probe texture: the client holds its own reference, this
     /// one is for the fence below.
     _device: ID3D11Device,
     /// The device's immediate context, where the client records its copies.
     context: ID3D11DeviceContext4,
     fence: ID3D11Fence,
-    /// Signalled when the fence reaches a value (`SetEventOnCompletion`); auto-reset.
-    event: HANDLE,
+    /// Set when the fence reaches a value (`SetEventOnCompletion`); auto-reset.
+    event: OwnedHandle,
     /// The last value signalled on the fence.
     value: u64,
-    pub renderer: Renderer,
+    pub(super) renderer: Renderer,
 }
 
-// SAFETY: D3D11 devices, fences and the D3D12 device are free-threaded; the immediate context
-// is only used from the render thread, which is the one thread that calls into this module
-// after the probe.
-unsafe impl Send for Interop {}
-
-impl Drop for Interop {
-    fn drop(&mut self) {
-        unsafe {
-            _ = CloseHandle(self.event);
-        }
-    }
-}
-
-/// The decode device of the running runtime; replaced by [`Probe::new`] on a restart.
-pub(super) static INTEROP: Mutex<Option<Interop>> = Mutex::new(None);
+// SAFETY: D3D11 devices, fences and the D3D12 device are free-threaded. The immediate context
+// is not, and only `&mut self` methods use it, so one thread at a time.
+unsafe impl Send for DecodeDevice {}
+unsafe impl Sync for DecodeDevice {}
 
 /// A 1x1 texture on the decode device, created `SHARED | SHARED_NTHANDLE` so the client creates
 /// its presentation textures the same way. The client captures the device from it and retains
@@ -81,9 +77,13 @@ pub struct Probe {
 }
 
 impl Probe {
-    /// Creates the decode device on the renderer's adapter and the fence between them. `Err`
-    /// when the renderer is on neither DX12 nor Vulkan, or the adapter cannot be matched.
-    pub fn new(device: &RenderDevice, adapter: &RenderAdapter) -> Result<Self, InteropError> {
+    /// Creates the decode device on the renderer's adapter, the fence between them, and the
+    /// probe the client captures the device from. `Err` when the renderer is on neither DX12 nor
+    /// Vulkan, or the adapter cannot be matched.
+    pub fn new(
+        device: &RenderDevice,
+        adapter: &RenderAdapter,
+    ) -> Result<(Self, DecodeDevice), InteropError> {
         let (renderer, luid) = renderer_and_luid(device, adapter)?;
         let dxgi_adapter = adapter_with_luid(luid)?;
 
@@ -118,6 +118,8 @@ impl Probe {
         let fence = fence.ok_or("CreateFence returned no fence")?;
         let event = unsafe { CreateEventW(None, false, false, PCWSTR::null()) }
             .map_err(InteropError::caused("CreateEventW failed"))?;
+        // SAFETY: the event was just created and nothing else owns it
+        let event = unsafe { OwnedHandle::from_raw_handle(event.0) };
 
         let desc = D3D11_TEXTURE2D_DESC {
             Width: 1,
@@ -140,15 +142,15 @@ impl Probe {
             .map_err(InteropError::caused("probe CreateTexture2D failed"))?;
         let texture = texture.ok_or("CreateTexture2D returned no texture")?;
 
-        *INTEROP.lock() = Some(Interop {
+        let decode_device = DecodeDevice {
             _device: d3d11,
             context,
             fence,
             event,
             value: 0,
             renderer,
-        });
-        Ok(Self { texture })
+        };
+        Ok((Self { texture }, decode_device))
     }
 
     pub fn ptr(&self) -> *const c_void {
@@ -242,32 +244,51 @@ fn adapter_with_luid(luid: u64) -> Result<IDXGIAdapter1, InteropError> {
     Err("no DXGI adapter has the renderer's LUID".into())
 }
 
-/// Orders the client's copy into the presentation texture before the renderer reads it: signals
-/// the decode device's fence behind the copy and waits up to [`COPY_WAIT_MS`] for it. `false`
-/// when the copy has not landed within that.
-///
-/// The wait is on the CPU because wgpu 24 offers no way to make the renderer's queue wait on this
-/// fence; a GPU-side wait (`ID3D12CommandQueue::Wait` on DX12) would replace it (#438).
-pub fn wait_for_client_copy() -> bool {
-    let mut guard = INTEROP.lock();
-    let Some(interop) = guard.as_mut() else {
-        return false;
-    };
-    interop.value += 1;
-    let value = interop.value;
-    unsafe {
-        if let Err(e) = interop.context.Signal(&interop.fence, value) {
-            warn!("uuav: fence signal failed: {e}");
+impl DecodeDevice {
+    /// Orders the client's copy into the presentation texture before the renderer reads it:
+    /// signals the fence behind the copy and waits up to [`COPY_WAIT_MS`] for it. `true` only
+    /// when the fence has passed the copy.
+    ///
+    /// The wait is on the CPU because wgpu 24 offers no way to make the renderer's queue wait on
+    /// this fence; a GPU-side wait (`ID3D12CommandQueue::Wait` on DX12) would replace it (#438).
+    pub fn wait_for_client_copy(&mut self) -> bool {
+        self.value += 1;
+        let value = self.value;
+        unsafe {
+            if let Err(e) = self.context.Signal(&self.fence, value) {
+                warn!("uuav: fence signal failed: {e}");
+                return false;
+            }
+            self.context.Flush();
+            if self.copy_done(value) {
+                return true;
+            }
+            let event = HANDLE(self.event.as_raw_handle());
+            if let Err(e) = self.fence.SetEventOnCompletion(value, event) {
+                warn!("uuav: fence wait failed: {e}");
+                return false;
+            }
+            if WaitForSingleObject(event, COPY_WAIT_MS) == WAIT_FAILED {
+                warn!(
+                    "uuav: fence wait failed: {}",
+                    windows::core::Error::from_win32()
+                );
+            }
+        }
+        // the event can also be set by an earlier value whose wait timed out, so the fence
+        // decides
+        self.copy_done(value)
+    }
+
+    /// Whether the fence has reached `value`. A removed device reports `u64::MAX`, which is not
+    /// a copy done.
+    fn copy_done(&self, value: u64) -> bool {
+        let completed = unsafe { self.fence.GetCompletedValue() };
+        if completed == u64::MAX {
+            static ONCE: Once = Once::new();
+            ONCE.call_once(|| warn!("uuav: the decode device was removed"));
             return false;
         }
-        interop.context.Flush();
-        if interop.fence.GetCompletedValue() >= value {
-            return true;
-        }
-        if let Err(e) = interop.fence.SetEventOnCompletion(value, interop.event) {
-            warn!("uuav: fence wait failed: {e}");
-            return false;
-        }
-        WaitForSingleObject(interop.event, COPY_WAIT_MS) == WAIT_OBJECT_0
+        completed >= value
     }
 }

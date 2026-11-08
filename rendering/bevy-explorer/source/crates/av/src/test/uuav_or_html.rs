@@ -103,6 +103,8 @@ fn min_test_app() -> App {
 
     app.insert_resource(PrimaryCameraRes(Entity::PLACEHOLDER));
     app.init_resource::<AudioSettings>();
+    #[cfg(feature = "uuav")]
+    app.init_resource::<media::UuavPlayers>();
 
     app.finish();
 

@@ -1,32 +1,20 @@
-//! The player runtime: starts the helper once a render device exists, retries a failed start,
-//! and creates a player for every new source.
+//! The helper runtime: starts the helper once a render device exists and retries a failed
+//! start.
 
 use std::{
     ffi::CStr,
     os::raw::{c_char, c_void},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicU64},
-    },
     time::{Duration, Instant},
 };
 
 #[cfg(windows)]
 use bevy::render::renderer::RenderAdapter;
 use bevy::{prelude::*, render::renderer::RenderDevice};
-use dcl_component::proto_components::sdk::components::VideoState;
-use kira::sound::streaming::StreamingSoundData;
 use tokio::sync::oneshot;
 
-use super::{
-    NEW_SOURCES, NewSource, audio,
-    audio::UuavKiraDecoder,
-    ffi,
-    ffi::PlayerId,
-    platform,
-    player::Player,
-    presentation::{Target, VideoPresentation},
-};
+#[cfg(windows)]
+use super::link::MainLink;
+use super::{audio, ffi, platform};
 
 /// The protocols the helper's demuxer may open: http(s) over tcp and tls, nothing else. No local
 /// files, and no udp, rtp or rtsp for an http body that probes as SDP to open towards hosts
@@ -55,7 +43,7 @@ struct ProbeHold {
 unsafe impl Send for ProbeHold {}
 unsafe impl Sync for ProbeHold {}
 
-enum Runtime {
+enum State {
     Pending {
         attempts: u32,
     },
@@ -72,47 +60,46 @@ enum Runtime {
     Ready,
 }
 
-/// A source whose player is being created on another thread (`uuav_player_new` round-trips to
-/// the helper).
-struct Creating {
-    source: NewSource,
-    done: oneshot::Receiver<Result<PlayerId, String>>,
+/// What becomes of a source the runtime is asked to play.
+pub(super) enum Admission {
+    Open,
+    /// The runtime is still coming up.
+    Wait,
+    Refuse,
 }
 
-#[derive(Resource)]
-pub(super) struct UuavRuntime {
-    runtime: Runtime,
+pub(super) struct HelperRuntime {
+    state: State,
     /// Failed starts so far, for the retry wait.
     init_failures: u32,
-    requested_sample_rate: u32,
-    creating: Vec<Creating>,
-    pub players: Vec<Player>,
-    pub presentation: Arc<VideoPresentation>,
+    /// The rate the helper delivers audio at.
+    pub sample_rate: u32,
 }
 
-impl UuavRuntime {
-    pub(super) fn new(presentation: Arc<VideoPresentation>) -> Self {
+impl Default for HelperRuntime {
+    fn default() -> Self {
         Self {
-            runtime: Runtime::Pending { attempts: 0 },
+            state: State::Pending { attempts: 0 },
             init_failures: 0,
-            requested_sample_rate: audio::output_sample_rate(),
-            creating: Vec::new(),
-            players: Vec::new(),
-            presentation,
+            sample_rate: audio::output_sample_rate(),
         }
     }
+}
 
+impl HelperRuntime {
     /// Starts the helper once a render device is there to derive the decode device from, and
-    /// picks up the answer on a later frame.
-    pub(super) fn initialize(
+    /// picks up the answer on a later frame. On Windows the decode device goes to the render
+    /// world through `link`.
+    pub fn initialize(
         &mut self,
         device: Option<&RenderDevice>,
         #[cfg(windows)] adapter: Option<&RenderAdapter>,
+        #[cfg(windows)] link: &MainLink,
     ) {
-        match &mut self.runtime {
-            Runtime::Pending { attempts } => {
+        match &mut self.state {
+            State::Pending { attempts } => {
                 if uuav::uuav_status().initialized {
-                    self.runtime = Runtime::Ready;
+                    self.state = State::Ready;
                     return;
                 }
                 // both are `None` until the renderer is up: Bevy inserts the device and the
@@ -133,7 +120,13 @@ impl UuavRuntime {
                 #[cfg(windows)]
                 let probe = platform::Probe::new(device, adapter);
                 let probe = match probe {
+                    #[cfg(not(windows))]
                     Ok(probe) => probe,
+                    #[cfg(windows)]
+                    Ok((probe, decode_device)) => {
+                        link.send_decode_device(decode_device);
+                        probe
+                    }
                     Err(e) => {
                         *attempts += 1;
                         if *attempts >= INIT_ATTEMPTS {
@@ -148,11 +141,11 @@ impl UuavRuntime {
                 };
                 self.spawn_init(probe);
             }
-            Runtime::Starting { done, .. } => match done.try_recv() {
+            State::Starting { done, .. } => match done.try_recv() {
                 Ok(Ok(())) => {
                     info!("uuav: player runtime started");
                     self.init_failures = 0;
-                    self.runtime = Runtime::Ready;
+                    self.state = State::Ready;
                 }
                 Ok(Err(e)) => self.fail_start(e),
                 Err(oneshot::error::TryRecvError::Closed) => {
@@ -160,7 +153,23 @@ impl UuavRuntime {
                 }
                 Err(oneshot::error::TryRecvError::Empty) => {}
             },
-            Runtime::Ready | Runtime::Failed { .. } => {}
+            State::Ready | State::Failed { .. } => {}
+        }
+    }
+
+    /// Whether a source can open now. A failed runtime whose retry wait has passed starts again
+    /// when a renderer is there.
+    pub fn admit(&mut self, has_renderer: bool, url: &str) -> Admission {
+        if has_renderer
+            && matches!(&self.state, State::Failed { retry_at } if Instant::now() >= *retry_at)
+        {
+            info!("uuav: starting the player runtime again for `{url}`");
+            self.state = State::Pending { attempts: 0 };
+        }
+        match self.state {
+            State::Ready => Admission::Open,
+            State::Pending { .. } | State::Starting { .. } if has_renderer => Admission::Wait,
+            _ => Admission::Refuse,
         }
     }
 
@@ -168,7 +177,7 @@ impl UuavRuntime {
     fn spawn_init(&mut self, probe: platform::Probe) {
         // the pointer crosses as an address: the probe object itself stays here
         let probe_ptr = probe.ptr() as usize;
-        let sample_rate = self.requested_sample_rate;
+        let sample_rate = self.sample_rate;
         let (done_tx, done) = oneshot::channel();
         let spawned = std::thread::Builder::new()
             .name("uuav-init".to_owned())
@@ -191,7 +200,7 @@ impl UuavRuntime {
             });
         match spawned {
             Ok(_) => {
-                self.runtime = Runtime::Starting {
+                self.state = State::Starting {
                     _probe: ProbeHold { _probe: probe },
                     done,
                 }
@@ -209,105 +218,9 @@ impl UuavRuntime {
             "uuav: player runtime failed to start (failure {}): {why}; next try after {delay:?}",
             self.init_failures
         );
-        self.runtime = Runtime::Failed {
+        self.state = State::Failed {
             retry_at: Instant::now() + delay,
         };
-    }
-
-    /// Begins creating a player for the source; [`poll_creating`](Self::poll_creating) starts
-    /// it once the helper has answered.
-    pub(super) fn adopt(&mut self, source: NewSource, has_renderer: bool) {
-        if has_renderer
-            && matches!(&self.runtime, Runtime::Failed { retry_at } if Instant::now() >= *retry_at)
-        {
-            info!(
-                "uuav: starting the player runtime again for `{}`",
-                source.url
-            );
-            self.runtime = Runtime::Pending { attempts: 0 };
-        }
-        match self.runtime {
-            Runtime::Ready => {}
-            Runtime::Pending { .. } | Runtime::Starting { .. } if has_renderer => {
-                // the runtime is still coming up; look again next frame
-                NEW_SOURCES.lock().push(source);
-                return;
-            }
-            _ => {
-                debug!("uuav: no player runtime, `{}` will not play", source.url);
-                source.state.send_replace(VideoState::VsError);
-                return;
-            }
-        }
-
-        let (done_tx, done) = oneshot::channel();
-        let spawned = std::thread::Builder::new()
-            .name("uuav-player".to_owned())
-            .spawn(move || {
-                _ = done_tx.send(ffi::player_new());
-            });
-        match spawned {
-            Ok(_) => self.creating.push(Creating { source, done }),
-            Err(e) => {
-                warn!("uuav: player for `{}` not created: {e}", source.url);
-                source.state.send_replace(VideoState::VsError);
-            }
-        }
-    }
-
-    pub(super) fn poll_creating(&mut self) {
-        for mut creating in std::mem::take(&mut self.creating) {
-            let created = match creating.done.try_recv() {
-                Ok(created) => created,
-                Err(oneshot::error::TryRecvError::Empty) => {
-                    self.creating.push(creating);
-                    continue;
-                }
-                Err(oneshot::error::TryRecvError::Closed) => {
-                    Err("the creation thread ended".to_owned())
-                }
-            };
-            match created {
-                Ok(id) => self.start(id, creating.source),
-                Err(e) => {
-                    warn!(
-                        "uuav: player for `{}` not created: {e}",
-                        creating.source.url
-                    );
-                    creating.source.state.send_replace(VideoState::VsError);
-                }
-            }
-        }
-    }
-
-    /// Opens the source on its new player and begins serving it.
-    fn start(&mut self, id: PlayerId, source: NewSource) {
-        debug!("uuav player {id}: open `{}`", source.url);
-        if let Err(e) = ffi::open_media(id, &source.url) {
-            warn!("uuav player {id}: open `{}` failed: {e}", source.url);
-            self.presentation.retire(id);
-            source.state.send_replace(VideoState::VsError);
-            return;
-        }
-
-        let sound =
-            StreamingSoundData::from_decoder(UuavKiraDecoder::new(id, self.requested_sample_rate));
-        if source.audio.try_send(sound).is_err() {
-            debug!("uuav player {id}: audio sink gone before the sound started");
-        }
-
-        let target = source.video.as_ref().and(source.image).map(|image| {
-            let target = Arc::new(Target {
-                image,
-                presented: AtomicU64::new(0),
-                presented_size: AtomicU64::new(0),
-                failed: AtomicBool::new(false),
-            });
-            self.presentation.targets.lock().insert(id, target.clone());
-            target
-        });
-
-        self.players.push(Player::new(id, source, target));
     }
 }
 

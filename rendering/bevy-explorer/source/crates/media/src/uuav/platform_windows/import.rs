@@ -1,7 +1,13 @@
 //! Imports the client's presentation texture into the renderer without a copy: on DX12 through
 //! `ID3D12Device::OpenSharedHandle`, on Vulkan as external memory.
 
-use std::{os::raw::c_void, sync::Once};
+use std::{
+    os::{
+        raw::c_void,
+        windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle},
+    },
+    sync::Once,
+};
 
 use bevy::{
     log::{debug, warn},
@@ -12,7 +18,7 @@ use bevy::{
 };
 use windows::{
     Win32::{
-        Foundation::{CloseHandle, HANDLE},
+        Foundation::HANDLE,
         Graphics::{
             Direct3D11::ID3D11Texture2D,
             Direct3D12::{ID3D12Device, ID3D12Resource},
@@ -24,7 +30,7 @@ use windows::{
 
 use super::{
     InteropError,
-    decode_device::{INTEROP, Renderer},
+    decode_device::{DecodeDevice, Renderer},
 };
 use crate::uuav::render::PlaneTextures;
 
@@ -33,6 +39,7 @@ use crate::uuav::render::PlaneTextures;
 /// the import holds the shared memory on top.
 pub fn make_planes(
     device: &RenderDevice,
+    decode_device: &DecodeDevice,
     y: *const c_void,
     uv: *const c_void,
     width: u32,
@@ -41,7 +48,7 @@ pub fn make_planes(
     if y.is_null() || y != uv {
         return None;
     }
-    match import(device, y, width, height) {
+    match import(device, &decode_device.renderer, y, width, height) {
         Ok(texture) => Some(PlaneTextures::nv12(texture)),
         Err(e) => {
             static ONCE: Once = Once::new();
@@ -56,6 +63,7 @@ pub fn make_planes(
 
 fn import(
     device: &RenderDevice,
+    renderer: &Renderer,
     ptr: *const c_void,
     width: u32,
     height: u32,
@@ -84,25 +92,19 @@ fn import(
     .map_err(InteropError::caused(
         "CreateSharedHandle failed (was the presentation texture created shareable?)",
     ))?;
+    // SAFETY: the handle was just created and nothing else owns it. Neither import takes it
+    // over: the opened resource keeps its own references, and the handle closes on return.
+    let owned = unsafe { OwnedHandle::from_raw_handle(handle.0) };
+    let handle = HANDLE(owned.as_raw_handle());
     let size = Extent3d {
         width,
         height,
         depth_or_array_layers: 1,
     };
-    let imported = {
-        let guard = INTEROP.lock();
-        let interop = guard.as_ref().ok_or("no decode device")?;
-        match &interop.renderer {
-            Renderer::Dx12(d3d12) => open_dx12(device, d3d12, handle, size),
-            Renderer::Vulkan => open_vulkan(device, handle, size),
-        }
-    };
-    // neither import takes ownership of the handle; the resource lives on through its own
-    // references
-    unsafe {
-        _ = CloseHandle(handle);
+    match renderer {
+        Renderer::Dx12(d3d12) => open_dx12(device, d3d12, handle, size),
+        Renderer::Vulkan => open_vulkan(device, handle, size),
     }
-    imported
 }
 
 fn descriptor(size: Extent3d) -> wgpu::TextureDescriptor<'static> {

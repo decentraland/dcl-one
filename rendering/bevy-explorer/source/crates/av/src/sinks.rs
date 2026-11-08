@@ -5,8 +5,6 @@ use dcl_component::proto_components::sdk::components::VideoState;
 use ipfs::IpfsResource;
 use media::{AVCommand, VideoData};
 
-#[cfg(feature = "uuav")]
-use crate::audio_sink::AudioSink;
 use crate::{AVPlayer, AVSinks};
 
 pub struct VideoSink {
@@ -37,10 +35,10 @@ impl VideoSink {
 }
 
 impl<T: AVPlayer> AVSinks<T> {
-    /// Opens `source` on the platform's av backend, rendering video into `image`. The audio and
-    /// video sinks share one command channel. A source the backend refuses reports `VsError`
-    /// and takes no commands.
+    /// Opens `source` on the platform's av backend, rendering video into `image`. A source the
+    /// backend refuses reports `VsError` and takes no commands.
     pub fn new(
+        #[cfg(feature = "uuav")] players: &mut media::UuavPlayers,
         ipfs: IpfsResource,
         source: String,
         hash: String,
@@ -53,26 +51,19 @@ impl<T: AVPlayer> AVSinks<T> {
         let (state_sender, state_receiver) = tokio::sync::watch::channel(VideoState::VsLoading);
 
         #[cfg(feature = "uuav")]
-        let audio = {
-            let (audio_sender, audio_receiver) = tokio::sync::mpsc::channel(10);
-            let (handle_sender, handle_receiver) = tokio::sync::oneshot::channel();
-            match media::resolve_source(&ipfs, &source, &hash) {
-                Ok(url) => media::spawn_av(
-                    command_receiver,
-                    T::HAS_VIDEO.then_some(video_sender),
-                    state_sender,
-                    url,
-                    image.as_ref(),
-                    audio_sender,
-                    handle_receiver,
-                ),
-                Err(e) => {
-                    warn!("av source `{source}`: {e}");
-                    state_sender.send_replace(VideoState::VsError);
-                }
+        match media::resolve_source(&ipfs, &source, &hash) {
+            Ok(url) => players.open(
+                url,
+                image.as_ref(),
+                command_receiver,
+                T::HAS_VIDEO.then_some(video_sender),
+                state_sender,
+            ),
+            Err(e) => {
+                warn!("av source `{source}`: {e}");
+                state_sender.send_replace(VideoState::VsError);
             }
-            Some(AudioSink::new(audio_receiver, handle_sender))
-        };
+        }
         #[cfg(feature = "html")]
         {
             let url = ipfs
@@ -89,8 +80,6 @@ impl<T: AVPlayer> AVSinks<T> {
         }
 
         let sinks = Self {
-            #[cfg(feature = "uuav")]
-            audio,
             video: image
                 .filter(|_| T::HAS_VIDEO)
                 .map(|image| VideoSink::new(source, video_receiver, image)),
@@ -120,13 +109,7 @@ impl<T: AVPlayer> AVSinks<T> {
         let (state_sender, state_receiver) = tokio::sync::watch::channel(VideoState::VsLoading);
 
         #[cfg(feature = "uuav")]
-        let audio = {
-            let (_audio_sender, audio_receiver) = tokio::sync::mpsc::channel(10);
-            let (handle_sender, _handle_receiver) = tokio::sync::oneshot::channel();
-            drop(command_receiver);
-            drop(video_sender);
-            Some(AudioSink::new(audio_receiver, handle_sender))
-        };
+        drop((command_receiver, video_sender));
         #[cfg(feature = "html")]
         media::spawn_av(
             command_receiver,
@@ -138,8 +121,6 @@ impl<T: AVPlayer> AVSinks<T> {
         );
 
         Self {
-            #[cfg(feature = "uuav")]
-            audio,
             video: image.map(|image| VideoSink::new(String::new(), video_receiver, image)),
             command_sender,
             rate: None,

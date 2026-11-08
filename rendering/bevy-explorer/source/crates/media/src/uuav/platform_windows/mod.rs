@@ -9,12 +9,13 @@
 //!    (`VK_KHR_external_memory_win32`). It becomes one `NV12` wgpu texture whose two plane views
 //!    the conversion samples.
 //!
-//! [`wait_for_client_copy`] orders step 2 before the renderer's read with a D3D11 fence.
+//! [`DecodeDevice::wait_for_client_copy`] orders step 2 before the renderer's read with a D3D11
+//! fence.
 
 mod decode_device;
 mod import;
 
-pub use decode_device::{Probe, wait_for_client_copy};
+pub use decode_device::{DecodeDevice, Probe};
 pub use import::make_planes;
 
 /// Why the decode device could not be set up or a presentation texture imported: the step that

@@ -75,6 +75,7 @@ fn new_audio_stream_source(
     )>,
     scenes: Query<&RendererSceneContext>,
     ipfs: Res<IpfsResource>,
+    #[cfg(feature = "uuav")] mut players: ResMut<media::UuavPlayers>,
 ) {
     let entity = trigger.target();
 
@@ -95,6 +96,8 @@ fn new_audio_stream_source(
     let sinks = match &(**source) {
         "" => AVSinks::<AudioStream>::for_empty_source(None),
         other => AVSinks::<AudioStream>::new(
+            #[cfg(feature = "uuav")]
+            &mut players,
             (*ipfs).clone(),
             other.to_owned(),
             context.hash.to_string(),
@@ -126,6 +129,7 @@ fn new_video_player_source(
     scenes: Query<&RendererSceneContext>,
     mut images: ResMut<Assets<Image>>,
     ipfs: Res<IpfsResource>,
+    #[cfg(feature = "uuav")] mut players: ResMut<media::UuavPlayers>,
 ) {
     let entity = trigger.target();
 
@@ -188,6 +192,8 @@ fn new_video_player_source(
     let sinks = match &(**source) {
         "" => AVSinks::<VideoPlayer>::for_empty_source(Some(image.clone())),
         other => AVSinks::<VideoPlayer>::new(
+            #[cfg(feature = "uuav")]
+            &mut players,
             (*ipfs).clone(),
             other.to_owned(),
             context.hash.to_string(),
@@ -367,8 +373,6 @@ fn play_videos(
 ) {
     for (mut video_player_sinks, mut output) in q.iter_mut() {
         let AVSinks {
-            #[cfg(feature = "uuav")]
-                audio: _,
             video: Some(video),
             command_sender: _,
             rate: sink_rate,
@@ -435,8 +439,6 @@ fn publish_av_player_state<T: AVPlayer>(
 ) {
     for (mut video_player_sinks, container) in q.iter_mut() {
         let AVSinks {
-            #[cfg(feature = "uuav")]
-                audio: _,
             video,
             command_sender: _,
             rate: _,

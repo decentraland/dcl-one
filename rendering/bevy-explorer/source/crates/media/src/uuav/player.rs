@@ -1,105 +1,119 @@
-//! One video player as the main world serves it: commands in, state, info and clock out.
+//! One player as the main world serves it: commands in, state, info and clock out.
 
-use std::{
-    sync::{Arc, atomic::Ordering},
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 use common::util::watch_send_if_modified;
 use dcl_component::proto_components::sdk::components::VideoState;
 use kira::tween::Tween;
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{mpsc, watch};
 
 use super::{
-    AudioHandle, NewSource, ffi,
+    audio::AudioHandle,
+    ffi,
     ffi::PlayerId,
-    presentation::Target,
-    size::{check_bounds, known_size, unpack_size},
+    link::{FromRender, MainLink},
+    size::{check_bounds, known_size},
 };
 use crate::{AVCommand, VideoData, VideoInfo};
 
-/// How often a playing player's clock goes to the scene while no frame is presented (no target
-/// image yet).
+/// How often a playing player's clock goes to the scene while no frame is presented.
 const CLOCK_INTERVAL: Duration = Duration::from_millis(250);
+
+/// The ends of a player the engine holds the other side of.
+pub(super) struct Channels {
+    pub commands: mpsc::UnboundedReceiver<AVCommand>,
+    /// `None` for an audio stream.
+    pub video: Option<mpsc::Sender<VideoData>>,
+    /// The playback state; the watch keeps the latest value.
+    pub state: watch::Sender<VideoState>,
+}
+
+/// What the main world knows about a video player's frames.
+#[derive(Default)]
+pub(super) struct Presentation {
+    /// Whether a render world was asked to present them. It then also frees the player, after
+    /// every message sent before.
+    pub render_world: bool,
+    /// The size of the planes the frames come in, once the render world has read them.
+    pub size: Option<(u32, u32)>,
+    pub failed: bool,
+    /// A frame was presented since the clock last went out.
+    pub new_frame: bool,
+}
 
 pub(super) struct Player {
     pub id: PlayerId,
-    commands: mpsc::UnboundedReceiver<AVCommand>,
-    video: Option<mpsc::Sender<VideoData>>,
-    /// The playback state; the watch keeps the latest value.
-    state: watch::Sender<VideoState>,
-    audio_handle: Option<oneshot::Receiver<AudioHandle>>,
-    handle: Option<AudioHandle>,
-    /// The last volume commanded, applied once the sound handle arrives.
-    volume: Option<f32>,
-    /// Cleared on close.
-    target: Option<Arc<Target>>,
+    channels: Channels,
+    sound: Option<AudioHandle>,
+    /// `None` for a player without a video channel or image.
+    presentation: Option<Presentation>,
     /// A seek went out this frame: the helper's state is read again next frame, so Seeking is
     /// sent before the state the seek lands in.
     seeking: bool,
     /// (width, height, framerate, duration); a send the channel refused leaves it as it was,
     /// so it is tried again next frame.
     last_info: Option<(u32, u32, f64, f64)>,
-    last_presented: u64,
     last_clock: Option<Instant>,
 }
 
 impl Player {
-    pub(super) fn new(id: PlayerId, source: NewSource, target: Option<Arc<Target>>) -> Self {
+    pub(super) fn new(
+        id: PlayerId,
+        channels: Channels,
+        sound: Option<AudioHandle>,
+        presentation: Option<Presentation>,
+    ) -> Self {
         Self {
             id,
-            commands: source.commands,
-            video: source.video,
-            state: source.state,
-            audio_handle: Some(source.audio_handle),
-            handle: None,
-            volume: None,
-            target,
+            channels,
+            sound,
+            presentation,
             seeking: false,
             last_info: None,
-            last_presented: 0,
             last_clock: None,
         }
     }
 
-    /// One frame of service; `false` once the player is closed.
-    pub(super) fn serve(&mut self, max_dimension: u32) -> bool {
-        self.take_audio_handle();
+    /// Applies what the render world reported about this player.
+    pub(super) fn on_render(&mut self, message: FromRender) {
+        let Some(presentation) = &mut self.presentation else {
+            return;
+        };
+        match message {
+            FromRender::Size { width, height, .. } => presentation.size = Some((width, height)),
+            FromRender::Presented(_) => presentation.new_frame = true,
+            FromRender::Failed(_) => presentation.failed = true,
+        }
+    }
+
+    /// One frame of service; `false` once the player is disposed.
+    pub(super) fn serve(&mut self, link: &MainLink, max_dimension: u32) -> bool {
         if !self.apply_commands() {
-            self.close();
             return false;
         }
         let state = self.publish_state();
-        if self.video.is_some() {
-            self.publish_info(max_dimension);
+        if self.channels.video.is_some() {
+            self.publish_info(link, max_dimension);
             self.publish_clock(state);
         }
         true
     }
 
-    /// Picks up the playing sound's handle once it arrives and gives it the last volume.
-    fn take_audio_handle(&mut self) {
-        let Some(receiver) = &mut self.audio_handle else {
-            return;
-        };
-        match receiver.try_recv() {
-            Ok(mut handle) => {
-                if let Some(volume) = self.volume {
-                    handle.set_volume(volume as f64, Tween::default());
-                }
-                self.handle = Some(handle);
-                self.audio_handle = None;
-            }
-            Err(oneshot::error::TryRecvError::Empty) => {}
-            Err(oneshot::error::TryRecvError::Closed) => self.audio_handle = None,
+    /// Ends the sound and frees the player.
+    pub(super) fn close(mut self, link: &MainLink) {
+        debug!("uuav player {}: close", self.id);
+        if let Some(sound) = &mut self.sound {
+            sound.stop(Tween::default());
         }
+        let render_world = self.presentation.as_ref().is_some_and(|p| p.render_world);
+        link.free(self.id, render_world);
     }
 
     /// Applies the queued commands; `false` once the player is disposed.
     fn apply_commands(&mut self) -> bool {
         loop {
-            match self.commands.try_recv() {
+            match self.channels.commands.try_recv() {
                 Ok(AVCommand::Dispose) | Err(mpsc::error::TryRecvError::Disconnected) => {
                     return false;
                 }
@@ -118,24 +132,20 @@ impl Player {
             uuav::UUAVState::UUAV_PAUSED | uuav::UUAVState::UUAV_ENDED => VideoState::VsPaused,
             uuav::UUAVState::UUAV_ERROR | uuav::UUAVState::UUAV_UNKNOWN => VideoState::VsError,
         };
-        if self
-            .target
-            .as_ref()
-            .is_some_and(|target| target.failed.load(Ordering::Acquire))
-        {
+        if self.presentation.as_ref().is_some_and(|p| p.failed) {
             state = VideoState::VsError;
         }
         if std::mem::take(&mut self.seeking) {
             // Seeking went out with the seek; the helper answers it from next frame
-        } else if watch_send_if_modified(&self.state, state) {
+        } else if watch_send_if_modified(&self.channels.state, state) {
             debug!("uuav player {}: {state:?}", self.id);
         }
         state
     }
 
     /// Sends the video's size, frame rate and duration when they changed.
-    fn publish_info(&mut self, max_dimension: u32) {
-        let Some((width, height)) = self.size(max_dimension) else {
+    fn publish_info(&mut self, link: &MainLink, max_dimension: u32) {
+        let Some((width, height)) = self.size(link, max_dimension) else {
             return;
         };
         let rate = ffi::framerate(self.id).unwrap_or(0.0);
@@ -143,15 +153,12 @@ impl Player {
         let length = ffi::duration(self.id).unwrap_or(-1.0);
         let info = (width, height, rate, length);
         if self.last_info != Some(info)
-            && send(
-                self.video.as_ref(),
-                VideoData::Info(VideoInfo {
-                    width,
-                    height,
-                    rate,
-                    length,
-                }),
-            )
+            && self.send(VideoData::Info(VideoInfo {
+                width,
+                height,
+                rate,
+                length,
+            }))
         {
             self.last_info = Some(info);
         }
@@ -160,37 +167,43 @@ impl Player {
     /// Sends the media time after each presented frame, and every [`CLOCK_INTERVAL`] while
     /// playing.
     fn publish_clock(&mut self, state: VideoState) {
-        let Some(target) = &self.target else {
+        let Some(presentation) = &self.presentation else {
             return;
         };
-        let presented = target.presented.load(Ordering::Acquire);
         let clock_due = state == VideoState::VsPlaying
             && self
                 .last_clock
                 .is_none_or(|at| at.elapsed() >= CLOCK_INTERVAL);
-        if presented != self.last_presented || clock_due {
+        if presentation.new_frame || clock_due {
             let time = ffi::current_time(self.id).unwrap_or(0.0);
-            if send(self.video.as_ref(), VideoData::Frame(time)) {
-                self.last_presented = presented;
+            if self.send(VideoData::Frame(time)) {
                 self.last_clock = Some(Instant::now());
+                if let Some(presentation) = &mut self.presentation {
+                    presentation.new_frame = false;
+                }
             }
         }
     }
 
-    /// The size the image is kept at: the planes the render world presents once it has read
-    /// them, the stream header until then. A header out of bounds (the helper passes it through
-    /// unchecked) fails the player instead of sizing the image.
-    fn size(&self, max_dimension: u32) -> Option<(u32, u32)> {
-        let target = self.target.as_ref()?;
-        if let Some(presented) = unpack_size(target.presented_size.load(Ordering::Acquire)) {
-            return Some(presented);
+    /// The size the image is kept at: the planes' size once the render world has read them, the
+    /// stream header's until then. A header out of bounds (the helper passes it through
+    /// unchecked) fails the player and stops its presentation.
+    fn size(&mut self, link: &MainLink, max_dimension: u32) -> Option<(u32, u32)> {
+        let presentation = self.presentation.as_mut()?;
+        if presentation.size.is_some() {
+            return presentation.size;
+        }
+        if presentation.failed {
+            return None;
         }
         let (width, height) = ffi::video_size(self.id).and_then(known_size)?;
         match check_bounds(width, height, max_dimension) {
             Ok(()) => Some((width, height)),
             Err(e) => {
-                if !target.failed.swap(true, Ordering::AcqRel) {
-                    warn!("uuav player {}: stream header refused: {e}", self.id);
+                warn!("uuav player {}: stream header refused: {e}", self.id);
+                presentation.failed = true;
+                if presentation.render_world {
+                    link.stop(self.id);
                 }
                 None
             }
@@ -206,14 +219,13 @@ impl Player {
                 ffi::consume(uuav::uuav_player_set_looping(id, u8::from(repeat)))
             }
             AVCommand::Seek(time) => {
-                watch_send_if_modified(&self.state, VideoState::VsSeeking);
+                watch_send_if_modified(&self.channels.state, VideoState::VsSeeking);
                 self.seeking = true;
                 ffi::consume(uuav::uuav_player_seek_async(id, time))
             }
             AVCommand::Volume(volume) => {
-                self.volume = Some(volume);
-                if let Some(handle) = &mut self.handle {
-                    handle.set_volume(volume as f64, Tween::default());
+                if let Some(sound) = &mut self.sound {
+                    sound.set_volume(volume as f64, Tween::default());
                 }
                 Ok(())
             }
@@ -224,26 +236,18 @@ impl Player {
         }
     }
 
-    /// Ends the sound; the player itself is freed by [`VideoPresentation::retire`].
-    fn close(&mut self) {
-        debug!("uuav player {}: close", self.id);
-        if let Some(mut handle) = self.handle.take() {
-            handle.stop(Tween::default());
-        }
-    }
-}
-
-/// Whether the data went out. A player without a video channel has nowhere to send and counts
-/// as sent.
-fn send(video: Option<&mpsc::Sender<VideoData>>, data: VideoData) -> bool {
-    let Some(video) = video else {
-        return true;
-    };
-    match video.try_send(data) {
-        Ok(()) => true,
-        Err(_) => {
-            trace!("uuav: video channel full or closed");
-            false
+    /// Whether the data went out. A player without a video channel has nowhere to send and counts
+    /// as sent.
+    fn send(&self, data: VideoData) -> bool {
+        let Some(video) = &self.channels.video else {
+            return true;
+        };
+        match video.try_send(data) {
+            Ok(()) => true,
+            Err(_) => {
+                trace!("uuav: video channel full or closed");
+                false
+            }
         }
     }
 }

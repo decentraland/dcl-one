@@ -39,8 +39,6 @@ use media::AVCommand;
 #[cfg(any(feature = "uuav", feature = "html"))]
 use tokio::sync::watch;
 
-#[cfg(feature = "uuav")]
-use crate::audio_sink::AudioSink;
 #[cfg(any(feature = "uuav", feature = "html"))]
 use crate::sinks::VideoSink;
 
@@ -69,21 +67,15 @@ pub trait AVPlayerConfig {
 
 #[cfg(any(feature = "uuav", feature = "html"))]
 pub trait AVPlayerSinks: Component<Mutability = Mutable> {
-    #[cfg(feature = "uuav")]
-    fn audio_sink(&self) -> Option<&AudioSink>;
-    #[cfg(feature = "uuav")]
-    fn audio_sink_mut(&mut self) -> Option<&mut AudioSink>;
     fn video_sink(&self) -> Option<&VideoSink>;
     fn video_sink_mut(&mut self) -> Option<&mut VideoSink>;
 }
 
-/// The av backend's ends of a player; the sinks share one command channel. Audio is mixed in
-/// kira on native and by the page element on the web, which has no audio sink.
+/// The av backend's ends of a player. Audio is mixed by the backend: in kira on native, by the
+/// page element on the web.
 #[cfg(any(feature = "uuav", feature = "html"))]
 #[derive(Component)]
 pub struct AVSinks<T: AVPlayer> {
-    #[cfg(feature = "uuav")]
-    pub audio: Option<AudioSink>,
     pub video: Option<VideoSink>,
     /// Sent through [`AVSinks::command`].
     pub command_sender: tokio::sync::mpsc::UnboundedSender<AVCommand>,
@@ -99,16 +91,6 @@ pub struct AVSinks<T: AVPlayer> {
 
 #[cfg(any(feature = "uuav", feature = "html"))]
 impl<T: AVPlayer> AVPlayerSinks for AVSinks<T> {
-    #[cfg(feature = "uuav")]
-    fn audio_sink(&self) -> Option<&AudioSink> {
-        self.audio.as_ref()
-    }
-
-    #[cfg(feature = "uuav")]
-    fn audio_sink_mut(&mut self) -> Option<&mut AudioSink> {
-        self.audio.as_mut()
-    }
-
     fn video_sink(&self) -> Option<&VideoSink> {
         self.video.as_ref()
     }
