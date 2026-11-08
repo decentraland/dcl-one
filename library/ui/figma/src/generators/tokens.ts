@@ -8,6 +8,7 @@ import type {
   TokenValue
 } from '../ir/schemas.js'
 import { camelCase, kebabCase } from './naming.js'
+import { inLayer } from './css-layers.js'
 import { header, renderValue, type Renderable } from './render.js'
 import type { GeneratedFile, GeneratorContext } from './types.js'
 
@@ -324,14 +325,10 @@ const TEXT_STYLE_NAME = 'export type TextStyleName = keyof typeof textStyles\n'
 function generateTokens(input: TokenInput, context: GeneratorContext): GeneratedFile[] {
   void context
   const { css, exports, theme } = tokenParts(input)
-  const tokensCss = [
-    CSS_HEADER,
-    css.primitives,
-    css.semantic,
-    css.spacing,
-    css.gradients,
-    css.layout
-  ].join('\n\n')
+  const tokensCss = `${CSS_HEADER}\n\n${inLayer(
+    'dcl.foundations',
+    [css.primitives, css.semantic, css.spacing, css.gradients, css.layout].join('\n\n')
+  )}`
   const tokensTs = [
     header(),
     exports.palette,
@@ -348,8 +345,8 @@ function generateTokens(input: TokenInput, context: GeneratorContext): Generated
   ].join('\n')
 
   return [
-    { path: 'tokens/tokens.css', content: `${tokensCss}\n` },
-    { path: 'tokens/text-styles.module.css', content: css.textStyles },
+    { path: 'tokens/tokens.css', content: tokensCss },
+    { path: 'tokens/text-styles.module.css', content: inLayer('dcl.foundations', css.textStyles) },
     { path: 'tokens/tokens.ts', content: tokensTs },
     { path: 'tokens/theme.ts', content: theme },
     {
@@ -366,7 +363,8 @@ function generateTokens(input: TokenInput, context: GeneratorContext): Generated
  */
 function generateFoundations(input: TokenInput): GeneratedFile[] {
   const { css, exports, theme } = tokenParts(input)
-  const cssFile = (...blocks: string[]) => `${[CSS_HEADER, ...blocks].join('\n\n')}\n`
+  const cssFile = (...blocks: string[]) =>
+    `${CSS_HEADER}\n\n${inLayer('dcl.foundations', blocks.join('\n\n'))}`
   const tsFile = (...blocks: string[]) => [header(), ...blocks].join('\n')
   return [
     { path: 'colors/colors.css', content: cssFile(css.primitives, css.semantic, css.gradients) },
@@ -378,7 +376,10 @@ function generateFoundations(input: TokenInput): GeneratedFile[] {
     { path: 'spacing/spacing.ts', content: tsFile(exports.space, exports.radius) },
     { path: 'layout/layout.css', content: cssFile(css.layout) },
     { path: 'layout/layout.ts', content: tsFile(exports.breakpoints, exports.layout) },
-    { path: 'typography/text-styles.module.css', content: css.textStyles },
+    {
+      path: 'typography/text-styles.module.css',
+      content: inLayer('dcl.foundations', css.textStyles)
+    },
     {
       path: 'typography/typography.ts',
       content: tsFile(exports.fontSizes, exports.textStyles, exports.textStyleCss, TEXT_STYLE_NAME)

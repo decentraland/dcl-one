@@ -1,3 +1,6 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+@layer dcl.components {
 .v0nroot {
 display: inline-flex;
 box-sizing: border-box;
@@ -127,4 +130,5 @@ position: absolute;
 left: 72.5px;
 top: 5.5px;
 background: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E %3Cg clip-path='url(%23clip0_15841_55327)'%3E %3Cpath d='M0 8C0 3.58172 3.58172 0 8 0C12.4183 0 16 3.58172 16 8C16 12.4183 12.4183 16 8 16C3.58172 16 0 12.4183 0 8Z' fill='%23161518'/%3E %3Cpath d='M3.75 13.0169C2.44578 11.825 1.625 10.093 1.625 8.16526C1.625 4.57043 4.47918 1.65625 8 1.65625C11.5208 1.65625 14.375 4.57043 14.375 8.16526C14.375 10.093 13.5542 11.825 12.25 13.0169' stroke-width='2' stroke-linecap='round' stroke='%2334CE77'/%3E %3Cpath d='M6.04156 10.8646C5.08726 10.2416 4.45831 9.17635 4.45831 7.96685C4.45831 6.04641 6.04397 4.48958 7.99998 4.48958C9.95599 4.48958 11.5416 6.04641 11.5416 7.96685C11.5416 9.17635 10.9127 10.2416 9.9584 10.8646' stroke-linecap='round' stroke='%2334CE77'/%3E %3Ccircle cx='7.99998' cy='8.20834' r='1.41667' fill='%2334CE77'/%3E %3C/g%3E %3Cpath d='M8 -1.5C13.2467 -1.5 17.5 2.75329 17.5 8C17.5 13.2467 13.2467 17.5 8 17.5C2.75329 17.5 -1.5 13.2467 -1.5 8C-1.5 2.75329 2.75329 -1.5 8 -1.5Z' stroke='%23161518' stroke-width='3'/%3E %3Cdefs%3E %3CclipPath id='clip0_15841_55327'%3E %3Cpath d='M0 8C0 3.58172 3.58172 0 8 0C12.4183 0 16 3.58172 16 8C16 12.4183 12.4183 16 8 16C3.58172 16 0 12.4183 0 8Z' fill='white'/%3E %3C/clipPath%3E %3C/defs%3E %3C/svg%3E") center / contain no-repeat;
+}
 }

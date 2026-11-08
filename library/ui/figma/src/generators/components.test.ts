@@ -31,6 +31,12 @@ describe('generateComponents', () => {
       const source = await fileContent('components/buttons/Button.module.css')
 
       expect(source).toContain('background: var(--dcl-primary-primary);')
+      expect(
+        source.startsWith(
+          '@layer dcl.reset, dcl.foundations, dcl.components;\n\n@layer dcl.components {\n'
+        )
+      ).toBe(true)
+      expect(source.trimEnd().endsWith('}')).toBe(true)
       expect(source).toContain("from '../../tokens/text-styles.module.css'")
       expect(source).not.toMatch(/#[0-9a-f]{6}/i)
     })

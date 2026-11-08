@@ -1,3 +1,6 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+@layer dcl.components {
 .v0nroot {
 display: inline-flex;
 box-sizing: border-box;
@@ -339,4 +342,5 @@ position: absolute;
 left: 0px;
 top: 0px;
 background: url("../assets/598c334e79ce20d0.svg") center / contain no-repeat;
+}
 }

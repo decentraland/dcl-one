@@ -259,6 +259,39 @@ describe('promoteReviewed over a hand-written component', () => {
     }, 120_000)
   })
 
+  describe('when the library bundles its font faces next to the generated foundations', () => {
+    it('should keep the foundations entry, the font stylesheet and the font files byte-identical', async () => {
+      const { root, app } = await library(['TitleBar'])
+      const kept: Record<string, Buffer> = {
+        'foundations/foundations.css': Buffer.from(
+          "@import './typography/inter.css';\n@import './colors/colors.css';\n"
+        ),
+        'foundations/typography/inter.css': Buffer.from(
+          "@font-face { font-family: 'Inter'; src: url('./fonts/inter-latin-wght-normal.woff2') format('woff2'); }\n"
+        ),
+        'foundations/typography/fonts/inter-latin-wght-normal.woff2': Buffer.from([
+          0x77, 0x4f, 0x46, 0x32, 0, 1, 2, 3
+        ]),
+        'foundations/typography/fonts/OFL.txt': Buffer.from('SIL Open Font License 1.1\n')
+      }
+      for (const [file, bytes] of Object.entries(kept)) {
+        await mkdir(path.dirname(path.join(root, file)), { recursive: true })
+        await writeFile(path.join(root, file), bytes)
+      }
+
+      await promoteReviewed(app)
+      for (const [file, bytes] of Object.entries(kept))
+        expect(await readFile(path.join(root, file)), file).toEqual(bytes)
+      expect(
+        await readFile(path.join(root, 'foundations/typography/text-styles.module.css'), 'utf8')
+      ).toContain('@layer dcl.foundations {')
+
+      expect(await promoteReviewed(app)).toMatchObject({ changed: false })
+      for (const [file, bytes] of Object.entries(kept))
+        expect(await readFile(path.join(root, file)), file).toEqual(bytes)
+    }, 120_000)
+  })
+
   describe('when a hand-written component has a synced name but is not selected', () => {
     it('should keep it and its exports while promoting the selected component', async () => {
       const { root, app } = await library(['TitleBar'], 'TabsBar')

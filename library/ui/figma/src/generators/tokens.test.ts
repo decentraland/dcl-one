@@ -14,6 +14,21 @@ describe('generateTokens', () => {
     files = new Map(result.files.map((file: GeneratedFile) => [file.path, file.content]))
   })
 
+  describe('when placing the foundations in the cascade', () => {
+    it('should put the tokens and text styles in the foundations layer, after the full layer order', () => {
+      for (const path of ['tokens/tokens.css', 'tokens/text-styles.module.css']) {
+        const css = files.get(path)!
+        expect(css).toContain(
+          '@layer dcl.reset, dcl.foundations, dcl.components;\n\n@layer dcl.foundations {\n'
+        )
+        expect(css.indexOf('@layer dcl.reset, dcl.foundations, dcl.components;')).toBeLessThan(
+          css.indexOf('{')
+        )
+        expect(css.trimEnd().endsWith('}')).toBe(true)
+      }
+    })
+  })
+
   describe('when generating the CSS variables', () => {
     it('should keep semantic tokens as references to primitives', () => {
       expect(files.get('tokens/tokens.css')).toContain('--dcl-bg-page: var(--dcl-neutrals-shadow);')

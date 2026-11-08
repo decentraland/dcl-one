@@ -1,3 +1,6 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+@layer dcl.components {
 .v0nroot {
 display: inline-flex;
 box-sizing: border-box;
@@ -21,4 +24,5 @@ position: absolute;
 left: 14.72px;
 top: 14.72px;
 background: url("data:image/svg+xml,%3Csvg width='17' height='17' viewBox='0 0 17 17' fill='none' xmlns='http://www.w3.org/2000/svg'%3E %3Cpath d='M16.4478 0.55348C17.1846 1.29097 17.184 2.48611 16.4465 3.22291L3.22167 16.4354C2.48418 17.1722 1.28904 17.1717 0.552236 16.4342C-0.184564 15.6967 -0.184008 14.5016 0.55348 13.7648L13.7783 0.552236C14.5158 -0.184564 15.711 -0.184007 16.4478 0.55348Z' fill-rule='evenodd' clip-rule='evenodd' fill='%23ECEBED'/%3E %3Cpath d='M16.4478 16.4347C15.711 17.1722 14.5158 17.1727 13.7783 16.4359L0.553482 3.22339C-0.184005 2.48659 -0.184561 1.29145 0.552238 0.553962C1.28904 -0.183525 2.48418 -0.184081 3.22167 0.552719L16.4465 13.7653C17.184 14.5021 17.1846 15.6972 16.4478 16.4347Z' fill-rule='evenodd' clip-rule='evenodd' fill='%23ECEBED'/%3E %3C/svg%3E") center / contain no-repeat;
+}
 }

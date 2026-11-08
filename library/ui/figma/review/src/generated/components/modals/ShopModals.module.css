@@ -1,3 +1,6 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+@layer dcl.components {
 .v0nroot {
 display: flex;
 box-sizing: border-box;
@@ -2320,4 +2323,5 @@ left: 348px;
 top: 121px;
 border-radius: var(--dcl-radius-full);
 background: var(--dcl-transparencies-white-20);
+}
 }

@@ -9,6 +9,7 @@ import type {
 } from '../ir/components.js'
 import { viewLoop, viewMotion, type StateExtras } from './motion.js'
 import { kebabCase, textStyleClass } from './naming.js'
+import { inLayer } from './css-layers.js'
 import { header } from './render.js'
 import { unsafeSvgReason } from './svg-safety.js'
 import type { GeneratedFile, GeneratorContext } from './types.js'
@@ -500,7 +501,7 @@ function generateComponents(specs: ComponentSpec[], context: GeneratorContext) {
     })
     files.push({
       path: `components/${folder}/${spec.name}.module.css`,
-      content: externalizeSvgs(cssRules.join('\n\n') + '\n', assets)
+      content: inLayer('dcl.components', externalizeSvgs(cssRules.join('\n\n') + '\n', assets))
     })
     manifest.push({
       name: spec.name,

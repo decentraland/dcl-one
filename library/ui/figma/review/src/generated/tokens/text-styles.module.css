@@ -1,3 +1,6 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+@layer dcl.foundations {
 :where(.text68656164696e672f31) { font-family: 'Inter', sans-serif; font-weight: 700; font-size: var(--dcl-font-size-heading-1); line-height: 1.25; letter-spacing: normal; text-transform: none; }
 :where(.text68656164696e672f32) { font-family: 'Inter', sans-serif; font-weight: 600; font-size: var(--dcl-font-size-heading-2); line-height: 1.25; letter-spacing: normal; text-transform: none; }
 :where(.text68656164696e672f33) { font-family: 'Inter', sans-serif; font-weight: 600; font-size: var(--dcl-font-size-heading-3); line-height: 1.25; letter-spacing: normal; text-transform: none; }
@@ -30,3 +33,4 @@
 :where(.text6578706c6f7265722f696e707574) { font-family: 'Inter', sans-serif; font-weight: 400; font-size: 16px; line-height: normal; letter-spacing: normal; text-transform: none; }
 :where(.text6578706c6f7265722f63617074696f6e2d63617073) { font-family: 'Inter', sans-serif; font-weight: 600; font-size: 12px; line-height: normal; letter-spacing: normal; text-transform: uppercase; }
 :where(.text6578706c6f7265722f62616467652d736d) { font-family: 'Inter', sans-serif; font-weight: 600; font-size: 10px; line-height: normal; letter-spacing: normal; text-transform: none; }
+}
