@@ -216,11 +216,11 @@ impl UuavPlayers {
         id: PlayerId,
         audio: Option<&mut AudioManager<DefaultBackend>>,
     ) -> Option<AudioHandle> {
-        let Some(audio) = audio else {
+        let (Some(audio), Some(sample_rate)) = (audio, self.runtime.sample_rate()) else {
             debug!("uuav player {id}: no audio output, the sound does not play");
             return None;
         };
-        let decoder = UuavKiraDecoder::new(id, self.runtime.sample_rate);
+        let decoder = UuavKiraDecoder::new(id, sample_rate);
         match audio.play(StreamingSoundData::from_decoder(decoder)) {
             Ok(sound) => Some(sound),
             Err(e) => {

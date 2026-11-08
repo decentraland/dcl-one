@@ -72,8 +72,9 @@ pub(super) struct HelperRuntime {
     state: State,
     /// Failed starts so far, for the retry wait.
     init_failures: u32,
-    /// The rate the helper delivers audio at.
-    pub sample_rate: u32,
+    /// The rate the helper delivers audio at; read from the output device when the helper
+    /// first starts.
+    sample_rate: Option<u32>,
 }
 
 impl Default for HelperRuntime {
@@ -81,12 +82,17 @@ impl Default for HelperRuntime {
         Self {
             state: State::Pending { attempts: 0 },
             init_failures: 0,
-            sample_rate: audio::output_sample_rate(),
+            sample_rate: None,
         }
     }
 }
 
 impl HelperRuntime {
+    /// `None` before the helper first starts.
+    pub fn sample_rate(&self) -> Option<u32> {
+        self.sample_rate
+    }
+
     /// Starts the helper once a render device is there to derive the decode device from, and
     /// picks up the answer on a later frame. On Windows the decode device goes to the render
     /// world through `link`.
@@ -99,6 +105,8 @@ impl HelperRuntime {
         match &mut self.state {
             State::Pending { attempts } => {
                 if uuav::uuav_status().initialized {
+                    self.sample_rate
+                        .get_or_insert_with(audio::output_sample_rate);
                     self.state = State::Ready;
                     return;
                 }
@@ -181,7 +189,9 @@ impl HelperRuntime {
     fn spawn_init(&mut self, probe: platform::Probe) {
         // the pointer crosses as an address: the probe object itself stays here
         let probe_ptr = probe.ptr() as usize;
-        let sample_rate = self.sample_rate;
+        let sample_rate = *self
+            .sample_rate
+            .get_or_insert_with(audio::output_sample_rate);
         let (done_tx, done) = oneshot::channel();
         let spawned = std::thread::Builder::new()
             .name("uuav-init".to_owned())
