@@ -143,6 +143,16 @@ describe('pickView', () => {
     )
   })
 
+  it('should throw for a boolean axis that is not a boolean', () => {
+    expect(() =>
+      pickView(
+        { 'size:md': 'md', 'size:md|signedIn': 'in' },
+        { values: { size: 'md' }, booleans: { signedIn: 'yes' as never }, flags: {} },
+        'Chip'
+      )
+    ).toThrow('Chip has no captured view for size="md", signedIn="yes"')
+  })
+
   it('should throw for a component with no views', () => {
     expect(() => pickView({}, select('md'), 'Chip')).toThrow('Chip has no captured view')
   })

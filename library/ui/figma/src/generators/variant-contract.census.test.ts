@@ -86,20 +86,29 @@ describe('generated variant contracts', () => {
             )
           ]
 
+    // Each axis omitted, passed as explicit undefined, or set to each captured value (booleans false or true).
+    const UNDEFINED = Symbol('undefined')
     let objects: Record<string, unknown>[] = [{}]
     for (const axis of [...values, ...booleans])
       objects = objects.flatMap((object) => [
         object,
+        { ...object, [axis]: UNDEFINED },
         ...domain(axis).map((value) => ({ ...object, [axis]: value }))
       ])
+    const literal = (object: Record<string, unknown>) =>
+      `{ ${Object.entries(object)
+        .map(
+          ([key, value]) => `${key}: ${value === UNDEFINED ? 'undefined' : JSON.stringify(value)}`
+        )
+        .join(', ')} }`
+    const valueOf = (object: Record<string, unknown>, axis: string) =>
+      object[axis] === UNDEFINED || object[axis] === undefined ? defaults[axis] : object[axis]
 
     const renderable = objects.map((object) => {
       const selection = {
-        values: Object.fromEntries(
-          values.map((axis) => [axis, (object[axis] ?? defaults[axis]) as string])
-        ),
+        values: Object.fromEntries(values.map((axis) => [axis, valueOf(object, axis) as string])),
         booleans: Object.fromEntries(
-          booleans.map((axis) => [axis, (object[axis] ?? defaults[axis]) as boolean])
+          booleans.map((axis) => [axis, valueOf(object, axis) as boolean])
         ),
         flags: {}
       }
@@ -107,7 +116,7 @@ describe('generated variant contracts', () => {
     })
     const failures = rejected(
       source,
-      objects.map((object, index) => `const t${index}: ${name}Props = ${JSON.stringify(object)};`)
+      objects.map((object, index) => `const t${index}: ${name}Props = ${literal(object)};`)
     )
     const mismatches = objects.filter((_, index) => renderable[index] === failures.has(index))
     expect(mismatches, `${name}: objects whose type check disagrees with the drawn views`).toEqual(

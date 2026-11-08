@@ -41,7 +41,7 @@ const sources = new Map(
 type Case = { key: string; props: Record<string, unknown> }
 type Row = {
   component: string
-  kind: 'spelling' | 'flags'
+  kind: 'spelling' | 'flags' | 'throw'
   props: Record<string, unknown>
   expectedKey: string
   oldOutcome: string
@@ -88,24 +88,28 @@ describe('selection census over every generated component', () => {
       for (const item of cases) {
         const axes = Object.keys(item.props).filter((key) => !FLAGS.includes(key as never))
         const defaulted = axes.filter((axis) => item.props[axis] === defaults[axis])
-        // Every subset of the default-valued axes omitted; the rest given explicitly (false booleans included).
-        for (let mask = 0; mask < 1 << defaulted.length; mask++) {
-          const props = { ...item.props }
-          defaulted.forEach((axis, index) => {
-            if (mask & (1 << index)) delete props[axis]
-          })
-          const { client, server } = chosen(Component, props)
-          expect(client, `${name} ${JSON.stringify(props)}`).toBe(views[item.key])
-          expect(server, `${name} ${JSON.stringify(props)} (SSR)`).toBe(views[item.key])
-          rows.push({
-            component: name,
-            kind: 'spelling',
-            props,
-            expectedKey: item.key,
-            oldOutcome: item.key,
-            newOutcome: item.key
-          })
-        }
+        // Every subset of the default-valued axes left out, either omitted or passed as explicit undefined; the rest
+        // given explicitly (false booleans included).
+        for (let mask = 0; mask < 1 << defaulted.length; mask++)
+          for (const absent of mask === 0 ? ['omit'] : ['omit', 'undefined']) {
+            const props: Record<string, unknown> = { ...item.props }
+            defaulted.forEach((axis, index) => {
+              if (!(mask & (1 << index))) return
+              if (absent === 'omit') delete props[axis]
+              else props[axis] = undefined
+            })
+            const { client, server } = chosen(Component, props)
+            expect(client, `${name} ${JSON.stringify(props)}`).toBe(views[item.key])
+            expect(server, `${name} ${JSON.stringify(props)} (SSR)`).toBe(views[item.key])
+            rows.push({
+              component: name,
+              kind: 'spelling',
+              props,
+              expectedKey: item.key,
+              oldOutcome: item.key,
+              newOutcome: item.key
+            })
+          }
       }
 
       // Every non-empty flag subset over each flag-free case: the expected view is the first generated key found by
@@ -116,6 +120,26 @@ describe('selection census over every generated component', () => {
         const base = Object.fromEntries(
           Object.entries(item.props).filter(([key]) => !FLAGS.includes(key as never))
         )
+        // Mask 0, every flag off: omitted, explicit false and explicit undefined all resolve to the case view.
+        if (flagProps.length)
+          for (const off of [
+            {},
+            Object.fromEntries(flagProps.map((flag) => [flag, false])),
+            Object.fromEntries(flagProps.map((flag) => [flag, undefined]))
+          ]) {
+            const props = { ...base, ...off }
+            const { client, server } = chosen(Component, props)
+            expect(client, `${name} ${JSON.stringify(props)}`).toBe(views[item.key])
+            expect(server, `${name} ${JSON.stringify(props)} (SSR)`).toBe(views[item.key])
+            rows.push({
+              component: name,
+              kind: 'flags',
+              props,
+              expectedKey: item.key,
+              oldOutcome: 'exact',
+              newOutcome: 'exact'
+            })
+          }
         for (let mask = 1; mask < 1 << flagProps.length; mask++) {
           const flags = Object.fromEntries(
             flagProps.filter((_, index) => mask & (1 << index)).map((flag) => [flag, true])
@@ -158,6 +182,85 @@ describe('selection census over every generated component', () => {
     }
   )
 
+  // The selections that must fail: an unknown enum value, a non-boolean boolean axis, and an undrawn base tuple even
+  // with interaction flags added (dropping flags never reaches another base). Each throws on the client and on the
+  // server, where the old runtime returned the default view.
+  it.each(components)(
+    '%s: unknown values and undrawn bases throw instead of rendering another view',
+    (name) => {
+      const exports = generated as Record<string, unknown>
+      const lower = name[0]!.toLowerCase() + name.slice(1)
+      const Component = exports[name] as ComponentType<Record<string, unknown>>
+      const views = exports[`${lower}Views`] as Record<string, unknown>
+      const cases = exports[`${lower}Cases`] as Case[]
+      const source = sources.get(name)!
+      const fn = source.slice(source.indexOf(`export const ${name} = ({`))
+      const flagProps = FLAGS.filter((flag) => new RegExp(`flags: \\{[^}]*\\b${flag}\\b`).test(fn))
+      const first = Object.fromEntries(
+        Object.entries(cases[0]!.props).filter(([key]) => !FLAGS.includes(key as never))
+      )
+      const attempts: Record<string, unknown>[] = []
+      const enumAxis = Object.keys(first).find((axis) => typeof first[axis] === 'string')
+      if (enumAxis) attempts.push({ ...first, [enumAxis]: '__not_captured__' })
+      const booleanAxis = Object.keys(first).find((axis) => typeof first[axis] === 'boolean')
+      if (booleanAxis) attempts.push({ ...first, [booleanAxis]: 'yes' })
+      const axes = Object.keys(first)
+      const domains = axes.map((axis) => [...new Set(cases.map((item) => item.props[axis]))])
+      let combos: unknown[][] = [[]]
+      for (const domain of domains)
+        combos = combos.flatMap((combo) => domain.map((value) => [...combo, value]))
+      const undrawn = combos
+        .map((combo) => Object.fromEntries(axes.map((axis, index) => [axis, combo[index]])))
+        .find((props) => {
+          const selection = {
+            values: Object.fromEntries(
+              Object.entries(props).filter(([, value]) => typeof value === 'string')
+            ) as Record<string, string>,
+            booleans: Object.fromEntries(
+              Object.entries(props).filter(([, value]) => typeof value === 'boolean')
+            ) as Record<string, boolean>,
+            flags: {}
+          }
+          return !(viewState.viewKey(selection) in views)
+        })
+      if (undrawn)
+        attempts.push({ ...undrawn, ...Object.fromEntries(flagProps.map((flag) => [flag, true])) })
+      for (const props of attempts) {
+        const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        try {
+          expect(
+            () => render(<Component {...props} />),
+            `${name} ${JSON.stringify(props)}`
+          ).toThrow(`${name} has no captured view for`)
+          expect(
+            () => renderToString(<Component {...props} />),
+            `${name} ${JSON.stringify(props)} (SSR)`
+          ).toThrow(`${name} has no captured view for`)
+        } finally {
+          log.mockRestore()
+          cleanup()
+        }
+        rows.push({
+          component: name,
+          kind: 'throw',
+          props,
+          expectedKey: '',
+          oldOutcome: 'default-fallback',
+          newOutcome: 'throw'
+        })
+      }
+      // A component with no variant axes has no value a caller could get wrong.
+      if (!attempts.length) expect(axes, name).toEqual([])
+    }
+  )
+
+  it('should throw for empty views, with or without flags', () => {
+    for (const flags of [{}, { disabled: true }])
+      expect(() => viewState.pickView({}, { values: {}, booleans: {}, flags }, 'Empty')).toThrow(
+        'Empty has no captured view for'
+      )
+  })
+
   it('should write the provenance-bound report when CENSUS_OUT is set', () => {
     const out = process.env.CENSUS_OUT
     if (!out) return
@@ -190,6 +293,7 @@ describe('selection census over every generated component', () => {
         flagExact: rows.filter((row) => row.kind === 'flags' && row.newOutcome === 'exact').length,
         flagDropped: rows.filter((row) => row.kind === 'flags' && row.newOutcome !== 'exact')
           .length,
+        throws: rows.filter((row) => row.kind === 'throw').length,
         nestedReferences: 0
       },
       rows

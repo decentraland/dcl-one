@@ -32,7 +32,7 @@ function viewKey(selection: Selection, dropped = 0): string {
 function describeSelection(selection: Selection): string {
   const axes = [
     ...Object.entries(selection.values).map(([name, value]) => `${name}=${JSON.stringify(value)}`),
-    ...Object.entries(selection.booleans).map(([name, on]) => `${name}=${Boolean(on)}`)
+    ...Object.entries(selection.booleans).map(([name, on]) => `${name}=${JSON.stringify(on)}`)
   ]
   return axes.join(', ') || 'no variant axes'
 }
@@ -47,6 +47,9 @@ function pickView<T>(
   selection: Selection,
   component = 'A generated component'
 ): T {
+  // A boolean axis is true or false; any other value (a string from an untyped caller) selects nothing drawn.
+  if (Object.values(selection.booleans).some((on) => typeof on !== 'boolean'))
+    throw new Error(`${component} has no captured view for ${describeSelection(selection)}`)
   const flagCount = FLAG_ORDER.filter((flag) => selection.flags[flag]).length
   for (let dropped = 0; dropped <= flagCount; dropped += 1) {
     const view = views[viewKey(selection, dropped)]
