@@ -195,6 +195,36 @@ describe('promoteReviewed over a hand-written component', () => {
     })
   })
 
+  describe('when the promoted component keeps its text overrides private', () => {
+    it('should promote the suppression unchanged and stay a no-op after a fresh sync and seal', async () => {
+      const { root } = await library(['TitleBar'])
+      const configFile = path.join(root, 'figma/figma.config.json')
+      const config = JSON.parse(await readFile(configFile, 'utf8'))
+      config.components = {
+        ...config.components,
+        TitleBar: { ...config.components?.TitleBar, exposeTextSlots: false }
+      }
+      await writeFile(configFile, JSON.stringify(config, null, 2))
+      const app = await createApp(path.join(root, 'figma'))
+      await runSync(app, { source: 'snapshot', developer: true })
+      await writePromotionManifest(app)
+
+      expect(await promoteReviewed(app)).toMatchObject({ components: ['TitleBar'] })
+      const promoted = await readFile(path.join(root, 'components/TitleBar/TitleBar.tsx'), 'utf8')
+      expect(promoted).toMatch(/^const titleBarSuppressedProps = \['label', /m)
+      expect(promoted).toContain('suppressed={titleBarSuppressedProps}')
+      expect(promoted).toContain('attributes={rest}')
+      expect(promoted).not.toContain('{...rest}')
+      expect(promoted).not.toMatch(/\b_label\d*\b/)
+
+      const after = await libraryState(root)
+      await runSync(app, { source: 'snapshot', developer: true })
+      await writePromotionManifest(app)
+      expect(await promoteReviewed(app)).toMatchObject({ changed: false })
+      expect(await libraryState(root)).toEqual(after)
+    }, 120_000)
+  })
+
   describe('when a hand-written component has a synced name but is not selected', () => {
     it('should keep it and its exports while promoting the selected component', async () => {
       const { root, app } = await library(['TitleBar'], 'TabsBar')
