@@ -559,3 +559,24 @@ describe('a nested generated reference (synthetic control)', () => {
     expect(() => renderToString(host(props))).toThrow('Button has no captured view for')
   })
 })
+
+// React 19 reports a key spread into JSX inside a props object; the runtime passes keys on their own.
+describe('rendering without React key warnings', () => {
+  it('should render every NavBar and Button case without a key-spread warning', () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      for (const { props } of navBarCases) {
+        const { unmount } = render(<UntypedNavBar {...props} />)
+        unmount()
+      }
+      for (const { props } of buttonCases) {
+        const { unmount } = render(<UntypedButton {...props} />)
+        unmount()
+      }
+      const messages = log.mock.calls.map((call) => call.map(String).join(' '))
+      expect(messages.filter((message) => /key/i.test(message))).toEqual([])
+    } finally {
+      log.mockRestore()
+    }
+  })
+})

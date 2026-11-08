@@ -133,8 +133,9 @@ function renderNode(
   semanticProps: SemanticProps = {},
   countLabels: Record<string, string> = {}
 ): ReactNode {
+  // The key is passed on its own: React rejects a key spread into JSX inside a props object.
+  const key = node.path || 'root'
   const common = {
-    key: node.path || 'root',
     className: `${styles.node} ${node.className}`,
     'data-n': node.path
   }
@@ -150,7 +151,7 @@ function renderNode(
         child.name === 'general/hide-ui'
     )
     return (
-      <div {...common}>
+      <div key={key} {...common}>
         {leading?.map((child) => renderNode(child, slots, interaction, semanticProps, countLabels))}
         <span key="native-field" className={styles.fieldControl}>
           {cloneElement(interaction.field.control, {
@@ -174,6 +175,7 @@ function renderNode(
   if (action)
     return (
       <button
+        key={key}
         {...common}
         className={`${common.className} ${styles.action}`}
         type="button"
@@ -187,7 +189,7 @@ function renderNode(
   if (node.semantic && node.kind === 'box')
     return renderSemantic(
       node.semantic,
-      common,
+      { key, ...common },
       node.children?.map((child) =>
         renderNode(child, slots, interaction, semanticProps, countLabels)
       ),
@@ -200,7 +202,7 @@ function renderNode(
   switch (node.kind) {
     case 'text':
       return (
-        <span {...common}>
+        <span key={key} {...common}>
           {override ??
             (node.textRuns
               ? node.textRuns.map((run, index) => (
@@ -214,7 +216,7 @@ function renderNode(
     case 'icon': {
       const Icon = node.icon ? iconComponents[node.icon.component] : undefined
       return (
-        <span {...common}>
+        <span key={key} {...common}>
           {override ??
             (Icon && node.icon ? <Icon size={node.icon.size} {...node.icon.props} /> : null)}
         </span>
@@ -222,15 +224,27 @@ function renderNode(
     }
     case 'ref': {
       const Component = node.ref ? registry.get(node.ref.component) : undefined
-      return <div {...common}>{Component ? <Component {...node.ref?.props} /> : null}</div>
+      return (
+        <div key={key} {...common}>
+          {Component ? <Component {...node.ref?.props} /> : null}
+        </div>
+      )
     }
     case 'glyph':
       return (
-        <div {...common} title={`${node.glyph?.name ?? node.name}: ${node.glyph?.reason ?? ''}`} />
+        <div
+          key={key}
+          {...common}
+          title={`${node.glyph?.name ?? node.name}: ${node.glyph?.reason ?? ''}`}
+        />
       )
     default:
       return (
-        <div {...common} role={interaction?.tabList === node.name ? 'tablist' : undefined}>
+        <div
+          key={key}
+          {...common}
+          role={interaction?.tabList === node.name ? 'tablist' : undefined}
+        >
           {node.children?.map((child) =>
             renderNode(child, slots, interaction, semanticProps, countLabels)
           )}

@@ -398,7 +398,10 @@ function containerDecls(node: RawNode, env: ViewEnv): [string, string][] {
   ]
   if (node.clipsContent) decls.push(['overflow', 'hidden'])
   if (layout.wrap) decls.push(['flex-wrap', 'wrap'])
-  if (layout.gap > 0) decls.push(['gap', lengthValue(layout.gap, env.numbers.space)])
+  // With SPACE_BETWEEN, Figma distributes the free space and ignores itemSpacing (the captured value is only the spacing
+  // at the drawn width). A CSS gap would act as a minimum and push children out of a narrower container.
+  if (layout.gap > 0 && layout.main !== 'SPACE_BETWEEN')
+    decls.push(['gap', lengthValue(layout.gap, env.numbers.space)])
   // A negative gap overlaps the children through their margins (overlapDecls); wrapped rows stay unsupported.
   else if (layout.gap < 0 && layout.wrap) env.report.notes.add('negative-gap-ignored')
   const inset = strokeLayoutInset(node, env)
