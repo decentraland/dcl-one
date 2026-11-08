@@ -30,6 +30,13 @@ use uuav::MAX_PIXELS;
 /// The smallest edge a video may have; a smaller one is refused before it reaches the device.
 const MIN_EDGE: u32 = 16;
 
+/// Whether a player's next frame waits until the conversion that read its planes has executed.
+/// `render_callback` moves each frame into the planes: on macOS the client copies on its own
+/// Metal queue and waits for the copy before returning, and on Linux the CPU planes go through
+/// the render queue, which orders them against the conversion. On Windows the client's copy
+/// runs on the D3D11 decode device, which nothing orders against the renderer's reads.
+const GATE_COPY_ON_READ: bool = cfg!(windows);
+
 /// The player table the main world maintains ([`super::UuavRuntime`]), read here.
 #[derive(Resource)]
 struct UuavRenderShared(Arc<Shared>);
@@ -241,6 +248,8 @@ struct Planes {
     uv: usize,
     width: u32,
     height: u32,
+    /// Uploaded into on Linux; elsewhere the bind group's views are all that read them.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     textures: PlaneTextures,
     bind_group: wgpu::BindGroup,
     /// The client's frame count at the last upload; `None` before the first.
@@ -248,7 +257,7 @@ struct Planes {
     /// The target texture the last conversion drew into: a new one needs the frame again.
     drawn_into: Option<TextureId>,
     /// Whether the last conversion submitted has executed; set by the queue's completion
-    /// callback. Read before the next copy when [`platform::GATE_COPY_ON_READ`].
+    /// callback. Read before the next copy when [`GATE_COPY_ON_READ`].
     read_done: Arc<AtomicBool>,
 }
 
@@ -313,9 +322,6 @@ fn present_uuav_frames(
     let Some(mut pipeline) = pipeline else {
         return;
     };
-    if !platform::PRESENTS_FRAMES {
-        return;
-    }
     // A capture holds the frame it was requested on until it is read back.
     if snapshot.is_some_and(|snapshot| snapshot.0) {
         return;
@@ -333,7 +339,7 @@ fn present_uuav_frames(
     let device = render_device.wgpu_device();
     let max_dimension = render_device.limits().max_texture_dimension_2d;
     let render_callback = uuav::uuav_get_render_callback();
-    if platform::GATE_COPY_ON_READ {
+    if GATE_COPY_ON_READ {
         // runs the completion callbacks of the conversions that have executed since
         device.poll(wgpu::Maintain::Poll);
     }
@@ -345,7 +351,7 @@ fn present_uuav_frames(
         let Ok(event_id) = i32::try_from(id) else {
             continue;
         };
-        if platform::GATE_COPY_ON_READ
+        if GATE_COPY_ON_READ
             && planes
                 .0
                 .get(&id)
@@ -438,14 +444,21 @@ fn present_uuav_frames(
             continue;
         }
         if planes.frames != Some(presented.frames) {
-            if !platform::upload(
+            #[cfg(target_os = "linux")]
+            let in_planes = platform::upload(
                 &render_queue,
                 &planes.textures,
                 presented.y,
                 presented.uv,
                 presented.width,
                 presented.height,
-            ) {
+            );
+            #[cfg(windows)]
+            let in_planes = platform::wait_for_client_copy();
+            // the planes are the client's textures, filled by `render_callback`
+            #[cfg(target_os = "macos")]
+            let in_planes = true;
+            if !in_planes {
                 // the frame is not in the planes yet; it is tried again next poll
                 continue;
             }
@@ -476,7 +489,7 @@ fn present_uuav_frames(
             pass.draw(0..3, 0..1);
         }
         render_queue.submit(std::iter::once(encoder.finish()));
-        if platform::GATE_COPY_ON_READ {
+        if GATE_COPY_ON_READ {
             planes.read_done.store(false, Ordering::Release);
             let read_done = planes.read_done.clone();
             render_queue.on_submitted_work_done(move || read_done.store(true, Ordering::Release));

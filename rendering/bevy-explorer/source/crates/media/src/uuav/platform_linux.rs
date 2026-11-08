@@ -9,17 +9,10 @@ use bevy::render::{
         Extent3d, TexelCopyBufferLayout, TexelCopyTextureInfo, TextureAspect, TextureDescriptor,
         TextureDimension, TextureFormat, TextureUsages,
     },
-    renderer::{RenderAdapter, RenderDevice, RenderQueue},
+    renderer::{RenderDevice, RenderQueue},
 };
 
 use super::render::PlaneTextures;
-
-/// Frames are presented on this platform.
-pub const PRESENTS_FRAMES: bool = true;
-
-/// The upload copies the CPU planes through the queue, which orders it against the reads
-/// itself.
-pub const GATE_COPY_ON_READ: bool = false;
 
 /// Nothing is derived from a host GPU object on Linux; the client accepts a null probe.
 pub struct Probe;
@@ -28,10 +21,6 @@ impl Probe {
     pub fn ptr(&self) -> *const c_void {
         std::ptr::null()
     }
-}
-
-pub fn probe(_device: &RenderDevice, _adapter: &RenderAdapter) -> Result<Probe, String> {
-    Ok(Probe)
 }
 
 pub fn make_planes(
@@ -67,9 +56,11 @@ fn create(device: &RenderDevice, format: TextureFormat, width: u32, height: u32)
     })
 }
 
-/// Copies the client's planes into the textures; `width` and `height` are the planes' own size,
+/// Copies the client's CPU planes into the textures through the render queue, which orders the
+/// copy before the conversion that samples them. `width` and `height` are the planes' own size,
 /// read together with the pointers. Both planes are `width` bytes per row: the CbCr plane is
-/// half as wide with two bytes per texel. Always `true`: the copy is queued.
+/// half as wide with two bytes per texel. `false` for a null plane or textures of another
+/// layout.
 pub fn upload(
     queue: &RenderQueue,
     planes: &PlaneTextures,

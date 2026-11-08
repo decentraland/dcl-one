@@ -27,12 +27,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(windows)]
+use bevy::render::renderer::RenderAdapter;
 use bevy::{
     prelude::*,
-    render::{
-        RenderApp,
-        renderer::{RenderAdapter, RenderDevice},
-    },
+    render::{RenderApp, renderer::RenderDevice},
 };
 use common::{structs::AudioDecoderError, util::watch_send_if_modified};
 use dcl_component::proto_components::sdk::components::VideoState;
@@ -63,7 +62,7 @@ const INIT_RETRY_DELAYS: [Duration; 4] = [
     Duration::from_secs(30),
 ];
 /// How often a playing player's clock goes to the scene while no frame is presented (no target
-/// image yet, or a platform without frames).
+/// image yet).
 const CLOCK_INTERVAL: Duration = Duration::from_millis(250);
 
 pub struct UuavPlugin;
@@ -254,17 +253,35 @@ impl UuavRuntime {
 
     /// Starts the helper once a render device is there to derive the decode device from, and
     /// picks up the answer on a later frame.
-    fn initialize(&mut self, device: Option<&RenderDevice>, adapter: Option<&RenderAdapter>) {
+    fn initialize(
+        &mut self,
+        device: Option<&RenderDevice>,
+        #[cfg(windows)] adapter: Option<&RenderAdapter>,
+    ) {
         match &mut self.runtime {
             Runtime::Pending { attempts } => {
                 if uuav::uuav_status().initialized {
                     self.runtime = Runtime::Ready;
                     return;
                 }
+                // both are `None` until the renderer is up: Bevy inserts the device and the
+                // adapter together, once the GPU is chosen
+                #[cfg(not(windows))]
+                let Some(device) = device else {
+                    return;
+                };
+                #[cfg(windows)]
                 let (Some(device), Some(adapter)) = (device, adapter) else {
                     return;
                 };
-                let probe = match platform::probe(device, adapter) {
+                #[cfg(target_os = "macos")]
+                let probe = platform::Probe::new(device);
+                // the client takes a null probe on Linux: nothing to fail
+                #[cfg(target_os = "linux")]
+                let probe = Ok::<_, &str>(platform::Probe);
+                #[cfg(windows)]
+                let probe = platform::Probe::new(device, adapter);
+                let probe = match probe {
                     Ok(probe) => probe,
                     Err(e) => {
                         *attempts += 1;
@@ -635,9 +652,13 @@ fn send(video: Option<&mpsc::Sender<VideoData>>, data: VideoData) -> bool {
 fn serve_uuav_players(
     mut runtime: ResMut<UuavRuntime>,
     device: Option<Res<RenderDevice>>,
-    adapter: Option<Res<RenderAdapter>>,
+    #[cfg(windows)] adapter: Option<Res<RenderAdapter>>,
 ) {
-    runtime.initialize(device.as_deref(), adapter.as_deref());
+    runtime.initialize(
+        device.as_deref(),
+        #[cfg(windows)]
+        adapter.as_deref(),
+    );
 
     let new_sources = std::mem::take(&mut *lock(&NEW_SOURCES));
     for source in new_sources {
