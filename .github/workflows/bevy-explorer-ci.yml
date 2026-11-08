@@ -270,6 +270,8 @@ jobs:
         env:
           RUSTC_WRAPPER: ${{ runner.os == 'Windows' && 'sccache' || '' }}
         run: |
+          # Experiment: the workspace crates without optimization on macOS (dependencies keep opt-level 3).
+          [ "$RUNNER_OS" != macOS ] || export CARGO_PROFILE_CI_TEST_OPT_LEVEL=0
           # Reports belong to this run, including when an older target was restored.
           rm -rf target/cargo-timings
           # The dcl_deno_ipc integration test makes Cargo build the sidecar in this invocation.
