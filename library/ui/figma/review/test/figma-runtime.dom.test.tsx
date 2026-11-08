@@ -2,7 +2,7 @@ import { cleanup, render } from '@testing-library/react'
 import type { ComponentType, ReactElement } from 'react'
 import { renderToString } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { UNCAPTURED_SELECTION, pickView } from '../src/components/figma-view-state'
+import { pickView } from '../src/components/figma-view-state'
 import { Button } from '../src/generated/components/buttons/Button'
 import { NavBar, navBarCases } from '../src/generated/components/nav-bar/NavBar'
 
@@ -26,10 +26,6 @@ function renderError(element: ReactElement): unknown {
 }
 
 describe('the generated runtime', () => {
-  it('should fail closed by default for an uncaptured selection', () => {
-    expect(UNCAPTURED_SELECTION).toBe('throw')
-  })
-
   describe('when an untyped caller selects a NavBar combination Figma never drew', () => {
     it('should throw an error naming the component and every axis value', () => {
       expect(String(renderError(<UntypedNavBar balances="credits" />))).toContain(
@@ -86,6 +82,45 @@ describe('the generated runtime', () => {
       expect(container.innerHTML).not.toContain('Explore')
       expect(container.innerHTML).not.toContain('Hidden')
     })
+
+    it('should still drop them when the caller also passes an empty or undefined suppression list', () => {
+      for (const suppressedProps of [[], undefined]) {
+        for (const suppressed of [[], undefined]) {
+          const { container, unmount } = render(
+            <UntypedNavBar
+              label="Explore"
+              label8="Hidden"
+              suppressedProps={suppressedProps}
+              suppressed={suppressed}
+            />
+          )
+          const root = container.firstElementChild!
+          expect(root.hasAttribute('label')).toBe(false)
+          expect(root.hasAttribute('label8')).toBe(false)
+          expect(container.innerHTML).not.toContain('Explore')
+          expect(container.innerHTML).not.toContain('Hidden')
+          unmount()
+        }
+      }
+    })
+  })
+
+  describe('when an untyped caller passes props named like the runtime configuration', () => {
+    it('should keep the generated views, component name and selection', () => {
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      try {
+        const { container } = render(
+          <UntypedNavBar views={{}} component="Other" select={{}} attributes={{ id: 'x' }} />
+        )
+        expect(container.querySelector('nav')).not.toBeNull()
+        expect(container.innerHTML).toContain('Sign In')
+      } finally {
+        log.mockRestore()
+      }
+      expect(String(renderError(<UntypedNavBar component="Other" balances="credits" />))).toContain(
+        'NavBar has no captured view'
+      )
+    })
   })
 })
 
@@ -94,24 +129,18 @@ describe('pickView', () => {
   const select = (size: string, flags = {}) => ({ values: { size }, booleans: {}, flags })
 
   it('should drop interaction flags before deciding a selection is uncaptured', () => {
-    expect(
-      pickView(views, 'size:md', select('md', { selected: true, disabled: true }), 'Chip')
-    ).toBe('md selected')
+    expect(pickView(views, select('md', { selected: true, disabled: true }), 'Chip')).toBe(
+      'md selected'
+    )
   })
 
-  it('should throw for an uncaptured axis value under the throw policy', () => {
-    expect(() => pickView(views, 'size:md', select('xl'), 'Chip', 'throw')).toThrow(
+  it('should throw for an uncaptured axis value instead of returning another view', () => {
+    expect(() => pickView(views, select('xl'), 'Chip')).toThrow(
       'Chip has no captured view for size="xl"'
     )
   })
 
-  it('should return the default view only under the default policy', () => {
-    expect(pickView(views, 'size:md', select('xl'), 'Chip', 'default')).toBe('md')
-  })
-
-  it('should still refuse a component with no views under the default policy', () => {
-    expect(() => pickView({}, 'size:md', select('xl'), 'Chip', 'default')).toThrow(
-      'A generated component must have at least one view'
-    )
+  it('should throw for a component with no views', () => {
+    expect(() => pickView({}, select('md'), 'Chip')).toThrow('Chip has no captured view')
   })
 })

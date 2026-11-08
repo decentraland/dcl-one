@@ -238,7 +238,6 @@ export const ProfilePic = ({
   <FigmaView
     as='div'
     views={profilePicViews}
-    defaultKey='size:72'
     component='ProfilePic'
     select={{
       values: { size },
@@ -247,7 +246,7 @@ export const ProfilePic = ({
     }}
     slots={{}}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

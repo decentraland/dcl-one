@@ -152,7 +152,6 @@ export const NavMenuTabMobile = ({
   <FigmaView
     as='div'
     views={navMenuTabMobileViews}
-    defaultKey='state:default'
     component='NavMenuTabMobile'
     select={{
       values: { state },
@@ -161,7 +160,7 @@ export const NavMenuTabMobile = ({
     }}
     slots={{ label, label2, label3, label4 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

@@ -137,13 +137,20 @@ describe('generated public component contracts', () => {
       expect(source).toContain('slots={{}}')
     })
 
-    it('should hand every suppressed text prop to the runtime to drop, binding none of them', () => {
+    it('should hand every suppressed text prop to the runtime as a module constant, binding none of them', () => {
       const omitted = spec.slots.filter((slot) => slot.kind === 'text').map((slot) => slot.name)
       expect(omitted.length).toBeGreaterThan(1)
       expect(source).toContain(
-        `suppressedProps={[${omitted.map((name) => `'${name}'`).join(', ')}]}`
+        `const navBarSuppressedProps = [${omitted.map((name) => `'${name}'`).join(', ')}]`
       )
+      expect(source).toContain('suppressed={navBarSuppressedProps}')
       expect(source).not.toMatch(/\b_label\d*\b/)
+    })
+
+    it('should pass the caller props as data instead of spreading them over the generated configuration', () => {
+      expect(source).toContain('attributes={rest}')
+      expect(source).not.toContain('{...rest}')
+      expect(source).not.toContain('suppressedProps=')
     })
 
     it('should pass the library lint once promoted', async () => {
@@ -186,7 +193,9 @@ describe('generated public component contracts', () => {
     })
 
     it('should suppress nothing when every text override is public', () => {
-      expect(sourceFor(spec)).not.toContain('suppressedProps')
+      const source = sourceFor(spec)
+      expect(source).not.toContain('SuppressedProps')
+      expect(source).not.toContain('suppressed=')
     })
 
     it('should preserve text overrides if the setting is omitted', () => {
@@ -230,7 +239,7 @@ describe('when a JavaScript caller supplies suppressed text slots', () => {
   it('should type each as never and list it for the runtime to drop', async () => {
     const spec = await navbarSpec()
     const source = sourceFor(spec)
-    const suppressed = /suppressedProps=\{\[([^\]]*)\]\}/.exec(source)?.[1] ?? ''
+    const suppressed = /const navBarSuppressedProps = \[([^\]]*)\]/.exec(source)?.[1] ?? ''
     for (const slot of spec.slots.filter((item) => item.kind === 'text')) {
       expect(suppressed).toContain(`'${slot.name}'`)
       expect(source).toContain(`${slot.name}?: never`)

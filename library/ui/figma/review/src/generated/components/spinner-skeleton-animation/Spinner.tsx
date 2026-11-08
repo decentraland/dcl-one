@@ -194,7 +194,6 @@ export const Spinner = ({
   <FigmaView
     as='div'
     views={spinnerViews}
-    defaultKey='variant:dark|step:1'
     component='Spinner'
     select={{
       values: { variant, step },
@@ -203,7 +202,7 @@ export const Spinner = ({
     }}
     slots={{}}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

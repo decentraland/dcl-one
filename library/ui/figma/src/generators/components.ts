@@ -386,13 +386,19 @@ function emitComponent(
     cases.join(',\n'),
     ']',
     '',
+    // Text overrides the type forbids. They are a module constant, not a prop, so no caller can replace the list.
+    ...(omittedTextSlots.length
+      ? [
+          `const ${varName}SuppressedProps = [${omittedTextSlots.map((slot) => quote(slot.name)).join(', ')}]`,
+          ''
+        ]
+      : []),
     `export const ${spec.name} = ({`,
     `  ${destructure.join(',\n  ')}`,
     `}: ${spec.name}Props) => (`,
     '  <FigmaView',
     `    as=${quote(spec.tag)}`,
     `    views={${varName}Views}`,
-    `    defaultKey=${quote(spec.defaultKey)}`,
     `    component=${quote(spec.name)}`,
     '    select={{',
     `      ${selection}`,
@@ -401,11 +407,9 @@ function emitComponent(
     ...(semanticNames.length ? [`    semanticProps={{ ${semanticNames.join(', ')} }}`] : []),
     '    forceState={forceState}',
     ...(disabled ? ['    disabled={disabled}'] : []),
-    // Text overrides the type forbids stay in rest for untyped callers; the runtime drops them before the DOM.
-    ...(omittedTextSlots.length
-      ? [`    suppressedProps={[${omittedTextSlots.map((slot) => quote(slot.name)).join(', ')}]}`]
-      : []),
-    '    {...rest}',
+    // The caller's props go in as data, never spread over the generated configuration above.
+    '    attributes={rest}',
+    ...(omittedTextSlots.length ? [`    suppressed={${varName}SuppressedProps}`] : []),
     '  />',
     ')',
     '',

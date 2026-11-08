@@ -112,7 +112,6 @@ export const ProgressBar = ({
   <FigmaView
     as='div'
     views={progressBarViews}
-    defaultKey='status:03'
     component='ProgressBar'
     select={{
       values: { status },
@@ -121,7 +120,7 @@ export const ProgressBar = ({
     }}
     slots={{ label }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

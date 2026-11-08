@@ -476,7 +476,6 @@ export const InputExplorerNames = ({
   <FigmaView
     as='div'
     views={inputExplorerNamesViews}
-    defaultKey='variant:empty'
     component='InputExplorerNames'
     select={{
       values: { variant },
@@ -485,7 +484,7 @@ export const InputExplorerNames = ({
     }}
     slots={{ label, label2, label3, label4 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

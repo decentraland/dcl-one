@@ -112,7 +112,6 @@ export const Tabs = ({
   <FigmaView
     as='button'
     views={tabsViews}
-    defaultKey='device:mobile'
     component='Tabs'
     select={{
       values: { device },
@@ -121,7 +120,7 @@ export const Tabs = ({
     }}
     slots={{ label }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

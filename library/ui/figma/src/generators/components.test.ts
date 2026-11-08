@@ -18,7 +18,9 @@ describe('generateComponents', () => {
       const source = await fileContent('components/buttons/Button.tsx')
 
       expect(source).toContain("variant?: 'primary' | 'secondary' | 'quaternary' | 'tertiary'")
-      expect(source).toContain("defaultKey='variant:primary'")
+      expect(source).toContain("variant = 'primary'")
+      expect(source).toContain('attributes={rest}')
+      expect(source).not.toContain('{...rest}')
       expect(source).toContain("registerComponent('Button', Button)")
       expect(source).toContain("import styles from './Button.module.css'")
       expect(source).toContain('figma-module-runtime')

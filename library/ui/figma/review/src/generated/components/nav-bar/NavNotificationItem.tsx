@@ -130,7 +130,6 @@ export const NavNotificationItem = ({
   <FigmaView
     as='button'
     views={navNotificationItemViews}
-    defaultKey='state:unread'
     component='NavNotificationItem'
     select={{
       values: { state },
@@ -139,7 +138,7 @@ export const NavNotificationItem = ({
     }}
     slots={{ label, label2, label3 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

@@ -1467,7 +1467,6 @@ export const TabsBar = ({
   <FigmaView
     as='div'
     views={tabsBarViews}
-    defaultKey='page:create|viewport:desktop'
     component='TabsBar'
     select={{
       values: { page, viewport },
@@ -1476,7 +1475,7 @@ export const TabsBar = ({
     }}
     slots={{ label, label2, label3, label4, label5, label6, label7, label8 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

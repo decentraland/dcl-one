@@ -49,7 +49,6 @@ export const NavMenuItem = ({
   <FigmaView
     as='button'
     views={navMenuItemViews}
-    defaultKey='default'
     component='NavMenuItem'
     select={{
       values: {  },
@@ -58,7 +57,7 @@ export const NavMenuItem = ({
     }}
     slots={{ label }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

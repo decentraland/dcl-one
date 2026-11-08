@@ -114,7 +114,6 @@ export const Events = ({
   <FigmaView
     as='div'
     views={eventsViews}
-    defaultKey='default'
     component='Events'
     select={{
       values: {  },
@@ -123,7 +122,7 @@ export const Events = ({
     }}
     slots={{ label, label2 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

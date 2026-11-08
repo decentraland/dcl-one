@@ -2315,6 +2315,8 @@ export const navBarCases: MatrixCase[] = [
   { key: 'viewport:desktop|balances:credits|theme:dark|signedIn', props: {"viewport":"desktop","balances":"credits","theme":"dark","signedIn":true}, states: ["base"] }
 ]
 
+const navBarSuppressedProps = ['label', 'label2', 'label3', 'label4', 'label5', 'label6', 'label7', 'label8']
+
 export const NavBar = ({
   viewport = 'largeDesktop',
   signedIn = false,
@@ -2335,7 +2337,6 @@ export const NavBar = ({
   <FigmaView
     as='div'
     views={navBarViews}
-    defaultKey='viewport:largeDesktop|balances:none|theme:dark'
     component='NavBar'
     select={{
       values: { viewport, balances, theme },
@@ -2345,8 +2346,8 @@ export const NavBar = ({
     slots={{}}
     semanticProps={{ label2Href, label3Href, label4Href, labelHref, logoHref, onMenu, onNotifications, onProfile, onSignIn }}
     forceState={forceState}
-    suppressedProps={['label', 'label2', 'label3', 'label4', 'label5', 'label6', 'label7', 'label8']}
-    {...rest}
+    attributes={rest}
+    suppressed={navBarSuppressedProps}
   />
 )
 

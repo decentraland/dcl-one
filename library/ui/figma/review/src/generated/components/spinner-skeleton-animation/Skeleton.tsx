@@ -54,7 +54,6 @@ export const Skeleton = ({
   <FigmaView
     as='div'
     views={skeletonViews}
-    defaultKey='phase:start'
     component='Skeleton'
     select={{
       values: { phase },
@@ -63,7 +62,7 @@ export const Skeleton = ({
     }}
     slots={{}}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

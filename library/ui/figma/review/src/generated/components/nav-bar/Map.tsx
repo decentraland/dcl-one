@@ -80,7 +80,6 @@ export const Map = ({
   <FigmaView
     as='div'
     views={mapViews}
-    defaultKey='default'
     component='Map'
     select={{
       values: {  },
@@ -89,7 +88,7 @@ export const Map = ({
     }}
     slots={{ label }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

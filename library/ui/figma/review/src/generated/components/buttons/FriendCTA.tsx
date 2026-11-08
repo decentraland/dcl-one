@@ -494,7 +494,6 @@ export const FriendCTA = ({
   <FigmaView
     as='button'
     views={friendCTAViews}
-    defaultKey='variant:friend|viewport:desktop'
     component='FriendCTA'
     select={{
       values: { variant, viewport },
@@ -503,7 +502,7 @@ export const FriendCTA = ({
     }}
     slots={{ label }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

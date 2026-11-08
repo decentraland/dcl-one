@@ -2674,7 +2674,6 @@ export const Button = ({
   <FigmaView
     as='button'
     views={buttonViews}
-    defaultKey='variant:primary|size:xl|viewport:desktop'
     component='Button'
     select={{
       values: { variant, size, viewport },
@@ -2684,7 +2683,7 @@ export const Button = ({
     slots={{ label }}
     forceState={forceState}
     disabled={disabled}
-    {...rest}
+    attributes={rest}
   />
 )
 

@@ -80,7 +80,6 @@ export const Market = ({
   <FigmaView
     as='div'
     views={marketViews}
-    defaultKey='default'
     component='Market'
     select={{
       values: {  },
@@ -89,7 +88,7 @@ export const Market = ({
     }}
     slots={{ label }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

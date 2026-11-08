@@ -616,7 +616,6 @@ export const JumpInCTA = ({
   <FigmaView
     as='button'
     views={jumpInCTAViews}
-    defaultKey='size:xl|viewport:desktop'
     component='JumpInCTA'
     select={{
       values: { size, viewport },
@@ -626,7 +625,7 @@ export const JumpInCTA = ({
     slots={{ label }}
     forceState={forceState}
     disabled={disabled}
-    {...rest}
+    attributes={rest}
   />
 )
 

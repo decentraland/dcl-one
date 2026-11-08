@@ -357,7 +357,6 @@ export const NavBarExplorer = ({
   <FigmaView
     as='div'
     views={navBarExplorerViews}
-    defaultKey='default'
     component='NavBarExplorer'
     select={{
       values: {  },
@@ -366,7 +365,7 @@ export const NavBarExplorer = ({
     }}
     slots={{ label, label2, label3, label4, label5, label6, label7, label8, label9, label10, label11 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

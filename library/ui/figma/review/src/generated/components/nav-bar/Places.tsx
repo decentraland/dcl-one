@@ -80,7 +80,6 @@ export const Places = ({
   <FigmaView
     as='div'
     views={placesViews}
-    defaultKey='default'
     component='Places'
     select={{
       values: {  },
@@ -89,7 +88,7 @@ export const Places = ({
     }}
     slots={{ label }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

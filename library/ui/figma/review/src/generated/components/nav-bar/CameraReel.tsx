@@ -87,7 +87,6 @@ export const CameraReel = ({
   <FigmaView
     as='div'
     views={cameraReelViews}
-    defaultKey='default'
     component='CameraReel'
     select={{
       values: {  },
@@ -96,7 +95,7 @@ export const CameraReel = ({
     }}
     slots={{ label }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

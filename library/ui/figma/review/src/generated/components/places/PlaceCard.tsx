@@ -4766,7 +4766,6 @@ export const PlaceCard = ({
   <FigmaView
     as='button'
     views={placeCardViews}
-    defaultKey='layout:below|product:explorer|state:add|access:public|size:lg|viewport:desktop'
     component='PlaceCard'
     select={{
       values: { layout, product, state, access, size, viewport },
@@ -4775,7 +4774,7 @@ export const PlaceCard = ({
     }}
     slots={{ label, label2, label3, label4, label5, label6, label7, label8, label9 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

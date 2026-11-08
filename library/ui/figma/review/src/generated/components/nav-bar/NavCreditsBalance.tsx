@@ -106,7 +106,6 @@ export const NavCreditsBalance = ({
   <FigmaView
     as='button'
     views={navCreditsBalanceViews}
-    defaultKey='state:empty'
     component='NavCreditsBalance'
     select={{
       values: { state },
@@ -115,7 +114,7 @@ export const NavCreditsBalance = ({
     }}
     slots={{ label, label2 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

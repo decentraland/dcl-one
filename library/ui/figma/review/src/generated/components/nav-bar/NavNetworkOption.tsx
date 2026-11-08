@@ -78,7 +78,6 @@ export const NavNetworkOption = ({
   <FigmaView
     as='button'
     views={navNetworkOptionViews}
-    defaultKey='default'
     component='NavNetworkOption'
     select={{
       values: {  },
@@ -87,7 +86,7 @@ export const NavNetworkOption = ({
     }}
     slots={{ label }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

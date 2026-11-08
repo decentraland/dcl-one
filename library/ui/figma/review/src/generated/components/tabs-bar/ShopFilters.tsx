@@ -967,7 +967,6 @@ export const ShopFilters = ({
   <FigmaView
     as='div'
     views={shopFiltersViews}
-    defaultKey='status:default|type:filters'
     component='ShopFilters'
     select={{
       values: { status, type },
@@ -976,7 +975,7 @@ export const ShopFilters = ({
     }}
     slots={{ label, label2, label3, label4, label5, label6, label7, label8, label9, label10, label11, label12, label13, label14, label15, label16, label17, label18, label19, label20, label21, label22, label23 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

@@ -219,10 +219,13 @@ function renderNode(
   }
 }
 
+type Attributes = Omit<HTMLAttributes<HTMLElement>, 'children'>
+
+// Everything except `attributes` comes from the generated component. The caller's own props arrive only through
+// `attributes`, so no prop a caller passes can replace the generated configuration.
 type FigmaViewProps = {
   as?: 'button' | 'div'
   views: Record<string, ViewNode>
-  defaultKey: string
   select: Selection
   slots: Record<string, ReactNode>
   forceState?: ForcedState
@@ -231,32 +234,32 @@ type FigmaViewProps = {
   semanticProps?: SemanticProps
   // The component's name, for the error an uncaptured variant selection raises.
   component?: string
-  // Props the component's type forbids (text overrides it does not expose). An untyped caller may still pass
-  // them, so they are dropped here instead of reaching the DOM.
-  suppressedProps?: readonly string[]
-} & Omit<HTMLAttributes<HTMLElement>, 'children'>
+  // The caller's remaining props, forwarded to the root element.
+  attributes?: Attributes
+  // Props the component's type forbids (text overrides it does not expose). An untyped caller may still pass them
+  // inside `attributes`, so they are dropped before the DOM.
+  suppressed?: readonly string[]
+}
 
 function FigmaView({
   as: Tag = 'div',
   views,
-  defaultKey,
   select,
   slots,
   forceState,
   disabled,
   semanticProps = {},
-  className,
   component,
-  suppressedProps = [],
-  ...forwarded
+  attributes = {},
+  suppressed = []
 }: FigmaViewProps) {
   const interaction = useContext(FigmaInteractions)
   const trigger = useRef<HTMLButtonElement>(null)
   const surface = useRef<HTMLDivElement>(null)
-  const rest = Object.fromEntries(
-    Object.entries(forwarded).filter(([name]) => !suppressedProps.includes(name))
-  )
-  const view = pickView(views, defaultKey, select, component)
+  const { className, ...rest } = Object.fromEntries(
+    Object.entries(attributes).filter(([name]) => !suppressed.includes(name))
+  ) as Attributes
+  const view = pickView(views, select, component)
   const disclosure = interaction?.disclosure
   useEffect(() => {
     if (!disclosure?.open) return

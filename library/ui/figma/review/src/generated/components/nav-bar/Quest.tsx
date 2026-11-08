@@ -81,7 +81,6 @@ export const Quest = ({
   <FigmaView
     as='div'
     views={questViews}
-    defaultKey='default'
     component='Quest'
     select={{
       values: {  },
@@ -90,7 +89,7 @@ export const Quest = ({
     }}
     slots={{ label }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

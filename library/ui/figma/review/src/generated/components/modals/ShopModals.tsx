@@ -1431,7 +1431,6 @@ export const ShopModals = ({
   <FigmaView
     as='div'
     views={shopModalsViews}
-    defaultKey='device:desktop'
     component='ShopModals'
     select={{
       values: { device },
@@ -1440,7 +1439,7 @@ export const ShopModals = ({
     }}
     slots={{ label, label2, label3, label4, label5, label6, label7, label8, label9, label10, label11, label12, label13, label14, label15, label16, label17, label18, label19, label20, label21 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 

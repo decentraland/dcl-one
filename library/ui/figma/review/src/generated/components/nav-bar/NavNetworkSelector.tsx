@@ -434,7 +434,6 @@ export const NavNetworkSelector = ({
   <FigmaView
     as='div'
     views={navNetworkSelectorViews}
-    defaultKey='state:closed|viewport:desktop'
     component='NavNetworkSelector'
     select={{
       values: { state, viewport },
@@ -443,7 +442,7 @@ export const NavNetworkSelector = ({
     }}
     slots={{ label, label2, label3, label4, label5, label6 }}
     forceState={forceState}
-    {...rest}
+    attributes={rest}
   />
 )
 
