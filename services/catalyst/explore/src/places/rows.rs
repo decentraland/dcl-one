@@ -298,9 +298,9 @@ impl From<PlaceRow> for WorldRow {
     }
 }
 
-/// The rows `order_by=most_active` reads on `GET /api/places`
-/// (`places-repository/component.ts:78-84`): the base positions with
-/// players, or the mirrored headcount when this node has no presence snapshot.
+/// The rows that lead `order_by=most_active`: on `GET /api/places` the base
+/// positions with players (`Place/model.ts:291-303,630`); without a presence
+/// snapshot, there and on the destinations, the mirrored headcount.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum ActiveRows {
     #[default]

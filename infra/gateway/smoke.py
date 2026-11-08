@@ -161,6 +161,7 @@ def client(args):
     for alias in table["aliases"]:
         method, path, target = alias["probe"]
         hit(path, "apis", method=method, target=target)
+    hit("/events-notifier/forward", "apis", method="POST")
     hit("/place/1,2", "sites", vhost="places.example.test", target="/places/place/1,2")
     hit("/world/sample.dcl.eth", "sites", vhost="places.example.test", target="/places/world/sample.dcl.eth")
     hit("/place?position=1,2", "apis", vhost="places.example.test", target="/places/place?position=1,2")

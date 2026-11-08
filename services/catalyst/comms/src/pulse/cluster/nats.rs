@@ -11,7 +11,7 @@
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_nats::PublishErrorKind;
 use futures::StreamExt;
@@ -47,7 +47,9 @@ pub const DEFAULT_DISCOVERY_INTERVAL_MS: u64 = 10_000;
 /// Long enough that a broker restart is not hammered, short enough that a recovered one is picked
 /// up inside two clustering passes. Only ever waited on before a connection has been built at all:
 /// once one exists, reconnection is the client's own job.
-const RECONNECT_BACKOFF: Duration = Duration::from_secs(5);
+const RECONNECT_BACKOFF: Duration = Duration::from_millis(250);
+/// The backoff's cap, and how long a link holds before the backoff resets.
+const RECONNECT_CAP: Duration = Duration::from_secs(5);
 const LOOKUP_CAPACITY: usize = 128;
 
 #[derive(Debug, Clone)]
@@ -267,6 +269,7 @@ fn connect_options(
 /// a rotation into an operator-visible outage.
 async fn supervise(shared: Arc<Shared>, options: NatsFeedOptions) {
     let ever_connected = Arc::new(AtomicBool::new(false));
+    let mut delay = RECONNECT_BACKOFF;
     loop {
         match connect_options(&options, ever_connected.clone())
             .connect(&options.url)
@@ -275,11 +278,17 @@ async fn supervise(shared: Arc<Shared>, options: NatsFeedOptions) {
             Ok(client) => {
                 shared.pending.notify_one();
                 tracing::info!("cluster feed connected");
+                let connected = Instant::now();
                 tokio::select! {
                     _ = drain(&shared, &options, &client) => {}
                     _ = serve_lookups(&shared, &client) => {}
                     _ = serve_completions(&shared, &client) => {}
                     _ = serve_control_positions(&shared, &client) => {}
+                }
+                // A socket the server accepts and drops at once is a failure
+                // for the backoff: the delay resets after a link that held.
+                if connected.elapsed() >= RECONNECT_CAP {
+                    delay = RECONNECT_BACKOFF;
                 }
                 crate::pulse::metrics::nats_connected(false);
             }
@@ -288,7 +297,8 @@ async fn supervise(shared: Arc<Shared>, options: NatsFeedOptions) {
                 tracing::warn!("cluster feed connect failed");
             }
         }
-        tokio::time::sleep(RECONNECT_BACKOFF).await;
+        tokio::time::sleep(delay.mul_f64(0.5 + rand::random::<f64>() * 0.5)).await;
+        delay = delay.saturating_mul(2).min(RECONNECT_CAP);
     }
 }
 
@@ -338,7 +348,6 @@ fn snapshot_change(
             token_not_before: snapshot.token_not_before,
             assignment_version: snapshot.assignment_version,
             source_incarnation: snapshot.source_incarnation,
-            ..Default::default()
         },
     }
 }
@@ -422,16 +431,16 @@ async fn serve_lookups(shared: &Shared, client: &async_nats::Client) {
         let Some(snapshot) = shared.current.lookup(&lookup.wallet, &lookup.session) else {
             continue;
         };
-        if let Some((epoch, native)) = shared.current.registration_identity(&lookup.wallet) {
-            if !shared.control.lock().unwrap().allows_assignment(
+        if let Some((epoch, native)) = shared.current.registration_identity(&lookup.wallet)
+            && !shared.control.lock().unwrap().allows_assignment(
                 &lookup.wallet,
                 &lookup.session,
                 &snapshot.realm,
                 epoch,
                 native,
-            ) {
-                continue;
-            }
+            )
+        {
+            continue;
         }
         let payload = snapshot.encode_to_vec();
         if payload.len() > MAX_REPLY_BYTES {

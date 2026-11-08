@@ -11,7 +11,7 @@ use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, timeout, timeout_at};
 
-const RECONNECT_DELAY: Duration = Duration::from_secs(5);
+const RECONNECT_DELAY: Duration = Duration::from_millis(250);
 const PROBE_INTERVAL: Duration = Duration::from_secs(5);
 /// The message set's lookup deadline also bounds local publish submission.
 const BROKER_DEADLINE: Duration = crate::protocol::bus::REQUEST_DEADLINE;
@@ -513,6 +513,7 @@ fn options(shared: &Shared, link: &Arc<Link>) -> async_nats::ConnectOptions {
 }
 
 async fn supervise(shared: Arc<Shared>, mut rx: mpsc::Receiver<Outbound>) {
+    let mut delay = RECONNECT_DELAY;
     loop {
         let link = Arc::new(Link::default());
         *shared.link.lock().unwrap() = Some(link.clone());
@@ -524,7 +525,13 @@ async fn supervise(shared: Arc<Shared>, mut rx: mpsc::Receiver<Outbound>) {
             Ok(client) => {
                 let _ = link.client.set(client);
                 tracing::info!("NATS link socket connected; awaiting broker round trip");
+                let connected = Instant::now();
                 run(&shared, &link, &mut rx).await;
+                // A socket the broker accepts and drops at once is a failure
+                // for the backoff: the delay resets after a link that held.
+                if connected.elapsed() >= PROBE_INTERVAL {
+                    delay = RECONNECT_DELAY;
+                }
                 tracing::warn!("NATS link broker exchange ended; rebuilding");
             }
             Err(_) => tracing::warn!("NATS link broker connect failed"),
@@ -534,7 +541,8 @@ async fn supervise(shared: Arc<Shared>, mut rx: mpsc::Receiver<Outbound>) {
         while let Ok(outbound) = rx.try_recv() {
             outbound.disconnected();
         }
-        tokio::time::sleep(RECONNECT_DELAY).await;
+        tokio::time::sleep(delay.mul_f64(0.5 + rand::random::<f64>() * 0.5)).await;
+        delay = delay.saturating_mul(2).min(Duration::from_secs(5));
     }
 }
 

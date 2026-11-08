@@ -412,10 +412,10 @@ impl Presence {
         state: &CommsState,
         scope: Scope,
     ) -> Result<i64, RecoveryFailure> {
-        if !matches!(&scope, Scope::Room(_)) {
-            if let Some(count) = self.admission_count(&scope) {
-                return Ok(count);
-            }
+        if !matches!(&scope, Scope::Room(_))
+            && let Some(count) = self.admission_count(&scope)
+        {
+            return Ok(count);
         }
         let _waiter = self
             .waiters
@@ -539,14 +539,15 @@ impl Presence {
     ) {
         let presence = self.clone();
         jobs.spawn("comms-occupancy-recovery", move |ctx| async move {
+            let mut retry = Duration::from_secs(1);
             loop {
                 let result = tokio::select! {
                     _ = ctx.cancel.cancelled() => return Ok(()),
                     result = presence.recover_complete(&state) => result,
                 };
                 let delay = match result {
-                    Ok(()) => { ctx.progress("complete LiveKit occupancy observation"); Duration::from_secs(30) },
-                    Err(error) => { ctx.error(error.to_string()); Duration::from_millis(5000 + rand::random::<u64>() % 1001) },
+                    Ok(()) => { ctx.progress("complete LiveKit occupancy observation"); retry = Duration::from_secs(1); Duration::from_secs(30) },
+                    Err(error) => { ctx.error(error.to_string()); let delay = retry + Duration::from_millis(rand::random::<u64>() % 1001); retry = retry.saturating_mul(2).min(Duration::from_secs(5)); delay },
                 };
                 ctx.pass_done();
                 // Coalesced hints never cause a tight loop. A pending hint can

@@ -1357,7 +1357,6 @@ async fn a_mutation_reaches_only_the_rooms_of_the_place_it_is_authorized_on() {
             namespace: crate::world_identity::SceneNamespace::new(&realm, parcel, None),
             local: true,
         })),
-        ..StubScenes::default()
     });
     seed_place(
         &pool,
@@ -2083,14 +2082,15 @@ async fn a_community_room_lives_while_a_moderator_is_present_and_sweeps_otherwis
             .is_empty(),
         "the last moderator leaving tears the room down"
     );
-    let events = directory.community_events.lock().unwrap();
-    assert_eq!(
-        events.len(),
-        1,
-        "the ended event crosses the social seam once"
-    );
-    assert_eq!(events[0]["subType"], "community-streaming-ended");
-    drop(events);
+    {
+        let events = directory.community_events.lock().unwrap();
+        assert_eq!(
+            events.len(),
+            1,
+            "the ended event crosses the social seam once"
+        );
+        assert_eq!(events[0]["subType"], "community-streaming-ended");
+    }
 
     state
         .voice_db
@@ -2800,12 +2800,16 @@ async fn a_connect_reaches_only_a_running_island_subscriber() {
     })
     .await
     .expect("the running subscriber asks Pulse");
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    tokio::time::timeout(
+        crate::shared::test_wait::HANG_GUARD,
+        state.island_subscriber().upgrade().unwrap().settle(),
+    )
+    .await
+    .unwrap();
     assert_eq!(asked.load(Ordering::SeqCst), 1);
 
     jobs.shutdown(Duration::from_secs(5)).await;
     state.announce_session(WALLET, SESSION);
-    tokio::time::sleep(Duration::from_millis(20)).await;
     assert_eq!(asked.load(Ordering::SeqCst), 1);
     assert!(bus.published().is_empty());
 }

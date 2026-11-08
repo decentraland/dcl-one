@@ -267,6 +267,7 @@ def runtime_env(config):
         'CONTENT_HISTORY_PRUNE_ENABLED': 'false', 'WORLDS_CONTENT_MIRROR_ENABLED': 'false',
         'MARKETPLACE_MIRRORS_ENABLED': 'false', 'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED': 'false', 'MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED': 'false',
+        'MARKETPLACE_SALES_INDEX_ENABLED': 'false',
         'LAND_AUTHZ_INDEX_ENABLED': 'false', 'CREDITS_USAGE_INDEX_ENABLED': 'false',
         'SHOP_RENTALS_INDEX_ENABLED': 'false', 'PRICE_POLL_ENABLED': 'false',
         'COMMUNITIES_MIRROR_UPSTREAM': 'false', 'SCENE_HOST_ENABLED': 'false',
@@ -1081,7 +1082,10 @@ def down():
                 raise RuntimeError('Supervisor is unavailable while development ports are occupied. '
                                    'Inspect .cache/dev/supervisor.log; no processes were stopped.')
             return 0
-        pc('down', check=True)
+        # process-compose can close the connection before it answers the stop
+        # request ("failed to stop project ... EOF"); the socket and the ports
+        # say whether it stopped, not the exit code.
+        pc('down')
         deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
             if not control_socket.exists() and (config is None or ports_free(config['port'])):

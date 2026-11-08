@@ -1152,21 +1152,20 @@ impl Policy {
                 keys.push(selected.scene_id.as_str().to_owned());
             }
         }
-        if let Some(scene) = scene {
-            if let Some(retired) = crate::rooms::replaced_world_scene(&self.pool, world, scene)
+        if let Some(scene) = scene
+            && let Some(retired) = crate::rooms::replaced_world_scene(&self.pool, world, scene)
                 .await
                 .map_err(|e| AuthorityNotEstablished::UndeterminedStoreUnavailable {
                     store: "worlds.retired_world_scenes",
                     reason_for_operators: e.to_string(),
                 })?
-            {
-                keys.extend(
-                    retired
-                        .ban_keys(world)
-                        .iter()
-                        .map(|key| key.as_str().to_owned()),
-                );
-            }
+        {
+            keys.extend(
+                retired
+                    .ban_keys(world)
+                    .iter()
+                    .map(|key| key.as_str().to_owned()),
+            );
         }
         for key in keys {
             if self

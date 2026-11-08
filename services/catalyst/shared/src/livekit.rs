@@ -219,9 +219,7 @@ pub fn verify_webhook_token(
     };
     let now = now.as_secs();
     const LEEWAY: u64 = 60;
-    let Some(exp) = payload.get("exp").and_then(json_u64) else {
-        return None;
-    };
+    let exp = payload.get("exp").and_then(json_u64)?;
     if now > exp.saturating_add(LEEWAY) {
         return None;
     }
@@ -233,12 +231,8 @@ pub fn verify_webhook_token(
     if payload.get("iss").and_then(|v| v.as_str()) != Some(api_key) {
         return None;
     }
-    let Some(claim) = payload.get("sha256").and_then(|v| v.as_str()) else {
-        return None;
-    };
-    let Some(expected) = decode_body_digest(claim) else {
-        return None;
-    };
+    let claim = payload.get("sha256").and_then(|v| v.as_str())?;
+    let expected = decode_body_digest(claim)?;
     crate::auth::admin_bearer::timing_safe_eq(&expected, &Sha256::digest(body))
         .then_some(exp.saturating_add(LEEWAY))
 }

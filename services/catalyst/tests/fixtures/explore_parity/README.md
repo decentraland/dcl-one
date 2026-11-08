@@ -6,7 +6,8 @@ pinned source: `github.com/decentraland/places@e660fbc2` and
 2026-11-04) plus the `decentraland-gatsby@9.0.1` framework they run on. The
 `GET /api/places` entries derive from
 `github.com/decentraland/discovery-server@81f0dcae` instead, the service that
-serves the route in production. The
+serves the route in production, except `order_by=most_active`, which production
+answers as the places service's own route (`getPlaceMostActiveList.ts`). The
 harness `tests/explore_parity.rs` sends every entry to the explore router over a
 seeded scratch database and compares the answer. Dated production captures
 exist for the same requests, but they stay private; nothing here comes from a
@@ -53,15 +54,6 @@ The flags compare to the value `1`; `EXPLORE_PARITY_WRITE_GAPS=0` is off.
 The listed entries, each with the pinned source lines it diverges from and the
 answer the router gives:
 
-- `events.status.envelope` and `places.status.shape`: the old services mount
-  the framework's `status()` without a handler of their own
-  (`events@b60d5bbd src/server.ts:48-58`, `places@e660fbc2 src/server.ts:78`,
-  `decentraland-gatsby@9.0.1 dist/entities/Route/routes/status.js:9-26`), so
-  `data` is exactly `{image, version, timestamp}`. The router's `status`
-  handler (`explore/src/lib.rs`) answers those three keys plus `catalogue`,
-  `configured_mirrors` and `mirrors`, the node's mirror state. Whether the
-  extras stay on `/api/status` or move to `/v1/status` is open in the parity
-  ADR (`docs/adr/2026-11-05-explore-api-parity-contract.md`).
 - `events.create.image_bucket_unconfigured`: without a poster store the old
   events service answers 503 `Poster uploads are unavailable because
   AWS_BUCKET_URL is not configured` (`src/entities/Event/utils.ts:837-843`).
@@ -80,8 +72,14 @@ shared row key sets (`expected.body.item_keys`, named by other entries'
 carry `harness.skip`; any other skip is `BAD` (`SKIPPED` in
 `tests/explore_parity.rs`).
 
-Twelve entries record dcl-one's accepted answer rather than the old service's
-(`ACCEPTED_ENTRIES` in the harness). Four are where the old events service 500s, which
+Fourteen entries record dcl-one's accepted answer rather than the old service's
+(`ACCEPTED_ENTRIES` in the harness). Two are `GET /api/status`: the old services mount
+the framework's `status()` without a handler of their own (`events@b60d5bbd
+src/server.ts:48-58`, `places@e660fbc2 src/server.ts:78`, `decentraland-gatsby@9.0.1
+dist/entities/Route/routes/status.js:9-26`), so `data` is exactly `{image, version,
+timestamp}`; the router's `status` handler (`explore/src/lib.rs`) adds `catalogue`,
+`configured_mirrors` and `mirrors`, the node's mirror state (`places.status.shape`,
+`events.status.envelope`). Four are where the old events service 500s, which
 dcl-one never reproduces: `events.sitemap.events_page_negative`
 (`page=-1`), `events.get_schedule.not_uuid`,
 `events.create.missing_categories_500` (201 with `categories: []`) and

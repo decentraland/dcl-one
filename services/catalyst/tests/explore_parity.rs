@@ -2016,10 +2016,13 @@ fn is_skipped(id: &str) -> bool {
 }
 
 /// Entries whose expectation is dcl-one's accepted answer rather than the pinned
-/// upstream's (upstream 500s dcl-one never reproduces, and the stored
-/// rating code `RP` upstream's PUT schema refuses). They are checked like every
+/// upstream's (upstream 500s dcl-one never reproduces, the stored rating
+/// code `RP` upstream's PUT schema refuses, and `GET /api/status` with the
+/// node's mirror state). They are checked like every
 /// other entry but are never a known gap: a failure is a regression.
-const ACCEPTED_ENTRIES: [&str; 12] = [
+const ACCEPTED_ENTRIES: [&str; 14] = [
+    "places.status.shape",
+    "events.status.envelope",
     "events.sitemap.events_page_negative",
     "events.get_schedule.not_uuid",
     "events.create.missing_categories_500",

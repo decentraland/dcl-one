@@ -144,8 +144,10 @@ fn is_mp4(body: &[u8]) -> bool {
     };
     let brands = || {
         payload[..4]
-            .chunks_exact(4)
-            .chain(payload[8..].chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .chain(payload[8..].as_chunks::<4>().0.iter())
     };
     if brands().any(|brand| matches!(brand, b"avif" | b"avis")) {
         return false;

@@ -1,0 +1,36 @@
+diff --git a/src/c/compress.rs b/src/c/compress.rs
+index e77bddfc8..327d5609c 100644
+--- a/src/c/compress.rs
++++ b/src/c/compress.rs
+@@ -460,6 +460,9 @@ pub(crate) unsafe fn enet_range_coder_compress(
+     }
+     out_data.offset_from(out_start) as i64 as usize
+ }
++// The translated range coder fetches the final input byte into `decode_code` as the C
++// source does, after the last read of it.
++#[allow(unused_assignments)]
+ pub(crate) unsafe fn enet_range_coder_decompress(
+     context: *mut u8,
+     mut in_data: *const u8,
+diff --git a/src/host.rs b/src/host.rs
+index 10334d480..2ef0aa415 100644
+--- a/src/host.rs
++++ b/src/host.rs
+@@ -189,7 +189,7 @@ impl<S: Socket> Host<S> {
+     }
+ 
+     /// Checks for any queued events on the host and dispatches one if available.
+-    pub fn check_events(&mut self) -> Option<Event<S>> {
++    pub fn check_events(&mut self) -> Option<Event<'_, S>> {
+         unsafe {
+             let mut event: ENetEvent<S> = zeroed();
+             if enet_host_check_events(self.host, &mut event) {
+@@ -208,7 +208,7 @@ impl<S: Socket> Host<S> {
+     ///
+     /// Returns any error reported by the socket implementation during [`Socket::receive`] or
+     /// [`Socket::send`].
+-    pub fn service(&mut self) -> Result<Option<Event<S>>, S::Error> {
++    pub fn service(&mut self) -> Result<Option<Event<'_, S>>, S::Error> {
+         unsafe {
+             let mut event: ENetEvent<S> = zeroed();
+             if enet_host_service(self.host, &mut event)? {
