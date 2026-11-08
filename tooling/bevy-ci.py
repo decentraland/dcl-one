@@ -19,7 +19,7 @@ GATEWAY_HUD_INPUTS = ('apps/ui3/src/play/lib/baseDomain.ts',
                       'apps/ui3/src/play/engine/generated/serviceTable.ts')
 # The flake's bevy-tools package (protoc, taplo, wasm-pack) and the action that delivers it to the
 # Linux lanes; Windows, macOS, headless packaging and scenes run install-protoc.py instead.
-TOOLS_INPUTS = ('flake.nix', 'flake.lock', 'infra/packages/default.nix', '.github/actions/bevy-explorer-tools')
+TOOLS_INPUTS = ('flake.nix', 'flake.lock', 'infra/packages/default.nix', 'infra/packages/tools.nix', '.github/actions/bevy-explorer-tools')
 INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/bevy', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
           'infra/gateway', *GATEWAY_HUD_INPUTS, *TOOLS_INPUTS,
           'tooling/bevy-ci.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
