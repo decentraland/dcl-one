@@ -490,12 +490,12 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   // on its bid page on the Marketplace, listed or not; RESALE NAME browses the NAMEs on sale there. Only the
   // shell's simulation runs here: this page has no way yet to wear a NAME registered for real once it is
   // indexed, so a shell that says `live` still sends the buyer to the web Shop, as one that can't, or that
-  // refuses, does.
+  // refuses, does. A shell busy with another purchase (a second press, its dialog already up) sends nowhere.
   const claimName = (input: PressedWith): void => {
     const name = nameDraft
-    const rehearse = capabilities?.namesMode === 'simulation' ? purchase.buyName(name, 'simulation', input) : Promise.resolve(false)
-    void rehearse.then((opened) => {
-      if (!opened) void openWebShop(webNameUrl(name))
+    const rehearse = capabilities?.namesMode === 'simulation' ? purchase.buyName(name, 'simulation', input) : Promise.resolve('unavailable' as const)
+    void rehearse.then((opening) => {
+      if (opening === 'unavailable') void openWebShop(webNameUrl(name))
     })
   }
   const makeNameOffer = (): void => void openWebShop(webNameOfferUrl(nameDraft), 'Marketplace')

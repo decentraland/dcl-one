@@ -13,6 +13,7 @@ import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
 import { inShell, onShellMessage, shellRequest } from '../../lib/shell'
 import {
   parseOperationEvent,
+  SHOP_BUSY,
   SHOP_EVENT,
   SHOP_METHODS,
   SHOP_PROTOCOL,
@@ -74,11 +75,15 @@ export interface ShopPurchase {
   /** Opens it for several items bought together, not from the cart (an outfit's BUY); false when it couldn't. */
   buyAll(lines: ShopLine[], input?: PressedWith): Promise<boolean>
   /**
-   * Opens the shell's BUY NAME dialog for `name`, in the mode the shell's capabilities said; false when it
-   * couldn't (the shell refused, didn't answer, or predates NAMEs), for the page to offer the web Shop instead.
+   * Opens the shell's BUY NAME dialog for `name`, in the mode the shell's capabilities said. `busy` when
+   * another purchase's dialog is open (that dialog is what the buyer sees), `unavailable` when the shell
+   * refused otherwise, didn't answer, or predates NAMEs, for the page to offer the web Shop instead.
    */
-  buyName(name: string, mode: ShopNamesMode, input?: PressedWith): Promise<boolean>
+  buyName(name: string, mode: ShopNamesMode, input?: PressedWith): Promise<ShopNameOpening>
 }
+
+/** How asking the shell for BUY NAME went. */
+export type ShopNameOpening = 'opened' | 'busy' | 'unavailable'
 
 /** What the page does as a NAME's purchase ends. */
 export interface ShopNameActions {
@@ -170,15 +175,16 @@ export function useShopPurchase(onBackpack: () => void, names: ShopNameActions =
   )
   const checkout = useCallback((lines: ShopLine[], input?: PressedWith): Promise<boolean> => request(lines, true, input), [request])
   const buyAll = useCallback((lines: ShopLine[], input?: PressedWith): Promise<boolean> => request(lines, false, input), [request])
-  const buyName = useCallback(async (name: string, mode: ShopNamesMode, input?: PressedWith): Promise<boolean> => {
-    if (!inShell) return false
+  const buyName = useCallback(async (name: string, mode: ShopNamesMode, input?: PressedWith): Promise<ShopNameOpening> => {
+    if (!inShell) return 'unavailable'
     const request: ShopBuyNameRequest = { v: SHOP_PROTOCOL, name, method: 'credits', mode, ...(input ? { input } : {}) }
     try {
       versioned(await shellRequest<ShopOperation>(SHOP_METHODS.buyName, request, BUY_TIMEOUT_MS))
-      return true
+      return 'opened'
     } catch (e) {
+      if (e instanceof Error && e.message === SHOP_BUSY) return 'busy'
       console.warn('[shop] the NAME purchase could not open', e)
-      return false
+      return 'unavailable'
     }
   }, [])
   return { available: inShell, buy, checkout, buyAll, buyName }
