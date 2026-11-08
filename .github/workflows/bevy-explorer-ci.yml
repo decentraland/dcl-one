@@ -159,6 +159,7 @@ jobs:
       CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
       SCCACHE_GHA_ENABLED: 'true'
       SCCACHE_GHA_VERSION: dcl-bevy-windows-v1
+      CEF_EXPORT_VERSION: 139.8.0+139.0.40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Reserve disk space on the hosted Linux runner
@@ -207,11 +208,11 @@ jobs:
       - name: Install clang for webrtc-sys
         if: runner.os == 'Linux'
         uses: ./.github/actions/bevy-explorer-clang
-      - name: install ffmpeg deps (macOs)
-        if: runner.os == 'macos'
-        run: |
-          brew install ffmpeg@6 pkg-config;
-          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@6/lib/pkgconfig" >> "$GITHUB_ENV"
+      - name: Install ffmpeg from the flake
+        if: runner.os == 'macOS'
+        uses: ./.github/actions/bevy-explorer-tools
+        with:
+          package: bevy-ffmpeg
       - name: install ffmpeg deps (windows)
         if: runner.os == 'windows' && matrix.os != 'self-hosted-windows'
         run: |
@@ -236,11 +237,19 @@ jobs:
       - name: Install ninja (macos)
         if: runner.os == 'macos'
         run: brew install ninja
+      - name: Keep the exported CEF distribution in the Actions cache
+        id: cef
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/share/cef
+          key: bevy-cef-${{ runner.os }}-${{ runner.arch }}-${{ env.CEF_EXPORT_VERSION }}
       - name: Export CEF distribution
         shell: bash
         run: |
-          cargo install export-cef-dir --version "139.8.0+139.0.40"
-          export-cef-dir --force "$HOME/.local/share/cef"
+          if [ "${{ steps.cef.outputs.cache-hit }}" != true ]; then
+            cargo install export-cef-dir --version "$CEF_EXPORT_VERSION"
+            export-cef-dir --force "$HOME/.local/share/cef"
+          fi
           # GITHUB_ENV/GITHUB_PATH reach native processes verbatim: on windows the git-bash
           # $HOME (/c/Users/...) would resolve as C:\c\Users\... — write windows paths there.
           if [ "$RUNNER_OS" = "Windows" ]; then
@@ -258,11 +267,13 @@ jobs:
         with:
           version: v0.19.0
       - name: Test the texture decoder boundaries
-        run: cargo test --manifest-path vendor/basisu/Cargo.toml --locked --lib
+        run: cargo test --manifest-path vendor/basisu/Cargo.toml --locked --lib --target-dir target
       - name: Run the native test suite
         env:
           RUSTC_WRAPPER: ${{ runner.os == 'Windows' && 'sccache' || '' }}
         run: |
+          # macOS builds the workspace crates without optimization; the dependencies keep opt-level 3 from the cache.
+          [ "$RUNNER_OS" != macOS ] || export CARGO_PROFILE_CI_TEST_OPT_LEVEL=0
           # Reports belong to this run, including when an older target was restored.
           rm -rf target/cargo-timings
           # The dcl_deno_ipc integration test makes Cargo build the sidecar in this invocation.

@@ -531,16 +531,16 @@ class SelectionTest(unittest.TestCase):
             result = ci.select(before, self.commit())
             self.assertTrue(all(result[lane] for lane in (*ci.LANES, 'native-matrix', 'scenes')))
 
-    def test_flake_tool_changes_select_the_linux_lanes_without_the_native_matrix_or_scenes(self):
-        # The Linux lanes take protoc, taplo and wasm-pack from the flake's bevy-tools package;
-        # Windows, macOS and the graphical scenes still run install-protoc.py.
-        for path in ('flake.lock', 'flake.nix', 'infra/packages/default.nix',
+    def test_flake_tool_changes_select_the_linux_lanes_and_the_native_matrix_without_scenes(self):
+        # The Linux lanes take protoc, taplo and wasm-pack from the flake's bevy-tools package and
+        # the macOS Test Suite its ffmpeg; the graphical scenes still run install-protoc.py.
+        for path in ('flake.lock', 'flake.nix', 'infra/packages/default.nix', 'infra/packages/tools.nix',
                      '.github/actions/bevy-explorer-tools/action.yml', 'apps/bevy-explorer/install-tools.sh'):
             with self.subTest(path=path):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(path, 'changed')
                 result = ci.select(before, self.commit())
-                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes') if result[lane]}, set(ci.LANES))
+                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes') if result[lane]}, {*ci.LANES, 'native-matrix'})
         # The other package definitions feed the images, not the engine lanes.
         before = self.git('rev-parse', 'HEAD')
         self.write('infra/packages/play.nix', 'changed')
