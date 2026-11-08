@@ -15,6 +15,7 @@
       - tooling/tests/test_bevy_*.py
       - .github/workflows/bevy-explorer-*.yml
       - .github/actions/bevy-explorer-ci-status/**
+      - .github/actions/bevy-explorer-tools/**
       - flake.*
       - rendering/bevy-explorer/**
       - .github/workflows/bevy-explorer-ci.yml
@@ -46,6 +47,7 @@
       - tooling/tests/test_bevy_*.py
       - .github/workflows/bevy-explorer-*.yml
       - .github/actions/bevy-explorer-ci-status/**
+      - .github/actions/bevy-explorer-tools/**
       - flake.*
       - rendering/bevy-explorer/**
       - .github/workflows/bevy-explorer-ci.yml
@@ -178,8 +180,19 @@ jobs:
           key: bevy-explorer-native-ci-test
       - name: Restore the vendored Bevy's cached file times
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
+      - name: Install protoc from the flake
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/bevy-explorer-tools
+      - name: Keep the verified protoc archive in the Actions cache
+        if: runner.os != 'Linux'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/protoc-archive
+          key: bevy-protoc-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/bevy-explorer/install-protoc.py') }}
       - name: Install protoc
-        if: matrix.os != 'self-hosted-windows'
+        if: runner.os != 'Linux' && matrix.os != 'self-hosted-windows'
+        env:
+          PROTOC_ARCHIVE_CACHE: ${{ runner.temp }}/protoc-archive
         run: python ../../../apps/bevy-explorer/install-protoc.py
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -353,8 +366,8 @@ jobs:
           workspaces: rendering/bevy-explorer/source -> target
       - name: Restore the vendored Bevy's cached file times
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
-      - name: Install protoc
-        run: python ../../../apps/bevy-explorer/install-protoc.py
+      - name: Install protoc from the flake
+        uses: ./.github/actions/bevy-explorer-tools
       - name: Install build dependencies
         run: |
           sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py clang cmake pkg-config \
@@ -490,8 +503,8 @@ jobs:
           key: bevy-explorer-native
       - name: Restore the vendored Bevy's cached file times
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
-      - name: Install protoc
-        run: python ../../../apps/bevy-explorer/install-protoc.py
+      - name: Install protoc from the flake
+        uses: ./.github/actions/bevy-explorer-tools
       - name: Install Linux build dependencies
         run: |
           sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py \
@@ -519,9 +532,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install taplo
-        run: curl -fsSL https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-linux-x86_64.gz | gzip -d - | install
-          -m 755 /dev/stdin /usr/local/bin/taplo
+      - name: Install taplo from the flake
+        uses: ./.github/actions/bevy-explorer-tools
       - name: Run Taplo
         id: taplo
         run: taplo fmt --check --diff
@@ -613,14 +625,9 @@ jobs:
       - name: Restore the vendored Bevy's cached file times
         if: steps.engine-cache.outputs.cache-matched-key == ''
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
-      - name: Install protoc
+      - name: Install protoc and wasm-pack from the flake
         if: steps.engine-cache.outputs.cache-matched-key == ''
-        run: python ../../../apps/bevy-explorer/install-protoc.py
-      - name: Install wasm-pack
-        if: steps.engine-cache.outputs.cache-matched-key == ''
-        run: |
-          curl -fsSL https://github.com/rustwasm/wasm-pack/releases/download/v0.15.0/wasm-pack-v0.15.0-x86_64-unknown-linux-musl.tar.gz \
-            | tar -xz --strip-components=1 -C "$HOME/.cargo/bin" wasm-pack-v0.15.0-x86_64-unknown-linux-musl/wasm-pack
+        uses: ./.github/actions/bevy-explorer-tools
       - name: Install Linux build dependencies
         if: steps.engine-cache.outputs.cache-matched-key == ''
         run: sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py libasound2-dev libudev-dev clang
