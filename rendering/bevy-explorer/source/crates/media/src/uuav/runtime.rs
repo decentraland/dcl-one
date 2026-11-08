@@ -117,16 +117,20 @@ impl HelperRuntime {
                 // the client takes a null probe on Linux: nothing to fail
                 #[cfg(target_os = "linux")]
                 let probe = Ok::<_, &str>(platform::Probe);
+                // a renderer the decode device cannot serve does not change between frames, so
+                // the runtime starts at once on an audio-only probe
                 #[cfg(windows)]
-                let probe = platform::Probe::new(device, adapter);
-                let probe = match probe {
-                    #[cfg(not(windows))]
-                    Ok(probe) => probe,
-                    #[cfg(windows)]
-                    Ok((probe, decode_device)) => {
+                let probe = platform::Probe::new(device, adapter)
+                    .map(|(probe, decode_device)| {
                         link.send_decode_device(decode_device);
                         probe
-                    }
+                    })
+                    .or_else(|e| {
+                        warn!("uuav: video frames will not be shown, audio still plays: {e}");
+                        platform::Probe::audio_only()
+                    });
+                let probe = match probe {
+                    Ok(probe) => probe,
                     Err(e) => {
                         *attempts += 1;
                         if *attempts >= INIT_ATTEMPTS {

@@ -7,6 +7,7 @@ use std::{
         windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle},
     },
     sync::Once,
+    time::{Duration, Instant},
 };
 
 use bevy::{
@@ -17,7 +18,7 @@ use windows::{
     Win32::{
         Foundation::{HANDLE, WAIT_FAILED},
         Graphics::{
-            Direct3D::D3D_DRIVER_TYPE_UNKNOWN,
+            Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_UNKNOWN},
             Direct3D11::{
                 D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_FLAG, D3D11_FENCE_FLAG_NONE,
                 D3D11_RESOURCE_MISC_SHARED, D3D11_RESOURCE_MISC_SHARED_NTHANDLE, D3D11_SDK_VERSION,
@@ -121,26 +122,10 @@ impl Probe {
         // SAFETY: the event was just created and nothing else owns it
         let event = unsafe { OwnedHandle::from_raw_handle(event.0) };
 
-        let desc = D3D11_TEXTURE2D_DESC {
-            Width: 1,
-            Height: 1,
-            MipLevels: 1,
-            ArraySize: 1,
-            Format: DXGI_FORMAT_R8G8B8A8_UNORM,
-            SampleDesc: DXGI_SAMPLE_DESC {
-                Count: 1,
-                Quality: 0,
-            },
-            Usage: D3D11_USAGE_DEFAULT,
-            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
-            CPUAccessFlags: 0,
-            MiscFlags: (D3D11_RESOURCE_MISC_SHARED.0 | D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0)
-                as u32,
-        };
-        let mut texture: Option<ID3D11Texture2D> = None;
-        unsafe { d3d11.CreateTexture2D(&desc, None, Some(&mut texture)) }
-            .map_err(InteropError::caused("probe CreateTexture2D failed"))?;
-        let texture = texture.ok_or("CreateTexture2D returned no texture")?;
+        let texture = probe_texture(
+            &d3d11,
+            (D3D11_RESOURCE_MISC_SHARED.0 | D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0) as u32,
+        )?;
 
         let decode_device = DecodeDevice {
             _device: d3d11,
@@ -153,9 +138,56 @@ impl Probe {
         Ok((Self { texture }, decode_device))
     }
 
+    /// A probe on a D3D11 device of the default adapter, for a renderer [`Probe::new`] cannot
+    /// serve. The client then plays audio; its presentation textures are not shared, so no
+    /// frame reaches the renderer.
+    pub fn audio_only() -> Result<Self, InteropError> {
+        let mut d3d11: Option<ID3D11Device> = None;
+        unsafe {
+            D3D11CreateDevice(
+                None,
+                D3D_DRIVER_TYPE_HARDWARE,
+                None,
+                D3D11_CREATE_DEVICE_FLAG(0),
+                None,
+                D3D11_SDK_VERSION,
+                Some(&mut d3d11),
+                None,
+                None,
+            )
+        }
+        .map_err(InteropError::caused("D3D11CreateDevice failed"))?;
+        let d3d11 = d3d11.ok_or("D3D11CreateDevice returned no device")?;
+        let texture = probe_texture(&d3d11, 0)?;
+        Ok(Self { texture })
+    }
+
     pub fn ptr(&self) -> *const c_void {
         self.texture.as_raw().cast_const()
     }
+}
+
+/// A 1x1 texture on `device` with these `D3D11_RESOURCE_MISC_*` flags.
+fn probe_texture(device: &ID3D11Device, misc_flags: u32) -> Result<ID3D11Texture2D, InteropError> {
+    let desc = D3D11_TEXTURE2D_DESC {
+        Width: 1,
+        Height: 1,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
+        Usage: D3D11_USAGE_DEFAULT,
+        BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: misc_flags,
+    };
+    let mut texture: Option<ID3D11Texture2D> = None;
+    unsafe { device.CreateTexture2D(&desc, None, Some(&mut texture)) }
+        .map_err(InteropError::caused("probe CreateTexture2D failed"))?;
+    Ok(texture.ok_or("CreateTexture2D returned no texture")?)
 }
 
 /// The renderer's API and its adapter's LUID.
@@ -252,6 +284,7 @@ impl DecodeDevice {
     /// The wait is on the CPU because wgpu 24 offers no way to make the renderer's queue wait on
     /// this fence; a GPU-side wait (`ID3D12CommandQueue::Wait` on DX12) would replace it (#438).
     pub fn wait_for_client_copy(&mut self) -> bool {
+        let deadline = Instant::now() + Duration::from_millis(COPY_WAIT_MS.into());
         self.value += 1;
         let value = self.value;
         unsafe {
@@ -260,35 +293,48 @@ impl DecodeDevice {
                 return false;
             }
             self.context.Flush();
-            if self.copy_done(value) {
-                return true;
-            }
             let event = HANDLE(self.event.as_raw_handle());
-            if let Err(e) = self.fence.SetEventOnCompletion(value, event) {
-                warn!("uuav: fence wait failed: {e}");
-                return false;
-            }
-            if WaitForSingleObject(event, COPY_WAIT_MS) == WAIT_FAILED {
-                warn!(
-                    "uuav: fence wait failed: {}",
-                    windows::core::Error::from_win32()
-                );
+            let mut registered = false;
+            loop {
+                match self.completed() {
+                    Some(completed) if completed >= value => return true,
+                    Some(_) => {}
+                    None => return false,
+                }
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    return false;
+                }
+                if !registered {
+                    if let Err(e) = self.fence.SetEventOnCompletion(value, event) {
+                        warn!("uuav: fence wait failed: {e}");
+                        return false;
+                    }
+                    registered = true;
+                }
+                // the event may be left set by an earlier value whose wait timed out, so a
+                // wake-up only means the fence is read again
+                let left_ms = left.as_micros().div_ceil(1000) as u32;
+                if WaitForSingleObject(event, left_ms) == WAIT_FAILED {
+                    warn!(
+                        "uuav: fence wait failed: {}",
+                        windows::core::Error::from_win32()
+                    );
+                    return false;
+                }
             }
         }
-        // the event can also be set by an earlier value whose wait timed out, so the fence
-        // decides
-        self.copy_done(value)
     }
 
-    /// Whether the fence has reached `value`. A removed device reports `u64::MAX`, which is not
-    /// a copy done.
-    fn copy_done(&self, value: u64) -> bool {
+    /// The fence's completed value; `None` once the device is removed (it then reports
+    /// `u64::MAX`).
+    fn completed(&self) -> Option<u64> {
         let completed = unsafe { self.fence.GetCompletedValue() };
         if completed == u64::MAX {
             static ONCE: Once = Once::new();
             ONCE.call_once(|| warn!("uuav: the decode device was removed"));
-            return false;
+            return None;
         }
-        completed >= value
+        Some(completed)
     }
 }

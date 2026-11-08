@@ -193,26 +193,41 @@ fn present_uuav_frames(
         render_device.wgpu_device().poll(wgpu::Maintain::Poll);
     }
 
+    // every player's copy goes first, so one fence wait covers them all
+    let mut frames = Vec::new();
     let mut failed = Vec::new();
     for (&id, player) in players.iter_mut() {
-        let presented = match take_presented(id, player, max_dimension) {
-            Ok(Some(presented)) => presented,
-            Ok(None) => continue,
+        match take_presented(id, player, max_dimension) {
+            Ok(Some(presented)) => {
+                if player.size != Some((presented.width, presented.height)) {
+                    player.size = Some((presented.width, presented.height));
+                    _ = link.to_main.send(FromRender::Size {
+                        id,
+                        width: presented.width,
+                        height: presented.height,
+                    });
+                }
+                frames.push((id, presented));
+            }
+            Ok(None) => {}
             Err(e) => {
                 warn!("uuav player {id}: frames not presented: {e}");
                 failed.push(id);
-                continue;
             }
-        };
-        if player.size != Some((presented.width, presented.height)) {
-            player.size = Some((presented.width, presented.height));
-            _ = link.to_main.send(FromRender::Size {
-                id,
-                width: presented.width,
-                height: presented.height,
-            });
         }
+    }
+    for id in failed {
+        players.remove(&id);
+        _ = link.to_main.send(FromRender::Failed(id));
+    }
 
+    // whether the copies above have landed, waited for once and only when a frame needs it
+    #[cfg(windows)]
+    let mut copies_landed = None;
+    for (id, presented) in frames {
+        let Some(player) = players.get_mut(&id) else {
+            continue;
+        };
         let Some(gpu_image) = images.get_mut(player.image) else {
             trace!("uuav player {id}: no target image yet");
             continue;
@@ -287,9 +302,11 @@ fn present_uuav_frames(
                 presented.height,
             );
             #[cfg(windows)]
-            let in_planes = decode_device
-                .as_mut()
-                .is_some_and(platform::DecodeDevice::wait_for_client_copy);
+            let in_planes = *copies_landed.get_or_insert_with(|| {
+                decode_device
+                    .as_mut()
+                    .is_some_and(platform::DecodeDevice::wait_for_client_copy)
+            });
             // the planes are the client's textures, filled by `render_callback`
             #[cfg(target_os = "macos")]
             let in_planes = true;
@@ -309,11 +326,6 @@ fn present_uuav_frames(
         );
         source.drawn_into = Some(target_texture);
         _ = link.to_main.send(FromRender::Presented(id));
-    }
-
-    for id in failed {
-        players.remove(&id);
-        _ = link.to_main.send(FromRender::Failed(id));
     }
 }
 
