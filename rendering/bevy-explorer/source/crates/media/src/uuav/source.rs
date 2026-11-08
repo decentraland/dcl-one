@@ -1,24 +1,17 @@
 use ipfs::IpfsIo;
 
-/// The url the helper streams for a scene's source string: a content-map file resolves to its
-/// content-server url, anything else must already be an http(s) url. The helper runs sandboxed
-/// without file access, so nothing is downloaded to disk first.
-///
-/// Blocking: `content_url` reads the ipfs context.
+/// Resolves a video source to an http(s) url: scene files map to their content-server url.
+/// Blocks on the ipfs context.
 pub fn resolve_source(ipfs: &IpfsIo, source: &str, hash: &str) -> Result<String, String> {
     let url = match ipfs.content_url(source, hash) {
-        // content_url hands a url-shaped source that is not in the content map back normalised
-        // (scheme lowercased, whitespace trimmed), so this branch takes any scheme it parses
+        // content_url may return a normalised copy of a plain url, so this can be any scheme
         Some(url) if url != source => url,
         _ => source.to_owned(),
     };
     http_only(url, source)
 }
 
-/// `url` when it is http(s), whatever branch produced it. A literal prefix test rather than a
-/// url parse, so the helper's demuxer cannot read the scheme differently: it takes far more than
-/// http (its own protocols included), and the whitelist it runs with is the second line of
-/// defence, not the first.
+/// Accepts only http(s). A prefix check, not a url parse, so the helper reads the same scheme.
 fn http_only(url: String, source: &str) -> Result<String, String> {
     let lower = url.to_ascii_lowercase();
     if lower.starts_with("http://") || lower.starts_with("https://") {
