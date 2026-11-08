@@ -154,7 +154,7 @@ Upstream success body for one scene (from `world-about-handler.spec.ts:106-145`,
 | field | upstream | dcl-one | verdict |
 |---|---|---|---|
 | `scenesUrn` | the most recently deployed scene only: `getWorldScenes(…, {limit: 1, orderBy: created_at, desc})` (`worlds-manager.ts:403-407`); the spec pins length 1 (`world-about-handler.spec.ts:541-554`) | every deployed scene, newest first (`queries.rs:88-92`, `about.rs:183-191`) | DIVERGENT (WW-01) |
-| `baseUrl` in URNs, file URLs, adapter | `HTTP_BASE_URL`, else the request's host | `Settings.public_url` (`lib.rs:136-139`) | MATCH when `HTTP_BASE_URL` is the public URL |
+| `baseUrl` in URNs, file URLs, adapter | `HTTP_BASE_URL`, else the request's host | URNs and file URLs: `Settings::content_server_url`, `<PUBLIC_URL>/worlds-content-server` (WR-12); adapter: `Settings.public_url` | MATCH when `HTTP_BASE_URL` is the worlds host |
 | `spawnCoordinates` | `worlds.spawn_coordinates`, `null` when unset | the column, else the newest scene's `metadata.scene.base` (`about.rs:212-219`) | DIVERGENT (WW-07) |
 | `realmName` | `worldConfiguration.name` (after the `dclName` migration) `|| worldName` | `worldConfiguration.name` as a string, else the path name (`about.rs:350-355`), then the ENS strip and override (`about.rs:197-205`) | DIVERGENT: legacy keys and empty name (WW-05, WW-06); strip intended (WW-12) |
 | `minimap.enabled` | `miniMapConfig.visible ?? false`, where a truthy legacy `minimapVisible` replaces the whole `miniMapConfig` | `miniMapConfig.visible`, else `minimapVisible` (`about.rs:357-364`) | DIVERGENT (WW-05) |

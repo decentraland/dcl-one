@@ -405,7 +405,7 @@ async fn mirror_passes_are_complete_resumable_and_never_touch_local_publishes() 
     for urn in urns {
         let urn = urn.as_str().unwrap();
         assert!(
-            urn.ends_with("?=&baseUrl=http://127.0.0.1:5210/contents/"),
+            urn.ends_with("?=&baseUrl=http://127.0.0.1:5210/worlds-content-server/contents/"),
             "{urn}"
         );
         assert!(b_ids.iter().any(|id| urn.contains(id)), "{urn}");
@@ -443,7 +443,7 @@ async fn mirror_passes_are_complete_resumable_and_never_touch_local_publishes() 
         index["data"][0]["scenes"][0]["thumbnail"]
             .as_str()
             .unwrap()
-            .starts_with("http://127.0.0.1:5210/contents/"),
+            .starts_with("http://127.0.0.1:5210/worlds-content-server/contents/"),
         "{index}"
     );
     let (status, st) = node.get("/worlds/status").await;

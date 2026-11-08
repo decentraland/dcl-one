@@ -63,7 +63,8 @@ const CONTENT_PREFIX: &str = "/content/";
 ///   (`CR-16-path-case-*.json`, `CS-23-path-case-deployments.json`). Only the
 ///   static segments of a content route are rewritten: parameters (hashes,
 ///   URNs) keep their case.
-/// - A 405 lists `Allow` as upstream does ([`upstream_allow`]).
+/// - A 405 lists `Allow` as upstream does ([`upstream_allow`]), here and
+///   under `/worlds-content-server/`.
 ///
 /// The root mounts and every other service's paths are left alone.
 pub fn upstream_routing(app: Router) -> Router {
@@ -134,13 +135,19 @@ pub(crate) fn canonical_path(path: &str, read: bool) -> Option<String> {
     changed.then(|| format!("{CONTENT_PREFIX}{}", segments.join("/")))
 }
 
+/// worlds-content-server's own mount (the `worlds-content-server.<domain>` vhost
+/// maps onto it); its koa-router writes `Allow` the same way.
+const WORLDS_CONTENT_SERVER_PREFIX: &str = "/worlds-content-server/";
+
 /// A 405's `Allow` as koa-router writes it: `HEAD, GET, POST`, comma and
 /// space, `HEAD` first (`CR-12-put-status.json`, `CR-12-delete-entities-active.json`);
 /// axum writes `GET,HEAD`.
 async fn upstream_allow(req: Request, next: Next) -> Response {
-    let under_content = req.uri().path().starts_with(CONTENT_PREFIX);
+    let path = req.uri().path();
+    let upstream_path =
+        path.starts_with(CONTENT_PREFIX) || path.starts_with(WORLDS_CONTENT_SERVER_PREFIX);
     let mut res = next.run(req).await;
-    if under_content
+    if upstream_path
         && res.status() == StatusCode::METHOD_NOT_ALLOWED
         && let Some(allow) = res.headers().get(ALLOW).and_then(|v| v.to_str().ok())
         && let Ok(allow) = HeaderValue::from_str(&upstream_allow_value(allow))
@@ -320,6 +327,39 @@ mod tests {
         assert_eq!(upstream_allow_value("GET,HEAD,POST"), "HEAD, GET, POST");
         assert_eq!(upstream_allow_value("POST"), "POST");
         assert_eq!(upstream_allow_value("DELETE"), "DELETE");
+    }
+
+    /// koa-router's `Allow` under `/content/` and the worlds prefix; axum's elsewhere.
+    #[tokio::test]
+    async fn a_405_lists_upstreams_allow_under_both_prefixes() {
+        use axum::routing::get;
+        use tower::ServiceExt;
+        let ok = || get(|| async { "ok" });
+        let app = upstream_routing(
+            Router::new()
+                .route("/content/status", ok())
+                .route("/worlds-content-server/status", ok())
+                .route("/worlds/status", ok()),
+        );
+        for (path, allow) in [
+            ("/content/status", "HEAD, GET"),
+            ("/worlds-content-server/status", "HEAD, GET"),
+            ("/worlds/status", "GET,HEAD"),
+        ] {
+            let res = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::PUT)
+                        .uri(path)
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::METHOD_NOT_ALLOWED, "{path}");
+            assert_eq!(res.headers()[ALLOW], allow, "{path}");
+        }
     }
 
     fn cors_app() -> Router {
