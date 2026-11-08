@@ -8,7 +8,7 @@ import type {
   ViewSpec
 } from '../ir/components.js'
 import { viewLoop, viewMotion, type StateExtras } from './motion.js'
-import { kebabCase, textStyleClass } from './naming.js'
+import { assertIdentifier, kebabCase, textStyleClass } from './naming.js'
 import { inLayer } from './css-layers.js'
 import { header } from './render.js'
 import { unsafeSvgReason } from './svg-safety.js'
@@ -120,11 +120,12 @@ function firstSlot(node: ViewNode): string | undefined {
   }
 }
 
+// Semantic href and handler names come from figma.config.json, so they follow the shared identifier rule too.
 function semanticProp(template: string, node: ViewNode): string {
-  if (!template.includes('{slot}')) return template
+  if (!template.includes('{slot}')) return assertIdentifier(template)
   const slot = firstSlot(node)
   if (!slot) throw new Error(`Semantic prop ${template} needs a text slot inside ${node.name}`)
-  return template.replace('{slot}', slot)
+  return assertIdentifier(template.replace('{slot}', slot))
 }
 
 // A link around text bound to a role takes exactly the prop name the role declares, never one built from the role.

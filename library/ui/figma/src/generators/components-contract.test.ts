@@ -373,3 +373,19 @@ describe('when a component binds text roles', () => {
     expect(await lintAsPromoted('NavBar', source)).toEqual([])
   })
 })
+
+describe('when figma.config.json semantics name a prop that is not a valid binding', () => {
+  it.each([
+    ['href', 'default'],
+    ['onActivate', 'arguments']
+  ])('should fail generation for %s %s', async (key, name) => {
+    const spec = await navbarSpec()
+    spec.semantics = {
+      ...spec.semantics,
+      'DCL Logo': { role: 'action', label: 'Decentraland', [key]: name }
+    }
+    expect(() => sourceFor(spec)).toThrow(
+      `Invalid generated TypeScript identifier: ${JSON.stringify(name)}`
+    )
+  })
+})

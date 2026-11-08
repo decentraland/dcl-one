@@ -456,3 +456,30 @@ describe('buildComponentSpecs with text roles', () => {
     })
   })
 })
+
+describe('configured generated names', () => {
+  // Every generated name a configuration states follows the same identifier rule as text roles.
+  it.each([
+    ['viewport', 'class'],
+    ['signed-in', 'eval']
+  ])('should fail generation when propNames maps %s to %s', async (figmaName, name) => {
+    const input = await navBarInput()
+    input.config.components.NavBar = {
+      ...input.config.components.NavBar,
+      propNames: { [figmaName]: name }
+    }
+    expect(() => buildComponentSpecs(input)).toThrow(
+      `Invalid generated TypeScript identifier: ${JSON.stringify(name)}`
+    )
+  })
+
+  it('should keep a valid configured prop name as written', async () => {
+    const input = await navBarInput()
+    input.config.components.NavBar = {
+      ...input.config.components.NavBar,
+      propNames: { viewport: 'screen' }
+    }
+    const spec = buildComponentSpecs(input).find((item) => item.name === 'NavBar')!
+    expect(spec.props.map((prop) => prop.name)).toContain('screen')
+  })
+})
