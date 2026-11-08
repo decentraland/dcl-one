@@ -46,6 +46,17 @@
 .note strong {
   font-weight: var(--fw-bold);
 }
+/* A simulated NAME purchase's note, in gold under what the step shows. */
+.simulation {
+  position: relative;
+  width: 100%;
+  margin: 0;
+  color: var(--gold);
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  line-height: 1.334;
+  text-align: center;
+}
 
 /* The design's CreditsItem: the tile, then 16px on, the name, creator and rarity over the price. */
 .item {
@@ -63,6 +74,11 @@
   min-width: 0;
   padding: 20px 11px;
   overflow: hidden;
+}
+/* A NAME's: its two lines centred, 32px above the price (the design's Buy Name). */
+.infoName {
+  justify-content: center;
+  gap: 32px;
 }
 .about {
   display: flex;

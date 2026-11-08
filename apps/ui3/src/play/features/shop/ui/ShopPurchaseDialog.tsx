@@ -1,7 +1,12 @@
-// ShopPurchaseDialog — one step of buying with Credits, as the design's Buy Items and Cart flows and its
-// modals sheet draw it: Buy Item or Buy N Items (the balance, the items and their prices), Insufficient
-// Funds (what is missing, BUY CREDITS), Processing, Purchase successful, and the Error modal ("Oops!
-// Something went wrong": what happened, CANCEL and TRY AGAIN when it may be tried again, else CLOSE).
+// ShopPurchaseDialog — one step of buying with Credits, as the design's Buy Items, Cart and Buy NAMEs flows
+// and its modals sheet draw it: Buy Item, Buy N Items or Buy Name (the balance, what is bought and its
+// price), Insufficient Funds (what is missing, BUY CREDITS), Processing, Purchase successful, and the Error
+// modal ("Oops! Something went wrong": what happened, CANCEL and TRY AGAIN when it may be tried again, else
+// CLOSE). A NAME is one row whose tile is the NAME's art; its success offers ASSIGN TO AVATAR.
+// A simulated NAME purchase (`simulation`, a testnet rehearsal that buys nothing) says so on every step it
+// shows, its failures included: a note that no Credits are spent and the NAME isn't registered or reserved,
+// SIMULATE PURCHASE for BUY NAME, and "Simulation complete" (the NAME without its NEW tag, PREVIEW ON AVATAR)
+// for Purchase successful.
 // Loading, a purchase still being confirmed and the sign-in request aren't drawn; they use the same dialog. Presentational: whoever
 // shows it (the web Explorer's shell, which signs the purchase) decides the step and acts on the choice.
 //
@@ -32,10 +37,13 @@ import successGlow from '../../../assets/shop/modal/success-glow.svg'
 import successSpark from '../../../assets/shop/modal/success-spark.svg'
 import { CreditsIcon } from './CreditsIcon'
 import { ShopItemTile } from './ShopItemTile'
+import { ShopNameTile } from './ShopNameTile'
 import { ShopModal, ShopModalGap } from './ShopModal'
 import styles from './ShopPurchaseDialog.module.css'
 
 export interface ShopPurchaseItem {
+  /** A NAME (its tile is the NAME's art, and it has no creator or rarity), or an item. */
+  kind?: 'name'
   name: string
   /** The creator's display name. */
   creator: string
@@ -46,15 +54,18 @@ export interface ShopPurchaseItem {
   credits: number
 }
 
+/** A simulated NAME purchase's step: nothing is bought (see the header). */
+type Simulated = { simulation?: true }
+
 export type ShopPurchaseStep =
-  /** `count`: the units being bought (one unless said). */
-  | { step: 'loading'; count?: number }
-  | { step: 'confirm'; items: ShopPurchaseItem[]; balance: number }
-  | { step: 'insufficient'; items: ShopPurchaseItem[]; balance: number; /** Credits short of the price. */ need: number }
-  | { step: 'processing'; balance: number | null; count?: number }
-  | { step: 'success'; items: ShopPurchaseItem[] }
+  /** `count`: the units being bought (one unless said); `subject: 'name'`: a NAME is. */
+  | ({ step: 'loading'; count?: number; subject?: 'name' } & Simulated)
+  | ({ step: 'confirm'; items: ShopPurchaseItem[]; balance: number } & Simulated)
+  | ({ step: 'insufficient'; items: ShopPurchaseItem[]; balance: number; /** Credits short of the price. */ need: number } & Simulated)
+  | ({ step: 'processing'; balance: number | null; count?: number; subject?: 'name' } & Simulated)
+  | ({ step: 'success'; items: ShopPurchaseItem[] } & Simulated)
   | { step: 'pending' }
-  | { step: 'failed'; message: string; retry: boolean }
+  | ({ step: 'failed'; message: string; retry: boolean } & Simulated)
   | { step: 'signIn' }
 
 export interface ShopPurchaseDialogProps {
@@ -64,6 +75,10 @@ export interface ShopPurchaseDialogProps {
   onConfirm?: () => void
   onBuyCredits?: () => void
   onBackpack?: () => void
+  /** A bought NAME's ASSIGN TO AVATAR. */
+  onAssign?: () => void
+  /** A simulated NAME's PREVIEW ON AVATAR. */
+  onPreview?: () => void
   onRetry?: () => void
   onSignIn?: () => void
 }
@@ -76,7 +91,13 @@ const TILES_SHOWN = 3
 /** The design's scroll thumb beside the list: 160px. */
 const LIST_THUMB = 160
 
-const buyTitle = (count: number): string => (count === 1 ? 'Buy Item' : `Buy ${count} Items`)
+const buyTitle = (count: number, name = false): string => (name ? 'Buy Name' : count === 1 ? 'Buy Item' : `Buy ${count} Items`)
+const buyLabel = (count: number, name = false, simulation = false): string => (simulation ? 'Simulate purchase' : name ? 'Buy name' : count === 1 ? 'Buy item' : 'Buy items')
+/** What a simulation spends and keeps: nothing, said before it runs and once it has. */
+const SIMULATION_AHEAD = 'Simulation: no Credits will be spent, and this NAME won’t be registered or reserved.'
+const SIMULATION_DONE = 'This was a simulation: no Credits were spent, and this NAME wasn’t registered or reserved.'
+/** Whether a step's rows are a NAME. */
+const isName = (items: readonly ShopPurchaseItem[]): boolean => items.length === 1 && items[0].kind === 'name'
 
 /**
  * BUY ITEM, answering only once it has been up a moment: it appears where the loading step's disabled
@@ -95,7 +116,7 @@ function ArmedButton({ onClick, children }: { onClick?: () => void; children: Re
   )
 }
 
-export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onBackpack, onRetry, onSignIn }: ShopPurchaseDialogProps): React.JSX.Element {
+export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onBackpack, onAssign, onPreview, onRetry, onSignIn }: ShopPurchaseDialogProps): React.JSX.Element {
   const cancel = (
     <Button variant="dark" size="modal" onClick={onClose}>
       Cancel
@@ -104,24 +125,28 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
   switch (view.step) {
     case 'loading': {
       const count = view.count ?? 1
+      const name = view.subject === 'name'
       return (
-        <ShopModal label={buyTitle(count)} busy actions={<>{cancel}<Button size="modal" disabled>{count === 1 ? 'Buy item' : 'Buy items'}</Button></>}>
-          <h2 className={styles.title}>{buyTitle(count)}</h2>
+        <ShopModal label={buyTitle(count, name)} busy actions={<>{cancel}<Button size="modal" disabled>{buyLabel(count, name, view.simulation)}</Button></>}>
+          <h2 className={styles.title}>{buyTitle(count, name)}</h2>
           <ShopModalGap count={2} />
           <Working label="Checking the price" />
           <ShopModalGap />
+          <SimulationNote shown={view.simulation} />
         </ShopModal>
       )
     }
     case 'confirm': {
       const count = view.items.length
+      const name = isName(view.items)
       return (
-        <ShopModal label={buyTitle(count)} actions={<>{cancel}<ArmedButton onClick={onConfirm}>{count === 1 ? 'Buy item' : 'Buy items'}</ArmedButton></>}>
-          <h2 className={styles.title}>{buyTitle(count)}</h2>
+        <ShopModal label={buyTitle(count, name)} actions={<>{cancel}<ArmedButton onClick={onConfirm}>{buyLabel(count, name, view.simulation)}</ArmedButton></>}>
+          <h2 className={styles.title}>{buyTitle(count, name)}</h2>
           <Balance credits={view.balance} />
           <ShopModalGap count={2} />
           <ItemList items={view.items} />
           <ShopModalGap />
+          <SimulationNote shown={view.simulation} />
         </ShopModal>
       )
     }
@@ -133,17 +158,18 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
           <Balance credits={view.balance} />
           <ShopModalGap />
           <p className={styles.note}>
-            You will need to buy <strong>{formatCreditsFull(view.need)} Credits</strong> to purchase {view.items.length === 1 ? 'this item' : 'these items'}.
+            You will need to buy <strong>{formatCreditsFull(view.need)} Credits</strong> to purchase {isName(view.items) ? 'this Name' : view.items.length === 1 ? 'this item' : 'these items'}.
           </p>
           <ShopModalGap />
           <ItemList items={view.items} />
           <ShopModalGap />
+          <SimulationNote shown={view.simulation} />
         </ShopModal>
       )
     case 'processing':
       return (
         <ShopModal
-          label={buyTitle(view.count ?? 1)}
+          label={buyTitle(view.count ?? 1, view.subject === 'name')}
           busy
           actions={
             <Button size="modal" disabled>
@@ -151,35 +177,56 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
             </Button>
           }
         >
-          <h2 className={styles.title}>{buyTitle(view.count ?? 1)}</h2>
+          <h2 className={styles.title}>{buyTitle(view.count ?? 1, view.subject === 'name')}</h2>
           {view.balance != null && <Balance credits={view.balance} />}
           <ShopModalGap count={2} />
-          <Working label="Processing your purchase" />
+          <Working label={view.simulation ? 'Simulating your purchase' : 'Processing your purchase'} />
           <ShopModalGap />
+          <SimulationNote shown={view.simulation} />
         </ShopModal>
       )
-    case 'success':
+    case 'success': {
+      const title = view.simulation ? 'Simulation complete' : 'Purchase successful!'
       return (
         <ShopModal
-          label="Purchase successful!"
+          label={title}
           actions={
             <>
               <Button variant="tint" size="modal" onClick={onClose}>
                 Continue shopping
               </Button>
-              <Button size="modal" onClick={onBackpack}>
-                Go to backpack
-              </Button>
+              {view.simulation ? (
+                <Button size="modal" onClick={onPreview}>
+                  Preview on avatar
+                </Button>
+              ) : isName(view.items) ? (
+                <Button size="modal" onClick={onAssign}>
+                  Assign to avatar
+                </Button>
+              ) : (
+                <Button size="modal" onClick={onBackpack}>
+                  Go to backpack
+                </Button>
+              )}
             </>
           }
         >
           <SuccessBadge />
-          <h2 className={styles.title}>Purchase successful!</h2>
+          <h2 className={styles.title}>{title}</h2>
           <ShopModalGap />
-          <BoughtTiles items={view.items} />
+          <BoughtTiles items={view.items} isNew={!view.simulation} />
           <ShopModalGap />
+          {view.simulation && (
+            <>
+              <p className={styles.simulation} role="note">
+                {SIMULATION_DONE}
+              </p>
+              <ShopModalGap />
+            </>
+          )}
         </ShopModal>
       )
+    }
     case 'pending':
       return (
         <ShopModal
@@ -216,9 +263,17 @@ export function ShopPurchaseDialog({ view, onClose, onConfirm, onBuyCredits, onB
           <h2 className={styles.title}>Oops! Something went wrong</h2>
           <ShopModalGap />
           <p className={styles.message} role="alert">
-            <strong>We couldn't complete your purchase this time.</strong> {view.message}
+            <strong>{view.simulation ? "We couldn't complete the simulation this time." : "We couldn't complete your purchase this time."}</strong> {view.message}
           </p>
           <ShopModalGap />
+          {view.simulation && (
+            <>
+              <p className={styles.simulation} role="note">
+                {SIMULATION_DONE}
+              </p>
+              <ShopModalGap />
+            </>
+          )}
         </ShopModal>
       )
     case 'signIn':
@@ -245,8 +300,24 @@ function Balance({ credits }: { credits: number }): React.JSX.Element {
   )
 }
 
-/** What was bought, on the success glow: past TILES_SHOWN the row scrolls sideways, the thumb below it. */
-function BoughtTiles({ items }: { items: ShopPurchaseItem[] }): React.JSX.Element {
+/** A simulation's note ahead of it running, under the step it shows on. */
+function SimulationNote({ shown }: { shown?: boolean }): React.JSX.Element | null {
+  if (!shown) return null
+  return (
+    <>
+      <p className={styles.simulation} role="note">
+        {SIMULATION_AHEAD}
+      </p>
+      <ShopModalGap />
+    </>
+  )
+}
+
+/**
+ * What was bought, on the success glow, each tagged NEW (`isNew`); past TILES_SHOWN the row scrolls
+ * sideways, the thumb below it.
+ */
+function BoughtTiles({ items, isNew = true }: { items: ShopPurchaseItem[]; isNew?: boolean }): React.JSX.Element {
   const row = useRef<HTMLSpanElement>(null)
   const scrolls = items.length > TILES_SHOWN
   return (
@@ -264,10 +335,10 @@ function BoughtTiles({ items }: { items: ShopPurchaseItem[] }): React.JSX.Elemen
         {items.map((item, i) =>
           scrolls ? (
             <span key={i} role="listitem" aria-label={item.name} className={styles.boughtItem}>
-              <ShopItemTile thumbnail={item.thumbnail} rarity={item.rarity} categoryIcon={item.categoryIcon} isNew />
+              <Tile item={item} isNew={isNew} />
             </span>
           ) : (
-            <ShopItemTile key={i} thumbnail={item.thumbnail} rarity={item.rarity} categoryIcon={item.categoryIcon} isNew />
+            <Tile key={i} item={item} isNew={isNew} />
           )
         )}
       </span>
@@ -302,20 +373,31 @@ function ItemList({ items }: { items: ShopPurchaseItem[] }): React.JSX.Element {
   )
 }
 
-/** The design's CreditsItem: the tile, then the name, creator and rarity over the price. */
+/** An item's tile, or a NAME's art. */
+function Tile({ item, isNew = false }: { item: ShopPurchaseItem; isNew?: boolean }): React.JSX.Element {
+  return item.kind === 'name' ? <ShopNameTile isNew={isNew} /> : <ShopItemTile thumbnail={item.thumbnail} rarity={item.rarity} categoryIcon={item.categoryIcon} isNew={isNew} />
+}
+
+/**
+ * The design's CreditsItem: the tile, then the name, creator and rarity over the price. A NAME's has the
+ * NAME and "Decentraland Name", centred 32px above its price.
+ */
 function ItemRow({ item }: { item: ShopPurchaseItem }): React.JSX.Element {
+  const name = item.kind === 'name'
   return (
     <div className={styles.item}>
-      <ShopItemTile thumbnail={item.thumbnail} rarity={item.rarity} categoryIcon={item.categoryIcon} />
-      <div className={styles.info}>
+      <Tile item={item} />
+      <div className={`${styles.info} ${name ? styles.infoName : ''}`.trim()}>
         <div className={styles.about}>
           <span className={styles.name} title={item.name}>
             {item.name}
           </span>
-          <span className={styles.creator}>{item.creator}</span>
-          <span className={styles.rarity} data-rarity={item.rarity || 'base'}>
-            {item.rarity || 'base'}
-          </span>
+          <span className={styles.creator}>{name ? 'Decentraland Name' : item.creator}</span>
+          {!name && (
+            <span className={styles.rarity} data-rarity={item.rarity || 'base'}>
+              {item.rarity || 'base'}
+            </span>
+          )}
         </div>
         <span className={styles.price} title={`${formatCreditsFull(item.credits)} Credits`}>
           <span className={styles.mark}>

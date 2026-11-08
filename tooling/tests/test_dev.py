@@ -508,6 +508,19 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['MARKETPLACE_MIRRORS_ENABLED'], 'true')
         self.assertIn('index', dev.project({**self.config, 'profile': 'testnet'})['processes'])
 
+    def test_the_name_simulation_is_off_unless_asked_and_only_on_the_testnet_profile(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('FOUNDATION_DEV_NAME_SIMULATION', None)
+            self.assertNotIn('VITE_SHOP_NAME_SIMULATION', dev.runtime_env({**self.config, 'profile': 'testnet'}))
+        for asked in ('0', 'true', ''):
+            with patch.dict(os.environ, {'FOUNDATION_DEV_NAME_SIMULATION': asked}):
+                self.assertNotIn('VITE_SHOP_NAME_SIMULATION', dev.runtime_env({**self.config, 'profile': 'testnet'}), asked)
+        with patch.dict(os.environ, {'FOUNDATION_DEV_NAME_SIMULATION': '1', 'VITE_SHOP_NAME_SIMULATION': 'true'}):
+            env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+            self.assertEqual((env['VITE_SHOP_NAME_SIMULATION'], env['VITE_SHOP_CHAIN_ID']), ('true', '80002'))
+            # Never on the mirror profile, which settles on Polygon, even when the shell's environment has it.
+            self.assertNotIn('VITE_SHOP_NAME_SIMULATION', dev.runtime_env({**self.config, 'profile': 'mirror'}))
+
     def test_the_testnet_profile_settles_credits_on_amoy(self):
         env = dev.runtime_env({**self.config, 'profile': 'testnet'})
         mirror = dev.runtime_env({**self.config, 'profile': 'mirror'})
