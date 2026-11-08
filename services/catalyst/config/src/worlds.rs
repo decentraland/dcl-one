@@ -154,18 +154,6 @@ pub struct WorldsConfig {
     #[arg(long, env = "SCENE_EVICTION_TTL_MS", default_value_t = 604_800_000)]
     pub scene_eviction_ttl_ms: u64,
 
-    /// Multipart uploads one client address (IPv6 by /64) may have in flight.
-    #[arg(long, env = "MAX_CONCURRENT_UPLOADS_PER_SOURCE", default_value_t = 4)]
-    pub max_concurrent_uploads_per_source: u64,
-
-    /// Declared upload bytes one client address may have in flight (>= one 350 MiB deploy).
-    #[arg(
-        long,
-        env = "MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE",
-        default_value_t = 367_001_600
-    )]
-    pub max_in_flight_upload_bytes_per_source: u64,
-
     #[arg(long, env = "MULTIPART_UPLOAD_TIMEOUT_MS", default_value_t = 300_000)]
     pub multipart_upload_timeout_ms: u64,
 
@@ -420,8 +408,15 @@ pub struct WorldsConfig {
     pub handshake_timeout: u64,
 
     /// The wallet denylist document; unset disarms the external denylist.
+    /// `NODE_POSTURE=mirror` defaults it to Decentraland's, as upstream's
+    /// `DENYLIST_JSON_URL` defaults.
     #[arg(long, env = "DENY_LIST_URL")]
     pub deny_list_url: Option<String>,
+
+    /// Upstream worlds-content-server's name for `DENY_LIST_URL`, read when
+    /// that one is unset or empty.
+    #[arg(long, env = "DENYLIST_JSON_URL", hide = true)]
+    pub denylist_json_url: Option<String>,
 
     /// The NATS broker `serve` (comms' one link) and `catalyst pulse` meet on; unset, no island is ever delivered.
     #[arg(long, env = "NATS_URL")]
@@ -466,6 +461,14 @@ pub struct WorldsConfig {
     /// The deployment audience clients sign for /ws/v4; unset leaves the v4 control authority unavailable.
     #[arg(long, env = "ARCHIPELAGO_CONTROL_V4_AUDIENCE")]
     pub archipelago_control_v4_audience: Option<String>,
+}
+
+impl WorldsConfig {
+    /// The wallet denylist document: `DENY_LIST_URL`, else `DENYLIST_JSON_URL`.
+    pub fn deny_list(&self) -> Option<String> {
+        crate::config::Config::non_empty(&self.deny_list_url)
+            .or_else(|| crate::config::Config::non_empty(&self.denylist_json_url))
+    }
 }
 
 /// The worlds federation: the peer file and its caps.
@@ -699,7 +702,7 @@ mod tests {
             (60_000, 10_000)
         );
         assert!(
-            c.worlds.deny_list_url.is_none()
+            c.worlds.deny_list().is_none()
                 && c.worlds.nats_url.is_none()
                 && c.worlds.archipelago_control_v4_audience.is_none()
         );

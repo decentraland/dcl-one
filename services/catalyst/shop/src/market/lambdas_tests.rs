@@ -1101,6 +1101,73 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         "the held token is appended (ENSURE_ERC_721); token 3 is mapped but not held, token 9 is not mapped: {body}"
     );
 
+    // An entity a remote list (`DENYLIST_URLS`) names is left out of the
+    // lambdas and explorer reads, as lamb2 reading the content server's
+    // filtered `/entities/active` leaves it out.
+    let denylist = Arc::new(crate::content::Denylist::default());
+    let listed = Arc::new(
+        MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            state.settings.clone(),
+        )
+        .with_denylist(denylist.clone()),
+    );
+    listed
+        .test_allow_loopback
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    denylist.set_remote(
+        "https://registry.example/denylist",
+        [
+            "bafyhat",
+            "bafyeyes",
+            "bafydance",
+            "bafyprofile",
+            "bafyoutfits",
+        ]
+        .map(String::from),
+    );
+    let (status, body) = get(&listed, &format!("/explorer/{OWNER}/wearables?pageSize=10")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let urns: Vec<&str> = body["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["urn"].as_str())
+        .collect();
+    assert_eq!(
+        urns,
+        [TP_URN, "urn:decentraland:off-chain:base-avatars:BaseFemale"],
+        "the listed hat and eyes are left out, the others stay: {body}"
+    );
+    let (_, body) = get(&listed, &format!("/explorer/{OWNER}/emotes")).await;
+    assert_eq!(body["totalAmount"], 0, "{body}");
+    // The owned item stays (it comes from the index); its definition goes.
+    let (_, body) = get(
+        &listed,
+        &format!("/lambdas/users/{OWNER}/wearables?includeDefinitions"),
+    )
+    .await;
+    assert_eq!(body["elements"][0]["urn"], hat, "{body}");
+    assert_eq!(body["elements"][0]["definition"], Value::Null, "{body}");
+    let (_, body) = get(&listed, &format!("/lambdas/collections/wearables?collectionId=urn:decentraland:matic:collections-v2:{COFFEE}")).await;
+    assert_eq!(body["wearables"], json!([]), "{body}");
+    let (_, body) = get(
+        &listed,
+        "/lambdas/collections/wearables?collectionType=base-wearable&category=eyes",
+    )
+    .await;
+    assert_eq!(body["wearables"], json!([]), "{body}");
+    let (status, _) = get(&listed, &format!("/lambdas/profiles/{OWNER}")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = get(&listed, &format!("/lambdas/outfits/{OWNER}")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // Lifted on the next good fetch.
+    denylist.set_remote("https://registry.example/denylist", Vec::<String>::new());
+    listed.profile_cache.clear();
+    let (status, _) = get(&listed, &format!("/lambdas/profiles/{OWNER}")).await;
+    assert_eq!(status, StatusCode::OK);
+
     // The chain endpoint down: the explorer and the profiles leave the
     // third-party items they could not check out, the dedicated route and
     // the outfits answer the old lambdas' FetcherError.

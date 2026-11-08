@@ -53,6 +53,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   with a "Default" choice; a flood of lines on one conversation is one sound (400 ms). The
   member-of list is read up to 10 pages of 100 (unity-explorer reads one), and one pair of clips
   serves focused and unfocused channels alike, played by the bridge scene from its own content.
+- **Blocked users in chat history (#296).** Live chat and reactions from anyone blocked in
+  either direction are dropped on every channel. Community history still stores them and
+  leaves them out of each read while the block lasts, so an unblock brings them back;
+  unity-explorer stores no community history. A new DM or DM reaction from them is not stored,
+  since a DM history is never trimmed. A DM thread stored before the block is read back whole:
+  hiding it would reveal that the other side blocked you, who is otherwise shown as offline.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.

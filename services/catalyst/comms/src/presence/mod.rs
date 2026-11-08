@@ -48,6 +48,29 @@ impl Scope {
             Self::Room(name) => room.name == *name,
         }
     }
+
+    /// Whether a room this node refused could hold participants this scope
+    /// counts: the exact room, or a world room or upstream-format room name
+    /// that names the scope's world. Any other refused room cannot hold them,
+    /// since every room this node admits to a world is canonical.
+    fn may_hold(&self, refused: &str) -> bool {
+        let world = match self {
+            Self::Room(name) => return refused == name,
+            Self::Lobby(world) | Self::Scenes(world) => world.as_str(),
+        };
+        if let Some((owner, _)) = crate::rooms::decode_world_scene_room(refused) {
+            return owner.key() == world;
+        }
+        let refused = refused.to_lowercase();
+        ["world-scene-room-", "world-", "scene-"]
+            .iter()
+            .any(|prefix| {
+                refused.strip_prefix(prefix).is_some_and(|rest| {
+                    rest.strip_prefix(world)
+                        .is_some_and(|tail| tail.is_empty() || tail.starts_with('-'))
+                })
+            })
+    }
 }
 
 #[derive(Clone)]
@@ -89,6 +112,8 @@ impl RecoveredRoom {
 #[derive(Clone, Default)]
 struct Complete {
     rooms: Vec<RecoveredRoom>,
+    /// Relevant rooms left out because this node refuses their names.
+    refused: Vec<String>,
     observed: Option<Observation>,
     unknown_generation: u64,
 }
@@ -173,28 +198,32 @@ impl Presence {
             Arc::new(Complete::default())
         }
     }
+    /// The world of the wallet's latest join, as upstream's peers registry
+    /// keeps the last join; memberships in several worlds joined at the same
+    /// instant (or with no join time) are undecided.
     pub fn get_peer_world(&self, wallet: &str) -> Result<Option<String>, AmbiguousWorld> {
         if !counts_as_player(wallet) {
             return Ok(None);
         }
-        // Preserve case-insensitive wallet lookup and all raw memberships.
-        // The approved public policy retries rather than choosing a winner.
-        let worlds: HashSet<_> = self
-            .visible()
-            .rooms
-            .iter()
-            .filter(|r| {
-                r.participants.iter().any(|p| {
-                    counts_as_player(&p.identity) && p.identity.eq_ignore_ascii_case(wallet)
-                })
-            })
-            .filter(|r| r.is_world)
-            .map(|r| r.realm.clone())
-            .collect();
-        if worlds.len() > 1 {
+        let view = self.visible();
+        let mut latest: HashMap<&str, i64> = HashMap::new();
+        for room in view.rooms.iter().filter(|r| r.is_world) {
+            for p in &room.participants {
+                if counts_as_player(&p.identity) && p.identity.eq_ignore_ascii_case(wallet) {
+                    let at = latest.entry(room.realm.as_str()).or_insert(i64::MIN);
+                    *at = (*at).max(p.joined_at_ms);
+                }
+            }
+        }
+        let Some(newest) = latest.values().copied().max() else {
+            return Ok(None);
+        };
+        let mut winners = latest.into_iter().filter(|(_, at)| *at == newest);
+        let (world, _) = winners.next().expect("the maximum is one of the values");
+        if winners.next().is_some() {
             return Err(AmbiguousWorld);
         }
-        Ok(worlds.into_iter().next())
+        Ok(Some(world.to_owned()))
     }
     pub fn world_counts(&self) -> Vec<(String, i64)> {
         Self::counts_of(&self.complete())
@@ -257,6 +286,7 @@ impl Presence {
         }
         let complete = &state.complete;
         if complete.unknown_generation != state.unknown_generation
+            || complete.refused.iter().any(|room| scope.may_hold(room))
             || !complete
                 .observed
                 .as_ref()
@@ -282,6 +312,7 @@ impl Presence {
         let mut state = self.state.lock();
         state.complete = Arc::new(Complete {
             rooms: vec![],
+            refused: vec![],
             observed: Some(Observation::now()),
             unknown_generation: state.unknown_generation,
         });
@@ -318,6 +349,7 @@ impl Presence {
             members.push(crate::shared::livekit::OccupancyParticipant {
                 identity: identity.into(),
                 sid: format!("fixture:{identity}"),
+                joined_at_ms: 0,
             });
         }
         view.observed = Some(observed);

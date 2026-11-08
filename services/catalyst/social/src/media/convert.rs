@@ -10,8 +10,11 @@
 //! first, filled through read-through when it is on, and only then fetched
 //! from the host the URL names: peers rate-limit an address that asks them
 //! for many uncached files, and the sync sources are asked once per file.
-//! A source is capped at 64 MiB (8 MiB for a thumbnail source) and answered
-//! with its status and content type, `public, max-age=86400`.
+//! A source is capped at 64 MiB (8 MiB for a thumbnail source). PNG, JPEG, GIF,
+//! WebP, AVIF, MP4 and WebM are returned with a content type derived from their
+//! bytes and `public, max-age=86400`. Videos require no `width`; they are never
+//! transcoded. Upstream errors use local, non-cacheable text. HEAD follows the
+//! same bounded fetch and validation as GET, with the response body removed.
 //! `width` (80, 160, 320, 640, 960) renders a bounded derivative with the
 //! content routes' renderer. At most [`THUMBNAIL_SLOTS`] thumbnail sources
 //! are in hand at once (the memory bound); up to [`THUMBNAIL_QUEUE`] more
@@ -77,6 +80,150 @@ fn build_response(status: StatusCode, content_type: &str, body: Bytes) -> Respon
         HeaderValue::from_static("public, max-age=86400"),
     );
     (status, headers, body).into_response()
+}
+
+pub async fn response_headers(mut response: Response) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("sandbox; default-src 'none'"),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    if !response.status().is_success() {
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    response
+}
+
+fn media_content_type(body: &[u8]) -> Result<String, Response> {
+    let kind = match image::guess_format(body) {
+        Ok(
+            format @ (image::ImageFormat::Png
+            | image::ImageFormat::Jpeg
+            | image::ImageFormat::Gif
+            | image::ImageFormat::WebP
+            | image::ImageFormat::Avif),
+        ) => Some(format.to_mime_type()),
+        _ if is_mp4(body) => Some("video/mp4"),
+        _ if is_webm(body) => Some("video/webm"),
+        _ => None,
+    };
+    kind.map(str::to_string)
+        .ok_or_else(|| StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response())
+}
+
+fn is_mp4(body: &[u8]) -> bool {
+    let Some(header) = body.get(..8) else {
+        return false;
+    };
+    if &header[4..8] != b"ftyp" {
+        return false;
+    }
+    let size = u32::from_be_bytes(header[..4].try_into().unwrap());
+    let (size, offset) = if size == 1 {
+        let Some(extended) = body.get(8..16) else {
+            return false;
+        };
+        (u64::from_be_bytes(extended.try_into().unwrap()), 16)
+    } else {
+        (u64::from(size), 8)
+    };
+    let Ok(size) = usize::try_from(size) else {
+        return false;
+    };
+    if size < offset + 8 || (size - offset) % 4 != 0 {
+        return false;
+    }
+    let Some(payload) = body.get(offset..size) else {
+        return false;
+    };
+    let brands = || {
+        payload[..4]
+            .chunks_exact(4)
+            .chain(payload[8..].chunks_exact(4))
+    };
+    if brands().any(|brand| matches!(brand, b"avif" | b"avis")) {
+        return false;
+    }
+    brands().any(|brand| {
+        brand.starts_with(b"mp4")
+            || matches!(
+                brand,
+                b"isom"
+                    | b"iso2"
+                    | b"iso3"
+                    | b"iso4"
+                    | b"iso5"
+                    | b"iso6"
+                    | b"avc1"
+                    | b"M4V "
+                    | b"dash"
+            )
+    })
+}
+
+fn ebml_vint(input: &mut &[u8], id: bool) -> Option<u64> {
+    let first = *input.first()?;
+    let length = first.leading_zeros() as usize + 1;
+    if length > if id { 4 } else { 8 } {
+        return None;
+    }
+    let bytes = input.get(..length)?;
+    let mut value = u64::from(if id {
+        first
+    } else {
+        first & (0x7f >> (length - 1))
+    });
+    for byte in &bytes[1..] {
+        value = (value << 8) | u64::from(*byte);
+    }
+    if !id && value == (1_u64 << (7 * length)) - 1 {
+        return None;
+    }
+    *input = &input[length..];
+    Some(value)
+}
+
+fn is_webm(body: &[u8]) -> bool {
+    let mut input = body;
+    if ebml_vint(&mut input, true) != Some(0x1a45dfa3) {
+        return false;
+    }
+    let Some(length) = ebml_vint(&mut input, false).and_then(|n| usize::try_from(n).ok()) else {
+        return false;
+    };
+    if length > 4096 {
+        return false;
+    }
+    let Some(mut header) = input.get(..length) else {
+        return false;
+    };
+    let mut doctype = None;
+    while !header.is_empty() {
+        let Some(id) = ebml_vint(&mut header, true) else {
+            return false;
+        };
+        let Some(length) = ebml_vint(&mut header, false).and_then(|n| usize::try_from(n).ok())
+        else {
+            return false;
+        };
+        let Some(value) = header.get(..length) else {
+            return false;
+        };
+        if id == 0x4282 {
+            if doctype.is_some() {
+                return false;
+            }
+            doctype = Some(value);
+        }
+        header = &header[length..];
+    }
+    doctype == Some(b"webm".as_slice())
 }
 
 /// A bounded line in front of a bounded number of slots.
@@ -230,16 +377,20 @@ async fn fetch_and_convert(
         Ready::Stored(opened) => read_stored(opened).await?,
         Ready::Remote(upstream) => read_remote(upstream, max_bytes).await?,
     };
-    if let Some(width) = width.filter(|_| status.is_success()) {
+    if let Some(width) = width {
+        if content_type.starts_with("video/") {
+            return Err((
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "video resizing is not supported",
+            )
+                .into_response());
+        }
         return match crate::content::entity_thumbnail::render(body, width).await {
             Ok((kind, bytes)) => cacheable(status, kind, bytes),
             Err(message) => Err((StatusCode::UNPROCESSABLE_ENTITY, message).into_response()),
         };
     }
-    if status.is_success() {
-        return cacheable(status, &content_type, body);
-    }
-    Err(build_response(status, &content_type, body))
+    cacheable(status, &content_type, body)
 }
 
 /// A source whose bytes are next to be read.
@@ -285,10 +436,8 @@ async fn read_stored(
         .read_range(0, opened.size.saturating_sub(1))
         .await
         .map_err(|_| (StatusCode::NOT_FOUND, "not found").into_response())?;
-    let content_type = image::guess_format(&body)
-        .map(|f| f.to_mime_type())
-        .unwrap_or("application/octet-stream");
-    Ok((StatusCode::OK, content_type.to_string(), body))
+    let content_type = media_content_type(&body)?;
+    Ok((StatusCode::OK, content_type, body))
 }
 
 /// The source's final answer, its body not yet read: a 429 or 503 is asked
@@ -334,12 +483,16 @@ async fn read_remote(
 ) -> Result<(StatusCode, String, Bytes), Response> {
     let status =
         StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-    let content_type = upstream
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("application/octet-stream")
-        .to_string();
+    if status == StatusCode::PARTIAL_CONTENT {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            "upstream returned unsolicited partial content",
+        )
+            .into_response());
+    }
+    if !status.is_success() {
+        return Err((status, "upstream media request failed").into_response());
+    }
     let body = match read_body_capped(upstream, max_bytes).await {
         Ok(body) => Bytes::from(body),
         Err(e) => {
@@ -357,7 +510,8 @@ async fn read_remote(
             });
         }
     };
-    Ok((status, content_type, body))
+    let content_type = media_content_type(&body)?;
+    Ok((StatusCode::OK, content_type, body))
 }
 
 /// The waits before each retry of a source that answered 429 or 503: peers
@@ -489,6 +643,27 @@ mod tests {
         Bytes::from(png.into_inner())
     }
 
+    fn ftyp(major: &[u8; 4], compatible: &[[u8; 4]]) -> Vec<u8> {
+        let mut body = ((16 + compatible.len() * 4) as u32).to_be_bytes().to_vec();
+        body.extend_from_slice(b"ftyp");
+        body.extend_from_slice(major);
+        body.extend_from_slice(&[0; 4]);
+        for brand in compatible {
+            body.extend_from_slice(brand);
+        }
+        body
+    }
+
+    fn video(format: &str) -> Bytes {
+        match format {
+            "mp4" => Bytes::from(ftyp(b"mp42", &[*b"isom"])),
+            "webm" => {
+                Bytes::from_static(b"\x1a\x45\xdf\xa3\x87\x42\x82\x84webm\x18\x53\x80\x67\xff")
+            }
+            _ => unreachable!(),
+        }
+    }
+
     /// A loopback source: `/img.png` and `/content/contents/{cid}` a 400x200
     /// PNG (the latter after 50 ms, as a peer across the network), `/missing`
     /// 404; counts hits.
@@ -497,7 +672,69 @@ mod tests {
         let png = png(400, 200);
         let counter = hits.clone();
         let slow = (png.clone(), hits.clone());
+        let mislabeled_png = png.clone();
+        let mislabeled_hits = hits.clone();
+        let video_hits = hits.clone();
+        let status_png = png.clone();
         let stub = Router::new()
+            .route(
+                "/video/{format}",
+                axum::routing::get(
+                    move |axum::extract::Path(format): axum::extract::Path<String>| {
+                        video_hits.fetch_add(1, Ordering::SeqCst);
+                        async move { ([(header::CONTENT_TYPE, "text/html")], video(&format)) }
+                    },
+                ),
+            )
+            .route(
+                "/status/{code}",
+                axum::routing::get(move |axum::extract::Path(code): axum::extract::Path<u16>| {
+                    let png = status_png.clone();
+                    async move {
+                        (
+                            StatusCode::from_u16(code).unwrap(),
+                            [(header::CONTENT_TYPE, "text/html")],
+                            png,
+                        )
+                    }
+                }),
+            )
+            .route(
+                "/html",
+                axum::routing::get(|| async {
+                    (
+                        [(header::CONTENT_TYPE, "text/html")],
+                        "<script>alert(1)</script>",
+                    )
+                }),
+            )
+            .route(
+                "/claimed-image",
+                axum::routing::get(|| async {
+                    (
+                        [(header::CONTENT_TYPE, "image/png")],
+                        "<script>alert(1)</script>",
+                    )
+                }),
+            )
+            .route(
+                "/mislabeled.png",
+                axum::routing::get(move || {
+                    let png = mislabeled_png.clone();
+                    mislabeled_hits.fetch_add(1, Ordering::SeqCst);
+                    async move { ([(header::CONTENT_TYPE, "text/html")], png) }
+                }),
+            )
+            .route(
+                "/missing.html",
+                axum::routing::get(|| async {
+                    (
+                        StatusCode::NOT_FOUND,
+                        [(header::CONTENT_TYPE, "text/html")],
+                        "<script>alert(1)</script>",
+                    )
+                }),
+            )
             .route(
                 "/img.png",
                 axum::routing::get(move || {
@@ -530,14 +767,28 @@ mod tests {
         (format!("http://{addr}"), hits)
     }
 
-    async fn get(app: &Router, uri: &str) -> (StatusCode, HeaderMap, Bytes) {
+    async fn request(app: &Router, method: &str, uri: &str) -> (StatusCode, HeaderMap, Bytes) {
         let resp = app
             .clone()
-            .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         let status = resp.status();
         let headers = resp.headers().clone();
+        assert_eq!(
+            headers[header::CONTENT_SECURITY_POLICY],
+            "sandbox; default-src 'none'"
+        );
+        assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+        if !status.is_success() {
+            assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+        }
         (
             status,
             headers,
@@ -547,12 +798,16 @@ mod tests {
         )
     }
 
+    async fn get(app: &Router, uri: &str) -> (StatusCode, HeaderMap, Bytes) {
+        request(app, "GET", uri).await
+    }
+
     fn q(url: &str) -> String {
         url::form_urlencoded::byte_serialize(url.as_bytes()).collect()
     }
 
     #[tokio::test]
-    async fn a_source_is_proxied_resized_memoized_and_its_errors_passed_through() {
+    async fn a_source_is_proxied_resized_memoized_and_its_errors_sanitized() {
         let (base, hits) = source().await;
         let app = app(crate::http::Outbound::for_tests());
 
@@ -596,7 +851,231 @@ mod tests {
 
         let missing = format!("/convert?url={}", q(&format!("{base}/missing")));
         let (status, _, body) = get(&app, &missing).await;
-        assert_eq!((status, &body[..]), (StatusCode::NOT_FOUND, &b"nope"[..]));
+        assert_eq!(
+            (status, &body[..]),
+            (StatusCode::NOT_FOUND, &b"upstream media request failed"[..])
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_sources_are_classified_by_bytes_and_error_bodies_are_not_forwarded() {
+        let (base, hits) = source().await;
+        let app = app(crate::http::Outbound::for_tests());
+        for route in ["/convert", "/media/convert"] {
+            for width in ["", "&width=80"] {
+                for path in ["html", "claimed-image"] {
+                    let uri = format!("{route}?url={}{width}", q(&format!("{base}/{path}")));
+                    let (status, _, body) = get(&app, &uri).await;
+                    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+                    assert!(body.is_empty());
+                }
+                let uri = format!("{route}?url={}{width}", q(&format!("{base}/missing.html")));
+                let (status, headers, body) = get(&app, &uri).await;
+                assert_eq!(status, StatusCode::NOT_FOUND);
+                assert_eq!(headers[header::CONTENT_TYPE], "text/plain; charset=utf-8");
+                assert_eq!(&body[..], b"upstream media request failed");
+            }
+            let uri = format!("{route}?url={}", q(&format!("{base}/mislabeled.png")));
+            for _ in 0..2 {
+                let (status, headers, body) = get(&app, &uri).await;
+                assert_eq!(status, StatusCode::OK);
+                assert_eq!(headers[header::CONTENT_TYPE], "image/png");
+                assert!(body.starts_with(b"\x89PNG"));
+            }
+            assert_eq!(
+                hits.load(Ordering::SeqCst),
+                1,
+                "both aliases share the cached image"
+            );
+            assert_eq!(get(&app, route).await.0, StatusCode::BAD_REQUEST);
+            let (status, headers, body) = get(&app, &format!("{route}?url=%00")).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert_eq!(headers[header::CONTENT_TYPE], "application/json");
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+                serde_json::json!({"error": "request path or query contains a NUL byte"})
+            );
+            assert_eq!(
+                get(
+                    &app,
+                    &format!("{route}?url=https://example.org&width=invalid")
+                )
+                .await
+                .0,
+                StatusCode::BAD_REQUEST
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn converter_preflights_are_sandboxed_without_changing_translation() {
+        let app = app(crate::http::Outbound::for_tests());
+        for route in ["/convert", "/media/convert", "/translate"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("OPTIONS")
+                        .uri(route)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+            assert_eq!(
+                response.headers().get(header::CONTENT_SECURITY_POLICY),
+                (route != "/translate")
+                    .then_some(&HeaderValue::from_static("sandbox; default-src 'none'"))
+            );
+        }
+        let response = app
+            .oneshot(
+                Request::post("/translate?text=%00")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
+        assert!(
+            !response
+                .headers()
+                .contains_key(header::CONTENT_SECURITY_POLICY)
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({"error": "request path or query contains a NUL byte"})
+        );
+    }
+
+    #[tokio::test]
+    async fn video_get_and_head_detect_bytes_share_cache_and_refuse_resizing() {
+        let (base, hits) = source().await;
+        for route in ["/convert", "/media/convert"] {
+            let app = app(crate::http::Outbound::for_tests());
+            for format in ["mp4", "webm"] {
+                let before = hits.load(Ordering::SeqCst);
+                let uri = format!("{route}?url={}", q(&format!("{base}/video/{format}")));
+                for method in ["HEAD", "GET", "HEAD", "GET"] {
+                    let (status, headers, body) = request(&app, method, &uri).await;
+                    assert_eq!(status, StatusCode::OK);
+                    assert_eq!(headers[header::CONTENT_TYPE], format!("video/{format}"));
+                    assert_eq!(headers[header::CACHE_CONTROL], "public, max-age=86400");
+                    if method == "HEAD" {
+                        assert!(body.is_empty());
+                    } else {
+                        assert_eq!(body, video(format));
+                    }
+                }
+                assert_eq!(hits.load(Ordering::SeqCst), before + 1);
+                let (status, _, body) = get(&app, &format!("{uri}&width=80")).await;
+                assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+                assert_eq!(&body[..], b"video resizing is not supported");
+                let (status, _, body) = request(&app, "HEAD", &format!("{uri}&width=80")).await;
+                assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+                assert!(body.is_empty());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn full_media_is_normalized_and_unsolicited_partial_media_is_rejected() {
+        let (base, _) = source().await;
+        let app = app(crate::http::Outbound::for_tests());
+        for route in ["/convert", "/media/convert"] {
+            for width in ["", "&width=80"] {
+                let uri = format!("{route}?url={}{width}", q(&format!("{base}/status/203")));
+                assert_eq!(get(&app, &uri).await.0, StatusCode::OK);
+                let uri = format!("{route}?url={}{width}", q(&format!("{base}/status/206")));
+                let (status, headers, body) = get(&app, &uri).await;
+                assert_eq!(status, StatusCode::BAD_GATEWAY);
+                assert_eq!(headers[header::CONTENT_TYPE], "text/plain; charset=utf-8");
+                assert_eq!(&body[..], b"upstream returned unsolicited partial content");
+            }
+        }
+    }
+
+    #[test]
+    fn media_signatures_are_allowlisted_and_container_headers_are_checked() {
+        for (body, expected) in [
+            (&b"\x89PNG\r\n\x1a\n"[..], "image/png"),
+            (&b"\xff\xd8\xff"[..], "image/jpeg"),
+            (&b"GIF89a"[..], "image/gif"),
+            (&b"RIFF\x04\0\0\0WEBP"[..], "image/webp"),
+        ] {
+            assert_eq!(media_content_type(body).unwrap(), expected);
+        }
+        assert_eq!(
+            media_content_type(&ftyp(b"avif", &[*b"mif1"])).unwrap(),
+            "image/avif"
+        );
+        assert!(!is_mp4(&ftyp(b"avif", &[*b"mp42"])));
+        assert!(!is_mp4(&ftyp(b"isom", &[*b"avif"])));
+        assert!(is_mp4(&ftyp(b"zzzz", &[*b"mp42"])));
+        let mut minor_is_not_a_brand = ftyp(b"zzzz", &[]);
+        minor_is_not_a_brand[12..16].copy_from_slice(b"mp42");
+        assert!(!is_mp4(&minor_is_not_a_brand));
+        for body in [
+            &b"P1\n<html><script>alert(1)</script>"[..],
+            &b"P1\n1 1\n0\n"[..],
+            &b"II*\0"[..],
+        ] {
+            assert!(media_content_type(body).is_err());
+        }
+        let mp4 = video("mp4");
+        for length in 0..mp4.len() {
+            assert!(!is_mp4(&mp4[..length]));
+        }
+        for size in [0_u32, 8, 15, 17, u32::MAX] {
+            let mut invalid = mp4.to_vec();
+            invalid[..4].copy_from_slice(&size.to_be_bytes());
+            assert!(!is_mp4(&invalid));
+        }
+        let mut extended = [
+            1_u32.to_be_bytes().as_slice(),
+            b"ftyp",
+            &24_u64.to_be_bytes(),
+            b"mp42",
+            &[0; 4],
+        ]
+        .concat();
+        assert!(is_mp4(&extended));
+        extended[8..16].copy_from_slice(&u64::MAX.to_be_bytes());
+        assert!(!is_mp4(&extended));
+        let webm = video("webm");
+        for length in 0..12 {
+            assert!(!is_webm(&webm[..length]));
+        }
+        assert!(is_webm(&webm));
+        assert!(!is_webm(b"\x1a\x45\xdf\xa3\x8b\x42\x82\x88matroska"));
+        assert!(!is_webm(b"\x1a\x45\xdf\xa3\xff\x42\x82\x84webm"));
+        assert!(!is_webm(b"\x1a\x45\xdf\xa3\x87\x42\x82\xffwebm"));
+        assert!(!is_webm(b"\x1a\x45\xdf\xa3\x87\x00\x82\x84webm"));
+        let eight_byte_size = b"\x1a\x45\xdf\xa3\x01\0\0\0\0\0\0\x07\x42\x82\x84webm";
+        assert!(is_webm(eight_byte_size));
+        assert!(!is_webm(
+            b"\x1a\x45\xdf\xa3\x01\0\0\0\0\0\0\x08\x42\x82\x84webm"
+        ));
+    }
+
+    #[test]
+    fn active_document_formats_are_not_images() {
+        for body in [
+            &b"<!doctype html><script>alert(1)</script>"[..],
+            &b"<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>"[..],
+            &b"%PDF-1.7"[..],
+            &b"<?xml version=\"1.0\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"/>"[..],
+        ] {
+            assert_eq!(
+                media_content_type(body).unwrap_err().status(),
+                StatusCode::UNSUPPORTED_MEDIA_TYPE
+            );
+        }
     }
 
     #[tokio::test]
@@ -639,6 +1118,15 @@ mod tests {
             .store(hash, Bytes::from(png.into_inner()))
             .await
             .unwrap();
+        let html_hash = cid(7);
+        storage
+            .store(&html_hash, Bytes::from_static(b"<script>alert(1)</script>"))
+            .await
+            .unwrap();
+        let videos = [(cid(8), "mp4"), (cid(9), "webm")];
+        for (hash, format) in &videos {
+            storage.store(hash, video(format)).await.unwrap();
+        }
         let own = "https://node.example.org";
         let app = app_reading(
             crate::http::Outbound::for_tests(),
@@ -681,6 +1169,24 @@ mod tests {
         let absent = q(&format!("{own}/content/contents/bafkreimissing"));
         let (status, _, _) = get(&app, &format!("/convert?url={absent}")).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+        let html = q(&format!("{own}/content/contents/{html_hash}"));
+        for width in ["", "&width=80"] {
+            let (status, _, body) = get(&app, &format!("/convert?url={html}{width}")).await;
+            assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+            assert!(body.is_empty());
+        }
+        for (hash, format) in videos {
+            let url = q(&format!("{own}/content/contents/{hash}"));
+            let uri = format!("/convert?url={url}");
+            let (status, headers, body) = get(&app, &uri).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(headers[header::CONTENT_TYPE], format!("video/{format}"));
+            assert_eq!(body, video(format));
+            assert_eq!(
+                get(&app, &format!("{uri}&width=80")).await.0,
+                StatusCode::UNSUPPORTED_MEDIA_TYPE
+            );
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -820,7 +1326,10 @@ mod tests {
         let (status, _, body) = get(&app, &format!("/convert?width=80&url={url}")).await;
         assert_eq!(
             (status, &body[..]),
-            (StatusCode::TOO_MANY_REQUESTS, &b"slow down"[..])
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                &b"upstream media request failed"[..]
+            )
         );
         assert_eq!(
             banned.load(Ordering::SeqCst),

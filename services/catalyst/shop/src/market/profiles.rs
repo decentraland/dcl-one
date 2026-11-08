@@ -24,7 +24,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
-use crate::content::queries::active_entity_docs_by_pointers;
+use crate::content::queries::{active_entity_docs_by_pointers, retain_non_denylisted};
 
 use super::graph;
 use super::third_party;
@@ -489,18 +489,20 @@ pub async fn process_profiles_positional(
 }
 
 /// The active entities on `pointers`, through the read-through when one is
-/// configured (the node's full view, as the lambdas' content client sees it).
+/// configured (the node's full view, as the lambdas' content client sees it),
+/// without the denylisted ones.
 pub(super) async fn active_entities(
     state: &MarketplaceState,
     pointers: &[String],
 ) -> Result<Vec<Value>, ()> {
-    let docs = match &state.read_through {
+    let mut docs = match &state.read_through {
         Some(read_through) => read_through.active_docs(false, pointers).await,
         None => active_entity_docs_by_pointers(&state.pool, pointers).await,
     }
     .map_err(|e| {
         tracing::error!(error = %e, "lambdas: active entities query failed");
     })?;
+    retain_non_denylisted(&mut docs, &state.denylist);
     Ok(docs.iter().filter_map(|d| d.to_value()).collect())
 }
 

@@ -24,7 +24,7 @@ async fn assert_deliveries(rig: &Rig, id: CommunityId, count: i64) {
             "email".into(),
             "skipped".into(),
             0,
-            Some("no confirmed email".into())
+            Some("no email template".into())
         )));
 }
 
@@ -590,17 +590,14 @@ async fn native_audiences_filter_opt_outs_and_replays_preserve_delivery_intent()
         );
         let deliveries: Vec<(Uuid,String,String,i32,Option<String>)> = sqlx::query_as("SELECT n.id,n.address,d.state,d.attempts,d.last_error FROM social.notifications n JOIN social.notification_deliveries d ON d.notification_id=n.id WHERE n.type=$1 AND n.metadata->>'communityId'=$2 ORDER BY n.address").bind(kind).bind(id.to_string()).fetch_all(&rig.pool).await.unwrap();
         assert_eq!(deliveries.len(), rows.len());
-        for ((id, recipient, state, attempts, error), row) in deliveries.iter().zip(&rows) {
+        // Community notices are never emailed upstream, whatever the preferences.
+        for ((id, _, state, attempts, error), row) in deliveries.iter().zip(&rows) {
             assert_eq!(*id, row.0);
             assert_eq!(*attempts, 0);
-            let expected = if *recipient == address(4) {
-                ("pending", None)
-            } else if *recipient == address(5) {
-                ("skipped", Some("ignore_all_email"))
-            } else {
-                ("skipped", Some("no confirmed email"))
-            };
-            assert_eq!((state.as_str(), error.as_deref()), expected);
+            assert_eq!(
+                (state.as_str(), error.as_deref()),
+                ("skipped", Some("no email template"))
+            );
         }
     }
     rig.finish();

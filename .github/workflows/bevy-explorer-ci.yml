@@ -173,7 +173,7 @@ jobs:
         run: python ../../../apps/bevy-explorer/prepare-native-cache.py
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           workspaces: rendering/bevy-explorer/source -> target
           key: bevy-explorer-native-ci-test
       - name: Restore the vendored Bevy's cached file times
@@ -191,7 +191,7 @@ jobs:
             libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
       - name: Install clang for webrtc-sys
         if: runner.os == 'Linux'
-        run: ../../../apps/bevy-explorer/install-clang.sh
+        uses: ./.github/actions/bevy-explorer-clang
       - name: install ffmpeg deps (macOs)
         if: runner.os == 'macos'
         run: |
@@ -349,7 +349,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: bevy-explorer-headless-linux-x64
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           workspaces: rendering/bevy-explorer/source -> target
       - name: Restore the vendored Bevy's cached file times
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
@@ -361,7 +361,7 @@ jobs:
             libasound2-dev libudev-dev libgl-dev libx11-dev libxext-dev \
             libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
       - name: Install clang for webrtc-sys
-        run: ../../../apps/bevy-explorer/install-clang.sh
+        uses: ./.github/actions/bevy-explorer-clang
       - name: Build headless engine and sidecar
         run: python3 ../../../apps/bevy-explorer/build-headless.py
       - name: Record the vendored Bevy's file times for the cache
@@ -485,7 +485,7 @@ jobs:
         run: python ../../../apps/bevy-explorer/prepare-native-cache.py
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           workspaces: rendering/bevy-explorer/source -> target
           key: bevy-explorer-native
       - name: Restore the vendored Bevy's cached file times
@@ -499,7 +499,7 @@ jobs:
             libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev \
             libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
       - name: Install clang for webrtc-sys
-        run: ../../../apps/bevy-explorer/install-clang.sh
+        uses: ./.github/actions/bevy-explorer-clang
       - run: cargo clippy --locked -- -D warnings
         shell: bash
       - name: Record the vendored Bevy's file times for the cache
@@ -544,6 +544,9 @@ jobs:
       # The Segment source the engine reports to (crates/analytics); unset, the shared key. Part
       # of the compiled engine's cache key (tooling/play-artifact.py engine-cache-key).
       BEVY_SEGMENT_WRITE_KEY: ${{ vars.BEVY_SEGMENT_WRITE_KEY }}
+      # Bevy Explorer / Benchmark refuses unoptimized web apps; while its fleet is off ('none'),
+      # nothing measures a PR's, so PR builds skip wasm-opt.
+      BEVY_WEB_OPT: ${{ github.event_name == 'pull_request' && vars.BENCHMARK_ENABLED_RUNNERS == 'none' && 'unoptimized' || 'optimized' }}
     permissions:
       id-token: write
       contents: read
@@ -552,19 +555,23 @@ jobs:
       - name: Identify compiled engine inputs
         id: engine-inputs
         working-directory: .
-        run: echo "key=$(python3 tooling/play-artifact.py engine-cache-key)" >> "$GITHUB_OUTPUT"
+        # A failing script must fail the step: an empty key would make restore-keys match any engine.
+        run: |
+          key=$(python3 tooling/play-artifact.py engine-cache-key)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
       - name: Restore compiled engine
         id: engine-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .cache/bevy-engine
-          # Every build goes through wasm-opt, on PRs as on main: Bevy Explorer / Benchmark compares
-          # a PR's web app with main's, and refuses an unoptimized one.
-          key: bevy-engine-v1-optimized-${{ steps.engine-inputs.outputs.key }}
+          # An unoptimized build may reuse main's optimized engine; an optimized one never reads an
+          # unoptimized engine.
+          key: bevy-engine-v1-${{ env.BEVY_WEB_OPT }}-${{ steps.engine-inputs.outputs.key }}
+          restore-keys: bevy-engine-v1-optimized-${{ steps.engine-inputs.outputs.key }}
       - name: Verify restored engine before skipping compiler setup
         if: steps.engine-cache.outputs.cache-matched-key != ''
         working-directory: .
-        run: python3 tooling/play-artifact.py verify-engine .cache/bevy-engine --production
+        run: python3 tooling/play-artifact.py verify-engine .cache/bevy-engine ${{ env.BEVY_WEB_OPT == 'optimized' && '--production' || '' }}
       - name: Reserve disk space on the hosted Linux runner
         if: steps.engine-cache.outputs.cache-matched-key == ''
         working-directory: .
@@ -618,7 +625,7 @@ jobs:
         if: steps.engine-cache.outputs.cache-matched-key == ''
         run: sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py libasound2-dev libudev-dev clang
       - name: Build and test the local web app
-        run: python3 ../../../apps/bevy-explorer/build-web.py --engine-cache ../../../.cache/bevy-engine
+        run: python3 ../../../apps/bevy-explorer/build-web.py --engine-cache ../../../.cache/bevy-engine ${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }}
       - name: Record the vendored Bevy's file times for the cache
         if: steps.engine-cache.outputs.cache-matched-key == ''
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
@@ -668,6 +675,8 @@ jobs:
           echo "PUBLIC_URL=$PUBLIC_URL"
           npm run build --prefix react-web
       - name: Test scene Fetch in Chromium
+        env:
+          DEBUG: pw:browser  # Chrome's own output, timestamped
         run: CHROME_BIN="$(command -v google-chrome)" npm run test:scene-fetch --prefix react-web
       - name: Bundle bridge scene
         run: |

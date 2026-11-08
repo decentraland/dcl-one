@@ -4,6 +4,8 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { shopCartDrawer } from "../../cart/drawer";
+import { shopCart } from "../../cart/store";
 import { catalogRow, CREATOR, PRIMARY_WEARABLE, ShopHarness, type SessionKind } from "../fixtures";
 import { toCatalogItem, type CatalogItem } from "../lib/catalogItem";
 import { rarityCardPalette, rarityColor } from "../lib/rarity";
@@ -141,6 +143,20 @@ describe("the card's price row", () => {
     await settle();
     expect(screen.queryByTestId("card-cart")).toBeNull();
     expect(screen.getByTestId("card").querySelector("[data-chips]")).toBeNull();
+  });
+
+  it("Add to cart puts the item in the cart and opens the drawer over the page, as upstream's card", async () => {
+    shopCart.clear();
+    shopCartDrawer.close();
+    card(item({ available: 5 }));
+    await settle();
+    fireEvent.click(screen.getByTestId("card-cart"));
+    expect(shopCart.getSnapshot().lines).toHaveLength(1);
+    expect(shopCart.getSnapshot().lines[0]!.available).toBe(5);
+    expect(shopCartDrawer.getSnapshot()).toEqual({ open: true, justAdded: 1 });
+    expect(window.location.pathname).not.toBe("/shop/cart");
+    shopCart.clear();
+    shopCartDrawer.close();
   });
 
   it("keeps the thumbnail decorative: the link and the title already name the item", async () => {

@@ -121,6 +121,75 @@ describe('profile domain', () => {
     expect(h.session().profile.saving).toBe(false)
   })
 
+  it('saves a name colour quietly: shown at once, and a failure only puts the old colour back', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile })
+    act(() => requestPassport('0xme'))
+    h.driver.emit({ kind: 'userProfile', address: '0xme', profile })
+
+    act(() => h.session().profile.saveNameColor({ r: 1, g: 0, b: 0 }))
+    expect(h.driver.last('saveProfile')).toEqual({ kind: 'saveProfile', nameColor: { r: 1, g: 0, b: 0 } })
+    expect(h.session().profile.data?.nameColor).toEqual({ r: 1, g: 0, b: 0 })
+    expect(peekProfile('0xme')?.nameColor).toEqual({ r: 1, g: 0, b: 0 })
+    // Not the edit form's save: its SAVE button and error stay out of it.
+    expect(h.session().profile.saving).toBe(false)
+
+    h.driver.emit({ kind: 'profileSaved', ok: false, error: 'failed to deploy to server.' })
+    expect(h.session().profile.saveError).toBeNull()
+    expect(h.session().profile.data?.nameColor).toBeUndefined()
+    expect(peekProfile('0xme')?.nameColor).toBeUndefined()
+  })
+
+  it('holds a save asked for while another deploys, so the engine never cancels the first', async () => {
+    const h = renderSession()
+    await enterAsGuest(h, { keepSent: true })
+    h.driver.emit({ kind: 'profile', profile })
+    act(() => h.session().profile.save({ description: 'gm' }))
+    act(() => h.session().profile.saveNameColor({ r: 0, g: 1, b: 0 }))
+    expect(h.driver.sentOf('saveProfile')).toHaveLength(1)
+    expect(h.session().profile.saving).toBe(true)
+
+    h.driver.emit({ kind: 'profileSaved', ok: true })
+    expect(h.driver.sentOf('saveProfile')).toHaveLength(2)
+    expect(h.driver.last('saveProfile')).toEqual({ kind: 'saveProfile', nameColor: { r: 0, g: 1, b: 0 } })
+    expect(h.session().profile.data).toMatchObject({ description: 'gm', nameColor: { r: 0, g: 1, b: 0 } })
+    // The colour's own deploy is quiet: the form is no longer saving while it runs.
+    expect(h.session().profile.saving).toBe(false)
+
+    h.driver.emit({ kind: 'profileSaved', ok: true })
+    expect(h.session().profile.saveError).toBeNull()
+  })
+
+  it('a rejected save is not carried into the save queued behind it', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile })
+    act(() => h.session().profile.save({ description: 'gm' }))
+    act(() => h.session().profile.saveNameColor({ r: 0, g: 0, b: 1 }))
+
+    h.driver.emit({ kind: 'profileSaved', ok: false, error: 'failed to deploy to server.' })
+    expect(h.session().profile.saveError).toBe('failed to deploy to server.')
+    expect(h.session().profile.data).toMatchObject({ description: 'hi', nameColor: { r: 0, g: 0, b: 1 } })
+
+    h.driver.emit({ kind: 'profileSaved', ok: true })
+    expect(h.session().profile.data).toMatchObject({ description: 'hi', nameColor: { r: 0, g: 0, b: 1 } })
+  })
+
+  it('a save the bridge failed to handle counts as failed, so the queue behind it still runs', async () => {
+    const h = renderSession()
+    await enterAsGuest(h, { keepSent: true })
+    h.driver.emit({ kind: 'profile', profile })
+    act(() => h.session().profile.save({ description: 'gm' }))
+    act(() => h.session().profile.saveNameColor({ r: 1, g: 0, b: 1 }))
+
+    h.driver.emit({ kind: 'requestFailed', request: 'saveProfile', error: 'boom' })
+    expect(h.session().profile.saveError).toBe('Could not save your profile.')
+    expect(h.session().profile.data?.description).toBe('hi')
+    expect(h.driver.last('saveProfile')).toEqual({ kind: 'saveProfile', nameColor: { r: 1, g: 0, b: 1 } })
+    expect(h.session().profile.saving).toBe(false)
+  })
+
   it('relays the claimed names the picker offers', async () => {
     const h = renderSession()
     await enterAsGuest(h)

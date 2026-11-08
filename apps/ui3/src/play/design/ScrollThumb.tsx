@@ -1,6 +1,7 @@
 // ScrollThumb — the Shop's scrollbar: a 14px outlined pill drawn beside a scroller whose own scrollbar is
-// hidden. It follows the scroller by writing its own style on scroll and resize (no React render), and
-// hides while everything fits. Place it with the parent's layout; it fills the parent's height as track.
+// hidden, down its side (`axis` y, the default) or along its bottom (x). It follows the scroller by writing
+// its own style on scroll and resize (no React render), and hides while everything fits. Place it with the
+// parent's layout; it fills the parent's height (or width, along x) as track.
 
 import { useEffect, useRef } from 'react'
 import styles from './ScrollThumb.module.css'
@@ -10,11 +11,14 @@ const MIN_THUMB = 40
 export function ScrollThumb({
   target,
   length,
+  axis = 'y',
   className
 }: {
   target: React.RefObject<HTMLElement | null>
   /** A fixed thumb length (px), as a design draws it; by default it shows how much of the content is in view. */
   length?: number
+  /** Down the scroller's side (y) or along its bottom (x). */
+  axis?: 'x' | 'y'
   className?: string
 }): React.JSX.Element {
   const track = useRef<HTMLSpanElement>(null)
@@ -24,18 +28,26 @@ export function ScrollThumb({
     const tr = track.current
     const t = thumb.current
     if (el == null || tr == null || t == null) return
+    const x = axis === 'x'
     const sync = (): void => {
       // The thumb travels its own track, which may be shorter than the scroller (one that bleeds past
       // its box to leave room for a hovered card); the scroller only gives the proportions.
-      const view = el.clientHeight
-      const fits = el.scrollHeight <= view + 1
+      const view = x ? el.clientWidth : el.clientHeight
+      const size = x ? el.scrollWidth : el.scrollHeight
+      const offset = x ? el.scrollLeft : el.scrollTop
+      const fits = size <= view + 1
       t.style.visibility = fits ? 'hidden' : 'visible'
       if (fits) return
-      const travel = tr.clientHeight
-      const height = Math.min(travel, length ?? Math.max(MIN_THUMB, (travel * view) / el.scrollHeight))
-      const top = ((travel - height) * el.scrollTop) / (el.scrollHeight - view)
-      t.style.height = `${height}px`
-      t.style.transform = `translateY(${top}px)`
+      const travel = x ? tr.clientWidth : tr.clientHeight
+      const extent = Math.min(travel, length ?? Math.max(MIN_THUMB, (travel * view) / size))
+      const at = ((travel - extent) * offset) / (size - view)
+      if (x) {
+        t.style.width = `${extent}px`
+        t.style.transform = `translateX(${at}px)`
+      } else {
+        t.style.height = `${extent}px`
+        t.style.transform = `translateY(${at}px)`
+      }
     }
     sync()
     el.addEventListener('scroll', sync, { passive: true })
@@ -58,9 +70,9 @@ export function ScrollThumb({
       ro.disconnect()
       mo.disconnect()
     }
-  }, [target, length])
+  }, [target, length, axis])
   return (
-    <span ref={track} className={`${styles.track} ${className ?? ''}`.trim()} aria-hidden="true">
+    <span ref={track} className={`${styles.track} ${axis === 'x' ? styles.x : ''} ${className ?? ''}`.trim()} aria-hidden="true">
       <span ref={thumb} className={styles.thumb} />
     </span>
   )

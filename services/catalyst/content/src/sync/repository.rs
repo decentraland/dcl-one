@@ -215,9 +215,9 @@ impl LiveDeploymentRepository {
                 WHERE ap.entity_id = s.entity_id
                 RETURNING ap.pointer
             ), outdated AS (
-                -- a generation stamped at the epoch is regenerated at the generator's next tick
+                -- a marked window is regenerated at the generator's next tick
                 UPDATE content.snapshots sn
-                SET generation_time = 'epoch'::timestamp
+                SET outdated = true
                 WHERE EXISTS (
                     SELECT 1 FROM superseded s
                     WHERE s.entity_timestamp BETWEEN sn.init_timestamp AND sn.end_timestamp)
@@ -539,7 +539,7 @@ mod tests {
     /// owns the database.
     #[tokio::test]
     async fn the_startup_repair_rolls_back_when_its_lease_is_lost() {
-        use crate::jobs::{Jobs, LeaseSettings, Leases};
+        use crate::jobs::{Jobs, LeaseSettings};
         use std::time::Duration;
         let Some((admin, pool, name)) = repair_database().await else {
             return;
@@ -574,6 +574,22 @@ mod tests {
             assert!(std::time::Instant::now() < deadline, "the repair never ran");
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
+        let leader = tokio::spawn({
+            let mut conn = pool.acquire().await.unwrap().detach();
+            let namespace = lease_settings.namespace.clone();
+            async move {
+                sqlx::query("SELECT pg_advisory_lock(hashtext($1), hashtext('sync'))")
+                    .bind(namespace)
+                    .execute(&mut conn)
+                    .await
+                    .unwrap();
+                conn
+            }
+        });
+        while waiters().await < 2 {
+            assert!(std::time::Instant::now() < deadline, "the leader never queued");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
 
         let pid = jobs.leases().unwrap().backend_pid().await.unwrap();
         let killed: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
@@ -582,17 +598,10 @@ mod tests {
             .await
             .unwrap();
         assert!(killed);
-        let leader = Arc::new(Leases::new(pool.clone(), lease_settings));
-        let held = loop {
-            if let Some(guard) = leader.try_acquire("sync").await.unwrap() {
-                break guard;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the sync lease never freed"
-            );
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        };
+        let held = tokio::time::timeout(deadline - std::time::Instant::now(), leader)
+            .await
+            .expect("the sync lease never freed")
+            .unwrap();
 
         while !jobs.report().iter().any(|j| {
             j.name == "deleter-repair"
@@ -643,8 +652,7 @@ mod tests {
         );
 
         jobs.shutdown(Duration::from_secs(5)).await;
-        held.release().await;
-        drop(leader);
+        drop(held);
         drop_repair_database(admin, pool, &name).await;
     }
 
@@ -846,7 +854,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_bloom_seed_streams_every_deployed_entity_id() {
-        let Some(pool) = test_pool(2).await else {
+        let Some((admin, pool, name)) = repair_database().await else {
             return;
         };
         let repo = LiveDeploymentRepository::new(pool.clone(), Arc::new(SyncStatus::default()));
@@ -871,11 +879,8 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert!(seeded >= ids.len() as u64, "seeded {seeded} ids");
-        assert!(
-            seeded <= in_table as u64,
-            "seeded {seeded} ids, table holds {in_table}"
-        );
+        assert_eq!(seeded, ids.len() as u64);
+        assert_eq!(seeded, in_table as u64);
         for id in &ids {
             assert!(
                 bloom.maybe_contains(id),
@@ -884,11 +889,7 @@ mod tests {
         }
         assert!(!bloom.maybe_contains(&format!("bafk-seed-{tag}-missing")));
 
-        sqlx::query("DELETE FROM content.deployments WHERE entity_id LIKE $1")
-            .bind(format!("bafk-seed-{tag}-%"))
-            .execute(&pool)
-            .await
-            .unwrap();
+        drop_repair_database(admin, pool, &name).await;
     }
 
     #[tokio::test]

@@ -2539,6 +2539,13 @@ async fn webhook_invalidates_occupancy_and_preserves_access_log_ordering() {
 async fn world_mint_refuses_at_capacity() {
     use crate::rooms::ResolvedRoom;
     use crate::world_identity::{RealmId, WorldName};
+    let Some(pool) = crate::db::scratch::pool(4).await else {
+        return;
+    };
+    sqlx::query("INSERT INTO worlds.worlds(name) VALUES('alice.dcl.eth') ON CONFLICT DO NOTHING")
+        .execute(&pool)
+        .await
+        .unwrap();
     let world = WorldName::parse("alice.dcl.eth").unwrap();
     let room = crate::rooms::worlds_service_world_room(&world);
     let scenes = StubScenes {
@@ -2551,8 +2558,6 @@ async fn world_mint_refuses_at_capacity() {
         ..StubScenes::default()
     };
     let presence = Arc::new(crate::presence::Presence::new());
-    let pool = PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres")
-        .expect("a lazy pool never connects");
     let state = Arc::new(
         CommsState::new(
             pool,
@@ -2924,6 +2929,13 @@ async fn world_mints_answer_404_for_an_unknown_or_blocked_world() {
     use crate::access::WorldAdmission;
     use crate::rooms::ResolvedRoom;
     use crate::world_identity::{RealmId, WorldName};
+    let Some(pool) = crate::db::scratch::pool(4).await else {
+        return;
+    };
+    sqlx::query("INSERT INTO worlds.worlds(name) VALUES('alice.dcl.eth') ON CONFLICT DO NOTHING")
+        .execute(&pool)
+        .await
+        .unwrap();
     let world = WorldName::parse("alice.dcl.eth").unwrap();
     let handshake = r#"{"signer":"dcl:explorer","intent":"dcl:explorer:comms-handshake"}"#;
     for (admission, expected) in [
@@ -2945,7 +2957,7 @@ async fn world_mints_answer_404_for_an_unknown_or_blocked_world() {
         };
         let state = Arc::new(
             CommsState::new(
-                lazy_pool(),
+                pool.clone(),
                 Outbound::for_tests(),
                 Settings::for_tests(),
                 None,
@@ -2975,10 +2987,13 @@ async fn world_mints_answer_404_for_an_unknown_or_blocked_world() {
             let (status, body) = body_json(app.clone().oneshot(request).await.unwrap()).await;
             assert_eq!(status, expected, "{admission:?} {path}: {body}");
             if expected == StatusCode::NOT_FOUND {
-                assert_eq!(
-                    body["message"], "World \"alice.dcl.eth\" is invalid or blocked.",
-                    "{body}"
-                );
+                // `comms-adapter-handler` words its 404 apart from the world mints'.
+                let message = if path.starts_with("/get-comms-adapter") {
+                    "World \"alice.dcl.eth\" was not found."
+                } else {
+                    "World \"alice.dcl.eth\" is invalid or blocked."
+                };
+                assert_eq!(body["message"], message, "{body}");
             }
         }
     }
@@ -3023,6 +3038,13 @@ async fn deny_listed_wallet_is_refused_by_every_world_mint_and_private_messages(
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/list", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    let Some(pool) = crate::db::scratch::pool(4).await else {
+        return;
+    };
+    sqlx::query("INSERT INTO worlds.worlds(name) VALUES('alice.dcl.eth') ON CONFLICT DO NOTHING")
+        .execute(&pool)
+        .await
+        .unwrap();
     let world = WorldName::parse("alice.dcl.eth").unwrap();
     let scenes = StubScenes {
         room: Ok(ResolvedRoom {
@@ -3035,7 +3057,7 @@ async fn deny_listed_wallet_is_refused_by_every_world_mint_and_private_messages(
     };
     let state = Arc::new(
         CommsState::new(
-            lazy_pool(),
+            pool.clone(),
             Outbound::for_tests().allowing_private_hosts(),
             Settings::for_tests(),
             None,

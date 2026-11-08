@@ -78,6 +78,15 @@ async fn fixture_full(
     ens: Option<(Arc<crate::ens::EnsResolver>, i64)>,
 ) -> Option<Fixture> {
     let pool = crate::db::scratch::pool(8).await?;
+    Some(fixture_on_pool(pool, personal, forward_to, ens).await)
+}
+
+async fn fixture_on_pool(
+    pool: PgPool,
+    personal: PersonalWorldsPolicy,
+    forward_to: Option<&str>,
+    ens: Option<(Arc<crate::ens::EnsResolver>, i64)>,
+) -> Fixture {
     let (market, names) = index_with_names().await;
     let dir = std::env::temp_dir().join(format!(
         "catalyst-worlds-core-{}-{}",
@@ -116,7 +125,7 @@ async fn fixture_full(
         )),
     );
     let app = router(state.clone());
-    Some(Fixture {
+    Fixture {
         pool,
         storage,
         state,
@@ -125,7 +134,7 @@ async fn fixture_full(
         market,
         allowance,
         social,
-    })
+    }
 }
 
 async fn fixture() -> Option<Fixture> {
@@ -3053,7 +3062,51 @@ async fn community_allow_lists_require_membership_and_revoke_on_exit() {
     );
 
     // Deleting a community, or taking it off the list, re-decides everyone.
+    let before: (uuid::Uuid, chrono::NaiveDateTime) = sqlx::query_as(
+        "SELECT revision,changed_at FROM social.world_access_rechecks WHERE world_name=$1",
+    )
+    .bind(world.key())
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE social.world_access_rechecks SET next_attempt_at=timezone('UTC',now())+interval '1 day' WHERE world_name=$1")
+        .bind(world.key()).execute(&f.pool).await.unwrap();
     f.state.community_closed(joined).await;
+    let after: (uuid::Uuid, chrono::NaiveDateTime, bool) = sqlx::query_as("SELECT revision,changed_at,next_attempt_at<=timezone('UTC',now()) FROM social.world_access_rechecks WHERE world_name=$1")
+        .bind(world.key()).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(
+        (after.0, after.1),
+        before,
+        "community wake preserves edit ordering"
+    );
+    assert!(
+        after.2,
+        "community closure must persist a due retry before its wakeup"
+    );
+    assert_eq!(
+        recorded.take(),
+        vec![Revocation::AccessSetting {
+            world: world.clone()
+        }]
+    );
+    // A completed check parks the row at infinity (comms `complete_recheck`).
+    // A closure makes it due again. The revision and the cutoff do not change.
+    sqlx::query(
+        "UPDATE social.world_access_rechecks SET next_attempt_at='infinity' WHERE world_name=$1",
+    )
+    .bind(world.key())
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    f.state.community_closed(joined).await;
+    let reopened: (uuid::Uuid, chrono::NaiveDateTime, bool) = sqlx::query_as("SELECT revision,changed_at,next_attempt_at<=timezone('UTC',now()) FROM social.world_access_rechecks WHERE world_name=$1")
+        .bind(world.key()).fetch_one(&f.pool).await.unwrap();
+    assert_eq!(
+        (reopened.0, reopened.1),
+        before,
+        "a closure is not a new edit"
+    );
+    assert!(reopened.2, "a closure reopens a completed check");
     assert_eq!(
         recorded.take(),
         vec![Revocation::AccessSetting {
@@ -3149,6 +3202,181 @@ async fn a_community_exit_evicts_from_the_livekit_rooms() {
         leave_community(&f.pool, community, who).await;
         f.state.community_member_removed(community, who).await;
     }
+    let removed = |who: &Address| {
+        requests.lock().unwrap().iter().any(|(method, body)| {
+            method == "RemoveParticipant"
+                && body["room"] == room
+                && body["identity"] == who.as_str()
+        })
+    };
+    let evicted = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !removed(&member) {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    assert!(evicted.is_ok(), "{:?}", requests.lock().unwrap());
+    assert!(!removed(&granted), "the wallet grant still admits it");
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_community_closure_rechecks_livekit_when_its_queue_insert_fails() {
+    use futures::FutureExt;
+    use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+
+    let Ok(url) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
+        return;
+    };
+    let opts: PgConnectOptions = url.parse().unwrap();
+    let admin = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(opts.clone().database("postgres"))
+        .await
+        .unwrap();
+    let name = format!("world_closure_{}", Uuid::new_v4().simple());
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
+        .execute(&admin)
+        .await
+        .unwrap();
+    // Fault-injection DDL must never lock or alter the shared scratch database.
+    // Clean up the private database even if setup or an assertion panics.
+    let outcome = std::panic::AssertUnwindSafe(async {
+        let pool = PgPoolOptions::new()
+            .max_connections(8)
+            .connect_with(opts.database(&name))
+            .await
+            .unwrap();
+        crate::db::apply_schema(&pool).await.unwrap();
+        let f = fixture_on_pool(pool, PersonalWorldsPolicy::disabled(), None, None).await;
+        community_closure_with_failed_queue_insert(f).await;
+    })
+    .catch_unwind()
+    .await;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE \"{name}\" WITH (FORCE)"
+    )))
+    .execute(&admin)
+    .await
+    .unwrap();
+    admin.close().await;
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+async fn community_closure_with_failed_queue_insert(f: Fixture) {
+    use crate::comms::gatekeeper::{CommsState, Settings as CommsSettings};
+    let world = world_name();
+    let room = format!("world-{}", world.key());
+    let owner = Wallet::random();
+    f.names.set(&owner.address, world.label());
+    let (member, granted) = (Wallet::random().address, Wallet::random().address);
+    let roster = json!({ "participants": [
+        { "identity": granted.as_str() }, { "identity": member.as_str() }
+    ] });
+    let recorded = Arc::new(RecordedRevocations::default());
+    f.state.add_revocation_sink(recorded.clone());
+    let requests = Arc::new(std::sync::Mutex::new(Vec::<(String, Value)>::new()));
+    let capture = requests.clone();
+    let listed = room.clone();
+    let fixture = Router::new().route(
+        "/twirp/livekit.RoomService/{method}",
+        axum::routing::post(
+            move |axum::extract::Path(method): axum::extract::Path<String>,
+                  axum::Json(body): axum::Json<Value>| {
+                let (capture, listed, roster) = (capture.clone(), listed.clone(), roster.clone());
+                async move {
+                    capture.lock().unwrap().push((method.clone(), body));
+                    axum::Json(match method.as_str() {
+                        "ListRooms" => json!({ "rooms": [{ "name": listed, "sid": "RM_a", "metadata": "{}" }] }),
+                        "ListParticipants" => roster,
+                        _ => json!({}),
+                    })
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut settings = CommsSettings::for_tests();
+    settings.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    let comms = Arc::new(CommsState::new(
+        f.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+        None,
+        None,
+        f.state.policy.clone(),
+        Arc::new(rooms::SceneResolver::new(f.pool.clone())),
+        Arc::new(crate::comms::presence::Presence::new()),
+        Arc::new(crate::comms::interfaces::test_support::StubDirectory::default()),
+    ));
+    f.state
+        .add_revocation_sink(Arc::new(super::CommsRoomRevocations(comms)));
+    sqlx::query("INSERT INTO worlds.worlds (name, access_type) VALUES ($1, 'allow-list')")
+        .bind(world.key())
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO worlds.world_permissions (world_name, permission, address) VALUES ($1, 'access', $2)")
+        .bind(world.key())
+        .bind(&granted)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let community = seed_community(&f.pool, &[&member, &granted]).await;
+    sqlx::query(
+        "INSERT INTO worlds.world_access_communities (world_name, community_id) VALUES ($1, $2)",
+    )
+    .bind(world.key())
+    .bind(community)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+
+    for who in [&granted, &member] {
+        leave_community(&f.pool, community, who).await;
+    }
+    // Fail only this world's queue writes; policy and community rows remain readable.
+    assert!(
+        world
+            .key()
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+    );
+    let constraint = format!("closure_failure_{}", Uuid::new_v4().simple());
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "ALTER TABLE social.world_access_rechecks ADD CONSTRAINT {constraint} CHECK (world_name <> '{}') NOT VALID",
+        world.key()
+    )))
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    f.state.community_closed(community).await;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "ALTER TABLE social.world_access_rechecks DROP CONSTRAINT {constraint}"
+    )))
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        recorded.take(),
+        vec![super::Revocation::AccessRecheck {
+            world: world.clone()
+        }]
+    );
+    let queued: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM social.world_access_rechecks WHERE world_name=$1)",
+    )
+    .bind(world.key())
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert!(
+        !queued,
+        "the advisory must not fabricate a durable intent or cutoff"
+    );
     let removed = |who: &Address| {
         requests.lock().unwrap().iter().any(|(method, body)| {
             method == "RemoveParticipant"
@@ -7028,3 +7256,77 @@ async fn a_quota_block_follows_the_live_name_holder() {
 }
 
 mod partial_uploads;
+
+/// Every signed worlds route answers a refused signed fetch as upstream's
+/// `onError` does (`undeploy-entity-handler.spec.ts:39-55`,
+/// `scenes-handler.spec.ts:833-856`, `world-settings-handler.spec.ts:849-876`,
+/// `post-permissions.spec.ts:355-365`).
+#[tokio::test]
+async fn signed_routes_refuse_with_the_crypto_middleware_body() {
+    let Some(f) = fixture().await else { return };
+    let w = world_name().display().to_string();
+    let address = Wallet::random().address.to_string();
+    let community = Uuid::new_v4();
+    let routes = [
+        ("put", format!("/world/{w}/settings")),
+        ("get", "/wallet/contribute".to_string()),
+        ("delete", format!("/world/{w}/scenes/0,0")),
+        ("delete", format!("/entities/{w}")),
+        ("post", format!("/world/{w}/permissions/access")),
+        (
+            "put",
+            format!("/world/{w}/permissions/deployment/{address}"),
+        ),
+        (
+            "delete",
+            format!("/world/{w}/permissions/deployment/{address}"),
+        ),
+        (
+            "put",
+            format!("/world/{w}/permissions/access/communities/{community}"),
+        ),
+        (
+            "delete",
+            format!("/world/{w}/permissions/access/communities/{community}"),
+        ),
+    ];
+    let wallet = Wallet::random();
+    // The settings route reads a multipart body; an empty one carries the signed fetch.
+    let case = |method: &'static str, path: &str| {
+        let case = Case::new(method, path.to_string());
+        if path.ends_with("/settings") {
+            case.body(b"--x--\r\n".to_vec(), "multipart/form-data; boundary=x")
+        } else {
+            case
+        }
+    };
+    for (method, path) in routes {
+        let body = expect(&f.app, case(method, &path), 400).await;
+        assert_eq!(
+            body,
+            json!({
+                "error": "Invalid Auth Chain",
+                "message": "This endpoint requires a signed fetch request. See ADR-44."
+            }),
+            "{method} {path}"
+        );
+        let body = expect(
+            &f.app,
+            case(method, &path)
+                .signed_over(&wallet, "/some/other/path", "{}")
+                .await,
+            401,
+        )
+        .await;
+        assert!(
+            body["error"]
+                .as_str()
+                .is_some_and(|e| e.starts_with("Invalid signature: ")),
+            "{method} {path}: {body}"
+        );
+        assert_eq!(
+            body["message"],
+            "This endpoint requires a signed fetch request. See ADR-44."
+        );
+    }
+}

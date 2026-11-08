@@ -97,6 +97,14 @@ pub trait SceneIdentity: Send + Sync {
         world: &WorldName,
         scene: &SceneId,
     ) -> Result<Option<ActiveDeployment>, ResolveError>;
+    /// A retired scene and its active successors, while the existing retention window lasts.
+    async fn replaced_world_scene(
+        &self,
+        _world: &WorldName,
+        _scene: &SceneId,
+    ) -> Result<Option<crate::rooms::ReplacedScene>, ResolveError> {
+        Ok(None)
+    }
     /// The world's active scene, `None` when the world has no scene here.
     async fn world_active_scene(
         &self,
@@ -200,7 +208,9 @@ pub trait SocialDirectory: Send + Sync {
         address: &Address,
         privacy: &str,
     ) -> Result<(), sqlx::Error>;
-    async fn notify_community_voice_ended(
+    /// Records the ended stream for community ranking, idempotent per
+    /// `event_key`; it is not a member notification.
+    async fn record_community_voice_ended(
         &self,
         community: crate::CommunityId,
         event_key: &str,
@@ -291,7 +301,7 @@ pub mod test_support {
                 .insert(address.clone(), privacy.to_string());
             Ok(())
         }
-        async fn notify_community_voice_ended(
+        async fn record_community_voice_ended(
             &self,
             _: crate::CommunityId,
             _: &str,

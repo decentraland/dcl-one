@@ -11,14 +11,17 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 7] = [
+const PREPARED_PENDING_STEPS: [&str; 10] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
     "0024_social_referral_reward_receipt",
     "0025_social_referral_login_received_at",
+    "0026_content_snapshots_outdated",
     "0027_land_authz_cleared_legs",
     "0028_shop_items_search_text",
+    "0029_explore_parity",
+    "0030_explore_read_columns",
 ];
 type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
 
@@ -347,6 +350,19 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         schema_migrate::Object::Index(name) if name == "social.private_voice_chats_caller_idx"
             || name == "social.private_voice_chats_callee_idx")),
         "migrate preserves the address access paths already created by the release"
+    );
+    // An index added to an existing table is created by the object pass (a step may not CREATE).
+    assert!(done.created.iter().any(|object| matches!(object,
+        schema_migrate::Object::Index(name) if name == "social.notification_deliveries_terminal_idx")));
+    let terminal_idx: String = sqlx::query_scalar(
+        "SELECT indexdef FROM pg_indexes WHERE schemaname = 'social' AND indexname = 'notification_deliveries_terminal_idx'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(
+        terminal_idx.contains("(updated_at) WHERE (state <> 'pending'::text)"),
+        "{terminal_idx}"
     );
     assert!(has_column(pool, "explore.place_reports", "upload_token_hash").await);
     assert!(has_column(pool, "social.notifications", "in_app").await);
@@ -1001,13 +1017,18 @@ async fn earlier_event_hook_layouts_upgrade_without_losing_intents() {
     schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
         .await
         .unwrap();
-    // Model the actual earlier development layout: buckets already existed,
-    // but creator throttling and prioritized claim ordering did not.
-    sqlx::raw_sql("ALTER TABLE explore.event_moderation_hooks DROP COLUMN creator_address CASCADE;
-        DROP INDEX explore.event_moderation_hooks_due_idx;
+    // Model the actual earlier development layout: the events-only outbox
+    // (no longer declared, so the object pass never creates it) as its first
+    // version laid it out, with a submission still queued in it, and the
+    // event-hook steps still to run.
+    sqlx::raw_sql("CREATE TABLE explore.event_moderation_hooks (id uuid PRIMARY KEY, event_id text NOT NULL, kind text NOT NULL, event jsonb NOT NULL, \
+            created_at timestamp without time zone NOT NULL DEFAULT (now() AT TIME ZONE 'UTC'), next_attempt_at timestamp without time zone NOT NULL DEFAULT (now() AT TIME ZONE 'UTC'), \
+            attempts integer NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 6), claim uuid, completed_at timestamp without time zone);
         CREATE INDEX event_moderation_hooks_due_idx ON explore.event_moderation_hooks(next_attempt_at,id) WHERE completed_at IS NULL AND attempts<6;
-        DELETE FROM meta.schema_steps WHERE step IN ('0018_event_hook_compatibility','0019_event_hook_admin_priority');
-        INSERT INTO explore.event_moderation_hooks(id,event_id,kind,event) VALUES(gen_random_uuid(),'retained-submission','submitted','{\"name\":\"Retained intent\"}')")
+        CREATE TABLE explore.event_moderation_hook_activation (singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton), activated_at timestamp without time zone NOT NULL);
+        DELETE FROM meta.schema_steps WHERE step IN ('0018_event_hook_compatibility','0019_event_hook_admin_priority','0029_explore_parity');
+        INSERT INTO explore.event_moderation_hooks(id,event_id,kind,event) VALUES(gen_random_uuid(),'retained-submission','submitted','{\"name\":\"Retained intent\"}'); \
+        INSERT INTO explore.event_moderation_hooks(id,event_id,kind,event,claim,attempts,next_attempt_at) VALUES(gen_random_uuid(),'claimed-submission','submitted','{}',gen_random_uuid(),1,(now() AT TIME ZONE 'UTC') + interval '1 minute')")
         .execute(pool).await.unwrap();
     let result =
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
@@ -1020,23 +1041,299 @@ async fn earlier_event_hook_layouts_upgrade_without_losing_intents() {
             .any(|step| step == "0018_event_hook_compatibility")
     );
     assert!(has_column(pool, "explore.event_moderation_hooks", "creator_address").await);
-    assert!(has_column(pool, "explore.event_moderation_hooks", "edit_bucket").await);
+    assert!(has_column(pool, "explore.event_moderation_hooks", "subject").await);
+    assert!(
+        has_column(pool, "explore.moderation_hooks", "channel").await,
+        "the object pass creates the outbox that replaced the events table"
+    );
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM explore.event_moderation_hooks WHERE event_id='retained-submission' AND event->>'name'='Retained intent'")
-        .fetch_one(pool).await.unwrap(),1);
-    let due:String=sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname='explore' AND indexname='event_moderation_hooks_due_idx'")
-        .fetch_one(pool).await.unwrap();
-    assert!(
-        due.contains("CASE") && due.contains("THEN 1") && due.contains("ELSE 2"),
-        "the object pass replaces the old due ordering: {due}"
+        .fetch_one(pool).await.unwrap(),1, "the steps never touch the queued intent");
+    // The worker's first pass moves it where the new binary reads.
+    assert_eq!(
+        catalyst::explore::moderation_hooks::adopt_legacy_rows(pool)
+            .await
+            .unwrap(),
+        1
     );
-    let creator:String=sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname='explore' AND indexname='event_moderation_hooks_creator_idx'")
-        .fetch_one(pool).await.unwrap();
-    assert!(
-        creator.contains("kind = 'edited'"),
-        "the creator index covers only throttled edits: {creator}"
+    let adopted: (String, String, serde_json::Value) = sqlx::query_as(
+        "SELECT channel, kind, payload FROM explore.moderation_hooks WHERE subject='retained-submission'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        adopted,
+        (
+            "events".into(),
+            "submitted".into(),
+            serde_json::json!({"name":"Retained intent"})
+        )
     );
-    sqlx::query("INSERT INTO explore.event_moderation_hooks(id,event_id,kind,event,creator_address,edit_bucket) VALUES(gen_random_uuid(),'new-edit','edited','{}','creator',timezone('UTC',now()))")
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM explore.event_moderation_hooks")
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        1,
+        "the row an older worker claimed waits for its retry minute"
+    );
+    sqlx::query("UPDATE explore.event_moderation_hooks SET next_attempt_at = (now() AT TIME ZONE 'UTC') - interval '1 second'")
+        .execute(pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        catalyst::explore::moderation_hooks::adopt_legacy_rows(pool)
+            .await
+            .unwrap(),
+        1,
+        "due, it moves"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM explore.event_moderation_hooks")
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        0
+    );
+    sqlx::query("INSERT INTO explore.moderation_hooks(id,channel,subject,kind,payload,creator_address,edit_bucket) VALUES(gen_random_uuid(),'events','new-edit','edited','{}','creator',timezone('UTC',now()))")
         .execute(pool).await.unwrap();
+    assert!(
+        schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    old.drop().await;
+}
+
+#[tokio::test]
+async fn world_admission_object_upgrade_and_explicit_ban_release_preserve_existing_state() {
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    let pool = &old.pool;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(release_v3()))
+        .execute(pool)
+        .await
+        .unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    catalyst::worlds::rooms::ensure_world_scene_ban_release(pool)
+        .await
+        .expect("a fresh upgraded catalogue does not need a release conversion");
+    // The previous main has the same schema version and throttle relation,
+    // but not this additive queue. Only this test-owned database is changed.
+    sqlx::query("DROP TABLE social.world_access_rechecks")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::raw_sql("INSERT INTO worlds.worlds(name) VALUES('release.dcl.eth'); INSERT INTO worlds.world_scenes(world_name,entity_id,deployment_auth_chain,entity,deployer,parcels,size) VALUES('release.dcl.eth','scene-old','[]','{}','owner',ARRAY['2,3'],1); INSERT INTO social.scene_bans(place_id,banned_address,banned_by) VALUES('scene-old','wallet','owner'); INSERT INTO social.world_secret_attempts(world_name,subject,attempts,window_start) VALUES('release.dcl.eth','caller',2,'2026-01-01');").execute(pool).await.unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    let installed: bool =
+        sqlx::query_scalar("SELECT to_regclass('social.world_access_rechecks') IS NOT NULL")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert!(installed);
+    let error = catalyst::worlds::rooms::ensure_world_scene_ban_release(pool)
+        .await
+        .expect_err("object migrations cannot certify the explicit row conversion");
+    assert!(
+        error
+            .to_string()
+            .contains("schemas/releases/world-scene-ban-keys.sql")
+    );
+    // Every Rust trim whitespace must preserve a declared base rather than
+    // choosing the lower fallback parcel. Include active and retained aliases.
+    let whitespace = [
+        '\t', '\n', '\u{b}', '\u{c}', '\r', ' ', '\u{85}', '\u{a0}', '\u{1680}', '\u{2000}',
+        '\u{2001}', '\u{2002}', '\u{2003}', '\u{2004}', '\u{2005}', '\u{2006}', '\u{2007}',
+        '\u{2008}', '\u{2009}', '\u{200a}', '\u{2028}', '\u{2029}', '\u{202f}', '\u{205f}',
+        '\u{3000}',
+    ];
+    for (i, space) in whitespace.into_iter().enumerate() {
+        let entity = format!("unicode-{i}");
+        let parcel = format!("{space}02{space},{space}003{space}");
+        assert_eq!(
+            catalyst::comms::world_identity::Parcel::parse(&parcel)
+                .unwrap()
+                .canonical(),
+            "2,3"
+        );
+        let document = serde_json::json!({"metadata":{"scene":{"base":parcel}}});
+        sqlx::query("INSERT INTO worlds.retired_world_scenes(world_name,entity_id,entity,parcels) VALUES('release.dcl.eth',$1,$2,$3)")
+            .bind(&entity).bind(document).bind(vec!["0,0".to_owned(), parcel])
+            .execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO social.scene_bans(place_id,banned_address,banned_by) VALUES($1,$2,'owner')")
+            .bind(&entity).bind(format!("unicode-wallet-{i}")).execute(pool).await.unwrap();
+    }
+    sqlx::raw_sql("INSERT INTO social.scene_bans(place_id,banned_address,banned_by) VALUES('genesis-unmapped','genesis-wallet','owner'); INSERT INTO worlds.retired_world_scenes(world_name,entity_id,entity,parcels) VALUES('release.dcl.eth','invalid-parcels','{}',ARRAY['invalid']); INSERT INTO social.scene_bans(place_id,banned_address,banned_by) VALUES('invalid-parcels','invalid-wallet','owner')")
+        .execute(pool).await.unwrap();
+    let release = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/releases/world-scene-ban-keys.sql"
+    ));
+    for _ in 0..2 {
+        sqlx::raw_sql(release).execute(pool).await.unwrap();
+    }
+    let bans: Vec<String> =
+        sqlx::query_scalar("SELECT place_id FROM social.scene_bans WHERE banned_address='wallet'")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+    assert_eq!(bans, vec!["release.dcl.eth:2,3"]);
+    catalyst::worlds::rooms::ensure_world_scene_ban_release(pool)
+        .await
+        .expect("converted catalogue passes while Genesis/unmapped/malformed rows remain");
+    let unicode_keys: Vec<String> = sqlx::query_scalar(
+        "SELECT place_id FROM social.scene_bans WHERE banned_address LIKE 'unicode-wallet-%'",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(unicode_keys.len(), whitespace.len());
+    assert!(unicode_keys.iter().all(|key| key == "release.dcl.eth:2,3"));
+    let untouched: i64 = sqlx::query_scalar("SELECT count(*) FROM social.scene_bans WHERE place_id IN ('genesis-unmapped','invalid-parcels')")
+        .fetch_one(pool).await.unwrap();
+    assert_eq!(untouched, 2);
+    // A retained-only mapping must also prevent serving until converted.
+    sqlx::query("INSERT INTO social.scene_bans(place_id,banned_address,banned_by) VALUES('unicode-0','retained-wallet','owner')")
+        .execute(pool).await.unwrap();
+    assert!(
+        catalyst::worlds::rooms::ensure_world_scene_ban_release(pool)
+            .await
+            .is_err()
+    );
+    sqlx::raw_sql(release).execute(pool).await.unwrap();
+    catalyst::worlds::rooms::ensure_world_scene_ban_release(pool)
+        .await
+        .unwrap();
+    let attempts: i32 = sqlx::query_scalar(
+        "SELECT attempts FROM social.world_secret_attempts WHERE world_name='release.dcl.eth'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(attempts, 2);
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    old.drop().await;
+}
+
+const RETIRED_HOOK_TABLES_RELEASE: &str = include_str!(concat!(
+    env!("DCL_ONE_ROOT"),
+    "/schemas/releases/explore-retired-hook-tables.sql"
+));
+
+/// The release as SQLx runs it: psql owns the `\set` line.
+fn retired_hook_tables_release() -> String {
+    let stop_on_error = "\\set ON_ERROR_STOP on\n";
+    assert_eq!(
+        RETIRED_HOOK_TABLES_RELEASE.matches(stop_on_error).count(),
+        1
+    );
+    RETIRED_HOOK_TABLES_RELEASE.replace(stop_on_error, "")
+}
+
+async fn has_relation(pool: &PgPool, name: &str) -> bool {
+    sqlx::query_scalar::<_, bool>("SELECT to_regclass($1) IS NOT NULL")
+        .bind(name)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn the_retired_hook_tables_release_adopts_the_pending_rows_then_drops_the_tables() {
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    let pool = &old.pool;
+    release_result(pool, &release_v3()).await.unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    // The earlier layouts: the events-only outbox with its activation row and
+    // the upcoming-notice queue, none of which the bootstrap declares now.
+    sqlx::raw_sql("CREATE TABLE explore.event_moderation_hooks (id uuid PRIMARY KEY, event_id text NOT NULL, kind text NOT NULL, event jsonb NOT NULL, \
+            created_at timestamp without time zone NOT NULL DEFAULT (now() AT TIME ZONE 'UTC'), next_attempt_at timestamp without time zone NOT NULL DEFAULT (now() AT TIME ZONE 'UTC'), \
+            attempts integer NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 6), claim uuid, completed_at timestamp without time zone); \
+        CREATE TABLE explore.event_moderation_hook_activation (singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton), activated_at timestamp without time zone NOT NULL); \
+        CREATE TABLE explore.event_upcoming_hooks (event_id text NOT NULL, occurrence_start timestamp without time zone NOT NULL, name text NOT NULL, PRIMARY KEY (event_id, occurrence_start)); \
+        DELETE FROM meta.schema_steps WHERE step IN ('0018_event_hook_compatibility','0019_event_hook_admin_priority','0029_explore_parity'); \
+        INSERT INTO explore.event_moderation_hook_activation (activated_at) VALUES ('2026-01-01 00:00:00'); \
+        INSERT INTO explore.event_moderation_hooks (id,event_id,kind,event) VALUES (gen_random_uuid(),'pending-submission','submitted','{\"name\":\"Pending\"}'); \
+        INSERT INTO explore.event_moderation_hooks (id,event_id,kind,event,completed_at) VALUES (gen_random_uuid(),'delivered-submission','submitted','{}',now() AT TIME ZONE 'UTC'); \
+        INSERT INTO explore.event_upcoming_hooks (event_id,occurrence_start,name) VALUES ('e','2026-01-01 00:00:00','')")
+        .execute(pool).await.unwrap();
+    // Before the steps the release refuses and changes nothing.
+    assert!(
+        release_result(pool, &retired_hook_tables_release())
+            .await
+            .is_err()
+    );
+    assert!(has_relation(pool, "explore.event_moderation_hooks").await);
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    release_result(pool, &retired_hook_tables_release())
+        .await
+        .unwrap();
+    for name in [
+        "explore.event_moderation_hooks",
+        "explore.event_moderation_hook_activation",
+        "explore.event_upcoming_hooks",
+    ] {
+        assert!(!has_relation(pool, name).await, "{name} is dropped");
+    }
+    let adopted: (String, String, serde_json::Value) = sqlx::query_as(
+        "SELECT channel, kind, payload FROM explore.moderation_hooks WHERE subject='pending-submission'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        adopted,
+        (
+            "events".into(),
+            "submitted".into(),
+            serde_json::json!({"name":"Pending"})
+        )
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM explore.moderation_hooks WHERE subject='delivered-submission'"
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap(),
+        0,
+        "a delivered row is not kept"
+    );
+    let activated: chrono::NaiveDateTime =
+        sqlx::query_scalar("SELECT activated_at FROM explore.moderation_hook_activation")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        activated,
+        chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap(),
+        "the outbox keeps the earlier activation"
+    );
+    // The job finds nothing to adopt and the object pass creates nothing back.
+    assert_eq!(
+        catalyst::explore::moderation_hooks::adopt_legacy_rows(pool)
+            .await
+            .unwrap(),
+        0
+    );
     assert!(
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
             .await

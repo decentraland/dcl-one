@@ -62,6 +62,7 @@ pub mod chain_walk;
 pub mod collections;
 pub mod contracts;
 pub mod definitions;
+pub mod features;
 pub mod federation;
 pub mod items;
 pub mod lambdas_catalog;
@@ -76,6 +77,7 @@ pub mod mirrors;
 pub mod neighbours;
 pub mod nft_index;
 pub mod nft_reads;
+pub mod notice_cursor;
 pub mod nfts;
 pub mod orders;
 pub mod owners;
@@ -84,13 +86,17 @@ pub mod profiles;
 pub mod rankings;
 pub mod readers;
 pub mod rentals;
+pub mod royalty_notices;
+pub mod sale_notices;
 pub mod sales;
 pub mod search;
 pub mod shop;
 pub mod signed;
 pub mod third_party;
+pub mod tips;
 pub mod trade_events;
 pub mod trades;
+pub mod transfer_notices;
 pub mod user_items;
 pub mod users;
 pub mod wire;
@@ -235,6 +241,8 @@ pub struct MarketSettings {
     /// The chain indexes (`nft`, `trade_events`), the neighbours job and the
     /// coupon state reader (`chain_walk::IndexSettings`; every default off).
     pub indexes: chain_walk::IndexSettings,
+    /// The tip forward's thresholds and pending cap.
+    pub tips: tips::TipSettings,
 }
 
 /// No derived `Debug`: `admin_token` is a bearer. Prints whether one is set,
@@ -257,6 +265,7 @@ impl std::fmt::Debug for MarketSettings {
             .field("catalog_cache_ttl", &self.catalog_cache_ttl)
             .field("marketplace_base_url", &self.marketplace_base_url)
             .field("indexes", &self.indexes)
+            .field("tips", &self.tips)
             .finish_non_exhaustive()
     }
 }
@@ -272,6 +281,7 @@ impl Default for MarketSettings {
             catalog_cache_ttl: Duration::from_secs(30),
             marketplace_base_url: "https://decentraland.org/marketplace".to_string(),
             indexes: chain_walk::IndexSettings::default(),
+            tips: tips::TipSettings::default(),
         }
     }
 }
@@ -315,12 +325,19 @@ impl MarketSettings {
             catalog_cache_ttl: Duration::from_secs(catalog_cache_ttl_secs),
             marketplace_base_url: marketplace_base_url.trim_end_matches('/').to_string(),
             indexes: chain_walk::IndexSettings::default(),
+            tips: tips::TipSettings::default(),
         })
     }
 
     /// The chain indexes' knobs (`main.rs` fills them from `Config`).
     pub fn with_indexes(mut self, indexes: chain_walk::IndexSettings) -> Self {
         self.indexes = indexes;
+        self
+    }
+
+    /// The tip forward's knobs (`main.rs` fills them from `Config`).
+    pub fn with_tips(mut self, tips: tips::TipSettings) -> Self {
+        self.tips = tips;
         self
     }
 }
@@ -495,9 +512,17 @@ pub struct MarketplaceState {
     pub(crate) eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     /// `READ_THROUGH_ENABLED`: a profile this node does not hold is asked of the sync sources.
     pub(crate) read_through: Option<Arc<crate::content::read_through::ReadThrough>>,
+    /// The store's moderation projection (`content::Denylist`): every read of
+    /// active entities here leaves the listed ones out, as lamb2 reading the
+    /// content server's filtered `/entities/active` does.
+    pub(crate) denylist: Arc<crate::content::Denylist>,
     /// `/profile-images`, attached once the social states exist: the faces a
     /// response points at are warmed there.
     pub(crate) profile_images: std::sync::OnceLock<crate::social::profile_images::SharedState>,
+    /// decentraland.org's `dapps` rollout flags as this node enforces them (`features`); every flag off until read.
+    pub(crate) dapps_flags: Arc<features::DappsFlags>,
+    /// Where `dapps_flags` is read from (`SHOP_FEATURE_FLAGS_*`).
+    pub(crate) flags_source: features::Source,
     /// The chain index's loopback switch: a test that flips it admits a
     /// loopback fake upstream for the shop's calls and the subgraph readers.
     #[cfg(test)]
@@ -531,7 +556,10 @@ impl MarketplaceState {
             explorer_cache: lambdas_explorer::explorer_cache(),
             eip1654: None,
             read_through: None,
+            denylist: Arc::default(),
             profile_images: std::sync::OnceLock::new(),
+            dapps_flags: Arc::new(features::DappsFlags::new()),
+            flags_source: features::Source::default(),
             settings,
         }
     }
@@ -542,6 +570,13 @@ impl MarketplaceState {
         eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     ) -> Self {
         self.eip1654 = eip1654;
+        self
+    }
+
+    /// Attaches the store's denylist (`Storage::denylist`), which the active
+    /// entity reads honour; without it nothing is hidden.
+    pub fn with_denylist(mut self, denylist: Arc<crate::content::Denylist>) -> Self {
+        self.denylist = denylist;
         self
     }
 
@@ -622,8 +657,19 @@ impl MarketplaceState {
     }
 
     pub fn spawn_api_jobs(self: &Arc<Self>, jobs: &Jobs) {
+        features::spawn_job(self, jobs);
         crate::coupons::spawn_job(self, jobs);
         federation::spawn_job(self, jobs);
+        tips::spawn_job(self, jobs);
+        sale_notices::spawn(self, jobs);
+        royalty_notices::spawn(
+            self.pool.clone(),
+            self.settings.market.marketplace_base_url.clone(),
+            self.settings.market.indexes.nft_enabled,
+            jobs,
+        );
+        transfer_notices::spawn(self, jobs);
+        crate::rentals::notices::spawn(self, jobs);
     }
 
     /// The JSON-RPC endpoint the chain indexes and the coupon reader use on
@@ -686,7 +732,7 @@ impl MarketplaceState {
 
 /// Refuses to walk an endpoint that serves another chain than `expected`:
 /// the walk would read another network's logs into this one's rows.
-async fn ensure_chain(
+pub(crate) async fn ensure_chain(
     rpc: &crate::land_authz::indexer::Rpc<'_>,
     expected: i64,
 ) -> anyhow::Result<()> {

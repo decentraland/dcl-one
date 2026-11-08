@@ -77,6 +77,7 @@ pub fn catalogues(method: &Method, path: &str) -> &'static [&'static str] {
         ["api", "places"]
             | ["api", "places", "status"]
             | ["api", "destinations"]
+            | ["v1", "destinations"]
             | ["api", "events", "search"]
     );
     if !as_of::is_read(method) && !(*method == Method::POST && read_over_post) {
@@ -333,7 +334,7 @@ pub async fn gate(State(state): State<SharedState>, request: Request, next: Next
     let is_batch = request.method() == Method::POST
         && matches!(
             path.trim_end_matches('/'),
-            "/api/places" | "/api/places/status" | "/api/destinations"
+            "/api/places" | "/api/places/status" | "/api/destinations" | "/v1/destinations"
         );
     if is_batch {
         let (parts, body) = request.into_parts();
@@ -343,7 +344,10 @@ pub async fn gate(State(state): State<SharedState>, request: Request, next: Next
         };
         request = Request::from_parts(parts, Body::from(bytes.clone()));
         let parsed = serde_json::from_slice::<serde_json::Value>(&bytes).ok();
-        let destinations = path == "/api/destinations";
+        let destinations = matches!(
+            path.trim_end_matches('/'),
+            "/api/destinations" | "/v1/destinations"
+        );
         let ids_value = if destinations {
             parsed
                 .as_ref()
@@ -573,6 +577,7 @@ mod tests {
             (&get, "/api/world_names", WORLDS),
             (&get, "/api/destinations", DESTINATIONS),
             (&post, "/api/destinations", DESTINATIONS),
+            (&post, "/v1/destinations", DESTINATIONS),
             (&get, "/v1/destinations/abc", DESTINATIONS),
             (&get, "/api/events", EVENTS),
             (&post, "/api/events/search", EVENTS),
