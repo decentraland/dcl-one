@@ -241,6 +241,23 @@ function renderNode(
 
 type Attributes = Omit<HTMLAttributes<HTMLElement>, 'children'>
 
+// The runtime's own parameter names. A generated component already keeps a caller from overriding them (its props
+// arrive only as `attributes`); an untyped caller can still pass one, so it is dropped here instead of reaching the DOM
+// as an attribute. Public props (forceState, disabled, className, style, handlers, aria-*, data-*, ref) are untouched.
+// The list is the runtime's: the installed library carries this file without the generator.
+const RESERVED_PROPS: ReadonlySet<string> = new Set([
+  'as',
+  'attributes',
+  'component',
+  'counts',
+  'defaultKey',
+  'select',
+  'semanticProps',
+  'slots',
+  'suppressed',
+  'views'
+])
+
 // Everything except `attributes` comes from the generated component. The caller's own props arrive only through
 // `attributes`, so no prop a caller passes can replace the generated configuration.
 // A count must be a non-negative integer and comes with its label; the label replaces the action's accessible name,
@@ -302,7 +319,9 @@ function FigmaView({
   const trigger = useRef<HTMLButtonElement>(null)
   const surface = useRef<HTMLDivElement>(null)
   const { className, ...rest } = Object.fromEntries(
-    Object.entries(attributes).filter(([name]) => !suppressed.includes(name))
+    Object.entries(attributes).filter(
+      ([name]) => !suppressed.includes(name) && !RESERVED_PROPS.has(name)
+    )
   ) as Attributes
   const view = pickView(views, select, component)
   const countLabels = resolveCounts(slots, counts, component)

@@ -429,3 +429,133 @@ describe('pickView over generated views', () => {
     expect(checked).toBeGreaterThan(0)
   })
 })
+
+describe('reserved runtime names passed by an untyped caller', () => {
+  const RESERVED = [
+    'as',
+    'attributes',
+    'component',
+    'counts',
+    'defaultKey',
+    'select',
+    'semanticProps',
+    'slots',
+    'suppressed',
+    'views'
+  ]
+  const injected = Object.fromEntries(
+    RESERVED.map((name) => [name, name === 'as' ? 'button' : { injected: true }])
+  )
+
+  it.each([
+    ['NavBar', UntypedNavBar],
+    ['Button', UntypedButton]
+  ] as const)(
+    'should never reach the DOM of %s while public props survive, on the client',
+    (_name, Component) => {
+      const onClick = vi.fn()
+      let element: HTMLElement | null = null
+      const { container } = render(
+        <Component
+          {...injected}
+          className="consumer"
+          style={{ outline: '1px solid red' }}
+          aria-describedby="help"
+          data-testid="root"
+          onClick={onClick}
+          forceState="hover"
+          ref={(node: HTMLElement | null) => {
+            element = node
+          }}
+        />
+      )
+      const root = container.firstElementChild as HTMLElement
+      for (const name of RESERVED) {
+        expect(root.hasAttribute(name), name).toBe(false)
+        expect(container.querySelector(`[${name.toLowerCase()}]`), name).toBeNull()
+      }
+      expect(root.classList.contains('consumer')).toBe(true)
+      expect(root.style.outline).toBe('1px solid red')
+      expect(root.getAttribute('aria-describedby')).toBe('help')
+      expect(root.getAttribute('data-testid')).toBe('root')
+      expect(root.getAttribute('data-force-state')).toBe('hover')
+      expect(element).toBe(root)
+      root.click()
+      expect(onClick).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it.each([
+    ['NavBar', UntypedNavBar],
+    ['Button', UntypedButton]
+  ] as const)('should never reach the server-rendered HTML of %s', (_name, Component) => {
+    const html = renderToString(<Component {...injected} className="consumer" data-testid="root" />)
+    for (const name of RESERVED) expect(html, name).not.toMatch(new RegExp(`\\s${name}=`, 'i'))
+    expect(html).toContain('data-testid="root"')
+    expect(html).toMatch(/class="[^"]*consumer/)
+  })
+
+  it('should keep disabled working on a generated button', () => {
+    const { container } = render(<UntypedButton {...injected} disabled />)
+    expect(container.querySelector('button')!.disabled).toBe(true)
+  })
+})
+
+// null skips a destructuring default, unlike undefined, so an untyped null reaches the runtime as written.
+describe('null from an untyped caller', () => {
+  it.each([
+    ['an enum axis', { viewport: null }, 'viewport=null'],
+    ['a boolean axis', { signedIn: null }, 'signedIn=null']
+  ])('should throw for %s, on the client and the server', (_case, props, axis) => {
+    expect(String(renderError(<UntypedNavBar {...props} />))).toContain(
+      `NavBar has no captured view for`
+    )
+    expect(String(renderError(<UntypedNavBar {...props} />))).toContain(axis)
+    expect(() => renderToString(<UntypedNavBar {...props} />)).toThrow(
+      'NavBar has no captured view for'
+    )
+  })
+
+  it('should treat a null interaction flag as off', () => {
+    const { container } = render(<UntypedButton disabled={null} loading={null} />)
+    expect(container.querySelector('button')!.disabled).toBe(false)
+    expect(renderToString(<UntypedButton disabled={null} loading={null} />)).not.toContain(
+      'disabled=""'
+    )
+  })
+})
+
+// No generated view embeds another component today, so this control drives the runtime's reference path directly:
+// a view that references the generated Button renders it with the reference's props, and an undrawn reference fails.
+describe('a nested generated reference (synthetic control)', () => {
+  const withRef = (props: Record<string, string | boolean>): ViewNode => ({
+    kind: 'box',
+    path: '',
+    name: 'root',
+    className: '',
+    children: [
+      { kind: 'ref', path: '0', name: 'Button', className: '', ref: { component: 'Button', props } }
+    ]
+  })
+  const host = (props: Record<string, string | boolean>) => (
+    <FigmaView
+      views={{ default: withRef(props) }}
+      component="Host"
+      select={{ values: {}, booleans: {}, flags: {} }}
+      slots={{}}
+    />
+  )
+
+  it('should render the referenced component with the reference props, on the client and the server', () => {
+    const props = { variant: 'primary', size: 'md', viewport: 'desktop' }
+    const { container } = render(host(props))
+    expect(container.querySelector('button')).not.toBeNull()
+    expect(renderToString(host(props))).toContain('<button')
+  })
+
+  it('should fail the whole render when the reference selects an undrawn view', () => {
+    const props = { variant: 'primary', size: 'xxl', viewport: 'desktop' }
+    expect(String(renderError(host(props)))).toContain('Button has no captured view for')
+    expect(() => renderToString(host(props))).toThrow('Button has no captured view for')
+  })
+})

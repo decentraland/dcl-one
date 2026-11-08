@@ -12,6 +12,8 @@ import type { ComponentType } from 'react'
 import { renderToString } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as viewState from '../src/components/figma-view-state'
+import { pickView as oldPickView } from './fixtures/figma-view-state-fd9b4576'
+import oldDefaults from './fixtures/default-keys-fd9b4576.json'
 import * as generated from '../src/generated/components'
 
 vi.mock('../src/components/figma-view-state', async (importOriginal) => {
@@ -51,15 +53,30 @@ const rows: Row[] = []
 const picked = vi.mocked(viewState.pickView)
 
 // Renders on the client and on the server and returns the view pickView chose in each.
-function chosen(Component: ComponentType<Record<string, unknown>>, props: Record<string, unknown>) {
+// The old runtime's pickView, called with the exact views and selection the generated component passed to the new
+// one, and the defaultKey the generated component carried before the change.
+function oldOutcomeOf(name: string) {
+  const call = picked.mock.calls.at(-1)!
+  const defaultKey = (oldDefaults.defaultKeys as Record<string, string>)[name]!
+  return oldPickView(call[0], defaultKey, call[1] as never)
+}
+
+// Renders on the client and on the server and returns the view pickView chose in each, plus the old runtime's choice
+// for the same selection.
+function chosen(
+  name: string,
+  Component: ComponentType<Record<string, unknown>>,
+  props: Record<string, unknown>
+) {
   picked.mockClear()
   render(<Component {...props} />)
   const client = picked.mock.results.at(-1)?.value
+  const old = oldOutcomeOf(name)
   picked.mockClear()
   renderToString(<Component {...props} />)
   const server = picked.mock.results.at(-1)?.value
   cleanup()
-  return { client, server }
+  return { client, server, old }
 }
 
 // Every generated component file; the module namespace is read inside each test, once the mocked runtime has loaded.
@@ -98,9 +115,10 @@ describe('selection census over every generated component', () => {
               if (absent === 'omit') delete props[axis]
               else props[axis] = undefined
             })
-            const { client, server } = chosen(Component, props)
+            const { client, server, old } = chosen(name, Component, props)
             expect(client, `${name} ${JSON.stringify(props)}`).toBe(views[item.key])
             expect(server, `${name} ${JSON.stringify(props)} (SSR)`).toBe(views[item.key])
+            expect(old, `${name} ${JSON.stringify(props)} (old runtime)`).toBe(client)
             rows.push({
               component: name,
               kind: 'spelling',
@@ -128,9 +146,10 @@ describe('selection census over every generated component', () => {
             Object.fromEntries(flagProps.map((flag) => [flag, undefined]))
           ]) {
             const props = { ...base, ...off }
-            const { client, server } = chosen(Component, props)
+            const { client, server, old } = chosen(name, Component, props)
             expect(client, `${name} ${JSON.stringify(props)}`).toBe(views[item.key])
             expect(server, `${name} ${JSON.stringify(props)} (SSR)`).toBe(views[item.key])
+            expect(old, `${name} ${JSON.stringify(props)} (old runtime)`).toBe(client)
             rows.push({
               component: name,
               kind: 'flags',
@@ -165,9 +184,10 @@ describe('selection census over every generated component', () => {
           }
           expect(expectedKey, `${name} ${JSON.stringify(flags)} resolves`).not.toBe('')
           const props = { ...base, ...flags }
-          const { client, server } = chosen(Component, props)
+          const { client, server, old } = chosen(name, Component, props)
           expect(client, `${name} ${JSON.stringify(props)}`).toBe(views[expectedKey])
           expect(server, `${name} ${JSON.stringify(props)} (SSR)`).toBe(views[expectedKey])
+          expect(old, `${name} ${JSON.stringify(props)} (old runtime)`).toBe(client)
           const outcome = dropped === 0 ? 'exact' : `flag-drop:${dropped}`
           rows.push({
             component: name,
@@ -240,12 +260,18 @@ describe('selection census over every generated component', () => {
           log.mockRestore()
           cleanup()
         }
+        // The old runtime, given the same selection, rendered a view instead: the default one, or for a coerced
+        // non-boolean the view of the truthy value.
+        const old = oldOutcomeOf(name)
+        const defaultKey = (oldDefaults.defaultKeys as Record<string, string>)[name]!
+        const oldKey = Object.keys(views).find((key) => views[key] === old)
+        expect(oldKey, `${name} ${JSON.stringify(props)} (old runtime)`).toBeDefined()
         rows.push({
           component: name,
           kind: 'throw',
           props,
           expectedKey: '',
-          oldOutcome: 'default-fallback',
+          oldOutcome: oldKey === defaultKey ? `default-fallback:${oldKey}` : `coerced:${oldKey}`,
           newOutcome: 'throw'
         })
       }
@@ -254,11 +280,15 @@ describe('selection census over every generated component', () => {
     }
   )
 
-  it('should throw for empty views, with or without flags', () => {
-    for (const flags of [{}, { disabled: true }])
+  it('should throw for empty views, with or without flags, in the old and the new runtime', () => {
+    for (const flags of [{}, { disabled: true }]) {
       expect(() => viewState.pickView({}, { values: {}, booleans: {}, flags }, 'Empty')).toThrow(
         'Empty has no captured view for'
       )
+      expect(() => oldPickView({}, 'default', { values: {}, booleans: {}, flags })).toThrow(
+        'A generated component must have at least one view'
+      )
+    }
   })
 
   it('should write the provenance-bound report when CENSUS_OUT is set', () => {
