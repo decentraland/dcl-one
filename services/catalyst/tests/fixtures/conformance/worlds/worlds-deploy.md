@@ -16,7 +16,7 @@ Pinned revisions:
   `rejectIfSigner`, `verify`), `@dcl/http-server` 2.3.0 (string and JSON bodies).
   Not read: `@dcl/schemas` (the AJV texts of `Entity`, `AuthChain`, `Scene`), `@dcl/crypto`
   (`Authenticator.validateSignature` texts), `busboy` (parser error texts beyond those the tests pin).
-- dcl-one: `fix/worlds-content-parity` @ `2da8b8aea` (origin/main), Rust workspace `services/catalyst`.
+- dcl-one: origin main `2da8b8aea`, Rust workspace `services/catalyst`.
 
 Everything below is from reading the code and tests of both trees. Nothing was built, run or
 captured, and no line is "verified".
@@ -103,7 +103,7 @@ header, as listed below.
 
 ### Request
 
-Upstream chain (`src/controllers/routes.ts:169-185`):
+Upstream chain (`src/controllers/routes.ts:181-197`):
 
 1. `stampRequestArrival()` stamps `requestArrivedAt` before the body is read (`request-arrival.ts:11-20`).
 2. `createSourceUploadAdmission` charges the client source (`cf-connecting-ip`, `TRUSTED_CLIENT_IP_HEADER`)
@@ -271,7 +271,7 @@ time the form finished arriving (WD-12).
 
 ### Request
 
-Upstream (`routes.ts:187`, `handlers/undeploy-entity-handler.ts:6-38`): strict signed fetch; the owner
+Upstream (`routes.ts:199`, `handlers/undeploy-entity-handler.ts:6-38`): strict signed fetch; the owner
 (`namePermissionChecker.checkPermission`) or a world-wide deployment grantee
 (`permissions.hasWorldWidePermission`); `worlds.undeployWorld` soft-deletes every scene, clears the
 spawn and the stats, publishes `WorldUndeploymentEvent` and re-checks the owner's block
@@ -297,7 +297,7 @@ spawn recomputed, `store.rs:950-972,1089-1098`), quota re-check off the request.
 
 ### Request
 
-Upstream (`routes.ts:198`, `scenes-handler.ts:87-133`): strict signed fetch; the coordinate must match
+Upstream (`routes.ts:210`, `scenes-handler.ts:87-133`): strict signed fetch; the coordinate must match
 `^-?\d+,-?\d+$` (no bounds check); the owner removes every scene on the parcel; anyone else needs a
 deployment grant over the whole footprint of every scene on it (else 401), and only those scene
 identities are removed; `undeployWorldScenes` recomputes the spawn and publishes
@@ -329,16 +329,20 @@ dcl-one (`scenes.rs:46-102`): world name parsed first, the strict signed fetch, 
    - Upstream: `{ creationTimestamp: Date.now(), ...result }`, where `result.creationTimestamp` is the
      time `deployScene` wrote into `world_scenes.created_at` under the world lock
      (`decentraland/worlds-content-server:src/logic/scene-deployments/component.ts:219`,
-     `src/adapters/worlds-manager.ts:558-572,731,764`). A later partial batch of the same entity
-     answers that same value (`test/integration/partial-deploy.spec.ts:1020-1043`,
-     `test/contracts/partial-deployment.ts:51-75`).
+     `src/adapters/worlds-manager.ts:558-572,731,764`). The single-request path is pinned by
+     `test/unit/scene-deployments.spec.ts:1029-1110` (the answer is the deployer's
+     `creationTimestamp`, `Date.now()` only when it reports none). A later partial batch of the same
+     entity answers that same value (`test/integration/partial-deploy.spec.ts:1020-1043`,
+     `test/contracts/partial-deployment.ts:51-75`, both on the partial path, where dcl-one matches).
    - dcl-one: `creation_timestamp: now_ms`, taken before validation
      (`services/catalyst/worlds/src/core/deploy.rs:852,921-935`); `publish` returns the row's
      `created_at_ms` (`deploy.rs:732-830`, `store.rs:787-801,887-895`) and the value is dropped. The
      replay of a later batch answers the row's time (`partial.rs:388-420`), so the two answers differ.
    - Proposed fix: in `deploy_entity_inner`, keep `Ok(created)` from `publish` and answer it;
      add the regular-then-partial case to `worlds/src/core/tests/partial_uploads.rs`.
-   - Severity: P1 (the partial-deployment contract's "already published" case fails after a regular deploy).
+   - Severity: P1 (a regular deploy answers a different time than any later replay of the same entity;
+     no upstream integration test runs a regular deploy followed by a partial replay, so this case is
+     inferred).
 
 2. **WD-02 · `DELETE /entities/:world_name`, `DELETE /world/:world_name/scenes/:coordinate` · signed-fetch refusal body.** Status: MATCH (fixed).
    - Upstream: `{"error":<verify message>,"message":"This endpoint requires a signed fetch request. See ADR-44."}`
@@ -353,7 +357,7 @@ dcl-one (`scenes.rs:46-102`): world name parsed first, the strict signed fetch, 
      (move the constant to `comms::worlds_envelope`), for every worlds signed-fetch route.
    - Fixed as proposed, with the crypto-middleware 6.3.0 texts (worlds-comms.md WC-01). Pinned by
      `worlds/src/core/tests.rs` `signed_routes_refuse_with_the_crypto_middleware_body` (unsigned and wrong-payload requests on both routes).
-   - Severity: P1 (builder and CLI show `message`). Depends on: the permissions/settings areas, which share the mapper.
+   - Severity: P2 (the status matches; builder and CLI show `message` as text). Depends on: the permissions/settings areas, which share the mapper.
 
 3. **WD-03 · all routes of this area · the worlds writes switch is off by default.** Status: kept: intended (worlds-compatibility.md, "Writes switch").
    - Upstream: no switch.

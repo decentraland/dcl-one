@@ -8,7 +8,7 @@ what `GET .../permissions` reveals.
 Pinned revisions:
 
 - Upstream: `decentraland/worlds-content-server` @ `10af5255bb04a1a28e0c26bd190317c26a6015a9` (2026-10-21).
-- dcl-one: `fix/worlds-content-parity` @ `2da8b8aea` (origin/main), Rust workspace `services/catalyst`.
+- dcl-one: origin main `2da8b8aea`, Rust workspace `services/catalyst`.
 
 Everything below comes from reading the code. Nothing was built or run, and no line is "verified".
 Some upstream behaviour comes from packages that are not in the clone. Their published tarballs were
@@ -85,14 +85,14 @@ Common notes:
   (`worlds_envelope.rs:197-203`). The signed-fetch and schema-validator refusals do not go through
   `errorHandler` upstream, so they have their own shapes (WP-01, WP-02).
 - **Signed fetch.** Upstream builds every signed route from `createSignedFetchMiddleware`
-  (`decentraland/worlds-content-server:src/controllers/routes.ts:44-64`):
+  (`decentraland/worlds-content-server:src/controllers/routes.ts:74-96`):
   - `optional:false`;
   - the scene gate `rejectIfSigner('decentraland-kernel-scene')`;
   - `onError → {error: err.message, message: 'This endpoint requires a signed fetch request. See ADR-44.'}`.
 
   `POST /world/:world_name/permissions/:permission_name` is the only route on the instance that accepts the
   folded pre-6.0.0 payload. Its canonical keys are `signer,type,secret,wallets,communities,nft`
-  (`routes.ts:158-165`). The other seven signed routes here use the strict instance (`routes.ts:98`).
+  (`routes.ts:158-165`). The other six signed routes here use the strict instance (`routes.ts:98`).
 
   dcl-one's `require_verified` (`services/catalyst/comms/src/signed_fetch.rs:131-185`) runs the same
   stages in the same order:
@@ -141,7 +141,8 @@ Common notes:
 
 Counts: 10 endpoints. MATCH 0, GAP 0, DIVERGENT 10, MISSING 0. Every route exists in dcl-one at the same method
 and path, on both mounts. On the success path, each route answers the upstream status and body shape.
-No route is MATCH: each keeps at least one open item below (the signed-fetch bodies, WP-01, are fixed).
+No route is MATCH: each keeps at least one open item below. The signed-fetch bodies of the seven signed
+routes (six strict, one legacy) are fixed (WP-01); the three unsigned ones differ on a body (WP-02, WP-03, WP-06).
 
 ---
 
@@ -149,8 +150,8 @@ No route is MATCH: each keeps at least one open item below (the signed-fetch bod
 
 Upstream: `permissions-handlers.ts:50-107`. It reads three things in parallel:
 
-- `access.getAccessForWorld`: the stored JSONB access, or `{type:"unrestricted"}` when the world has no row or
-  the name is deny-listed (`access/component.ts:34-40`, `worlds-manager.ts:322-356`);
+- `access.getAccessForWorld`: the stored JSONB access, or `{type:"unrestricted"}` when the world has no row
+  (`access/component.ts:34-40`, `worlds-manager.ts:322-356`);
 - `permissionsManager.getOwner`: the stored `worlds.owner` first, then `nameOwnership`; a lookup failure gives
   `undefined` (`permissions-manager.ts:18-32`);
 - `permissions.getPermissionsSummary` (`permissions/component.ts:422-440`).
@@ -430,19 +431,21 @@ Upstream: `permissions-handlers.ts:403-450`. Stage order:
    real removal;
 7. access: `removeWalletFromAccessAllowList` + `handleAccessChange`.
 
-`isWorldValid` passes when the `worlds` row exists, the name is not deny-listed, and the owner is not blocked past
-the two-day grace (`logic/worlds/component.ts:68-81`, `worlds-manager.ts:322-356`). It does **not** require a
+`isWorldValid` passes when the `worlds` row exists and the owner is not blocked past the two-day grace
+(`logic/worlds/component.ts:68-81`, `worlds-manager.ts:322-356`); its deny-list filter matches no world name
+(worlds-reads.md WR-17). It does **not** require a
 deployed scene, even though the comment above it says it does.
 
 dcl-one: `permissions.rs:465-516`. `store::world_is_valid` (`store.rs:427-446`) requires the row, **at least one
-`world_scenes` row**, and no operator disable or quota block past the grace. It does not check the deny list.
+`world_scenes` row**, and no operator disable or quota block past the grace. It does not check the deny list
+either, so the two agree there.
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
 | Grant or wallet removed, or absent | 204, empty | | `:449` | `:515` | MATCH (parcel-scoped grants are dropped whole in both) |
 | World row missing | 404 `World "<w>" not found.` | | `:428-432` | `:487-492` | MATCH |
 | World row exists with no deployed scene (permissions set before the first deploy, or every scene undeployed) | upstream 204; dcl-one **404** | | `isWorldValid` | `world_is_valid` `has_scenes` | DIVERGENT (WP-11) |
-| Deny-listed name | upstream 404; dcl-one 204 | | `getRawWorldRecords` filter | no deny-list check | DIVERGENT (WP-11) |
+| Deny-listed name | 204 on both (upstream's filter never matches a full name) | | `getRawWorldRecords` filter | no deny-list check | MATCH |
 | Invalid permission name | 400 `Permission '<p>' does not support allow-list. Only 'deployment', 'streaming', and 'access' do.` | | `:420-424` | `:473-477` | MATCH |
 | `access`, world not an allow-list | 400, the same text | | `access/component.ts:180-183` | `:505-511,792-795` | MATCH |
 | `access` kick | Upstream: `handleAccessChange`, rule (3), over every participant. dcl-one: `revoke_unless_admitted` for the removed wallet only (`core/mod.rs:371-389`). The result is the same: only the removed wallet can lose admission. | | | `:513` | intended (WP-14) |
@@ -463,12 +466,12 @@ dcl-one: `permissions.rs:465-516`. `store::world_is_valid` (`store.rs:427-446`) 
 
 ## Backlog (WP-)
 
-1. **WP-01 · all eight signed routes · signed-fetch refusal bodies.** Status: MATCH (fixed).
+1. **WP-01 · all seven signed routes · signed-fetch refusal bodies.** Status: MATCH (fixed).
    - Upstream: `{"error": <middleware message>, "message": "This endpoint requires a signed fetch request. See ADR-44."}`.
      The middleware messages are `Invalid Auth Chain`, `Invalid signature: <detail>`,
      `Expired signature: signature timestamp: …`, `Invalid metadata content: {…}` and
      `Invalid chain metadata: expected "<k>", got "<K>"`. A 5xx keeps `err.message`
-     (`decentraland/worlds-content-server:src/controllers/routes.ts:59-62`; `@dcl/crypto-middleware@6.3.0`
+     (`decentraland/worlds-content-server:src/controllers/routes.ts:89-92`; `@dcl/crypto-middleware@6.3.0`
      `dist/verify.js:69-93,161-205,285-312,331-333`).
      Pinned by `post-permissions.spec.ts:355-365,393-402`, `post-permissions-legacy-payload.spec.ts` and
      `explorer-legacy-payload.spec.ts:116-171`.
@@ -591,19 +594,18 @@ dcl-one: `permissions.rs:465-516`. `store::world_is_valid` (`store.rs:427-446`) 
         `parse_address`.
     - Severity: P2. Size: S.
 
-11. **WP-11 · route 10 (and route 1 for the deny list) · `isWorldValid` semantics.** Status: open.
-    - Upstream: valid when the `worlds` row exists, the name is not on the name deny list, and the owner is not
-      blocked past the two-day grace. A scene is **not** required (`logic/worlds/component.ts:68-81`,
+11. **WP-11 · route 10 · `isWorldValid` semantics.** Status: open.
+    - Upstream: valid when the `worlds` row exists and the owner is not blocked past the two-day grace. A scene
+      is **not** required; its deny-list filter matches no world name (worlds-reads.md WR-17)
+      (`logic/worlds/component.ts:68-81`,
       `adapters/worlds-manager.ts:322-356`).
-    - dcl-one: `world_is_valid` also requires a `world_scenes` row, and ignores the name deny list
-      (`store.rs:427-446`).
+    - dcl-one: `world_is_valid` also requires a `world_scenes` row (`store.rs:427-446`). Neither tree applies
+      the name deny list in effect.
     - Left:
       - an owner who set deployment collaborators or an allow-list before the first deploy, or after undeploying
-        every scene, gets `404 World "<w>" not found.` when removing one; upstream answers 204;
-      - a deny-listed world answers 204 here where upstream answers 404;
-      - upstream's GET reads a deny-listed world's access as `unrestricted`.
-    - Proposed fix: in `store::world_is_valid`, drop the `has_scenes` condition and add `state.names` (the
-      `NameDenyList`) to the check. Keep the operator disable, which is dcl-one only. Add a test in
+        every scene, gets `404 World "<w>" not found.` when removing one; upstream answers 204.
+    - Proposed fix: in `store::world_is_valid`, drop the `has_scenes` condition. Keep the operator disable,
+      which is dcl-one only. Add a test in
       `worlds/src/core/tests.rs` that runs `POST deployment` then `DELETE .../deployment/{a}` on a world with no
       scene and expects 204. Check every other caller of `world_is_valid` first (`rg -n world_is_valid
       services/catalyst/worlds/src`), because the deploy and settings areas may rely on the scene condition.
