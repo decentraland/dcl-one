@@ -1150,16 +1150,7 @@ pub unsafe extern "C" fn uuav_player_open_media_async(
         Err(_) => return ResultFFI::error("url is not valid UTF-8"),
     };
 
-    // new media, new info: drop the cached one until the helper re-announces, and a
-    // presentation failure of the previous media with it (under the video lock, so a render
-    // event still presenting the previous media cannot set it again afterwards)
-    if let Some(client) = CLIENT.load().as_ref()
-        && let Some(mirror) = client.mirror(player_id)
-    {
-        mirror.media_info.store(None);
-        let _presenting = mirror.video.lock();
-        mirror.present_failed.store(false, Ordering::Release);
-    }
+    forget_previous_media(player_id);
     // buffered audio belongs to the previous media
     clear_jitter_ring(player_id);
 
@@ -1430,6 +1421,18 @@ pub extern "C" fn uuav_player_seek_async(player_id: PlayerId, time: f64) -> Resu
         |intended| intended.resume_time = Some(time),
         |id| ToServer::Seek { id, time },
     ))
+}
+
+/// Drops a player's media info and presentation failure; a no-op for unknown players.
+fn forget_previous_media(player_id: PlayerId) {
+    if let Some(client) = CLIENT.load().as_ref()
+        && let Some(mirror) = client.mirror(player_id)
+    {
+        mirror.media_info.store(None);
+        // a render event still presenting the previous media holds this lock
+        let _presenting = mirror.video.lock();
+        mirror.present_failed.store(false, Ordering::Release);
+    }
 }
 
 /// Flushes a player's jitter ring around a content discontinuity
