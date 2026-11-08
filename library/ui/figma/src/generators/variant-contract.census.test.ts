@@ -26,6 +26,10 @@ function contractOf(source: string) {
 }
 
 // Type checks each statement against the generated props type; returns the indexes that do not compile.
+// The diagnostics that mean "this value is not assignable to the props type". Any other diagnostic (a missing global,
+// a syntax error) is a broken fixture, not a contract rejection, so it fails the test instead of counting as one.
+const ASSIGNABILITY = new Set([2322, 2353, 2559, 2739, 2741, 2769])
+
 function rejected(source: string, statements: string[]): Set<number> {
   const header = [
     'type ReactNode = string; type ForcedState = "hover" | "pressed";',
@@ -42,7 +46,11 @@ function rejected(source: string, statements: string[]): Set<number> {
   for (const diagnostic of ts.getPreEmitDiagnostics(program)) {
     if (diagnostic.file?.fileName !== 'c.ts' || diagnostic.start === undefined) continue
     const line = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start).line - offset
-    if (line >= 0) lines.add(line)
+    if (line < 0 || !ASSIGNABILITY.has(diagnostic.code))
+      throw new Error(
+        `Fixture diagnostic TS${diagnostic.code} on line ${line}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')}`
+      )
+    lines.add(line)
   }
   return lines
 }
@@ -136,12 +144,19 @@ describe('generated variant contracts', () => {
       'const undrawn = { balances: "credits" } as const; const bad1: NavBarProps = { ...undrawn };',
       // Negative: a wider string where the axis needs a literal.
       'declare const wide: string; const bad2: NavBarProps = { viewport: wide };',
-      // Negative: a record of unknowns.
-      'declare const loose: Record<string, unknown>; const bad3: NavBarProps = loose;',
       // Negative: a widened boolean that may select signedIn: true without balances support.
       'declare const signed: boolean; const bad4: NavBarProps = { signedIn: signed, balances: "credits" };'
     ]
     const failures = rejected(source, statements)
-    expect([...failures].sort()).toEqual([2, 3, 4, 5])
+    expect([...failures].sort()).toEqual([2, 3, 4])
+  })
+
+  // An arbitrary Record<string, unknown> is not claimed to be rejected statically: its values are unknown, and the
+  // runtime validates them (unknown values throw, reserved names are dropped). A fixture that refers to a missing
+  // global must fail outright rather than pass as a rejection.
+  it('should fail on a missing-global diagnostic instead of counting it as a contract rejection', () => {
+    expect(() =>
+      rejected(sources.get('NavBar')!, ['const missing: NavBarProps = notDeclaredAnywhere;'])
+    ).toThrow('Fixture diagnostic TS2304')
   })
 })

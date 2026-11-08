@@ -24,6 +24,8 @@ const generatedFiles = new Map(
     .map((file) => [path.basename(file, '.tsx'), file])
 )
 const SPARSE = ['NavBar', 'NavMenuDropdown', 'NavProfileButton', 'PlaceCard']
+// Only these mean "not assignable to the props"; any other diagnostic is a broken fixture and fails the run.
+const ASSIGNABILITY = new Set([2322, 2353, 2559, 2739, 2741, 2769])
 const UNDEFINED = Symbol('undefined')
 
 type Fixture = { component: string; line: number; text: string; compiles: boolean; why: string }
@@ -180,8 +182,10 @@ beforeAll(() => {
   for (const diagnostic of ts.getPreEmitDiagnostics(program, program.getSourceFile(virtualFile))) {
     if (!diagnostic.file || diagnostic.start === undefined) continue
     const line = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start).line
-    if (line < header)
-      throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'))
+    if (line < header || !ASSIGNABILITY.has(diagnostic.code))
+      throw new Error(
+        `Fixture diagnostic TS${diagnostic.code} on line ${line}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')}`
+      )
     bad.add(line)
   }
   fixtures = list
