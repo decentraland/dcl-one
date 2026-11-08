@@ -193,6 +193,8 @@ export type PageToScene =
   | PreviewFocusRequest
   | PreviewStageRequest
   | PreviewEmoteRequest
+  | PreviewRotateRequest
+  | PreviewZoomRequest
   | GetOutfitsRequest
   | SaveOutfitRequest
   | DeleteOutfitRequest
@@ -398,6 +400,8 @@ export interface FriendsMessage {
   /** Blocked addresses (names/avatars not resolved here). */
   blocked: string[]
   blockedUsers?: BlockedUser[]
+  /** Lowercased addresses of users who have blocked the local user (absent from older bridges). */
+  blockedBy?: string[]
   /** Signed in but the social service hasn't initialised yet (vs a guest, who never gets it). */
   loading?: boolean
 }
@@ -680,6 +684,12 @@ export interface AppNotification {
 
 export interface NotificationsMessage {
   kind: 'notifications'
+  notifications: AppNotification[]
+}
+
+/** Unread notifications newer than any seen before, from the scene's poll (newest first). */
+export interface NotificationsNewMessage {
+  kind: 'notificationsNew'
   notifications: AppNotification[]
 }
 
@@ -1485,6 +1495,25 @@ export interface PreviewEmoteRequest {
   urn: string | null
 }
 
+/** Turn the preview avatar about its vertical axis by `degrees` (the page's drag over it: the engine's
+ *  drag-lock doesn't reach the preview in every host, so the page drives the turn itself). */
+export interface PreviewRotateRequest {
+  kind: 'previewRotate'
+  degrees: number
+}
+
+/** Zoom the preview avatar's camera: `zoom` × the framing in use (1 is the framing as it is, up to
+ *  PREVIEW_MAX_ZOOM), keeping what is at `anchor` where it is: a height in the camera's view, 0 its top and 1
+ *  its bottom (the pointer's, as the page's wheel over the avatar asks). The view stays inside the framing. */
+export interface PreviewZoomRequest {
+  kind: 'previewZoom'
+  zoom: number
+  anchor: number
+}
+
+/** The furthest the preview avatar's camera zooms in: the head framing is 2.5× the whole body. */
+export const PREVIEW_MAX_ZOOM = 2.5
+
 /** RGB color, components 0..1 (matches PBAvatarBase / the deployed avatar entity). */
 export interface RGBColor {
   r: number
@@ -1759,6 +1788,7 @@ export type SceneToPage =
   | ProfileSavedMessage
   | OwnedNamesMessage
   | NotificationsMessage
+  | NotificationsNewMessage
   | EmotesMessage
   | MicMessage
   | WearablesMessage

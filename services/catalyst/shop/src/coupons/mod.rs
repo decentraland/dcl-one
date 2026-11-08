@@ -24,6 +24,7 @@ pub mod chain;
 pub mod component;
 pub mod contracts;
 pub mod errors;
+pub mod favorites;
 pub mod merkle;
 pub mod schema;
 pub mod signature;

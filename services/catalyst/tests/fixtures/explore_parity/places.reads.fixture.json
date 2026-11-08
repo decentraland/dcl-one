@@ -1,0 +1,2801 @@
+[
+  {
+    "id": "places.$defs.place_row", "area": "places", "request": {"method": "GET", "path": "-"},
+    "expected": {
+      "status": 0, "content_type": "application/json",
+      "body": {
+        "item_keys": [
+          "id", "title", "description", "image", "owner", "positions", "base_position", "contact_name",
+          "contact_email", "content_rating", "disabled", "disabled_at", "created_at", "updated_at",
+          "favorites", "likes", "dislikes", "like_rate", "categories", "highlighted", "highlighted_image",
+          "world", "world_name", "deployed_at", "textsearch", "like_score", "creator_address", "sdk",
+          "ranking", "world_id", "disabled_reason", "deployment_id", "exclude_from_ranking", "user_favorite",
+          "user_like", "user_dislike", "user_count", "user_visits"
+        ]
+      },
+      "body_match": "shape"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/controllers/handlers/query-params.ts:4-41", "src/adapters/places-repository/component.ts:174-203"
+      ]
+    },
+    "harness": {"skip": "definitions shared by the places entries; not a request"},
+    "notes": "A place in a list or a read answer."
+  },
+  {
+    "id": "places.$defs.world_row", "area": "places", "request": {"method": "GET", "path": "-"},
+    "expected": {
+      "status": 0, "content_type": "application/json",
+      "body": {
+        "item_keys": [
+          "id", "world_name", "title", "description", "image", "content_rating", "categories", "owner",
+          "show_in_places", "single_player", "skybox_time", "likes", "dislikes", "favorites", "like_rate",
+          "like_score", "created_at", "updated_at", "is_private", "highlighted", "highlighted_image",
+          "ranking", "settings_version", "exclude_from_ranking", "disabled", "disabled_at", "contact_name",
+          "base_position", "world", "user_visits", "deployed_at", "user_favorite", "user_like",
+          "user_dislike", "user_count"
+        ]
+      },
+      "body_match": "shape"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:40", "src/entities/World/routes/getWorldList.ts:25-80",
+        "src/entities/World/schemas.ts:5-81",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/World/model.ts:207-252", "src/entities/World/model.ts:343-386",
+        "src/entities/World/utils.ts:13-30", "src/entities/shared/entityInteractions.ts:169-185",
+        "src/migrations/1770729308000_create-worlds-table.ts:7-98",
+        "src/migrations/1770729908000_add-is-private-to-worlds.ts:9-15",
+        "src/migrations/1770730028000_add-highlighted-ranking-to-worlds.ts:6-22",
+        "src/migrations/1770730388000_remove-disabled-from-worlds.ts:19-20",
+        "src/migrations/1786492800000_add-settings-version-to-worlds.ts:9-13",
+        "src/migrations/1788789426884_add-exclude-from-ranking.ts:8-20"
+      ]
+    },
+    "harness": {"skip": "definitions shared by the places entries; not a request"},
+    "notes": "A world in a list or a read answer."
+  },
+  {
+    "id": "places.$defs.destination_row", "area": "places", "request": {"method": "GET", "path": "-"},
+    "expected": {
+      "status": 0, "content_type": "application/json",
+      "body": {
+        "item_keys": [
+          "id", "title", "description", "image", "owner", "world_name", "content_rating", "categories",
+          "likes", "dislikes", "favorites", "like_rate", "like_score", "disabled", "disabled_at",
+          "created_at", "updated_at", "base_position", "contact_name", "deployed_at", "highlighted", "world",
+          "is_private", "highlighted_image", "positions", "contact_email", "creator_address", "sdk",
+          "ranking", "user_visits", "user_favorite", "user_like", "user_dislike", "user_count"
+        ]
+      },
+      "body_match": "shape"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Destination/routes/index.ts:29",
+        "src/entities/Destination/routes/getDestinationsList.ts:34-171",
+        "src/entities/Destination/schemas.ts:6-135",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/Destination/model.ts:23-49", "src/entities/Destination/model.ts:181-322",
+        "src/entities/Destination/utils.ts:140-248", "src/entities/shared/entityInteractions.ts:169-185",
+        "src/entities/shared/contentQuality.ts:86-123"
+      ]
+    },
+    "harness": {"skip": "definitions shared by the places entries; not a request"},
+    "notes": "A destination in a list answer."
+  },
+  {
+    "id": "places.get_places.default_list", "area": "places",
+    "request": {"method": "GET", "path": "/api/places"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length <= 100", "every item.world == false", "every item.disabled == false", "total >= 3"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34", "src/logic/places/component.ts:43-73",
+        "src/adapters/places-repository/component.ts:62-121",
+        "src/adapters/places-repository/component.ts:174-203"
+      ]
+    },
+    "notes": "The discovery server lists `disabled IS false AND world IS false`, `like_score DESC NULLS LAST, deployed_at DESC`, 100 rows. dcl-one also serves `deployment_id` and `exclude_from_ranking` (fields of decentraland/places@e660fbc2); the discovery server has no such columns."
+  },
+  {
+    "id": "places.get_places.limit_one", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"limit": "1"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length == 1", "total >= 3"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/controllers/handlers/query-params.ts:4-41", "src/adapters/places-repository/component.ts:174-203"
+      ]
+    }
+  },
+  {
+    "id": "places.get_places.limit_over_cap", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"limit": "1000"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length <= 100"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/controllers/handlers/query-params.ts:4-41", "src/adapters/places-repository/component.ts:174-203"
+      ]
+    },
+    "notes": "`Math.min(limit, 100)`."
+  },
+  {
+    "id": "places.get_places.offset_past_end", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"offset": "1000"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length == 0", "total >= 3"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/controllers/handlers/query-params.ts:4-41", "src/adapters/places-repository/component.ts:174-203"
+      ]
+    },
+    "notes": "`total` is the count; the page is empty."
+  },
+  {
+    "id": "places.get_places.invalid_limit_format", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"limit": "abc"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length <= 100", "every item.world == false", "every item.disabled == false", "total >= 3"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/controllers/handlers/query-params.ts:4-41", "src/adapters/places-repository/component.ts:174-203"
+      ]
+    },
+    "notes": "`intParam`: `Number('abc')` is not an integer, so `limit` is the default 100."
+  },
+  {
+    "id": "places.get_places.negative_limit", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"limit": "-1"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length <= 100", "every item.world == false", "every item.disabled == false", "total >= 3"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/controllers/handlers/query-params.ts:4-41", "src/adapters/places-repository/component.ts:174-203"
+      ]
+    },
+    "notes": "`intParam`: a negative number is not kept, so `limit` is the default 100."
+  },
+  {
+    "id": "places.get_places.invalid_offset_format", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"offset": "x"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length <= 100", "every item.world == false", "every item.disabled == false", "total >= 3"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/controllers/handlers/query-params.ts:4-41", "src/adapters/places-repository/component.ts:174-203"
+      ]
+    },
+    "notes": "`intParam`: `Number('x')` is not an integer, so `offset` is 0."
+  },
+  {
+    "id": "places.get_places.invalid_position_pattern", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"positions": "10;10"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": {"total": 0, "ok": true, "data": []},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/controllers/handlers/query-params.ts:4-41", "src/adapters/places-filters.ts:11-36",
+        "src/adapters/places-repository/component.ts:62-121"
+      ]
+    },
+    "notes": "A position has no pattern check; `10;10` is a parcel no place has."
+  },
+  {
+    "id": "places.get_places.invalid_owner_pattern", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"owner": "0x123"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": {"total": 0, "ok": true, "data": []},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/adapters/places-repository/component.ts:62-121"
+      ]
+    },
+    "notes": "An owner has no pattern check; `lower(p.owner) = '0x123'` matches no row."
+  },
+  {
+    "id": "places.get_places.invalid_creator_address_pattern", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"creator_address": "not-an-address"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": {"total": 0, "ok": true, "data": []},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/adapters/places-repository/component.ts:62-121"
+      ]
+    },
+    "notes": "A creator address has no pattern check; the lowercased value matches no row."
+  },
+  {
+    "id": "places.get_places.invalid_only_favorites_format", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"only_favorites": "maybe"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length <= 100", "every item.world == false", "every item.disabled == false", "total >= 3"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": ["src/controllers/handlers/get-places-handler.ts:12-34", "src/logic/places/component.ts:43-73"]
+    },
+    "notes": "`only_favorites` is true only as `true`; `maybe` is false and the list is the default list."
+  },
+  {
+    "id": "places.get_places.invalid_only_highlighted_format", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"only_highlighted": "yes"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length <= 100", "every item.world == false", "every item.disabled == false", "total >= 3"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/adapters/places-repository/component.ts:62-121"
+      ]
+    },
+    "notes": "`only_highlighted` is true only as `true`; `yes` is false and the list is the default list."
+  },
+  {
+    "id": "places.get_places.invalid_with_realms_detail_format", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"with_realms_detail": "x"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length <= 100", "every item.world == false", "every item.disabled == false", "total >= 3"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": ["src/controllers/handlers/get-places-handler.ts:12-34", "src/logic/places/component.ts:43-73"]
+    },
+    "notes": "`with_realms_detail` is true only as `true`; `x` is false and no item carries `realms_detail`."
+  },
+  {
+    "id": "places.get_places.order_by_user_visits_enum", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"order_by": "user_visits"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length <= 100", "every item.world == false", "every item.disabled == false", "total >= 3"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/adapters/places-repository/component.ts:174-203"
+      ]
+    },
+    "notes": "`user_visits` is outside `ORDER_BY_VALUES`, so the order is `like_score`."
+  },
+  {
+    "id": "places.get_places.unknown_order_by_ignored", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"order_by": "bogus", "order": "sideways"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length <= 100"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/adapters/places-repository/component.ts:174-203"
+      ]
+    },
+    "notes": "An `order_by` outside `ORDER_BY_VALUES` is `like_score`; an `order` other than `asc` is `desc`."
+  },
+  {
+    "id": "places.get_places.order_by_like_score_counts_a_local_vote", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"order_by": "like_score", "limit": "3"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": [
+          "data.length == 3", "total >= 3", "every item.like_score non-increasing",
+          "data.0.id == '{place_id:excluded}'", "data.0.like_score == 0.5080474719557795",
+          "data.1.id == '{place_id:enabled}'", "data.2.id == '{place_id:highlighted}'"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/model.ts:602-611", "src/entities/shared/entityInteractions.ts:20",
+        "src/entities/shared/entityInteractions.ts:97-105",
+        "src/entities/shared/entityInteractions.ts:133-160"
+      ]
+    },
+    "harness": {"place_id": "excluded", "viewer_state": ["liked_qualified"]},
+    "notes": "A like by a wallet whose voting power reaches `MIN_USER_ACTIVITY` (100) rewrites the place row's `like_score` (`buildUpdateLikesQuery`, entityInteractions.ts:149-156, the Wilson bound of :97-105) and the lists order on that column (`p.like_score DESC NULLS LAST, p.deployed_at DESC`, Place/model.ts:602-611; the discovery server reads the same column, `places-repository/component.ts:174-203`), so the order and the served value agree. The three listed places mirror `like_score` 0.5 (4 likes, 1 dislike); the `user` wallet's qualified like on `excluded` makes it the bound of (5, 1), which lists first, then the two at 0.5 by `id`."
+  },
+  {
+    "id": "places.get_places.unknown_param_ignored", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"foo": "bar", "only_featured": "true"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length <= 100"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": ["src/controllers/handlers/get-places-handler.ts:12-34"]
+    },
+    "notes": "Unknown parameters are not read."
+  },
+  {
+    "id": "places.get_places.positions_match", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"positions": "10,10"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": [
+          "data.length == 1", "total == 1", "every item.base_position == '10,10'",
+          "every item.id == '{place_id}'"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/controllers/handlers/query-params.ts:4-41", "src/adapters/places-filters.ts:11-36",
+        "src/adapters/places-repository/component.ts:62-121"
+      ]
+    }
+  },
+  {
+    "id": "places.get_places.positions_non_base_parcel", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"positions": "10,11"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length == 1", "every item.base_position == '10,10'"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/controllers/handlers/query-params.ts:4-41", "src/adapters/places-filters.ts:11-36",
+        "src/adapters/places-repository/component.ts:62-121"
+      ]
+    },
+    "notes": "`p.positions && positions`: a parcel of the place, not only its base position."
+  },
+  {
+    "id": "places.get_places.positions_disabled_excluded", "area": "places",
+    "request": {"method": "GET", "path": "/api/places?positions=10,10&positions=20,20"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length == 1", "total == 1", "every item.base_position == '10,10'"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/controllers/handlers/query-params.ts:4-41", "src/adapters/places-filters.ts:11-36",
+        "src/adapters/places-repository/component.ts:62-121"
+      ]
+    },
+    "notes": "`positionsParam` reads every `positions` value; `disabled IS false` drops the closed place."
+  },
+  {
+    "id": "places.get_places.positions_no_match", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"positions": "99,99"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": {"total": 0, "ok": true, "data": []},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/controllers/handlers/query-params.ts:4-41", "src/adapters/places-filters.ts:11-36",
+        "src/adapters/places-repository/component.ts:62-121"
+      ]
+    }
+  },
+  {
+    "id": "places.get_places.names_world_backed", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"names": "harbour.dcl.eth"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["every item.world == true", "every item.world_name == 'harbour.dcl.eth'"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/controllers/handlers/query-params.ts:4-41", "src/adapters/places-repository/component.ts:62-121"
+      ]
+    },
+    "notes": "`names` lifts `world IS false`; `p.world_id = ANY(lowercased names)`."
+  },
+  {
+    "id": "places.get_places.names_case_insensitive", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"names": "HARBOUR.DCL.ETH"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["every item.world == true", "every item.world_name == 'harbour.dcl.eth'"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/controllers/handlers/query-params.ts:4-41", "src/adapters/places-repository/component.ts:62-121"
+      ]
+    },
+    "notes": "`names` are lowercased before the match."
+  },
+  {
+    "id": "places.get_places.only_highlighted", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"only_highlighted": "true"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["every item.highlighted == true", "data.length >= 1"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/adapters/places-repository/component.ts:62-121"
+      ]
+    },
+    "notes": "`only_highlighted` also lifts `world IS false`, so highlighted world rows would appear too."
+  },
+  {
+    "id": "places.get_places.only_excluded_from_ranking_ignored", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"only_excluded_from_ranking": "true"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length <= 100", "every item.world == false", "every item.disabled == false", "total >= 3"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": ["src/controllers/handlers/get-places-handler.ts:12-34"]
+    },
+    "notes": "The discovery server has no `only_excluded_from_ranking` parameter; the list is the default list."
+  },
+  {
+    "id": "places.get_places.owner_filter", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"owner": "0X00000000000000000000000000000000000000AA"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["every item.owner == '0x00000000000000000000000000000000000000aa'", "data.length >= 1"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34", "src/logic/places/component.ts:43-73",
+        "src/adapters/places-repository/component.ts:62-121"
+      ]
+    },
+    "notes": "`lower(p.owner) = lower($owner)`; with operated parcels from the LAND index the row's positions match too."
+  },
+  {
+    "id": "places.get_places.categories_no_match", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"categories": "nonexistent-category"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": {"total": 0, "ok": true, "data": []},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/controllers/handlers/query-params.ts:4-41", "src/adapters/places-filters.ts:11-36",
+        "src/adapters/places-repository/component.ts:62-121"
+      ]
+    }
+  },
+  {
+    "id": "places.get_places.search_too_short", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"search": "ab"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": {"total": 0, "ok": true, "data": []},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/adapters/places-repository/component.ts:174-203"
+      ]
+    },
+    "notes": "`search.length < MIN_SEARCH_LENGTH` (3) answers an empty list and a zero count without a query."
+  },
+  {
+    "id": "places.get_places.search_adds_rank", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"search": "plaza"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array",
+        "item_keys": [
+          "id", "title", "description", "image", "owner", "positions", "base_position", "contact_name",
+          "contact_email", "content_rating", "disabled", "disabled_at", "created_at", "updated_at",
+          "favorites", "likes", "dislikes", "like_rate", "categories", "highlighted", "highlighted_image",
+          "world", "world_name", "deployed_at", "textsearch", "like_score", "creator_address", "sdk",
+          "ranking", "world_id", "disabled_reason", "deployment_id", "exclude_from_ranking", "user_favorite",
+          "user_like", "user_dislike", "user_count", "user_visits", "rank"
+        ],
+        "invariants": ["data.length >= 1", "every item.title == 'Harness Plaza'"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34", "src/adapters/places-filters.ts:11-36",
+        "src/adapters/places-repository/component.ts:174-203"
+      ]
+    },
+    "notes": "With `search` the SELECT appends `rank` (`ts_rank_cd`) to every item and sorts by it first; only the seeded title containing \"Plaza\" matches."
+  },
+  {
+    "id": "places.get_places.with_realms_detail", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"with_realms_detail": "true"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array",
+        "item_keys": [
+          "id", "title", "description", "image", "owner", "positions", "base_position", "contact_name",
+          "contact_email", "content_rating", "disabled", "disabled_at", "created_at", "updated_at",
+          "favorites", "likes", "dislikes", "like_rate", "categories", "highlighted", "highlighted_image",
+          "world", "world_name", "deployed_at", "textsearch", "like_score", "creator_address", "sdk",
+          "ranking", "world_id", "disabled_reason", "deployment_id", "exclude_from_ranking", "user_favorite",
+          "user_like", "user_dislike", "user_count", "user_visits", "realms_detail"
+        ],
+        "invariants": ["data.length <= 100"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": ["src/controllers/handlers/get-places-handler.ts:12-34", "src/logic/places/component.ts:43-73"]
+    },
+    "notes": "`with_realms_detail=true` adds `realms_detail` to every item."
+  },
+  {
+    "id": "places.get_places.order_by_most_active", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"order_by": "most_active"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": {"total": 0, "ok": true, "data": []},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34", "src/logic/places/component.ts:43-73",
+        "src/adapters/places-repository/component.ts:62-121",
+        "src/adapters/places-repository/component.ts:174-203"
+      ]
+    },
+    "notes": "`most_active` reads only the base positions with players (`hotScenes.getActivePositions()`), at most 100, best liked first, sorted by `user_count` in memory; `total` is the size of that set. With no active position the WHERE is `AND FALSE`. The harness has no presence snapshot and every seeded `user_count` is 0, so the set is empty."
+  },
+  {
+    "id": "places.get_places.only_favorites_anonymous", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"only_favorites": "true"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": {"total": 0, "ok": true, "data": []},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": ["src/controllers/handlers/get-places-handler.ts:12-34", "src/logic/places/component.ts:43-73"]
+    },
+    "notes": "`only_favorites` without a user answers `{ data: [], total: 0 }`."
+  },
+  {
+    "id": "places.get_places.only_favorites_wrong_bearer", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"only_favorites": "true"}, "auth": "bearer:wrong"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": {"total": 0, "ok": true, "data": []},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": ["src/controllers/handlers/get-places-handler.ts:12-34", "src/logic/places/component.ts:43-73"]
+    }
+  },
+  {
+    "id": "places.get_places.wrong_bearer_reads_as_anonymous", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "auth": "bearer:wrong"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": [
+          "data.length <= 100", "every item.user_favorite == false", "every item.user_like == false",
+          "every item.user_dislike == false"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": ["src/controllers/handlers/get-places-handler.ts:12-34", "src/logic/places/component.ts:43-73"]
+    }
+  },
+  {
+    "id": "places.get_places.empty_search_is_no_filter", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"search": ""}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length <= 100", "every item.world == false", "every item.disabled == false", "total >= 3"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/adapters/places-repository/component.ts:62-121",
+        "src/adapters/places-repository/component.ts:174-203"
+      ]
+    },
+    "notes": "`search: params.get('search') ?? undefined` keeps the empty string, which is falsy: no length gate and no text query."
+  },
+  {
+    "id": "places.get_places.categories_comma_split", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"categories": "poi,game"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length == 2", "total == 2", "every item.world == false"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/controllers/handlers/query-params.ts:4-41", "src/adapters/places-filters.ts:11-36",
+        "src/adapters/places-repository/component.ts:62-121"
+      ]
+    },
+    "notes": "`multiParam` splits each value on commas and trims; `p.categories && {poi,game}` matches the plaza (poi) and the featured place (game)."
+  },
+  {
+    "id": "places.get_places.only_highlighted_one_is_false", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"only_highlighted": "1"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length <= 100", "every item.world == false", "every item.disabled == false", "total >= 3"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/adapters/places-repository/component.ts:62-121"
+      ]
+    },
+    "notes": "`only_highlighted` is true only as `true`; `1` is false and the list is the default list."
+  },
+  {
+    "id": "places.get_places.names_turn_positions_off", "area": "places",
+    "request": {"method": "GET", "path": "/api/places", "query": {"positions": "99,99", "names": "harbour.dcl.eth"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length >= 1", "every item.world_name == 'harbour.dcl.eth'"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/controllers/handlers/query-params.ts:4-41", "src/adapters/places-repository/component.ts:62-121"
+      ]
+    },
+    "notes": "`positions` applies only without `names` (`filters.positions?.length && !filters.names?.length`)."
+  },
+  {
+    "id": "places.get_places.too_many_names", "area": "places",
+    "request": {
+      "method": "GET", "path": "/api/places",
+      "query": {
+        "names": "a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a,a"
+      }
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {"ok": false, "error": "Too many names (max 1000)", "code": "bad_request"},
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/discovery-server@81f0dcae",
+      "refs": [
+        "src/controllers/handlers/get-places-handler.ts:12-34",
+        "src/controllers/handlers/query-params.ts:4-41", "src/controllers/middlewares/error-handler.ts"
+      ]
+    },
+    "notes": "`multiParam` counts the values after the comma split. The discovery server's `error` field holds the error class name (`BadRequestError`) and `message` the text; dcl-one's `error` holds the text and `code` the class."
+  },
+  {
+    "id": "places.post_places.body_not_array", "area": "places",
+    "request": {"method": "POST", "path": "/api/places", "body": {"ids": ["{place_id}"]}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {"ok": false, "error": "Invalid request body. Expected an array of place IDs.", "code": "bad_request"},
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:42", "src/entities/Place/routes/getPlaceListById.ts:21-73",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:13-24",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:46-63",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/middleware/withBody.js:8-17"
+      ]
+    },
+    "notes": "Errors keep their own status (wkc `status()` returns `res.status` first), so this POST is 400 and not 201."
+  },
+  {
+    "id": "places.post_places.too_many_ids", "area": "places",
+    "request": {
+      "method": "POST", "path": "/api/places",
+      "body": [
+        "6b7c1d2e-0000-4000-8000-000000000000", "6b7c1d2e-0000-4000-8000-000000000001",
+        "6b7c1d2e-0000-4000-8000-000000000002", "6b7c1d2e-0000-4000-8000-000000000003",
+        "6b7c1d2e-0000-4000-8000-000000000004", "6b7c1d2e-0000-4000-8000-000000000005",
+        "6b7c1d2e-0000-4000-8000-000000000006", "6b7c1d2e-0000-4000-8000-000000000007",
+        "6b7c1d2e-0000-4000-8000-000000000008", "6b7c1d2e-0000-4000-8000-000000000009",
+        "6b7c1d2e-0000-4000-8000-000000000010", "6b7c1d2e-0000-4000-8000-000000000011",
+        "6b7c1d2e-0000-4000-8000-000000000012", "6b7c1d2e-0000-4000-8000-000000000013",
+        "6b7c1d2e-0000-4000-8000-000000000014", "6b7c1d2e-0000-4000-8000-000000000015",
+        "6b7c1d2e-0000-4000-8000-000000000016", "6b7c1d2e-0000-4000-8000-000000000017",
+        "6b7c1d2e-0000-4000-8000-000000000018", "6b7c1d2e-0000-4000-8000-000000000019",
+        "6b7c1d2e-0000-4000-8000-000000000020", "6b7c1d2e-0000-4000-8000-000000000021",
+        "6b7c1d2e-0000-4000-8000-000000000022", "6b7c1d2e-0000-4000-8000-000000000023",
+        "6b7c1d2e-0000-4000-8000-000000000024", "6b7c1d2e-0000-4000-8000-000000000025",
+        "6b7c1d2e-0000-4000-8000-000000000026", "6b7c1d2e-0000-4000-8000-000000000027",
+        "6b7c1d2e-0000-4000-8000-000000000028", "6b7c1d2e-0000-4000-8000-000000000029",
+        "6b7c1d2e-0000-4000-8000-000000000030", "6b7c1d2e-0000-4000-8000-000000000031",
+        "6b7c1d2e-0000-4000-8000-000000000032", "6b7c1d2e-0000-4000-8000-000000000033",
+        "6b7c1d2e-0000-4000-8000-000000000034", "6b7c1d2e-0000-4000-8000-000000000035",
+        "6b7c1d2e-0000-4000-8000-000000000036", "6b7c1d2e-0000-4000-8000-000000000037",
+        "6b7c1d2e-0000-4000-8000-000000000038", "6b7c1d2e-0000-4000-8000-000000000039",
+        "6b7c1d2e-0000-4000-8000-000000000040", "6b7c1d2e-0000-4000-8000-000000000041",
+        "6b7c1d2e-0000-4000-8000-000000000042", "6b7c1d2e-0000-4000-8000-000000000043",
+        "6b7c1d2e-0000-4000-8000-000000000044", "6b7c1d2e-0000-4000-8000-000000000045",
+        "6b7c1d2e-0000-4000-8000-000000000046", "6b7c1d2e-0000-4000-8000-000000000047",
+        "6b7c1d2e-0000-4000-8000-000000000048", "6b7c1d2e-0000-4000-8000-000000000049",
+        "6b7c1d2e-0000-4000-8000-000000000050", "6b7c1d2e-0000-4000-8000-000000000051",
+        "6b7c1d2e-0000-4000-8000-000000000052", "6b7c1d2e-0000-4000-8000-000000000053",
+        "6b7c1d2e-0000-4000-8000-000000000054", "6b7c1d2e-0000-4000-8000-000000000055",
+        "6b7c1d2e-0000-4000-8000-000000000056", "6b7c1d2e-0000-4000-8000-000000000057",
+        "6b7c1d2e-0000-4000-8000-000000000058", "6b7c1d2e-0000-4000-8000-000000000059",
+        "6b7c1d2e-0000-4000-8000-000000000060", "6b7c1d2e-0000-4000-8000-000000000061",
+        "6b7c1d2e-0000-4000-8000-000000000062", "6b7c1d2e-0000-4000-8000-000000000063",
+        "6b7c1d2e-0000-4000-8000-000000000064", "6b7c1d2e-0000-4000-8000-000000000065",
+        "6b7c1d2e-0000-4000-8000-000000000066", "6b7c1d2e-0000-4000-8000-000000000067",
+        "6b7c1d2e-0000-4000-8000-000000000068", "6b7c1d2e-0000-4000-8000-000000000069",
+        "6b7c1d2e-0000-4000-8000-000000000070", "6b7c1d2e-0000-4000-8000-000000000071",
+        "6b7c1d2e-0000-4000-8000-000000000072", "6b7c1d2e-0000-4000-8000-000000000073",
+        "6b7c1d2e-0000-4000-8000-000000000074", "6b7c1d2e-0000-4000-8000-000000000075",
+        "6b7c1d2e-0000-4000-8000-000000000076", "6b7c1d2e-0000-4000-8000-000000000077",
+        "6b7c1d2e-0000-4000-8000-000000000078", "6b7c1d2e-0000-4000-8000-000000000079",
+        "6b7c1d2e-0000-4000-8000-000000000080", "6b7c1d2e-0000-4000-8000-000000000081",
+        "6b7c1d2e-0000-4000-8000-000000000082", "6b7c1d2e-0000-4000-8000-000000000083",
+        "6b7c1d2e-0000-4000-8000-000000000084", "6b7c1d2e-0000-4000-8000-000000000085",
+        "6b7c1d2e-0000-4000-8000-000000000086", "6b7c1d2e-0000-4000-8000-000000000087",
+        "6b7c1d2e-0000-4000-8000-000000000088", "6b7c1d2e-0000-4000-8000-000000000089",
+        "6b7c1d2e-0000-4000-8000-000000000090", "6b7c1d2e-0000-4000-8000-000000000091",
+        "6b7c1d2e-0000-4000-8000-000000000092", "6b7c1d2e-0000-4000-8000-000000000093",
+        "6b7c1d2e-0000-4000-8000-000000000094", "6b7c1d2e-0000-4000-8000-000000000095",
+        "6b7c1d2e-0000-4000-8000-000000000096", "6b7c1d2e-0000-4000-8000-000000000097",
+        "6b7c1d2e-0000-4000-8000-000000000098", "6b7c1d2e-0000-4000-8000-000000000099",
+        "6b7c1d2e-0000-4000-8000-000000000100"
+      ]
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {"ok": false, "error": "Cannot request more than 100 places at once", "code": "bad_request"},
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:42", "src/entities/Place/routes/getPlaceListById.ts:21-73",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:13-24",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:46-63",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    }
+  },
+  {
+    "id": "places.post_places.valid_ids", "area": "places",
+    "request": {"method": "POST", "path": "/api/places", "body": ["{place_id}"]},
+    "expected": {
+      "status": 201, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length == 1", "total == 1", "every item.id == '{place_id}'"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:42", "src/entities/Place/routes/getPlaceListById.ts:21-73",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:13-24",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:46-63",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38",
+        "src/entities/Place/model.ts:208-211", "src/entities/Place/model.ts:579-592",
+        "src/entities/Place/model.ts:297-306", "src/entities/Place/model.ts:594-641",
+        "src/entities/shared/entityInteractions.ts:169-185", "src/entities/Place/utils.ts:194-241",
+        "src/migrations/1660567567429_create-places-table copy.ts:9-72",
+        "src/migrations/1662121657764_add-stats-to-places.ts:6-21",
+        "src/migrations/1664364229612_add-activity-and-popularity-fields-to-places.ts:6-17",
+        "src/migrations/1666236261694_update-popularity-score-to-highest-rated.ts:9",
+        "src/migrations/1666718810532_deprecate-place-activity-and-place-activity-daily.ts:4",
+        "src/migrations/1662726073097_create-categories.ts:39-45",
+        "src/migrations/1667844930518_add-highlighted.ts:20-22",
+        "src/migrations/1696876576231_migrate-featured-to-category.ts:32",
+        "src/migrations/1696876576233_remove-tags-field-from-places-table.ts:17",
+        "src/migrations/1681243168802_add-worlds-properties.ts:6-17",
+        "src/migrations/1681243168803_add-deployed-at.ts:6-12",
+        "src/migrations/1697479763911_make-all-words-discoverable.ts:6-20",
+        "src/migrations/1688755469681_add-places-search-text.ts:6-11",
+        "src/migrations/1690312213298_add-like-score-field-to-places-table.ts:6-12",
+        "src/migrations/1743773505141_add-creator-address-to-places.ts:9-13",
+        "src/migrations/1768234702000_add-sdk-to-places.ts:6-9",
+        "src/migrations/1768576478000_add-ranking-to-places.ts:6-12",
+        "src/migrations/1770729428000_add-world-id-to-places.ts:9-15",
+        "src/migrations/1774051200000_add-disabled-reason-to-places.ts:6-12",
+        "src/migrations/1785729600000_add-deployment-id-to-places.ts:9-13",
+        "src/migrations/1788789426884_add-exclude-from-ranking.ts:8-20"
+      ]
+    },
+    "notes": "wkc `status()` answers 201 for POST/PUT when the response carries no status. Item key set is `SELECT p.*` plus the user-interaction columns and the user_count/user_visits the route adds; `textsearch` (tsvector), `world_id`, `deployment_id` and `ranking` leak through `p.*` upstream. `rank` is appended only with `search`, `realms_detail` only with with_realms_detail."
+  },
+  {
+    "id": "places.post_places.disabled_id_counted_not_listed", "area": "places",
+    "request": {"method": "POST", "path": "/api/places", "body": ["{place_id}"]},
+    "expected": {
+      "status": 201, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length == 0", "total == 1"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:42", "src/entities/Place/routes/getPlaceListById.ts:21-73",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:13-24",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:46-63",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38",
+        "src/entities/Place/model.ts:144-148", "src/entities/Place/model.ts:579-592"
+      ]
+    },
+    "harness": {"place_id": "disabled"},
+    "notes": "findWithAggregates keeps `disabled is false` while countByIds counts every id, so a disabled id gives an empty page with total 1."
+  },
+  {
+    "id": "places.post_places_status.body_not_array", "area": "places",
+    "request": {"method": "POST", "path": "/api/places/status", "body": {}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {"ok": false, "error": "Invalid request body. Expected an array of place IDs.", "code": "bad_request"},
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:53", "src/entities/Place/routes/getPlaceStatusListById.ts:15-37",
+        "src/entities/Place/model.ts:556-592",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:13-24",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:46-63",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    }
+  },
+  {
+    "id": "places.post_places_status.too_many_ids", "area": "places",
+    "request": {
+      "method": "POST", "path": "/api/places/status",
+      "body": [
+        "6b7c1d2e-0000-4000-8000-000000000000", "6b7c1d2e-0000-4000-8000-000000000001",
+        "6b7c1d2e-0000-4000-8000-000000000002", "6b7c1d2e-0000-4000-8000-000000000003",
+        "6b7c1d2e-0000-4000-8000-000000000004", "6b7c1d2e-0000-4000-8000-000000000005",
+        "6b7c1d2e-0000-4000-8000-000000000006", "6b7c1d2e-0000-4000-8000-000000000007",
+        "6b7c1d2e-0000-4000-8000-000000000008", "6b7c1d2e-0000-4000-8000-000000000009",
+        "6b7c1d2e-0000-4000-8000-000000000010", "6b7c1d2e-0000-4000-8000-000000000011",
+        "6b7c1d2e-0000-4000-8000-000000000012", "6b7c1d2e-0000-4000-8000-000000000013",
+        "6b7c1d2e-0000-4000-8000-000000000014", "6b7c1d2e-0000-4000-8000-000000000015",
+        "6b7c1d2e-0000-4000-8000-000000000016", "6b7c1d2e-0000-4000-8000-000000000017",
+        "6b7c1d2e-0000-4000-8000-000000000018", "6b7c1d2e-0000-4000-8000-000000000019",
+        "6b7c1d2e-0000-4000-8000-000000000020", "6b7c1d2e-0000-4000-8000-000000000021",
+        "6b7c1d2e-0000-4000-8000-000000000022", "6b7c1d2e-0000-4000-8000-000000000023",
+        "6b7c1d2e-0000-4000-8000-000000000024", "6b7c1d2e-0000-4000-8000-000000000025",
+        "6b7c1d2e-0000-4000-8000-000000000026", "6b7c1d2e-0000-4000-8000-000000000027",
+        "6b7c1d2e-0000-4000-8000-000000000028", "6b7c1d2e-0000-4000-8000-000000000029",
+        "6b7c1d2e-0000-4000-8000-000000000030", "6b7c1d2e-0000-4000-8000-000000000031",
+        "6b7c1d2e-0000-4000-8000-000000000032", "6b7c1d2e-0000-4000-8000-000000000033",
+        "6b7c1d2e-0000-4000-8000-000000000034", "6b7c1d2e-0000-4000-8000-000000000035",
+        "6b7c1d2e-0000-4000-8000-000000000036", "6b7c1d2e-0000-4000-8000-000000000037",
+        "6b7c1d2e-0000-4000-8000-000000000038", "6b7c1d2e-0000-4000-8000-000000000039",
+        "6b7c1d2e-0000-4000-8000-000000000040", "6b7c1d2e-0000-4000-8000-000000000041",
+        "6b7c1d2e-0000-4000-8000-000000000042", "6b7c1d2e-0000-4000-8000-000000000043",
+        "6b7c1d2e-0000-4000-8000-000000000044", "6b7c1d2e-0000-4000-8000-000000000045",
+        "6b7c1d2e-0000-4000-8000-000000000046", "6b7c1d2e-0000-4000-8000-000000000047",
+        "6b7c1d2e-0000-4000-8000-000000000048", "6b7c1d2e-0000-4000-8000-000000000049",
+        "6b7c1d2e-0000-4000-8000-000000000050", "6b7c1d2e-0000-4000-8000-000000000051",
+        "6b7c1d2e-0000-4000-8000-000000000052", "6b7c1d2e-0000-4000-8000-000000000053",
+        "6b7c1d2e-0000-4000-8000-000000000054", "6b7c1d2e-0000-4000-8000-000000000055",
+        "6b7c1d2e-0000-4000-8000-000000000056", "6b7c1d2e-0000-4000-8000-000000000057",
+        "6b7c1d2e-0000-4000-8000-000000000058", "6b7c1d2e-0000-4000-8000-000000000059",
+        "6b7c1d2e-0000-4000-8000-000000000060", "6b7c1d2e-0000-4000-8000-000000000061",
+        "6b7c1d2e-0000-4000-8000-000000000062", "6b7c1d2e-0000-4000-8000-000000000063",
+        "6b7c1d2e-0000-4000-8000-000000000064", "6b7c1d2e-0000-4000-8000-000000000065",
+        "6b7c1d2e-0000-4000-8000-000000000066", "6b7c1d2e-0000-4000-8000-000000000067",
+        "6b7c1d2e-0000-4000-8000-000000000068", "6b7c1d2e-0000-4000-8000-000000000069",
+        "6b7c1d2e-0000-4000-8000-000000000070", "6b7c1d2e-0000-4000-8000-000000000071",
+        "6b7c1d2e-0000-4000-8000-000000000072", "6b7c1d2e-0000-4000-8000-000000000073",
+        "6b7c1d2e-0000-4000-8000-000000000074", "6b7c1d2e-0000-4000-8000-000000000075",
+        "6b7c1d2e-0000-4000-8000-000000000076", "6b7c1d2e-0000-4000-8000-000000000077",
+        "6b7c1d2e-0000-4000-8000-000000000078", "6b7c1d2e-0000-4000-8000-000000000079",
+        "6b7c1d2e-0000-4000-8000-000000000080", "6b7c1d2e-0000-4000-8000-000000000081",
+        "6b7c1d2e-0000-4000-8000-000000000082", "6b7c1d2e-0000-4000-8000-000000000083",
+        "6b7c1d2e-0000-4000-8000-000000000084", "6b7c1d2e-0000-4000-8000-000000000085",
+        "6b7c1d2e-0000-4000-8000-000000000086", "6b7c1d2e-0000-4000-8000-000000000087",
+        "6b7c1d2e-0000-4000-8000-000000000088", "6b7c1d2e-0000-4000-8000-000000000089",
+        "6b7c1d2e-0000-4000-8000-000000000090", "6b7c1d2e-0000-4000-8000-000000000091",
+        "6b7c1d2e-0000-4000-8000-000000000092", "6b7c1d2e-0000-4000-8000-000000000093",
+        "6b7c1d2e-0000-4000-8000-000000000094", "6b7c1d2e-0000-4000-8000-000000000095",
+        "6b7c1d2e-0000-4000-8000-000000000096", "6b7c1d2e-0000-4000-8000-000000000097",
+        "6b7c1d2e-0000-4000-8000-000000000098", "6b7c1d2e-0000-4000-8000-000000000099",
+        "6b7c1d2e-0000-4000-8000-000000000100"
+      ]
+    },
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Cannot request more than 100 places at once", "code": "not_found"},
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:53", "src/entities/Place/routes/getPlaceStatusListById.ts:15-37",
+        "src/entities/Place/model.ts:556-592",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:13-24",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:46-63",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    },
+    "notes": "Upstream throws Response.NotFound (404, code not_found) for this case, unlike POST /api/places which uses 400."
+  },
+  {
+    "id": "places.post_places_status.valid_ids", "area": "places",
+    "request": {"method": "POST", "path": "/api/places/status", "body": ["{place_id}"]},
+    "expected": {
+      "status": 201, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array",
+        "item_keys": ["id", "disabled", "disabled_reason", "world", "world_name", "base_position"],
+        "data_subset": {
+          "id": "{place_id}", "disabled": false, "disabled_reason": null, "world": false, "world_name": null,
+          "base_position": "10,10"
+        },
+        "invariants": ["data.length == 1", "total == 1"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:53", "src/entities/Place/routes/getPlaceStatusListById.ts:15-37",
+        "src/entities/Place/model.ts:556-592",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:13-24",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:46-63",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    },
+    "notes": "findByIds selects exactly id, disabled, disabled_reason, world, world_name, base_position and has no disabled filter."
+  },
+  {
+    "id": "places.post_places_status.disabled_id_listed", "area": "places",
+    "request": {"method": "POST", "path": "/api/places/status", "body": ["{place_id}"]},
+    "expected": {
+      "status": 201, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array",
+        "item_keys": ["id", "disabled", "disabled_reason", "world", "world_name", "base_position"],
+        "data_subset": {"id": "{place_id}", "disabled": true, "disabled_reason": "moderation", "base_position": "20,20"},
+        "invariants": ["data.length == 1", "total == 1"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:53", "src/entities/Place/routes/getPlaceStatusListById.ts:15-37",
+        "src/entities/Place/model.ts:556-592",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:13-24",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:46-63",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    },
+    "harness": {"place_id": "disabled"}
+  },
+  {
+    "id": "places.get_place.ok", "area": "places",
+    "request": {"method": "GET", "path": "/api/places/{place_id}"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "object", "item_keys": "places.$defs.place_row",
+        "data_subset": {
+          "id": "{place_id}", "base_position": "10,10", "world": false, "disabled": false,
+          "user_favorite": false, "user_like": false, "user_dislike": false, "user_count": 0, "user_visits": 0
+        },
+        "invariants": ["data.world_name == null", "data.title == 'Harness Plaza'"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:40", "src/entities/Place/routes/getPlace.ts:19-47",
+        "src/entities/Place/schemas.ts:5-11", "src/entities/Place/model.ts:513-554",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/schema.js:28-35",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38",
+        "src/entities/Place/utils.ts:194-241", "src/entities/Place/model.ts:297-306",
+        "src/entities/Place/model.ts:594-641", "src/entities/shared/entityInteractions.ts:169-185",
+        "src/entities/Place/utils.ts:194-241",
+        "src/migrations/1660567567429_create-places-table copy.ts:9-72",
+        "src/migrations/1662121657764_add-stats-to-places.ts:6-21",
+        "src/migrations/1664364229612_add-activity-and-popularity-fields-to-places.ts:6-17",
+        "src/migrations/1666236261694_update-popularity-score-to-highest-rated.ts:9",
+        "src/migrations/1666718810532_deprecate-place-activity-and-place-activity-daily.ts:4",
+        "src/migrations/1662726073097_create-categories.ts:39-45",
+        "src/migrations/1667844930518_add-highlighted.ts:20-22",
+        "src/migrations/1696876576231_migrate-featured-to-category.ts:32",
+        "src/migrations/1696876576233_remove-tags-field-from-places-table.ts:17",
+        "src/migrations/1681243168802_add-worlds-properties.ts:6-17",
+        "src/migrations/1681243168803_add-deployed-at.ts:6-12",
+        "src/migrations/1697479763911_make-all-words-discoverable.ts:6-20",
+        "src/migrations/1688755469681_add-places-search-text.ts:6-11",
+        "src/migrations/1690312213298_add-like-score-field-to-places-table.ts:6-12",
+        "src/migrations/1743773505141_add-creator-address-to-places.ts:9-13",
+        "src/migrations/1768234702000_add-sdk-to-places.ts:6-9",
+        "src/migrations/1768576478000_add-ranking-to-places.ts:6-12",
+        "src/migrations/1770729428000_add-world-id-to-places.ts:9-15",
+        "src/migrations/1774051200000_add-disabled-reason-to-places.ts:6-12",
+        "src/migrations/1785729600000_add-deployment-id-to-places.ts:9-13",
+        "src/migrations/1788789426884_add-exclude-from-ranking.ts:8-20"
+      ]
+    },
+    "notes": "Item key set is `SELECT p.*` plus the user-interaction columns and the user_count/user_visits the route adds; `textsearch` (tsvector), `world_id`, `deployment_id` and `ranking` leak through `p.*` upstream. `rank` is appended only with `search`, `realms_detail` only with with_realms_detail. user_count/user_visits are 0 when no hot-scene or scene-stats data is cached."
+  },
+  {
+    "id": "places.get_place.with_realms_detail", "area": "places",
+    "request": {"method": "GET", "path": "/api/places/{place_id}", "query": {"with_realms_detail": "true"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "object",
+        "item_keys": [
+          "id", "title", "description", "image", "owner", "positions", "base_position", "contact_name",
+          "contact_email", "content_rating", "disabled", "disabled_at", "created_at", "updated_at",
+          "favorites", "likes", "dislikes", "like_rate", "categories", "highlighted", "highlighted_image",
+          "world", "world_name", "deployed_at", "textsearch", "like_score", "creator_address", "sdk",
+          "ranking", "world_id", "disabled_reason", "deployment_id", "exclude_from_ranking", "user_favorite",
+          "user_like", "user_dislike", "user_count", "user_visits", "realms_detail"
+        ],
+        "data_subset": {"id": "{place_id}"}
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:40", "src/entities/Place/routes/getPlace.ts:19-47",
+        "src/entities/Place/schemas.ts:5-11", "src/entities/Place/model.ts:513-554",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/schema.js:28-35",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38",
+        "src/entities/Place/routes/getPlace.ts:40-42", "src/entities/Place/utils.ts:235-237"
+      ]
+    }
+  },
+  {
+    "id": "places.get_place.disabled_still_readable", "area": "places",
+    "request": {"method": "GET", "path": "/api/places/{place_id}"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "object", "item_keys": "places.$defs.place_row",
+        "data_subset": {"id": "{place_id}", "disabled": true, "disabled_reason": "moderation", "base_position": "20,20"}
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:40", "src/entities/Place/routes/getPlace.ts:19-47",
+        "src/entities/Place/schemas.ts:5-11", "src/entities/Place/model.ts:513-554",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/schema.js:28-35",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    },
+    "harness": {"place_id": "disabled"},
+    "notes": "findByIdWithAggregates filters only by id: disabled rows are returned with disabled true, never 404."
+  },
+  {
+    "id": "places.get_place.invalid_uuid", "area": "places",
+    "request": {"method": "GET", "path": "/api/places/not-a-uuid"},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "Error validating input:\n- place_id must match format \"uuid\" {\"format\":\"uuid\"}",
+        "code": "bad_request",
+        "data": {
+          "messages": ["place_id must match format \"uuid\" {\"format\":\"uuid\"}"],
+          "errors": [
+            {
+              "instancePath": "/place_id", "schemaPath": "#/properties/place_id/format", "keyword": "format",
+              "params": {"format": "uuid"}, "message": "must match format \"uuid\""
+            }
+          ]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:40", "src/entities/Place/routes/getPlace.ts:19-47",
+        "src/entities/Place/schemas.ts:5-11", "src/entities/Place/model.ts:513-554",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/schema.js:28-35",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    },
+    "notes": "schema.params makes place_id required with format uuid (ajv-formats, case-insensitive regex)."
+  },
+  {
+    "id": "places.get_place.unknown_uuid", "area": "places",
+    "request": {"method": "GET", "path": "/api/places/{place_id}"},
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found place \"{place_id}\"", "code": "not_found"},
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:40", "src/entities/Place/routes/getPlace.ts:19-47",
+        "src/entities/Place/schemas.ts:5-11", "src/entities/Place/model.ts:513-554",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/schema.js:28-35",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38",
+        "src/entities/Place/routes/getPlace.ts:30-35"
+      ]
+    },
+    "harness": {"place_id": "missing"}, "notes": "Upstream appends `stack` in production; not reproduced."
+  },
+  {
+    "id": "places.get_place.upper_case_uuid", "area": "places",
+    "request": {"method": "GET", "path": "/api/places/6B7C1D2E-0000-4000-8000-000000000001"},
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found place \"6B7C1D2E-0000-4000-8000-000000000001\"", "code": "not_found"},
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:40", "src/entities/Place/routes/getPlace.ts:19-47",
+        "src/entities/Place/schemas.ts:5-11", "src/entities/Place/model.ts:513-554",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/schema.js:28-35",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38",
+        "src/entities/Place/model.ts:39-42", "src/migrations/1660567567429_create-places-table copy.ts:10-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Database/types.js:5-6"
+      ]
+    },
+    "notes": "The uuid format is case-insensitive so validation passes, but places.id is CHAR(36) compared as text (case-sensitive), so the upper-case spelling of the enabled seed id finds nothing and is echoed back in the 404 message. Literal id used because no placeholder spells the upper-case form."
+  },
+  {
+    "id": "places.get_place_categories.ok", "area": "places",
+    "request": {"method": "GET", "path": "/api/places/{place_id}/categories"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "object", "item_keys": ["categories"],
+        "invariants": ["'categories' in data"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:47", "src/entities/Place/routes/getPlaceCategories.ts:12-26",
+        "src/entities/Place/schemas.ts:5-11", "src/entities/PlaceCategories/model.ts:63-72",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13"
+      ]
+    },
+    "notes": "Returns the place_categories rows for the id with no ORDER BY, so the order of the seeded art/poi pair is not asserted."
+  },
+  {
+    "id": "places.get_place_categories.invalid_uuid", "area": "places",
+    "request": {"method": "GET", "path": "/api/places/nope/categories"},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "Error validating input:\n- place_id must match format \"uuid\" {\"format\":\"uuid\"}",
+        "code": "bad_request",
+        "data": {
+          "messages": ["place_id must match format \"uuid\" {\"format\":\"uuid\"}"],
+          "errors": [
+            {
+              "instancePath": "/place_id", "schemaPath": "#/properties/place_id/format", "keyword": "format",
+              "params": {"format": "uuid"}, "message": "must match format \"uuid\""
+            }
+          ]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:47", "src/entities/Place/routes/getPlaceCategories.ts:12-26",
+        "src/entities/Place/schemas.ts:5-11", "src/entities/PlaceCategories/model.ts:63-72",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    }
+  },
+  {
+    "id": "places.get_place_categories.unknown_uuid", "area": "places",
+    "request": {"method": "GET", "path": "/api/places/{place_id}/categories"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": {"ok": true, "data": {"categories": []}},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Place/routes/index.ts:47", "src/entities/Place/routes/getPlaceCategories.ts:12-26",
+        "src/entities/Place/schemas.ts:5-11", "src/entities/PlaceCategories/model.ts:63-72",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13"
+      ]
+    },
+    "harness": {"place_id": "missing"},
+    "notes": "No existence check: an unknown id answers an empty list, not 404."
+  },
+  {
+    "id": "places.get_categories.default", "area": "places",
+    "request": {"method": "GET", "path": "/api/categories"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {"envelope": ["ok", "data"], "data_type": "array", "item_keys": ["name", "count", "i18n"]}
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Category/routes.ts:9-41", "src/entities/Category/model.ts:20-62", "src/intl/en.json",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13"
+      ]
+    },
+    "notes": "Each item is `{name, count, i18n: {en}}` for every active category; `count` is a number (places+worlds) for target=all."
+  },
+  {
+    "id": "places.get_categories.target_places", "area": "places",
+    "request": {"method": "GET", "path": "/api/categories", "query": {"target": "places"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {"envelope": ["ok", "data"], "data_type": "array", "item_keys": ["name", "count", "i18n"]}
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Category/routes.ts:9-41", "src/entities/Category/model.ts:20-62", "src/intl/en.json",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/Category/types.ts:21-25"
+      ]
+    },
+    "notes": "target narrows the count to `p.world IS false`; the shape is unchanged."
+  },
+  {
+    "id": "places.get_categories.unknown_target_ignored", "area": "places",
+    "request": {"method": "GET", "path": "/api/categories", "query": {"target": "bogus"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {"envelope": ["ok", "data"], "data_type": "array", "item_keys": ["name", "count", "i18n"]}
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Category/routes.ts:9-41", "src/entities/Category/model.ts:20-62", "src/intl/en.json",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13"
+      ]
+    },
+    "notes": "Any target other than places/worlds falls back to all; there is no ajv schema on this route."
+  },
+  {
+    "id": "places.get_map.default", "area": "places", "request": {"method": "GET", "path": "/api/map"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "object",
+        "invariants": [
+          "'10,10' in data", "'20,20' not in data", "'30,30' in data", "total >= 2",
+          "doc: map item keys: id,base_position,title,description,image,contact_name,categories,user_favorite,user_like,user_dislike,user_visits,user_count"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Map/routes/index.ts:28", "src/entities/Map/routes/getMapPlaces.ts:28-94",
+        "src/entities/Place/schemas.ts:13-123", "src/entities/Place/model.ts:1141-1240",
+        "src/entities/Map/utils.ts:6-46", "src/entities/Map/types.ts:7-24", "src/entities/Map/types.ts:44",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13"
+      ]
+    },
+    "notes": "`data` is an object keyed by base_position. Each value has keys id,base_position,title,description,image,contact_name,categories,user_favorite,user_like,user_dislike,user_visits,user_count (`positions` is set to undefined and dropped by JSON; `realms_detail` only with with_realms_detail). Rows need `array_length(categories,1) > 0`, so the seeded excluded place (categories unknown) is not asserted."
+  },
+  {
+    "id": "places.get_map.positions", "area": "places",
+    "request": {"method": "GET", "path": "/api/map", "query": {"positions": "10,10"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "object",
+        "invariants": ["'10,10' in data", "'30,30' not in data", "total == 1"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Map/routes/index.ts:28", "src/entities/Map/routes/getMapPlaces.ts:28-94",
+        "src/entities/Place/schemas.ts:13-123", "src/entities/Place/model.ts:1141-1240",
+        "src/entities/Map/utils.ts:6-46", "src/entities/Map/types.ts:7-24", "src/entities/Map/types.ts:44",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/Place/model.ts:1222-1228", "src/entities/Place/model.ts:1242-1309"
+      ]
+    }
+  },
+  {
+    "id": "places.get_map.limit_over_cap", "area": "places",
+    "request": {"method": "GET", "path": "/api/map", "query": {"limit": "10000"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "object",
+        "invariants": ["'10,10' in data", "total >= 2"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Map/routes/index.ts:28", "src/entities/Map/routes/getMapPlaces.ts:28-94",
+        "src/entities/Place/schemas.ts:13-123", "src/entities/Place/model.ts:1141-1240",
+        "src/entities/Map/utils.ts:6-46", "src/entities/Map/types.ts:7-24", "src/entities/Map/types.ts:44",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/Map/routes/getMapPlaces.ts:63-65", "src/entities/Map/types.ts:44"
+      ]
+    },
+    "notes": "The map cap is DEFAULT_MAX_LIMIT = 500, applied by numeric clamp, never a 400."
+  },
+  {
+    "id": "places.get_map.invalid_limit_format", "area": "places",
+    "request": {"method": "GET", "path": "/api/map", "query": {"limit": "abc"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "Error validating input:\n- limit must match format \"uint\" {\"format\":\"uint\"}",
+        "code": "bad_request",
+        "data": {
+          "messages": ["limit must match format \"uint\" {\"format\":\"uint\"}"],
+          "errors": [
+            {
+              "instancePath": "/limit", "schemaPath": "#/properties/limit/format", "keyword": "format",
+              "params": {"format": "uint"}, "message": "must match format \"uint\""
+            }
+          ]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Map/routes/index.ts:28", "src/entities/Map/routes/getMapPlaces.ts:28-94",
+        "src/entities/Place/schemas.ts:13-123", "src/entities/Place/model.ts:1141-1240",
+        "src/entities/Map/utils.ts:6-46", "src/entities/Map/types.ts:7-24", "src/entities/Map/types.ts:44",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    },
+    "notes": "/api/map validates with the places getPlaceListQuerySchema, so the wording is identical to /api/places."
+  },
+  {
+    "id": "places.get_map.invalid_position_pattern", "area": "places",
+    "request": {"method": "GET", "path": "/api/map", "query": {"positions": "abc"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "Error validating input:\n- positions/0 must match pattern \"^-?\\d{1,3},-?\\d{1,3}$\" {\"pattern\":\"^-?\\\\d{1,3},-?\\\\d{1,3}$\"}",
+        "code": "bad_request",
+        "data": {
+          "messages": [
+            "positions/0 must match pattern \"^-?\\d{1,3},-?\\d{1,3}$\" {\"pattern\":\"^-?\\\\d{1,3},-?\\\\d{1,3}$\"}"
+          ],
+          "errors": [
+            {
+              "instancePath": "/positions/0", "schemaPath": "#/properties/positions/items/pattern",
+              "keyword": "pattern", "params": {"pattern": "^-?\\d{1,3},-?\\d{1,3}$"},
+              "message": "must match pattern \"^-?\\d{1,3},-?\\d{1,3}$\""
+            }
+          ]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Map/routes/index.ts:28", "src/entities/Map/routes/getMapPlaces.ts:28-94",
+        "src/entities/Place/schemas.ts:13-123", "src/entities/Place/model.ts:1141-1240",
+        "src/entities/Map/utils.ts:6-46", "src/entities/Map/types.ts:7-24", "src/entities/Map/types.ts:44",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    }
+  },
+  {
+    "id": "places.get_map.only_favorites_anonymous", "area": "places",
+    "request": {"method": "GET", "path": "/api/map", "query": {"only_favorites": "true"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": {"total": 0, "ok": true, "data": []},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Map/routes/index.ts:28", "src/entities/Map/routes/getMapPlaces.ts:28-94",
+        "src/entities/Place/schemas.ts:13-123", "src/entities/Place/model.ts:1141-1240",
+        "src/entities/Map/utils.ts:6-46", "src/entities/Map/types.ts:7-24", "src/entities/Map/types.ts:44",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/Map/routes/getMapPlaces.ts:56-58",
+        "decentraland-gatsby@9.0.1 dist/entities/Auth/routes/withDecentralandAuth.js:12-53"
+      ]
+    },
+    "notes": "The anonymous only_favorites short-circuit answers an array `[]`, not the keyed object the route otherwise returns."
+  },
+  {
+    "id": "places.get_map_places.default", "area": "places",
+    "request": {"method": "GET", "path": "/api/map/places"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["every item.world == false", "every item.disabled == false", "data.length <= 500"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Map/routes/index.ts:30", "src/entities/Map/routes/getAllPlacesList.ts:29-105",
+        "src/entities/Map/schemas.ts:88-177", "src/entities/Place/model.ts:1310-1427",
+        "src/entities/Map/utils.ts:48-100",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/Place/model.ts:297-306", "src/entities/Place/model.ts:594-641",
+        "src/entities/shared/entityInteractions.ts:169-185", "src/entities/Place/utils.ts:194-241",
+        "src/migrations/1660567567429_create-places-table copy.ts:9-72",
+        "src/migrations/1662121657764_add-stats-to-places.ts:6-21",
+        "src/migrations/1664364229612_add-activity-and-popularity-fields-to-places.ts:6-17",
+        "src/migrations/1666236261694_update-popularity-score-to-highest-rated.ts:9",
+        "src/migrations/1666718810532_deprecate-place-activity-and-place-activity-daily.ts:4",
+        "src/migrations/1662726073097_create-categories.ts:39-45",
+        "src/migrations/1667844930518_add-highlighted.ts:20-22",
+        "src/migrations/1696876576231_migrate-featured-to-category.ts:32",
+        "src/migrations/1696876576233_remove-tags-field-from-places-table.ts:17",
+        "src/migrations/1681243168802_add-worlds-properties.ts:6-17",
+        "src/migrations/1681243168803_add-deployed-at.ts:6-12",
+        "src/migrations/1697479763911_make-all-words-discoverable.ts:6-20",
+        "src/migrations/1688755469681_add-places-search-text.ts:6-11",
+        "src/migrations/1690312213298_add-like-score-field-to-places-table.ts:6-12",
+        "src/migrations/1743773505141_add-creator-address-to-places.ts:9-13",
+        "src/migrations/1768234702000_add-sdk-to-places.ts:6-9",
+        "src/migrations/1768576478000_add-ranking-to-places.ts:6-12",
+        "src/migrations/1770729428000_add-world-id-to-places.ts:9-15",
+        "src/migrations/1774051200000_add-disabled-reason-to-places.ts:6-12",
+        "src/migrations/1785729600000_add-deployment-id-to-places.ts:9-13",
+        "src/migrations/1788789426884_add-exclude-from-ranking.ts:8-20"
+      ]
+    },
+    "notes": "Without positions or names the query adds `p.world is false`. Item key set is `SELECT p.*` plus the user-interaction columns and the user_count/user_visits the route adds; `textsearch` (tsvector), `world_id`, `deployment_id` and `ranking` leak through `p.*` upstream. `rank` is appended only with `search`, `realms_detail` only with with_realms_detail."
+  },
+  {
+    "id": "places.get_map_places.names_case_sensitive", "area": "places",
+    "request": {"method": "GET", "path": "/api/map/places", "query": {"names": "harbour.dcl.eth"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["every item.world_name == 'harbour.dcl.eth'", "every item.world == true"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Map/routes/index.ts:30", "src/entities/Map/routes/getAllPlacesList.ts:29-105",
+        "src/entities/Map/schemas.ts:88-177", "src/entities/Place/model.ts:1310-1427",
+        "src/entities/Map/utils.ts:48-100",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/Place/model.ts:1349-1352"
+      ]
+    },
+    "notes": "Here names match `p.world_name IN (...)` verbatim (no lowercasing, unlike /api/places)."
+  },
+  {
+    "id": "places.get_map_places.names_upper_case_no_match", "area": "places",
+    "request": {"method": "GET", "path": "/api/map/places", "query": {"names": "HARBOUR.DCL.ETH"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": {"total": 0, "ok": true, "data": []},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Map/routes/index.ts:30", "src/entities/Map/routes/getAllPlacesList.ts:29-105",
+        "src/entities/Map/schemas.ts:88-177", "src/entities/Place/model.ts:1310-1427",
+        "src/entities/Map/utils.ts:48-100",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/Place/model.ts:1349-1352", "src/entities/Place/model.ts:1468-1470"
+      ]
+    },
+    "notes": "The seeded world_name is lower-case and the comparison is exact, so an upper-case name matches nothing in both list and count."
+  },
+  {
+    "id": "places.get_map_places.positions", "area": "places",
+    "request": {"method": "GET", "path": "/api/map/places", "query": {"positions": "10,10"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.place_row",
+        "invariants": ["data.length == 1", "total == 1", "every item.base_position == '10,10'"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Map/routes/index.ts:30", "src/entities/Map/routes/getAllPlacesList.ts:29-105",
+        "src/entities/Map/schemas.ts:88-177", "src/entities/Place/model.ts:1310-1427",
+        "src/entities/Map/utils.ts:48-100",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/Place/model.ts:1343-1348"
+      ]
+    }
+  },
+  {
+    "id": "places.get_map_places.invalid_limit_format", "area": "places",
+    "request": {"method": "GET", "path": "/api/map/places", "query": {"limit": "abc"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "Error validating input:\n- limit must match format \"uint\" {\"format\":\"uint\"}",
+        "code": "bad_request",
+        "data": {
+          "messages": ["limit must match format \"uint\" {\"format\":\"uint\"}"],
+          "errors": [
+            {
+              "instancePath": "/limit", "schemaPath": "#/properties/limit/format", "keyword": "format",
+              "params": {"format": "uint"}, "message": "must match format \"uint\""
+            }
+          ]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Map/routes/index.ts:30", "src/entities/Map/routes/getAllPlacesList.ts:29-105",
+        "src/entities/Map/schemas.ts:88-177", "src/entities/Place/model.ts:1310-1427",
+        "src/entities/Map/utils.ts:48-100",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    }
+  },
+  {
+    "id": "places.get_map_places.invalid_creator_address_pattern", "area": "places",
+    "request": {"method": "GET", "path": "/api/map/places", "query": {"creator_address": "xyz"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "Error validating input:\n- creator_address must match pattern \"^0x[a-fA-F0-9]{40}$\" {\"pattern\":\"^0x[a-fA-F0-9]{40}$\"}",
+        "code": "bad_request",
+        "data": {
+          "messages": ["creator_address must match pattern \"^0x[a-fA-F0-9]{40}$\" {\"pattern\":\"^0x[a-fA-F0-9]{40}$\"}"],
+          "errors": [
+            {
+              "instancePath": "/creator_address", "schemaPath": "#/properties/creator_address/pattern",
+              "keyword": "pattern", "params": {"pattern": "^0x[a-fA-F0-9]{40}$"},
+              "message": "must match pattern \"^0x[a-fA-F0-9]{40}$\""
+            }
+          ]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Map/routes/index.ts:30", "src/entities/Map/routes/getAllPlacesList.ts:29-105",
+        "src/entities/Map/schemas.ts:88-177", "src/entities/Place/model.ts:1310-1427",
+        "src/entities/Map/utils.ts:48-100",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    }
+  },
+  {
+    "id": "places.get_destinations.default", "area": "places",
+    "request": {"method": "GET", "path": "/api/destinations"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array",
+        "item_keys": "places.$defs.destination_row",
+        "invariants": ["data.length <= 100", "every item.disabled == false"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Destination/routes/index.ts:29",
+        "src/entities/Destination/routes/getDestinationsList.ts:34-171",
+        "src/entities/Destination/schemas.ts:6-135",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/Destination/model.ts:23-49", "src/entities/Destination/model.ts:181-322",
+        "src/entities/Destination/utils.ts:140-248", "src/entities/shared/entityInteractions.ts:169-185",
+        "src/entities/shared/contentQuality.ts:86-123"
+      ]
+    },
+    "notes": "UNION of places and worlds projected onto the destination columns. The generic feed applies the content-quality filter (image, title, owner/contact), so no row count is asserted for the seeds. `connected_addresses` appears only with with_connected_users, `live`/`live_event_name` only with with_live_events, `rank` only with search."
+  },
+  {
+    "id": "places.get_destinations.only_worlds", "area": "places",
+    "request": {"method": "GET", "path": "/api/destinations", "query": {"only_worlds": "true"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array",
+        "item_keys": "places.$defs.destination_row",
+        "invariants": ["every item.world == true", "every item.base_position == '0,0'", "every item.disabled == false"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Destination/routes/index.ts:29",
+        "src/entities/Destination/routes/getDestinationsList.ts:34-171",
+        "src/entities/Destination/schemas.ts:6-135",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/Destination/model.ts:23-49", "src/entities/Destination/model.ts:181-322",
+        "src/entities/Destination/utils.ts:140-248", "src/entities/shared/entityInteractions.ts:169-185",
+        "src/entities/Destination/model.ts:259-284", "src/entities/World/model.ts:95-102"
+      ]
+    },
+    "notes": "Worlds carry the constants `false as disabled`, `'0,0' as base_position`, `true as world`."
+  },
+  {
+    "id": "places.get_destinations.only_places", "area": "places",
+    "request": {"method": "GET", "path": "/api/destinations", "query": {"only_places": "true"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array",
+        "item_keys": "places.$defs.destination_row",
+        "invariants": ["every item.world == false", "every item.is_private == false"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Destination/routes/index.ts:29",
+        "src/entities/Destination/routes/getDestinationsList.ts:34-171",
+        "src/entities/Destination/schemas.ts:6-135",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/Destination/model.ts:23-49", "src/entities/Destination/model.ts:181-322",
+        "src/entities/Destination/utils.ts:140-248", "src/entities/shared/entityInteractions.ts:169-185",
+        "src/entities/Destination/model.ts:234-257"
+      ]
+    }
+  },
+  {
+    "id": "places.get_destinations.only_places_wins_over_only_worlds", "area": "places",
+    "request": {"method": "GET", "path": "/api/destinations", "query": {"only_places": "true", "only_worlds": "true"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array",
+        "item_keys": "places.$defs.destination_row", "invariants": ["every item.world == false"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Destination/routes/index.ts:29",
+        "src/entities/Destination/routes/getDestinationsList.ts:34-171",
+        "src/entities/Destination/schemas.ts:6-135",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/Destination/model.ts:234-284"
+      ]
+    },
+    "notes": "findWithAggregates checks only_places before only_worlds, so both flags together list places."
+  },
+  {
+    "id": "places.get_destinations.pointer_only_places", "area": "places",
+    "request": {"method": "GET", "path": "/api/destinations", "query": {"pointer": "10,10", "only_places": "true"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array",
+        "item_keys": "places.$defs.destination_row",
+        "invariants": ["data.length == 1", "every item.base_position == '10,10'", "every item.id == '{place_id}'"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Destination/routes/index.ts:29",
+        "src/entities/Destination/routes/getDestinationsList.ts:34-171",
+        "src/entities/Destination/schemas.ts:6-135",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/Destination/routes/getDestinationsList.ts:81", "src/entities/Place/model.ts:176-185",
+        "src/entities/Destination/model.ts:119-125"
+      ]
+    },
+    "notes": "The destinations position filter is the `pointer` parameter (a `positions` query is ignored). `pointer` also lifts the content-quality filter for places."
+  },
+  {
+    "id": "places.get_destinations.invalid_pointer_pattern", "area": "places",
+    "request": {"method": "GET", "path": "/api/destinations", "query": {"pointer": "abc"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "Error validating input:\n- pointer/0 must match pattern \"^-?\\d{1,3},-?\\d{1,3}$\" {\"pattern\":\"^-?\\\\d{1,3},-?\\\\d{1,3}$\"}",
+        "code": "bad_request",
+        "data": {
+          "messages": [
+            "pointer/0 must match pattern \"^-?\\d{1,3},-?\\d{1,3}$\" {\"pattern\":\"^-?\\\\d{1,3},-?\\\\d{1,3}$\"}"
+          ],
+          "errors": [
+            {
+              "instancePath": "/pointer/0", "schemaPath": "#/properties/pointer/items/pattern",
+              "keyword": "pattern", "params": {"pattern": "^-?\\d{1,3},-?\\d{1,3}$"},
+              "message": "must match pattern \"^-?\\d{1,3},-?\\d{1,3}$\""
+            }
+          ]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Destination/routes/index.ts:29",
+        "src/entities/Destination/routes/getDestinationsList.ts:34-171",
+        "src/entities/Destination/schemas.ts:6-135",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    }
+  },
+  {
+    "id": "places.get_destinations.invalid_limit_format", "area": "places",
+    "request": {"method": "GET", "path": "/api/destinations", "query": {"limit": "abc"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "Error validating input:\n- limit must match format \"uint\" {\"format\":\"uint\"}",
+        "code": "bad_request",
+        "data": {
+          "messages": ["limit must match format \"uint\" {\"format\":\"uint\"}"],
+          "errors": [
+            {
+              "instancePath": "/limit", "schemaPath": "#/properties/limit/format", "keyword": "format",
+              "params": {"format": "uint"}, "message": "must match format \"uint\""
+            }
+          ]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Destination/routes/index.ts:29",
+        "src/entities/Destination/routes/getDestinationsList.ts:34-171",
+        "src/entities/Destination/schemas.ts:6-135",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    }
+  },
+  {
+    "id": "places.get_destinations.invalid_only_worlds_format", "area": "places",
+    "request": {"method": "GET", "path": "/api/destinations", "query": {"only_worlds": "maybe"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "Error validating input:\n- only_worlds must match format \"boolean\" {\"format\":\"boolean\"}",
+        "code": "bad_request",
+        "data": {
+          "messages": ["only_worlds must match format \"boolean\" {\"format\":\"boolean\"}"],
+          "errors": [
+            {
+              "instancePath": "/only_worlds", "schemaPath": "#/properties/only_worlds/format",
+              "keyword": "format", "params": {"format": "boolean"}, "message": "must match format \"boolean\""
+            }
+          ]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Destination/routes/index.ts:29",
+        "src/entities/Destination/routes/getDestinationsList.ts:34-171",
+        "src/entities/Destination/schemas.ts:6-135",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    }
+  },
+  {
+    "id": "places.get_destinations.invalid_owner_pattern", "area": "places",
+    "request": {"method": "GET", "path": "/api/destinations", "query": {"owner": "zzz"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "Error validating input:\n- owner must match pattern \"^0x[a-fA-F0-9]{40}$\" {\"pattern\":\"^0x[a-fA-F0-9]{40}$\"}",
+        "code": "bad_request",
+        "data": {
+          "messages": ["owner must match pattern \"^0x[a-fA-F0-9]{40}$\" {\"pattern\":\"^0x[a-fA-F0-9]{40}$\"}"],
+          "errors": [
+            {
+              "instancePath": "/owner", "schemaPath": "#/properties/owner/pattern", "keyword": "pattern",
+              "params": {"pattern": "^0x[a-fA-F0-9]{40}$"},
+              "message": "must match pattern \"^0x[a-fA-F0-9]{40}$\""
+            }
+          ]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Destination/routes/index.ts:29",
+        "src/entities/Destination/routes/getDestinationsList.ts:34-171",
+        "src/entities/Destination/schemas.ts:6-135",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    }
+  },
+  {
+    "id": "places.get_destinations.names_like_only_worlds", "area": "places",
+    "request": {"method": "GET", "path": "/api/destinations", "query": {"names": "HARB", "only_worlds": "true"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array",
+        "item_keys": "places.$defs.destination_row",
+        "invariants": ["every item.id == 'harbour.dcl.eth'", "every item.world == true"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Destination/routes/index.ts:29",
+        "src/entities/Destination/routes/getDestinationsList.ts:34-171",
+        "src/entities/Destination/schemas.ts:6-135",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/World/model.ts:121-130", "src/entities/Destination/model.ts:131-137"
+      ]
+    },
+    "notes": "Destination `names` is a case-insensitive LIKE '%name%' on world_name (partial match), unlike /api/worlds where names match exactly. Listing also requires an enabled place with world_id = the world id, so no length is asserted."
+  },
+  {
+    "id": "places.get_destinations.world_names_exact_only_worlds", "area": "places",
+    "request": {
+      "method": "GET", "path": "/api/destinations",
+      "query": {"world_names": "HARBOUR.DCL.ETH", "only_worlds": "true"}
+    },
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array",
+        "item_keys": "places.$defs.destination_row", "invariants": ["every item.id == 'harbour.dcl.eth'"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Destination/routes/index.ts:29",
+        "src/entities/Destination/routes/getDestinationsList.ts:34-171",
+        "src/entities/Destination/schemas.ts:6-135",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/World/model.ts:115-120"
+      ]
+    },
+    "notes": "world_names are lowercased and matched exactly against the world id."
+  },
+  {
+    "id": "places.get_destinations.only_favorites_anonymous", "area": "places",
+    "request": {"method": "GET", "path": "/api/destinations", "query": {"only_favorites": "true"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": {"total": 0, "ok": true, "data": []},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Destination/routes/index.ts:29",
+        "src/entities/Destination/routes/getDestinationsList.ts:34-171",
+        "src/entities/Destination/schemas.ts:6-135",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/Destination/routes/getDestinationsList.ts:103-105",
+        "decentraland-gatsby@9.0.1 dist/entities/Auth/routes/withDecentralandAuth.js:12-53"
+      ]
+    }
+  },
+  {
+    "id": "places.post_destinations.body_not_array", "area": "places",
+    "request": {"method": "POST", "path": "/api/destinations", "body": {}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false, "error": "Invalid request body. Expected an array of destination IDs.",
+        "code": "bad_request"
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Destination/routes/index.ts:30",
+        "src/entities/Destination/routes/getDestinationsListById.ts:36-190",
+        "src/entities/Destination/schemas.ts:6-135",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:13-24",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:46-63",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    }
+  },
+  {
+    "id": "places.post_destinations.too_many_ids", "area": "places",
+    "request": {
+      "method": "POST", "path": "/api/destinations",
+      "body": [
+        "6b7c1d2e-0000-4000-8000-000000000000", "6b7c1d2e-0000-4000-8000-000000000001",
+        "6b7c1d2e-0000-4000-8000-000000000002", "6b7c1d2e-0000-4000-8000-000000000003",
+        "6b7c1d2e-0000-4000-8000-000000000004", "6b7c1d2e-0000-4000-8000-000000000005",
+        "6b7c1d2e-0000-4000-8000-000000000006", "6b7c1d2e-0000-4000-8000-000000000007",
+        "6b7c1d2e-0000-4000-8000-000000000008", "6b7c1d2e-0000-4000-8000-000000000009",
+        "6b7c1d2e-0000-4000-8000-000000000010", "6b7c1d2e-0000-4000-8000-000000000011",
+        "6b7c1d2e-0000-4000-8000-000000000012", "6b7c1d2e-0000-4000-8000-000000000013",
+        "6b7c1d2e-0000-4000-8000-000000000014", "6b7c1d2e-0000-4000-8000-000000000015",
+        "6b7c1d2e-0000-4000-8000-000000000016", "6b7c1d2e-0000-4000-8000-000000000017",
+        "6b7c1d2e-0000-4000-8000-000000000018", "6b7c1d2e-0000-4000-8000-000000000019",
+        "6b7c1d2e-0000-4000-8000-000000000020", "6b7c1d2e-0000-4000-8000-000000000021",
+        "6b7c1d2e-0000-4000-8000-000000000022", "6b7c1d2e-0000-4000-8000-000000000023",
+        "6b7c1d2e-0000-4000-8000-000000000024", "6b7c1d2e-0000-4000-8000-000000000025",
+        "6b7c1d2e-0000-4000-8000-000000000026", "6b7c1d2e-0000-4000-8000-000000000027",
+        "6b7c1d2e-0000-4000-8000-000000000028", "6b7c1d2e-0000-4000-8000-000000000029",
+        "6b7c1d2e-0000-4000-8000-000000000030", "6b7c1d2e-0000-4000-8000-000000000031",
+        "6b7c1d2e-0000-4000-8000-000000000032", "6b7c1d2e-0000-4000-8000-000000000033",
+        "6b7c1d2e-0000-4000-8000-000000000034", "6b7c1d2e-0000-4000-8000-000000000035",
+        "6b7c1d2e-0000-4000-8000-000000000036", "6b7c1d2e-0000-4000-8000-000000000037",
+        "6b7c1d2e-0000-4000-8000-000000000038", "6b7c1d2e-0000-4000-8000-000000000039",
+        "6b7c1d2e-0000-4000-8000-000000000040", "6b7c1d2e-0000-4000-8000-000000000041",
+        "6b7c1d2e-0000-4000-8000-000000000042", "6b7c1d2e-0000-4000-8000-000000000043",
+        "6b7c1d2e-0000-4000-8000-000000000044", "6b7c1d2e-0000-4000-8000-000000000045",
+        "6b7c1d2e-0000-4000-8000-000000000046", "6b7c1d2e-0000-4000-8000-000000000047",
+        "6b7c1d2e-0000-4000-8000-000000000048", "6b7c1d2e-0000-4000-8000-000000000049",
+        "6b7c1d2e-0000-4000-8000-000000000050", "6b7c1d2e-0000-4000-8000-000000000051",
+        "6b7c1d2e-0000-4000-8000-000000000052", "6b7c1d2e-0000-4000-8000-000000000053",
+        "6b7c1d2e-0000-4000-8000-000000000054", "6b7c1d2e-0000-4000-8000-000000000055",
+        "6b7c1d2e-0000-4000-8000-000000000056", "6b7c1d2e-0000-4000-8000-000000000057",
+        "6b7c1d2e-0000-4000-8000-000000000058", "6b7c1d2e-0000-4000-8000-000000000059",
+        "6b7c1d2e-0000-4000-8000-000000000060", "6b7c1d2e-0000-4000-8000-000000000061",
+        "6b7c1d2e-0000-4000-8000-000000000062", "6b7c1d2e-0000-4000-8000-000000000063",
+        "6b7c1d2e-0000-4000-8000-000000000064", "6b7c1d2e-0000-4000-8000-000000000065",
+        "6b7c1d2e-0000-4000-8000-000000000066", "6b7c1d2e-0000-4000-8000-000000000067",
+        "6b7c1d2e-0000-4000-8000-000000000068", "6b7c1d2e-0000-4000-8000-000000000069",
+        "6b7c1d2e-0000-4000-8000-000000000070", "6b7c1d2e-0000-4000-8000-000000000071",
+        "6b7c1d2e-0000-4000-8000-000000000072", "6b7c1d2e-0000-4000-8000-000000000073",
+        "6b7c1d2e-0000-4000-8000-000000000074", "6b7c1d2e-0000-4000-8000-000000000075",
+        "6b7c1d2e-0000-4000-8000-000000000076", "6b7c1d2e-0000-4000-8000-000000000077",
+        "6b7c1d2e-0000-4000-8000-000000000078", "6b7c1d2e-0000-4000-8000-000000000079",
+        "6b7c1d2e-0000-4000-8000-000000000080", "6b7c1d2e-0000-4000-8000-000000000081",
+        "6b7c1d2e-0000-4000-8000-000000000082", "6b7c1d2e-0000-4000-8000-000000000083",
+        "6b7c1d2e-0000-4000-8000-000000000084", "6b7c1d2e-0000-4000-8000-000000000085",
+        "6b7c1d2e-0000-4000-8000-000000000086", "6b7c1d2e-0000-4000-8000-000000000087",
+        "6b7c1d2e-0000-4000-8000-000000000088", "6b7c1d2e-0000-4000-8000-000000000089",
+        "6b7c1d2e-0000-4000-8000-000000000090", "6b7c1d2e-0000-4000-8000-000000000091",
+        "6b7c1d2e-0000-4000-8000-000000000092", "6b7c1d2e-0000-4000-8000-000000000093",
+        "6b7c1d2e-0000-4000-8000-000000000094", "6b7c1d2e-0000-4000-8000-000000000095",
+        "6b7c1d2e-0000-4000-8000-000000000096", "6b7c1d2e-0000-4000-8000-000000000097",
+        "6b7c1d2e-0000-4000-8000-000000000098", "6b7c1d2e-0000-4000-8000-000000000099",
+        "6b7c1d2e-0000-4000-8000-000000000100"
+      ]
+    },
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {"ok": false, "error": "Cannot request more than 100 destinations at once", "code": "bad_request"},
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Destination/routes/index.ts:30",
+        "src/entities/Destination/routes/getDestinationsListById.ts:36-190",
+        "src/entities/Destination/schemas.ts:6-135",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:13-24",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:46-63",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    }
+  },
+  {
+    "id": "places.post_destinations.valid_ids", "area": "places",
+    "request": {"method": "POST", "path": "/api/destinations", "body": ["{place_id}"]},
+    "expected": {
+      "status": 201, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array",
+        "item_keys": "places.$defs.destination_row",
+        "invariants": ["data.length == 1", "total == 1", "every item.id == '{place_id}'"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Destination/routes/index.ts:30",
+        "src/entities/Destination/routes/getDestinationsListById.ts:36-190",
+        "src/entities/Destination/schemas.ts:6-135",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:13-24",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:46-63",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38",
+        "src/entities/Destination/model.ts:23-49", "src/entities/Destination/model.ts:181-322",
+        "src/entities/Destination/utils.ts:140-248", "src/entities/shared/entityInteractions.ts:169-185",
+        "src/entities/Place/model.ts:208-211", "src/entities/Destination/model.ts:108-117"
+      ]
+    },
+    "notes": "POST answers 201 per the wkc `status()` rule. `ids` makes it a lookup query, which lifts the content-quality filter; a world is addressed by its id (lowercased name) in the same array."
+  },
+  {
+    "id": "places.post_destinations.empty_array_lists_feed", "area": "places",
+    "request": {"method": "POST", "path": "/api/destinations", "body": []},
+    "expected": {
+      "status": 201, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array",
+        "item_keys": "places.$defs.destination_row", "invariants": ["data.length <= 100"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/Destination/routes/index.ts:30",
+        "src/entities/Destination/routes/getDestinationsListById.ts:36-190",
+        "src/entities/Destination/schemas.ts:6-135",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:13-24",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/utils.js:46-63",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38",
+        "src/entities/Place/model.ts:208-211", "src/entities/World/model.ts:132-135"
+      ]
+    },
+    "notes": "An empty array passes both checks and `!!ids.length` is false, so no id filter applies and the generic feed is returned with 201."
+  },
+  {
+    "id": "places.get_worlds.default", "area": "places", "request": {"method": "GET", "path": "/api/worlds"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.world_row",
+        "invariants": [
+          "data.length <= 100", "every item.world == true", "every item.disabled == false",
+          "every item.base_position == '0,0'"
+        ]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:40", "src/entities/World/routes/getWorldList.ts:25-80",
+        "src/entities/World/schemas.ts:5-81",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/World/model.ts:207-252", "src/entities/World/model.ts:343-386",
+        "src/entities/World/utils.ts:13-30", "src/entities/shared/entityInteractions.ts:169-185",
+        "src/migrations/1770729308000_create-worlds-table.ts:7-98",
+        "src/migrations/1770729908000_add-is-private-to-worlds.ts:9-15",
+        "src/migrations/1770730028000_add-highlighted-ranking-to-worlds.ts:6-22",
+        "src/migrations/1770730388000_remove-disabled-from-worlds.ts:19-20",
+        "src/migrations/1786492800000_add-settings-version-to-worlds.ts:9-13",
+        "src/migrations/1788789426884_add-exclude-from-ranking.ts:8-20"
+      ]
+    },
+    "notes": "Item keys are `w.*` plus the constants disabled/disabled_at/base_position/world/user_visits, the lateral-join image/contact_name/deployed_at, the interaction columns and user_count. A world is listed only when show_in_places and an enabled place has world_id = w.id, so no count is asserted."
+  },
+  {
+    "id": "places.get_worlds.names_exact", "area": "places",
+    "request": {"method": "GET", "path": "/api/worlds", "query": {"names": "HARBOUR.DCL.ETH"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.world_row",
+        "invariants": ["every item.id == 'harbour.dcl.eth'"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:40", "src/entities/World/routes/getWorldList.ts:25-80",
+        "src/entities/World/schemas.ts:5-81",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/World/model.ts:115-120", "src/entities/World/model.ts:362-371"
+      ]
+    },
+    "notes": "/api/worlds `names` are lowercased and compared with `w.id = ANY(...)` (exact), unlike the LIKE match of /api/destinations."
+  },
+  {
+    "id": "places.get_worlds.owner_filter", "area": "places",
+    "request": {"method": "GET", "path": "/api/worlds", "query": {"owner": "0x00000000000000000000000000000000000000BB"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.world_row",
+        "invariants": ["every item.owner == '0x00000000000000000000000000000000000000bb'"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:40", "src/entities/World/routes/getWorldList.ts:25-80",
+        "src/entities/World/schemas.ts:5-81",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/World/model.ts:131"
+      ]
+    },
+    "notes": "owner is lowercased by the route and compared with `w.owner = $1` (the seeded owner is lower-case)."
+  },
+  {
+    "id": "places.get_worlds.invalid_owner_pattern", "area": "places",
+    "request": {"method": "GET", "path": "/api/worlds", "query": {"owner": "bad"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "Error validating input:\n- owner must match pattern \"^0x[a-fA-F0-9]{40}$\" {\"pattern\":\"^0x[a-fA-F0-9]{40}$\"}",
+        "code": "bad_request",
+        "data": {
+          "messages": ["owner must match pattern \"^0x[a-fA-F0-9]{40}$\" {\"pattern\":\"^0x[a-fA-F0-9]{40}$\"}"],
+          "errors": [
+            {
+              "instancePath": "/owner", "schemaPath": "#/properties/owner/pattern", "keyword": "pattern",
+              "params": {"pattern": "^0x[a-fA-F0-9]{40}$"},
+              "message": "must match pattern \"^0x[a-fA-F0-9]{40}$\""
+            }
+          ]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:40", "src/entities/World/routes/getWorldList.ts:25-80",
+        "src/entities/World/schemas.ts:5-81",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    }
+  },
+  {
+    "id": "places.get_worlds.invalid_limit_format", "area": "places",
+    "request": {"method": "GET", "path": "/api/worlds", "query": {"limit": "abc"}},
+    "expected": {
+      "status": 400, "content_type": "application/json",
+      "body": {
+        "ok": false,
+        "error": "Error validating input:\n- limit must match format \"uint\" {\"format\":\"uint\"}",
+        "code": "bad_request",
+        "data": {
+          "messages": ["limit must match format \"uint\" {\"format\":\"uint\"}"],
+          "errors": [
+            {
+              "instancePath": "/limit", "schemaPath": "#/properties/limit/format", "keyword": "format",
+              "params": {"format": "uint"}, "message": "must match format \"uint\""
+            }
+          ]
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:40", "src/entities/World/routes/getWorldList.ts:25-80",
+        "src/entities/World/schemas.ts:5-81",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/routes/Router.js:52-80",
+        "decentraland-gatsby@9.0.1 dist/entities/Schema/index.js:15-46",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    }
+  },
+  {
+    "id": "places.get_worlds.limit_over_cap", "area": "places",
+    "request": {"method": "GET", "path": "/api/worlds", "query": {"limit": "500"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["total", "ok", "data"], "data_type": "array", "item_keys": "places.$defs.world_row",
+        "invariants": ["data.length <= 100"]
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:40", "src/entities/World/routes/getWorldList.ts:25-80",
+        "src/entities/World/schemas.ts:5-81",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/World/routes/getWorldList.ts:58", "src/entities/World/model.ts:378"
+      ]
+    }
+  },
+  {
+    "id": "places.get_worlds.only_favorites_anonymous", "area": "places",
+    "request": {"method": "GET", "path": "/api/worlds", "query": {"only_favorites": "true"}},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body": {"total": 0, "ok": true, "data": []},
+      "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:40", "src/entities/World/routes/getWorldList.ts:25-80",
+        "src/entities/World/schemas.ts:5-81",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "src/entities/World/routes/getWorldList.ts:51-53",
+        "decentraland-gatsby@9.0.1 dist/entities/Auth/routes/withDecentralandAuth.js:12-53"
+      ]
+    }
+  },
+  {
+    "id": "places.get_world.ok", "area": "places",
+    "request": {"method": "GET", "path": "/api/worlds/{world_id}"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {
+        "envelope": ["ok", "data"], "data_type": "object", "item_keys": "places.$defs.world_row",
+        "data_subset": {
+          "id": "harbour.dcl.eth", "world_name": "harbour.dcl.eth", "title": "Harbour", "world": true,
+          "disabled": false, "disabled_at": null, "base_position": "0,0", "user_visits": 0,
+          "user_favorite": false, "user_like": false, "user_dislike": false, "user_count": 0
+        }
+      }
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:39", "src/entities/World/routes/getWorld.ts:16-43",
+        "src/entities/World/schemas.ts:240-245", "src/entities/World/model.ts:284-341",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38",
+        "src/entities/World/model.ts:207-252", "src/entities/World/model.ts:343-386",
+        "src/entities/World/utils.ts:13-30", "src/entities/shared/entityInteractions.ts:169-185",
+        "src/migrations/1770729308000_create-worlds-table.ts:7-98",
+        "src/migrations/1770729908000_add-is-private-to-worlds.ts:9-15",
+        "src/migrations/1770730028000_add-highlighted-ranking-to-worlds.ts:6-22",
+        "src/migrations/1770730388000_remove-disabled-from-worlds.ts:19-20",
+        "src/migrations/1786492800000_add-settings-version-to-worlds.ts:9-13",
+        "src/migrations/1788789426884_add-exclude-from-ranking.ts:8-20"
+      ]
+    },
+    "notes": "findByIdWithAggregates has no show_in_places filter. user_count is 0 without cached worlds live data."
+  },
+  {
+    "id": "places.get_world.missing", "area": "places",
+    "request": {"method": "GET", "path": "/api/worlds/{world_id}"},
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found world \"{world_id}\"", "code": "not_found"},
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:39", "src/entities/World/routes/getWorld.ts:16-43",
+        "src/entities/World/schemas.ts:240-245", "src/entities/World/model.ts:284-341",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38"
+      ]
+    },
+    "harness": {"world_id": "missing"}
+  },
+  {
+    "id": "places.get_world.upper_case_name", "area": "places",
+    "request": {"method": "GET", "path": "/api/worlds/HARBOUR.DCL.ETH"},
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "Not found world \"HARBOUR.DCL.ETH\"", "code": "not_found"},
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:39", "src/entities/World/routes/getWorld.ts:16-43",
+        "src/entities/World/schemas.ts:240-245", "src/entities/World/model.ts:284-341",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ErrorResponse.js:9-38",
+        "src/entities/World/model.ts:333", "src/migrations/1770729308000_create-worlds-table.ts:8-13"
+      ]
+    },
+    "notes": "getWorld passes the param verbatim to `WHERE w.id = $1`; the id is the lowercased name, so an upper-case name is a 404 (the social card route lowercases, this one does not)."
+  },
+  {
+    "id": "places.get_world_names.default", "area": "places",
+    "request": {"method": "GET", "path": "/api/world_names"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {"envelope": ["total", "ok", "data"], "data_type": "array", "invariants": ["data.length <= 100000"]}
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/entities/World/routes/index.ts:41", "src/entities/World/routes/getWorldNamesList.ts:6-15",
+        "src/entities/World/model.ts:434-457",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/wkc/response/ApiResponse.js:4-13"
+      ]
+    },
+    "notes": "`data` is an array of world_name strings ordered by world_name ASC, `total` their count; same show_in_places + enabled-place condition as /api/worlds. No ajv schema and no parameters."
+  },
+  {
+    "id": "places.social_place.by_position", "area": "places",
+    "request": {"method": "GET", "path": "/places/place/", "query": {"position": "10,10"}},
+    "expected": {
+      "status": 200, "content_type": "text/html",
+      "body": {
+        "title": "Harness Plaza | Decentraland Place",
+        "meta": {
+          "og:title": "Harness Plaza | Decentraland Place",
+          "twitter:title": "Harness Plaza | Decentraland Place",
+          "og:url": "https://decentraland.org/places/place/?position=10.10",
+          "twitter:url": "https://decentraland.org/places/place/?position=10.10",
+          "twitter:card": "summary_large_image"
+        }
+      },
+      "body_match": "subset",
+      "headers": {"link": "<https://decentraland.org/places/place/?position=10.10>; rel=canonical"}
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/server.ts:85", "src/entities/Social/routes.ts:16-105", "src/entities/Place/utils.ts:23-39",
+        "src/entities/Place/utils.ts:58-64", "src/utils/position/toCanonicalPosition.ts:3-15",
+        "src/intl/en.json", "decentraland-gatsby@9.0.1 dist/entities/Gatsby/utils.js:9-92",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleRaw.js:7-10",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:11-64",
+        "src/entities/Place/model.ts:594-641"
+      ]
+    },
+    "notes": "placeUrl() builds on the default PLACES_BASE_URL https://decentraland.org/places, sets pathname /places/place/ and `position` with toCanonicalPosition's default glue '.', so 10,10 becomes 10.10. The `link` header is `<url>; rel=canonical`. description/og:image depend on the seeded description/image and are not asserted."
+  },
+  {
+    "id": "places.social_place.by_id", "area": "places",
+    "request": {"method": "GET", "path": "/places/place/", "query": {"id": "{place_id}"}},
+    "expected": {
+      "status": 200, "content_type": "text/html",
+      "body": {
+        "title": "Harness Plaza | Decentraland Place",
+        "meta": {"og:title": "Harness Plaza | Decentraland Place"}
+      },
+      "body_match": "subset",
+      "headers": {"link": "<https://decentraland.org/places/place/?position=10.10>; rel=canonical"}
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/server.ts:85", "src/entities/Social/routes.ts:16-105", "src/entities/Place/utils.ts:23-39",
+        "src/entities/Place/utils.ts:58-64", "src/utils/position/toCanonicalPosition.ts:3-15",
+        "src/intl/en.json", "decentraland-gatsby@9.0.1 dist/entities/Gatsby/utils.js:9-92",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleRaw.js:7-10",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:11-64",
+        "src/entities/Place/model.ts:513-554"
+      ]
+    },
+    "notes": "A uuid `id` (validator isUUID) wins over `position` and is read with findByIdWithAggregates."
+  },
+  {
+    "id": "places.social_place.disabled_by_id", "area": "places",
+    "request": {"method": "GET", "path": "/places/place/", "query": {"id": "{place_id}"}},
+    "expected": {
+      "status": 200, "content_type": "text/html", "body": {"meta": {"twitter:card": "summary_large_image"}},
+      "body_match": "subset",
+      "headers": {"link": "<https://decentraland.org/places/place/?position=20.20>; rel=canonical"}
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/server.ts:85", "src/entities/Social/routes.ts:16-105", "src/entities/Place/utils.ts:23-39",
+        "src/entities/Place/utils.ts:58-64", "src/utils/position/toCanonicalPosition.ts:3-15",
+        "src/intl/en.json", "decentraland-gatsby@9.0.1 dist/entities/Gatsby/utils.js:9-92",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleRaw.js:7-10",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:11-64",
+        "src/entities/Place/model.ts:513-554"
+      ]
+    },
+    "harness": {"place_id": "disabled"},
+    "notes": "findByIdWithAggregates has no disabled filter, so a disabled place still gets a card and canonical link; its title is not seeded, so only the link is asserted."
+  },
+  {
+    "id": "places.social_place.invalid_id_fallback", "area": "places",
+    "request": {"method": "GET", "path": "/places/place/", "query": {"id": "not-a-uuid"}},
+    "expected": {
+      "status": 200, "content_type": "text/html",
+      "body": {
+        "title": "Decentraland Place",
+        "meta": {
+          "og:title": "Decentraland Place", "description": "This place is awesome",
+          "og:description": "This place is awesome", "twitter:image": "image", "og:image": "image",
+          "site": "site", "card": "card", "creator": "creator"
+        }
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/server.ts:85", "src/entities/Social/routes.ts:16-105", "src/entities/Place/utils.ts:23-39",
+        "src/entities/Place/utils.ts:58-64", "src/utils/position/toCanonicalPosition.ts:3-15",
+        "src/intl/en.json", "decentraland-gatsby@9.0.1 dist/entities/Gatsby/utils.js:9-92",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleRaw.js:7-10",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:11-64",
+        "decentraland-gatsby@9.0.1 dist/entities/Gatsby/utils.js:53-57"
+      ]
+    },
+    "notes": "A non-uuid id is ignored and with no position nothing matches: the copies.social.place defaults are injected verbatim; replaceHelmetMetadata turns the placeholder `image` into twitter:image/og:image metas (no bare `image` meta) and injects `site`, `card`, `creator` as named metas; no `link` header is set. Upstream computes og:url as siteUrl() + originalUrl.slice(1) = https://decentraland.org/places/places/place/?id=not-a-uuid (doubled /places/); that value is not asserted and should not be reproduced."
+  },
+  {
+    "id": "places.social_place.no_match_fallback", "area": "places",
+    "request": {"method": "GET", "path": "/places/place/", "query": {"position": "99,99"}},
+    "expected": {
+      "status": 200, "content_type": "text/html",
+      "body": {
+        "title": "Decentraland Place",
+        "meta": {"og:title": "Decentraland Place", "description": "This place is awesome"}
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/server.ts:85", "src/entities/Social/routes.ts:16-105", "src/entities/Place/utils.ts:23-39",
+        "src/entities/Place/utils.ts:58-64", "src/utils/position/toCanonicalPosition.ts:3-15",
+        "src/intl/en.json", "decentraland-gatsby@9.0.1 dist/entities/Gatsby/utils.js:9-92",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleRaw.js:7-10",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:11-64",
+        "src/entities/Place/model.ts:176-185"
+      ]
+    },
+    "notes": "No `link` header on the fallback."
+  },
+  {
+    "id": "places.social_place.position_outside_world_limits", "area": "places",
+    "request": {"method": "GET", "path": "/places/place/", "query": {"position": "999,999"}},
+    "expected": {
+      "status": 200, "content_type": "text/html",
+      "body": {"title": "Decentraland Place", "meta": {"og:title": "Decentraland Place"}},
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/server.ts:85", "src/entities/Social/routes.ts:16-105", "src/entities/Place/utils.ts:23-39",
+        "src/entities/Place/utils.ts:58-64", "src/utils/position/toCanonicalPosition.ts:3-15",
+        "src/intl/en.json", "decentraland-gatsby@9.0.1 dist/entities/Gatsby/utils.js:9-92",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleRaw.js:7-10",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:11-64",
+        "src/utils/position/toCanonicalPosition.ts:3-15"
+      ]
+    },
+    "notes": "toCanonicalPosition returns null outside the world limits, so no lookup happens and the fallback card is served."
+  },
+  {
+    "id": "places.social_world.by_name", "area": "places",
+    "request": {"method": "GET", "path": "/places/world/", "query": {"name": "{world_id}"}},
+    "expected": {
+      "status": 200, "content_type": "text/html",
+      "body": {
+        "title": "Harbour | Decentraland Place",
+        "meta": {
+          "og:title": "Harbour | Decentraland Place",
+          "og:url": "https://decentraland.org/places/world/?name=harbour.dcl.eth",
+          "twitter:card": "summary_large_image"
+        }
+      },
+      "body_match": "subset",
+      "headers": {"link": "<https://decentraland.org/places/world/?name=harbour.dcl.eth>; rel=canonical"}
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/server.ts:85", "src/entities/Social/routes.ts:16-105", "src/entities/Place/utils.ts:23-39",
+        "src/entities/Place/utils.ts:58-64", "src/utils/position/toCanonicalPosition.ts:3-15",
+        "src/intl/en.json", "decentraland-gatsby@9.0.1 dist/entities/Gatsby/utils.js:9-92",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleRaw.js:7-10",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:11-64",
+        "src/entities/World/model.ts:284-341"
+      ]
+    },
+    "notes": "worldUrl() sets pathname /places/world/ and `name` = world_name on the default PLACES_BASE_URL."
+  },
+  {
+    "id": "places.social_world.upper_case_name_lowercased", "area": "places",
+    "request": {"method": "GET", "path": "/places/world/", "query": {"id": "HARBOUR.DCL.ETH"}},
+    "expected": {
+      "status": 200, "content_type": "text/html", "body": {"title": "Harbour | Decentraland Place"},
+      "body_match": "subset",
+      "headers": {"link": "<https://decentraland.org/places/world/?name=harbour.dcl.eth>; rel=canonical"}
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/server.ts:85", "src/entities/Social/routes.ts:16-105", "src/entities/Place/utils.ts:23-39",
+        "src/entities/Place/utils.ts:58-64", "src/utils/position/toCanonicalPosition.ts:3-15",
+        "src/intl/en.json", "decentraland-gatsby@9.0.1 dist/entities/Gatsby/utils.js:9-92",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleRaw.js:7-10",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:11-64",
+        "src/entities/Social/routes.ts:74"
+      ]
+    },
+    "notes": "injectWorldMetadata reads `id` or `name` and lowercases it before the lookup."
+  },
+  {
+    "id": "places.social_world.missing_fallback", "area": "places",
+    "request": {"method": "GET", "path": "/places/world/", "query": {"name": "{world_id}"}},
+    "expected": {
+      "status": 200, "content_type": "text/html",
+      "body": {
+        "title": "Decentraland Place",
+        "meta": {"og:title": "Decentraland Place", "description": "This place is awesome"}
+      },
+      "body_match": "subset"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/server.ts:85", "src/entities/Social/routes.ts:16-105", "src/entities/Place/utils.ts:23-39",
+        "src/entities/Place/utils.ts:58-64", "src/utils/position/toCanonicalPosition.ts:3-15",
+        "src/intl/en.json", "decentraland-gatsby@9.0.1 dist/entities/Gatsby/utils.js:9-92",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleRaw.js:7-10",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:11-64"
+      ]
+    },
+    "harness": {"world_id": "missing"},
+    "notes": "The world card falls back to the same copies.social.place defaults as the place card; no `link` header."
+  },
+  {
+    "id": "places.unknown_route.json_404", "area": "places",
+    "request": {"method": "GET", "path": "/api/nope"},
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "NotFound", "code": "not_found"}, "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/server.ts:63-82",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:11-64",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-32",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-42",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:53-64"
+      ]
+    },
+    "notes": "The trailing `handle(async () => { throw new RequestError(\"NotFound\", 404) })` under /api answers every unmatched method and path. RequestError.toJSON never adds `stack` (it checks result.stack, not err.stack), so the body is exact."
+  },
+  {
+    "id": "places.unknown_route.json_404_post", "area": "places",
+    "request": {"method": "POST", "path": "/api/nope", "body": {}},
+    "expected": {
+      "status": 404, "content_type": "application/json",
+      "body": {"ok": false, "error": "NotFound", "code": "not_found"}, "body_match": "exact"
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/server.ts:63-82",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleExpressError.js:8-32",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/error.js:8-42"
+      ]
+    },
+    "notes": "Status is the error's 404, not the 201 default for POST (handleExpressError uses err.statusCode)."
+  },
+  {
+    "id": "places.status.shape", "area": "places", "request": {"method": "GET", "path": "/api/status"},
+    "expected": {
+      "status": 200, "content_type": "application/json", "body_match": "shape",
+      "shape": {"envelope": ["ok", "data"], "data_type": "object", "item_keys": ["image", "version", "timestamp"]}
+    },
+    "source": {
+      "kind": "source", "repo": "decentraland/places@e660fbc2",
+      "refs": [
+        "src/server.ts:78", "decentraland-gatsby@9.0.1 dist/entities/Route/routes/status.js:9-26",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleAPI.js:8-16",
+        "decentraland-gatsby@9.0.1 dist/entities/Route/handle/handleIncommingMessage.js:39-59"
+      ]
+    },
+    "notes": "status() without an extra handler answers `{ok: true, data: {image, version, timestamp}}`; image/version come from the IMAGE env (`events:<ts>` by default) and are not asserted. Open: strict three fields as here, or dcl-one's superset with `catalogue`, `mirrors`, `configured_mirrors` kept on this path (else moved to `/v1/status`). The entry asserts upstream's shape until that is settled."
+  }
+]

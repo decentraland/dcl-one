@@ -3,7 +3,9 @@ import type { FetchPlacesParams } from "./types";
 type SqlQuery = { text: string; values: unknown[] };
 
 // The node's place_columns (services/catalyst/explore/src/places/rows.rs) over unaliased
-// `FROM explore.place`: the counts add this node's own saves, correlated on place.id.
+// `FROM explore.place`: the counts and rates are projected as the node's place_columns
+// (rows.rs) projects them: this node's own votes add to the mirrored values until the
+// likes import covers a place; from then on the facts alone are served, NULL rates included.
 export const PLACE_COLUMNS = `
   id, title, description, raw->>'image' AS image,
   creator_address AS owner,
@@ -19,8 +21,8 @@ export const PLACE_COLUMNS = `
   NULLIF(raw->>'created_at','')::timestamptz AS created_at,
   NULLIF(raw->>'updated_at','')::timestamptz AS updated_at,
   favorites + COALESCE((SELECT ic.favorites FROM explore.place_interaction_counts ic WHERE ic.entity_id = place.id), 0) AS favorites,
-  likes + COALESCE((SELECT ic.likes FROM explore.place_interaction_counts ic WHERE ic.entity_id = place.id), 0) AS likes,
-  dislikes + COALESCE((SELECT ic.dislikes FROM explore.place_interaction_counts ic WHERE ic.entity_id = place.id), 0) AS dislikes,
+  COALESCE((SELECT CASE WHEN ic.imported > 0 THEN ic.likes ELSE place.likes + ic.likes END FROM explore.place_interaction_counts ic WHERE ic.entity_id = place.id), likes) AS likes,
+  COALESCE((SELECT CASE WHEN ic.imported > 0 THEN ic.dislikes ELSE place.dislikes + ic.dislikes END FROM explore.place_interaction_counts ic WHERE ic.entity_id = place.id), dislikes) AS dislikes,
   categories,
   COALESCE((SELECT array_agg(t::text) FROM jsonb_array_elements_text(raw->'tags') t), ARRAY[]::text[]) AS tags,
   highlighted,
@@ -34,8 +36,8 @@ export const PLACE_COLUMNS = `
   COALESCE((raw->>'is_private')::bool, false) AS is_private,
   NULLIF(raw->>'user_count','')::int AS user_count,
   COALESCE(NULLIF(raw->>'user_visits','')::int, 0) AS user_visits,
-  NULLIF(raw->>'like_rate','')::float8 AS like_rate,
-  NULLIF(raw->>'like_score','')::float8 AS like_score
+  COALESCE((SELECT CASE WHEN ic.imported > 0 THEN ic.like_rate ELSE COALESCE(ic.like_rate, like_rate_num) END FROM explore.place_interaction_counts ic WHERE ic.entity_id = place.id), CASE WHEN EXISTS (SELECT 1 FROM explore.place_interaction_counts ic WHERE ic.entity_id = place.id AND ic.imported > 0) THEN NULL ELSE like_rate_num END) AS like_rate,
+  COALESCE((SELECT CASE WHEN ic.imported > 0 THEN ic.like_score ELSE COALESCE(ic.like_score, like_score_num) END FROM explore.place_interaction_counts ic WHERE ic.entity_id = place.id), CASE WHEN EXISTS (SELECT 1 FROM explore.place_interaction_counts ic WHERE ic.entity_id = place.id AND ic.imported > 0) THEN NULL ELSE like_score_num END) AS like_score
 `.trim();
 
 export const CATEGORIES_SQL = `
@@ -46,7 +48,11 @@ export const CATEGORIES_SQL = `
   ORDER BY count DESC, name ASC
 `.trim();
 
-const DEFAULT_ORDER = `NULLIF(raw->>'like_score','')::float8 DESC NULLS LAST, deployed_at DESC`;
+// The list sorts on the score it serves (the `like_score` it projects), as
+// the node's like-score order does (query.rs LIKE_SCORE_ORDER_SQL), not on
+// the mirrored value alone, with the node's `id ASC` tie-break so pages
+// never swap rows tied on score and deployment time.
+const DEFAULT_ORDER = `like_score DESC NULLS LAST, deployed_at DESC, id ASC`;
 
 function normalizeCategories(c?: string | string[]): string[] {
   if (!c) return [];

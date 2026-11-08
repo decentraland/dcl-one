@@ -12,12 +12,10 @@ import { SHOP_QUERY_KEYS } from "../checkout/lib/after-purchase";
 import { CURRENCY, formatAmount } from "../checkout/lib/currency";
 import { EnsureQueryClient, useShopServices } from "../checkout/services";
 import { cancelCreditOrder, creditOrderPill, fetchUserCreditOrders, resumeCreditOrder, type CreditOrder } from "./credits";
-import { balanceLabel, useBalance, useCreditPacks } from "./hooks";
+import { useCreditPacks } from "./hooks";
 import { isIapMode } from "./iap";
 import { createPackCheckout, packBonus, pollCreditGrant, type CreditPack } from "./payments";
 import { clearTopUpHandoffs, takeTopUpReturn } from "./returns";
-import CreditRate from "./components/CreditRate";
-import HeldCredits from "./components/HeldCredits";
 import packStack1 from "./assets/pack-stack1-512.webp?url";
 import packStack2 from "./assets/pack-stack2-512.webp?url";
 import packStack3 from "./assets/pack-stack3-512.webp?url";
@@ -286,7 +284,6 @@ function CreditsScreen() {
   const account = wallet.account;
   const qc = useQueryClient();
   const { packs, isLoading } = useCreditPacks();
-  const balance = useBalance(account);
   const [phase, setPhase] = useState<Phase>("select");
   const [granted, setGranted] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -445,17 +442,6 @@ function CreditsScreen() {
                     </button>
                   </div>
                 </header>
-
-                {account ? (
-                  <section className="shop-credits__balance" aria-label={`Your ${CURRENCY.name}`}>
-                    <span>Your balance</span>
-                    <b data-testid="credits-balance">
-                      {balanceLabel(balance.data, balance.isError)} {CURRENCY.name}
-                    </b>
-                    <HeldCredits held={balance.data?.held} />
-                    <CreditRate />
-                  </section>
-                ) : null}
 
                 {canceledNote ? (
                   <p className="shop-credits__note" role="status">

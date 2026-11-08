@@ -39,6 +39,14 @@ class DevTest(unittest.TestCase):
         with patch.dict(os.environ, {'FOUNDATION_DEV_PROFILE': 'offline'}):
             self.config = dev.settings(create=True)
 
+    def test_a_dev_stack_starts_with_the_marketplace_override_on_and_keeps_a_developers_own(self):
+        queries = []
+        with patch.object(dev, 'sql', lambda config, query, database='catalyst': queries.append(query) or ''):
+            dev.seed_dev_flags(self.config)
+        self.assertEqual(len(queries), 1)
+        self.assertIn("('dapps', 'dapps-shop-marketplace-features', true)", queries[0])
+        self.assertIn('ON CONFLICT (app, name) DO NOTHING', queries[0])
+
     def test_trades_snapshot_comes_from_a_local_file(self):
         snapshot = self.state / 'trades.sql.gz'
         snapshot.write_bytes(gzip.compress(b'-- trades'))
@@ -433,7 +441,8 @@ class DevTest(unittest.TestCase):
                     'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED', 'CREDITS_USAGE_INDEX_ENABLED'):
             self.assertEqual(env[key], 'false', key)
         # The Shop's catalogue follows the public subgraphs and chain, as `posture show mirror` does.
-        for key in ('MARKETPLACE_MIRRORS_ENABLED', 'MARKETPLACE_NFT_INDEX_ENABLED', 'LAND_AUTHZ_INDEX_ENABLED'):
+        for key in ('MARKETPLACE_MIRRORS_ENABLED', 'MARKETPLACE_NFT_INDEX_ENABLED', 'LAND_AUTHZ_INDEX_ENABLED',
+                    'SHOP_RENTALS_INDEX_ENABLED'):
             self.assertEqual(env[key], 'true', key)
         self.assertTrue(env['MATIC_COLLECTIONS_SUBGRAPH_URL'].startswith('https://'))
         self.assertIn('index', dev.project({**self.config, 'profile': 'mirror'})['processes'])
@@ -474,6 +483,7 @@ class DevTest(unittest.TestCase):
         # The NFT index knows mainnet's contracts only, so it does not walk the testnets.
         self.assertEqual(env['MARKETPLACE_NFT_INDEX_ENABLED'], 'false')
         self.assertEqual(mirror['MARKETPLACE_NFT_INDEX_ENABLED'], 'true')
+        self.assertEqual((env['SHOP_RENTALS_INDEX_ENABLED'], mirror['SHOP_RENTALS_INDEX_ENABLED']), ('false', 'true'))
         self.assertIn('decentraland.zone', env['TRADES_SYNC_UPSTREAM_URL'])
         self.assertIn('decentraland.zone', env['TRANSACTIONS_UPSTREAM_URL'])
         self.assertTrue(env['RPC_ENDPOINT_POLYGON'].endswith('/amoy'))
@@ -675,6 +685,62 @@ class DevTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'api-build failed'):
                 dev.wait_ready(10)
         sleep.assert_not_called()
+
+    def test_wait_narrates_progress_with_the_building_task_output(self):
+        listing = subprocess.CompletedProcess([], 0, json.dumps([
+            {'name': 'api-build', 'status': 'Running', 'is_running': True, 'exit_code': 0},
+            {'name': 'api', 'status': 'Pending', 'is_running': False, 'exit_code': 0},
+        ]))
+        log = self.state / 'api-build.log'
+        log.write_text('previous run\n')
+        def polling(*args, **kwargs):
+            with log.open('a') as output:
+                output.write('   Compiling catalyst-worlds v0.1.0\n')
+            return listing
+        with patch.object(dev, 'pc', side_effect=polling), patch.object(dev, 'PROGRESS_SECONDS', 0), \
+                patch.object(dev.urllib.request, 'urlopen', side_effect=dev.urllib.error.URLError('starting')), \
+                patch.object(dev.time, 'sleep', side_effect=InterruptedError), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            with self.assertRaises(InterruptedError):
+                dev.wait_ready(10)
+        self.assertIn('Waiting up to 10s for the API and Sites.', out.getvalue())
+        self.assertIn('running: api-build; waiting to start: api; api-build: Compiling catalyst-worlds v0.1.0',
+                      out.getvalue())
+        self.assertNotIn('previous run', out.getvalue())
+
+    def test_last_line_uses_new_output_and_strips_terminal_sequences(self):
+        log = self.state / 'api-build.log'
+        log.write_text('a previous run with a long stale line\n')
+        position = dev.log_position(log)
+        self.assertEqual(dev.last_line(log, after=position), '')
+        with log.open('a') as output:
+            output.write('\x1b[31mCompiling\x1b[0m\r\x1b]0;build title\x07Finished\x1b[K\n')
+        self.assertEqual(dev.last_line(log, after=position), 'Finished')
+        log.write_text('truncated\n')
+        self.assertEqual(dev.last_line(log, after=position), 'truncated')
+        log.unlink()
+        log.write_text('rotated\n')
+        self.assertEqual(dev.last_line(log, after=position), 'rotated')
+
+    def test_wait_does_not_report_the_previous_builds_last_line(self):
+        (self.state / 'api-build.log').write_text('old build failed\n')
+        listing = subprocess.CompletedProcess([], 0, stdout=json.dumps([
+            {'name': 'api-build', 'is_running': True}]))
+        with patch.object(dev, 'pc', return_value=listing), patch.object(dev, 'PROGRESS_SECONDS', 0), \
+                patch.object(dev.urllib.request, 'urlopen', side_effect=dev.urllib.error.URLError('starting')), \
+                patch.object(dev.time, 'sleep', side_effect=InterruptedError), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            with self.assertRaises(InterruptedError):
+                dev.wait_ready(10)
+        self.assertIn('running: api-build', out.getvalue())
+        self.assertNotIn('old build failed', out.getvalue())
+
+    def test_process_compose_commands_carry_a_configuration_directory(self):
+        with patch.object(dev.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
+            dev.pc('process', 'list')
+        env = run.call_args.kwargs['env']
+        self.assertTrue(env['XDG_CONFIG_DIRS'].endswith(f":{self.state / 'xdg'}"))
+        self.assertTrue((self.state / 'xdg/process-compose').is_dir())
 
     def test_first_pass_pending_lists_configured_mirrors_without_a_complete_pass(self):
         status = {'data': {

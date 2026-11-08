@@ -126,7 +126,7 @@ async fn friendship_native_inbox_metadata_and_delivery_failures_preserve_committ
                         "email".into(),
                         "skipped".into(),
                         0,
-                        Some("no confirmed email".into())
+                        Some("no email template".into())
                     )]
                 );
             }

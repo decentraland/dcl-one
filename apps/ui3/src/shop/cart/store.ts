@@ -120,6 +120,7 @@ function decodeLine(value: unknown): CartLine | null {
     provenance: (v.provenance as CartProvenance | undefined) ?? {},
     seen: v.seen ? decodePurchaseOffer(v.seen) : null,
     addedAt: typeof v.addedAt === "number" ? v.addedAt : 0,
+    ...(typeof v.available === "number" && Number.isFinite(v.available) ? { available: v.available } : {}),
   };
 }
 
@@ -225,7 +226,12 @@ export function createCartStore(opts: { storage?: () => CartStorage | null; now?
       const id = cartLineId(input.asset, listing);
       const existing = current().lines.find((l) => l.id === id);
       if (existing) {
-        if (isMint(existing)) store.setQuantity(id, existing.quantity + (input.quantity ?? 1), input.available);
+        if (isMint(existing)) {
+          store.setQuantity(id, existing.quantity + (input.quantity ?? 1), input.available);
+          // The newest stock the buyer saw is the drawer's cap from now on.
+          const available = input.available;
+          if (typeof available === "number" && available !== existing.available) update((lines) => lines.map((l) => (l.id === id ? { ...l, available } : l)));
+        }
         return current().lines.find((l) => l.id === id)!;
       }
       const line: CartLine = {
@@ -238,6 +244,7 @@ export function createCartStore(opts: { storage?: () => CartStorage | null; now?
         provenance: input.provenance ?? {},
         seen: input.seen ?? null,
         addedAt: now(),
+        ...(typeof input.available === "number" ? { available: input.available } : {}),
       };
       update((lines) => [...lines, line]);
       return line;

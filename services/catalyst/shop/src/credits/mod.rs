@@ -203,6 +203,8 @@ pub struct RawSettings {
     pub credit_buffer_bps: u32,
     /// `CREDITS_REVOKER_KEY_FILE` (the plain variable is refused): the `CREDITS_REVOKER_ROLE` signer of `revokeCredits`; unset, revocations queue and wait.
     pub credits_revoker_key: Option<String>,
+    /// `SHOP_BASE_URL`: the grant notification's link (the old `${DECENTRALAND_URL}/shop`).
+    pub shop_base_url: String,
 }
 
 impl Default for RawSettings {
@@ -245,6 +247,7 @@ impl Default for RawSettings {
             credit_cap_headroom_pct: batch::DEFAULT_CAP_HEADROOM_PCT,
             credit_buffer_bps: batch::DEFAULT_ORACLE_BUFFER_BPS,
             credits_revoker_key: None,
+            shop_base_url: crate::subscriptions::DEFAULT_SHOP_BASE_URL.to_string(),
         }
     }
 }
@@ -282,6 +285,7 @@ pub struct Settings {
     pub credit_cap_headroom_pct: u32,
     pub credit_buffer_bps: u32,
     pub credits_revoker_key: Option<String>,
+    pub shop_base_url: String,
 }
 
 fn non_empty(v: Option<String>) -> Option<String> {
@@ -464,6 +468,10 @@ impl Settings {
             credit_cap_headroom_pct: raw.credit_cap_headroom_pct,
             credit_buffer_bps: raw.credit_buffer_bps,
             credits_revoker_key,
+            shop_base_url: non_empty(Some(raw.shop_base_url))
+                .unwrap_or_else(|| crate::subscriptions::DEFAULT_SHOP_BASE_URL.to_string())
+                .trim_end_matches('/')
+                .to_string(),
         })
     }
 
@@ -559,7 +567,7 @@ impl State {
             market,
             settings.marketplace_markup_bps,
         ));
-        let mut credits = Credits::new(pool);
+        let mut credits = Credits::new(pool).with_shop_base_url(&settings.shop_base_url);
         if settings.usage.is_configured() {
             credits = credits.with_usage_index(settings.usage.chain_id);
         }

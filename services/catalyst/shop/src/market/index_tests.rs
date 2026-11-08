@@ -2407,3 +2407,264 @@ async fn api_jobs_never_attach_market_indexing_even_when_enabled() {
     );
     db.drop().await;
 }
+
+/// `catalyst index` attaches `rentals-index` only when switched on and a
+/// chain-1 endpoint is configured.
+#[tokio::test]
+async fn the_rentals_index_attaches_behind_its_switch_and_a_chain_one_endpoint() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let attached = |state: &SharedState, enabled: bool| {
+        let jobs = crate::jobs::Jobs::new().with_fleet_jobs(false);
+        crate::rentals::index::spawn_job(state, &jobs, enabled);
+        let names: Vec<_> = jobs.report().into_iter().map(|j| j.name).collect();
+        (jobs, names.iter().any(|n| n == "rentals-index"))
+    };
+    let with_rpc = state_over(
+        db.pool.clone(),
+        "https://rpc.example.org/",
+        IndexSettings::default(),
+        false,
+    );
+    let (off, on_without_switch) = attached(&with_rpc, false);
+    let (on, on_with_switch) = attached(&with_rpc, true);
+    let mut no_rpc = state_over(
+        db.pool.clone(),
+        "https://rpc.example.org/",
+        IndexSettings::default(),
+        false,
+    );
+    Arc::get_mut(&mut no_rpc)
+        .unwrap()
+        .settings
+        .market
+        .trade_rpc_urls = RpcEndpoints::from_env(None);
+    let (bare, on_without_rpc) = attached(&no_rpc, true);
+    assert!(!on_without_switch && on_with_switch && !on_without_rpc);
+    for jobs in [off, on, bare] {
+        assert!(
+            jobs.shutdown(std::time::Duration::from_secs(5))
+                .await
+                .is_empty()
+        );
+    }
+    db.drop().await;
+}
+
+/// The rentals walk over a fake chain feeds the notifications: a rent before
+/// the first notification pass is history; a later rent notifies its start,
+/// and its end once the published block's time passes it, with the
+/// events-notifier metadata.
+#[tokio::test]
+async fn the_rentals_walk_feeds_rental_started_and_rental_ended() {
+    use crate::market::transfer_notices::Pass;
+    use crate::rentals::index::{RENTALS_MAINNET, RentalsIndex, tests::rented_log};
+    use crate::rentals::notices::{ended_id, run_ended, run_started, started_id};
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let base = "https://decentraland.org/marketplace";
+    let land = crate::land_authz::LAND_REGISTRY_MAINNET.to_ascii_lowercase();
+    let lessor = "0x00000000000000000000000000000000000000a1";
+    let tenant = "0x00000000000000000000000000000000000000b0";
+    let day_blocks = 86_400 / 2;
+    let rent = |token: U256, days: u64, block: u64| {
+        let mut l = rented_log(
+            &land,
+            token,
+            lessor,
+            tenant,
+            days,
+            U256::from(1),
+            &[block as u8; 65],
+            block,
+            0,
+        );
+        l.block_timestamp = Some(format!("0x{:x}", time_of(block)));
+        l
+    };
+    // Parcel 1,2.
+    let parcel = (U256::from(1u64) << 128) | U256::from(2u64);
+    let chain = FakeChain::new(
+        1_000 + 2 * day_blocks,
+        vec![rent(U256::from(7u64), 1, 1_100)],
+        10_000_000,
+        10,
+    );
+    let url = serve(chain.clone()).await;
+    let st = state_over(db.pool.clone(), &url, index_settings(10, 1_000_000), false);
+    let ix = RentalsIndex::at(RENTALS_MAINNET, 1_000);
+    assert!(pass(&st, &url, &ix).await.published);
+    assert_eq!(
+        run_started(&st.pool, base).await.unwrap(),
+        Pass::Emitted(0),
+        "no past rent"
+    );
+    assert_eq!(
+        run_ended(&st.pool, base).await.unwrap(),
+        Pass::Emitted(0),
+        "no past end"
+    );
+
+    let rented_at = 1_000 + 2 * day_blocks + 100;
+    chain
+        .logs
+        .lock()
+        .push(log_json(&rent(parcel, 1, rented_at)));
+    *chain.head.lock() = rented_at + 1_000;
+    assert!(pass(&st, &url, &ix).await.published);
+    assert_eq!(run_started(&st.pool, base).await.unwrap(), Pass::Emitted(1));
+    assert_eq!(
+        run_ended(&st.pool, base).await.unwrap(),
+        Pass::Emitted(0),
+        "still running"
+    );
+
+    *chain.head.lock() = rented_at + day_blocks + 1_000;
+    assert!(pass(&st, &url, &ix).await.published);
+    assert_eq!(run_ended(&st.pool, base).await.unwrap(), Pass::Emitted(1));
+    assert_eq!(
+        run_started(&st.pool, base).await.unwrap(),
+        Pass::Emitted(0),
+        "nothing twice"
+    );
+
+    let rows: Vec<(uuid::Uuid, String, String, Value)> = sqlx::query_as(
+        "SELECT id, address, type, metadata FROM social.notifications ORDER BY occurred_at",
+    )
+    .fetch_all(&st.pool)
+    .await
+    .unwrap();
+    let key: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT {} FROM shop.rental_event e WHERE e.kind = 'rented' AND e.block_number = $1",
+        crate::market::notice_cursor::tx_log_key("rental_event", "e", "coalesce(e.signature, '')")
+    )))
+    .bind(rented_at as i64)
+    .fetch_one(&st.pool)
+    .await
+    .unwrap();
+    let (started, ended) = (time_of(rented_at), time_of(rented_at) + 86_400);
+    let token = parcel.to_string();
+    let link = format!("{base}/contracts/{land}/tokens/{token}/manage");
+    let meta = |title: &str, description: String| {
+        json!({
+            "address": lessor, "contract": land, "lessor": lessor, "tenant": tenant,
+            "operator": tenant, "startedAt": started.to_string(), "endedAt": ended.to_string(), "tokenId": token,
+            "link": link, "title": title, "land": "1,2", "description": description,
+        })
+    };
+    assert_eq!(
+        rows,
+        vec![
+            (
+                started_id("ethereum", &key),
+                lessor.to_string(),
+                "rental_started".to_string(),
+                meta(
+                    "LAND Rented",
+                    format!("Your LAND at 1,2 was rented by {tenant}.")
+                )
+            ),
+            (
+                ended_id("ethereum", &key),
+                lessor.to_string(),
+                "rental_ended".to_string(),
+                meta(
+                    "Rent Period Ending",
+                    "The rent of your LAND at 1,2 has ended.".to_string()
+                )
+            ),
+        ]
+    );
+    db.drop().await;
+}
+
+/// The rewind path of `run_pass` (plan, delete, apply) moves a producer's
+/// cursor back: the gift that replaces a reorged one is announced once the
+/// index republishes.
+#[tokio::test]
+async fn a_reorg_rewind_replays_the_notification_producers() {
+    use super::transfer_notices::{self, Pass};
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let s = nft_index::start_block(ChainNet::Matic);
+    let c1 = "0x00000000000000000000000000000000000000c1";
+    seed_collection(
+        &db.pool,
+        "matic",
+        c1,
+        s + 10,
+        "urn:decentraland:matic:collections-v2:0xc1",
+        "Pirates",
+    )
+    .await;
+    let t1 = v2_token(0, 1);
+    let chain = FakeChain::new(
+        s + 1_500,
+        vec![transfer(c1, ZERO, ALICE, t1, s + 100, 0)],
+        1_000_000,
+        100,
+    );
+    let url = serve(chain.clone()).await;
+    let st = state_over(db.pool.clone(), &url, index_settings(50, 100_000), false);
+    let ix = NftIndex::new(ChainNet::Matic);
+    assert!(publish_nft(&st, &url, &ix).await.published);
+    transfer_notices::tests::publish(
+        &db.pool,
+        INDEXER_TRADE_EVENTS,
+        "matic",
+        (s + 1_000_000) as i64,
+        chrono::Utc::now().timestamp(),
+    )
+    .await;
+    let notified = || async {
+        sqlx::query_scalar::<_, String>(
+            "SELECT address FROM social.notifications WHERE type = 'transfer_received' ORDER BY address",
+        )
+        .fetch_all(&db.pool)
+        .await
+        .unwrap()
+    };
+    assert_eq!(
+        transfer_notices::run_once(&db.pool, 137).await.unwrap(),
+        Pass::Emitted(0),
+        "seeded at the mint"
+    );
+
+    chain
+        .logs
+        .lock()
+        .push(log_json(&transfer(c1, ALICE, BOB, t1, s + 1_900, 0)));
+    *chain.head.lock() = s + 2_000;
+    assert!(publish_nft(&st, &url, &ix).await.published);
+    assert_eq!(
+        transfer_notices::run_once(&db.pool, 137).await.unwrap(),
+        Pass::Emitted(1)
+    );
+
+    let cursor = chain_walk::cursor(&db.pool, INDEXER_NFT, ChainNet::Matic)
+        .await
+        .unwrap()
+        .unwrap();
+    chain
+        .forks
+        .lock()
+        .insert(cursor.last_block as u64, format!("0x{}", "ee".repeat(32)));
+    {
+        let mut logs = chain.logs.lock();
+        logs.retain(|l| l["blockNumber"] != json!(format!("0x{:x}", s + 1_900)));
+        logs.push(log_json(&transfer(c1, ALICE, CARL, t1, s + 1_880, 0)));
+    }
+    assert!(pass(&st, &url, &ix).await.reorg_rewound_to.is_some());
+    chain.forks.lock().clear();
+    assert!(publish_nft(&st, &url, &ix).await.published);
+    assert_eq!(
+        transfer_notices::run_once(&db.pool, 137).await.unwrap(),
+        Pass::Emitted(1),
+        "the replacing gift is read again below the old cursor"
+    );
+    assert_eq!(notified().await, vec![BOB.to_string(), CARL.to_string()]);
+    db.drop().await;
+}

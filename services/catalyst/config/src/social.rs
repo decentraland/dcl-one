@@ -417,7 +417,7 @@ pub struct SocialConfig {
     #[arg(long, env = "CATALYRST_SOCIAL_RPC_ADMIN_TOKEN", hide_env_values = true)]
     pub catalyrst_social_rpc_admin_token: Option<String>,
 
-    /// Source CURRENT_VERSION string returned verbatim by social RPC /status.
+    /// Source CURRENT_VERSION string returned verbatim by the social RPC and notifications /status.
     #[arg(long, env = "CURRENT_VERSION")]
     pub social_rpc_current_version: Option<String>,
 
@@ -539,15 +539,33 @@ pub struct SocialConfig {
     #[arg(long, env = "SENDGRID_FROM_EMAIL")]
     pub sendgrid_from_email: Option<String>,
 
+    /// The generic template: outbox deliveries, confirmations and ad-hoc emails; unset records every delivery as skipped.
+    #[arg(long, env = "SENDGRID_NOTIFICATION_TEMPLATE_ID")]
+    pub sendgrid_notification_template_id: Option<String>,
+
+    /// The account confirmation email's own template; unset uses SENDGRID_NOTIFICATION_TEMPLATE_ID.
     #[arg(long, env = "SENDGRID_VALIDATE_EMAIL_TEMPLATE_ID")]
     pub sendgrid_validate_email_template_id: Option<String>,
 
+    /// The credits confirmation email's own template; unset uses SENDGRID_NOTIFICATION_TEMPLATE_ID.
     #[arg(long, env = "SENDGRID_VALIDATE_CREDITS_EMAIL_TEMPLATE_ID")]
     pub sendgrid_validate_credits_email_template_id: Option<String>,
 
-    /// The email channel of the notification outbox; unset records every delivery as skipped.
-    #[arg(long, env = "SENDGRID_NOTIFICATION_TEMPLATE_ID")]
-    pub sendgrid_notification_template_id: Option<String>,
+    /// SendGrid validates notification, confirmation and ad-hoc emails but delivers none (never the code-rendered mail).
+    #[arg(long, env = "SENDGRID_SANDBOX_MODE", default_value_t = false, action = clap::ArgAction::Set)]
+    pub sendgrid_sandbox_mode: bool,
+
+    /// HMAC key of the notification emails' unsubscribe links; unset holds notification emails pending.
+    #[arg(long, env = "SIGNING_KEY", hide_env_values = true)]
+    pub signing_key: Option<String>,
+
+    /// Public notifications origin of the email unsubscribe links.
+    #[arg(
+        long,
+        env = "NOTIFICATIONS_SERVICE_BASE_URL",
+        default_value = "https://notifications.decentraland.org"
+    )]
+    pub notifications_service_base_url: String,
 
     #[arg(
         long,
@@ -562,6 +580,18 @@ pub struct SocialConfig {
         default_value = "https://decentraland.org/marketplace"
     )]
     pub marketplace_base_url: String,
+
+    /// Bearer of POST /notifications/notifications/email; unset refuses it.
+    #[arg(long, env = "NOTIFICATION_SERVICE_TOKEN", hide_env_values = true)]
+    pub notification_service_token: Option<String>,
+
+    /// Governance's bearer of POST /notifications/notifications (`governance_*` types only); unset disables it.
+    #[arg(long, env = "NOTIFICATIONS_GOVERNANCE_TOKEN", hide_env_values = true)]
+    pub notifications_governance_token: Option<String>,
+
+    /// The rewards app's bearer of POST /notifications/notifications (`reward_*` types only); unset disables it.
+    #[arg(long, env = "NOTIFICATIONS_REWARDS_TOKEN", hide_env_values = true)]
+    pub notifications_rewards_token: Option<String>,
 
     /// Cloudflare Turnstile secret for confirm-email; unset turns the check off.
     #[arg(long, env = "TURNSTILE_SECRET_KEY", hide_env_values = true)]
@@ -592,6 +622,22 @@ pub struct SocialConfig {
         default_value_t = 15
     )]
     pub notification_delivery_interval_secs: u64,
+
+    /// Days a producer broadcast stays in every inbox before it is hidden and pruned.
+    #[arg(
+        long,
+        env = "NOTIFICATIONS_BROADCAST_HORIZON_DAYS",
+        default_value_t = 90
+    )]
+    pub notifications_broadcast_horizon_days: u64,
+    /// Pending notification emails idle this long end skipped as expired (default 7 days;
+    /// `0` never expires while SIGNING_KEY is set, other values below an hour are raised to an hour).
+    #[arg(
+        long,
+        env = "NOTIFICATION_DELIVERY_MAX_AGE_SECS",
+        default_value_t = 604_800
+    )]
+    pub notification_delivery_max_age_secs: u64,
 
     // social/badges: the old catalyrst-badges settings (the art is embedded).
     /// Bearer of the badge grant/revoke routes; unset refuses them.

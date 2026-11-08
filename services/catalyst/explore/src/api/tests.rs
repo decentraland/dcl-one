@@ -32,6 +32,9 @@ struct Mock {
     denylist: Mutex<Vec<Value>>,
     flags: Mutex<Value>,
     flags_etag: Mutex<String>,
+    /// The `events` application's document (`events.json`), the one
+    /// `events::foundation` reads.
+    events_flags: Mutex<Value>,
     entities: Mutex<Vec<Value>>,
     profiles: Mutex<Vec<Value>>,
     tiles: Mutex<Value>,
@@ -94,6 +97,13 @@ fn mock() -> Arc<Mock> {
             json!({"flags": {"explorer-alfa-minimum-requirements": true, "explorer-feature-a": false}, "variants": {"explorer-variant": {"name": "v", "enabled": true}}}),
         ),
         flags_etag: Mutex::new("\"flags-1\"".into()),
+        events_flags: Mutex::new(json!({
+            "flags": {"events-decentraland-foundation-addresses": true},
+            "variants": {"events-decentraland-foundation-addresses": {
+                "name": "addresses", "enabled": true,
+                "payload": {"type": "json", "value": "[\"0xF0000000000000000000000000000000000000F0\"]"}
+            }}
+        })),
         entities: Mutex::new(vec![
             entity("bafyscene", &["0,0", "0,1"]),
             entity("bafyother", &["5,5"]),
@@ -142,6 +152,20 @@ async fn serve_mock(mock: Arc<Mock>) -> SocketAddr {
             StatusCode::OK,
             [(header::ETAG, etag)],
             Json(m.flags.lock().clone()),
+        )
+            .into_response()
+    }
+    async fn events_flags(AxState(m): AxState<Arc<Mock>>, headers: HeaderMap) -> Response {
+        m.hit("events-flags");
+        if headers.get(header::REFERER).and_then(|v| v.to_str().ok())
+            != Some("https://decentraland.org")
+        {
+            return (StatusCode::OK, Json(json!({"flags": {}, "variants": {}}))).into_response();
+        }
+        (
+            StatusCode::OK,
+            [(header::ETAG, "\"events-flags-1\"")],
+            Json(m.events_flags.lock().clone()),
         )
             .into_response()
     }
@@ -267,6 +291,7 @@ async fn serve_mock(mock: Arc<Mock>) -> SocketAddr {
         .route("/banned-names", post(banned))
         .route("/denylist.json", get(denylist))
         .route("/explorer.json", get(flags))
+        .route("/events.json", get(events_flags))
         .route("/entities/active", post(entities))
         .route("/profiles", post(profiles))
         .route("/profiles/metadata", post(profiles_metadata))
@@ -1727,6 +1752,58 @@ async fn feature_flags_mirror_sends_the_referer_applies_overrides_and_uses_the_e
     let doc = restarted.state.flags.document();
     assert_eq!(doc["flags"]["explorer-feature-a"], false);
     assert_eq!(doc["flags"]["explorer-local-only"], true);
+
+    jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+/// Review architecture-1 explore-change-4: the pass also mirrors the
+/// `events` document, so `events::foundation` reads a real row.
+#[tokio::test]
+async fn feature_flags_mirror_stores_the_events_document_for_the_foundation_names() {
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let mock = mock();
+    let addr = serve_mock(mock.clone()).await;
+    let node = node_with_db(Settings::for_tests(sources_at(addr)), db.pool.clone()).await;
+    let (jobs, ctx) = job_ctx().await;
+
+    feature_flags::run_pass(&node.state, &ctx).await.unwrap();
+    assert_eq!(
+        mock.hits("events-flags"),
+        1,
+        "the referer-gated events document"
+    );
+    let (stored, etag): (Value, Option<String>) =
+        sqlx::query_as("SELECT document, etag FROM explore_api.feature_flags WHERE app = 'events'")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(stored, *mock.events_flags.lock());
+    assert_eq!(etag.as_deref(), Some("\"events-flags-1\""));
+
+    let foundation = crate::events::foundation::Foundation::default();
+    foundation.refresh_if_stale(&db.pool).await;
+    assert_eq!(
+        crate::events::foundation::display_name(
+            &foundation.snapshot(),
+            Some("0xf0000000000000000000000000000000000000f0"),
+            Some("Alice".into())
+        ),
+        Some(crate::events::foundation::FOUNDATION_NAME.into())
+    );
+    let (explorer,): (Value,) =
+        sqlx::query_as("SELECT document FROM explore_api.feature_flags WHERE app = 'explorer'")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert!(
+        explorer["variants"]
+            .get("events-decentraland-foundation-addresses")
+            .is_none(),
+        "the two documents stay apart"
+    );
 
     jobs.shutdown(Duration::from_secs(1)).await;
     db.teardown().await;

@@ -204,8 +204,8 @@ pub fn map_auth_error(err: AuthError) -> SignedFetchError {
 /// Which payload shapes a surface accepts: the crypto-middleware 6.x one
 /// alone (the old social-service verified "the 6.x payload only"), or 6.x
 /// first and then the pre-6.0.0 folded one behind the canonical-`signer`
-/// guard (the explore reads and the notifications routes, whose upstreams
-/// still declare the legacy fallback).
+/// guard (the explore reads and `PUT /notifications/read`, whose upstreams
+/// still declare the legacy fallback; the other notifications routes take 6.x only).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PayloadPolicy {
     V6Only,

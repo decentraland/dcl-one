@@ -70,6 +70,9 @@ nix develop --command bash tooling/dev-smoke.sh
 nix develop --command bash tooling/dev-test.sh [rust|e2e]   # rust: PostgreSQL only
 ```
 
+CI runs the Rust suites in `nix develop .#ci`: the toolchain, the services the tests
+start and the build tools, without the web and media tools.
+
 Run both in a fresh checkout. `python3 tooling/ci-local.py install` adds hooks
 that run the matching workflows' checks (images need Linux or
 `CI_LOCAL_IMAGES=1`); `ci-local.py run [REV]` runs them without pushing.

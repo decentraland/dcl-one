@@ -20,6 +20,7 @@ pub mod calls;
 pub mod chain;
 pub mod executions;
 pub mod facts;
+pub mod feed_rate;
 pub mod quote;
 pub mod tracker;
 pub mod venues;
