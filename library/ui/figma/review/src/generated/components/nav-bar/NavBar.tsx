@@ -2315,7 +2315,7 @@ export const navBarCases: MatrixCase[] = [
   { key: 'viewport:desktop|balances:credits|theme:dark|signedIn', props: {"viewport":"desktop","balances":"credits","theme":"dark","signedIn":true}, states: ["base"] }
 ]
 
-const navBarSuppressedProps = ['label', 'label2', 'label3', 'label4', 'label5', 'label6', 'label7', 'label8']
+const navBarSuppressedProps = Object.freeze(['label', 'label2', 'label3', 'label4', 'label5', 'label6', 'label7', 'label8'] as const)
 
 export const NavBar = ({
   viewport = 'largeDesktop',

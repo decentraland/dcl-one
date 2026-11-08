@@ -229,3 +229,76 @@ describe('text roles in the runtime', () => {
     })
   })
 })
+
+describe('caller isolation through real rendering', () => {
+  describe('when an untyped caller passes every runtime parameter name', () => {
+    it('should keep the generated element, view, slots and component name', () => {
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      try {
+        const { container } = render(
+          <UntypedNavBar
+            as="button"
+            views={{}}
+            select={{ values: { viewport: 'mobile' }, booleans: {}, flags: {} }}
+            slots={{ label: 'Injected' }}
+            component="Other"
+            attributes={{ id: 'injected' }}
+            semanticProps={{ logoHref: 'https://example.com' }}
+          />
+        )
+        const root = container.firstElementChild!
+        expect(root.tagName).toBe('NAV')
+        expect(container.textContent).toContain('Sign In')
+        expect(container.textContent).not.toContain('Injected')
+        expect(container.querySelector('a[href="https://example.com"]')).toBeNull()
+      } finally {
+        log.mockRestore()
+      }
+    })
+  })
+
+  describe('when a caller passes standard element props', () => {
+    it('should forward className, style, events, aria, data and ref to the root', () => {
+      const onClick = vi.fn()
+      let element: HTMLElement | null = null
+      const { container } = render(
+        <UntypedNavBar
+          className="consumer"
+          style={{ outline: '1px solid red' }}
+          onClick={onClick}
+          aria-describedby="help"
+          data-testid="bar"
+          ref={(node: HTMLElement | null) => {
+            element = node
+          }}
+        />
+      )
+      const root = container.firstElementChild as HTMLElement
+      expect(root.classList.contains('consumer')).toBe(true)
+      expect(root.style.outline).toBe('1px solid red')
+      expect(root.getAttribute('aria-describedby')).toBe('help')
+      expect(root.getAttribute('data-testid')).toBe('bar')
+      expect(element).toBe(root)
+      root.click()
+      expect(onClick).toHaveBeenCalledTimes(1)
+    })
+
+    it('should disable a generated button and block its click', () => {
+      const onClick = vi.fn()
+      const { container } = render(<UntypedButton disabled onClick={onClick} />)
+      const button = container.querySelector('button')!
+      expect(button.disabled).toBe(true)
+      button.click()
+      expect(onClick).not.toHaveBeenCalled()
+    })
+
+    it('should render the same forwarded attributes on the server', () => {
+      const html = renderToString(
+        <UntypedNavBar className="consumer" data-testid="bar" aria-describedby="help" />
+      )
+      expect(html).toMatch(/^<nav[^>]*class="[^"]*consumer/)
+      expect(html).toContain('data-testid="bar"')
+      expect(html).toContain('aria-describedby="help"')
+    })
+  })
+})

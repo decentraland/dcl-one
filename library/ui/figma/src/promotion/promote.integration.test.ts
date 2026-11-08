@@ -211,7 +211,7 @@ describe('promoteReviewed over a hand-written component', () => {
 
       expect(await promoteReviewed(app)).toMatchObject({ components: ['TitleBar'] })
       const promoted = await readFile(path.join(root, 'components/TitleBar/TitleBar.tsx'), 'utf8')
-      expect(promoted).toMatch(/^const titleBarSuppressedProps = \['label', /m)
+      expect(promoted).toMatch(/^const titleBarSuppressedProps = Object\.freeze\(\['label', /m)
       expect(promoted).toContain('suppressed={titleBarSuppressedProps}')
       expect(promoted).toContain('attributes={rest}')
       expect(promoted).not.toContain('{...rest}')

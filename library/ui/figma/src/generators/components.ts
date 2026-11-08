@@ -264,6 +264,23 @@ function caseProps(view: ViewSpec): Record<string, string | boolean> {
 
 // Sparse axes are a relation, not independent options. Interaction flags keep their existing
 // fallback contract; only captured enum and non-flag boolean combinations constrain the API.
+// A caller that omits every axis prop gets the defaults, so that selection must be a drawn view: the runtime throws
+// for any undrawn one, and a default the generator itself produces must never be one.
+function assertDrawnDefaults(spec: ComponentSpec): void {
+  const axes = spec.props.filter((prop) => !FLAG_PROPS.includes(prop.name))
+  const drawn = spec.views.some((view) =>
+    axes.every((prop) =>
+      prop.kind === 'boolean'
+        ? (view.booleans[prop.name] ?? false) === prop.default
+        : (view.values[prop.name] ?? prop.default) === prop.default
+    )
+  )
+  if (!drawn)
+    throw new Error(
+      `${spec.name}: its default selection (${axes.map((prop) => `${prop.name}=${JSON.stringify(prop.default)}`).join(', ')}) is not a captured view`
+    )
+}
+
 function variantContract(spec: ComponentSpec): string | undefined {
   const axes = spec.props.filter((prop) => !FLAG_PROPS.includes(prop.name))
   const rows = [
@@ -326,6 +343,7 @@ function emitComponent(
         `({ ${role.name}?: undefined; ${role.label}?: string } | { ${role.name}: number; ${role.label}: string })`
     )
     .join(' & ')
+  assertDrawnDefaults(spec)
   const contract = variantContract(spec)
 
   const refImports = [
@@ -434,7 +452,7 @@ function emitComponent(
     // Text overrides the type forbids. They are a module constant, not a prop, so no caller can replace the list.
     ...(omittedTextSlots.length
       ? [
-          `const ${varName}SuppressedProps = [${omittedTextSlots.map((slot) => quote(slot.name)).join(', ')}]`,
+          `const ${varName}SuppressedProps = Object.freeze([${omittedTextSlots.map((slot) => quote(slot.name)).join(', ')}] as const)`,
           ''
         ]
       : []),

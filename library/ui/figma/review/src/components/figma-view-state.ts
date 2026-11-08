@@ -39,8 +39,9 @@ function describeSelection(selection: Selection): string {
 
 // Interaction flags Figma did not draw in combination (for example "selected" + "disabled") fall back to the
 // closest drawn view by dropping flags from the end. Any other selection Figma never drew throws, in every
-// environment and during server rendering: the typed props already reject it, so only an untyped caller (plain JS,
-// spread props) reaches here, and rendering another view would silently change the viewport, state or theme asked for.
+// environment and during server rendering. The generator types a sparse component's axes as a union of the drawn
+// combinations (its variant contract) and only emits defaults that are drawn, so only an untyped caller (plain JS,
+// spread props) reaches here; rendering another view would silently change the viewport, state or theme asked for.
 function pickView<T>(
   views: Record<string, T>,
   selection: Selection,

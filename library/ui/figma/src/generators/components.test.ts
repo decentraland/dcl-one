@@ -318,4 +318,15 @@ describe('generateComponents with Figma motion', () => {
 
     expect(css).not.toContain('transition')
   })
+
+  describe('when the default selection of a component is not a captured view', () => {
+    it('should fail generation instead of emitting a component that throws when rendered with no props', async () => {
+      const spec = structuredClone((await componentSpecs()).find((item) => item.name === 'Button')!)
+      const variant = spec.props.find((prop) => prop.name === 'variant')!
+      spec.views = spec.views.filter((view) => view.values.variant !== variant.default)
+      expect(() => generateComponents([spec], context)).toThrow(
+        `Button: its default selection (variant="${String(variant.default)}"`
+      )
+    })
+  })
 })

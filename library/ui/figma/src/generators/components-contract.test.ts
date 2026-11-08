@@ -141,7 +141,7 @@ describe('generated public component contracts', () => {
       const omitted = spec.slots.filter((slot) => slot.kind === 'text').map((slot) => slot.name)
       expect(omitted.length).toBeGreaterThan(1)
       expect(source).toContain(
-        `const navBarSuppressedProps = [${omitted.map((name) => `'${name}'`).join(', ')}]`
+        `const navBarSuppressedProps = Object.freeze([${omitted.map((name) => `'${name}'`).join(', ')}] as const)`
       )
       expect(source).toContain('suppressed={navBarSuppressedProps}')
       expect(source).not.toMatch(/\b_label\d*\b/)
@@ -239,7 +239,9 @@ describe('when a JavaScript caller supplies suppressed text slots', () => {
   it('should type each as never and list it for the runtime to drop', async () => {
     const spec = await navbarSpec()
     const source = sourceFor(spec)
-    const suppressed = /const navBarSuppressedProps = \[([^\]]*)\]/.exec(source)?.[1] ?? ''
+    const suppressed =
+      /const navBarSuppressedProps = Object\.freeze\(\[([^\]]*)\] as const\)/.exec(source)?.[1] ??
+      ''
     for (const slot of spec.slots.filter((item) => item.kind === 'text')) {
       expect(suppressed).toContain(`'${slot.name}'`)
       expect(source).toContain(`${slot.name}?: never`)
