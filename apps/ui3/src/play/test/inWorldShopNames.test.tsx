@@ -21,6 +21,8 @@ const ADDRESS = '0x00000000000000000000000000000000000ab47f'
 const ME: Profile = { address: ADDRESS, name: 'Mojito', hasClaimedName: true, isGuest: false }
 /** DCLRegistrar on mainnet, the network a build that names none registers on. */
 const MAINNET_REGISTRAR = '0x2a187453064356c898cae034eaed119e1663acb8'
+/** The Marketplace's rollout, which NAME resales and offers to an owner need. */
+const MARKETPLACE_ON = { 'dapps-shop-marketplace-features': true }
 const TRUE_WORD = `0x${'0'.repeat(63)}1`
 const FALSE_WORD = `0x${'0'.repeat(64)}`
 
@@ -38,6 +40,8 @@ interface Routes {
   bannedDown?: boolean
   /** The credits quote is down. */
   quoteDown?: boolean
+  /** decentraland.org's `dapps` rollout flags. */
+  flags?: Record<string, boolean>
   /** The NAMEs on resale (/shop-api/v1/nfts?category=ens): their labels and MANA prices, or down; or the
    *  answer for each page, by how many it skips (held back while its promise is). */
   resales?: ResalePage | 'down' | ((skip: number) => ResalePage | Promise<ResalePage>)
@@ -62,6 +66,7 @@ function serve(routes: Routes = {}): ReturnType<typeof vi.fn> {
   const f = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input instanceof Request ? input.url : input), location.href)
     const path = url.pathname
+    if (path.endsWith('/dapps.json')) return Response.json({ flags: routes.flags ?? {}, variants: {} })
     if (path.endsWith('/dcl-lists/banned-names')) {
       await routes.bannedAfter
       if (routes.bannedDown) return new Response('', { status: 503 })
@@ -225,7 +230,7 @@ describe('the in-world Shop’s Names', () => {
   })
 
   it('says a taken NAME is taken, and MAKE OFFER opens its bid page on the web Marketplace, listed or not', async () => {
-    serve({ taken: ['mojito'] })
+    serve({ taken: ['mojito'], flags: MARKETPLACE_ON })
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
     renderShop()
     const field = await openNames()
@@ -241,6 +246,28 @@ describe('the in-world Shop’s Names', () => {
     const url = new URL(open.mock.calls[0]![0] as string)
     expect(url.pathname).toBe(`/shop/token/${MAINNET_REGISTRAR}/${token}/bid`)
     expect(url.searchParams.has('section')).toBe(false)
+  })
+
+  it('without the Marketplace’s rollout a taken NAME is only taken: no MAKE OFFER and no RESALE NAME', async () => {
+    const f = serve({ taken: ['mojito'] })
+    renderShop()
+    const field = await openNames()
+    await userEvent.type(field, 'Mojito')
+    expect(await screen.findByText('This NAME Is Taken. Choose Another NAME.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'MAKE OFFER' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Resale name' })).toBeNull()
+    // Nor is the resale feed read.
+    expect(f.mock.calls.some(([input]) => new URL(String(input), location.href).pathname.endsWith('/shop-api/v1/nfts'))).toBe(false)
+  })
+
+  it('a guest gets no MAKE OFFER and no RESALE NAME even with the rollout on: there is no account to hold a wallet', async () => {
+    serve({ taken: ['mojito'], flags: MARKETPLACE_ON })
+    renderShop({ profile: fakeProfileState({ data: { ...ME, isGuest: true, hasClaimedName: false } }) })
+    const field = await openNames()
+    await userEvent.type(field, 'Mojito')
+    expect(await screen.findByText('This NAME Is Taken. Choose Another NAME.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'MAKE OFFER' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Resale name' })).toBeNull()
   })
 
   it('offers no NAME until the banned list answers', async () => {
@@ -314,7 +341,7 @@ describe('the in-world Shop’s Names', () => {
   })
 
   it('RESALE NAME lists the NAMEs on resale with their MANA price, each bought on the web Marketplace', async () => {
-    serve({ resales: { names: [{ name: 'Mojito', priceWei: '500000000000000000000' }, { name: 'Cattie', priceWei: '12500000000000000000' }] } })
+    serve({ flags: MARKETPLACE_ON, resales: { names: [{ name: 'Mojito', priceWei: '500000000000000000000' }, { name: 'Cattie', priceWei: '12500000000000000000' }] } })
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
     renderShop()
     await openNames()
@@ -331,18 +358,18 @@ describe('the in-world Shop’s Names', () => {
   })
 
   it('says when no NAME is on resale, and offers to try again when the list can’t be read', async () => {
-    serve({ resales: 'down' })
+    serve({ resales: 'down', flags: MARKETPLACE_ON })
     renderShop()
     await openNames()
     await userEvent.click(screen.getByRole('button', { name: 'Resale name' }))
     expect(await screen.findByText('Couldn\'t load the NAMEs on resale')).toBeInTheDocument()
-    serve({ resales: { names: [] } })
+    serve({ flags: MARKETPLACE_ON, resales: { names: [] } })
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(await screen.findByText('No NAMEs on resale right now')).toBeInTheDocument()
   })
 
   it('pages RESALE NAME through the list, newest listings first', async () => {
-    const f = serve({ resales: { names: [{ name: 'Mojito', priceWei: '1000000000000000000' }], total: 30 } })
+    const f = serve({ flags: MARKETPLACE_ON, resales: { names: [{ name: 'Mojito', priceWei: '1000000000000000000' }], total: 30 } })
     renderShop()
     await openNames()
     await userEvent.click(screen.getByRole('button', { name: 'Resale name' }))
@@ -358,7 +385,7 @@ describe('the in-world Shop’s Names', () => {
     // Page 2 held one NAME, sold before it was read: 24 are left, all on page 1.
     const firstPage = Array.from({ length: 24 }, (_, i) => ({ name: i === 0 ? 'Mojito' : `Name${i}`, priceWei: '1000000000000000000' }))
     let sold = false
-    serve({ resales: (skip) => (skip === 0 ? { names: firstPage, total: sold ? 24 : 25 } : { names: [], total: 24 }) })
+    serve({ flags: MARKETPLACE_ON, resales: (skip) => (skip === 0 ? { names: firstPage, total: sold ? 24 : 25 } : { names: [], total: 24 }) })
     renderShop()
     await openNames()
     await userEvent.click(screen.getByRole('button', { name: 'Resale name' }))
@@ -431,7 +458,7 @@ describe('the in-world Shop’s Names', () => {
   })
 
   it('shows the player’s own name over the avatar on RESALE NAME: claimed with its badge, unclaimed with its suffix', async () => {
-    serve({ resales: { names: [] } })
+    serve({ flags: MARKETPLACE_ON, resales: { names: [] } })
     const { rerender, props } = renderShop()
     await openNames()
     await userEvent.click(screen.getByRole('button', { name: 'Resale name' }))

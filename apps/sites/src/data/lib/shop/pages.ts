@@ -73,13 +73,21 @@ export function isPrivateShopPage(page: ShopPageId): boolean {
   return PRIVATE.has(page);
 }
 
+/** The Marketplace's public pages: drawn only for a web3 wallet session with its rollout on (ui3 market/access.tsx).
+ * The server reads for no one, so it renders nothing for them, reads nothing and keeps them out of the index. */
+const MARKETPLACE: ReadonlySet<ShopPageId> = new Set<ShopPageId>(["lands", "account", "rankings"]);
+
+export function isMarketplaceShopPage(page: ShopPageId): boolean {
+  return MARKETPLACE.has(page);
+}
+
 /** The head for `page` when the loader found nothing more specific. */
 export function defaultShopSeo(page: ShopPageId, canonical?: string): ShopSeo {
   return {
     title: page === "overview" ? "Shop" : shopPageTitle(page),
     description: DESCRIPTIONS[page] ?? "The Decentraland Shop: wearables, emotes, NAMEs and LAND.",
-    canonical: isPrivateShopPage(page) ? undefined : canonical,
-    noindex: isPrivateShopPage(page),
+    canonical: isPrivateShopPage(page) || isMarketplaceShopPage(page) ? undefined : canonical,
+    noindex: isPrivateShopPage(page) || isMarketplaceShopPage(page),
   };
 }
 

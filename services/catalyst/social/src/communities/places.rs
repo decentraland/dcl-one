@@ -83,11 +83,14 @@ fn is_uuid_shaped(id: &str) -> bool {
 /// the destinations lookup as one array (upstream's `POST /api/destinations`
 /// body; here explore's [`destinations_by_ids`](crate::explore::places::destinations::destinations_by_ids)
 /// in process), and each row takes the fields of the destination whose `id`
-/// is exactly its id, after its own. So a `*.eth` row, an id stored in
-/// uppercase or a disabled place stays bare. A failed lookup answers the bare
-/// rows. `addedBy` and `addedAt` stay on every row (ui3 reads them); explore's
-/// own `kind` does not (production's destination has none, nothing here reads
-/// it).
+/// is exactly its id, after its own. The destinations are `world is false`
+/// places and the catalogue's worlds, each keyed by its lowercased name
+/// (places `Place/model.ts:149`, `World/model.ts:132-135,466-469`): a `*.eth`
+/// row is its catalogue world, while a world scene's UUID, a `*.eth` name the
+/// catalogue lacks, an id stored in uppercase or a disabled place stays bare.
+/// A failed lookup answers the bare rows. `addedBy` and `addedAt` stay on
+/// every row (ui3 reads them); explore's own `kind` does not (production's
+/// destination has none, nothing here reads it).
 async fn with_destinations(
     state: &CommunitiesState,
     community: CommunityId,

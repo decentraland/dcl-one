@@ -32,6 +32,11 @@ export interface ShopCapabilities {
   wallet: ShopWalletKind | null
   credits: boolean
   reason?: 'signedOut' | 'guest' | 'noWallet'
+  /**
+   * Whether the login may use the Marketplace (resales, bids, NAME offers): a web3 wallet that is how the account
+   * signed in, here to sign as it (shop/market/access.tsx). Absent means it may not.
+   */
+  marketplace?: boolean
 }
 
 export interface ShopBalance {

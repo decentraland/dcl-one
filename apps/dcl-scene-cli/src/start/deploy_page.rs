@@ -804,14 +804,17 @@ pub(super) async fn preflight(
 /// for the same wallet instead of fanning out a second time beside it.
 async fn rights_after_warm(st: &AppState, dest: &Dest, address: &str) -> Arc<Rights> {
     let key = format!("rights|{address}|{}", dest.headline);
-    for _ in 0..150 {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut delay = Duration::from_millis(25);
+    loop {
         if let Some(hit) = deploy_rights::rights_peek(&st.deploy.rights, dest, address) {
             return hit;
         }
-        if !warm_slot(st).contains(&key) {
+        if !warm_slot(st).contains(&key) || Instant::now() >= deadline {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(delay.min(deadline.saturating_duration_since(Instant::now()))).await;
+        delay = delay.saturating_mul(2).min(Duration::from_millis(500));
     }
     deploy_rights::cached_rights(&st.deploy.rights, dest, address).await
 }
@@ -1145,6 +1148,7 @@ fn spawn_connect_poll(
 ) {
     tokio::spawn(async move {
         let deadline = Instant::now() + CONNECT_WINDOW;
+        let mut delay = Duration::from_millis(250);
         let outcome = loop {
             if Instant::now() >= deadline {
                 break Err("the sign-in expired \u{2014} connect again".to_string());
@@ -1165,7 +1169,8 @@ fn spawn_connect_poll(
                     break Err(format!("the relay refused the wait (HTTP {status})"));
                 }
             }
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            tokio::time::sleep(delay.min(deadline.saturating_duration_since(Instant::now()))).await;
+            delay = delay.saturating_mul(2).min(Duration::from_secs(5));
         };
         match outcome {
             Ok(()) => *connect_slot(&st) = None,
@@ -2405,7 +2410,7 @@ const TARGET_SCRIPT: &str = concat!(
     include_str!("page_common.js"),
     include_str!("target.js"),
     r#"(() => {
-  if (document.getElementById('connect-pending')) setTimeout(() => location.reload(), 3000);
+  if (document.getElementById('connect-pending')) pageRefreshWhen((doc) => !doc.getElementById('connect-pending'), 300000);
 })();"#
 );
 

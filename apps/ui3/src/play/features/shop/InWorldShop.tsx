@@ -9,11 +9,12 @@
 // typed NAME shows over the avatar in a nametag, as it will read once claimed, and CLAIM NAME registers it
 // on the web Shop; RESALE NAME lists the NAMEs on resale, each bought on the web Marketplace.
 
-import { useQueries, useQueryClient } from '@tanstack/react-query'
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
 import { defaultWorn, wornUrns } from '../../../shop/discovery/lib/outfit'
 import { BASE_FEMALE, BASE_MALE, type BodyShapeUrn } from '../../../shop/detail/lib/bodyShape'
+import { hostOr } from '../../../shop/discovery/flags'
 import { REMOTE_FLAG } from '../../../shop/discovery/lib/remoteFlags'
 import { NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput } from '../../../shop/names/names'
 import { Button, Chip, ChevronDown, ChevronLeft, EmptyState, MaskIcon, OptionMenu, Pager, ScrollThumb, SearchField, showConfirm, showToast, Spinner, Tabs, type TabItem } from '../../design'
@@ -40,10 +41,11 @@ import { useShopFlag } from './flagsQuery'
 import { homeQueries, useNewest, useShopOutfits, useTrending, type OutfitSummary } from './homeQuery'
 import { tryOnUrn, webNameOfferUrl, webNameTokenUrl, webNameUrl, webOutfitUrl, webShopUrl } from './itemLinks'
 import { NAME_RESALES_KEY, resalePageCount, useNameCheck, useNameResales, type NameResale } from './namesQuery'
-import { useCreditsBalance, useShopCapabilities, useShopPurchase } from './purchaseQuery'
+import { purchaseQueries, useCreditsBalance, useShopPurchase } from './purchaseQuery'
 import { categoryGlyph, CreatorName, SelectedItemPanel, ShopCard } from './ShopItems'
 import { AvatarNametag, CreditsPill, EmoteControls, PriceTag, ShopCart, ShopCartBadge, ShopCartToast, ShopFilters, ShopHome, ShopItemSkeleton, ShopNameCard, ShopNames, type PressedWith, type ShopHomeOutfitOffer, type ShopNamesTab } from './ui'
 import styles from './InWorldShop.module.css'
+import { inShell } from '../../lib/shell'
 
 type Section = 'all' | 'wearables' | 'emotes' | 'names'
 const SECTIONS: TabItem<Section>[] = [
@@ -173,11 +175,31 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   // The listings wait for the creator-sales answer (or its failure): read before it, they'd come without
   // their sale prices and be read again once it lands.
   const creatorSalesFlag = useShopFlag(REMOTE_FLAG.creatorSales)
-  const flagsKnown = creatorSalesFlag !== undefined
+  // Resales, NAME resales and offers are the Marketplace's (shop/market/access.tsx): offered only while its rollout is
+  // on (a host's declaration first, as on the web) and to a web3 wallet. In the web shell that is the shell's own
+  // answer for the login (its capabilities' `marketplace`: a web3 sign-in it recorded, with a wallet here to sign), and
+  // the listings wait for it. Elsewhere (the desktop and native HUDs) nothing here can buy: a signed-in player who is
+  // not a guest may browse them, and the web Shop a resale opens decides again (AGENTS.md). Off, the rows and the
+  // catalogue list creators' primary sales only.
+  const capabilitiesQuery = useQuery(purchaseQueries.capabilities())
+  // The answer is the login's: another login (a logout, then another account) asks again, so neither its buyer nor
+  // its Marketplace answer outlives the account it was for.
+  const loginAddress = profile.data?.address?.toLowerCase() ?? null
+  useEffect(() => {
+    void queryClient.invalidateQueries({ queryKey: ['shop', 'purchase'] })
+  }, [loginAddress, queryClient])
+  const capabilities = capabilitiesQuery.data
+  const web3Player = inShell ? capabilities?.marketplace === true : profile.data != null && !profile.data.isGuest
+  // Settled once the shell answers, or fails to (then without the Marketplace), so the listings never wait forever.
+  const accessKnown = !inShell || capabilities !== undefined || capabilitiesQuery.isError
+  const marketplaceFlag = hostOr('marketplaceFeatures', useShopFlag(REMOTE_FLAG.marketplaceFeatures) ?? null) === true && web3Player
+  const flagsKnown = creatorSalesFlag !== undefined && accessKnown
   const creatorSales = creatorSalesFlag ?? false
-  const grid = useShopCatalogue(filters, page, { creatorSales, enabled: shop.open && flagsKnown && isCatalogue(section) })
-  const nameCheck = useNameCheck(nameDraft, shop.open && section === 'names' && nameTab === 'unique')
-  const resales = useNameResales(resalePage, shop.open && section === 'names' && nameTab === 'resale')
+  const grid = useShopCatalogue(filters, page, { creatorSales, marketplace: marketplaceFlag, enabled: shop.open && flagsKnown && isCatalogue(section) })
+  // RESALE NAME is the Marketplace's: without it the section stays on UNIQUE NAME and the resale feed is never read.
+  const namesTab: ShopNamesTab = marketplaceFlag ? nameTab : 'unique'
+  const nameCheck = useNameCheck(nameDraft, shop.open && section === 'names' && namesTab === 'unique')
+  const resales = useNameResales(resalePage, shop.open && section === 'names' && namesTab === 'resale')
   useEffect(() => {
     if (resaleScroller.current) resaleScroller.current.scrollTop = 0
   }, [resalePage])
@@ -200,13 +222,12 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   const outfits = useShopOutfits(onHome)
   // Each outfit's items, for its tile's price (wearing it reads the same query).
   const outfitReads = useQueries({ queries: (onHome ? (outfits.data ?? []) : []).map((o) => homeQueries.outfitItems(o)) })
-  const trending = useTrending(creatorSales, onHome && flagsKnown)
-  const newest = useNewest(creatorSales, onHome && flagsKnown)
+  const trending = useTrending({ creatorSales, marketplace: marketplaceFlag }, onHome && flagsKnown)
+  const newest = useNewest({ creatorSales, marketplace: marketplaceFlag }, onHome && flagsKnown)
   // Escape closes the filters first, as the HUD's other popovers (OptionMenu registers its own).
   useEffect(() => (menu === 'filters' ? registerCancelLayer(() => setMenu(null)) : undefined), [menu])
   const items = grid.data?.items ?? []
   const total = grid.data?.total ?? 0
-  const capabilities = useShopCapabilities()
   const credits = useCreditsBalance(shop.open ? (capabilities?.buyer ?? null) : null)
   const purchase = useShopPurchase(() => onNavigate('backpack'))
   // A guest login's cart is the signed-out one, which the account takes over once one signs in.
@@ -582,7 +603,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
           </div>
           {section === 'names' &&
             !zoomed &&
-            (nameTab === 'unique' ? (
+            (namesTab === 'unique' ? (
               // The NAME being picked, over the avatar as it will read once claimed (in a claimed NAME's colour).
               <AvatarNametag className={styles.nametag} name={nameDraft} typing={nameFocused} color={userNameColor(nameDraft, ownAddress, true)} />
             ) : (
@@ -610,9 +631,10 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
           <section className={styles.content} aria-label={section === 'all' ? 'Shop home' : section === 'emotes' ? 'Emotes' : section === 'names' ? 'Names' : 'Wearables'}>
             {section === 'names' ? (
               <ShopNames
-                tab={nameTab}
+                tab={namesTab}
                 onTab={setNameTab}
                 resale={
+                  marketplaceFlag ? (
                   <div className={styles.body}>
                     <div className={styles.scrollWrap}>
                       <div ref={resaleScroller} className={styles.scroller}>
@@ -651,6 +673,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                       <ScrollThumb target={resaleScroller} length={THUMB_LENGTH} className={styles.thumb} />
                     </div>
                   </div>
+                  ) : undefined
                 }
                 value={nameDraft}
                 onChange={typeName}
@@ -663,7 +686,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                 status={nameCheck.status}
                 price={nameCheck.price}
                 onClaim={claimName}
-                onMakeOffer={makeNameOffer}
+                onMakeOffer={marketplaceFlag ? makeNameOffer : undefined}
                 onRetry={nameCheck.retry}
               />
             ) : section === 'all' ? (

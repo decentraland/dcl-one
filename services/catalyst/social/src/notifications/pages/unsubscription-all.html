@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Unsubscription Complete</title>
+  <style>
+      @font-face {
+        font-family: 'Inter';
+        font-style: normal;
+        font-weight: 400;
+        src: url('https://fonts.gstatic.com/s/inter/v3/UcCO3FwrRsHGlyAegSZkx9zS0j_-.woff2') format('woff2');
+      }
+    </style>
+    
+    <!-- Desktop Outlook chokes on web font references and defaults to Times New Roman, so we force a safe fallback font. -->
+    <!--[if mso]>
+        <style>
+            * {
+                font-family: sans-serif !important;
+            }
+        </style>
+    <![endif]-->
+    
+    <!-- All other clients get the webfont reference; some will render the font and others will silently fail to the fallbacks. More on that here: http://stylecampaign.com/blog/2015/02/webfont-support-in-email/ -->
+    <!--[if !mso]><!-->
+        <link href='https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap' rel='stylesheet' type='text/css'>
+    <!--<![endif]-->
+    
+    <style>
+        * {font-family: Inter, Arial, Helvetica, Arial, sans-serif;}
+    </style>
+
+
+  <style>
+  
+      .decentraland-logo {
+          width: 52px
+       }
+    @media (max-width: 600px) {
+      .container {
+        width: 100% !important;
+      }
+      .decentraland-logo {
+          width: 48px
+       }
+    }
+  </style>
+</head>
+
+<body style="margin: 0; padding: 0; font-family: Inter, Helvetica, Arial, sans-serif; background-color: #d6d6d639;">
+  <table class="container" cellpadding="0" cellspacing="0"
+    style="margin: 28px auto; width: 600px; background-color: #fff; padding: 20px; text-align: center;">
+
+    <tr>
+      <td>
+        <img
+          class="decentraland-logo"
+          src="http://cdn.mcauto-images-production.sendgrid.net/2322095804444b83/daa7c679-2475-41f1-a881-a0fe9eb30ade/48x48.png"
+          alt="Decentraland Logo" style="display: block; margin: 20px auto 0;" />
+      </td>
+    </tr>
+    <tr>
+        <td>
+            {{heading}}
+        </td>
+    </tr>
+    <tr>
+      <td>
+      <Table>
+          
+          <tr>
+            <td>
+              <img
+                src="http://cdn.mcauto-images-production.sendgrid.net/2322095804444b83/6c3cdf5d-3317-4569-abea-bf0a0a262ca2/600x240.png"
+                alt="Unsubscribe Banner" style="width: 100%; max-width: 600px; border-radius: 8px;" />
+            </td>
+          </tr>
+          <!-- Rental Details -->
+          <tr>
+            <td>
+                <p>You have been successfully unsubscribed from all email notifications from Decentraland.</p>
+
+                <p>If you want to receive notifications again, re-subscribe and customize your notifications by visiting Account Settings.</p>
+                <p style="height: 41px; padding-bottom: 8px; display: block; text-align: center;"><a href="{{accountLink}}" style="
+                                display: inline-block;
+                                background-color: #ff2d55;
+                                width: 200px;
+                                border-radius: 6px;
+                                color: #fff;
+                                padding: 10px 20px 10px 20px;
+                                text-align: center;
+                                text-decoration: none;
+                                font-family: system-ui, BlinkMacSystemFont, 'Segoe UI',
+                                Roboto, 'Helvetica Neue', Arial, sans-serif;
+                            ">GO TO ACCOUNT SETTINGS</a>
+                </p>
+            </td>
+          </tr>
+        </Table>
+      </td>
+    </tr>
+    <!-- Social Media Links -->
+    <tr>
+      <td>
+        <div style="margin-top: 40px;">
+          <a href="https://dcl.gg/discord"><img
+              src="http://cdn.mcauto-images-production.sendgrid.net/2322095804444b83/83007823-8c78-4e46-a0d8-8af8bbce1348/49x49.png"
+              alt="Discord" style="width: 26px; height: 25px; margin: 0 10px;" /></a>
+          <a href="https://github.com/decentraland"><img
+              src="http://cdn.mcauto-images-production.sendgrid.net/2322095804444b83/7e80e36c-0de5-4aea-b6b8-039ab7ae2495/50x49.png"
+              alt="GitHub" style="width: 26px; height: 25px; margin: 0 10px;" /></a>
+          <a href="https://x.com/decentraland"><img
+              src="http://cdn.mcauto-images-production.sendgrid.net/2322095804444b83/6a7ba0a5-a312-425d-8501-63ee46c08f94/50x49.png"
+              alt="X" style="width: 26px; height: 25px; margin: 0 10px;" /></a>
+          <a href="https://www.instagram.com/decentraland_foundation/"><img
+              src="http://cdn.mcauto-images-production.sendgrid.net/2322095804444b83/8ece53a3-2e8d-46aa-840b-44cac9a951ff/50x49.png"
+              alt="Instagram" style="width: 26px; height: 25px; margin: 0 10px;" /></a>
+          <a href="https://www.youtube.com/@decentraland_foundation"><img
+              src="http://cdn.mcauto-images-production.sendgrid.net/2322095804444b83/20c004d5-5632-4980-93f2-6e776c86ccac/50x49.png"
+              alt="YouTube" style="width: 26px; height: 25px; margin: 0 10px;" /></a>
+          <a href="https://www.tiktok.com/@decentraland_fdn"><img
+              src="http://cdn.mcauto-images-production.sendgrid.net/2322095804444b83/1afd6661-435b-4077-bd42-31fa8e1aeb9f/50x49.png"
+              alt="TikTok" style="width: 26px; height: 25px; margin: 0 10px;" /></a>
+          <a href="https://www.linkedin.com/company/decentralandorg"><img
+              src="http://cdn.mcauto-images-production.sendgrid.net/2322095804444b83/7e0bca78-c20c-4a8a-b293-87d45c9a6de7/50x49.png"
+              alt="LinkedIn" style="width: 26px; height: 25px; margin: 0 10px;" /></a>
+        </div>
+      </td>
+    </tr>
+  </table>
+</body>
+
+</html>

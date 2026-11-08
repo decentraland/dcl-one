@@ -25,6 +25,7 @@ import { useCampaign } from "../hooks";
 import { t } from "../intl";
 import { localized, toContentfulLocale } from "../lib/contentful";
 import { MarketAnnouncementBar, MarketFooter } from "./MarketChrome";
+import { useMarketplace } from "../../market/access";
 import ShopCreditsChip, { ShopHeldCredits } from "./ShopCreditsChip";
 import ShopFooter from "./ShopFooter";
 import "./shoptheme.css";
@@ -39,7 +40,7 @@ type Tab = { id: ShopSection; label: string; href: string; mobileOnly?: boolean 
 const COLLECTIBLES = /^\/shop\/(items|item|token|collection|names)(\/|$)/;
 const TOKEN_ACTION = /^\/shop\/(token|item)\/[^/]+\/[^/]+\/(transfer|bid|bids|sell|cancel|manage|rent)\/?$/;
 const TOKEN = /^\/shop\/token\/([^/]+)\/[^/]+(\/|$)/;
-const MARKETPLACE_ONLY = /^\/shop\/(lands|rankings|settings|accounts?)(\/|$)/;
+const MARKETPLACE_ONLY = /^\/shop\/(lands|rankings|accounts?)(\/|$)/;
 
 export function isLandTokenPath(pathname: string): boolean {
   const c = TOKEN.exec(pathname)?.[1]?.toLowerCase();
@@ -199,7 +200,10 @@ export default function ShopChrome({ children, topbar, footer }: { children?: Re
   const iap = isIapMode();
   const { campaign } = useCampaign();
   const eventLabel = campaign?.mainTag ? (localized(campaign.tabName, toContentfulLocale("en")) ?? campaign.name ?? null) : null;
-  const set = navSetFor(pathname);
+  // The Marketplace's tabs (LAND, ...) only for a visitor who has it (market/access.tsx): anyone else stays on the
+  // Shop's, and its pages send them to the overview anyway.
+  const marketplace = useMarketplace();
+  const set = marketplace ? navSetFor(pathname) : "shop";
   const tabs = useMemo(() => shopTabs({ iap, eventLabel, set }), [iap, eventLabel, set]);
   const signedIn = wallet.session.kind !== "signedOut";
 

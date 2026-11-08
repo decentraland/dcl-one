@@ -112,6 +112,8 @@ pub struct Settings {
     pub partial_uploads: PartialUploadLimits,
     /// `WORLDS_OWNER_RECONCILE_INTERVAL_SECS`: the `worlds-owner-reconcile` pause.
     pub owner_reconcile_interval: std::time::Duration,
+    /// `ACCESS_MAX_WALLETS`, `ACCESS_MAX_COMMUNITIES`: the access allow-list caps.
+    pub access_caps: store::AccessCaps,
 }
 
 impl std::fmt::Debug for Settings {
@@ -139,6 +141,7 @@ impl Settings {
             max_file_count: deploy::DEFAULT_MAX_FILE_COUNT,
             partial_uploads: PartialUploadLimits::default(),
             owner_reconcile_interval: DEFAULT_OWNER_RECONCILE_INTERVAL,
+            access_caps: store::AccessCaps::default(),
         })
     }
 
@@ -160,6 +163,14 @@ impl Settings {
 
     pub fn with_owner_reconcile_interval_secs(mut self, secs: u64) -> Self {
         self.owner_reconcile_interval = std::time::Duration::from_secs(secs);
+        self
+    }
+
+    pub fn with_access_caps(mut self, wallets: u32, communities: u32) -> Self {
+        self.access_caps = store::AccessCaps {
+            wallets: wallets.into(),
+            communities: communities.into(),
+        };
         self
     }
 
@@ -185,6 +196,7 @@ impl Settings {
             max_file_count: deploy::DEFAULT_MAX_FILE_COUNT,
             partial_uploads: PartialUploadLimits::default(),
             owner_reconcile_interval: DEFAULT_OWNER_RECONCILE_INTERVAL,
+            access_caps: store::AccessCaps::default(),
         }
     }
 }
@@ -659,7 +671,9 @@ fn timed_routes() -> Router<SharedState> {
         )
         .route(
             "/world/{world_name}/permissions/{permission_name}/parcels",
-            post(permissions::get_addresses_for_parcel_permission),
+            post(permissions::get_addresses_for_parcel_permission)
+                .put(permissions::put_permissions_parcels_address)
+                .delete(permissions::delete_permissions_parcels_address),
         )
         .route(
             "/world/{world_name}/permissions/access/communities/{community_id}",

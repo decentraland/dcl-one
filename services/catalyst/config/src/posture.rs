@@ -162,6 +162,13 @@ fn prune_unless_content_writes(lookup: &Lookup) -> Option<String> {
     Some((!writes).to_string())
 }
 
+fn denylist_or_decentraland(lookup: &Lookup) -> Option<String> {
+    Some(
+        set(lookup, "DENYLIST_JSON_URL")
+            .unwrap_or_else(|| "https://config.decentraland.org/denylist.json".to_string()),
+    )
+}
+
 const ROWS: &[Row] = &[
     mirrored("sync", "SYNC_ENABLED"),
     row(
@@ -172,6 +179,8 @@ const ROWS: &[Row] = &[
         Is("true"),
     ),
     upstream("sync", "SYNC_SOURCE", DCL_PEERS),
+    // The DAO catalyst list over ETH_RPC_URL; SYNC_SOURCE is its fallback.
+    mirrored("sync", "SYNC_FROM_DAO"),
     mirrored("sync", "READ_THROUGH_ENABLED"),
     // Decentraland's moderation list, hidden from the content reads as the
     // upstream catalyst hides it (its DENYLIST_URLS default).
@@ -242,6 +251,18 @@ const ROWS: &[Row] = &[
         "mirrors",
         "EXPLORER_DENYLIST_SOURCE_URL",
         "https://config.decentraland.org/denylist.json",
+    ),
+    // The comms mints' wallet denylist, upstream worlds-content-server's
+    // DENYLIST_JSON_URL default; that name, when set, wins over the default.
+    row(
+        "mirrors",
+        "DENY_LIST_URL",
+        From(
+            "DENYLIST_JSON_URL, else https://config.decentraland.org/denylist.json",
+            denylist_or_decentraland,
+        ),
+        Is(""),
+        Is(""),
     ),
     upstream(
         "mirrors",
@@ -350,6 +371,7 @@ const ROWS: &[Row] = &[
     ),
     mirrored("indexes", "LAND_AUTHZ_INDEX_ENABLED"),
     mirrored("indexes", "CREDITS_USAGE_INDEX_ENABLED"),
+    mirrored("indexes", "SHOP_RENTALS_INDEX_ENABLED"),
     row(
         "indexes",
         "CREDITS_MANAGER_CONTRACT",
@@ -901,9 +923,12 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("ACCOUNT_BASE_URL", LINK),
     ("PROFILE_URL", LINK),
     ("MARKETPLACE_BASE_URL", LINK),
+    ("NOTIFICATIONS_SERVICE_BASE_URL", LINK),
     ("SHOP_BASE_URL", LINK),
     ("SHOP_ITEM_BASE_URL", LINK),
     ("EVENTS_BASE_URL", LINK),
+    ("JUMP_IN_SITE_URL", LINK),
+    ("PLACES_BASE_URL", LINK),
     ("CREDITS_CHECKOUT_CANCEL_URL", LINK),
     ("CREDITS_CHECKOUT_SUCCESS_URL", LINK),
     ("BADGES_PUBLIC_ASSET_BASE_URL", LINK),

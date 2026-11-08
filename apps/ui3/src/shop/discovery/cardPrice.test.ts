@@ -24,11 +24,11 @@ describe("an eligible primary card", () => {
   });
 
   it("keeps a running sale's compare-at when creator sales are on", () => {
-    (window as Window & { __SHOP_FLAGS__?: { creatorSales?: boolean } }).__SHOP_FLAGS__ = { creatorSales: true };
+    window.__SHOP_FLAGS__ = { creatorSales: true };
     try {
       expect(cardPrice(unifiedListingToItem(saleWearable()), web2())).toMatchObject({ kind: "credits", credits: 14, compareAt: 20 });
     } finally {
-      delete (window as Window & { __SHOP_FLAGS__?: unknown }).__SHOP_FLAGS__;
+      delete window.__SHOP_FLAGS__;
     }
   });
 

@@ -1800,6 +1800,80 @@ async fn double_post_grants_once_and_replays_original_amounts() {
 }
 
 #[tokio::test]
+async fn an_operator_grant_notifies_once_and_a_purchase_never() {
+    let Some(pool) = pool().await else { return };
+    let addr = scratch_wallet().address;
+    let idem = unique("grant");
+    let credits = Credits::new(pool.clone()).with_shop_base_url("https://example.org/shop/");
+    let detail = json!({});
+    let grant = |amount: &'static str, kind: &'static str, keyed: bool| GrantRequest {
+        address: &addr,
+        amount,
+        kind,
+        reason: None,
+        actor: Some("ops"),
+        idempotency_key: keyed.then_some(idem.as_str()),
+        detail: &detail,
+    };
+    assert!(
+        !credits
+            .admin_grant_credits(grant("1250", "grant", true))
+            .await
+            .unwrap()
+            .replayed
+    );
+    assert!(
+        credits
+            .admin_grant_credits(grant("1250", "grant", true))
+            .await
+            .unwrap()
+            .replayed
+    );
+    credits
+        .admin_grant_credits(grant("2.5", "grant", false))
+        .await
+        .unwrap();
+    credits
+        .admin_grant_credits(grant("9", "purchase", false))
+        .await
+        .unwrap();
+
+    let metadata: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT metadata FROM social.notifications WHERE address = $1 AND type = 'credits_on_demand_granted' ORDER BY (metadata->>'usdCents')::int DESC",
+    )
+    .bind(&addr)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        metadata,
+        vec![
+            json!({
+                "creditsGranted": 1250, "denomination": "USD", "usdCents": 12500,
+                "image": "https://assets-cdn.decentraland.org/credits/notification-icon.png",
+                "title": "Credits added to your account",
+                "description": "You received 1,250 Credits. They never expire: spend them in the Shop.",
+                "link": "https://example.org/shop",
+            }),
+            json!({
+                "creditsGranted": 2.5, "denomination": "USD", "usdCents": 25,
+                "image": "https://assets-cdn.decentraland.org/credits/notification-icon.png",
+                "title": "Credits added to your account",
+                "description": "You received 2.5 Credits. They never expire: spend them in the Shop.",
+                "link": "https://example.org/shop",
+            }),
+        ],
+        "the replay and the purchase add nothing"
+    );
+    sqlx::query("DELETE FROM social.notifications WHERE address = $1")
+        .bind(&addr)
+        .execute(&pool)
+        .await
+        .unwrap();
+    cleanup(&pool, &addr).await;
+}
+
+#[tokio::test]
 async fn mana_topup_route_verifies_through_the_broker_and_grants_once() {
     let Some(pool) = pool().await else { return };
     let wallet = scratch_wallet();

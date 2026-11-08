@@ -32,7 +32,7 @@ export type ShopNamesTab = 'unique' | 'resale'
 export interface ShopNamesProps {
   tab: ShopNamesTab
   onTab: (tab: ShopNamesTab) => void
-  /** RESALE NAME's page: the page draws the NAMEs on resale. */
+  /** RESALE NAME's page: the page draws the NAMEs on resale. Absent while the Marketplace's rollout is off: no chip, and the section stays on UNIQUE NAME. */
   resale?: React.ReactNode
   /** The typed NAME. */
   value: string
@@ -54,17 +54,22 @@ export interface ShopNamesProps {
   /** The NAME's price in whole Credits, once known. */
   price?: number | null
   onClaim: (input: PressedWith) => void
-  onMakeOffer: () => void
+  /** A taken NAME's offer to its owner, on the Marketplace. Absent while its rollout is off: no MAKE OFFER. */
+  onMakeOffer?: () => void
   onRetry: () => void
 }
 
 export function ShopNames(props: ShopNamesProps): React.JSX.Element {
-  const { tab, onTab, resale } = props
+  const { onTab, resale } = props
+  const offersResale = resale != null
+  const tab: ShopNamesTab = offersResale ? props.tab : 'unique'
   return (
     <div className={styles.names}>
       <div className={styles.chips} role="group" aria-label="NAMEs">
         <Chip variant="dark" label="Unique name" icon={<MaskIcon src={uniqueIcon} size={26} />} selected={tab === 'unique'} onClick={() => onTab('unique')} />
-        <Chip variant="dark" label="Resale name" icon={<MaskIcon src={resaleIcon} size={26} />} selected={tab === 'resale'} onClick={() => onTab('resale')} />
+        {offersResale ? (
+          <Chip variant="dark" label="Resale name" icon={<MaskIcon src={resaleIcon} size={26} />} selected={tab === 'resale'} onClick={() => onTab('resale')} />
+        ) : null}
       </div>
       {tab === 'unique' ? (
         <>
@@ -174,15 +179,19 @@ function Feedback({
     ) : status === 'taken' ? (
       <>
         <img src={warningIcon} alt="" width={15} height={15} />
-        <span>
-          {/* Broken where the design breaks it. */}
-          This NAME Is Taken. Choose Another NAME Or Make
-          <br />
-          An Offer To The Owner.{' '}
-          <button type="button" className={styles.makeOffer} onClick={onMakeOffer}>
-            MAKE OFFER
-          </button>
-        </span>
+        {onMakeOffer ? (
+          <span>
+            {/* Broken where the design breaks it. */}
+            This NAME Is Taken. Choose Another NAME Or Make
+            <br />
+            An Offer To The Owner.{' '}
+            <button type="button" className={styles.makeOffer} onClick={onMakeOffer}>
+              MAKE OFFER
+            </button>
+          </span>
+        ) : (
+          <span>This NAME Is Taken. Choose Another NAME.</span>
+        )}
       </>
     ) : status === 'banned' ? (
       <>

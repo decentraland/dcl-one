@@ -16,6 +16,7 @@ import { shopPath } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { fetchLists, type FavoriteList } from "../lib/favorites";
 import { shopFavorites, useFavorites } from "../store/favorites";
+import { useMarketplace } from "../access";
 import ItemCard from "../components/ItemCard";
 import { ListEditor } from "../components/ListEditor";
 import SaveToLists from "../components/SaveToLists";
@@ -43,6 +44,8 @@ function CountHead({ count }: { count: number | null }) {
 
 export function SavedItems({ head }: { head?: ReactNode }) {
   const { items, status, error, account } = useFavorites();
+  // Lists are the old Marketplace's (market/access.tsx); the old shop's favorites are one saved grid.
+  const lists = useMarketplace() && !!account;
   const [visible, setVisible] = useState(PAGE_SIZE);
   const [picking, setPicking] = useState<{ key: string; name: string } | null>(null);
   const list = useMemo(() => Object.values(items), [items]);
@@ -88,7 +91,7 @@ export function SavedItems({ head }: { head?: ReactNode }) {
               saved
               onToggleSave={() => shopFavorites.toggle(item)}
               actions={
-                account ? (
+                lists ? (
                   <button type="button" onClick={() => setPicking({ key: item.key, name: item.name })}>
                     Add to a list
                   </button>
@@ -150,12 +153,13 @@ export function ListsOverview({ account }: { account: string }) {
 export default function MyFavorites() {
   const { account } = useShopWallet();
   const [params, setParams] = useSearchParams();
-  const tab = params.get("tab") === "lists" && account ? "lists" : "saved";
+  const marketplace = useMarketplace();
+  const tab = params.get("tab") === "lists" && account && marketplace ? "lists" : "saved";
   useSeo({ title: TITLE, noindex: true });
   useEffect(() => {
     shopFavorites.reloadFor(account);
   }, [account]);
-  const head = account ? (
+  const head = account && marketplace ? (
     <div className="shop-fav__head">
       <h1 className="shop-fav__title">{TITLE}</h1>
       <div className="shop-fav__tabs" role="tablist" aria-label="Favorites">
@@ -171,7 +175,7 @@ export default function MyFavorites() {
   return (
     <EnsureQueryClient>
       <section className="shop-page shop-fav" data-testid="favorites-page">
-        {tab === "lists" && account ? (
+        {tab === "lists" && account && marketplace ? (
           <>
             {head}
             <ListsOverview account={account} />

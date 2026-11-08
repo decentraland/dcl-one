@@ -131,6 +131,24 @@ pub struct WorldsConfig {
     )]
     pub worlds_owner_reconcile_interval_secs: u64,
 
+    /// Wallets a world's access allow-list may hold (1..=10,000; 0 would refuse every addition).
+    #[arg(
+        long,
+        env = "ACCESS_MAX_WALLETS",
+        default_value_t = 1000,
+        value_parser = clap::value_parser!(u32).range(1..=10_000)
+    )]
+    pub access_max_wallets: u32,
+
+    /// Communities a world's access allow-list may hold (1..=1,000; 0 would refuse every addition).
+    #[arg(
+        long,
+        env = "ACCESS_MAX_COMMUNITIES",
+        default_value_t = 50,
+        value_parser = clap::value_parser!(u32).range(1..=1_000)
+    )]
+    pub access_max_communities: u32,
+
     /// Entries a deployed entity's `content` may list, at most the 10,000 file parts a deploy may upload.
     #[arg(long, env = "MAX_FILE_COUNT", default_value_t = 10_000, value_parser = clap::value_parser!(u32).range(1..=10_000))]
     pub max_file_count: u32,
@@ -408,8 +426,15 @@ pub struct WorldsConfig {
     pub handshake_timeout: u64,
 
     /// The wallet denylist document; unset disarms the external denylist.
+    /// `NODE_POSTURE=mirror` defaults it to Decentraland's, as upstream's
+    /// `DENYLIST_JSON_URL` defaults.
     #[arg(long, env = "DENY_LIST_URL")]
     pub deny_list_url: Option<String>,
+
+    /// Upstream worlds-content-server's name for `DENY_LIST_URL`, read when
+    /// that one is unset or empty.
+    #[arg(long, env = "DENYLIST_JSON_URL", hide = true)]
+    pub denylist_json_url: Option<String>,
 
     /// The NATS broker `serve` (comms' one link) and `catalyst pulse` meet on; unset, no island is ever delivered.
     #[arg(long, env = "NATS_URL")]
@@ -454,6 +479,14 @@ pub struct WorldsConfig {
     /// The deployment audience clients sign for /ws/v4; unset leaves the v4 control authority unavailable.
     #[arg(long, env = "ARCHIPELAGO_CONTROL_V4_AUDIENCE")]
     pub archipelago_control_v4_audience: Option<String>,
+}
+
+impl WorldsConfig {
+    /// The wallet denylist document: `DENY_LIST_URL`, else `DENYLIST_JSON_URL`.
+    pub fn deny_list(&self) -> Option<String> {
+        crate::config::Config::non_empty(&self.deny_list_url)
+            .or_else(|| crate::config::Config::non_empty(&self.denylist_json_url))
+    }
 }
 
 /// The worlds federation: the peer file and its caps.
@@ -524,6 +557,40 @@ mod tests {
         assert_eq!(with("10000").unwrap().worlds.max_file_count, 10_000);
         assert!(with("10001").is_err());
         assert!(with("0").is_err());
+    }
+
+    #[test]
+    fn access_allow_list_caps_keep_the_upstream_defaults_within_a_range() {
+        let with = |flag: &str, v: &str| parse(&["x", "--database-url", "postgres:///c", flag, v]);
+        let defaults = parse(&["x", "--database-url", "postgres:///c"]).unwrap();
+        assert_eq!(
+            (
+                defaults.worlds.access_max_wallets,
+                defaults.worlds.access_max_communities
+            ),
+            (1000, 50)
+        );
+        assert_eq!(
+            with("--access-max-wallets", "10000")
+                .unwrap()
+                .worlds
+                .access_max_wallets,
+            10_000
+        );
+        assert_eq!(
+            with("--access-max-communities", "1000")
+                .unwrap()
+                .worlds
+                .access_max_communities,
+            1_000
+        );
+        for (flag, over) in [
+            ("--access-max-wallets", "10001"),
+            ("--access-max-communities", "1001"),
+        ] {
+            assert!(with(flag, "0").is_err(), "{flag} 0");
+            assert!(with(flag, over).is_err(), "{flag} {over}");
+        }
     }
 
     #[test]
@@ -687,7 +754,7 @@ mod tests {
             (60_000, 10_000)
         );
         assert!(
-            c.worlds.deny_list_url.is_none()
+            c.worlds.deny_list().is_none()
                 && c.worlds.nats_url.is_none()
                 && c.worlds.archipelago_control_v4_audience.is_none()
         );

@@ -56,13 +56,16 @@ the data and its operations.
    records it in `meta.schema_steps`; `services/catalyst/tests/`). A step
    that drops, renames, retypes or deletes is refused: that change is its own
    reviewed release (record the data-safe release procedure and evidence in the task report).
-   A changed body of a hash-named write function (`content.deploy_entity_<hash>`,
+   A changed body of a hash-named function (`content.deploy_entity_<hash>`,
    `content.unpublish_scene_<hash>`, `social.world_authorization_started_<hash>`,
-   `social.world_secret_refund_<hash>`) is a new function; `migrate` creates it and
+   `social.world_secret_refund_<hash>`, the `explore.*_<hash>` functions the
+   generated columns call) is a new function; `migrate` creates it and
    leaves the old one for binaries still calling it. `catalyst schema status`
    lists the old ones as superseded after migrate (run before `migrate`, that
    includes the one the running binary still calls); drop them by hand once no
-   process runs an older binary.
+   process runs an older binary, a generated column's one with that column.
+   A step that adds a column calling such a function creates it first with
+   `CREATE FUNCTION`, skipped when the database has it.
    The `deleter_deployment` repair runs once per database and repair version
    (`content.system_properties` key `deleter_repair_version`, only ever
    raised), at a sync leader's bootstrap or a non-syncing process's startup.
@@ -487,6 +490,10 @@ database holding local authority changes only through a data-safe release
 (record the data-safe release procedure and evidence in the task report): additive steps under
 `schemas/migrations/` applied once by `catalyst schema migrate`; anything that
 drops, renames or retypes is its own reviewed release under `schemas/releases/`.
+After the steps, the object pass creates every object of `schemas/` the
+database lacks and re-creates each view it has in place, so a column a step
+adds reaches the view; a view change that drops, renames or retypes a column
+is a release, because the replacement refuses it.
 
 The binary requires schema version 3. Stop all writers, pollers and administrative
 write paths, and verify a backup restore before a release. A version-1 database
@@ -508,6 +515,23 @@ catalyst schema status
 Keep every writer stopped through that sequence. The release refuses mixed
 layouts, changed receipt hashes and a pre-existing destination. It audits pending
 wallets across both roles and refuses overlapping or non-normalized pending state.
+The explore parity layout (step `0029_explore_parity`) moves event moderation notices
+into the shared outbox `explore.moderation_hooks`; the earlier tables
+`explore.event_moderation_hooks`, `explore.event_moderation_hook_activation` and
+`explore.event_upcoming_hooks` are retired by their own release. Run it once, with the
+administrative role, after every replica runs a binary with the outbox and `catalyst
+schema migrate` has recorded step `0029_explore_parity`; it refuses to run earlier:
+
+```sh
+psql "$DATABASE_URL" -X -f schemas/releases/explore-retired-hook-tables.sql
+```
+
+Until it runs, every pass of the `moderation-hook` job first moves the pending rows of
+the old events table into the outbox, so the release finds few or none; it moves the
+rest in the same transaction, keeps the earlier of the two activation instants and
+drops delivered and dead-letter rows with the tables. The drop is not reversible: a
+rollback restores the matching backup. Do not reset a database.
+
 The canonical future definitions live once under `schemas/releases/v3/`; the
 compatible version-3 build explicitly enrolls them in the single fresh bootstrap.
 A version-2 build does not discover that nested directory. Merging dormant
@@ -530,7 +554,11 @@ Its other columns take constant defaults or are nullable, and step
 `0024_social_referral_reward_receipt` adds nullable claim, response and retry
 columns, imports confirmed `reward_paid` receipts without losing notification
 completion, and quarantines older uncertain pending rewards. The backfill touches
-only paid or pending rewards.
+only paid or pending rewards. `0030_explore_read_columns` adds the stored read
+columns of `explore.place`, `explore.place_world_local` and `explore.event` in
+one `ALTER TABLE` per table, so each table is rewritten once: 0.96 s, 0.91 s and
+0.14 s on 10,008, 10,008 and 3,011 rows, where one statement per column took
+2.38 s, 2.07 s and 0.39 s.
 
 The object pass also builds `deployments_active_entity_timestamp_idx` on
 `content.deployments` (the snapshot generator's inactive-entities count) in the

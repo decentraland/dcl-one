@@ -39,6 +39,7 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
         market_settings(&config, &content::own_hosts(&config))?,
     ));
     market.spawn_index_jobs(&jobs);
+    shop::rentals::index::spawn_job(&market, &jobs, config.shop.shop_rentals_index_enabled);
     let land = Arc::new(land_authz::LandAuthzState::new(
         pool.clone(),
         http.clone(),
@@ -58,8 +59,9 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
         None,
     ));
     credits.spawn_usage_index(&jobs);
+    let shutdown = crate::serve::shutdown_signal();
     tracing::info!(jobs = ?jobs.report().iter().map(|j| &j.name).collect::<Vec<_>>(), "index worker started");
-    crate::serve::shutdown_signal().await;
+    shutdown.await;
     let aborted = jobs.shutdown(Duration::from_secs(30)).await;
     if !aborted.is_empty() {
         tracing::warn!(?aborted, "index jobs aborted at shutdown");
@@ -134,7 +136,15 @@ pub(crate) fn market_settings(
             ),
             chain_id_ethereum: config.marketplace.marketplace_index_chain_id_ethereum,
             chain_id_matic: config.marketplace.marketplace_index_chain_id_matic,
-        })?),
+        })?)
+        .with_tips(
+            shop::market::tips::TipSettings::parse(
+                &config.marketplace.marketplace_tip_min_amount_wei,
+                config.marketplace.marketplace_tip_max_age_secs,
+                config.marketplace.marketplace_tip_max_pending,
+            )?
+            .with_trusted_proxies(config.node.http_trusted_proxy_cidrs.clone()),
+        ),
     ))
 }
 
@@ -208,6 +218,7 @@ pub(crate) fn credits_settings(config: &Config) -> anyhow::Result<shop::credits:
         credit_cap_headroom_pct: config.shop.credits_cap_headroom_pct,
         credit_buffer_bps: config.shop.credits_oracle_buffer_bps,
         credits_revoker_key: non_empty(&config.shop.credits_revoker_key),
+        shop_base_url: config.shop.shop_base_url.clone(),
     })
     .context("CREDITS_* / STRIPE_* / CHECKOUT_* configuration")
 }

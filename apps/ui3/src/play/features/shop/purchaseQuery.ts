@@ -51,11 +51,6 @@ export const purchaseQueries = {
     })
 }
 
-/** What the session can pay with in the Shop (undefined until the shell answers, or outside it). */
-export function useShopCapabilities(): ShopCapabilities | undefined {
-  return useQuery(purchaseQueries.capabilities()).data
-}
-
 /** The buyer's whole Credits, or undefined until known (signed out: never). */
 export function useCreditsBalance(buyer: string | null): number | undefined {
   return useQuery(purchaseQueries.balance(buyer)).data?.credits

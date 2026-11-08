@@ -383,7 +383,10 @@ async fn concurrent_rpc_sockets_always_end_the_oldest() {
         socket
     };
     let mut oldest = rpc(&server).await;
-    assert!(matches!(next_message(&mut oldest).await, WsMessage::Binary(_)));
+    assert!(matches!(
+        next_message(&mut oldest).await,
+        WsMessage::Binary(_)
+    ));
     assert!(
         crate::shared::test_wait::until(async || admission.sockets_of(&address) == 1).await,
         "the oldest socket holds a slot"

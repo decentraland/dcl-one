@@ -223,6 +223,24 @@ describe('in-world shop', () => {
     expect(screen.getByRole('radio', { name: 'On sale' })).toHaveAttribute('aria-checked', 'true')
   })
 
+  it('lists creators\u2019 primary sales only while the Marketplace is off, and resales too once it is on', async () => {
+    const off = serve({ trending: [listingRow()], listings: [[listingRow()]] })
+    const view = renderShop()
+    expect(await findCard('Golden Armor')).toBeInTheDocument()
+    await openTab('All')
+    await waitFor(() => expect(calls(off, '/v3/catalog/trending').length).toBeGreaterThan(0))
+    for (const suffix of ['/v3/catalog/unified', '/v3/catalog/trending']) {
+      expect(calls(off, suffix).every((u) => u.searchParams.get('listingType') === 'primary'), suffix).toBe(true)
+    }
+    view.unmount()
+
+    const on = serve({ trending: [listingRow()], listings: [[listingRow()]], flags: { 'dapps-shop-marketplace-features': true } })
+    // A signed-in player, not a guest: the HUD offers the Marketplace to no one before the profile says which.
+    renderShop({ profile: fakeProfileState({ data: { address: '0x00000000000000000000000000000000000ab47f', name: 'Mojito', hasClaimedName: true, isGuest: false } }) })
+    expect(await findCard('Golden Armor')).toBeInTheDocument()
+    await waitFor(() => expect(calls(on, '/v3/catalog/unified').some((u) => !u.searchParams.has('listingType'))).toBe(true))
+  })
+
   it('shows the All home with its sections', async () => {
     serve({ trending: [listingRow()], listings: [[listingRow({ itemId: '2', name: 'Pixel Hoodie' })]] })
     renderShop()

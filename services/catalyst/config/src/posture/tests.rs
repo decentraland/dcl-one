@@ -282,6 +282,18 @@ fn a_mirror_catalog_takes_the_upstream_filters_only() {
     assert!(c.market_upstreams.lambdas_catalog_extensions_enabled);
 }
 
+/// CS-25: a mirror syncs from the DAO catalyst list, `SYNC_SOURCE` its fallback.
+#[test]
+fn a_mirror_syncs_from_the_dao_list() {
+    assert_eq!(expanded(Posture::Mirror, &[])["SYNC_FROM_DAO"], "true");
+    for posture in [Posture::Island, Posture::Journey] {
+        assert_eq!(expanded(posture, &[])["SYNC_FROM_DAO"], "false");
+    }
+    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
+    assert!(c.content.sync_from_dao);
+    assert!(!c.content.sync_source.is_empty());
+}
+
 #[test]
 fn read_through_copies_a_miss_on_a_mirror_only() {
     assert_eq!(
@@ -472,7 +484,7 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
     assert!(c.content.sync_source.contains("peer.decentraland.org"));
     assert!(c.explore.explorer_mirrors_enabled && c.social.communities_mirror_upstream);
     assert!(c.marketplace.marketplace_nft_index_enabled && c.land_authz.land_authz_index_enabled);
-    assert!(c.shop.credits_usage_index_enabled);
+    assert!(c.shop.credits_usage_index_enabled && c.shop.shop_rentals_index_enabled);
     assert_eq!(
         c.shop.credits_manager_contract.as_deref(),
         Some(CREDITS_MANAGER_MAINNET)

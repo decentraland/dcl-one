@@ -70,6 +70,8 @@ export interface ShellShopWallet {
   kind(account: string): ShopWalletKind | null
   /** That wallet as an EIP-1193 provider for `account`, or null when it can't sign for it. */
   provider(account: string): Eip1193Provider | null
+  /** Whether `account` may use the Marketplace: a web3 wallet recorded as its sign-in, here to sign. Absent: never. */
+  marketplace?(account: string): boolean
 }
 
 /** The dialog's item without its glyph: the overlay draws the category's. */
@@ -1164,7 +1166,8 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     if (login.guest) return { v: SHOP_PROTOCOL, buyer, wallet: null, credits: false, reason: 'guest' }
     const wallet = deps.wallet?.kind(buyer) ?? null
     const usable = wallet != null && deps.wallet?.provider(buyer) != null && !!login.identity.ephemeralIdentity.privateKey
-    return { v: SHOP_PROTOCOL, buyer, wallet, credits: usable, ...(usable ? {} : { reason: 'noWallet' as const }) }
+    const marketplace = usable && wallet === 'web3' && deps.wallet?.marketplace?.(buyer) === true
+    return { v: SHOP_PROTOCOL, buyer, wallet, credits: usable, marketplace, ...(usable ? {} : { reason: 'noWallet' as const }) }
   }
 
   const balance = async (): Promise<ShopBalance | null> => {

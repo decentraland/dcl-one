@@ -480,6 +480,12 @@ fn flag(event: &Value, key: &str) -> bool {
     event.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 
+/// The stored read of a mirrored `duration`, bounded to a thousand years: the
+/// old service bounds the field nowhere (`Event/schemas.ts:369`), and the
+/// generated `live_until` adds it as an interval, which a value past about
+/// 9e15 ms overflows, failing the whole batch. The document keeps its value.
+pub const MAX_DURATION_MS: i64 = 1_000 * 365 * 24 * 60 * 60 * 1_000;
+
 pub fn extract_fields(event: &Value) -> Option<EventFields<'_>> {
     let id = match event.get("id").and_then(Value::as_str) {
         Some(s) if !s.is_empty() => s,
@@ -492,7 +498,10 @@ pub fn extract_fields(event: &Value) -> Option<EventFields<'_>> {
         finish_at: event.get("finish_at").and_then(Value::as_str),
         next_start_at: event.get("next_start_at").and_then(Value::as_str),
         next_finish_at: event.get("next_finish_at").and_then(Value::as_str),
-        duration_ms: event.get("duration").and_then(Value::as_i64),
+        duration_ms: event
+            .get("duration")
+            .and_then(Value::as_i64)
+            .map(|d| d.clamp(0, MAX_DURATION_MS)),
         recurrent: flag(event, "recurrent"),
         highlighted: flag(event, "highlighted"),
         trending: flag(event, "trending"),
@@ -657,6 +666,18 @@ mod tests {
     fn events(fixture: &str) -> Vec<Value> {
         let body: Value = serde_json::from_str(fixture).expect("fixture is valid JSON");
         parse_page(&body).expect("fixture envelope parses")
+    }
+
+    #[test]
+    fn a_mirrored_duration_is_stored_within_the_interval_range() {
+        let duration = |value: i64| {
+            extract_fields(&serde_json::json!({"id": "e", "duration": value}))
+                .unwrap()
+                .duration_ms
+        };
+        assert_eq!(duration(i64::MAX), Some(MAX_DURATION_MS));
+        assert_eq!(duration(-5), Some(0));
+        assert_eq!(duration(3_600_000), Some(3_600_000));
     }
 
     #[test]

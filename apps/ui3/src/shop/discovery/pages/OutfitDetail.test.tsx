@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createShopClient } from "../../api/shop";
 import { shopCart } from "../../cart/store";
-import { catalogClient, catalogTransport, COLLECTION, ShopHarness, type CatalogAnswers, type CatalogScenario } from "../fixtures";
+import { catalogClient, catalogTransport, COLLECTION, defaultAnswers, ShopHarness, type CatalogAnswers, type CatalogScenario } from "../fixtures";
 import OutfitDetail from "./OutfitDetail";
 
 const OUTFIT = {
@@ -57,6 +57,23 @@ describe("an outfit", () => {
     const lines = shopCart.getSnapshot().lines;
     expect(lines.every((l) => l.provenance.outfitId === OUTFIT.id && l.method === null)).toBe(true);
     await waitFor(() => expect(screen.getByTestId("outfit-detail-cta")).toHaveTextContent("Added to cart"));
+  });
+
+  it("adds creators' primary sales only without the Marketplace, never a resale in their place", async () => {
+    const asked: (string | null)[] = [];
+    const answers = defaultAnswers();
+    outfit({
+      [`/v1/outfits/${OUTFIT.id}`]: { outfit: OUTFIT },
+      "/v3/catalog/unified": (url: URL) => {
+        if (url.searchParams.get("itemId")) asked.push(url.searchParams.get("listingType"));
+        return answers["/v3/catalog/unified"]!(url);
+      },
+    });
+    await waitFor(() => expect(screen.getByTestId("outfit-detail-cta")).toHaveTextContent("Add 2 items to cart"));
+    asked.length = 0;
+    fireEvent.click(screen.getByTestId("outfit-detail-cta"));
+    await waitFor(() => expect(asked).toHaveLength(2));
+    expect(asked.every((t) => t === "primary")).toBe(true);
   });
 
   it("an unknown outfit is not found", async () => {

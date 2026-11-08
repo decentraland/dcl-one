@@ -49,6 +49,33 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('bash tooling/dev-smoke.sh', smoke)
         self.assertIn('bash tooling/dev-test.sh e2e', smoke)
 
+    def test_every_nix_job_restores_the_store_snapshot_before_its_first_shell(self):
+        policy = WORKFLOW.parents[2] / 'tooling/repo-actions-policy.sh'
+        self.assertIn("patterns_allowed[]=nix-community/cache-nix-action@*", policy.read_text())
+        installs = 0
+        for name in ('development.yml', 'social-voice-release.yml'):
+            jobs = WORKFLOW.with_name(name).read_text().split('\njobs:\n', 1)[1]
+            for job in re.split(r'(?m)^  (?=[\w-]+:\n)', jobs):
+                steps = re.split(r'(?m)^      - ', job)
+                for i, step in enumerate(steps):
+                    if not step.startswith('uses: cachix/install-nix-action@'):
+                        continue
+                    installs += 1
+                    snapshot, roots = steps[i + 1], steps[i + 2]
+                    shell = 'ci' if 'dev-test.sh rust' in job or 'social-voice-release-test.sh' in job else 'default'
+                    key = 'nix-store-${{ runner.os }}-${{ runner.arch }}-' + shell + '-'
+                    self.assertTrue(snapshot.startswith('uses: nix-community/cache-nix-action@'), name)
+                    self.assertIn('primary-key: ' + key + "${{ hashFiles('flake.nix', 'flake.lock', ", snapshot)
+                    self.assertIn('restore-prefixes-first-match: ' + key + '\n', snapshot)
+                    self.assertIn("save: ${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' }}", snapshot)
+                    self.assertIn('gc-max-store-size: 0', snapshot)
+                    self.assertIn('mkdir -p .cache/nix-roots\n', roots)
+                    self.assertIn('nix develop ' + ('.#ci ' if shell == 'ci' else '') + '--profile .cache/nix-roots/env --command true', roots)
+                    self.assertIn('nix flake archive --json', roots)
+                    for command in re.findall(r'nix develop(?: \.#\w+)?', job):
+                        self.assertEqual(command, 'nix develop .#ci' if shell == 'ci' else 'nix develop', name)
+        self.assertEqual(installs, 4)
+
     def test_smoke_snapshots_are_saved_only_from_passing_main_pushes(self):
         def allowed(event, ref, platform, passed=True, hit=False):
             save = re.search(r'(?ms)^      - name: Save successful[^\n]*\n(.*?)(?=^      - |\Z)',

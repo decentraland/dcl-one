@@ -1,10 +1,11 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 
 import { newCheckout } from "../cart/machine";
 import { partitionCart } from "../cart/partition";
 import { rarityCardPalette } from "../discovery/lib/rarity";
 import { creatorOrder, storeMint, wearableResale, parcelResale, BOOK } from "../payment/fixtures";
+import { marketplaceOn } from "../market/testing-flags";
 import CartPage from "./CartPage";
 import { creatorTrade } from "./fakes";
 import { createDemo, DemoShell, type DemoScenario } from "./demo";
@@ -112,6 +113,7 @@ describe("the cart page", () => {
   });
 
   it("web3 mixed cart: credits first on the mint, MANA only on the resale, separate totals and groups, then both groups settle", async () => {
+    onTestFinished(marketplaceOn());
     const { demo } = renderCart({ session: "web3", lines: MIXED });
     const mint = screen.getByRole("article", { name: "Rainbow Hat" });
     const resale = screen.getByRole("article", { name: "Vintage Jacket" });
@@ -165,6 +167,7 @@ describe("the cart page", () => {
   });
 
   it("no quote route and lines added from a card: each line still shows the rule's choices, unavailable, never 'Checking'", () => {
+    onTestFinished(marketplaceOn());
     const fromCards: DemoScenario["lines"] = MIXED!.map((l) => ({ ...l, category: "wearable", unseen: true }));
     for (const session of ["web3", "web2"] as const) {
       const { unmount } = renderCart({ session, lines: fromCards, offers: "outage" });
@@ -174,9 +177,14 @@ describe("the cart page", () => {
       expect(within(mint).queryAllByRole("radio", { name: /MANA/ })).toHaveLength(session === "web3" ? 1 : 0);
       expect(within(mint).getAllByText("The Credits price is unavailable right now. Try again in a moment.")).toHaveLength(1);
       const resale = screen.getByRole("article", { name: "Vintage Jacket" });
-      expect(within(resale).getByTestId("payment-mana-only").textContent).toContain("This is a resale: the seller is paid in MANA.");
-      expect(within(resale).getByTestId("payment-mana-only").textContent).not.toMatch(/credit/i);
-      if (session === "web2") expect(within(resale).getByRole("button", { name: "How to pay with MANA" })).toBeTruthy();
+      if (session === "web3") {
+        expect(within(resale).getByTestId("payment-mana-only").textContent).toContain("This is a resale: the seller is paid in MANA.");
+        expect(within(resale).getByTestId("payment-mana-only").textContent).not.toMatch(/credit/i);
+      } else {
+        // A web2 session never has the Marketplace (market/access.tsx): the resale is only removable.
+        expect(within(resale).getByText("Resales can't be bought in the Shop right now. Remove it to continue.")).toBeTruthy();
+        expect(within(resale).queryByTestId("payment-mana-only")).toBeNull();
+      }
       expect(confirmButton()).toBeDisabled();
       unmount();
     }
@@ -206,6 +214,7 @@ describe("the cart page", () => {
   });
 
   it("stale price: the change is shown and must be accepted before confirming", async () => {
+    onTestFinished(marketplaceOn());
     renderCart({ session: "web3", lines: MIXED, offers: "repriced" });
     await screen.findByRole("button", { name: "Accept the changes" });
     expect(await within(screen.getByRole("article", { name: "Rainbow Hat" })).findByText(/Price changed from 12 Credits to 14 Credits/)).toBeTruthy();
@@ -220,18 +229,48 @@ describe("the cart page", () => {
     expect(confirmButton()).toBeDisabled();
   });
 
-  it("web2: the resale is MANA only with wallet guidance that never mentions credits; its group needs a wallet", async () => {
+  it("web2: a resale saved earlier is the Marketplace's, never a web2 session's: noted, unpriced, and in the way until removed", async () => {
+    // Even with the rollout on: the Marketplace needs a web3 wallet session (market/access.tsx).
+    onTestFinished(marketplaceOn());
     renderCart({ session: "web2", lines: MIXED });
     const resale = screen.getByRole("article", { name: "Vintage Jacket" });
-    fireEvent.click(within(resale).getByRole("button", { name: "How to pay with MANA" }));
-    const guidance = within(resale).getByRole("heading", { name: "This purchase is paid in MANA" }).closest("section")!;
-    expect(guidance.textContent).toContain("Polygon");
-    expect(guidance.textContent).not.toMatch(/credit/i);
+    expect(within(resale).getByText("Resales can't be bought in the Shop right now. Remove it to continue.")).toBeTruthy();
+    expect(within(resale).queryByRole("button", { name: "How to pay with MANA" })).toBeNull();
+    const blockers = await screen.findByRole("list", { name: "Why you can't confirm yet" });
+    expect(blockers.textContent).toContain("Resales can't be bought in the Shop right now. Remove them to continue.");
+    expect(confirmButton()).toBeDisabled();
+    // Removed, the rest of the cart checks out on credits.
+    fireEvent.click(within(resale).getByRole("button", { name: "Remove Vintage Jacket" }));
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
     expect(within(screen.getByRole("article", { name: "Rainbow Hat" })).queryByRole("radio", { name: /MANA/ })).toBeNull();
     expect(screen.queryByTestId("pay-with-mana")).toBeNull();
+  });
+
+  it("web3 while access is still pending: a resale waits, unpriced and unpaid, and is never called removable", async () => {
+    // The rollout is on; the session is still being read back, so the Marketplace's access is pending.
+    onTestFinished(marketplaceOn());
+    renderCart({ session: "web3", lines: MIXED, resolving: true });
+    const resale = screen.getByRole("article", { name: "Vintage Jacket" });
+    expect(within(resale).getByText("Checking the price…")).toBeTruthy();
+    expect(screen.queryByText(/Remove (it|them) to continue/)).toBeNull();
+    const blockers = await screen.findByRole("list", { name: "Why you can't confirm yet" });
+    expect(blockers.textContent).toContain("Checking prices and availability…");
+    expect(confirmButton()).toBeDisabled();
+    // The count is what the total prices: the waiting resale is in neither.
+    expect(screen.getByText(/^Total: 1 item$/)).toBeTruthy();
+  });
+
+  it("web3 without the rollout: a resale saved earlier is not priced or bought, and blocks the checkout until removed", async () => {
+    renderCart({ session: "web3", lines: MIXED });
+    const resale = screen.getByRole("article", { name: "Vintage Jacket" });
+    expect(within(resale).getByText("Resales can't be bought in the Shop right now. Remove it to continue.")).toBeTruthy();
+    const blockers = await screen.findByRole("list", { name: "Why you can't confirm yet" });
+    expect(blockers.textContent).toContain("Remove them to continue.");
+    expect(confirmButton()).toBeDisabled();
+    // Only the hat is priced: the resale counts in neither the units nor the total.
+    expect(screen.getByText(/^Total: 1 item$/)).toBeTruthy();
+    fireEvent.click(within(resale).getByRole("button", { name: "Remove Vintage Jacket" }));
     await waitFor(() => expect(confirmButton()).toBeEnabled());
-    // Before any checkout, the one group this session cannot pay still says why.
-    expect(screen.getAllByTestId("checkout-group")[1]!.textContent).toContain("Needs a web3 wallet with MANA");
   });
 
   it("the MANA rail moves the cart to MANA and checks out only once the cart has re-priced on it", async () => {
@@ -533,6 +572,7 @@ describe("the cart page", () => {
   });
 
   it("LAND in a web3 cart is MANA only on Ethereum, in its own group", async () => {
+    onTestFinished(marketplaceOn());
     renderCart({ session: "web3", lines: [{ offer: (s) => parcelResale(s), listing: { orderId: "order-1" }, name: "Parcel 12,-4" }] });
     expect(screen.getByTestId("payment-mana-only").textContent).toContain("Paid in MANA on Ethereum");
     expect(screen.getByTestId("payment-mana-only").textContent).toContain("LAND, estates and rentals are sold in MANA.");
