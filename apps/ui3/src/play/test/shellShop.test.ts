@@ -1030,7 +1030,7 @@ describe('the shell purchase', () => {
   it('runs one dialog at a time', async () => {
     const t = setup()
     await t.buy()
-    await expect(t.buy('8')).rejects.toThrow(/already open/)
+    await expect(t.buy('8')).rejects.toMatchObject({ code: SHOP_BUSY })
   })
 
   it('refuses a request that names more than an item', async () => {
@@ -1649,13 +1649,13 @@ describe('BUY NAME, simulated', () => {
   it('opens one purchase at a time: a second BUY NAME, or an item, waits for the open one', async () => {
     const t = setup(SIM)
     await t.buyName()
-    await expect(t.buyName('Carolo')).rejects.toThrow(SHOP_BUSY)
-    await expect(t.buy()).rejects.toThrow(SHOP_BUSY)
+    await expect(t.buyName('Carolo')).rejects.toMatchObject({ code: SHOP_BUSY })
+    await expect(t.buy()).rejects.toMatchObject({ code: SHOP_BUSY })
     ;(await t.until('confirm')).handlers.onClose()
     // And an item purchase open keeps BUY NAME out.
     await t.buy()
     await t.until('confirm')
-    await expect(t.buyName()).rejects.toThrow(SHOP_BUSY)
+    await expect(t.buyName()).rejects.toMatchObject({ code: SHOP_BUSY })
   })
 
   it('reopens nothing when its reads answer after it was cancelled', async () => {

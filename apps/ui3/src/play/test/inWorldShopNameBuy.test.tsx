@@ -25,7 +25,7 @@ vi.mock('../lib/shell', () => ({
 import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop'
 import { webNameUrl } from '../features/shop/itemLinks'
 import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
-import { SHOP_BUSY, SHOP_EVENT } from '../lib/shopProtocol'
+import { SHOP_EVENT, shopBusy } from '../lib/shopProtocol'
 import type { Profile } from '../engine/protocol'
 import { PopupHost, resetPopups, ToastHost } from '../design'
 import { fakeProfileState } from './harness'
@@ -68,7 +68,7 @@ function answerShell(namesMode?: string, opts: { refuse?: boolean; busyAfter?: n
     }
     if (method === 'shop.buyName') {
       if (opts.refuse) throw new Error('NAMEs are not bought here')
-      if (opts.busyAfter != null && opened >= opts.busyAfter) throw new Error(SHOP_BUSY)
+      if (opts.busyAfter != null && opened >= opts.busyAfter) throw shopBusy()
       opened++
       return { v: 1, operation: 'n1', buyer: BUYER, state: 'reviewing', items: [], name: params?.name, mode: params?.mode }
     }

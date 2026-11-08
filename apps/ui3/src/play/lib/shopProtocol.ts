@@ -12,6 +12,7 @@
 import { MAX_CREDIT_LINES_PER_GROUP } from '../../shop/model/settlement'
 import { NAME_MAX_LENGTH, NAME_MIN_LENGTH } from '../../shop/names/names'
 import type { WalletKind } from '../../shop/wallet/session'
+import { ShellError } from './shellReply'
 
 export const SHOP_PROTOCOL = 1
 
@@ -25,10 +26,14 @@ export const SHOP_METHODS = {
 } as const
 
 /**
- * The error `shop.buy` and `shop.buyName` answer while another purchase is open. CLAIM NAME leaves that
- * purchase's dialog to say what is going on, rather than send the buyer to the web Shop.
+ * The code `shop.buy` and `shop.buyName` answer with while another purchase is open, or still opening (its
+ * dialog's first step shows before the request that opens it is answered): that purchase's dialog says what
+ * is going on, so the HUD sends the buyer nowhere else. Matched by its code (isShellError), never by its message.
  */
-export const SHOP_BUSY = 'a purchase is already open'
+export const SHOP_BUSY = 'shop.busy'
+
+/** That answer, as the shell throws it. */
+export const shopBusy = (): ShellError => new ShellError(SHOP_BUSY, 'a purchase is already open')
 
 /** The message the shell posts as an operation moves on. */
 export const SHOP_EVENT = 'bevy-shell:shop'

@@ -21,7 +21,7 @@ vi.mock('../lib/shell', () => ({
 
 import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop'
 import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
-import { SHOP_EVENT } from '../lib/shopProtocol'
+import { SHOP_EVENT, shopBusy } from '../lib/shopProtocol'
 import type { Wearable } from '../engine/protocol'
 import { fakeProfileState } from './harness'
 import { PopupHost, resetPopups } from '../design'
@@ -208,7 +208,7 @@ describe('buying in the in-world Shop', () => {
   })
 
   it('offers the web Shop when the shell can’t open the purchase: a refusal, or an answer in another version', async () => {
-    for (const answer of [Promise.reject(new Error('a purchase is already open')), Promise.resolve({ v: 2, operation: 'op', state: 'reviewing' })]) {
+    for (const answer of [Promise.reject(new Error('this item is not sold here')), Promise.resolve({ v: 2, operation: 'op', state: 'reviewing' })]) {
       answer.catch(() => {})
       serveCatalogue()
       answerShell()
@@ -222,6 +222,22 @@ describe('buying in the in-world Shop', () => {
       cleanup()
       resetPopups()
     }
+  })
+
+  it('sends nowhere when the shell is busy with another purchase: that purchase’s dialog, open or opening, is what the buyer sees', async () => {
+    serveCatalogue()
+    answerShell()
+    const usual = shell.request.getMockImplementation()!
+    shell.request.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === 'shop.buy') throw shopBusy()
+      return usual(method, params)
+    })
+    renderShop()
+    const card = (await screen.findByText('Golden Armor', {}, { timeout: 5000 })).closest('[data-rarity]') as HTMLElement
+    await userEvent.click(within(card).getByRole('button', { name: 'BUY' }))
+    await waitFor(() => expect(shell.request).toHaveBeenCalledWith('shop.buy', expect.anything()))
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(screen.queryByText('You will be redirected to the web Shop')).toBeNull()
   })
 
   it('ignores a malformed event', async () => {
