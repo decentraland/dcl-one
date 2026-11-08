@@ -534,7 +534,7 @@ class SelectionTest(unittest.TestCase):
     def test_flake_tool_changes_select_the_linux_lanes_without_the_native_matrix_or_scenes(self):
         # The Linux lanes take protoc, taplo and wasm-pack from the flake's bevy-tools package;
         # Windows, macOS and the graphical scenes still run install-protoc.py.
-        for path in ('flake.lock', 'flake.nix', 'infra/packages/default.nix',
+        for path in ('flake.lock', 'flake.nix', 'infra/packages/default.nix', 'infra/packages/tools.nix',
                      '.github/actions/bevy-explorer-tools/action.yml', 'apps/bevy-explorer/install-tools.sh'):
             with self.subTest(path=path):
                 before = self.git('rev-parse', 'HEAD')
