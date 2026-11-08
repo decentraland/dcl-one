@@ -19,7 +19,7 @@ This function takes an object with the following properties:
 
 > [!WARNING]
 > **📔 Note**: During the transition, the avatar is not affected by colliders, so it can pass through objects.
-> 
+>
 
 
 
@@ -79,6 +79,34 @@ pointerEventsSystem.onPointerDown(
 	}
 )
 ```
+
+
+> [!WARNING]
+> **📔 Note**: Without a `duration`, the promise resolves as soon as the teleport is queued, not once the player has arrived. Code after the `await` runs while `Transform.get(engine.PlayerEntity)` still reports the old position, and the move that lands a moment later can cut off an emote you started there. If something has to happen on arrival, poll the player's position instead:
+>
+> ```ts
+> import { engine, Transform } from '@dcl/sdk/ecs'
+> import { Vector3 } from '@dcl/sdk/math'
+> import { movePlayerTo } from '~system/RestrictedActions'
+>
+> function teleportThen(target: Vector3, onArrive: () => void) {
+> 	void movePlayerTo({ newRelativePosition: target })
+>
+> 	let waited = 0
+> 	function waitForArrival(dt: number) {
+> 		waited += dt
+> 		const pos = Transform.getOrNull(engine.PlayerEntity)?.position
+> 		// compare on X and Z only, so a height difference can't stall the wait
+> 		const arrived = pos !== undefined && Math.hypot(pos.x - target.x, pos.z - target.z) < 0.2
+> 		if (!arrived && waited < 1.5) return // give up after 1.5s
+> 		engine.removeSystem(waitForArrival)
+> 		onArrive()
+> 	}
+>
+> 	engine.addSystem(waitForArrival)
+> }
+> ```
+
 
 If the player attempts to move during the duration of their transition, the transition will be interrupted and the `movePlayerTo` function will never resolve. You can prevent this behavior by disabling all inputs while the transition is in progress using the `InputModifier` component, see [Restrict locomotion](/docs/creator/sdk7/interactivity/avatars/locomotion/#restrict-locomotion).
 

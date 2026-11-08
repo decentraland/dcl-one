@@ -17,24 +17,30 @@ To import a 3D model, an image, a sound file, or a video into your scene from yo
 
 1. Drag files directly onto the bottom panel. You can also click the **+ Import Assets** button on the top-left of the bottom panel and select from your local drive.
 
-![](/docs/creator/images/editor/import-assets.webp)
+![](/docs/creator/images/editor/import-assets.webp)
 
 2. Check the model thumbnail and click **Import**. When importing multiple assets, use the arrow buttons to cycle over each asset.
 
-![](/docs/creator/images/editor/import-confirmation.webp)
+![](/docs/creator/images/editor/import-confirmation.webp)
 
 You can now find your asset in the **Local Assets** tab. Assets are sorted into folders by type: 3D models appear under the _assets/Models_ folder, images under _assets/Images_, sound files under _assets/Audio_, and videos under _assets/Video_.
 
 Items from the built-in free asset packs are stored under _assets/asset-packs/_, and custom items created from the editor under _assets/custom/_. Older scenes may have user imports under _assets/scene/_ instead. All of these paths work in your scene code, just reference whichever folder the asset is in.
 
 - For 3D models, drag the `.glb` or `.gltf` files onto the canvas to add them as items on your scene.
-- Other kinds of assets like images and sound files can be dragged onto the fields of an item. For example you can drag an `.mp3` file onto the _Path_ field of an _Audio Source_ component.
+- You can also drag an image, a sound or a video file onto the canvas. The editor creates a ready-made item that already points at your file:
+  - A `.png`, `.jpg` or `.jpeg` file becomes an **Image** item.
+  - An `.mp3`, `.ogg` or `.wav` file becomes an ambient sound item.
+  - An `.mp4` file becomes a **Video Screen** item.
+
+  The new item is named after the file and arrives with the same components and settings as the equivalent item from the asset packs, so you can tweak it from the inspector straight away.
+- Any asset can also be dragged onto the fields of an item that is already in the scene. For example you can drag an `.mp3` file onto the _Path_ field of an _Audio Source_ component.
 
 
 > [!NOTE]
 > **💡 Tip**: You can also paste files directly into the project's `assets` folder, from Finder, Explorer or anywhere else. They appear in the **Local Assets** tab on their own, shortly after the copy finishes. If they don't show up, press the **Refresh** button next to the **Import Assets** button.
-> 
-> <img src="/docs/creator/images/editor/refresh-assets.webp" alt="" data-size="original">
+>
+> <img src="/docs/creator/images/editor/refresh-assets.webp" alt="" data-size="original">
 
 
 ### Supported formats

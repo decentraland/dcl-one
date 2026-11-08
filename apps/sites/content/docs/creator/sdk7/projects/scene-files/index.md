@@ -36,7 +36,7 @@ The _scene.json_ file is a JSON formatted manifest for a scene in the world. A s
 
 Most of the fields on the _scene.json_ file can be edited directly in the UI of the Scene Editor. See [Scene Settings](/docs/creator/scene-editor/get-started/scene-editor-essentials/#scene-settings).
 
-![](/docs/creator/images/thumbnail-image.webp)
+![](/docs/creator/images/thumbnail-image.webp)
 
 For more information see [scene metadata](/docs/creator/sdk7/projects/scene-metadata/#metadata).
 
@@ -95,6 +95,11 @@ When importing any assets via the Scene Editor, they are added automatically ins
 All scenes include a _.dclignore_ file, this file specifies what files in the scene folder to ignore when deploying a scene to Decentraland.
 
 For example, you might like to keep the Blender files for the 3D models in your scene inside the scene folder, but you want to prevent those files from being deployed to Decentraland. In that case, you could add `*.blend` to _.dclignore_ to ignore all files with that extension.
+
+
+> [!WARNING]
+> **📔 Note**: _.dclignore_ also applies to the local preview, not only to deployments. An ignored file isn't listed in the content the preview serves, so your scene can't load it there either. It isn't a 404 you can spot in the logs: the file is simply never requested. If an asset works in your editor but not in the preview, check _.dclignore_ first.
+
 
 | What to ignore | Example     | Description                                                                             |
 | -------------- | ----------- | --------------------------------------------------------------------------------------- |

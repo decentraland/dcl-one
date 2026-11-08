@@ -28,34 +28,82 @@ When the assistant is on, an **AI Assistant** button (the sparkles icon) appears
 
 The assistant does not use an API key of its own. It runs a coding CLI that you install and sign into, so the work is billed to that tool's own subscription.
 
-Four are supported:
+Four are supported: Claude, Codex, Cursor and Gemini. You install each one with its vendor's own installer, from a terminal.
 
-| CLI | Install | Sign in |
+### Install a CLI
+
+Run the command for your operating system:
+
+| CLI | macOS and Linux | Windows |
 | --- | --- | --- |
-| Claude | `npm i -g @anthropic-ai/claude-code` | `claude` |
-| Codex | `npm i -g @openai/codex` | `codex login` |
-| Cursor | `npm i -g cursor-agent` | `cursor-agent login` |
-| Gemini | `npm i -g @google/gemini-cli` | `gemini` |
+| Claude | `curl -fsSL https://claude.ai/install.sh \| bash` | `winget install Anthropic.ClaudeCode` |
+| Codex | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh` | `powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 \| iex"` |
+| Cursor | `curl https://cursor.com/install -fsS \| bash` | `powershell -ExecutionPolicy ByPass -c "irm 'https://cursor.com/install?win32=true' \| iex"` |
+| Gemini | `npm install -g @google/gemini-cli` | `npm install -g @google/gemini-cli` |
 
-You can do this from inside the Creator Hub. In the settings, on the **AI** tab under **Connect**, each detected CLI shows its status and a **Sign in** link that runs the login for you and opens your browser. A green dot and **Connected** mean it is ready. **Sign out** disconnects it.
+You don't have to copy these by hand. The Creator Hub shows the exact commands for your operating system in two places, along with a link to that vendor's install guide:
 
-If you prefer to do it yourself, open the **Via Terminal** section under a CLI. It gives you the exact **Install** and **Sign In** commands to copy.
+* The setup card in the chat panel, which appears the first time you open the panel with no CLI connected.
+* The settings, on the **AI** tab under **Connect**, in the **Via Terminal** section below each CLI. Each command there has a **Copy** button.
+
+The vendor guides:
+
+* [Claude Code install guide](https://code.claude.com/docs/en/terminal-guide)
+* [Codex CLI install guide](https://developers.openai.com/codex/cli)
+* [Cursor CLI install guide](https://cursor.com/docs/cli/installation)
+* [Gemini CLI install guide](https://www.geminicli.com/docs/get-started/installation)
+
+After installing, click **Recheck** on the chat panel's setup card so the Creator Hub picks up the new CLI, with no need to restart the app. The **AI** tab checks again on its own each time you open it.
 
 
 > [!WARNING]
-> **📔 Note**: Gemini has no **Sign in** button. Its login only runs as an interactive session, so sign in by running `gemini` in a terminal, or set a `GEMINI_API_KEY` in your environment.
+> **📔 Note**: Claude Desktop is not the same thing as Claude Code. The assistant needs Claude Code, Anthropic's terminal tool, and signing into the desktop app does not sign you into it. If the Creator Hub finds Claude Desktop without Claude Code, it says so and shows you the install command.
+>
+> Gemini CLI needs a paid Gemini API key, or a Gemini Code Assist Standard or Enterprise license.
 
 
-The same setup card appears in the chat panel itself the first time you open it with no CLI connected.
+### Sign in
+
+| CLI | Sign in |
+| --- | --- |
+| Claude | `claude auth login` |
+| Codex | `codex login` |
+| Cursor | `cursor-agent login` |
+| Gemini | run `gemini` and follow the prompts |
+
+Run the sign-in command in a terminal. It finishes in your browser.
+
+Codex has a shortcut: if it isn't installed yet, the Creator Hub can install it and sign you in for you. Click **Sign in with Codex** on the chat panel's setup card, or **Sign in** next to Codex under **Connect** on the **AI** tab. The Creator Hub runs the login and opens your browser, and a **Sign out** link then appears in the same place. If you installed Codex yourself with the command above, there is no button: sign in from a terminal like the others.
+
+A green dot and **Connected** next to a CLI mean it is ready to use.
 
 
 > [!NOTE]
 > **💡 Tip**: If you have more than one CLI signed in, a dropdown in the chat panel lets you switch between them.
 
 
+### When an agent asks you to sign in again
+
+A saved sign-in can expire while the CLI still looks connected. When a CLI answers a message with "not logged in", the Creator Hub shows a **Sign-in needed** state with an amber dot instead of passing the raw command line through to the chat.
+
+The chat panel and the **Via Terminal** section on the **AI** tab show the two commands to run, one at a time, finishing in your browser:
+
+| CLI | Sign out, then sign back in |
+| --- | --- |
+| Claude | `claude auth logout`, then `claude auth login` |
+| Codex | `codex logout`, then `codex login` |
+| Cursor | `cursor-agent logout`, then `cursor-agent login` |
+| Gemini | run `gemini`, then `/auth logout`, then `/auth login` |
+
+If the Creator Hub installed Codex for you, use **Sign out** and then **Sign in** on the **AI** tab instead.
+
+Send your message again once you are signed in. The agent stays enabled the whole time, so you don't have to set it up from scratch.
+
 ### Bill to an API key instead
 
 If you would rather pay per token than use a CLI subscription, switch on **Bill this to an API key instead** on the **AI** tab of the settings. It reads your provider's API key from your environment: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `CURSOR_API_KEY` or `GEMINI_API_KEY`. This is off by default.
+
+This is also a way around a sign-in you can't complete. When a CLI is in the **Sign-in needed** state, the Creator Hub shows an **Or use an API key** hint with the matching variable name.
 
 ## What it can do
 
@@ -83,7 +131,38 @@ While the assistant works, its changes show up live in the entity tree and the c
 
 An **About AI usage** card reminds you that the assistant consumes tokens from your connected account. Keep an eye on that account's usage.
 
+The assistant runs one message at a time. While a reply is in progress, a **Thinking…** indicator stays up until the turn finishes, including during long tool calls. Sending a second message doesn't cancel the first one: wait for the reply, or press **Stop** to end the turn yourself.
+
+Some replies ask you a question before continuing. If you leave one unanswered for too long, it closes with "This question is no longer active." and you can ask again.
+
+### Attach files to a prompt
+
+Sometimes it's easier to show the assistant something than to describe it. You can attach files to any message in three ways:
+
+* Click the paperclip icon on the left of the message box, labeled **Attach files**, and pick one or more files.
+* Drag files from your file explorer onto the message box. A **Drop files to attach** hint appears while you drag.
+* Paste an image straight from your clipboard, for example a screenshot you just took.
+
+Each attached file shows up as a chip above the message box, with an icon for its kind: image, 3D model (`.glb`, `.gltf`), audio (`.mp3`, `.wav`, `.ogg`, `.m4a`, `.flac`), or a generic file for anything else. Click the **Remove** cross on a chip to drop it before sending. You can attach up to 8 files to a single message, and you can send attachments with no text at all.
+
+Files you drag in or pick from disk are handed to the assistant by their real path, so nothing is copied and there is no size limit. The assistant can look at images directly, and it can reference a model or audio file by its path when it writes scene code. Pasted images have no file on disk, so the Creator Hub saves them to a temporary file first; those are capped at 8 MB each.
+
 If your Claude CLI is too old, the panel shows a warning. Run `claude update` in a terminal to fix it.
+
+### Point at an asset in your prompt
+
+Attaching a file sends its contents. Mentioning an asset is lighter: it just tells the assistant which asset in your project you mean, so you can say "use this one" instead of typing out a path.
+
+With the assistant open, double-click any asset in the **Local Assets** tab. It appears as a chip above the message box, reading **Asset: _filename_**, or **Built-in animation: _name_** for one of the built-in avatar animations.
+
+* Mention as many assets as you like. Each one gets its own chip and its own **Remove** cross.
+* Mentions sit next to the **Selection** chip, so you can point at an entity in your scene and an asset at the same time: "put this animation on that NPC".
+* Mentions apply to your next message only. They clear once you send it.
+
+
+> [!NOTE]
+> **💡 Tip**: Selecting the Scene root counts as selecting nothing, so it is never sent to the assistant. Select a real entity when you want the assistant to act on it.
+
 
 ## Decentraland skills are installed for you
 
