@@ -1,5 +1,5 @@
 import { access, mkdtemp } from 'node:fs/promises'
-import { createServer } from 'node:http'
+import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -34,6 +34,25 @@ describe('when releasing a browser test harness', () => {
       'browser already gone'
     )
     expect(server.listening).toBe(false)
+    expect(await exists(scratch)).toBe(false)
+  })
+
+  it('should reject with the first release error when several releases fail, and still remove the scratch folder', async () => {
+    const scratch = await mkdtemp(path.join(tmpdir(), 'release-harness-'))
+    const session = { close: () => Promise.reject(new Error('first: browser close')) }
+    let closed = false
+    const server = {
+      listening: true,
+      close: (callback: (error?: Error) => void) => {
+        closed = true
+        callback(new Error('second: server close'))
+      }
+    } as unknown as Server
+
+    await expect(releaseHarness({ session, server, scratch })).rejects.toThrow(
+      'first: browser close'
+    )
+    expect(closed).toBe(true)
     expect(await exists(scratch)).toBe(false)
   })
 })

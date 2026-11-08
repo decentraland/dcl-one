@@ -7,21 +7,31 @@ type Harness = {
   scratch?: string
 }
 
-// Releases whatever a browser test's setup managed to start, in reverse order, even when setup failed part way
-// or an earlier release throws. The first release error is rethrown after every resource has been released.
+// Releases whatever a browser test's setup managed to start (browser session, then a listening server, then the
+// scratch folder), attempting every release even when an earlier one fails, and rejects with the first release
+// error. It only sees release errors: a setup failure is reported by the test runner on its own.
 async function releaseHarness({ session, server, scratch }: Harness): Promise<void> {
-  try {
-    await session?.close()
-  } finally {
-    try {
+  const releases: (() => Promise<unknown>)[] = [
+    async () => session?.close(),
+    async () => {
       if (server?.listening)
         await new Promise<void>((resolve, reject) =>
           server.close((error) => (error ? reject(error) : resolve()))
         )
-    } finally {
+    },
+    async () => {
       if (scratch) await rm(scratch, { recursive: true, force: true })
     }
+  ]
+  let first: { error: unknown } | undefined
+  for (const release of releases) {
+    try {
+      await release()
+    } catch (error) {
+      first ??= { error }
+    }
   }
+  if (first) throw first.error
 }
 
 export { releaseHarness }
