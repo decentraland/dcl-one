@@ -11,8 +11,8 @@ nix develop --command make check   # non-interactive: never starts services
 ```
 
 `flake.nix` pins nixpkgs to a nixos-unstable commit. The Update nixpkgs workflow
-proposes the current tip every Sunday; `python3 tooling/nixpkgs-update.py` does
-the same locally.
+proposes the current tip on the first of each month; `python3
+tooling/nixpkgs-update.py` does the same locally.
 
 `nix develop` starts a per-checkout PostgreSQL 18, API, Sites, LiveKit, NATS and
 Pulse that outlive the shell and reload on edits.
