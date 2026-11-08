@@ -157,7 +157,7 @@ Upstream success body for one scene (from `world-about-handler.spec.ts:106-145`,
 | field | upstream | dcl-one | verdict |
 |---|---|---|---|
 | `scenesUrn` | the most recently deployed scene only: `getWorldScenes(…, {limit: 1, orderBy: created_at, desc})` (`worlds-manager.ts:403-407`); the spec pins length 1 (`world-about-handler.spec.ts:541-554`) | the newest scene only (`about.rs` `build_about`, `.take(1)` of the newest-first rows) | MATCH (WW-01) |
-| `baseUrl` in URNs, file URLs, adapter | `HTTP_BASE_URL`, else the request's host | `Settings.public_url` (`lib.rs:136-139`) | MATCH when `HTTP_BASE_URL` is the public URL |
+| `baseUrl` in URNs, file URLs, adapter | `HTTP_BASE_URL`, else the request's host | URNs and file URLs: `Settings::content_server_url`, `<PUBLIC_URL>/worlds-content-server` (WR-12); adapter: `Settings.public_url` | MATCH when `HTTP_BASE_URL` is the worlds host |
 | `spawnCoordinates` | `worlds.spawn_coordinates`, `null` when unset | the same | MATCH (WW-07) |
 | `realmName` | `worldConfiguration.name` (after the `dclName` migration) `|| worldName` | the same (`about.rs` `RuntimeMeta::from_scene`), then the ENS strip and override (`resolve_realm_name`) | MATCH (WW-05, WW-06); strip intended (WW-12) |
 | `minimap.enabled` | `miniMapConfig.visible ?? false`, where a truthy legacy `minimapVisible` replaces the whole `miniMapConfig` | the same, read as a boolean (JS truthiness) | MATCH (WW-05) |
