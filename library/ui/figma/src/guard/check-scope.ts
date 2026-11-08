@@ -326,7 +326,21 @@ async function checkScope(input: ScopeInput): Promise<ScopeResult> {
     }
 
     if (runKind === 'developer') {
-      checkEntries(file, before, after, owner, ownership, captured, true, removable, add, input)
+      checkEntries(
+        file,
+        before,
+        after,
+        owner,
+        ownership,
+        captured,
+        true,
+        removable,
+        add,
+        input,
+        undefined,
+        baseOwnership,
+        stagedOwnership
+      )
       continue
     }
     if (aggregateKind(file) === 'catalog' && derivedCatalog === undefined)
@@ -361,7 +375,9 @@ async function checkScope(input: ScopeInput): Promise<ScopeResult> {
         removable,
         add,
         input,
-        derivedCatalog
+        derivedCatalog,
+        baseOwnership,
+        stagedOwnership
       )
       continue
     }
@@ -637,17 +653,19 @@ function checkEntries(
   removable: ReadonlySet<string>,
   add: (violation: Violation) => void,
   input: ScopeInput,
-  derivedCatalog?: DerivedCatalogMetadata | Error
+  derivedCatalog?: DerivedCatalogMetadata | Error,
+  baseOwnership: Ownership = ownership,
+  stagedOwnership: Ownership = ownership
 ): void {
   const aggregate = aggregateKind(file)
   let parsedAfter, parsedBefore
   try {
     parsedAfter = aggregate
-      ? parseAggregate(aggregate, after.toString('utf8'), ownership)
+      ? parseAggregate(aggregate, after.toString('utf8'), stagedOwnership)
       : undefined
     parsedBefore =
       aggregate && before
-        ? parseAggregate(aggregate, before.toString('utf8'), ownership)
+        ? parseAggregate(aggregate, before.toString('utf8'), baseOwnership)
         : undefined
   } catch (error) {
     add({
@@ -770,14 +788,18 @@ function checkEntries(
         cause: `new entry ${key} belongs to ${entry.owner ?? 'no page'}, which was not captured`
       })
 
-  const frozen = (parsed: typeof parsedAfter) =>
-    parsed.order.filter((key) => {
-      const entryOwner = parsed.entries.get(key)?.owner
-      return !(entryOwner !== null && entryOwner !== undefined && captured.has(entryOwner))
-    })
-  const keptAfter = new Set(parsedAfter.order)
-  const orderBefore = frozen(parsedBefore).filter((key) => keptAfter.has(key))
-  const orderAfter = frozen(parsedAfter).filter((key) => parsedBefore.entries.has(key))
+  // Each key is classified once, by its committed entry when it has one: both sides are parsed with
+  // their own ownership, and a renamed component's old keys have no staged owner. Staged ownership
+  // never frees a committed entry whose owner is null or uncaptured.
+  const committed = parsedBefore
+  const proposed = parsedAfter
+  const isFrozen = (key: string) => {
+    const entryOwner = (committed.entries.get(key) ?? proposed.entries.get(key))?.owner
+    return !(entryOwner !== null && entryOwner !== undefined && captured.has(entryOwner))
+  }
+  const keptAfter = new Set(proposed.order)
+  const orderBefore = committed.order.filter((key) => isFrozen(key) && keptAfter.has(key))
+  const orderAfter = proposed.order.filter((key) => isFrozen(key) && committed.entries.has(key))
   if (orderBefore.join('\n') !== orderAfter.join('\n'))
     add({
       path: file,

@@ -2,6 +2,7 @@ import { cp, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { encodePageFileName } from '../capture/page-file-name.js'
 import { checkScope, type RunKind, type StageCompleteness } from './check-scope.js'
 import { applyRetirements, computeOwned } from './apply-retirements.js'
 import { emptyRetirements, type Retirements } from './retirements.js'
@@ -391,6 +392,168 @@ describe('checkScope', () => {
       expect(await fidelity({ ...rest, 'PlaceCard-1': second, 'PlaceCard-0': first })).toEqual([
         'the order of unselected entries changed'
       ])
+    })
+
+    describe('and the staged run renames components while the evidence keeps their old names', () => {
+      // Staged ownership is rebuilt from the staged manifest and catalog, so a renamed component's old
+      // case keys have no staged owner even though the same root ID is still on the same page.
+      const stageCatalog = async (
+        list: { name: string; page: string; id: string; variants: { id: string }[] }[],
+        pages: Record<string, { id: string; name: string }[]>
+      ) => {
+        await put(
+          staged,
+          `${GEN}/components/manifest.ts`,
+          manifest(
+            list.map((component) => ({
+              ...component,
+              file: `${component.page.toLowerCase()}/${component.name}`
+            }))
+          )
+        )
+        await put(staged, `${REVIEW}/catalog.json`, {
+          fileKey: 'F',
+          components: list,
+          pages: [
+            { id: BUTTONS, name: 'Buttons' },
+            { id: PLACES, name: 'Places' }
+          ],
+          foundations: { tokens: [] }
+        })
+        for (const [name, id] of [
+          ['Buttons', BUTTONS],
+          ['Places', PLACES]
+        ] as const)
+          await put(staged, `${SNAP}/components/${encodePageFileName(name)}`, {
+            v: 2,
+            page: { id, name },
+            components: (pages[name] ?? []).map((component) => ({
+              id: component.id,
+              name: component.name,
+              others: []
+            }))
+          })
+      }
+      const renameButton = () =>
+        stageCatalog(
+          [
+            { name: 'JumpInButton', page: 'Buttons', id: 'b1', variants: [{ id: '10:1' }] },
+            { name: 'PlaceCard', page: 'Places', id: 'p1', variants: [{ id: '20:1' }] }
+          ],
+          {
+            Buttons: [{ id: 'b1', name: 'JumpInButton' }],
+            Places: [{ id: 'p1', name: 'PlaceCard' }]
+          }
+        )
+      const causes = async (before: Record<string, unknown>, after: Record<string, unknown>) => {
+        await put(base, FIDELITY, { cases: before })
+        await put(staged, FIDELITY, { cases: after })
+        return (await run()).violations
+          .filter((violation) => violation.path === FIDELITY)
+          .map((violation) => violation.cause)
+      }
+      const { 'Button-0': button, 'PlaceCard-0': first, 'PlaceCard-1': second } = evidence
+      // The captured page re-renders its case, so the aggregate's bytes change.
+      const rerendered = { ...button, status: 'different' }
+
+      it('should accept the renamed case in its committed position', async () => {
+        await renameButton()
+        expect(
+          await causes(evidence, {
+            'Button-0': rerendered,
+            'PlaceCard-0': first,
+            'PlaceCard-1': second
+          })
+        ).toEqual([])
+      })
+
+      it('should reject a swap of the uncaptured entries', async () => {
+        await renameButton()
+        expect(
+          await causes(evidence, {
+            'Button-0': button,
+            'PlaceCard-1': second,
+            'PlaceCard-0': first
+          })
+        ).toEqual(['the order of unselected entries changed'])
+      })
+
+      it('should accept the renamed case moved after the uncaptured entries', async () => {
+        await renameButton()
+        expect(
+          await causes(evidence, {
+            'PlaceCard-0': first,
+            'PlaceCard-1': second,
+            'Button-0': rerendered
+          })
+        ).toEqual([])
+      })
+
+      it('should reject a reorder of an uncaptured page that has no staged owner', async () => {
+        await stageCatalog(
+          [
+            { name: 'Button', page: 'Buttons', id: 'b1', variants: [{ id: '10:1' }] },
+            { name: 'PlaceCardNew', page: 'Places', id: 'p1', variants: [{ id: '20:1' }] }
+          ],
+          {
+            Buttons: [{ id: 'b1', name: 'Button' }],
+            Places: [{ id: 'p1', name: 'PlaceCardNew' }]
+          }
+        )
+        expect(
+          await causes(evidence, {
+            'Button-0': button,
+            'PlaceCard-1': second,
+            'PlaceCard-0': first
+          })
+        ).toEqual(['the order of unselected entries changed'])
+      })
+
+      it('should keep an entry with no committed owner frozen when the staged run captures it', async () => {
+        await stageCatalog(
+          [
+            { name: 'Button', page: 'Buttons', id: 'b1', variants: [{ id: '10:1' }] },
+            { name: 'Chip', page: 'Buttons', id: 'c1', variants: [{ id: '10:2' }] },
+            { name: 'PlaceCard', page: 'Places', id: 'p1', variants: [{ id: '20:1' }] }
+          ],
+          {
+            Buttons: [
+              { id: 'b1', name: 'Button' },
+              { id: 'c1', name: 'Chip' }
+            ],
+            Places: [{ id: 'p1', name: 'PlaceCard' }]
+          }
+        )
+        const chip = { sourceId: '10:2', image: '/dcl-ui-review/renders/Chip-0.png' }
+        expect(
+          await causes(
+            { 'Chip-0': chip, ...evidence },
+            { 'Button-0': button, 'PlaceCard-0': first, 'Chip-0': chip, 'PlaceCard-1': second }
+          )
+        ).toEqual(['the order of unselected entries changed'])
+      })
+
+      it('should keep an uncaptured committed owner frozen when the staged run reassigns it', async () => {
+        await stageCatalog(
+          [
+            { name: 'Button', page: 'Buttons', id: 'b1', variants: [{ id: '10:1' }] },
+            { name: 'PlaceCard', page: 'Places', id: 'p1', variants: [{ id: '20:1' }] }
+          ],
+          {
+            Buttons: [
+              { id: 'b1', name: 'Button' },
+              { id: 'p1', name: 'PlaceCard' }
+            ]
+          }
+        )
+        expect(
+          await causes(evidence, {
+            'Button-0': button,
+            'PlaceCard-1': second,
+            'PlaceCard-0': first
+          })
+        ).toEqual(['the order of unselected entries changed'])
+      })
     })
   })
 
