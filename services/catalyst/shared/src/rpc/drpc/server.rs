@@ -87,9 +87,9 @@ type TransportEvent<T, M> = (T, M);
 
 #[allow(clippy::enum_variant_names)]
 enum ServerEvents<T: Transport + ?Sized> {
-    AttachTransport(Arc<T>),
-    NewTransport(TransportID, Arc<T>),
-    CloseTransport(TransportID),
+    Attach(Arc<T>),
+    New(TransportID, Arc<T>),
+    Close(TransportID),
 }
 
 enum TransportNotification<T: Transport + ?Sized> {
@@ -105,11 +105,7 @@ impl<T: Transport + ?Sized> ServerEventsSender<T> {
     /// `RpcServer::attach_transport` from another thread or background task, e.g. a listener
     /// accepting external connections.
     pub fn send_attach_transport(&self, transport: Arc<T>) -> ServerResult<()> {
-        if self
-            .0
-            .send(ServerEvents::AttachTransport(transport))
-            .is_err()
-        {
+        if self.0.send(ServerEvents::Attach(transport)).is_err() {
             return Err(ServerResultError::Internal(
                 ServerInternalError::UnableToNofifyServer,
             ));
@@ -118,11 +114,7 @@ impl<T: Transport + ?Sized> ServerEventsSender<T> {
     }
 
     fn send_new_transport(&self, id: TransportID, transport: Arc<T>) -> ServerResult<()> {
-        if self
-            .0
-            .send(ServerEvents::NewTransport(id, transport))
-            .is_err()
-        {
+        if self.0.send(ServerEvents::New(id, transport)).is_err() {
             error!("> RpcServer > Error on notifying the new transport {id}");
             return Err(ServerResultError::Internal(
                 ServerInternalError::TransportNotAttached,
@@ -199,7 +191,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
             error!(
                 "> RpcServer > new_transport_attached > Error while sending server ready message: {error:?}"
             );
-            let _ = events.0.send(ServerEvents::CloseTransport(id));
+            let _ = events.0.send(ServerEvents::Close(id));
             if !matches!(error, TransportError::Closed) {
                 transport.close().await;
             }
@@ -334,7 +326,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
         tokio::spawn(async move {
             while let Some(event) = events_receiver.recv().await {
                 match event {
-                    ServerEvents::NewTransport(id, transport) => {
+                    ServerEvents::New(id, transport) => {
                         let tx_cloned = transports_notifier.clone();
                         tokio::spawn(async move {
                             loop {
@@ -375,10 +367,10 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                             }
                         });
                     }
-                    ServerEvents::CloseTransport(id) => {
+                    ServerEvents::Close(id) => {
                         let _ = transports_notifier.send(TransportNotification::CloseTransport(id));
                     }
-                    ServerEvents::AttachTransport(transport) => {
+                    ServerEvents::Attach(transport) => {
                         if transports_notifier
                             .send(TransportNotification::MustAttachTransport(transport))
                             .is_err()

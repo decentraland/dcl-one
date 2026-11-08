@@ -15,6 +15,7 @@ that passed on a tree is not repeated for that tree. Workflow path filters are r
 `git commit --no-verify` / `git push --no-verify` bypass the hooks.
 """
 import contextlib
+import errno
 import fnmatch
 import hashlib
 import importlib.util
@@ -230,12 +231,20 @@ def locked():
     with open(STATE / 'lock', 'w') as handle:
         if WINDOWS:
             import msvcrt
+            delay = .1
+            announced = False
             while True:
                 try:
                     msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
                     break
-                except OSError:
-                    time.sleep(1)
+                except OSError as error:
+                    if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                        raise
+                    if not announced:
+                        print('Waiting for another local CI run to finish; Ctrl-C cancels this queued run.', file=sys.stderr)
+                        announced = True
+                    time.sleep(delay)
+                    delay = min(delay * 2, 2)
         else:
             import fcntl
             fcntl.flock(handle, fcntl.LOCK_EX)

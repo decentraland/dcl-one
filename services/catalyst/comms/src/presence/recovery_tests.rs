@@ -921,9 +921,10 @@ async fn same_wallet_in_distinct_worlds_returns_retryable_503_then_single_world_
     server.abort();
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn aggregate_exact_100000_records_across_bounded_responses_publish_but_one_more_retains_old_view()
  {
+    let _clock = crate::shared::test_wait::hold_paused_clock();
     let (state, source, server) = fixture().await;
     let names = [
         "world-foo.dcl.eth",
@@ -963,8 +964,9 @@ async fn aggregate_exact_100000_records_across_bounded_responses_publish_but_one
     server.abort();
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn aggregate_exact_16_mebibytes_publish_but_one_more_decoded_byte_retains_old_view() {
+    let _clock = crate::shared::test_wait::hold_paused_clock();
     let (mut state, source, server) = fixture().await;
     let mut catalogue = Catalogue::default();
     let mut rooms = Vec::new();

@@ -12,6 +12,7 @@ from pathlib import Path
 import plistlib
 import shutil
 import signal
+import select
 import socket
 import subprocess
 import tempfile
@@ -305,7 +306,7 @@ class DevTest(unittest.TestCase):
                 server.wait()
         self.addCleanup(stop)
         deadline = time.monotonic() + 20
-        while True:
+        for delay in dev.backoff_delays(deadline):
             try:
                 with dev.urllib.request.urlopen(f'http://127.0.0.1:{monitor}/healthz', timeout=1) as response:
                     self.assertEqual(json.loads(response.read()), {'status': 'ok'})
@@ -313,7 +314,9 @@ class DevTest(unittest.TestCase):
             except OSError:
                 self.assertIsNone(server.poll(), 'nats-server exited')
                 self.assertLess(time.monotonic(), deadline, 'nats-server did not answer')
-                time.sleep(.2)
+                time.sleep(min(delay, max(0, deadline - time.monotonic())))
+        else:
+            self.fail('nats-server did not answer')
         with socket.create_connection(('127.0.0.1', client), timeout=5) as sock:
             self.assertTrue(sock.recv(4096).startswith(b'INFO '), 'a NATS client port')
 
@@ -368,7 +371,7 @@ class DevTest(unittest.TestCase):
                 server.wait()
         self.addCleanup(stop)
         deadline = time.monotonic() + 20
-        while True:
+        for delay in dev.backoff_delays(deadline):
             try:
                 with socket.create_connection(('127.0.0.1', signaling), timeout=1) as sock:
                     sock.sendall(b'GET / HTTP/1.0\r\n\r\n')
@@ -377,7 +380,9 @@ class DevTest(unittest.TestCase):
             except OSError:
                 self.assertIsNone(server.poll(), 'livekit-server exited')
                 self.assertLess(time.monotonic(), deadline, 'livekit-server did not answer')
-                time.sleep(.2)
+                time.sleep(min(delay, max(0, deadline - time.monotonic())))
+        else:
+            self.fail('livekit-server did not answer')
 
     def test_persistent_settings_do_not_rotate_secrets(self):
         warning = io.StringIO()
@@ -596,7 +601,7 @@ class DevTest(unittest.TestCase):
         # duplicate CREATE DATABASE fails, and migration requires the stamp.
         script = self.state / 'schema-race.py'
         script.write_text(textwrap.dedent('''
-            import importlib.util, pathlib, sys, time
+            import importlib.util, pathlib, sys
             spec = importlib.util.spec_from_file_location('dev', sys.argv[1])
             d = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(d)
@@ -606,7 +611,6 @@ class DevTest(unittest.TestCase):
             def sql(config, query, db='catalyst'):
                 if 'pg_database' in query:
                     exists = database.exists()
-                    time.sleep(.2)
                     return '1' if exists else ''
                 if query == 'CREATE DATABASE catalyst':
                     database.touch(exist_ok=False)
@@ -619,15 +623,40 @@ class DevTest(unittest.TestCase):
             def run(argv, **kwargs):
                 with (d.STATE / 'actions').open('a') as log:
                     log.write(argv[2] + '\\n')
-                time.sleep(.2)
                 stamp.touch()
+            real_flock = d.fcntl.flock
+            def flock(lock, operation):
+                try:
+                    real_flock(lock, operation | d.fcntl.LOCK_NB)
+                except BlockingIOError:
+                    print('blocked', flush=True)
+                    real_flock(lock, operation)
+                print('locked', flush=True)
+                assert sys.stdin.readline().strip() == 'continue'
+            d.fcntl.flock = flock
             d.sql, d.run = sql, run
             d.apply_schema(d.settings(), 'catalyst')
         '''))
-        children = [subprocess.Popen([os.sys.executable, str(script), str(dev.__file__), str(self.state)],
-                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(2)]
-        for child in children:
-            self.addCleanup(lambda child=child: child.poll() is None and child.kill())
+        children = []
+        def start():
+            child = subprocess.Popen([os.sys.executable, str(script), str(dev.__file__), str(self.state)],
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            children.append(child)
+            self.addCleanup(lambda: child.poll() is None and child.kill())
+            return child
+        def expect(child, state):
+            self.assertTrue(select.select([child.stdout], [], [], 10)[0], f'child did not reach {state}')
+            self.assertEqual(child.stdout.readline().strip(), state)
+        def release(child):
+            child.stdin.write('continue\n')
+            child.stdin.flush()
+        first = start()
+        expect(first, 'locked')
+        second = start()
+        expect(second, 'blocked')
+        release(first)
+        expect(second, 'locked')
+        release(second)
         for child in children:
             stdout, stderr = child.communicate(timeout=10)
             self.assertEqual(child.returncode, 0, stdout + stderr)
@@ -835,11 +864,11 @@ class DevTest(unittest.TestCase):
                 dev.pc('up', '--config', str(project), '--disable-dotenv', '--detached', '--tui=false',
                        check=True, capture_output=True, text=True)
                 deadline = time.monotonic() + 10
-                while time.monotonic() < deadline:
+                for delay in dev.backoff_delays(deadline):
                     result = dev.pc('process', 'list', '--output', 'json', capture_output=True, text=True)
                     if result.returncode == 0:
                         break
-                    time.sleep(.1)
+                    time.sleep(min(delay, max(0, deadline - time.monotonic())))
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertTrue((state / 'pc.sock').is_socket())
                 self.assertEqual(json.loads(result.stdout)[0]['name'], 'hold')
@@ -937,14 +966,14 @@ class DevTest(unittest.TestCase):
             process = subprocess.Popen([os.sys.executable, '-c', launch], stdout=log, stderr=log)
             self.addCleanup(lambda: stop(process))
             deadline = time.monotonic() + 30
-            while time.monotonic() < deadline:
+            for delay in dev.backoff_delays(deadline):
                 if process.poll() is not None:
                     self.fail((self.state / 'postgres.log').read_text())
                 try:
                     dev.sql(self.config, 'SELECT 1', 'postgres')
                     return process
                 except subprocess.CalledProcessError:
-                    time.sleep(.1)
+                    time.sleep(min(delay, max(0, deadline - time.monotonic())))
             self.fail('PostgreSQL startup timed out')
         try:
             process = start()

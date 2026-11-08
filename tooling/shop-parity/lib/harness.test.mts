@@ -5,6 +5,7 @@ import { createServer, request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import { waitUntil } from "../../../library/async/index.ts";
 import { deflateSync } from "node:zlib";
 import { assertFreshBuild, buildSites, dclOneIdentity, isCommitted, localEnvFiles, stampFile } from "./build.mts";
 import type { Collected, Node } from "./collect.mts";
@@ -741,5 +742,28 @@ describe("network guards", () => {
       lift();
       server.close();
     }
+  });
+});
+
+
+describe("bounded condition waits", () => {
+  it("checks before waiting and returns falsy results", async () => {
+    assert.equal(await waitUntil(async () => 0, { timeoutMs: 1000, description: "ready" }), 0);
+  });
+
+  it("backs off, caps the interval and never checks or sleeps past the deadline", async () => {
+    let now = 0;
+    const delays: number[] = [];
+    const checks: number[] = [];
+    await assert.rejects(waitUntil(async () => { checks.push(now); }, {
+      timeoutMs: 850, description: "missing", initialDelayMs: 100, maxDelayMs: 300, now: () => now,
+      sleep: async (delay) => { delays.push(delay); now += delay; },
+    }), /Timed out: missing/);
+    assert.deepEqual(checks, [0, 100, 300, 600]);
+    assert.deepEqual(delays, [100, 200, 300, 250]);
+  });
+
+  it("preserves errors from a failed check", async () => {
+    await assert.rejects(waitUntil(async () => { throw new Error("preview exited"); }, { timeoutMs: 1000, description: "preview" }), /preview exited/);
   });
 });

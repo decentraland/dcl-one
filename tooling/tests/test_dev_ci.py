@@ -91,6 +91,9 @@ class DevCiTest(unittest.TestCase):
         self.assertEqual(dev.watched_changes(['docs/development.md', 'README.md'], self.dev), [])
         self.assertEqual(dev.watched_changes(['docs/a.md', 'apps/ui3/src/a.ts'], self.dev), ['apps/ui3/src/a.ts'])
         self.assertTrue(dev.watched_changes(['services/catalyst/db/src/lib.rs'], self.dev))
+        for path in ('.github/workflows/bevy-explorer-benchmark.yml', 'infra/gateway/smoke.py'):
+            with self.subTest(path=path):
+                self.assertEqual(dev.watched_changes([path], self.dev), [path])
         # No change and an unfiltered workflow: nothing to skip on, so everything runs.
         self.assertFalse(dev.plan('local', 'HEAD', 'HEAD')[2])
         with patch.object(self.dev, 'workflow_paths', return_value=None):

@@ -4,6 +4,7 @@
 // cannot be equal between two renders (3D previews, live timers) and say why; expected entries
 // are deliberate differences, each with the rule (the repository's AGENTS.md) or code behind it.
 import type { Page } from "playwright-core";
+import { waitUntil } from "../../library/async/index.ts";
 import { collectionOfItem, creatorOfProfile } from "./lib/discover.mts";
 import type { Expectation } from "./lib/structure.mts";
 
@@ -57,13 +58,32 @@ const byText = (tag: string, text: string, scope = "//main") => `xpath=${scope}/
 const inDrawer = (tag: string, text: string) =>
   `xpath=//*[@role='dialog']//${tag}[starts-with(${UP},'${text.toUpperCase()}') and not(.//${tag}[starts-with(${UP},'${text.toUpperCase()}')])]`;
 /** Adds the detail page's item (or the second card's) through the page itself, as a buyer does. */
-async function addToCart(page: Page, path?: string) {
+async function addToCart(page: Page, path?: string, expectedCount = 1) {
   if (path) await page.goto(new URL(path, page.url()).href, { waitUntil: "load" });
   const add = page.locator(byText("button", "Add to cart"));
   await add.first().waitFor({ state: "visible", timeout: 20_000 });
+  if (expectedCount === 1) {
+    const drawer = page.getByRole("dialog", { name: /shopping cart/i });
+    await waitUntil(async (remainingMs) => {
+      if (await drawer.isVisible()) return true;
+      await page.getByTestId("subnav-cart").click({ timeout: remainingMs });
+      return await drawer.isVisible() ? true : undefined;
+    }, { timeoutMs: 20_000, description: "the cart responding before the first add" });
+    await page.keyboard.press("Escape");
+    await drawer.waitFor({ state: "hidden", timeout: 20_000 });
+  }
+  await page.waitForFunction(cartHasCount, expectedCount - 1, { timeout: 20_000 });
   await add.first().click();
-  await page.waitForTimeout(800);
+  await page.waitForFunction(cartHasCount, expectedCount, { timeout: 20_000 });
 }
+function cartHasCount(expected: number): boolean {
+  const cart = document.querySelector("[data-testid=subnav-cart]");
+  if (!cart) return false;
+  const text = `${cart.getAttribute("aria-label") ?? ""} ${cart.textContent ?? ""}`;
+  const count = Number(text.match(/\d+/)?.[0] ?? 0);
+  return count === expected;
+}
+
 /** The nearest ancestor box of a text that is at least `minChildren` wide, e.g. a panel by its heading. */
 const panelOf = (text: string) => `xpath=//main//*[${UP}='${text.toUpperCase()}' and not(*)]/ancestor::*[count(*)>=2][2]`;
 
@@ -353,7 +373,7 @@ export const PAGES: PageSpec[] = [
     setup: async (page, _side, targets) => {
       if (!targets.item2) throw new Error("the recording has no second item (record a new set: discover reads it)");
       await addToCart(page, targets.item ?? "/shop/items");
-      await addToCart(page, targets.item2);
+      await addToCart(page, targets.item2, 2);
       await page.goto(new URL("/shop/cart", page.url()).href, { waitUntil: "load" });
     },
     keys: [
@@ -374,9 +394,6 @@ export const PAGES: PageSpec[] = [
     title: "Empty cart, signed out",
     path: "/shop/cart",
     ready: both("[data-testid=subnav]"),
-    setup: async (page) => {
-      await page.waitForTimeout(1500);
-    },
     keys: [...FRAME_KEYS],
     masks: [WEBGL],
     regions: FRAME_REGIONS,
@@ -416,9 +433,6 @@ function plain(id: string, title: string, path: PageSpec["path"], extra: Partial
     title,
     path,
     ready: both("[data-testid=subnav]"),
-    setup: async (page) => {
-      await page.waitForTimeout(2_000);
-    },
     keys: [...FRAME_KEYS],
     maxHeight: 3000,
     masks: [WEBGL],

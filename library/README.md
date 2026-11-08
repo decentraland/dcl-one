@@ -12,6 +12,7 @@ The one exception is `ui/apps/<app>/`, which holds UI used by a single app
 | `dcl-scene-authoring/` | Composites, CRDT encoding | scene CLI, scene build |
 | `dcl-scene-build/` | SDK7 scene build, native and WASI | sites, scene CLI tests |
 | `dcl-preview-tunnel{,-protocol}/` | Preview relay and wire types | scene CLI |
+| `async/` | Capped exponential backoff, bounded condition waits and HTTP probes | Shop parity/trade tooling, Redis conformance tooling |
 | `catalyst-api/` | TypeScript DTOs, OpenAPI documents | sites, ui3, catalyst |
 | `protocol/` | The `.proto` contract, the npm package `@dcl/protocol` | Explorer (`dcl_component`), comms, social, scene CLI, scene authoring, the SDK |
 | `js-sdk-toolchain/` | The creator SDK: `@dcl/sdk`, `ecs`, `react-ecs`, `js-runtime`, `sdk-commands`, `playground-assets` (npm, own lockfiles) | scenes; reads `protocol/` |

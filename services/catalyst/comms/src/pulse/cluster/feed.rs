@@ -1347,7 +1347,7 @@ mod current_tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn saturation_never_truncates_or_evicts_unfinished_plans() {
         let current = CurrentAssignments::default();
         let mut assignments = Vec::new();

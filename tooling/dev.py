@@ -36,6 +36,13 @@ PROGRESS_SECONDS = 30
 ANSI = re.compile(r'\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))')
 
 
+def backoff_delays(deadline, first=.1, maximum=2):
+    delay = first
+    while (remaining := deadline - time.monotonic()) > 0:
+        yield min(delay, remaining)
+        delay = min(delay * 2, maximum)
+
+
 def run(argv, **kwargs):
     return subprocess.run([str(a) for a in argv], check=True, **kwargs)
 
@@ -679,9 +686,11 @@ def reap_orphans():
             for signum in (stop, signal.SIGKILL):
                 (os.killpg if group else os.kill)(pid, signum)
                 deadline = time.monotonic() + 30
-                while (alive := started(pid) == record['started']) and time.monotonic() < deadline:
-                    time.sleep(.2)
-                if not alive:
+                for delay in backoff_delays(deadline):
+                    if started(pid) != record['started']:
+                        break
+                    time.sleep(min(delay, max(0, deadline - time.monotonic())))
+                if started(pid) != record['started']:
                     break
         path.unlink()
 
@@ -919,10 +928,12 @@ def up(postgres_only=False):
         args, env = prepared
         pc(*args, '--detached', check=True, env=env)
         deadline = time.monotonic() + 10
+        delays = backoff_delays(deadline)
         while not supervisor_running():
-            if time.monotonic() >= deadline:
+            delay = next(delays, None)
+            if delay is None:
                 raise RuntimeError('Supervisor startup timed out. Inspect .cache/dev/supervisor.log.')
-            time.sleep(.1)
+            time.sleep(min(delay, max(0, deadline - time.monotonic())))
     print('Starting PostgreSQL only.' if postgres_only else
           'Starting PostgreSQL, the API and Sites. The first run downloads dependencies and compiles Rust.')
     print('Use foundation-dev logs api-build, foundation-dev status or foundation-dev wait.')
@@ -971,7 +982,8 @@ def wait_ready(timeout, postgres_only=False):
     deadline = started + timeout
     log_positions = {name: log_position(STATE / f'{name}.log') for name in ('web-install', 'api-build')}
     print(f"Waiting up to {timeout}s for {'PostgreSQL' if postgres_only else 'the API and Sites'}.", flush=True)
-    while time.monotonic() < deadline:
+    delays = backoff_delays(deadline)
+    while True:
         processes = pc('process', 'list', '--output', 'json', capture_output=True, text=True)
         if processes.returncode:
             raise RuntimeError('The development supervisor is not running. Run foundation-dev up.')
@@ -1000,7 +1012,10 @@ def wait_ready(timeout, postgres_only=False):
             print('API and Sites are ready.')
             return wait_first_mirror_pass(config, deadline)
         except (urllib.error.URLError, TimeoutError, OSError, RuntimeError, subprocess.CalledProcessError):
-            time.sleep(1)
+            delay = next(delays, None)
+            if delay is None:
+                break
+            time.sleep(min(delay, max(0, deadline - time.monotonic())))
     raise RuntimeError('Startup timed out. Check foundation-dev status and foundation-dev logs api/sites.')
 
 
@@ -1018,6 +1033,7 @@ def wait_first_mirror_pass(config, deadline):
     # prerequisite for readiness: an error, an unreadable status or the deadline only warns.
     url = f"http://127.0.0.1:{config['port']}/api/status"
     announced = None
+    delays = backoff_delays(deadline, maximum=5)
     while True:
         try:
             with urllib.request.urlopen(url, timeout=3) as response:
@@ -1039,7 +1055,7 @@ def wait_first_mirror_pass(config, deadline):
         if pending != announced:
             print(f"Waiting for the first {', '.join(pending)} mirror pass; its routes answer 503 until then.")
             announced = pending
-        time.sleep(2)
+        time.sleep(min(next(delays, 0), max(0, deadline - time.monotonic())))
 
 
 def live_postgres_pid():
@@ -1087,11 +1103,13 @@ def down():
         # say whether it stopped, not the exit code.
         pc('down')
         deadline = time.monotonic() + 120
-        while time.monotonic() < deadline:
-            if not control_socket.exists() and (config is None or ports_free(config['port'])):
-                return 0
-            time.sleep(.2)
-    raise RuntimeError('Shutdown timed out. Inspect .cache/dev/supervisor.log before restarting.')
+        delays = backoff_delays(deadline)
+        while control_socket.exists() or (config is not None and not ports_free(config['port'])):
+            delay = next(delays, None)
+            if delay is None:
+                raise RuntimeError('Shutdown timed out. Inspect .cache/dev/supervisor.log before restarting.')
+            time.sleep(min(delay, max(0, deadline - time.monotonic())))
+        return 0
 
 
 def main():

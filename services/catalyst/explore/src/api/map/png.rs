@@ -109,12 +109,14 @@ fn png_response(bytes: Arc<Vec<u8>>) -> Response {
         .into_response()
 }
 
-fn render_error(e: String) -> Response {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({ "ok": false, "error": e })),
+fn render_error(e: String) -> Box<Response> {
+    Box::new(
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "ok": false, "error": e })),
+        )
+            .into_response(),
     )
-        .into_response()
 }
 
 fn cached_png_render<F>(
@@ -126,7 +128,7 @@ fn cached_png_render<F>(
     render: F,
 ) -> Response
 where
-    F: FnOnce(&Grid) -> Result<Vec<u8>, Response>,
+    F: FnOnce(&Grid) -> Result<Vec<u8>, Box<Response>>,
 {
     let last = state.map.last_updated_at();
     let etag = http_cache::etag_for(last, &key);
@@ -149,7 +151,7 @@ where
                 }
                 Err(mut resp) => {
                     http_cache::apply(&mut resp, last, max_age, swr);
-                    return resp;
+                    return *resp;
                 }
             }
         }
@@ -226,7 +228,7 @@ pub async fn estate_map_png(
         |grid| {
             let selected = select_estate_coords(grid, &estate_id);
             if selected.is_empty() {
-                return Err(StatusCode::NOT_FOUND.into_response());
+                return Err(Box::new(StatusCode::NOT_FOUND.into_response()));
             }
             let mut xs: Vec<i32> = selected.iter().map(|c| c.x).collect();
             let mut ys: Vec<i32> = selected.iter().map(|c| c.y).collect();
