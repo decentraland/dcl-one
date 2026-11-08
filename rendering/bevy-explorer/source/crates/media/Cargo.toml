@@ -37,7 +37,7 @@ uuav = { workspace = true, optional = true }
 metal = { workspace = true, optional = true }
 
 # the D3D11 decode device the uuav client captures, its fence, and the import of its
-# presentation textures into a DX12 or Vulkan renderer (platform_windows.rs)
+# presentation textures into a DX12 or Vulkan renderer (uuav/platform_windows/)
 [target.'cfg(windows)'.dependencies]
 ash = { workspace = true }
 windows = { workspace = true, features = [

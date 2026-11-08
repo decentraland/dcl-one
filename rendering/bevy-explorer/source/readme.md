@@ -51,8 +51,8 @@ Scene video and audio streams play through the UUAV player (`library/uuav`): a s
 native binary spawns the helper from its own directory, so the committed runtime set has to sit
 next to it: `git lfs pull --include 'library/uuav/dist/**'` once, then
 `python3 ../../../tooling/uuav/stage-dist.py host target/release` (the `just native-*` recipes
-do this; `just stage-uuav-tests` stages it for `cargo test`). Windows builds play the audio of a
-video but do not show its frames yet (`crates/media/src/uuav/platform_windows.rs`).
+do this; `just stage-uuav-tests` stages it for `cargo test`). On Windows the frames are imported
+into the DX12 or Vulkan renderer without a copy (`crates/media/src/uuav/platform_windows/`).
 
 ## Web client
 

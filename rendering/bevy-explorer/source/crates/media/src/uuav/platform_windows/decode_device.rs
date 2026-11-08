@@ -1,24 +1,11 @@
-//! Windows: a frame reaches the renderer in three steps.
-//!
-//! 1. The helper decodes it with FFmpeg's D3D11VA and copies it into an NV12 texture shared
-//!    across processes.
-//! 2. The uuav client copies that into its NV12 presentation texture, on a D3D11 device this
-//!    module creates on the renderer's adapter.
-//! 3. The renderer opens the presentation texture through an NT handle without a copy: on DX12
-//!    with `ID3D12Device::OpenSharedHandle`, on Vulkan as external memory
-//!    (`VK_KHR_external_memory_win32`). It becomes one `NV12` wgpu texture whose two plane views
-//!    the conversion samples.
-//!
-//! [`wait_for_client_copy`] orders step 2 before the renderer's read with a D3D11 fence.
+//! The D3D11 decode device on the renderer's adapter, the probe the client captures it from, and
+//! the fence that orders the client's copies before the renderer's reads.
 
-use std::{os::raw::c_void, sync::Once};
+use std::os::raw::c_void;
 
 use bevy::{
-    log::{debug, warn},
-    render::{
-        render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
-        renderer::{RenderAdapter, RenderDevice},
-    },
+    log::warn,
+    render::renderer::{RenderAdapter, RenderDevice},
 };
 use parking_lot::Mutex;
 use windows::{
@@ -32,11 +19,10 @@ use windows::{
                 D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device,
                 ID3D11Device5, ID3D11DeviceContext4, ID3D11Fence, ID3D11Texture2D,
             },
-            Direct3D12::{ID3D12Device, ID3D12Resource},
+            Direct3D12::ID3D12Device,
             Dxgi::{
                 Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC},
-                CreateDXGIFactory1, DXGI_SHARED_RESOURCE_READ, DXGI_SHARED_RESOURCE_WRITE,
-                IDXGIAdapter1, IDXGIFactory1, IDXGIResource1,
+                CreateDXGIFactory1, IDXGIAdapter1, IDXGIFactory1,
             },
         },
         System::Threading::{CreateEventW, WaitForSingleObject},
@@ -44,20 +30,20 @@ use windows::{
     core::{Interface as _, PCWSTR},
 };
 
-use super::render::PlaneTextures;
+use super::InteropError;
 
 /// How long [`wait_for_client_copy`] waits for a copy to land before returning `false`.
 const COPY_WAIT_MS: u32 = 4;
 
 /// The renderer's API, read once from the render device: where a presentation texture is
 /// imported.
-enum Renderer {
+pub(super) enum Renderer {
     Dx12(ID3D12Device),
     Vulkan,
 }
 
 /// The decode device and the fence that orders its copies before the renderer's reads.
-struct Interop {
+pub(super) struct Interop {
     /// Kept so the device outlives the probe texture: the client holds its own reference, this
     /// one is for the fence below.
     _device: ID3D11Device,
@@ -68,7 +54,7 @@ struct Interop {
     event: HANDLE,
     /// The last value signalled on the fence.
     value: u64,
-    renderer: Renderer,
+    pub renderer: Renderer,
 }
 
 // SAFETY: D3D11 devices, fences and the D3D12 device are free-threaded; the immediate context
@@ -85,45 +71,13 @@ impl Drop for Interop {
 }
 
 /// The decode device of the running runtime; replaced by [`Probe::new`] on a restart.
-static INTEROP: Mutex<Option<Interop>> = Mutex::new(None);
+pub(super) static INTEROP: Mutex<Option<Interop>> = Mutex::new(None);
 
 /// A 1x1 texture on the decode device, created `SHARED | SHARED_NTHANDLE` so the client creates
 /// its presentation textures the same way. The client captures the device from it and retains
 /// the device itself, so the probe only has to outlive the call.
 pub struct Probe {
     texture: ID3D11Texture2D,
-}
-
-/// Why the decode device could not be set up or a presentation texture imported: the step that
-/// failed and the API error behind it, when there is one.
-#[derive(Debug)]
-pub struct InteropError {
-    step: &'static str,
-    cause: Option<Box<dyn std::error::Error>>,
-}
-
-impl InteropError {
-    fn caused<E: std::error::Error + 'static>(step: &'static str) -> impl FnOnce(E) -> Self {
-        move |cause| Self {
-            step,
-            cause: Some(Box::new(cause)),
-        }
-    }
-}
-
-impl From<&'static str> for InteropError {
-    fn from(step: &'static str) -> Self {
-        Self { step, cause: None }
-    }
-}
-
-impl std::fmt::Display for InteropError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.cause {
-            Some(cause) => write!(f, "{}: {cause}", self.step),
-            None => f.write_str(self.step),
-        }
-    }
 }
 
 impl Probe {
@@ -286,162 +240,6 @@ fn adapter_with_luid(luid: u64) -> Result<IDXGIAdapter1, InteropError> {
         }
     }
     Err("no DXGI adapter has the renderer's LUID".into())
-}
-
-/// Imports the presentation texture (`y` and `uv` are the same `ID3D11Texture2D`) into the
-/// renderer. The client keeps it alive across frames and for one poll after a resolution change;
-/// the import holds the shared memory on top.
-pub fn make_planes(
-    device: &RenderDevice,
-    y: *const c_void,
-    uv: *const c_void,
-    width: u32,
-    height: u32,
-) -> Option<PlaneTextures> {
-    if y.is_null() || y != uv {
-        return None;
-    }
-    match import(device, y, width, height) {
-        Ok(texture) => Some(PlaneTextures::nv12(texture)),
-        Err(e) => {
-            static ONCE: Once = Once::new();
-            ONCE.call_once(|| {
-                warn!("video frames cannot be imported into the renderer: {e}");
-            });
-            debug!("uuav: presentation texture not imported: {e}");
-            None
-        }
-    }
-}
-
-fn import(
-    device: &RenderDevice,
-    ptr: *const c_void,
-    width: u32,
-    height: u32,
-) -> Result<wgpu::Texture, InteropError> {
-    if !device
-        .features()
-        .contains(wgpu::Features::TEXTURE_FORMAT_NV12)
-    {
-        return Err("the render device has no NV12 texture support".into());
-    }
-    let raw = ptr.cast_mut();
-    // SAFETY: the client hands out a live `ID3D11Texture2D` it keeps alive until one poll after
-    // it replaces it; `from_raw_borrowed` adds no reference and the cast below takes its own
-    let texture =
-        unsafe { ID3D11Texture2D::from_raw_borrowed(&raw) }.ok_or("null presentation texture")?;
-    let resource: IDXGIResource1 = texture.cast().map_err(InteropError::caused(
-        "the presentation texture is not an IDXGIResource1",
-    ))?;
-    let handle = unsafe {
-        resource.CreateSharedHandle(
-            None,
-            DXGI_SHARED_RESOURCE_READ.0 | DXGI_SHARED_RESOURCE_WRITE.0,
-            PCWSTR::null(),
-        )
-    }
-    .map_err(InteropError::caused(
-        "CreateSharedHandle failed (was the presentation texture created shareable?)",
-    ))?;
-    let size = Extent3d {
-        width,
-        height,
-        depth_or_array_layers: 1,
-    };
-    let imported = {
-        let guard = INTEROP.lock();
-        let interop = guard.as_ref().ok_or("no decode device")?;
-        match &interop.renderer {
-            Renderer::Dx12(d3d12) => open_dx12(device, d3d12, handle, size),
-            Renderer::Vulkan => open_vulkan(device, handle, size),
-        }
-    };
-    // neither import takes ownership of the handle; the resource lives on through its own
-    // references
-    unsafe {
-        _ = CloseHandle(handle);
-    }
-    imported
-}
-
-fn descriptor(size: Extent3d) -> wgpu::TextureDescriptor<'static> {
-    wgpu::TextureDescriptor {
-        label: Some("uuav presentation"),
-        size,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: TextureDimension::D2,
-        format: TextureFormat::NV12,
-        usage: TextureUsages::TEXTURE_BINDING,
-        view_formats: &[],
-    }
-}
-
-fn open_dx12(
-    device: &RenderDevice,
-    d3d12: &ID3D12Device,
-    handle: HANDLE,
-    size: Extent3d,
-) -> Result<wgpu::Texture, InteropError> {
-    let mut resource: Option<ID3D12Resource> = None;
-    unsafe { d3d12.OpenSharedHandle(handle, &mut resource) }.map_err(InteropError::caused(
-        "ID3D12Device::OpenSharedHandle failed",
-    ))?;
-    let resource = resource.ok_or("OpenSharedHandle returned no resource")?;
-    // SAFETY: the resource is a 2D single-mip NV12 texture of `size` opened on the renderer's
-    // device, and the wrapper takes the reference `OpenSharedHandle` returned
-    let hal = unsafe {
-        wgpu::hal::dx12::Device::texture_from_raw(
-            resource,
-            TextureFormat::NV12,
-            TextureDimension::D2,
-            size,
-            1,
-            1,
-        )
-    };
-    Ok(unsafe {
-        device
-            .wgpu_device()
-            .create_texture_from_hal::<wgpu::hal::api::Dx12>(hal, &descriptor(size))
-    })
-}
-
-fn open_vulkan(
-    device: &RenderDevice,
-    handle: HANDLE,
-    size: Extent3d,
-) -> Result<wgpu::Texture, InteropError> {
-    let hal = unsafe {
-        device
-            .wgpu_device()
-            .as_hal::<wgpu::hal::api::Vulkan, _, _>(|hal| {
-                let hal = hal.ok_or("the renderer is not on Vulkan")?;
-                hal.texture_from_d3d11_shared_handle(
-                    handle,
-                    &wgpu::hal::TextureDescriptor {
-                        label: Some("uuav presentation"),
-                        size,
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: TextureDimension::D2,
-                        format: TextureFormat::NV12,
-                        usage: wgpu::hal::TextureUses::RESOURCE,
-                        memory_flags: wgpu::hal::MemoryFlags::empty(),
-                        view_formats: vec![],
-                    },
-                )
-                .map_err(InteropError::caused(
-                    "Vulkan import of the D3D11 texture failed",
-                ))
-            })
-    }?;
-    Ok(unsafe {
-        device
-            .wgpu_device()
-            .create_texture_from_hal::<wgpu::hal::api::Vulkan>(hal, &descriptor(size))
-    })
 }
 
 /// Orders the client's copy into the presentation texture before the renderer reads it: signals
