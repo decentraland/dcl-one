@@ -19,20 +19,82 @@ const LIBRARY = { name: "dcl-sites-beacon", version: "1.0.0" } as const;
 /** A slow endpoint holds neither a browser socket nor a server-rendered request past this. */
 const SEND_TIMEOUT_MS = 5000;
 /**
- * The events the server sends a minute (its 404s and error reports): a scanner's requests
- * are not visitors, and each one without a cookie would be a new Segment user.
+ * The events the server sends a minute, in three windows: its 404s, its reports (schema
+ * drift, which the asset catalog reports through too) and every other event (relayed client
+ * errors, the page events loaders emit). A scanner's requests are not visitors, each one
+ * without a cookie would be a new Segment user, and neither a scanner with a browser's user
+ * agent nor an unauthenticated client-error post may starve the reports.
  */
 const SERVER_EVENTS_PER_MINUTE = 60;
-let serverWindowStart = 0;
-let serverWindowSent = 0;
+const NOT_FOUND_EVENT = "page_not_found";
+const REPORT_EVENTS = new Set(["catalyst_schema_drift"]);
+const serverBudgets = {
+  notFound: { windowStart: 0, sent: 0 },
+  reports: { windowStart: 0, sent: 0 },
+  other: { windowStart: 0, sent: 0 },
+};
 
-function serverBudgetAllows(now = Date.now()): boolean {
-  if (now - serverWindowStart >= 60_000) {
-    serverWindowStart = now;
-    serverWindowSent = 0;
+function serverBudgetAllows(event: string, now = Date.now()): boolean {
+  const budget =
+    event === NOT_FOUND_EVENT
+      ? serverBudgets.notFound
+      : REPORT_EVENTS.has(event)
+        ? serverBudgets.reports
+        : serverBudgets.other;
+  // A clock behind the window's start (set back, or a test's) opens a new window too.
+  if (now - budget.windowStart >= 60_000 || now < budget.windowStart) {
+    budget.windowStart = now;
+    budget.sent = 0;
   }
-  serverWindowSent += 1;
-  return serverWindowSent <= SERVER_EVENTS_PER_MINUTE;
+  budget.sent += 1;
+  return budget.sent <= SERVER_EVENTS_PER_MINUTE;
+}
+
+/**
+ * Query parameters that carry a credential (`cast-stream?token=` takes a stream key, an
+ * OAuth return carries `code`, `/auth/callback?authResult=` the session token, Magic's
+ * return `magic_credential`): dropped from the page URL, the referrer, a 404's path and a
+ * relayed client error's URL before they reach Segment or a log, and from a query-shaped
+ * fragment too (the scene editor takes the SDK run's token as `#token=`). Every other
+ * parameter, `utm_*` included, is kept.
+ */
+const SENSITIVE_QUERY_PARAMS = new Set([
+  "token",
+  "code",
+  "key",
+  "signature",
+  "access_token",
+  "authresult",
+  "magic_credential",
+]);
+
+function withoutSensitivePairs(part: string): string {
+  return part
+    .split("&")
+    .filter((pair) => {
+      if (pair === "") return false;
+      const eq = pair.indexOf("=");
+      let name = pair.slice(0, eq < 0 ? pair.length : eq);
+      try {
+        name = decodeURIComponent(name);
+      } catch {
+      }
+      return !SENSITIVE_QUERY_PARAMS.has(name.toLowerCase());
+    })
+    .join("&");
+}
+
+export function withoutSensitiveParams(url: string): string {
+  const h = url.indexOf("#");
+  const beforeHash = h < 0 ? url : url.slice(0, h);
+  const fragment = h < 0 ? "" : url.slice(h + 1);
+  const q = beforeHash.indexOf("?");
+  const query = q < 0 ? "" : beforeHash.slice(q + 1);
+  const keptQuery = withoutSensitivePairs(query);
+  const keptFragment = fragment.includes("=") ? withoutSensitivePairs(fragment) : fragment;
+  if (keptQuery === query && keptFragment === fragment) return url;
+  const base = q < 0 ? beforeHash : beforeHash.slice(0, q);
+  return base + (keptQuery ? `?${keptQuery}` : "") + (keptFragment ? `#${keptFragment}` : "");
 }
 
 function env(name: string): string | undefined {
@@ -157,9 +219,9 @@ function context(): SegmentContext {
   return {
     direct: true,
     page: {
-      url: window.location.href,
+      url: withoutSensitiveParams(window.location.href),
       path: window.location.pathname,
-      referrer: typeof document !== "undefined" ? document.referrer : "",
+      referrer: withoutSensitiveParams(typeof document !== "undefined" ? document.referrer : ""),
       title: typeof document !== "undefined" ? document.title : "",
     },
     userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
@@ -205,7 +267,7 @@ function sendToSegment(body: SegmentTrackBody): void {
     return;
   }
 
-  if (!serverBudgetAllows()) return;
+  if (!serverBudgetAllows(body.event)) return;
   postTelemetry(url, payload, "application/json");
 }
 

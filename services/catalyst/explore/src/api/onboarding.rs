@@ -251,15 +251,18 @@ impl OnboardingStore {
             *w = w.to_lowercase();
         }
 
-        if identifier_type == "wallet" && email.is_none() {
+        if identifier_type == "wallet" {
             let lowered = user_identifier.to_lowercase();
-            if let Some((resolved_user, resolved_email)) = self.resolve_wallet_identity(&lowered) {
-                wallet = Some(wallet.unwrap_or(lowered));
+            if email.is_none()
+                && let Some((resolved_user, resolved_email)) =
+                    self.resolve_wallet_identity(&lowered)
+            {
                 user_identifier = resolved_user;
                 email = Some(resolved_email);
-            } else {
-                wallet = Some(wallet.unwrap_or(lowered));
             }
+            // The identifier is the wallet: a body without the `wallet` field
+            // binds it too, so a later wallet-identified checkpoint finds the row.
+            wallet = Some(wallet.unwrap_or(lowered));
         }
 
         let key = (user_identifier.clone(), checkpoint_id);
@@ -665,6 +668,54 @@ mod tests {
             .unwrap();
         assert_eq!(row.email.as_deref(), Some("late@b.com"));
         assert_eq!(row.wallet.as_deref(), Some("0xabc"));
+    }
+
+    /// An email body identified by the wallet (`identifierType: "wallet"`, no
+    /// `wallet` field) binds that wallet, so the explorer's CP7 for it lands
+    /// on the user's row.
+    #[test]
+    fn an_email_body_identified_by_a_wallet_binds_that_wallet() {
+        let mut store = OnboardingStore::default();
+        store.record_checkpoint(
+            reached("0xABC", "wallet", 1, Some("late@b.com"), None),
+            t(0),
+        );
+        let row = store
+            .checkpoints
+            .iter()
+            .find(|r| r.checkpoint == 1)
+            .unwrap();
+        assert_eq!(row.wallet.as_deref(), Some("0xabc"));
+        store.record_checkpoint(reached("0xabc", "wallet", 7, None, None), t(5));
+        let row = store
+            .checkpoints
+            .iter()
+            .find(|r| r.checkpoint == 7)
+            .unwrap();
+        assert_eq!(
+            (row.user_id.as_str(), row.email.as_deref()),
+            ("0xABC", Some("late@b.com"))
+        );
+    }
+
+    #[test]
+    fn an_explicit_wallet_field_wins_over_the_identifier() {
+        let mut store = OnboardingStore::default();
+        store.record_checkpoint(
+            reached("0xabc", "wallet", 1, Some("a@b.com"), Some("0xDEF")),
+            t(0),
+        );
+        let row = store
+            .checkpoints
+            .iter()
+            .find(|r| r.checkpoint == 1)
+            .unwrap();
+        assert_eq!(row.wallet.as_deref(), Some("0xdef"));
+        assert_eq!(store.resolve_wallet_identity("0xabc"), None);
+        assert_eq!(
+            store.resolve_wallet_identity("0xdef"),
+            Some(("0xabc".to_string(), "a@b.com".to_string()))
+        );
     }
 
     #[test]
