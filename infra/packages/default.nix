@@ -15,4 +15,8 @@ in {
     name = "foundation-image-tools";
     paths = [ pkgs.skopeo pkgs.jq pkgs.python3 pkgs.curl ];
   };
+  bevy-tools = pkgs.buildEnv {
+    name = "bevy-explorer-tools";
+    paths = [ pkgs.protobuf pkgs.taplo pkgs.wasm-pack ];
+  };
 } // import ../containers/images.nix { inherit pkgs catalyst sites gateway revision; }

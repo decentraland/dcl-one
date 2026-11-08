@@ -531,6 +531,22 @@ class SelectionTest(unittest.TestCase):
             result = ci.select(before, self.commit())
             self.assertTrue(all(result[lane] for lane in (*ci.LANES, 'native-matrix', 'scenes')))
 
+    def test_flake_tool_changes_select_the_linux_lanes_without_the_native_matrix_or_scenes(self):
+        # The Linux lanes take protoc, taplo and wasm-pack from the flake's bevy-tools package;
+        # Windows, macOS and the graphical scenes still run install-protoc.py.
+        for path in ('flake.lock', 'flake.nix', 'infra/packages/default.nix',
+                     '.github/actions/bevy-explorer-tools/action.yml', 'apps/bevy-explorer/install-tools.sh'):
+            with self.subTest(path=path):
+                before = self.git('rev-parse', 'HEAD')
+                self.write(path, 'changed')
+                result = ci.select(before, self.commit())
+                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes') if result[lane]}, set(ci.LANES))
+        # The other package definitions feed the images, not the engine lanes.
+        before = self.git('rev-parse', 'HEAD')
+        self.write('infra/packages/play.nix', 'changed')
+        result = ci.select(before, self.commit())
+        self.assertFalse(any(result[lane] for lane in (*ci.LANES, 'native-matrix', 'scenes')))
+
     def test_vendored_bevy_selects_every_lane_and_the_native_matrix(self):
         # The Explorer builds Bevy from rendering/bevy-explorer/bevy, platform code included.
         self.write('rendering/bevy-explorer/bevy/crates/bevy_scene/src/scene_spawner.rs', 'changed')
