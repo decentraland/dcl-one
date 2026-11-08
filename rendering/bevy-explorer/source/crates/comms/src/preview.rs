@@ -6,6 +6,7 @@ use bevy::{
     tasks::{IoTaskPool, Task},
 };
 use common::{
+    backoff::Backoff,
     structs::{CurrentRealm, PreviewCommand, PreviewMode},
     util::TaskExt,
 };
@@ -22,9 +23,15 @@ impl Plugin for PreviewPlugin {
     }
 }
 
+/// The wait before a reconnect: 250 ms, doubling with each failed connection, at most 5 s.
+const RECONNECT_START: Duration = Duration::from_millis(250);
+const RECONNECT_CAP: Duration = Duration::from_secs(5);
+
 #[allow(clippy::type_complexity)]
 fn connect_preview_server(
     mut preview: ResMut<PreviewMode>,
+    mut failures: Local<u32>,
+    mut retry_at: Local<Option<web_time::Instant>>,
     mut task: Local<
         Option<(
             Task<Result<(), anyhow::Error>>,
@@ -40,6 +47,8 @@ fn connect_preview_server(
     };
 
     if current_realm.is_changed() {
+        *failures = 0;
+        *retry_at = None;
         *task = None;
     }
 
@@ -50,15 +59,28 @@ fn connect_preview_server(
         return;
     }
 
-    let mut restart = task.as_ref().is_none();
-    if let Some(res) = task.as_mut().and_then(|t| t.0.complete()) {
-        if let Err(err) = res {
-            warn!("preview socket error: {err}, restarting");
-        }
-        restart = true;
+    if let Some(result) = task.as_mut().and_then(|t| t.0.complete()) {
         *task = None;
+        *failures = match result {
+            Ok(()) => 0,
+            Err(err) => {
+                warn!("preview socket error: {err}");
+                failures.saturating_add(1)
+            }
+        };
+        // wait after every exit: a preview server with no ws endpoint fails the upgrade
+        // immediately, and an unpaused respawn would spin one attempt per frame
+        *retry_at = Some(
+            web_time::Instant::now()
+                + Backoff::after(RECONNECT_START, RECONNECT_CAP, (*failures).max(1)),
+        );
     }
-    if restart {
+    let due = match *retry_at {
+        Some(at) => web_time::Instant::now() >= at,
+        None => true,
+    };
+    if task.is_none() && due {
+        *retry_at = None;
         let (sx, rx) = tokio::sync::mpsc::unbounded_channel();
         *task = Some((
             IoTaskPool::get().spawn(handle_preview_socket(server.clone(), sx)),
@@ -73,19 +95,9 @@ fn connect_preview_server(
     preview.is_preview = true;
 }
 
+/// Connects to the preview server and forwards its messages until the socket ends.
+/// Ok once a connection was made, however it ended; Err when none was.
 pub async fn handle_preview_socket(
-    server: String,
-    sender: tokio::sync::mpsc::UnboundedSender<PreviewCommand>,
-) -> Result<(), anyhow::Error> {
-    let result = preview_socket(server, sender).await;
-    // back off on every exit path, not just a clean disconnect: a preview server with
-    // no ws endpoint fails the upgrade immediately and the caller respawns us as soon
-    // as the task completes, so an early error spins one attempt per frame
-    async_std::task::sleep(Duration::from_secs(5)).await;
-    result
-}
-
-async fn preview_socket(
     server: String,
     sender: tokio::sync::mpsc::UnboundedSender<PreviewCommand>,
 ) -> Result<(), anyhow::Error> {
@@ -107,7 +119,13 @@ async fn preview_socket(
     let (_, mut read) = stream.split();
 
     while let Some(msg) = read.next().await {
-        let msg = msg?;
+        let msg = match msg {
+            Ok(msg) => msg,
+            Err(err) => {
+                warn!("preview socket error: {err}");
+                break;
+            }
+        };
         info!("preview server message: {msg}");
         let data = msg.into_data();
         let Ok(ws_scene_message) = WsSceneMessage::decode(data.as_slice()) else {
@@ -119,9 +137,11 @@ async fn preview_socket(
             continue;
         };
 
-        sender.send(message.into())?;
+        if sender.send(message.into()).is_err() {
+            break;
+        }
     }
 
-    warn!("preview socket disconnected, waiting 5 secs to attempt reconnect");
+    warn!("preview socket disconnected");
     Ok(())
 }

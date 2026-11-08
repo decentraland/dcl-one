@@ -12,6 +12,7 @@ use bevy::{
 use bevy_dui::{DuiCommandsExt, DuiEntityCommandsExt, DuiProps, DuiRegistry};
 use common::{
     autopilot::Autopilot,
+    backoff::Backoff,
     profile::SerializedProfile,
     rpc::{RpcResultReceiver, RpcResultSender},
     sets::SceneSets,
@@ -355,21 +356,27 @@ fn parse_auth_identity(payload: &str) -> Result<(Address, EphemeralKey, Vec<Chai
 /// Fetch the profile, retrying on failure. Ok(None) means the user has no profile (or
 /// `default_on_error` was set); a persistent failure must otherwise fail the login rather
 /// than fall back to a default profile, or we would deploy the default over the user's
-/// existing server-side profile. Retries are patient because the realm may still be
-/// resolving when login runs (on web the page can fire `/login_identity` at boot), which
-/// reads as a fetch failure. Errors carry the PROFILE_FETCH_FAILED prefix so UIs can
-/// offer retrying with `default_on_error`.
+/// existing server-side profile. Retries are patient (six attempts, waiting 500 ms doubling
+/// to 4 s between them, 11.5 s in all) because the realm may still be resolving when login
+/// runs (on web the page can fire `/login_identity` at boot), which reads as a fetch
+/// failure. Errors carry the PROFILE_FETCH_FAILED prefix so UIs can offer retrying with
+/// `default_on_error`.
 async fn get_profile_with_retry(
     address: Address,
     ipfs: std::sync::Arc<IpfsIo>,
     default_on_error: bool,
     endpoint: Option<String>,
 ) -> Result<Option<UserProfile>, String> {
-    const ATTEMPTS: u32 = 5;
+    const ATTEMPTS: u32 = 6;
     let mut last_error = String::default();
     for attempt in 0..ATTEMPTS {
         if attempt > 0 {
-            async_std::task::sleep(std::time::Duration::from_secs(2)).await;
+            async_std::task::sleep(Backoff::after(
+                std::time::Duration::from_millis(500),
+                std::time::Duration::from_secs(4),
+                attempt,
+            ))
+            .await;
         }
         match get_remote_profile(address, ipfs.clone(), endpoint.clone()).await {
             Ok(maybe_profile) => return Ok(maybe_profile),

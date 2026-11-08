@@ -52,6 +52,7 @@ const AUTH_SERVER_TIMEOUT: Duration = Duration::from_secs(600);
 async fn fetch_server(req_id: String) -> Result<(Address, serde_json::Value), anyhow::Error> {
     let start_time = web_time::Instant::now();
     let mut attempt = 0;
+    let deadline = start_time + AUTH_SERVER_TIMEOUT;
     loop {
         debug!("trying req_id {:?} attempt ${attempt}", req_id);
         if web_time::Instant::now()
@@ -63,13 +64,24 @@ async fn fetch_server(req_id: String) -> Result<(Address, serde_json::Value), an
         }
         attempt += 1;
 
+        // a person approves in the browser: poll at a steady short interval until the deadline
+        if attempt > 1 {
+            async_std::task::sleep(
+                AUTH_SERVER_RETRY_INTERVAL
+                    .min(deadline.saturating_duration_since(web_time::Instant::now())),
+            )
+            .await;
+            if web_time::Instant::now() >= deadline {
+                return Err(anyhow!("timed out awaiting response"));
+            }
+        }
         let url = format!("{}/{req_id}", auth_server_endpoint_url());
         let response = platform::http_client_builder()
             .use_native_tls()
             .build()
             .unwrap()
             .get(&url)
-            .timeout(AUTH_SERVER_TIMEOUT)
+            .timeout(deadline.saturating_duration_since(web_time::Instant::now()))
             .send()
             .await;
 
@@ -78,7 +90,6 @@ async fn fetch_server(req_id: String) -> Result<(Address, serde_json::Value), an
                 if response.status().is_success() {
                     let text = response.text().await?;
                     if text.is_empty() {
-                        async_std::task::sleep(AUTH_SERVER_RETRY_INTERVAL).await;
                         continue;
                     }
                     match serde_json::from_str::<ServerResponse>(&text) {
@@ -103,7 +114,6 @@ async fn fetch_server(req_id: String) -> Result<(Address, serde_json::Value), an
                     }
                 } else {
                     if response.status() == StatusCode::NOT_FOUND {
-                        async_std::task::sleep(AUTH_SERVER_RETRY_INTERVAL).await;
                         continue;
                     }
 

@@ -11,6 +11,7 @@ use bevy::{
 };
 use bevy_console::{ConsoleCommand, PrintConsoleLine};
 use common::{
+    backoff::Backoff,
     structs::{PreviewCommand, PrimaryUser},
     util::{JoinRelativeExt, TaskExt},
 };
@@ -267,6 +268,29 @@ struct ClearStoreCommand {
     hash: Option<String>,
 }
 
+/// Retries `operation`, waiting 25 ms doubling to 500 ms between attempts, until it
+/// succeeds or `deadline` passes.
+async fn retry_storage_operation(
+    what: &str,
+    mut operation: impl FnMut() -> std::io::Result<()>,
+    deadline: web_time::Instant,
+) -> std::io::Result<()> {
+    let mut backoff = Backoff::new(Duration::from_millis(25), Duration::from_millis(500));
+    loop {
+        match operation() {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                let remaining = deadline.saturating_duration_since(web_time::Instant::now());
+                if remaining.is_zero() {
+                    return Err(error);
+                }
+                debug!("{what} failed, retrying: {error}");
+                async_std::task::sleep(backoff.delay().min(remaining)).await;
+            }
+        }
+    }
+}
+
 fn clear_store_command(
     mut input: ConsoleCommand<ClearStoreCommand>,
     mut live_scenes: ResMut<LiveScenes>,
@@ -288,14 +312,31 @@ fn clear_store_command(
         if std::fs::exists(&storage_folder).unwrap_or_default() {
             let temp = parent.join(format!("{file}_delete"));
             *clear_task = Some(IoTaskPool::get().spawn(async move {
-                while let Err(e) = std::fs::rename(&storage_folder, &temp) {
-                    warn!("can't rename {temp:?}: {e}");
-                    async_std::task::sleep(Duration::from_millis(500)).await;
+                let deadline = web_time::Instant::now() + Duration::from_secs(60);
+                let remove_temp = || match std::fs::remove_dir_all(&temp) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    result => result,
+                };
+                // an earlier run may have renamed the store and then failed to delete it
+                if let Err(error) =
+                    retry_storage_operation("stale delete", &remove_temp, deadline).await
+                {
+                    error!("can't delete stale {temp:?}: {error}");
+                    return;
                 }
-
-                while let Err(e) = std::fs::remove_dir_all(&temp) {
-                    warn!("can't delete {temp:?}: {e}");
-                    async_std::task::sleep(Duration::from_millis(500)).await;
+                if let Err(error) = retry_storage_operation(
+                    "rename",
+                    || std::fs::rename(&storage_folder, &temp),
+                    deadline,
+                )
+                .await
+                {
+                    error!("can't rename {storage_folder:?} to {temp:?}: {error}");
+                    return;
+                }
+                if let Err(error) = retry_storage_operation("delete", &remove_temp, deadline).await
+                {
+                    error!("can't delete {temp:?}: {error}");
                 }
             }));
         }

@@ -1,7 +1,10 @@
 use std::time::Duration;
 
 use bevy::log::debug;
-use common::rpc::{CompareSnapshot, CompareSnapshotResult, RpcCall, RpcResultSender};
+use common::{
+    backoff::Backoff,
+    rpc::{CompareSnapshot, CompareSnapshotResult, RpcCall, RpcResultSender},
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot::error::TryRecvError;
 
@@ -116,6 +119,8 @@ pub fn op_take_and_compare_snapshot(
         }))
         .expect("failed to send to renderer");
 
+    let deadline = bevy::platform::time::Instant::now() + Duration::from_secs(60);
+    let mut backoff = Backoff::new(Duration::from_millis(1), Duration::from_millis(100));
     let (error, stored_snapshot_found, similarity) = loop {
         match rx.try_recv() {
             Ok(CompareSnapshotResult {
@@ -123,7 +128,14 @@ pub fn op_take_and_compare_snapshot(
                 found,
                 similarity,
             }) => break (error, found, similarity),
-            Err(TryRecvError::Empty) => std::thread::sleep(Duration::from_millis(100)),
+            Err(TryRecvError::Empty) => {
+                let remaining =
+                    deadline.saturating_duration_since(bevy::platform::time::Instant::now());
+                if remaining.is_zero() {
+                    anyhow::bail!("snapshot timed out");
+                }
+                std::thread::sleep(backoff.delay().min(remaining));
+            }
             Err(TryRecvError::Closed) => anyhow::bail!("snapshot failed"),
         }
     };
