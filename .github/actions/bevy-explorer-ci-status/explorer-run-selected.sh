@@ -25,6 +25,7 @@
 # *Changes* job has not completed when the budget runs out answers `false`: the `completed` caller
 # writes the sections anyway, so the pull request loses only the pending badges.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/retry.sh"
 
 : "${RUN_ID:?RUN_ID is required}"
 : "${REPO:?REPO is required}"
@@ -41,6 +42,7 @@ EXPLORER_JOB_PATTERN='^(Test Suite( \(.*\))?|Headless Smoke|Clippy|Web engine, H
 log() { echo "[explorer-run-selected] $*" >&2; }
 
 deadline=$(( $(date +%s) + WAIT_SECONDS ))
+attempt=1
 
 while :; do
   jobs_json=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100")
@@ -94,5 +96,8 @@ while :; do
     exit 0
   fi
 
-  sleep "$POLL_SECONDS"
+  remaining=$((deadline - now))
+  delay=$(backoff_delay "$attempt" "$POLL_SECONDS")
+  sleep_for "$delay" "$remaining"
+  attempt=$((attempt + 1))
 done

@@ -12,13 +12,14 @@
 // The primary loop: the seller, creator of E2E_ITEM's collection, starts a discount from My Store; the
 // buyer sees the lower price, buys one with MANA, tops up test credits with the mock card and buys one
 // with credits; the seller ends the discount. It mints two units each run, so it runs while supply lasts.
+import { waitUntil } from "../../library/async/index.ts";
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createPublicClient, erc721Abi, erc20Abi, formatEther, http, isAddress, keccak256, parseAbi, parseEther, toHex, zeroAddress, type Hex } from "viem";
 import { generatePrivateKey } from "viem/accounts";
 import { polygonAmoy } from "viem/chains";
 import type { Browser, BrowserContext, Page, Response } from "playwright-core";
-import { launch } from "./lib/browser.mts";
+import { launch, waitForDiscountedPrice } from "./lib/browser.mts";
 import { AMOY_CREDITS_MANAGER } from "./lib/contracts.mts";
 import { journeyEnv, parseDiscount, parseItem, parseToken, parseTopup } from "./lib/env.mts";
 import { signedPost } from "./lib/signed.mts";
@@ -158,14 +159,14 @@ const ownerOf = (t: { contract: string; tokenId: string }) => amoy.readContract(
 
 /** The token's owner becomes `who`: polled, since the UI may confirm before the RPC sees the block. */
 async function becomesOwner(t: { contract: string; tokenId: string }, who: Hex): Promise<void> {
-  const until = Date.now() + 2 * 60_000;
-  // A failed read is retried at the next poll; only the deadline fails the step.
-  let owner = await ownerOf(t).catch(() => null);
-  while (owner?.toLowerCase() !== who.toLowerCase()) {
-    if (Date.now() > until) throw new Error(`ownerOf is still ${owner ?? "unreadable"} after 2 minutes`);
-    await new Promise((r) => setTimeout(r, 5_000));
-    owner = await ownerOf(t).catch(() => null);
-  }
+  let lastOwner: string | null = null;
+  await waitUntil(async () => {
+    const owner = await ownerOf(t).catch(() => null);
+    if (owner !== null) lastOwner = owner;
+    return owner?.toLowerCase() === who.toLowerCase() ? owner : undefined;
+  }, { timeoutMs: 2 * 60_000, initialDelayMs: 500, maxDelayMs: 10_000, description: `ownerOf becoming ${who}` }).catch((cause: unknown) => {
+    throw new Error(`ownerOf did not become ${who}; last owner: ${lastOwner ?? "unavailable"}`, { cause });
+  });
 }
 
 /** The rows of the token's Bids tab that the buyer made. */
@@ -327,13 +328,14 @@ const unitsOf = (i: { contract: string }, who: Hex) => amoy.readContract({ addre
 
 /** The buyer's units of the collection grow past `before`: polled, as the receipt may come before the RPC's block. */
 async function unitsGrow(i: { contract: string }, who: Hex, before: bigint): Promise<bigint> {
-  const until = Date.now() + 2 * 60_000;
-  for (;;) {
-    const now = await unitsOf(i, who).catch(() => before);
-    if (now > before) return now;
-    if (Date.now() > until) throw new Error(`the buyer still holds ${before} unit(s) of the collection after 2 minutes`);
-    await new Promise((r) => setTimeout(r, 5_000));
-  }
+  let lastUnits: bigint | undefined;
+  return waitUntil(async () => {
+    const now = await unitsOf(i, who).catch(() => undefined);
+    if (now !== undefined) lastUnits = now;
+    return now !== undefined && now > before ? now : undefined;
+  }, { timeoutMs: 2 * 60_000, initialDelayMs: 500, maxDelayMs: 10_000, description: `the buyer holding more than ${before} units` }).catch((cause: unknown) => {
+    throw new Error(`the buyer did not hold more than ${before} units; last units: ${lastUnits ?? "unavailable"}`, { cause });
+  });
 }
 
 /**
@@ -372,12 +374,10 @@ const manaOf = (who: Hex) => amoy.readContract({ address: AMOY_MANA, abi: erc20A
 
 /** The buyer's MANA once it differs from `before`, polled: the RPC may answer from a block behind the receipt. */
 async function manaMoves(who: Hex, before: bigint): Promise<bigint> {
-  const until = Date.now() + 60_000;
-  for (;;) {
+  return waitUntil(async () => {
     const now = await manaOf(who).catch(() => before);
-    if (now !== before || Date.now() > until) return now;
-    await new Promise((r) => setTimeout(r, 5_000));
-  }
+    return now !== before ? now : undefined;
+  }, { timeoutMs: 60_000, initialDelayMs: 500, maxDelayMs: 10_000, description: "the buyer's MANA balance changing" }).catch(() => before);
 }
 
 /** The MANA amount the item page quotes once MANA is selected, or null when it cannot be read. */
@@ -645,15 +645,8 @@ async function primary(seller: Actor, buyer: Actor, buyerKey: Hex, s: Funds, b: 
     });
     await step("the item shows the discounted price", buyer, async () => {
       // The catalogue joins the creator's live coupon once the coupon-state job has read it from the manager.
-      const until = Date.now() + 3 * 60_000;
-      for (;;) {
-        await buyer.page.goto(itemPath(item));
-        await buyer.page.getByTestId("payment-panel").waitFor({ timeout: 60_000 }).catch(() => {});
-        // The server render has no __SHOP_FLAGS__, so the crossed-out price arrives with the client's refetch.
-        if (await buyer.page.getByTestId("detail-price-was").waitFor({ timeout: 15_000 }).then(() => true, () => false)) return (await buyer.page.getByTestId("item-price").innerText().catch(() => "")).replace(/\s+/g, " ");
-        if (Date.now() > until) throw new Error("no crossed-out regular price after 3 minutes: the discount does not reach the item page");
-        await new Promise((r) => setTimeout(r, 15_000));
-      }
+      // The server render has no __SHOP_FLAGS__, so the crossed-out price arrives with the client's refetch.
+      return waitForDiscountedPrice(buyer.page, itemPath(item));
     });
     await step("buyer buys one with MANA at the discount", buyer, async () => {
       const units = await unitsOf(item, buyer.wallet.address);

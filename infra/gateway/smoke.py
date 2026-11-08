@@ -99,14 +99,20 @@ def websocket(host, path):
         assert stream.read(len(message)) == message
 
 
-def wait_ready(host):
-    for _ in range(80):
+def wait_ready(host, path="/_gateway/healthz"):
+    deadline = time.monotonic() + 20
+    delay = .1
+    while True:
         try:
-            if request(host, "/_gateway/healthz")[0] == 200:
+            if request(host, path)[0] == 200:
                 return
         except OSError:
             pass
-        time.sleep(0.25)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(delay, remaining))
+        delay = min(delay * 2, 2)
     raise AssertionError(f"{host} did not become ready")
 
 
@@ -266,12 +272,7 @@ def client(args):
         updated = request(public, path, vhost="worlds-content-server.example.test" if path.startswith("/world/")
                           else "example.test", method="PUT", body=b"x" * (1024 * 1024 + 1))
         assert updated[0] == 200, ("worlds settings body cap", path, updated)
-    for _ in range(40):
-        if request(late, "/about")[0] == 200:
-            break
-        time.sleep(0.5)
-    else:
-        raise AssertionError("Gateway did not resolve an upstream that started later")
+    wait_ready(late, "/about")
     hit("/about", "apis", host=late)
     print("Host aliases, signed paths, WebSocket echo, authorized file delivery and body caps passed.", flush=True)
     print("Gateway starts without upstreams and resolves them when they become available.", flush=True)

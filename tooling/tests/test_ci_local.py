@@ -1,5 +1,10 @@
 """The local hooks select the same workflows GitHub would for a change."""
 import importlib.util
+import errno
+import io
+import sys
+import tempfile
+from types import SimpleNamespace
 from pathlib import Path
 import re
 import unittest
@@ -81,11 +86,46 @@ class CiLocalTest(unittest.TestCase):
         changed = {'infra/gateway/gateway.py'}
         self.assertTrue(ci.triggered('gateway-images.yml', changed))
         self.assertFalse(ci.triggered('apis-sites-images.yml', changed))
-        self.assertFalse(ci.triggered('development.yml', changed, event='push'))
+        self.assertTrue(ci.triggered('development.yml', changed, event='push'))
         for event in ('push', 'pull_request'):
             with self.subTest(event=event):
                 self.assertTrue(ci.triggered('bevy-explorer-ci.yml', changed, event=event))
         self.assertIn('gateway configuration', [step.name for step in ci.pre_commit_steps(changed)])
+
+
+class WindowsHookQueueTest(unittest.TestCase):
+    def test_a_legitimate_run_holding_the_lock_longer_than_120_seconds_is_queued(self):
+        attempts = []
+        sleeps = []
+        def locking(fd, mode, length):
+            attempts.append((fd, mode, length))
+            if len(attempts) <= 70:
+                raise OSError(errno.EACCES, 'lock held')
+        module = SimpleNamespace(LK_NBLCK=1, locking=locking)
+        notice = io.StringIO()
+        with tempfile.TemporaryDirectory() as folder, patch.object(ci, 'STATE', Path(folder)), \
+                patch.object(ci, 'WINDOWS', True), patch.dict(sys.modules, {'msvcrt': module}), \
+                patch.object(ci.time, 'sleep', side_effect=sleeps.append), patch('sys.stderr', notice):
+            with ci.locked():
+                self.assertEqual(len(attempts), 71)
+        self.assertGreater(sum(sleeps), 120)
+        self.assertEqual(sleeps[:5], [.1, .2, .4, .8, 1.6])
+        self.assertTrue(all(delay == 2 for delay in sleeps[5:]))
+        self.assertEqual(notice.getvalue().count('Waiting for another local CI run'), 1)
+        self.assertIn('Ctrl-C', notice.getvalue())
+
+    def test_non_contention_windows_errors_fail_immediately(self):
+        def locking(*args):
+            raise OSError(errno.EBADF, 'invalid handle')
+        module = SimpleNamespace(LK_NBLCK=1, locking=locking)
+        with tempfile.TemporaryDirectory() as folder, patch.object(ci, 'STATE', Path(folder)), \
+                patch.object(ci, 'WINDOWS', True), patch.dict(sys.modules, {'msvcrt': module}), \
+                patch.object(ci.time, 'sleep') as sleeping:
+            with self.assertRaises(OSError) as raised:
+                with ci.locked():
+                    self.fail('invalid handle acquired')
+            self.assertEqual(raised.exception.errno, errno.EBADF)
+        sleeping.assert_not_called()
 
 
 if __name__ == '__main__':

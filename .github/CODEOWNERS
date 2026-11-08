@@ -82,6 +82,9 @@
 /apps/ui3/ @decentraland/web-applications
 /library/ui/ @decentraland/web-applications
 
+# async
+/library/async/ @decentraland/web-applications @decentraland/apis
+
 # shop-ui
 /apps/ui3/src/shop/ @decentraland/web-applications
 /apps/sites/src/routes/shop/ @decentraland/web-applications
