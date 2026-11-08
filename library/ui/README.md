@@ -44,6 +44,8 @@ A synced component with the name of a hand-written one (Button, Modal) replaces 
 
 Promoted previews reproduce the reviewed design; they do not implement production keyboard, focus or navigation semantics. A consumer composing them owns that behavior and its tests.
 
+A generated component throws during render when it receives a variant combination Figma never drew, which only an untyped caller (plain JavaScript, spread props) can pass. The error names the component and every axis value, for example `NavBar has no captured view for viewport="largeDesktop", balances="credits", theme="dark", signedIn=false`. This is decided by the owner: throw in all environments, server rendering included; there is no fallback view. A consumer that renders generated components from data it does not type-check should place them under a React error boundary, and let server rendering surface the error through the route's error handling (for example a framework `ErrorBoundary` route export) instead of catching and hiding it.
+
 ## Provenance
 
 `upstream.lock.json` records the imported sources, their revisions and licenses.
