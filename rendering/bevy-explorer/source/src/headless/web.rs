@@ -150,7 +150,8 @@ fn run_on_worker_timer(mut app: App) -> AppExit {
             )
             .expect("setTimeout");
     };
-    let tick: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::default();
+    type Tick = Rc<RefCell<Option<Closure<dyn FnMut()>>>>;
+    let tick = Tick::default();
     let next = tick.clone();
     let reschedule = schedule.clone();
     // Each tick is due an interval after the last was DUE, not after it ran, so a timer that

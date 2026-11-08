@@ -89,6 +89,7 @@ pub fn spawn_scene(
 
     IoTaskPool::get()
         .spawn(async move {
+            let failure_sender = renderer_sender.clone();
             // push data to static vec
             SCENE_QUEUE
                 .get()
@@ -111,7 +112,20 @@ pub fn spawn_scene(
                 });
 
             // spin up a scene thread to consume it
-            spawn_and_init_sandbox().await;
+            if let Err(error) = spawn_and_init_sandbox().await {
+                kill_flag.kill();
+                ipc_close.cancel();
+                SCENE_QUEUE
+                    .get()
+                    .unwrap()
+                    .lock()
+                    .await
+                    .retain(|entry| entry.scene_context.scene_id != scene_id);
+                let _ = failure_sender.try_send(dcl_types::SceneResponse::Error(format!(
+                    "scene sandbox failed to start: {error:?}"
+                )));
+                return;
+            }
 
             // the guard is never sent on; this resolves when the engine drops the
             // scene handle. set the kill flag (shared wasm memory, so the worker sees
@@ -134,8 +148,8 @@ use wasm_bindgen::prelude::*;
 #[bevy::web_worker::page_functions]
 #[wasm_bindgen(js_namespace = self)]
 extern "C" {
-    #[wasm_bindgen(js_name = spawn_and_init_sandbox)]
-    async fn spawn_and_init_sandbox();
+    #[wasm_bindgen(catch, js_name = spawn_and_init_sandbox)]
+    async fn spawn_and_init_sandbox() -> Result<(), JsValue>;
     #[wasm_bindgen(js_name = terminate_sandbox)]
     fn terminate_sandbox(scene_id: u64);
 }

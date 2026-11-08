@@ -3,13 +3,12 @@ import { state, parentOf, markComponentDeleted } from '../state'
 import { NODES_COMPONENT } from '../hierarchy-order'
 import { NAME_COMPONENT } from '../custom-components'
 import { compositeToSnapshotName, isAuthoredEntity, isSavableComponent } from '../composite'
-import { sleep } from '../utils'
 import { isObj, stripCase, writeComponent, writeDelete, applyExternalEntityDelete } from './mutate'
 import {
   ensureProjectScenePinned,
   reloadAfter,
   reloadSnapshot,
-  SETTLE_MS
+  reloadUntil
 } from './session'
 import { allocateNamedEntities } from './entities'
 import { deleteComponent } from './component-ops'
@@ -162,12 +161,7 @@ export async function importComposite(
     await Promise.all(writes)
 
     if (!state.frozen && order.length > 0) {
-      const last = idMap.get(order[order.length - 1])
-      for (let attempt = 0; attempt < 6; attempt++) {
-        await sleep(SETTLE_MS)
-        await reloadSnapshot()
-        if (last === undefined || state.snapshot[String(last)] !== undefined) break
-      }
+      await reloadUntil(() => [...idMap.values()].every((id) => state.snapshot[String(id)] !== undefined))
     }
 
     const idMapObj: Record<string, number> = {}

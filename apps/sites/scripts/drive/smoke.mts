@@ -1,10 +1,11 @@
 #!/usr/bin/env node
+import { backoffDelay, sleep } from "../../../../library/async/index.ts";
 import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { freePort, launchChromium, Tab, type CdpMessage } from "./cdp.mts";
+import { BROWSER_READINESS_BACKOFF, freePort, launchChromium, Tab, type CdpMessage } from "./cdp.mts";
 import { HUD_ALLOW, ROUTES, hudPanels, type Route } from "./smoke-routes.mts";
 import { PAGE_CHECKS } from "./smoke-page-checks.mts";
 
@@ -23,7 +24,7 @@ type Opts = {
 function parseArgs(argv: string[]): Opts {
   const opts: Opts = {
     base: process.env.PUBLIC_CATALYST_URL || `http://${process.env.HOST || "127.0.0.1"}:${process.env.PORT || 5212}`,
-    wait: 4000,
+    wait: 30_000,
     json: path.join(HERE, "out", "smoke.json"),
     routes: null,
     hud: false,
@@ -106,8 +107,7 @@ type VisitResult = {
 
 async function visitOnce(tab: Tab, url: string, waitMs: number, allowConsole: RegExp[]): Promise<VisitResult> {
   tab.drainEvents();
-  await tab.cmd("Page.navigate", { url });
-  await new Promise((r) => setTimeout(r, waitMs));
+  await tab.navigate(url, waitMs);
   const page: PageChecks = JSON.parse(await tab.ev(PAGE_CHECKS));
   const { issues, status } = collectIssues(tab.drainEvents(), url, allowConsole);
   const failures: Issue[] = [...issues];
@@ -143,8 +143,15 @@ async function visit(tab: Tab, url: string, waitMs: number, allowConsole: RegExp
     const message = err instanceof Error ? err.message : String(err);
     console.log(`[smoke]   ${url}: ${message}, retrying in ${RETRY_DELAY_MS / 1000}s...`);
     await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
-    const retried = await visitOnce(tab, url, waitMs, allowConsole);
-    return { ...retried, transient: [{ kind: "transport", text: message }] };
+    try {
+      const retried = await visitOnce(tab, url, waitMs, allowConsole);
+      return { ...retried, transient: [{ kind: "transport", text: message }] };
+    } catch (again) {
+      // The route failed twice to load or answer: that is this route's failure, and the sweep
+      // goes on so the report still covers every other route.
+      const text = again instanceof Error ? again.message : String(again);
+      return { status: null, failures: [{ kind: "transport", text }], title: "" };
+    }
   }
   if (!first.failures.length) return first;
   console.log(`[smoke]   ${url}: ${first.failures.length} failure(s), retrying in ${RETRY_DELAY_MS / 1000}s...`);
@@ -212,11 +219,12 @@ async function hudLane(tab: Tab, base: string): Promise<HudReport> {
   };
   const until = async (step: string, expr: string, timeoutMs: number): Promise<boolean> => {
     const deadline = Date.now() + timeoutMs;
+    let attempt = 0;
     for (;;) {
       note(step);
       if (await tab.ev(expr).catch((err) => { evErr = String(err instanceof Error ? err.message : err).slice(0, 200); return false; })) return true;
       if (Date.now() > deadline) return false;
-      await new Promise((r) => setTimeout(r, 500));
+      await sleep(backoffDelay(attempt++, BROWSER_READINESS_BACKOFF, deadline - Date.now()));
     }
   };
 
@@ -267,7 +275,7 @@ async function hudLane(tab: Tab, base: string): Promise<HudReport> {
   await tab.ev(`[...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Dismiss")?.click()`);
   for (const id of panels) {
     await tab.ev(`location.hash = "#/${id}"`);
-    await new Promise((r) => setTimeout(r, 700));
+    await tab.ev("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))", { awaitPromise: true });
     note(`panel:#/${id}`);
     const hash = await tab.ev("location.hash");
     if (hash !== `#/${id}`) {
@@ -315,8 +323,7 @@ async function main(): Promise<void> {
 
     const authed = routes.filter((r) => r.auth === "both");
     if (authed.length) {
-      await tab.cmd("Page.navigate", { url: opts.base + "/" });
-      await new Promise((r) => setTimeout(r, 3000));
+      await tab.navigate(opts.base + "/");
       const signed = await tab.ev(
         "window.__DCL_DEV__ ? window.__DCL_DEV__.signInBurner().then(id => id.signer) : null",
         { awaitPromise: true, timeoutMs: 20_000 },

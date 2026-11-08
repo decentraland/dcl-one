@@ -5,13 +5,18 @@
 // the scene runtime every sandbox worker runs its scene on, compiled once for all of them; a
 // failed fetch or compile isn't kept, so the next spawn tries again
 let sceneRuntimeModule;
-const compileSceneRuntime = () =>
-  (sceneRuntimeModule ??= WebAssembly.compileStreaming(
-    fetch(new URL("./pkg-scene/dcl_scene_wasm_bg.wasm", import.meta.url))
-  ).catch((e) => {
-    sceneRuntimeModule = undefined;
-    throw e;
-  }));
+const compileSceneRuntime = () => {
+  if (!sceneRuntimeModule) {
+    const pending = WebAssembly.compileStreaming(
+      fetch(new URL("./pkg-scene/dcl_scene_wasm_bg.wasm", import.meta.url))
+    ).catch((e) => {
+      if (sceneRuntimeModule === pending) sceneRuntimeModule = undefined;
+      throw e;
+    });
+    sceneRuntimeModule = pending;
+  }
+  return sceneRuntimeModule;
+};
 
 /**
  * @param {{ compiledModule: WebAssembly.Module, sharedMemory: WebAssembly.Memory,
@@ -108,13 +113,22 @@ export function createSandboxHost({ compiledModule, sharedMemory, bridgeSession,
   // to the engine through an engine-module instance with no glue (crates/dcl_wasm/src/inner/relay.rs).
   const spawnAndInit = async () => {
     let sceneModule;
-    // the engine waits on this for its queued scene, so keep trying rather than fail it
+    // a load in flight is never cut short; retries after failures stop 60 s after the first try,
+    // and invalid WebAssembly is not retried
+    const deadline = performance.now() + 60_000;
+    let delay = 100;
     while (!sceneModule) {
       try {
         sceneModule = await compileSceneRuntime();
       } catch (e) {
+        const remaining = deadline - performance.now();
+        if (remaining <= 0 || e instanceof WebAssembly.CompileError) {
+          onWorkerCrash(new ErrorEvent("error", { message: String(e), error: e }));
+          throw e;
+        }
         console.error("[Main JS] scene runtime failed to load; retrying", e);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, Math.min(delay, remaining)));
+        delay = Math.min(delay * 2, 5000);
       }
     }
     var timeoutId;

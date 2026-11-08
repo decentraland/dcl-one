@@ -1,3 +1,4 @@
+import { backoffDelay } from '../../../../../library/async'
 import { cmd } from '../cmd'
 import { autoLogin } from '../login'
 import { getCurrentInspectableScene } from '../current-scene'
@@ -7,6 +8,10 @@ import { freezeAnimatables, reassertAuthoredIntoSnapshot } from '../edit-freeze'
 import { stripPickColliders } from '../viewport/pick-layer'
 import { sleep } from '../utils'
 import { loadComponentNames } from './component-ops'
+
+const SNAPSHOT_TIMEOUT_MS = 1200
+const PROJECT_PIN_TIMEOUT_MS = 1200
+const SNAPSHOT_BACKOFF = { initialMs: 25, maxMs: 200, factor: 2 }
 
 export async function startInspector(): Promise<void> {
   state.status = 'logging-in'
@@ -68,18 +73,30 @@ export async function reloadSnapshot(): Promise<boolean> {
   }
 }
 
-export const SETTLE_MS = 150
-export async function reloadAfter(goneIds: string[] = []): Promise<void> {
-  if (state.frozen) return
-  for (let attempt = 0; attempt < 6; attempt++) {
-    await sleep(SETTLE_MS)
-    await reloadSnapshot()
-    if (goneIds.every((id) => !(id in state.snapshot))) return
+/**
+ * Reloads the snapshot until `ready` holds or the budget ends, and says which. Best effort, as the
+ * fixed six reloads were: a snapshot that lags the edit is not an error for a write that succeeded.
+ */
+export async function reloadUntil(ready: () => boolean, timeoutMs = SNAPSHOT_TIMEOUT_MS): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  let attempt = 0
+  for (;;) {
+    if (await reloadSnapshot() && ready()) return true
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) return false
+    await sleep(backoffDelay(attempt++, SNAPSHOT_BACKOFF, remaining))
   }
 }
 
+export async function reloadAfter(goneIds: string[] = []): Promise<void> {
+  if (state.frozen) return
+  await reloadUntil(() => goneIds.every((id) => !(id in state.snapshot)))
+}
+
 export async function ensureProjectScenePinned(hash: string): Promise<boolean> {
-  for (let attempt = 0; attempt < 8; attempt++) {
+  const deadline = Date.now() + PROJECT_PIN_TIMEOUT_MS
+  let attempt = 0
+  for (;;) {
     try {
       await cmd.setScene(hash)
     } catch (e) {
@@ -90,7 +107,8 @@ export async function ensureProjectScenePinned(hash: string): Promise<boolean> {
       if (new RegExp(`hash:\\s*${esc}(?:\\s|$)`, 'm').test(stats)) return true
     } catch {
     }
-    await sleep(SETTLE_MS)
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) return false
+    await sleep(backoffDelay(attempt++, SNAPSHOT_BACKOFF, remaining))
   }
-  return false
 }

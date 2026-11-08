@@ -527,7 +527,6 @@ export function start(options = {}) {
       document.head.appendChild(s);
     });
   };
-  setTimeout(showCanvas, 200);
 
   document.getElementById("mygame-canvas").started = true;
 }

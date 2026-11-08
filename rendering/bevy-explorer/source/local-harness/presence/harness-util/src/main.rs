@@ -46,20 +46,21 @@ async fn send_bus(url: &str, token: &str, scene_hash: &str, message: &str) -> an
     options.auto_subscribe = false;
     options.adaptive_stream = false;
     options.dynacast = false;
-    let (room, _events) = livekit::Room::connect(url, token, options)
+    let (room, mut events) = livekit::Room::connect(url, token, options)
         .await
         .context("room connect")?;
 
-    // Wait for the server participant to appear before publishing: a reliable data packet
-    // sent before the peer connection to it is established is silently dropped.
-    for _ in 0..50 {
-        if !room.remote_participants().is_empty() {
-            break;
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while room.remote_participants().is_empty() {
+            events
+                .recv()
+                .await
+                .ok_or_else(|| anyhow!("room closed before a peer joined"))?;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    // give the data channel a moment to finish negotiating after the participant appears
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        Ok::<(), anyhow::Error>(())
+    })
+    .await
+    .context("no server participant joined within five seconds")??;
     println!("bus peers: {}", room.remote_participants().len());
 
     // 1-byte CommsMessageType::String prefix, then utf8 payload

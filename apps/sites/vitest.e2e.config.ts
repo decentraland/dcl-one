@@ -9,6 +9,7 @@ const cssStub = fileURLToPath(new URL("./test/e2e/css-stub.ts", import.meta.url)
 export default defineConfig({
   resolve: {
     alias: [
+      { find: "@dcl/async", replacement: fileURLToPath(new URL("../../library/async/index.ts", import.meta.url)) },
       { find: /^.*\.css$/, replacement: cssStub },
       { find: "@ui", replacement: ui },
       { find: "@catalyst-api", replacement: catalystApi },

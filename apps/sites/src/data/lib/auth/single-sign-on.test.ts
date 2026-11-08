@@ -70,10 +70,9 @@ describe("the session decentraland.org's dapps share", () => {
 
   it("never writes a session back after a sign-out that came while its key was derived", async () => {
     const { publicKey: _, ...ephemeral } = identity().ephemeral;
-    storeShared({ ...identity(), ephemeral });
+    const stored = storeShared({ ...identity(), ephemeral });
     clearShared(SIGNER);
-    await import("viem/accounts");
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await stored;
     expect(localStorage.getItem(`single-sign-on-${SIGNER}`)).toBeNull();
   });
 });

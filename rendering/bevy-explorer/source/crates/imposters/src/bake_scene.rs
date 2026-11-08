@@ -628,9 +628,29 @@ fn save_and_zip_callback<T>(
 
         // lock
         let touch = output_path.clone().with_extension("touch");
-        while std::fs::File::create_new(&touch).is_err() {
-            // wait
-            std::thread::sleep(Duration::ZERO);
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        let mut delay = Duration::from_millis(1);
+        loop {
+            match std::fs::File::create_new(&touch) {
+                Ok(_) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let Some(remaining) =
+                        deadline.checked_duration_since(std::time::Instant::now())
+                    else {
+                        error!(
+                            "timed out acquiring imposter archive lock: {}",
+                            touch.display()
+                        );
+                        return;
+                    };
+                    std::thread::sleep(delay.min(remaining));
+                    delay = (delay * 2).min(Duration::from_millis(250));
+                }
+                Err(error) => {
+                    error!("failed to acquire imposter archive lock: {error}");
+                    return;
+                }
+            }
         }
 
         // move and read prev version

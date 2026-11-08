@@ -67,6 +67,7 @@ class ResolveTests(unittest.TestCase):
             f'repos/{REPO}/actions/workflows/bevy-explorer-ci.yml/runs?head_sha={SHA_PR}&status=success': {'workflow_runs': []},
             f'repos/{REPO}/pulls/194/files': [{'filename': 'services/catalyst/src/main.rs'}, {'filename': 'apps/bevy-explorer/e2e/specs/chat.test.ts'}],
             f'repos/{REPO}/pulls/195/files': [{'filename': 'services/catalyst/src/main.rs'}, {'filename': 'apps/sites/package.json'}],
+            f'repos/{REPO}/pulls/196/files': [{'filename': 'rendering/bevy-explorer/source/deploy/web/engine/sandbox_host.js'}],
         })
         inputs.bench.api = self.api
         self.waits = []
@@ -113,6 +114,10 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(result['run'], False)
         self.assertIn('neither', result['reason'])
         self.assertNotIn(f'repos/{REPO}/actions/workflows/bevy-explorer-ci.yml/runs?branch=main', self.api.calls)
+
+    def test_a_change_to_the_sandbox_host_changes_the_suite(self):
+        self.assertTrue(inputs.changes_suite(REPO, 196))
+        self.assertFalse(inputs.changes_suite(REPO, 195))
 
     def test_a_push_to_a_labelled_pull_request_takes_the_label_off_and_runs_nothing(self):
         result = inputs.resolve('pull_request', pull_request(194, SHA_NEW, action='synchronize'), REPO, wait=self.wait(run(30, SHA_NEW, 'pull_request')))

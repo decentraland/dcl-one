@@ -77,7 +77,7 @@ let generation = 0;
  * Mirrors a session under its account's shared key (an expired one is not written, as upstream). A session made here
  * carries its public key and is written at once; one without it (kept before it was recorded) derives it first.
  */
-export function storeShared(identity: AuthIdentity): void {
+export function storeShared(identity: AuthIdentity): void | Promise<void> {
   const k = key(identity.signer);
   const store = storage();
   if (!k || !store || new Date(identity.expiration).getTime() <= Date.now()) return;
@@ -94,7 +94,7 @@ export function storeShared(identity: AuthIdentity): void {
     write(identity.ephemeral.publicKey);
     return;
   }
-  void import("viem/accounts")
+  return import("viem/accounts")
     .then(({ privateKeyToAccount }) => write(privateKeyToAccount(identity.ephemeral.privateKey).publicKey))
     .catch(() => {});
 }

@@ -6,14 +6,13 @@ import {
   encodeCustomComponent,
   NAME_COMPONENT
 } from '../custom-components'
-import { sleep } from '../utils'
 import {
   applyLocalComponent,
   mergeKeepingOrder,
   writeComponent,
   writeDelete
 } from './mutate'
-import { ensureProjectScenePinned, reloadSnapshot, SETTLE_MS } from './session'
+import { ensureProjectScenePinned, reloadUntil } from './session'
 import { groundPointFromScreen } from '../camera/camera-projection'
 
 const PARCEL_SIZE = 16
@@ -105,12 +104,7 @@ export async function createEntities(
     }
 
     if (!state.frozen) {
-      const last = ids.length > 0 ? String(ids[ids.length - 1]) : null
-      for (let attempt = 0; attempt < 6; attempt++) {
-        await sleep(SETTLE_MS)
-        await reloadSnapshot()
-        if (last === null || state.snapshot[last] !== undefined) break
-      }
+      await reloadUntil(() => ids.every((id) => state.snapshot[String(id)] !== undefined))
     }
   } catch (e) {
     for (const id of ids) {

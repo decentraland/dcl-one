@@ -1,7 +1,7 @@
 // The product card's own parts: the rarity flap, the creator line while its profile loads and when its
 // picture fails, the sale price with what a screen reader hears, and which row the cart button replaces.
 
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { shopCartDrawer } from "../../cart/drawer";
@@ -45,9 +45,6 @@ function card(it: CatalogItem, session: SessionKind = "signedOut", props: Partia
     </ShopHarness>,
   );
 }
-
-/** Lets the batched profile read land inside act. */
-const settle = () => act(async () => new Promise((r) => setTimeout(r, 120)));
 
 /**
  * VIEW and the round arrow, as upstream's ViewCtaLink and ViewRoundLink: links to the detail page (so VIEW
@@ -99,7 +96,7 @@ describe("the card's creator line", () => {
       </ShopHarness>,
     );
     expect(screen.queryByTestId("creator")).toBeNull();
-    await settle();
+    await screen.findByText("Nacho");
     expect(screen.getByTestId("creator-display")).toHaveTextContent("Nacho");
     expect(screen.getByTestId("creator-ava").getAttribute("src")).toBeTruthy();
     expect(within(screen.getByTestId("creator-name")).getByText("By Nacho")).toBeTruthy();
@@ -112,8 +109,7 @@ describe("the card's creator line", () => {
         <CardCreator address={CREATOR} />
       </ShopHarness>,
     );
-    await settle();
-    fireEvent.error(screen.getByTestId("creator-ava"));
+    fireEvent.error(await screen.findByTestId("creator-ava"));
     expect(screen.queryByTestId("creator-ava")).toBeNull();
     expect(screen.getByTestId("creator-ava-letter")).toHaveTextContent("N");
   });
@@ -132,9 +128,8 @@ describe("the card's creator line", () => {
 describe("the card's price row", () => {
   const sale = { compareAtCredits: 20, priceCredits: 14, saleEndsAt: Date.now() + 86_400_000 };
 
-  it("on sale: the new and the struck price, each read with its unit, and MANA for a web3 wallet", async () => {
+  it("on sale: the new and the struck price, each read with its unit, and MANA for a web3 wallet", () => {
     card(item({ ...sale, manaWei: "4020000000000000000" }), "web3");
-    await settle();
     const now = screen.getByTestId("card-price-now");
     const was = screen.getByTestId("card-price-was");
     expect(now).toHaveTextContent("14");
@@ -143,78 +138,69 @@ describe("the card's price row", () => {
     expect(screen.getByTestId("card-price-mana")).toHaveTextContent("MANA");
   });
 
-  it("a resale never shows the sale: no badge over its Resale tag and no struck price", async () => {
+  it("a resale never shows the sale: no badge over its Resale tag and no struck price", () => {
     card(item({ ...sale, listingType: "secondary", tokenId: "7", manaWei: "4020000000000000000" }), "web3");
-    await settle();
     expect(screen.getByTestId("card-resale")).toBeTruthy();
     expect(screen.queryByTestId("card-sale-badge")).toBeNull();
     expect(screen.queryByTestId("card-price-was")).toBeNull();
   });
 
-  it("the cart button takes the chips row's place on a card that has something to buy, VIEW on one that has not", async () => {
+  it("the cart button takes the chips row's place on a card that has something to buy, VIEW on one that has not", () => {
     const { unmount } = card(item());
-    await settle();
     expect(screen.getByTestId("card-cart")).toBeTruthy();
     expect(screen.queryByTestId("card-view")).toBeNull();
     expect(screen.getByTestId("card-price").closest("[data-chips]")).not.toBeNull();
     unmount();
     card(item({ available: 0 }));
-    await settle();
     expect(screen.queryByTestId("card-cart")).toBeNull();
     expect(screen.queryByTestId("card-add-round")).toBeNull();
     expectViewLinks();
     expect(screen.getByTestId("card-nfs").closest("[data-chips]")).not.toBeNull();
   });
 
-  it("says NOT FOR SALE for a mint with no copies left, as upstream's browse card", async () => {
+  it("says NOT FOR SALE for a mint with no copies left, as upstream's browse card", () => {
     card(item({ available: 0 }));
-    await settle();
     expect(screen.getByTestId("card-nfs")).toHaveTextContent("Not for Sale");
     expect(screen.queryByTestId("card-sold-out")).toBeNull();
   });
 
-  it("a view card, as a creator's unlisted item, says NOT FOR SALE and shows VIEW too, as upstream's", async () => {
+  it("a view card, as a creator's unlisted item, says NOT FOR SALE and shows VIEW too, as upstream's", () => {
     card(item({ available: 0 }), "signedOut", { mode: "view" });
-    await settle();
     expect(screen.getByTestId("card-nfs")).toHaveTextContent("Not for Sale");
     expect(screen.queryByTestId("card-sold-out")).toBeNull();
     expect(screen.queryByTestId("card-cart")).toBeNull();
     expectViewLinks();
   });
 
-  it("a store mint is for sale by its stock, not by a trade: none counted shows VIEW, some shows Add to cart", async () => {
+  it("a store mint is for sale by its stock, not by a trade: none counted shows VIEW, some shows Add to cart", () => {
     // A store row carries no trade id; its price row still prices it, so only the store rule keeps it off sale.
     const unknownStock = item({ acquisition: "store", available: undefined });
     delete unknownStock.tradeId;
     const { unmount } = card(unknownStock);
-    await settle();
     expect(screen.queryByTestId("card-cart")).toBeNull();
     expectViewLinks();
     unmount();
     const inStock = item({ acquisition: "store", available: 5 });
     delete inStock.tradeId;
     card(inStock);
-    await settle();
     expect(screen.getByTestId("card-cart")).toBeTruthy();
     expect(screen.queryByTestId("card-view")).toBeNull();
   });
 
-  it("a priced item with no listing to buy keeps its price and shows VIEW, never an Add to cart it could not honour", async () => {
+  it("a priced item with no listing to buy keeps its price and shows VIEW, never an Add to cart it could not honour", () => {
     const unlisted = item({ priceCredits: 14, available: 5 });
     delete unlisted.tradeId;
     card(unlisted);
-    await settle();
     expect(screen.getByTestId("card-price")).toHaveTextContent("14");
     expect(screen.queryByTestId("card-cart")).toBeNull();
     expect(screen.queryByTestId("card-add-round")).toBeNull();
     expectViewLinks();
   });
 
-  it("Add to cart puts the item in the cart and opens the drawer over the page, as upstream's card", async () => {
+  it("Add to cart puts the item in the cart and opens the drawer over the page, as upstream's card", () => {
     shopCart.clear();
     shopCartDrawer.close();
     card(item({ available: 5 }));
-    await settle();
     fireEvent.click(screen.getByTestId("card-cart"));
     expect(shopCart.getSnapshot().lines).toHaveLength(1);
     expect(shopCart.getSnapshot().lines[0]!.available).toBe(5);
@@ -224,9 +210,8 @@ describe("the card's price row", () => {
     shopCartDrawer.close();
   });
 
-  it("keeps the thumbnail decorative: the link and the title already name the item", async () => {
+  it("keeps the thumbnail decorative: the link and the title already name the item", () => {
     card(item());
-    await settle();
     expect(screen.getByTestId("card-media").querySelector("img")?.getAttribute("alt")).toBe("");
   });
 });

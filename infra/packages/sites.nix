@@ -58,6 +58,7 @@ let
       (ui + /src) (ui + /public) (ui + /scripts/gen-error-pages.mts)
       (ui + /vite.validate.js) (ui + /package.json)
       (root + /library/catalyst-api)
+      (root + /library/async)
     ];
   };
 in stdenv.mkDerivation {

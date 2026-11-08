@@ -17,7 +17,8 @@ or empty). `suite-changed` writes `changed` (true or false) instead.
   nothing. The job waits for the commit's Bevy Explorer / CI run (BEVY_E2E_CI_WAIT_SECONDS, polled
   every BEVY_E2E_CI_POLL_SECONDS) and takes the web app it built; a run whose web app has expired
   is skipped, saying so; a pull request whose CI built none, or that started no CI run, takes
-  main's newest when it changes the suite, its workflow or its tooling, so its specs still run;
+  main's newest when it changes the suite, its workflow, its tooling or the sandbox host its driver
+  tests exercise, so its specs still run;
   one that changes neither is skipped.
 - `workflow_run` of Bevy Explorer / CI: a successful push to main, with the web app that run
   built. A pull request's CI run is skipped here: its scenarios run from its own event.
@@ -41,7 +42,9 @@ _spec.loader.exec_module(bench)
 
 # What the workflow's `pull_request` trigger lists for the suite's own checks: the suite, the
 # workflow and its tooling.
-SUITE_PATHS = ('apps/bevy-explorer/e2e/', '.github/workflows/bevy-explorer-e2e.yml', 'tooling/bevy-e2e-', 'tooling/tests/test_bevy_e2e_')
+SUITE_PATHS = ('apps/bevy-explorer/e2e/', '.github/workflows/bevy-explorer-e2e.yml', 'tooling/bevy-e2e-', 'tooling/tests/test_bevy_e2e_',
+               # the scene runtime loader the driver's unit tests exercise
+               'rendering/bevy-explorer/source/deploy/web/engine/sandbox_host.js')
 # The label a maintainer puts on a pull request whose code may run the scenarios. The workflow's
 # concurrency group names it too.
 RUN_LABEL = 'ci:e2e'

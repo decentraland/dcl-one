@@ -1,6 +1,14 @@
+import { backoffDelay, sleep, waitUntil } from "@dcl/async";
 import { useEffect, useRef, useState } from "react";
 import { initialProjectRealmMachine, transitionProjectRealm, type ProjectRealmStatus } from "./project-realm-machine";
-import { BOOT_TIMEOUT_MS } from "../editor-config";
+import {
+  BOOT_TIMEOUT_MS,
+  PROJECT_REALM_BACKOFF,
+  PROJECT_SERVICE_WORKER_TIMEOUT_MS,
+  PROJECT_PREPARE_TIMEOUT_MS,
+  PROJECT_CACHE_SEED_TIMEOUT_MS,
+  PROJECT_REOPEN_TIMEOUT_MS,
+} from "../editor-config";
 import { PROJECT_REALM_EFFECT, setProjectPlayState, projectScopeFromViewport } from "../project-cache";
 import { runEditorEffect } from "../serial-effect";
 import { restoreProjectCache } from "../project-cache-name";
@@ -42,7 +50,28 @@ export function useProjectRealm(
       controller.abort();
       transition({ type: "error", request: activeRequest, session: activeSession });
     }, BOOT_TIMEOUT_MS);
-    const sleepMs = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+    const wait = (timeoutMs: number, description: string) => ({
+      timeoutMs, description, signal: controller.signal,
+      initialDelayMs: PROJECT_REALM_BACKOFF.initialMs, maxDelayMs: PROJECT_REALM_BACKOFF.maxMs,
+    });
+    // A wait that ran out is where the fixed-interval loops fell through; an abort or a failed
+    // preparation still propagates.
+    const ranOut = (error: unknown): false => {
+      if (error instanceof Error && error.message.startsWith("Timed out:")) return false;
+      throw error;
+    };
+    // Repeats `attempt` until it reports done or the budget ends. The budget bounds the pauses
+    // between attempts, not a preparation in progress: the boot timeout aborts that, as before.
+    const attempts = async (attempt: () => Promise<boolean>, timeoutMs: number): Promise<boolean> => {
+      const deadline = Date.now() + timeoutMs;
+      for (let tries = 0; ; tries += 1) {
+        if (await attempt()) return true;
+        if (!current()) return false;
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return false;
+        await sleep(backoffDelay(tries, PROJECT_REALM_BACKOFF, remaining), controller.signal);
+      }
+    };
 
     const ensureWorker = async () => {
       try {
@@ -52,11 +81,13 @@ export function useProjectRealm(
         if (viewport.origin !== window.location.origin) return;
         const enginePath = viewport.pathname.replace(/\/?$/, "/");
         const reg = await swc.register(`${enginePath}service_worker.js`, { scope: enginePath });
-        for (let i = 0; i < 60 && current() && !reg.active; i += 1) await sleepMs(100);
+        await waitUntil(() => reg.active !== null, wait(PROJECT_SERVICE_WORKER_TIMEOUT_MS, "the engine service worker activating"));
         // The outer /create document is deliberately outside the engine scope
         // and will never acquire its controller. The iframe bootstrap waits
         // for control itself; do not add 1.5s to every editor entry here.
       } catch {
+        // A registration that is refused or a worker that never activates does not
+        // block the editor: the iframe bootstrap waits for control itself.
       }
     };
 
@@ -79,39 +110,24 @@ export function useProjectRealm(
         if (cache) {
           if (!isLocalReopen) {
             if (isDraftReopen) {
-              for (let i = 0; i < 20 && !prepareRealmRef.current; i += 1) {
-                if (!current()) return;
-                await sleepMs(200);
-              }
+              await waitUntil(() => !!prepareRealmRef.current, wait(PROJECT_PREPARE_TIMEOUT_MS, "the draft's preparation")).catch(ranOut);
             }
-            for (let attempt = 0; attempt < 5; attempt += 1) {
-              if (!current()) return;
-              if (prepareRealmRef.current) {
-                // Immutable uploaded assets belong to this project, including
-                // unsaved recovery checkpoints. Rebuild the manifest without
-                // deleting those bytes on reload or on a transport Retry.
-                await populate();
-                if (!current()) return;
-                if ((await cache.keys()).length > 0) break;
-              }
-              await sleepMs(300);
-            }
-            if (current() && prepareRealmRef.current && !(await cache.keys()).length) throw new Error("The project realm is empty");
+            // Immutable uploaded assets belong to this project, including
+            // unsaved recovery checkpoints. Rebuild the manifest without
+            // deleting those bytes on reload or on a transport Retry.
+            const seeded = await attempts(async () => {
+              if (prepareRealmRef.current) await populate();
+              return current() && (await cache.keys()).length > 0;
+            }, PROJECT_CACHE_SEED_TIMEOUT_MS);
+            if (!current()) return;
+            if (!seeded && prepareRealmRef.current) throw new Error("The project realm is empty");
           } else if (prepareRealmRef.current) {
             await populate();
             if (!current()) return;
             if (!(await cache.keys()).length) throw new Error("The project realm is empty");
           } else {
-            let populated = false;
-            for (let i = 0; i < 40; i += 1) {
-              if (!current()) return;
-              const keys = await cache.keys();
-              if (keys.length > 0) {
-                populated = true;
-                break;
-              }
-              await sleepMs(200);
-            }
+            const populated = await attempts(async () => (await cache.keys()).length > 0, PROJECT_REOPEN_TIMEOUT_MS);
+            if (!current()) return;
             if (!populated) {
               await populate();
               if (!current()) return;

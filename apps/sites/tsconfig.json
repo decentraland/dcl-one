@@ -25,6 +25,7 @@
     "jsx": "react-jsx",
     "rootDirs": [".", "./.react-router/types"],
     "paths": {
+      "@dcl/async": ["../../library/async/index.ts"],
       "react": ["./node_modules/@types/react/index.d.ts"],
       "react/*": ["./node_modules/@types/react/*"],
       "@ui/*": ["../ui3/src/*"],

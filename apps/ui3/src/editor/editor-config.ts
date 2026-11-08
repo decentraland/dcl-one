@@ -15,3 +15,12 @@ export const BOOT_LEAVE_MS = 260;
 // The engine acknowledges the edit camera before its loading fade and first
 // rendered grid frame have reached the viewport.
 export const EDIT_VIEW_SETTLE_MS = 1200;
+
+// Project realm readiness: each wait polls with this backoff until its budget,
+// the same budgets the fixed-interval loops had.
+export const PROJECT_REALM_BACKOFF = { initialMs: 50, maxMs: 1000, factor: 2 };
+
+export const PROJECT_SERVICE_WORKER_TIMEOUT_MS = 6000;
+export const PROJECT_PREPARE_TIMEOUT_MS = 4000;
+export const PROJECT_CACHE_SEED_TIMEOUT_MS = 1500;
+export const PROJECT_REOPEN_TIMEOUT_MS = 8000;

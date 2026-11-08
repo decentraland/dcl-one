@@ -166,10 +166,16 @@ async fn connect_to_room(
     address: String,
     token: String,
 ) -> RoomResult<(Room, mpsc::UnboundedReceiver<RoomEvent>)> {
-    let mut options = RoomOptions::default();
-    options.auto_subscribe = false;
-    options.adaptive_stream = false;
-    options.dynacast = false;
+    #[cfg(target_arch = "wasm32")]
+    let options = RoomOptions::default();
+    #[cfg(not(target_arch = "wasm32"))]
+    let options = {
+        let mut options = RoomOptions::default();
+        options.auto_subscribe = false;
+        options.adaptive_stream = false;
+        options.dynacast = false;
+        options
+    };
     Room::connect(&address, &token, options).await
 }
 

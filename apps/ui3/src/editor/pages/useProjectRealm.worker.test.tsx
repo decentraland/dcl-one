@@ -1,6 +1,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useProjectRealm } from "./useProjectRealm";
+import { PROJECT_SERVICE_WORKER_TIMEOUT_MS } from "../editor-config";
 
 vi.mock("../project-cache", async original => ({
   ...await original<object>(), setProjectPlayState: vi.fn(async () => {}),
@@ -26,5 +27,28 @@ test("does not register a different origin's engine worker on the editor origin"
   const hook = renderHook(() => useProjectRealm("https://engine.test/play/?realm=%2F_project", null));
   await waitFor(() => expect(hook.result.current).toBe("ready"));
   expect(register).not.toHaveBeenCalled();
+  hook.unmount();
+});
+
+test("opens the editor when the worker registration is refused", async () => {
+  vi.stubGlobal("caches", undefined);
+  const register = vi.fn(async () => { throw new DOMException("denied", "SecurityError"); });
+  vi.stubGlobal("navigator", { serviceWorker: { register, controller: null } });
+  const hook = renderHook(() => useProjectRealm("/play/?realm=%2F_project", null));
+  await waitFor(() => expect(hook.result.current).toBe("ready"));
+  expect(register).toHaveBeenCalledTimes(1);
+  hook.unmount();
+});
+
+test("opens the editor when the worker does not activate within its budget", async () => {
+  vi.stubGlobal("caches", undefined);
+  const register = vi.fn(async () => ({ active: null }));
+  vi.stubGlobal("navigator", { serviceWorker: { register, controller: null } });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const hook = renderHook(() => useProjectRealm("/play/?realm=%2F_project", null));
+  await act(async () => { await vi.advanceTimersByTimeAsync(PROJECT_SERVICE_WORKER_TIMEOUT_MS - 1); });
+  expect(hook.result.current).not.toBe("ready");
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(hook.result.current).toBe("ready");
   hook.unmount();
 });

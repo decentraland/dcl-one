@@ -7,6 +7,7 @@
     // No baseUrl: it is deprecated in TS 6 and paths resolve relative to this
     // file without it.
     "paths": {
+      "@dcl/async": ["../../library/async/index.ts"],
       "dcl-validate-impl": ["./src/validate/checked.ts"],
       // The catalyst server's DTO shapes and OpenAPI documents, shared with sites.
       "@catalyst-api/*": ["../../library/catalyst-api/*"]

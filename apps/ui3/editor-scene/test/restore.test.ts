@@ -4,8 +4,9 @@ import { cmd } from '../src/cmd'
 import { state } from '../src/state'
 import { NAME_COMPONENT, customComponentId } from '../src/custom-components'
 import { restoreComposite } from '../src/inspector/hydrate'
-import { reloadSnapshot } from '../src/inspector/session'
+import { reloadSnapshot, reloadUntil } from '../src/inspector/session'
 import { addComponent } from '../src/hierarchy-runtime'
+import { engine } from '@dcl/sdk/ecs'
 
 const composite = (entities: Record<string, string>) => JSON.stringify({ components: [
   { name: NAME_COMPONENT, data: Object.fromEntries(Object.entries(entities).map(([id, value]) => [id, { json: { value } }])) },
@@ -168,6 +169,36 @@ test('snapshot readiness waits for view freeze and recovers from replacement of 
   await reloadSnapshot()
   assert.equal(state.status, 'ready')
   assert.equal(state.error, '')
+})
+
+test('a snapshot that never reflects the edit ends the bounded reload as ready, not as an error', async () => {
+  state.status = 'ready'
+  state.snapshot = {}
+  cmd.freezeView = async () => 'ok'
+  let reloads = 0
+  cmd.crdtSnapshot = async () => { reloads++; return {} }
+  // the scene's sleep advances on engine ticks, so tick the engine while the reload runs
+  let ticking = true
+  const ticks = (async () => {
+    while (ticking) {
+      await engine.update(1 / 60)
+      await new Promise(resolve => setImmediate(resolve))
+    }
+  })()
+  try {
+    const started = Date.now()
+    assert.equal(await reloadUntil(() => false, 60), false)
+    assert.ok(Date.now() - started >= 60)
+    assert.ok(reloads >= 2)
+    assert.equal(state.status, 'ready')
+    assert.equal(state.error, '')
+    reloads = 0
+    assert.equal(await reloadUntil(() => reloads >= 2, 1000), true)
+    assert.equal(reloads, 2)
+  } finally {
+    ticking = false
+    await ticks
+  }
 })
 
 test('failed animation freeze is retried before the snapshot can become ready', async () => {

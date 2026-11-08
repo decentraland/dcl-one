@@ -42,6 +42,8 @@ class CiLocalTest(unittest.TestCase):
         self.assertTrue(ci.triggered('structure.yml', {'docs/README.md'}))
         names = [s.name for s in ci.pre_push_steps({'docs/README.md'})]
         self.assertEqual(names, ['ownership catalogue', 'module layers'])
+        web = [s.name for s in ci.pre_push_steps({'library/async/index.ts'})]
+        self.assertEqual(web, [s.name for s in ci.pre_push_steps({'apps/ui3/src/editor/editor-config.ts'})])
 
     def test_documentation_is_excluded_from_development_and_image_inputs(self):
         docs = {'DATABASE.md', 'services/catalyst/docs/events.md',

@@ -1,7 +1,14 @@
+import { backoffDelay, sleep } from "../../../../library/async/index.ts";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 import http from "node:http";
 import net from "node:net";
+
+const CHROMIUM_LAUNCH_TIMEOUT_MS = 120_000;
+const PAGE_CONDITION_TIMEOUT_MS = 30_000;
+const PAGE_NAVIGATION_TIMEOUT_MS = 30_000;
+
+export const BROWSER_READINESS_BACKOFF = { initialMs: 50, maxMs: 1000, factor: 2 };
 
 export function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -64,8 +71,9 @@ export async function launchChromium({ port, profileDir, extraArgs = [] }: Launc
     ],
     { stdio: "ignore" },
   );
-  const launchTimeoutMs = Number(process.env.CDP_LAUNCH_TIMEOUT_MS || 120_000);
+  const launchTimeoutMs = Number(process.env.CDP_LAUNCH_TIMEOUT_MS || CHROMIUM_LAUNCH_TIMEOUT_MS);
   const deadline = Date.now() + launchTimeoutMs;
+  let attempt = 0;
   for (;;) {
     try {
       await httpJson(`http://127.0.0.1:${port}/json/version`);
@@ -75,7 +83,7 @@ export async function launchChromium({ port, profileDir, extraArgs = [] }: Launc
         proc.kill();
         throw new Error(`chromium did not expose CDP in ${Math.round(launchTimeoutMs / 1000)}s`);
       }
-      await new Promise((r) => setTimeout(r, 400));
+      await sleep(backoffDelay(attempt++, BROWSER_READINESS_BACKOFF, deadline - Date.now()));
     }
   }
   return proc;
@@ -257,7 +265,9 @@ export class Tab {
     this.ws.send(JSON.stringify({ id, method, params }));
     const deadline = Date.now() + timeoutMs;
     for (;;) {
-      const raw = await this.ws.next(Math.max(200, deadline - Date.now()));
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error(`${method} timed out`);
+      const raw = await this.ws.next(remaining);
       let obj: CdpMessage;
       try {
         obj = JSON.parse(raw);
@@ -286,9 +296,36 @@ export class Tab {
     return r.result?.value;
   }
 
-  async navigate(url: string, settleMs = 3_500): Promise<void> {
-    await this.cmd("Page.navigate", { url });
-    await new Promise((r) => setTimeout(r, settleMs));
+  async waitUntil(expression: string | (() => Promise<boolean>), timeoutMs = PAGE_CONDITION_TIMEOUT_MS): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    let attempt = 0;
+    for (;;) {
+      try {
+        if (await (typeof expression === "string" ? this.ev(expression, { timeoutMs: Math.max(1, deadline - Date.now()) }) : expression())) return;
+      } catch (error) {
+        if (!/Execution context was destroyed|Cannot find context|Inspected target navigated/.test(String(error))) throw error;
+      }
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error(`page condition did not become true: ${expression}`);
+      await sleep(backoffDelay(attempt++, BROWSER_READINESS_BACKOFF, remaining));
+    }
+  }
+
+  async navigate(url: string, timeoutMs = PAGE_NAVIGATION_TIMEOUT_MS): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    const remaining = () => Math.max(1, deadline - Date.now());
+    const result = await this.cmd("Page.navigate", { url }, remaining());
+    if (result.errorText) throw new Error(result.errorText);
+    if (result.loaderId) {
+      await this.waitUntil(async () => {
+        const { frameTree } = await this.cmd("Page.getFrameTree", {}, remaining());
+        return frameTree.frame.id === result.frameId && frameTree.frame.loaderId === result.loaderId;
+      }, remaining());
+    }
+    await this.waitUntil('document.readyState === "complete"', remaining());
+    // fonts and in-view images are best effort: one that never finishes does not fail the visit
+    await this.waitUntil('document.fonts.status === "loaded" && [...document.images].every((image) => { const rect = image.getBoundingClientRect(); return image.complete || (image.loading === "lazy" && (rect.bottom <= 0 || rect.top >= innerHeight || rect.right <= 0 || rect.left >= innerWidth)); })', remaining()).catch(() => {});
+    await this.ev('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))', { awaitPromise: true, timeoutMs: remaining() });
   }
 
   async setViewport(width: number, height: number): Promise<void> {

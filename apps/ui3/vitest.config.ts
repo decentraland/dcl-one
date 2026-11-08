@@ -7,6 +7,7 @@ import { validateAlias } from "./vite.validate.js";
 export default defineConfig({
   resolve: {
     alias: [
+      { find: "@dcl/async", replacement: fileURLToPath(new URL("../../library/async/index.ts", import.meta.url)) },
       ...validateAlias(),
       { find: "@catalyst-api", replacement: fileURLToPath(new URL("../../library/catalyst-api", import.meta.url)) },
     ],

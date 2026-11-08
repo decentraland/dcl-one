@@ -1,7 +1,7 @@
 // The item page's creator and collection lines: where each links, the creator's name and initial
 // fallback, and how the collection collage splits its thumbnails into rows.
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CREATOR, ShopHarness } from "../../discovery/fixtures";
@@ -26,7 +26,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-const settle = () => act(async () => new Promise((r) => setTimeout(r, 120)));
+const settle = () => screen.findByText("Nacho");
 
 describe("DetailCreator", () => {
   it("links to the creator's storefront and reads By {name}", async () => {

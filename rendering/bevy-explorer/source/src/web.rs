@@ -819,8 +819,7 @@ pub fn update_render_scale(
 /// launch (pulse server, imposter source, …) is retained alongside them.
 fn update_url_params(
     player: Query<&GlobalTransform, With<PrimaryUser>>,
-    current_realm: Res<CurrentRealm>,
-    startup_scenes: Option<Res<StartupScenes>>,
+    (current_realm, startup_scenes): (Res<CurrentRealm>, Option<Res<StartupScenes>>),
     preview: Res<PreviewMode>,
     editor: Res<EditorMode>,
     mut prev: Local<Option<EngineRunOptions>>,

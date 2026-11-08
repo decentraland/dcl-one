@@ -1,7 +1,7 @@
 // Upstream's rollout flags, read from the same feature-flags file: what each answer means, how long it is
 // held, and that "Suggested for you" asks the server for anything only while its flag is on.
 
-import { act, render } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import SuggestedForYouRow from "../components/SuggestedForYouRow";
@@ -180,19 +180,16 @@ describe("Suggested for you behind its flag", () => {
     );
     return client;
   }
-  const settle = () => act(async () => new Promise((r) => setTimeout(r, 50)));
   const askedForSuggestions = (client: ReturnType<typeof catalogClient>) => client.calls.some((c) => c.url.includes("suggested"));
 
   it("asks for nothing while the flag is absent, as in production today", async () => {
     const client = row();
-    await settle();
     expect(askedForSuggestions(client)).toBe(false);
     expect(flagReads()).toBe(0);
   });
 
   it("asks once the flag is on", async () => {
     const client = row(ON);
-    await settle();
-    expect(askedForSuggestions(client)).toBe(true);
+    await waitFor(() => expect(askedForSuggestions(client)).toBe(true));
   });
 });

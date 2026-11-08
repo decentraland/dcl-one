@@ -241,11 +241,12 @@ export default defineConfig({
     host: process.env.HOST || "127.0.0.1",
     port: Number(process.env.PORT) || 5212,
     strictPort: true,
-    fs: { allow: [".", "../ui3", "../../library/catalyst-api"] },
+    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/async"] },
     proxy: nodeProxy(),
   },
   resolve: {
     alias: {
+      "@dcl/async": fileURLToPath(new URL("../../library/async/index.ts", import.meta.url)),
       ...validateAliasObject(),
       "@ui": ui,
       "@catalyst-api": catalystApi,
