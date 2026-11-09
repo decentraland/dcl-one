@@ -32,8 +32,9 @@ function specifiers(source: string): { named: string[]; opaque: string[] } {
 
 /**
  * The source with its comments blanked and everything else kept: strings, template literals and regular expressions
- * are skipped whole, so a `//` or a `/*` inside one hides nothing. A `/` starts a regular expression where an
- * expression may start (after an operator, a bracket, a comma or a keyword), as JavaScript reads it.
+ * are skipped whole, so a `//` or a `/*` inside one hides nothing. A template's `${…}` is code again, read the same way
+ * up to the brace that closes it, so a template nested inside one is skipped whole too. A `/` starts a regular
+ * expression where an expression may start (after an operator, a bracket, a comma or a keyword), as JavaScript reads it.
  */
 function withoutComments(source: string): string {
   let out = "";
@@ -52,54 +53,55 @@ function withoutComments(source: string): string {
     while (i < source.length && source[i] !== "`") {
       if (source[i] === "\\") out += source[i++];
       else if (source[i] === "$" && source[i + 1] === "{") {
-        let depth = 0;
-        do {
-          if (source[i] === "{") depth++;
-          else if (source[i] === "}") depth--;
-          else if (source[i] === "'" || source[i] === '"') {
-            skipQuoted(source[i]!);
-            continue;
-          }
-          out += source[i++];
-        } while (i < source.length && depth > 0);
+        out += source[i++];
+        out += source[i++];
+        last = "{";
+        skipCode(true);
         continue;
       }
       out += source[i++] ?? "";
     }
     out += source[i++] ?? "";
   };
-  while (i < source.length) {
-    const c = source[i]!;
-    const next = source[i + 1];
-    if (c === "/" && next === "/") {
-      while (i < source.length && source[i] !== "\n") i++;
-    } else if (c === "/" && next === "*") {
-      const end = source.indexOf("*/", i + 2);
-      i = end < 0 ? source.length : end + 2;
-      out += " ";
-    } else if (c === "'" || c === '"') {
-      skipQuoted(c);
-      last = c;
-    } else if (c === "`") {
-      skipTemplate();
-      last = c;
-    } else if (c === "/" && (last === "" || /[(,=:[!&|?{};+\-*%<>~^]/.test(last) || /\b(return|typeof|case|in|of)\s*$/.test(out))) {
-      out += source[i++];
-      let inClass = false;
-      while (i < source.length && (source[i] !== "/" || inClass)) {
-        if (source[i] === "\\") out += source[i++];
-        else if (source[i] === "[") inClass = true;
-        else if (source[i] === "]") inClass = false;
+  /** Code to the end of the source, or, in a template's `${`, through the brace that closes it. */
+  const skipCode = (interpolation: boolean): void => {
+    let depth = 0;
+    while (i < source.length) {
+      const c = source[i]!;
+      const next = source[i + 1];
+      if (c === "/" && next === "/") {
+        while (i < source.length && source[i] !== "\n") i++;
+      } else if (c === "/" && next === "*") {
+        const end = source.indexOf("*/", i + 2);
+        i = end < 0 ? source.length : end + 2;
+        out += " ";
+      } else if (c === "'" || c === '"') {
+        skipQuoted(c);
+        last = c;
+      } else if (c === "`") {
+        skipTemplate();
+        last = c;
+      } else if (c === "/" && (last === "" || /[(,=:[!&|?{};+\-*%<>~^]/.test(last) || /\b(return|typeof|case|in|of)\s*$/.test(out))) {
+        out += source[i++];
+        let inClass = false;
+        while (i < source.length && (source[i] !== "/" || inClass)) {
+          if (source[i] === "\\") out += source[i++];
+          else if (source[i] === "[") inClass = true;
+          else if (source[i] === "]") inClass = false;
+          out += source[i++] ?? "";
+        }
         out += source[i++] ?? "";
+        last = "/";
+      } else {
+        out += c;
+        i++;
+        if (!/\s/.test(c)) last = c;
+        if (c === "{") depth++;
+        else if (c === "}" && depth-- === 0 && interpolation) return;
       }
-      out += source[i++] ?? "";
-      last = "/";
-    } else {
-      out += c;
-      if (!/\s/.test(c)) last = c;
-      i++;
     }
-  }
+  };
+  skipCode(false);
   return out;
 }
 
@@ -157,5 +159,12 @@ describe("the host seam of the Shop's read modules", () => {
     expect(withoutComments("const t = `a ${'//'} b`; location.href")).toBe("const t = `a ${'//'} b`; location.href");
     expect(withoutComments(`const q = /['"]/; window.x; // gone`)).toBe(`const q = /['"]/; window.x; `);
     expect(withoutComments("const r = a / b; // gone")).toBe("const r = a / b; ");
+    // A template nested in a `${…}`, with a URL in it, ends neither its own template nor the outer one.
+    expect(withoutComments("const t = `a ${`http://x`} b`; window.location; // gone")).toBe("const t = `a ${`http://x`} b`; window.location; ");
+    expect(withoutComments("const t = `${`http://${host}/`}`; window.x")).toBe("const t = `${`http://${host}/`}`; window.x");
+    // Inside a `${…}`, braces nest, a comment is still a comment, and a `/` may start a regular expression.
+    expect(withoutComments("const t = `${f({ a: 1 })}//`; window.y")).toBe("const t = `${f({ a: 1 })}//`; window.y");
+    expect(withoutComments("const t = `${x /* } */}`; window.z")).toBe("const t = `${x  }`; window.z");
+    expect(withoutComments("const t = `${/`/.test(s)}`; window.w")).toBe("const t = `${/`/.test(s)}`; window.w");
   });
 });
