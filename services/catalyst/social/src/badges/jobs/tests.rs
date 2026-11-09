@@ -1024,3 +1024,72 @@ async fn a_recount_resumes_past_a_wallet_it_cannot_move() {
         "the pass completed"
     );
 }
+
+#[tokio::test]
+async fn a_sale_of_an_unmirrored_item_holds_until_the_item_or_a_later_pass() {
+    let Some(pool) = private_pool("badges_sales_hold").await else {
+        return;
+    };
+    let p = pass(&pool);
+    chain_ready(&pool, "sales", 100).await;
+    sales::batch(&p, Log::Sale).await.unwrap();
+    let c = contract();
+    let creator = fresh_address();
+    let buyer = fresh_address();
+    let b = buyer.as_str();
+    let sale_at = now().and_utc().timestamp();
+    let sale = |block: i64, item_id: i64, tx: String| {
+        let pool = pool.clone();
+        let c = c.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO shop.sale_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, item_id, buyer, tx_hash) \
+                 VALUES ('matic', $1, 0, $2, 'mint', $3, $3, 1, $4, $5, $6)",
+            )
+            .bind(block)
+            .bind(sale_at)
+            .bind(&c)
+            .bind(item_id)
+            .bind(b)
+            .bind(tx)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    // item 1 is not mirrored yet; item 2 is, and sold after it
+    item(&pool, &c, 2, "wearable_v2", creator.as_str()).await;
+    sale(101, 1, format!("0x{}", "a".repeat(64))).await;
+    sale(102, 2, format!("0x{}", "b".repeat(64))).await;
+    chain_ready(&pool, "sales", 102).await;
+    mirror_ready(&pool, "items").await;
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap(), (0, false));
+    assert_eq!(
+        cursor(&pool, Log::Sale.source()).await,
+        Some((100, i32::MAX))
+    );
+    assert_eq!(progress(&pool, b, "emotionista").await, None);
+    assert_eq!(progress(&pool, b, "fashionista").await, None);
+
+    item(&pool, &c, 1, "emote_v1", creator.as_str()).await;
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap(), (2, false));
+    assert_eq!(progress(&pool, b, "emotionista").await.unwrap().0, 1);
+    assert_eq!(progress(&pool, b, "fashionista").await.unwrap().0, 1);
+
+    // an item the mirror never holds: passed once a pass completes an hour
+    // after the sale
+    sale(103, 9, format!("0x{}", "c".repeat(64))).await;
+    chain_ready(&pool, "sales", 103).await;
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap(), (0, false));
+    sqlx::query(
+        "UPDATE shop.mirror_state SET last_complete_pass_at = to_timestamp($1)::timestamp \
+         WHERE mirror = 'items'",
+    )
+    .bind((sale_at + sales::ITEM_WAIT_SECS) as f64)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(sales::batch(&p, Log::Sale).await.unwrap(), (1, false));
+    assert_eq!(cursor(&pool, Log::Sale.source()).await, Some((103, 0)));
+    assert_eq!(progress(&pool, b, "fashionista").await.unwrap().0, 1);
+}

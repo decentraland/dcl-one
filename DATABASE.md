@@ -1303,7 +1303,10 @@ default, and social writes are), each a reader of tables other areas own, with o
   and `shop.nft_event` (`order_successful`) on Polygon by (block, log index),
   each up to the block its index published in `shop.chain_cursor`
   (emotionista, fashionista; one step per transaction hash, the legacy order's
-  chain position standing in for its missing hash);
+  chain position standing in for its missing hash). A sale of an item
+  `shop.items` lacks holds its log's cursor until the item is mirrored or the
+  items mirror completes a pass an hour after the sale (a pass walks every
+  item, minutes at the defaults); then it is passed without effect;
 - recounts of `shop.items` and `shop.collections` on Polygon (once
   `shop.mirror_state` records a complete pass) and of accepted
   `social.referral_progress` rows (creators, the collection half of open for

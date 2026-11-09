@@ -15,6 +15,14 @@
 //! folded and fresh, shop's own readiness rule), from its own cursor
 //! (`sales:<table>:matic`, block and log index), which starts at the
 //! published block.
+//!
+//! A sale of an item the items mirror does not hold yet holds its cursor
+//! (the logs are read in chain order, so the sales after it wait too) until
+//! the item appears or the mirror completes a pass [`ITEM_WAIT_SECS`] after
+//! the sale: a complete pass walks every item and at the defaults takes
+//! minutes, so an item still missing then is not a collection item the
+//! mirror will ever hold (a bid on a foreign ERC721), and the sale is passed
+//! without effect. A mirror that stops completing passes holds the sales.
 
 use std::collections::{HashMap, HashSet};
 
@@ -29,6 +37,10 @@ use crate::identity::Address;
 const ITEM_SHIFT: &str = "105312291668557186697918027683670432318895095400549111254310977536";
 const ASSET_TYPE_ERC721: i64 = 3;
 const ASSET_TYPE_COLLECTION_ITEM: i64 = 4;
+/// How long after a sale the items mirror must complete a pass before a
+/// sale whose item it lacks is passed (a pass takes well under it: 50 pages
+/// of 1,000 items every 300 s by default).
+pub(crate) const ITEM_WAIT_SECS: i64 = 3_600;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Log {
@@ -227,10 +239,18 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
         .bind(limit)
         .fetch_all(&mut *tx)
         .await?;
-    let Some(last) = rows.last().map(|r| (r.block_number, r.log_index)) else {
+    if rows.is_empty() {
         tx.rollback().await?;
         return Ok((0, false));
-    };
+    }
+    // The last complete items pass, unix seconds.
+    let items_pass: Option<i64> = sqlx::query_scalar(
+        "SELECT extract(epoch FROM last_complete_pass_at)::bigint FROM shop.mirror_state \
+         WHERE mirror = 'items' AND network = 'matic'",
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    .flatten();
     // (buyer, tx key, sale time, badges)
     let mut sales: Vec<(String, String, i64, Vec<&'static str>)> = Vec::new();
     let now = crate::shared::now_utc();
@@ -240,27 +260,51 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
         Vec::new()
     };
     let traded = trade_item_types(&mut tx, &goods).await?;
+    let mut passed = 0;
     for row in &rows {
         let at = chrono::DateTime::from_timestamp(row.block_time, 0)
             .map(|t| t.naive_utc())
             .unwrap_or(now);
+        let (buyer, types, unmirrored): (Option<String>, Vec<String>, bool) = if log == Log::Trade {
+            match trade(row) {
+                Some((buyer, goods)) => {
+                    let wanted = goods.len();
+                    let types: Vec<String> = goods
+                        .into_iter()
+                        .filter_map(|(_, c, v)| traded.get(&(c, v)).cloned())
+                        .collect();
+                    let missing = types.len() < wanted;
+                    (Some(buyer), types, missing)
+                }
+                None => (None, Vec::new(), false),
+            }
+        } else {
+            let missing = row.buyer.is_some() && row.item_types.is_empty();
+            (row.buyer.clone(), row.item_types.clone(), missing)
+        };
+        if unmirrored && !pass.too_old(at, now) {
+            let waited = items_pass
+                .is_some_and(|done| done >= row.block_time.saturating_add(ITEM_WAIT_SECS));
+            if !waited {
+                tracing::debug!(
+                    source = log.source(),
+                    block = row.block_number,
+                    log = row.log_index,
+                    "sale of an item not mirrored yet: held"
+                );
+                break;
+            }
+            tracing::debug!(
+                source = log.source(),
+                block = row.block_number,
+                log = row.log_index,
+                "sale of an item the mirror never held: passed"
+            );
+        }
+        passed += 1;
         if pass.too_old(at, now) {
             continue;
         }
-        let (buyer, types): (Option<String>, Vec<String>) = if log == Log::Trade {
-            match trade(row) {
-                Some((buyer, goods)) => (
-                    Some(buyer),
-                    goods
-                        .into_iter()
-                        .filter_map(|(_, c, v)| traded.get(&(c, v)).cloned())
-                        .collect(),
-                ),
-                None => (None, Vec::new()),
-            }
-        } else {
-            (row.buyer.clone(), row.item_types.clone())
-        };
         let mut badges: Vec<&'static str> = types.iter().map(|t| badge_of(t)).collect();
         badges.sort();
         badges.dedup();
@@ -280,6 +324,10 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
             badges,
         ));
     }
+    let Some(last) = rows[..passed].last().map(|r| (r.block_number, r.log_index)) else {
+        tx.rollback().await?;
+        return Ok((0, false));
+    };
     let addresses: Vec<String> = sales
         .iter()
         .map(|s| s.0.clone())
@@ -304,7 +352,10 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
     }
     super::advance(&mut tx, log.source(), last.0, last.1).await?;
     tx.commit().await?;
-    Ok((rows.len() as u64, rows.len() as i64 == limit))
+    Ok((
+        passed as u64,
+        passed == rows.len() && rows.len() as i64 == limit,
+    ))
 }
 
 #[cfg(test)]
