@@ -1,10 +1,13 @@
 """The drift collector's parsing and version logic, and the site's markdown rendering."""
 import importlib.util
 from pathlib import Path
+import tempfile
 import textwrap
 import unittest
+from unittest.mock import patch
 
 TOOLING = Path(__file__).resolve().parents[1]
+WORKFLOW = TOOLING.parent / '.github/workflows/bevy-explorer-upstream.yml'
 spec = importlib.util.spec_from_file_location('upstream_drift', TOOLING / 'upstream-drift.py')
 drift = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(drift)
@@ -59,6 +62,7 @@ class VersionLogicTests(unittest.TestCase):
     def test_v8_engine_reads_the_readme_then_the_crate_major(self):
         self.assertEqual(drift.v8_engine('0.105.1', '# rusty_v8\n\nV8 Version: 12.9.202.9\n'), {'v8': '12.9.202.9', 'milestone': 129})
         self.assertEqual(drift.v8_engine('150.4.0'), {'v8': '15.0', 'milestone': 150})
+        self.assertEqual(drift.v8_engine('129.0.0'), {'v8': '12.9', 'milestone': 129})
         self.assertEqual(drift.v8_engine('0.105.1'), {'v8': None, 'milestone': None})
 
     def test_newest_matching_skips_yanked_and_prereleases(self):
@@ -67,7 +71,7 @@ class VersionLogicTests(unittest.TestCase):
         self.assertIsNone(drift.newest_matching(versions, '^153'))
 
     def v8_state(self, locked, accepted, chrome):
-        return {'locked_versions': [locked['crate']], 'locked': locked, 'accepted': accepted,
+        return {'locked_versions': [locked['crate']] if locked else [], 'locked': locked, 'accepted': accepted,
                 'deno_core': {'version': '0.413.0', 'v8_req': '^150.4.0'}, 'chrome': {'milestone': chrome}}
 
     def test_v8_findings_fire_behind_deno_core_and_far_from_chrome(self):
@@ -84,6 +88,51 @@ class VersionLogicTests(unittest.TestCase):
     def test_v8_findings_flag_an_unknown_version(self):
         findings = drift.v8_findings(self.v8_state({'crate': '0.1.0', 'v8': None, 'milestone': None}, None, 157))
         self.assertEqual(findings, ['cannot tell the V8 version of the locked v8 0.1.0'])
+
+    def test_v8_findings_flag_an_unresolved_deno_core_requirement(self):
+        state = self.v8_state({'crate': '150.4.0', 'v8': '15.0', 'milestone': 150}, None, 151)
+        state['deno_core']['v8_req'] = None
+        self.assertEqual(drift.v8_findings(state), ['unable to resolve which v8 deno_core 0.413.0 accepts (requirement: not found)'])
+
+    def test_v8_findings_flag_a_v8_outside_crates_io(self):
+        state = self.v8_state(None, {'crate': '150.4.0', 'v8': '15.0', 'milestone': 150}, 157)
+        state['unregistered'] = ['150.4.0 (git+https://github.com/example/rusty_v8#abc)']
+        findings = drift.v8_findings(state)
+        self.assertEqual(len(findings), 1)
+        self.assertIn('v8 outside crates.io', findings[0])
+
+    def test_collect_v8_keeps_a_v8_outside_crates_io(self):
+        meta = {'v8': {'versions': [{'num': '150.4.0', 'created_at': '2026-06-01T00:00:00Z'}], 'crate': {'max_stable_version': '150.4.0'}},
+                'deno_core': {'crate': {'max_stable_version': '0.413.0'}}}
+        with patch.object(drift, 'crates_io', side_effect=meta.get), \
+             patch.object(drift, 'v8_requirement', return_value='^150.4.0'), \
+             patch.object(drift, 'rusty_v8_readme', return_value=None), \
+             patch.object(drift, 'chrome_stable', return_value={'milestone': 157, 'version': '157.0.1', 'date': '2026-11-01'}):
+            v8 = drift.collect_v8([{'name': 'v8', 'version': '150.4.0', 'source': ''}])
+        self.assertIsNone(v8['locked'])
+        self.assertEqual(v8['findings'], ['v8 outside crates.io, its age is not checked: 150.4.0 (path)'])
+        self.assertIn('v8 outside crates.io', drift.v8_report_markdown(v8))
+
+    def test_collect_v8_or_error_stores_the_failure(self):
+        lock = [{'name': 'v8', 'version': '0.105.1', 'source': 'registry+https://github.com/rust-lang/crates.io-index'}]
+        with patch.object(drift, 'crates_io', side_effect=OSError('crates.io down')):
+            self.assertEqual(drift.collect_v8_or_error(lock), {'error': "OSError('crates.io down')"})
+
+    def test_v8_report_fails_and_keeps_the_body_on_collect_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data, body = Path(tmp, 'data.json'), Path(tmp, 'body.md')
+            data.write_text('{"v8": {"error": "boom"}}')
+            body.write_text('previous body')
+            with patch.object(drift, 'DATA', data):
+                self.assertEqual(drift.v8_report(str(body)), 1)
+            self.assertEqual(body.read_text(), 'previous body')
+
+    def test_v8_issue_step_runs_last_and_matches_the_exact_title(self):
+        text = WORKFLOW.read_text()
+        issue = text.index('- name: Open, update or close the V8 freshness issue')
+        self.assertGreater(issue, text.index('- name: Open or update the fork inventory pull request'))
+        self.assertNotIn('--search', text[issue:])
+        self.assertIn('select(.title == env.TITLE)', text[issue:])
 
     def test_tag_helpers(self):
         self.assertEqual(drift.version_key('v0.16.1'), (0, 16, 1, 0))

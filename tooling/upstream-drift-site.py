@@ -158,6 +158,7 @@ function overview(){
 }
 function v8Panel(){
   const v = D.v8; if (!v) return '';
+  if (v.error) return `<h3>Scene runtime V8</h3><p class="empty">Not collected: ${esc(v.error)}</p>`;
   const row = (label, e, note) => `<tr><td>${esc(label)}</td><td>${e ? `<a href="https://crates.io/crates/v8/${esc(e.crate)}" target="_blank" rel="noreferrer">${esc(e.crate)}</a>` : '–'}</td><td>${esc(e?.v8 || '?')}</td><td>${e?.milestone ? 'M' + e.milestone : '?'}</td><td>${esc(e?.date || '')} <span class="muted">${esc(note || '')}</span></td></tr>`;
   return `<h3>Scene runtime V8</h3><p class="muted">The <code>v8</code> crate deno_core locks; RustSec has no V8 advisories, so its age is checked here. Chrome gap limit: ${v.chrome_gap_limit} milestones.</p>
   <table><thead><tr><th></th><th>v8 crate</th><th>V8</th><th>Chrome</th><th>released</th></tr></thead><tbody>

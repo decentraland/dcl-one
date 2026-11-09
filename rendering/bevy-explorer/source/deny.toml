@@ -1,6 +1,6 @@
-# cargo deny for the Explorer workspace, run on pull requests by
+# cargo deny for the Explorer workspace, run on pull requests and weekly by
 # .github/workflows/bevy-explorer-deny.yml:
-#   cargo deny --locked check advisories bans
+#   cargo deny --locked --workspace check advisories bans
 # The vendored bevy/deny.toml belongs to the bevy fork and is not used here.
 
 [graph]
