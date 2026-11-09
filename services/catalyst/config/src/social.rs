@@ -682,6 +682,11 @@ pub struct SocialConfig {
     /// processor passes it without effect; 0 keeps every deployment.
     #[arg(long, env = "BADGES_DEPLOYMENT_MAX_LAG_SECS", default_value_t = 86_400)]
     pub badges_deployment_max_lag_secs: u64,
+    /// Count the gatekeeper's room joins and leaves toward the presence
+    /// badges (social.presence_badges): every process stores the events,
+    /// the leased badges-presence jobs apply them and close lost visits.
+    #[arg(long, env = "BADGES_PRESENCE_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub badges_presence_enabled: bool,
 
     // social/media: the autotranslate route (an external engine over the network).
     /// disabled | mock | http | llm; empty = http when TRANSLATE_BACKEND_URL

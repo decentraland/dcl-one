@@ -942,6 +942,17 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             "FLEET_JOBS_ENABLED=false: this process serves no /ws, /ws/v4 or socket-reading connector route and mints no island; the primary serves them"
         );
     }
+    // The gatekeeper's room events feed the worlds access log and, when
+    // enabled, the presence badges (stored here, applied by a leased job).
+    let presence_badges =
+        config.social.badges_presence_enabled && config.writes.social_writes_enabled;
+    let mut room_event_sinks: Vec<Arc<dyn comms::gatekeeper::events::RoomEventSink>> =
+        vec![stage5.core.clone()];
+    if presence_badges {
+        let sink = Arc::new(badges::presence::EventSink::default());
+        sink.spawn_writer(pool.clone(), &jobs);
+        room_event_sinks.push(sink);
+    }
     let comms_stage = comms_states(
         &config,
         &pool,
@@ -951,7 +962,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         comms_settings,
         &policy,
         ban_status.clone(),
-        stage5.core.clone(),
+        Arc::new(comms::gatekeeper::events::RoomEventFanout::new(
+            room_event_sinks,
+        )),
         live_presence.clone(),
         eip1654.clone(),
         primary,
@@ -1114,6 +1127,15 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     social.media.spawn_jobs(&jobs);
     social.rpc.spawn_jobs(&jobs);
     social.segment_webhooks.spawn_jobs(&jobs);
+    if presence_badges {
+        badges::presence::spawn_jobs(
+            pool.clone(),
+            social.badges.badges.asset_base_url().to_owned(),
+            live_presence.clone(),
+            badges::presence::Settings::default(),
+            &jobs,
+        );
+    }
     if config.writes.social_writes_enabled {
         badges::jobs::spawn(&social.badges, &jobs);
         let communities = social.communities.clone();

@@ -1398,3 +1398,51 @@ effect; `BADGES_EVENT_MAX_AGE_SECS` (default off) is upstream's
 adds `seq`; the object pass creates `social.badge_cursors`,
 `social.badge_cursor_gaps` and both indexes.
 
+### Presence badges flow
+
+Input is the gatekeeper's verified LiveKit joins and leaves (`RoomEventFanout`
+in `serve`, beside the worlds access log): wallet identities only, scene and
+world rooms only, with LiveKit's participant sid as the session. Each process
+queues them without blocking the webhook (10,000 events, a dropped one counted
+in `badges_presence_events_dropped_total`) and its writer inserts batches into
+`social.presence_events`, keyed by LiveKit's event id, so a redelivered
+webhook is one row. The writer keeps only events in a place a badge could
+count now: a 30 s snapshot of the published badges' worlds and of the scene
+entities deployed on their parcels (one GIN-indexed `entity_pointers &&`
+read), every event when the snapshot cannot be read. A failed batch insert is
+retried once after 1 s, then dropped and counted. Expected volume is every
+join and leave of the scene and world rooms of active presence badges while
+`BADGES_PRESENCE_ENABLED` is on (unmeasured); rows live only
+until the next pass of the leased `badges-presence` job (5 s), which applies
+up to 500 in `seq` order, one transaction per event that deletes it, so the
+queue is its own cursor and a row committed behind a later `seq` is still
+there on the next pass. The clock (bookkeeping times and the 5-minute future
+guard) is read per event, so a long drain stays current. Only a deterministic
+failure counts toward dropping an event (after 3 passes, logged and counted);
+a connection, pool, timeout, conflict or failover error is retried on the next
+pass without counting.
+
+Every presence transaction first takes one advisory lock: the engine and the
+`badges-presence-sweep` job are a single writer fleet-wide, so the runtime
+tables need no per-session locks. The runtime state is upstream's
+(`presence_visits` keyed by badge, wallet and room, cascading from
+`presence_badges`; `presence_applied_events`, `presence_pending_leaves` and
+`presence_absence_facts` keyed by their facts), in epoch milliseconds where a
+value meets a LiveKit event time or the `intervals` document. Indexes follow
+the statements: `(wallet, realm_name)` for a leave's open visits,
+`opened_at` and `(last_checked_at, opened_at)` for the sweeper's due visits,
+and each fact table's retention column for the bounded prune (batches of 1,000
+per table until one comes back short, at most 20 per sweep, after the 7-day
+redelivery window). Completed badges are left out in one statement per event,
+so a wallet with nothing left to earn in a place records no visit or pending
+leave there. A scene badge resolves
+the event's entity to its parcels through `content.deployments` (`entity_id`
+is unique); a world badge compares names. Progress is written through
+`apply_progress` with the progress document `{ steps, intervals }` kept as
+upstream writes it, so an imported document resumes. Invariants: a session
+counts only from its own join to its own leave, never past the first
+occupancy observation that missed the wallet; an ended session never reopens
+for that badge; overlapping connections count once; a stay completes at the
+instant the union reaches `required_seconds`. The sweeper reads this
+process's LiveKit occupancy observation (`comms::presence`) and only closes
+visits; no observation, or an empty one, changes nothing.

@@ -15,6 +15,9 @@
 //! `badge_admin_audit`, `presence_badges`, `badge_cursors`. Every progress
 //! write goes through [`progress::apply_progress`]: the console grant and the
 //! processor's [`jobs`], which feed upstream's observers ([`evaluators`]).
+//! [`progress::apply_progress`]: the console grant and the presence flow
+//! ([`presence`], with its runtime tables `presence_events`, `presence_visits`
+//! and the applied, pending-leave and absence facts).
 //!
 //! Mounted by `serve` as `.nest("/badges", router(state))` (the old gateway
 //! stripped that prefix), so `<node>/badges` is the base URL of upstream's
@@ -28,6 +31,7 @@ pub mod backfill;
 pub mod evaluators;
 pub mod handlers;
 pub mod jobs;
+pub mod presence;
 pub mod progress;
 pub mod store;
 pub mod types;

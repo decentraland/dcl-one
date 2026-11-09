@@ -952,12 +952,21 @@ mod tests {
             "true",
             "--first-wear-enabled",
             "true",
+            "--badges-presence-enabled",
+            "true",
         ])
         .unwrap();
         assert!(
             cli.writes.social_writes_enabled
                 && cli.social.livekit_allow_dev_creds
                 && cli.social.first_wear_enabled
+                && cli.social.badges_presence_enabled
+        );
+        assert!(
+            !parse(&["x", "--database-url", "postgres:///catalyst"])
+                .unwrap()
+                .social
+                .badges_presence_enabled
         );
     }
 
