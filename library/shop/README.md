@@ -1,6 +1,6 @@
 # `library/shop`
 
-The Shop's portable core: the model (addresses, assets, chains, money, purchases, settlement and
+The Shop's portable core ([ADR](../../docs/adr/2026-11-09-shop-portable-core.md)): the model (addresses, assets, chains, money, purchases, settlement and
 its wire shapes), card prices, sale and rarity rules, the price slider, currency formatting,
 payment rules and copy, cart partitioning, the spend guard, contract ABIs and the `/shop-api`
 endpoint map. Every Shop host imports it as `@shop/*`: the web Shop and the `/play` HUD in
