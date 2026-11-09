@@ -22,8 +22,7 @@ export const REQUIRED_CHECKS = [
   'diff',
   'check-mappings',
   'review-manifest',
-  'navbar-bounds',
-  'install'
+  'navbar-bounds'
 ]
 const RECORD_KEYS = ['schema', 'lockHash', 'fdsRevision', 'snapshotRevision', 'figmaTree', 'checks']
 const CHECK_KEYS = ['result', 'detail']

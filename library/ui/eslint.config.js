@@ -6,7 +6,6 @@ export default tseslint.config(
   {
     ignores: [
       'node_modules',
-      '.agent-work',
       'figma/.figma-cache',
       'figma/figma-snapshot',
       'figma/test/fixtures',
