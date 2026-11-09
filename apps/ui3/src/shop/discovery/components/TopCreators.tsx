@@ -7,13 +7,14 @@ import { Link } from "react-router";
 import { fetchCommunityProfiles } from "../../../data/hooks/useCommunityProfiles";
 import { SHOP_BASE } from "../../routes";
 import { fetchShopTopCreators } from "../api";
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import { railGeometry, railPageFromGeometry, scrollRailToPage } from "../lib/pagedRail";
 import { avatarBackgroundColor, selectTopCreators, type CreatorProfile, type TopCreator } from "../lib/topCreators";
 import { useShopQuery } from "../query";
 import carouselArrow from "../icons/carousel-arrow.svg?url";
 import "./rail.css";
 import "./topcreators.css";
+import { shopClient } from "../../api/host";
 
 const CARDS = 8;
 const DAYS = 30;
@@ -27,7 +28,7 @@ function tr(key: string, fallback: string): string {
 }
 
 export async function loadTopCreators(signal?: AbortSignal): Promise<TopCreator[]> {
-  const ranked = await fetchShopTopCreators(CANDIDATES, DAYS, { signal });
+  const ranked = await fetchShopTopCreators(CANDIDATES, DAYS, { client: shopClient(), signal });
   const raw = ranked.length ? await fetchCommunityProfiles(ranked.map((c) => c.id), { signal }) : {};
   const profiles = new Map<string, CreatorProfile>();
   for (const [address, p] of Object.entries(raw)) profiles.set(address.toLowerCase(), { name: p.name, hasClaimedName: p.claimed === true, face: p.picture ?? undefined });

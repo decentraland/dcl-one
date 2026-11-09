@@ -2,7 +2,7 @@
 // (shop/discovery/api), category map and sorts behind one TanStack key and options factory, so every
 // reader of one filter set and page shares one cache entry. As the web Shop's browse grid does
 // (shop/discovery/lib/itemsGrid), what is on sale reads the listings feed and anything wider the
-// catalogue; the card prices each row by the web Shop's own rule (shop/discovery/cardPrice).
+// catalogue; the card prices each row by the Shop's own rule (library/shop discovery/cardPrice).
 
 import { queryOptions, useQuery } from '@tanstack/react-query'
 import { fetchCatalogItems, fetchShopItems, type ShopSort } from '../../../shop/discovery/api'
@@ -16,7 +16,8 @@ import lowerBodyIcon from '../../assets/category-icons/lower_body.png'
 import feetIcon from '../../assets/category-icons/feet.png'
 import accessoriesIcon from '../../assets/category-icons/earring.png'
 import skinIcon from '../../assets/category-icons/skin.png'
-import { listingTypeFor } from '../../../shop/market/access-rule'
+import { listingTypeFor } from '@shop/market/access-rule'
+import { shopClient } from '../../../shop/api/host'
 
 export const SHOP_PAGE_SIZE = 48
 
@@ -135,7 +136,7 @@ export const shopQueries = {
               maxPriceCredits: filters.maxCredits ?? undefined,
               ...paging
             },
-            { signal }
+            { client: shopClient(), signal }
           )
         // Nothing not for sale has a price, so the range applies to the other statuses only.
         const status = statusOf(filters)
@@ -153,7 +154,7 @@ export const shopQueries = {
             maxPriceCredits: priced ? (filters.maxCredits ?? undefined) : undefined,
             ...paging
           },
-          { signal }
+          { client: shopClient(), signal }
         )
       },
       staleTime: 30_000

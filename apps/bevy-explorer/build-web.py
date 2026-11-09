@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build the Explorer web engine, HUD and bridge scene."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 import json
 import os
@@ -8,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 
 APP = Path(__file__).resolve().parent
 ROOT = APP.parents[1]
@@ -18,11 +20,30 @@ spec.loader.exec_module(artifact)
 
 
 def run(*args, cwd=SOURCE, env=None):
+    started = time.monotonic()
     subprocess.run(args, cwd=cwd, env=env, check=True)
+    print(f'{" ".join(map(str, args))}: {time.monotonic() - started:.1f}s', flush=True)
 
 
-def web(no_opt=False, engine_cache=None):
-    env = {**os.environ, 'RUSTUP_TOOLCHAIN': 'nightly-2026-04-15'}
+def compile_wasm(no_opt, env):
+    if no_opt:
+        env = {**env, 'CARGO_PROFILE_RELEASE_CODEGEN_UNITS': '16'}
+    run('cargo', 'build', '--locked', '--release', '--target', 'wasm32-unknown-unknown',
+        '--lib', '-p', 'decentra-bevy', '-p', 'dcl_scene_wasm', '--no-default-features',
+        '--features=decentra-bevy/livekit,decentra-bevy/social', env=env)
+    target = Path(env.get('CARGO_TARGET_DIR', SOURCE / 'target')) / 'wasm32-unknown-unknown/release'
+    for name, directory in (('webgpu_build', 'pkg'), ('dcl_scene_wasm', 'pkg-scene')):
+        output = SOURCE / 'deploy/web/engine' / directory
+        run('wasm-bindgen', str(target / f'{name}.wasm'), '--target', 'web',
+            '--typescript', '--out-dir', str(output), env=env)
+        if not no_opt:
+            wasm = output / f'{name}_bg.wasm'
+            optimized = wasm.with_suffix('.opt.wasm')
+            run('wasm-opt', str(wasm), '-O', '-o', str(optimized), env=env)
+            optimized.replace(wasm)
+
+
+def prepare_engine(no_opt, engine_cache, shared_build, env):
     flags = ['--no-opt'] if no_opt else []
     revision = os.environ.get('GITHUB_SHA', 'local')
     if engine_cache and engine_cache.exists():
@@ -34,30 +55,44 @@ def web(no_opt=False, engine_cache=None):
             target = ROOT / part
             if target.exists():
                 shutil.rmtree(target)
-        run('wasm-pack', 'build', '--target', 'web', *flags, '--out-dir', './deploy/web/engine/pkg',
-            '--no-default-features', '--features=livekit,social', env=env)
+        if shared_build:
+            compile_wasm(no_opt, env)
+        else:
+            run('wasm-pack', 'build', '--target', 'web', *flags, '--out-dir', './deploy/web/engine/pkg',
+                '--no-default-features', '--features=livekit,social', env=env)
+            run('wasm-pack', 'build', 'crates/dcl_scene_wasm', '--target', 'web', *flags,
+                '--out-dir', '../../deploy/web/engine/pkg-scene', '--no-default-features', env=env)
         pkg = SOURCE / 'deploy/web/engine/pkg'
         (pkg / '.gitignore').unlink(missing_ok=True)
         (pkg / 'manifest.json').write_text(json.dumps({'wasmSize': (pkg / 'webgpu_build_bg.wasm').stat().st_size}))
-        run('wasm-pack', 'build', 'crates/dcl_scene_wasm', '--target', 'web', *flags,
-            '--out-dir', '../../deploy/web/engine/pkg-scene', '--no-default-features', env=env)
         (SOURCE / 'deploy/web/engine/pkg-scene/.gitignore').unlink(missing_ok=True)
         run('bash', './scripts/gen-ts-bindings.sh', env=env)
         engine = {'inputs': artifact.engine_inputs(ROOT), 'revision': revision, 'optimized': not no_opt}
         if engine_cache:
             artifact.pack_engine(engine_cache, ROOT, optimized=not no_opt, revision=revision)
+    return engine
+
+
+def web(no_opt=False, engine_cache=None, shared_build=False):
+    env = {**os.environ, 'RUSTUP_TOOLCHAIN': 'nightly-2026-04-15',
+           'RAYON_NUM_THREADS': os.environ.get('RAYON_NUM_THREADS', str(min(os.cpu_count() or 1, 16)))}
+    revision = os.environ.get('GITHUB_SHA', 'local')
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        installations = [pool.submit(run, 'npm', 'ci', '--prefix', project, env=env)
+                         for project in ('react-web', 'react-web/bridge-scene')]
+        engine = prepare_engine(no_opt, engine_cache, shared_build, env)
+        for installation in installations:
+            installation.result()
     metadata = SOURCE / 'target/sandbox-worker.meta.json'
     metadata.parent.mkdir(exist_ok=True)
-    run('npx', '--yes', 'esbuild@0.28.1', './deploy/web/engine/sandbox_worker.js',
+    run('node', './react-web/node_modules/esbuild/bin/esbuild', './deploy/web/engine/sandbox_worker.js',
         '--bundle', '--format=esm', '--log-level=error', f'--metafile={metadata}',
         '--outfile=./deploy/web/engine/pkg/sandbox_worker.bundle.js', env=env)
     entries = [o for o in json.loads(metadata.read_text())['outputs'].values() if o.get('entryPoint')]
     if len(entries) != 1 or entries[0]['exports']:
         raise SystemExit('Sandbox worker must have one entry point and export nothing')
-    run('npm', 'ci', '--prefix', 'react-web', env=env)
-    run('npm', 'ci', '--prefix', 'react-web/bridge-scene', env=env)
     # Relative URLs allow the same build at / or a gateway subpath. No upstream CDN stamping.
-    web_env = {**env, 'PUBLIC_URL': '', 'SCENE_BASE_URL': '/bridge-scene/static/'}
+    web_env = {**env, 'PUBLIC_URL': '', 'SCENE_BASE_URL': '../'}
     run('npm', 'run', 'build', '--prefix', 'react-web', env=web_env)
     run('npm', 'run', 'test', '--prefix', 'react-web', env=web_env)
     run('npm', 'run', 'bundle', '--prefix', 'react-web/bridge-scene', env=web_env)
@@ -83,8 +118,10 @@ def main():
     parser.add_argument('--no-opt', action='store_true', help='Skip wasm-opt for development/PR builds')
     parser.add_argument('--engine-cache', type=Path,
                         help='CI-only compiled WASM cache, restored with an exact input key')
+    parser.add_argument('--shared-build', action='store_true',
+                        help='Compile both WASM modules in one Cargo feature graph; requires wasm-bindgen and wasm-opt')
     args = parser.parse_args()
-    web(args.no_opt, args.engine_cache.resolve() if args.engine_cache else None)
+    web(args.no_opt, args.engine_cache.resolve() if args.engine_cache else None, args.shared_build)
 
 
 if __name__ == '__main__':

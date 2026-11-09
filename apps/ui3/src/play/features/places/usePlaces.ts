@@ -60,7 +60,9 @@ export function usePlaces(account?: string | null): UsePlaces {
   const key = JSON.stringify([search.trim(), category, effectiveSort, section, personalAccount])
   const [page, setPage] = useState({ key, offset: 0 })
   const offset = page.key === key ? page.offset : 0
-  const [resultKey, setResultKey] = useState(key)
+  // The query the shown rows answer: until it is the current one the rows are loading, from the
+  // render that changes the query (the fetch starts in an effect after it).
+  const [resultKey, setResultKey] = useState<string | null>(null)
   const rowsKey = useRef(key)
   const [hasMore, setHasMore] = useState(false)
   const [attempt, setAttempt] = useState(0)
@@ -150,5 +152,5 @@ export function usePlaces(account?: string | null): UsePlaces {
   const loadMore = (): void => {
     if (!loading && hasMore) setPage({ key, offset: offset + BROWSE_ARGS.limit })
   }
-  return { places: current ? places : [], liveFeed, featured, loading: loading && !loadingMore, loadingMore, hasMore: current && hasMore, loadMore, retry: () => setAttempt((previous) => previous + 1), error, search, setSearch, category, setCategory, sort, setSort, section, setSection }
+  return { places: current ? places : [], liveFeed, featured, loading: !current || (loading && !loadingMore), loadingMore, hasMore: current && hasMore, loadMore, retry: () => setAttempt((previous) => previous + 1), error, search, setSearch, category, setCategory, sort, setSort, section, setSection }
 }

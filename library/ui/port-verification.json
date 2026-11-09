@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "lockHash": "14ec147136700e15853f5fd16bda5997b3a52bd704d1eaaac67d637b5783696d",
+  "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
+  "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
+  "figmaTree": "95c2786f520c150f5801ad6440e88e66296f83ff",
+  "checks": {
+    "fetch-source": {
+      "result": "pass",
+      "detail": "verified existing pinned cache - 544 files match its revision and digest table"
+    },
+    "deviations": {
+      "result": "pass",
+      "detail": "436 ported files and 39 public foundation files match pinned bytes and origins"
+    },
+    "diff": {
+      "result": "pass",
+      "detail": "0 added, 0 changed, 0 removed, no ledger issues"
+    },
+    "check-mappings": {
+      "result": "pass",
+      "detail": "ok true, 0 mappings checked"
+    },
+    "review-manifest": {
+      "result": "pass",
+      "detail": "catalog unchanged after regeneration"
+    },
+    "navbar-bounds": {
+      "result": "pass",
+      "detail": "19 of 19 targeted navbar bounds checks pass"
+    },
+    "install": {
+      "result": "pass",
+      "detail": "clean verified-cache install reproduces all 39 tracked files including provenance, second install changes nothing"
+    }
+  }
+}

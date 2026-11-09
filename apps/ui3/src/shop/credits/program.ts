@@ -8,9 +8,10 @@
 
 import type { CreditsProgramProgressResponse } from "@catalyst-api/credits/CreditsProgramProgressResponse";
 import type { SeasonsData } from "@catalyst-api/credits/SeasonsData";
-import { shopClient, type ShopClient } from "../api/shop";
+import { type ShopClient } from "../api/shop";
 import type { ShopSigner } from "../api/signer";
 import { decodeUserCredits, type UserCreditsResponse } from "./credits";
+import { shopClient } from "../api/host";
 
 /** GET /shop-api/v1/credit-program/season: the current season (null when the program is off). */
 export async function fetchSeason(client: ShopClient = shopClient()): Promise<unknown | null> {

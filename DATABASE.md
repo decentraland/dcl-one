@@ -1190,7 +1190,7 @@ counted, which is the accepted cost of the retention).
 
 The bootstrap (`schemas/40_social.sql`) defines the table, the indexes and the
 trigger; an existing database gains them from the object pass. Step
-`0037_social_badge_processor` adds `seq` to a table that predates it as a
+`0038_social_badge_processor` adds `seq` to a table that predates it as a
 nullable column, then its default (`nextval` of `social.client_events_seq`,
 named as text so the step precedes the object pass that creates the
 sequence): both change the catalog only, no row is rewritten, and the kept
@@ -1281,7 +1281,7 @@ completion are never taken back by a write (only the console revoke deletes
 them); a tiered badge completes at its last tier, a single badge at
 `criteria_steps`; an archived badge stays listed and kept by its earners and is
 never awarded; an unpublished one is invisible. A database stamped before step
-`0036_social_badges_catalog_parity` keeps its four placeholder rows: the step
+`0037_social_badges_catalog_parity` keeps its four placeholder rows: the step
 gives `open_for_business` and `emotionista` upstream's content and leaves
 `decentraland_citizen` and `walkabout` unpublished. It also fits the old
 progress rows to the new targets: a tiered row keeps completion only when the
@@ -1387,7 +1387,7 @@ transaction left open on the cluster as gaps that keep ageing. A deployment stor
 more than `BADGES_DEPLOYMENT_MAX_LAG_SECS` (default a day) after its entity
 timestamp is history a syncing node caught up on and is passed without
 effect; `BADGES_EVENT_MAX_AGE_SECS` (default off) is upstream's
-`EVENT_PROCESSING_MAX_AGE_IN_SECONDS`. Step `0037_social_badge_processor`
+`EVENT_PROCESSING_MAX_AGE_IN_SECONDS`. Step `0038_social_badge_processor`
 adds `seq`; the object pass creates `social.badge_cursors`,
 `social.badge_cursor_gaps` and both indexes.
 

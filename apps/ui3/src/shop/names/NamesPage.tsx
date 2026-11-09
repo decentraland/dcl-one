@@ -10,13 +10,12 @@ import { Link, useLocation, useNavigate } from "react-router";
 import { useMarketplace } from "../market/access";
 import Button from "../../atoms/Button";
 import { useMediaQuery } from "../../data/hooks/useMediaQuery";
-import { shopClient } from "../api/shop";
 import Icon from "../discovery/components/Icon";
 import { SHOP_BASE } from "../routes";
 import type { ShopClient } from "../api/shop";
-import { creditsCeil } from "../model/money";
-import type { PurchaseOffer } from "../model/purchase";
-import { presentPayment } from "../payment/present";
+import { creditsCeil } from "@shop/model/money";
+import type { PurchaseOffer } from "@shop/model/purchase";
+import { presentPayment } from "@shop/payment/present";
 import { useLandWallet } from "../land/useLandWallet";
 import { fetchBannedNames } from "./api";
 import NameBuyModal, { type NameBuyModalProps } from "./NameBuyModal";
@@ -29,6 +28,7 @@ import "./namespage.css";
 import identityIcon from "./icons/identity-icon.svg?url";
 import worldIcon from "./icons/world-icon.svg?url";
 import inviteIcon from "./icons/invite-icon.svg?url";
+import { shopClient } from "../api/host";
 
 export type NamesNavState = { resumeName?: string };
 

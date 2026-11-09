@@ -2,9 +2,9 @@
 // Fitting-room logic, pure: one wearable per slot (its category), emotes are never worn, and the
 // preview's URN order puts the playing emote first (both renderers then pick the same one).
 
-import { isCompatible, type BodyShapeUrn } from "../../detail/lib/bodyShape";
+import { isCompatible, type BodyShapeUrn } from "@shop/detail/lib/bodyShape";
 import { itemUrn } from "../../detail/lib/urn";
-import type { CatalogItem } from "./catalogItem";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 
 export function isWearable(item: Pick<CatalogItem, "category">): boolean {
   return item.category !== "emote";

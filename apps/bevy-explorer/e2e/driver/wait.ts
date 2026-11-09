@@ -53,18 +53,3 @@ export async function until<T>(read: () => Promise<T> | T, done: (value: T) => b
     await sleep(Math.min(intervalMs, left))
   }
 }
-
-/** Read until two consecutive reads agree (the catalogue's "settled read"), or the deadline
- *  passes, in which case the last read is returned. */
-export async function settled<T>(read: () => Promise<T>, options: UntilOptions & { same?: (a: T, b: T) => boolean }): Promise<T> {
-  const { timeoutMs, intervalMs = 1000, same = (a, b) => JSON.stringify(a) === JSON.stringify(b) } = options
-  const deadline = Date.now() + timeoutMs
-  let previous = await read()
-  while (Date.now() < deadline) {
-    await sleep(intervalMs)
-    const next = await read()
-    if (same(previous, next)) return next
-    previous = next
-  }
-  return previous
-}

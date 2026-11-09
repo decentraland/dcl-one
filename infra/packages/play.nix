@@ -15,7 +15,10 @@ let
       /rendering/bevy-explorer/source
       /rendering/bevy-explorer/bevy
       /library/protocol/proto
+      # The HUD's shared sources (HUD_SHARED in tooling/play-artifact.py).
+      /library/shop /library/catalyst-api
       /apps/bevy-explorer/build-web.py /apps/bevy-explorer/install-linux-deps.py
+      /apps/bevy-explorer/install-web-tools.py
       /apps/bevy-explorer/install-tools.sh /.github/actions/bevy-explorer-tools/action.yml
       /flake.lock /infra/packages/default.nix /infra/packages/tools.nix
       /tooling/play-artifact.py

@@ -3,6 +3,7 @@
 // representation's file names resolved to content URLs, so the renderer can download them itself.
 // Fail-soft: null means the preview plays no emote.
 
+import { shopPeers } from "../../api/host";
 import { peerUrlFor } from "./urn";
 
 type ActiveEntity = {
@@ -41,7 +42,7 @@ function encode(definition: unknown): string {
   return btoa(JSON.stringify(definition).replace(/[^\x20-\x7f]/g, ""));
 }
 
-export async function fetchEmoteBase64(urn: string, peerUrl: string = peerUrlFor([urn]), signal?: AbortSignal): Promise<EmotePlayback | null> {
+export async function fetchEmoteBase64(urn: string, peerUrl: string = peerUrlFor([urn], shopPeers()), signal?: AbortSignal): Promise<EmotePlayback | null> {
   try {
     const res = await fetch(`${peerUrl}/content/entities/active`, {
       method: "POST",
@@ -79,7 +80,7 @@ export function emoteClipUrl(entity: RepresentationEntity, peerUrl: string, body
 }
 
 export async function fetchEmoteClipUrl(urn: string, bodyShape?: string, signal?: AbortSignal): Promise<string | null> {
-  const peerUrl = peerUrlFor([urn]);
+  const peerUrl = peerUrlFor([urn], shopPeers());
   try {
     const res = await fetch(`${peerUrl}/content/entities/active`, {
       method: "POST",

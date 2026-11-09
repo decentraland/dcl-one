@@ -13,6 +13,7 @@ import {
   PROFILE_FIELDS,
   isValidLinkUrl
 } from './profileFields'
+import passportStyles from './ProfilePassport.module.css'
 import styles from './ProfileEditForm.module.css'
 
 type LinkDraft = { title: string; url: string }
@@ -109,7 +110,7 @@ export function ProfileEditForm({
     setDraft((d) => ({ ...d, links: d.links.map((l, i) => (i === index ? { ...l, ...patch } : l)) }))
 
   return (
-    <section className={styles.form} aria-label="Edit profile">
+    <section className={`${passportStyles.card} ${styles.form}`} aria-label="Edit profile">
       {error != null && (
         <div className={styles.error} role="alert">
           <span>{error}</span>
@@ -119,7 +120,7 @@ export function ProfileEditForm({
         </div>
       )}
 
-      <h2 className={styles.title}>About Me</h2>
+      <h2 className={`${passportStyles.cardTitle} ${styles.title}`}>About Me</h2>
       <TextArea
         aria-label="About me"
         value={draft.description}
@@ -131,8 +132,8 @@ export function ProfileEditForm({
         placeholder="Tell people about yourself"
       />
 
-      <h2 className={styles.title}>Info</h2>
-      <div className={styles.fields}>
+      <h2 className={`${passportStyles.cardTitle} ${styles.title}`}>Info</h2>
+      <div className={`${passportStyles.fields} ${styles.fields}`}>
         {PROFILE_FIELDS.map(({ key, label, kind }) => (
           <div key={key} className={`${styles.field} ${kind === 'date' ? styles.fieldWide : ''}`.trim()}>
             <FieldLabel>{label}</FieldLabel>
@@ -169,7 +170,7 @@ export function ProfileEditForm({
         ))}
       </div>
 
-      <h2 className={styles.title}>Links</h2>
+      <h2 className={`${passportStyles.cardTitle} ${styles.title}`}>Links</h2>
       <p className={styles.hint}>Add up to {MAX_LINKS} links to your website or social networks.</p>
       <div className={styles.links}>
         {draft.links.map((link, i) => {

@@ -11,7 +11,7 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 16] = [
+const PREPARED_PENDING_STEPS: [&str; 17] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -26,10 +26,20 @@ const PREPARED_PENDING_STEPS: [&str; 16] = [
     "0033_explore_recurrence_one_pass",
     "0034_shop_bid_invalidated",
     "0035_explore_mirror_adopted_at",
-    "0036_social_badges_catalog_parity",
-    "0037_social_badge_processor",
+    "0036_credits_authorization_request_digest",
+    "0037_social_badges_catalog_parity",
+    "0038_social_badge_processor",
 ];
 type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
+/// id, category, is_tier, criteria_steps, published, created_at
+type BadgeDefinitionRow = (
+    String,
+    Option<String>,
+    bool,
+    Option<i32>,
+    bool,
+    chrono::NaiveDateTime,
+);
 
 async fn step_ledger(pool: &PgPool) -> Vec<LedgerRow> {
     sqlx::query_as(
@@ -210,20 +220,13 @@ INSERT INTO social.user_achieved_tiers (address, badge_id, tier_id) VALUES
   ('0x' || repeat('f', 40), 'emotionista', 'emotionista-gold');
 ";
 
-/// `0036_social_badges_catalog_parity`: no row is inserted or deleted; the
+/// `0037_social_badges_catalog_parity`: no row is inserted or deleted; the
 /// ids upstream shares take its content, the two it names differently stay
 /// unpublished, and the wallets keep every row: a completed single badge
 /// reads its new target, a tiered one stops at its held tier's new target
 /// and stays completed only at its last tier.
 async fn assert_placeholder_badges_upgraded(pool: &PgPool) {
-    let defs: Vec<(
-        String,
-        Option<String>,
-        bool,
-        Option<i32>,
-        bool,
-        chrono::NaiveDateTime,
-    )> = sqlx::query_as(
+    let defs: Vec<BadgeDefinitionRow> = sqlx::query_as(
         "SELECT id, category, is_tier, criteria_steps, published_at IS NOT NULL, created_at \
              FROM social.badge_definitions ORDER BY created_at, id",
     )
@@ -308,7 +311,7 @@ async fn assert_placeholder_badges_upgraded(pool: &PgPool) {
 }
 
 /// `social.client_events` as a database that kept explorer events before
-/// `0037_social_badge_processor` holds it: no `seq`, two rows.
+/// `0038_social_badge_processor` holds it: no `seq`, two rows.
 const CLIENT_EVENTS_BEFORE_SEQ: &str = "
 CREATE TABLE social.client_events (
     key text NOT NULL,
@@ -338,7 +341,7 @@ async fn client_events_filenode(pool: &PgPool) -> i64 {
         .unwrap()
 }
 
-/// `0037_social_badge_processor`: the table is not rewritten, the kept events
+/// `0038_social_badge_processor`: the table is not rewritten, the kept events
 /// keep a NULL `seq` (they precede every cursor), a new one takes the
 /// sequence's first number, and the object pass adds the sequence, the
 /// cursor tables and both partial indexes.

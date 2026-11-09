@@ -9,8 +9,8 @@ import { Link, useNavigate } from "react-router";
 
 import ManaMark from "../../../atoms/ManaMark";
 import Modal from "../../../components/Modal";
-import { isPolygon, type ChainId } from "../../model/chain";
-import { formatMana } from "../../model/money";
+import { isPolygon, type ChainId } from "@shop/model/chain";
+import { formatMana } from "@shop/model/money";
 import { shopPath } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { fetchLegacyOrders } from "../../market/lib/api";

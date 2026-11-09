@@ -9,7 +9,10 @@ export default defineConfig({
     alias: [
       ...validateAlias(),
       { find: "@catalyst-api", replacement: fileURLToPath(new URL("../../library/catalyst-api", import.meta.url)) },
+      { find: "@shop", replacement: fileURLToPath(new URL("../../library/shop", import.meta.url)) },
     ],
+    // library/shop has no node_modules of its own: its viem imports resolve to ui3's copy.
+    dedupe: ["viem"],
   },
   plugins: [react()],
   test: {
@@ -27,6 +30,16 @@ export default defineConfig({
           exclude: ["src/play/**"],
           setupFiles: ["src/test/setup.ts"],
           css: true,
+        },
+      },
+      {
+        // The Shop's portable core (library/shop), which every Shop host shares.
+        extends: true,
+        test: {
+          name: "shop-core",
+          dir: "../../library/shop",
+          include: ["**/*.test.ts"],
+          environment: "node",
         },
       },
       {

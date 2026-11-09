@@ -70,7 +70,7 @@ pub async fn list(
 ) -> Result<(Vec<CollaboratorScene>, i64), ApiError> {
     let rows = sqlx::query(
         "WITH candidates AS (
-             SELECT entity_id AS scene_id, world_name, 'world' AS realm_kind, CASE WHEN entity ->> 'timestamp' ~ '^[0-9]{1,15}$'
+             SELECT entity_id AS scene_id, world_name, 'world' AS realm_kind, CASE WHEN jsonb_typeof(entity -> 'timestamp') = 'number'
                          THEN (entity ->> 'timestamp')::double precision
                          ELSE extract(epoch FROM created_at) * 1000 END AS deployed_at,
                     parcels,

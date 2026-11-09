@@ -11,9 +11,9 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 
 import ManaMark from "../../../atoms/ManaMark";
-import { sameAddress } from "../../model/address";
-import { formatMana } from "../../model/money";
-import { isPolygon } from "../../model/chain";
+import { sameAddress } from "@shop/model/address";
+import { formatMana } from "@shop/model/money";
+import { isPolygon } from "@shop/model/chain";
 import { shopPath } from "../../routes";
 import { patchManageCaches } from "../../seller/lib/manage-cache";
 import { useShopWallet } from "../../wallet/context";
