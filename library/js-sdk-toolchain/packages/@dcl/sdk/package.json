@@ -15,8 +15,9 @@
   "main": "./index.js",
   "minCliVersion": "3.14.1",
   "repository": {
-    "url": "git+https://github.com/decentraland/js-sdk-toolchain",
-    "directory": "packages/@dcl/sdk"
+    "type": "git",
+    "url": "git+https://github.com/decentraland/dcl-one.git",
+    "directory": "library/js-sdk-toolchain/packages/@dcl/sdk"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

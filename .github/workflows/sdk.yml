@@ -18,7 +18,7 @@ concurrency:
   # a newer push supersedes a PR run; main runs finish
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
-  # the SDK's make install downloads protoc 3.20.1 for the runner's arch; nothing publishes
+  # the SDK's make install downloads protoc 3.20.1 for the runner's arch
   CI: true
 jobs:
   lint:
@@ -59,6 +59,18 @@ jobs:
           cache-dependency-path: library/js-sdk-toolchain/package-lock.json
       - name: Install (builds library/protocol's out-ts first)
         run: make install
+      - name: Stamp the snapshot version into @dcl/sdk
+        # <latest patch+1>-<run>.commit-<sha>; make prepare copies it to the other packages.
+        # Fork PRs keep the placeholder: they cannot publish.
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: decentraland/oddish-action@a4e98664bf53d4aae1f6d20d1a43ff2c79b555b3 # v1.0.1
+        with:
+          cwd: ./library/js-sdk-toolchain/packages/@dcl/sdk
+          deterministic-snapshot: true
+          only-update-versions: true
+        env:
+          # A PR checkout is a detached merge commit, so oddish cannot read the branch from git.
+          BRANCH_NAME: ${{ github.head_ref }}
       - name: Build
         id: build
         # a changed API report fails here; the regenerated files are still uploaded below
@@ -93,12 +105,78 @@ jobs:
         run: make test-cli
       - name: Prepare releasable packages
         run: make prepare
-        env:
-          # nothing is published from this job, and @dcl/protocol has no version published from here yet:
-          # the packed manifests say so instead of naming a version that is not on npm
-          PROTOCOL_VERSION: 0.0.0-unpublished.${{ github.sha }}
       - name: Packed manifests name no local dependency
         run: |
           rm -rf .packed && mkdir .packed
           for tgz in packages/@dcl/*/*.tgz; do mkdir -p ".packed/$(basename "$tgz" .tgz)" && tar -xzf "$tgz" -C ".packed/$(basename "$tgz" .tgz)"; done
           node scripts/check-no-local-packages.cjs .packed
+          rm -rf dist && mkdir dist && mv packages/@dcl/*/*.tgz dist/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sdk-packages-${{ github.sha }}
+          path: library/js-sdk-toolchain/dist/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    # main publishes next; a same-repo PR publishes a preview under the shared pr dist-tag (one tag
+    # for every PR; the comment names the exact version). Fork PRs have no OIDC token.
+    name: Publish ${{ github.event_name == 'push' && 'next' || 'the PR preview' }}
+    needs: [lint, build-test]
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write # npm OIDC trusted publishing — no token secret
+    env:
+      DIST_TAG: ${{ github.event_name == 'push' && 'next' || 'pr' }}
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.16.0
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sdk-packages-${{ github.sha }}
+          path: dist
+      - name: Publish in dependency order
+        id: publish
+        # a rerun of this run repeats the snapshot version, so packages already on npm are skipped
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
+        run: |
+          set -euo pipefail
+          for name in ecs js-runtime react-ecs sdk-commands sdk playground-assets; do
+            tgz=$(ls dist/dcl-"$name"-[0-9]*.tgz)
+            spec=$(tar -xOf "$tgz" package/package.json | node -p 'const p = JSON.parse(require("fs").readFileSync(0, "utf8")); p.name + "@" + p.version')
+            if npm view "$spec" version > /dev/null 2>&1; then
+              echo "$spec is already on npm; skipping"
+            else
+              npm publish "$tgz" --access public --tag "$DIST_TAG"
+            fi
+          done
+          echo "version=${spec##*@}" >> "$GITHUB_OUTPUT"
+      - name: Report a failed PR preview
+        if: github.event_name == 'pull_request' && steps.publish.outcome == 'failure'
+        run: echo '::warning::The PR preview did not publish; see the Publish step log.'
+      - name: Comment the install command on the PR
+        if: github.event_name == 'pull_request' && steps.publish.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          VERSION: ${{ steps.publish.outputs.version }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          marker='<!-- sdk-preview -->'
+          fence="\`\`\`"
+          body=$(printf '%s\n## Test this pull request\n\nSDK packages for %s:\n\n%s\nnpm install @dcl/sdk@%s @dcl/sdk-commands@%s\n%s\n\nThe pr dist-tag points at the last PR preview published, so prefer the exact version.\n' "$marker" "$SHA" "$fence" "$VERSION" "$VERSION" "$fence")
+          id=$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate --jq "[.[] | select(.body | startswith(\"$marker\"))][0].id // empty")
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GH_REPO/issues/comments/$id" -f body="$body" > /dev/null
+          else
+            gh api "repos/$GH_REPO/issues/$PR/comments" -f body="$body" > /dev/null
+          fi

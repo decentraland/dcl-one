@@ -3,7 +3,7 @@
   "description": "Decentraland ECS",
   "version": "0.0.1",
   "author": "DCL",
-  "bugs": "https://github.com/decentraland/js-sdk-toolchain/issues",
+  "bugs": "https://github.com/decentraland/dcl-one/issues",
   "dependencies": {
     "@dcl/ecs": "file:../ecs",
     "react": "^18.2.0",
@@ -16,7 +16,7 @@
   "files": [
     "dist"
   ],
-  "homepage": "https://github.com/decentraland/js-sdk-toolchain#readme",
+  "homepage": "https://github.com/decentraland/dcl-one/tree/main/library/js-sdk-toolchain#readme",
   "keywords": [
     "@dcl/react-ecs",
     "dcl",
@@ -26,8 +26,9 @@
   "license": "Apache-2.0",
   "main": "./dist/index.js",
   "repository": {
-    "url": "git+https://github.com/decentraland/js-sdk-toolchain",
-    "directory": "packages/@dcl/react-ecs"
+    "type": "git",
+    "url": "git+https://github.com/decentraland/dcl-one.git",
+    "directory": "library/js-sdk-toolchain/packages/@dcl/react-ecs"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

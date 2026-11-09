@@ -25,10 +25,12 @@ build test prepare`). Its `.github`, agent files and editor configuration were l
   npm links `library/protocol`, so the generated components, scene APIs and `out-ts` types come
   from the one proto source. `make install` builds the protocol package first; `update-protocol`
   is gone, since there is nothing to bump.
-- `make prepare` pins `@dcl/protocol` in the packed manifests to `PROTOCOL_VERSION`, which the
-  caller must set (the publish job's value; `sdk.yml` packs with a `0.0.0-unpublished.<sha>` that
-  says what it is), so a tarball never names a `file:` link or a version that is not on npm
-  (`scripts/check-no-local-packages.cjs`, run by `sdk.yml`).
+- No published package depends on `@dcl/protocol`. `@dcl/sdk-commands`, the one that used it at
+  runtime, generates the two messages it needs (`local_development`, realm `about`) into
+  `src/generated` during `make build`, with the options `@dcl/protocol`'s own `out-ts` uses, so the
+  SDK ships the protocol at its commit and never waits on a protocol release.
+  `scripts/check-no-local-packages.cjs`, run by `sdk.yml`, still fails a tarball that names a
+  `file:` link.
 - `AvatarShape` and `AvatarEquippedData` keep `forceRender` optional for scenes: the protocol's
   `repeated` field would otherwise make the generated type require it, so the two extended
   components from the SDK's `experimental-bevy` branch serialize an omitted value as `[]`, and a
@@ -43,7 +45,14 @@ build test prepare`). Its `.github`, agent files and editor configuration were l
   `PROTOC`, which prost reads for the Rust crates. CI leaves it unset and uses the SDK's download
   of 3.20.1, so generated code in a PR comes from that version.
 - `.github/workflows/sdk.yml` runs lint, build, test, the CLI smoke test and `prepare` on changes
-  under `library/js-sdk-toolchain` or `library/protocol`. It publishes nothing.
+  under `library/js-sdk-toolchain` or `library/protocol`. A push to `main` also publishes the six
+  packages under the `next` dist-tag as `<latest patch+1>-<run>.commit-<sha>` (oddish derives
+  the version from the registry's `latest`; the manifests keep `7.0.0` as upstream does, and
+  `npm publish` ships the tarballs through trusted publishing). A pull request from this
+  repository publishes the same way under the shared `pr` dist-tag, one tag for every PR, and a
+  sticky comment names the exact version to install; fork pull requests publish nothing.
+  Versioned releases are cut by hand ([releases ADR](2026-11-09-releases-per-scope.md)). The
+  manifests name this repository, which trusted publishing requires.
 - Snapshots (`test/snapshots/**`, `playground-assets.api.md`) are regenerated locally
   (`make update-snapshots`) whenever `library/protocol` changes what `@dcl/ecs` generates; the
   snapshot test fails on a stale one (with `UPDATE_SNAPSHOTS` it also rewrites it) and the
@@ -60,10 +69,10 @@ build test prepare`). Its `.github`, agent files and editor configuration were l
 
 ## Follow-ups
 
-1. Publish the SDK packages from here (oddish, trusted publishing re-pointed, `next` on `main`,
-   `sdk/<version>` releases) and stop publishing from `decentraland/js-sdk-toolchain`; the PR-build
-   tooling (S3 tarballs, the "Test this pull request" comment, the e2e realm, the playground).
-   The first release notes carry the narrowed types above.
+1. Releases and `next` are published from here; still to do: the npm trusted publishers pointed at
+   `sdk.yml` and `sdk-release.yml`, stop publishing from `decentraland/js-sdk-toolchain`, the
+   rest of the PR tooling (the e2e realm, the playground). The first release notes carry the
+   narrowed types above.
 2. The `auth-server` branch as a dcl-one branch published through a manual `publish-tag` run.
 3. Fold the rest of the SDK's `experimental-bevy` layer (react-ecs scroll and render-to-texture,
    drag events, `setGltfMesh`, …) into `main` here.

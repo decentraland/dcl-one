@@ -66,9 +66,31 @@ make build
 
 ## Release Process
 
-1. Merge changes to the main branch
-2. Wait for CI workflow completion in GitHub Actions
-3. Create a new Release following the [version guidelines](https://docs.decentraland.org/creator/releases/version-agreement/)
+Every push to `main` that touches the SDK or the protocol publishes the six packages under the
+`next` dist-tag (`.github/workflows/sdk.yml`), so `npm install @dcl/sdk@next` follows `main`. The
+version is `<latest patch+1>-<run>.commit-<sha>`, derived from the registry's `latest` as upstream
+does; the `7.0.0` in the manifests is a placeholder and is never bumped.
+
+A pull request from this repository publishes the same packages under the shared `pr` dist-tag and
+comments the exact version on the PR; install that version rather than the tag, which moves to the
+last PR published.
+
+Versioned releases ship from the `SDK / Release` workflow
+(`.github/workflows/sdk-release.yml`), run by hand from `main`. The manifests in the tree keep
+their placeholder version; the run stamps the one you give it.
+
+1. Run `SDK / Release` from `main` with the `version` to publish, following the
+   [version guidelines](https://docs.decentraland.org/creator/releases/version-agreement/); a
+   `-rc.1`-style suffix makes a prerelease. The run refuses an existing `sdk-v<version>` tag or a
+   version any of the six packages already has on npm.
+2. The run builds, tests, stamps the version into `@dcl/sdk` (`make prepare` copies it to the
+   others), packs, publishes to npm in dependency order (dist-tag `latest`, or `rc` for a
+   prerelease) and creates the `sdk-v<version>` release with the tarballs, the `library/protocol`
+   commit the packages were generated from, and the SDK and protocol commits since the previous
+   `sdk-v*` tag. The `notes` input goes at the top of the body.
+
+If publishing succeeded but the release step failed, create the release by hand with
+`gh release create sdk-v<version> --target <sha> --latest=false`; a rerun stops at the npm check.
 
 ## Testing Infrastructure
 

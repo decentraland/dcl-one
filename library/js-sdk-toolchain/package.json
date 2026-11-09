@@ -3,7 +3,7 @@
   "description": "",
   "version": "7.0.0",
   "author": "",
-  "bugs": "https://github.com/decentraland/js-sdk-toolchain/issues",
+  "bugs": "https://github.com/decentraland/dcl-one/issues",
   "dependencies": {
     "@babel/plugin-transform-dynamic-import": "^7.27.1",
     "@babel/plugin-transform-modules-commonjs": "^7.28.5",
@@ -31,7 +31,7 @@
   "engines": {
     "node": ">=24.16"
   },
-  "homepage": "https://github.com/decentraland/js-sdk-toolchain#readme",
+  "homepage": "https://github.com/decentraland/dcl-one/tree/main/library/js-sdk-toolchain#readme",
   "keywords": [],
   "license": "Apache-2.0",
   "overrides": {
