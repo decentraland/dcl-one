@@ -1,4 +1,5 @@
 use crate::js::errors::OpError;
+use crate::js::plain::JsPlain;
 use common::rpc::ReadFileResponse;
 use dcl_component::proto_components::sdk::components::PbRealmInfo;
 use dcl_js::runtime::{SceneInfoResponse, WorldTime};
@@ -19,32 +20,36 @@ pub fn ops() -> Vec<OpDecl> {
 }
 
 #[op2]
-#[serde]
 async fn op_read_file(
     op_state: Rc<RefCell<OpState>>,
     #[string] filename: String,
-) -> Result<ReadFileResponse, OpError> {
-    Ok(dcl_js::runtime::op_read_file(op_state, filename).await?)
+) -> Result<JsPlain<ReadFileResponse>, OpError> {
+    Ok(JsPlain(
+        dcl_js::runtime::op_read_file(op_state, filename).await?,
+    ))
 }
 
 #[op2]
-#[serde]
 async fn op_scene_information(
     op_state: Rc<RefCell<OpState>>,
-) -> Result<SceneInfoResponse, OpError> {
-    Ok(dcl_js::runtime::op_scene_information(op_state).await?)
+) -> Result<JsPlain<SceneInfoResponse>, OpError> {
+    Ok(JsPlain(
+        dcl_js::runtime::op_scene_information(op_state).await?,
+    ))
 }
 
 #[op2]
-#[serde]
-async fn op_realm_information(op_state: Rc<RefCell<OpState>>) -> Result<PbRealmInfo, OpError> {
-    Ok(dcl_js::runtime::op_realm_information(op_state).await?)
+async fn op_realm_information(
+    op_state: Rc<RefCell<OpState>>,
+) -> Result<JsPlain<PbRealmInfo>, OpError> {
+    Ok(JsPlain(
+        dcl_js::runtime::op_realm_information(op_state).await?,
+    ))
 }
 
 #[op2]
-#[serde]
-async fn op_world_time(op_state: Rc<RefCell<OpState>>) -> Result<WorldTime, OpError> {
-    Ok(dcl_js::runtime::op_world_time(op_state).await?)
+async fn op_world_time(op_state: Rc<RefCell<OpState>>) -> Result<JsPlain<WorldTime>, OpError> {
+    Ok(JsPlain(dcl_js::runtime::op_world_time(op_state).await?))
 }
 
 #[op2]

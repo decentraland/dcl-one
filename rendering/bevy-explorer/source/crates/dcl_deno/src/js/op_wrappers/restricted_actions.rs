@@ -1,4 +1,5 @@
 use crate::js::errors::OpError;
+use crate::js::plain::JsPlain;
 use dcl_component::proto_components::common::Vector3 as DclVector3;
 use dcl_js::restricted_actions::UiFocusResult;
 use deno_core::{op2, OpDecl, OpState};
@@ -122,13 +123,14 @@ async fn op_open_explorer_ui(op_state: Rc<RefCell<OpState>>, ui: i32) -> Result<
 }
 
 #[op2]
-#[serde]
 async fn op_ui_focus(
     op_state: Rc<RefCell<OpState>>,
     apply: bool,
     #[string] element_id: Option<String>,
-) -> Result<UiFocusResult, OpError> {
-    Ok(dcl_js::restricted_actions::op_ui_focus(op_state, apply, element_id).await?)
+) -> Result<JsPlain<UiFocusResult>, OpError> {
+    Ok(JsPlain(
+        dcl_js::restricted_actions::op_ui_focus(op_state, apply, element_id).await?,
+    ))
 }
 
 #[op2]

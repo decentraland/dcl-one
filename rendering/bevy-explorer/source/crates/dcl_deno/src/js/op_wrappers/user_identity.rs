@@ -1,4 +1,5 @@
 use crate::js::errors::OpError;
+use crate::js::plain::JsPlain;
 use std::{cell::RefCell, rc::Rc};
 
 use dcl_js::user_identity::UserData;
@@ -11,16 +12,18 @@ pub fn ops() -> Vec<OpDecl> {
 pub struct UserEthAddress(pub String);
 
 #[op2]
-#[serde]
-async fn op_get_user_data(state: Rc<RefCell<OpState>>) -> Result<UserData, OpError> {
-    Ok(dcl_js::user_identity::op_get_user_data(state).await?)
+async fn op_get_user_data(state: Rc<RefCell<OpState>>) -> Result<JsPlain<UserData>, OpError> {
+    Ok(JsPlain(
+        dcl_js::user_identity::op_get_user_data(state).await?,
+    ))
 }
 
 #[op2]
-#[serde]
 async fn op_get_player_data(
     state: Rc<RefCell<OpState>>,
     #[string] id: String,
-) -> Result<UserData, OpError> {
-    Ok(dcl_js::user_identity::op_get_player_data(state, id).await?)
+) -> Result<JsPlain<UserData>, OpError> {
+    Ok(JsPlain(
+        dcl_js::user_identity::op_get_player_data(state, id).await?,
+    ))
 }

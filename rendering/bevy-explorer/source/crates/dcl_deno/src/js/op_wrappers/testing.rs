@@ -1,4 +1,5 @@
 use crate::js::errors::OpError;
+use crate::js::plain::JsPlain;
 use dcl_js::testing::{
     SceneTestPlan, SceneTestResult, TakeAndCompareSnapshotResponse,
     TestingScreenshotComparisonMethodRequest,
@@ -44,7 +45,6 @@ fn op_log_test_result(
 }
 
 #[op2]
-#[serde]
 fn op_take_and_compare_snapshot(
     state: &mut OpState,
     #[string] name: String,
@@ -52,13 +52,13 @@ fn op_take_and_compare_snapshot(
     #[scoped] camera_target: Plain<(f32, f32, f32)>,
     #[scoped] snapshot_size: Plain<(u32, u32)>,
     #[scoped] method: Plain<TestingScreenshotComparisonMethodRequest>,
-) -> Result<TakeAndCompareSnapshotResponse, OpError> {
-    Ok(dcl_js::testing::op_take_and_compare_snapshot(
+) -> Result<JsPlain<TakeAndCompareSnapshotResponse>, OpError> {
+    Ok(JsPlain(dcl_js::testing::op_take_and_compare_snapshot(
         state,
         name,
         camera_position.0,
         camera_target.0,
         snapshot_size.0,
         method.0,
-    )?)
+    )?))
 }

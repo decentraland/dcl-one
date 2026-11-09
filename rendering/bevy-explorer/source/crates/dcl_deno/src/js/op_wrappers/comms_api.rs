@@ -1,4 +1,5 @@
 use crate::js::errors::OpError;
+use crate::js::plain::JsPlain;
 use std::{cell::RefCell, rc::Rc};
 
 use dcl_component::proto_components::kernel::apis::VideoTracksActiveStreamsResponse;
@@ -10,9 +11,10 @@ pub fn ops() -> Vec<OpDecl> {
 }
 
 #[op2]
-#[serde]
 async fn op_get_active_video_streams(
     state: Rc<RefCell<OpState>>,
-) -> Result<VideoTracksActiveStreamsResponse, OpError> {
-    Ok(dcl_js::comms_api::op_get_active_video_streams(state).await?)
+) -> Result<JsPlain<VideoTracksActiveStreamsResponse>, OpError> {
+    Ok(JsPlain(
+        dcl_js::comms_api::op_get_active_video_streams(state).await?,
+    ))
 }

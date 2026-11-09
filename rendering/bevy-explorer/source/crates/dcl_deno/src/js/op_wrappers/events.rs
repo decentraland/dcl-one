@@ -1,4 +1,5 @@
 use crate::js::errors::OpError;
+use crate::js::plain::JsPlain;
 use dcl_js::events::Event;
 use deno_core::{op2, OpDecl, OpState};
 
@@ -18,7 +19,6 @@ fn op_unsubscribe(state: &mut OpState, #[string] id: &str) {
 }
 
 #[op2]
-#[serde]
-fn op_send_batch(state: &mut OpState) -> Vec<Event> {
-    dcl_js::events::op_send_batch(state)
+fn op_send_batch(state: &mut OpState) -> JsPlain<Vec<Event>> {
+    JsPlain(dcl_js::events::op_send_batch(state))
 }
