@@ -107,6 +107,10 @@ pub enum Command {
     Boundaries {
         shown: bool,
     },
+    /// The authentication platform: the disc the avatar stands on, turning with it.
+    Platform {
+        shown: bool,
+    },
     /// Which subject is shown: the item alone, or the avatar wearing it.
     View {
         item: bool,
@@ -199,6 +203,8 @@ pub enum Command {
         shadow_reach: Option<f32>,
         exposure: Option<f32>,
         glow: Option<f32>,
+        platform_base: Option<f32>,
+        platform_emission: Option<f32>,
     },
     /// A PNG of the view. With a size, rendered off screen at exactly `width` x `height` pixels
     /// (up to 4096 a side), as the live camera frames it vertically, the requested aspect setting
@@ -311,6 +317,8 @@ pub struct OrbitCamera {
     pub fixed: bool,
     /// the scene boundaries are shown, and framed with the avatar
     pub boundaries: bool,
+    /// the authentication platform is shown under the avatar
+    pub platform: bool,
     pub lock_beta: bool,
     tilt: f32,
     tilt_velocity: f32,
@@ -353,6 +361,7 @@ impl Default for OrbitCamera {
             fit_subject: false,
             fixed: false,
             boundaries: false,
+            platform: false,
             lock_beta: false,
             tilt: 0.0,
             tilt_velocity: 0.0,
@@ -631,6 +640,9 @@ fn apply_commands(
             Command::Boundaries { shown } => {
                 orbit.boundaries = shown;
             }
+            Command::Platform { shown } => {
+                orbit.platform = shown;
+            }
             Command::View { item } => {
                 if orbit.item_view != item {
                     // the camera glides from one subject to the other, as the Unity renderer
@@ -771,6 +783,8 @@ fn apply_commands(
                 shadow_reach,
                 exposure,
                 glow,
+                platform_base,
+                platform_emission,
             } => {
                 let light = light.as_mut();
                 for (slot, value) in [
@@ -782,6 +796,8 @@ fn apply_commands(
                     (&mut light.shadow_reach, shadow_reach),
                     (&mut light.exposure, exposure),
                     (&mut light.glow, glow),
+                    (&mut light.platform_base, platform_base),
+                    (&mut light.platform_emission, platform_emission),
                 ] {
                     if let Some(value) = value {
                         *slot = value;

@@ -141,7 +141,8 @@ The target is the Unity renderer's behaviour, not only its look. In place so far
   after the last drag, in marketplace mode only and not while an emote item plays; right drag
   pans within 2 m; the wheel zooms between 1/1.5 and 2 times the framed distance; input in
   marketplace and builder modes only, four times the drag speed in builder;
-- its floor: the shadow catcher and, under it, the glow around the feet;
+- its floor: the shadow catcher and, under it, the glow around the feet (the light rig's `glow`, 0 by
+  default for now);
 - its framing of avatars too big for the default view, set once before the avatar is seen: after the
   avatar or outfit changes, the page keeps its loading state while the preview waits for the outfit
   and the emote, steps the paused emote through its clip, measures the skinned surface at each pose
@@ -174,11 +175,16 @@ The target is the Unity renderer's behaviour, not only its look. In place so far
   are not worn), from the renderer's fixed profile camera: 7 m in front at a 20 degree lens, looking
   8.3 degrees down at 0.9 m, never fitted to the avatar. A drag still turns it; no zoom, pan or
   auto-rotation.
+- its authentication mode (the auth dapp's sign-in and quick setup pages): profile mode on the
+  renderer's platform, the gold disc with the glowing rim the avatar stands on and turns with
+  (`src/platform/`), at its 0.7 scale 0.0813 m down. Its colour and glow are calibrated against
+  the renderer's captures (`platformBase`, `platformEmission` on `web/compare.html`), as this
+  light rig and tonemapping are the toon avatar's.
 
 A named default emote plays once in the marketplace, then the avatar idles; it loops in the
 builder.
 
-Still to come: authentication and jesus modes, social emotes, spring bones, and
+Still to come: jesus mode, social emotes, spring bones, and
 configurator mode.
 
 The emote controller follows the Unity renderer: `goTo` on a stopped emote starts it and holds

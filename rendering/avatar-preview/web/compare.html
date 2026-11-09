@@ -30,6 +30,8 @@
     <label>shadow <input id="shadow" type="range" min="0" max="1" step="0.05"><output></output></label>
     <label>reach <input id="shadowReach" type="range" min="1" max="8" step="0.25"><output></output></label>
     <label>glow <input id="glow" type="range" min="0" max="20" step="0.5"><output></output></label>
+    <label>platform base <input id="platformBase" type="range" min="0" max="2" step="0.02"><output></output></label>
+    <label>platform emission <input id="platformEmission" type="range" min="0" max="2" step="0.01"><output></output></label>
     <button id="copy" type="button">copy light</button>
   </header>
   <main>
@@ -51,7 +53,7 @@
     bevy.src = `${location.origin}/?${query}`;
 
     // defaults mirror stage::StageLight
-    const light = { illuminance: 8000, exposure: -0.4, yaw: 0.6, pitch: 0.65, shadow: 0.4, shadowReach: 4, glow: 1 };
+    const light = { illuminance: 8000, exposure: -0.4, yaw: 0.46, pitch: 0.6, shadow: 0.35, shadowReach: 6, glow: 0, platformBase: 0.5, platformEmission: 1.67 };
     for (const k of Object.keys(light)) if (own.has(k)) light[k] = Number(own.get(k));
     const send = () => bevy.contentWindow && bevy.contentWindow.postMessage({ type: 'bevy_light', payload: light }, '*');
     for (const [k, v] of Object.entries(light)) {

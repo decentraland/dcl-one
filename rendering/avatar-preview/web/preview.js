@@ -602,6 +602,8 @@ async function apply() {
     ui.configure(o);
     command(cameraFrom(o));
     command({ op: 'boundaries', shown: !!o.showSceneBoundaries });
+    // the Unity renderer's authentication platform; the auth page passes none of its own then
+    command({ op: 'platform', shown: modeOf(o) === 'authentication' });
     command({ op: 'background', color: o.disableBackground ? null : (o.background ? (o.background.startsWith('#') ? o.background : '#' + o.background) : DEFAULT_BACKGROUND) });
     command(outfit);
     command(solo

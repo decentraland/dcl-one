@@ -29,6 +29,11 @@ pub struct StageLight {
     pub exposure: f32,
     /// the floor glow around the feet, as a factor of the Unity renderer's (0 for none)
     pub glow: f32,
+    /// the authentication platform's base colour and emission, as factors of its Unity material's:
+    /// this camera's light rig and ACES tonemapping are calibrated for the toon avatar, so the
+    /// platform's lit material is matched to the Unity renderer's captures with these
+    pub platform_base: f32,
+    pub platform_emission: f32,
 }
 
 impl Default for StageLight {
@@ -38,12 +43,14 @@ impl Default for StageLight {
             ambient: 2000.0,
             // from the camera's right, fairly high: the shadow falls behind to the left, as in
             // wearable-preview's Unity renderer (compared with web/compare.html)
-            yaw: 0.6,
-            pitch: 0.65,
-            shadow: 0.4,
-            shadow_reach: 4.0,
+            yaw: 0.46,
+            pitch: 0.6,
+            shadow: 0.35,
+            shadow_reach: 6.0,
             exposure: -0.4,
-            glow: 1.0,
+            glow: 0.0,
+            platform_base: 0.5,
+            platform_emission: 1.67,
         }
     }
 }
@@ -77,11 +84,15 @@ impl Plugin for StagePlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "shadow_catcher.wgsl");
         bevy::asset::embedded_asset!(app, "grid_01.png");
+        bevy::asset::embedded_asset!(app, "platform/platform.glb");
+        bevy::asset::embedded_asset!(app, "platform/base_color.png");
+        bevy::asset::embedded_asset!(app, "platform/emission.png");
+        bevy::asset::embedded_asset!(app, "platform/normal.png");
         app.add_plugins(MaterialPlugin::<ShadowCatcherMaterial>::default())
             .init_resource::<StageLight>()
             .insert_resource(bevy::pbr::DirectionalLightShadowMap { size: 2048 })
             .add_systems(Startup, spawn_stage)
-            .add_systems(Update, (apply_light, place_floors));
+            .add_systems(Update, (apply_light, place_floors, turn_platform));
     }
 }
 
@@ -151,6 +162,32 @@ fn spawn_stage(
         NotShadowCaster,
         Boundaries,
     ));
+    // the authentication platform, as the Unity renderer places it under the avatar: 0.7 of the
+    // model's size, 0.0813 m down, its material `Platform_MAT` (no metal, smoothness 0, the
+    // emission map times an HDR orange)
+    commands.spawn((
+        Mesh3d(assets.load("embedded://dcl_avatar_preview/platform/platform.glb#Mesh0/Primitive0")),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color_texture: Some(
+                assets.load("embedded://dcl_avatar_preview/platform/base_color.png"),
+            ),
+            normal_map_texture: Some(assets.load_with_settings(
+                "embedded://dcl_avatar_preview/platform/normal.png",
+                |s: &mut bevy::image::ImageLoaderSettings| s.is_srgb = false,
+            )),
+            emissive_texture: Some(
+                assets.load("embedded://dcl_avatar_preview/platform/emission.png"),
+            ),
+            emissive: platform_emissive(light.platform_emission),
+            metallic: 0.0,
+            perceptual_roughness: 1.0,
+            ..default()
+        })),
+        Transform::from_xyz(0.0, -0.0813, 0.0).with_scale(Vec3::splat(0.7)),
+        Visibility::Hidden,
+        NotShadowCaster,
+        Platform,
+    ));
     commands.spawn((
         Mesh3d(meshes.add(Plane3d::default().mesh().size(4.0, 4.0))),
         MeshMaterial3d(materials.add(StandardMaterial {
@@ -166,6 +203,28 @@ fn spawn_stage(
     ));
 }
 
+/// The platform material's HDR emission colour (`Platform_MAT`), times `factor`.
+fn platform_emissive(factor: f32) -> LinearRgba {
+    LinearRgba::rgb(32.0, 7.525_279, 0.0) * factor
+}
+
+/// The authentication platform, shown with `platform`.
+#[derive(Component)]
+pub struct Platform;
+
+/// The platform turns with the avatar, as the Unity renderer's is a child of its avatar root.
+fn turn_platform(
+    avatars: Query<&Transform, (With<crate::PreviewAvatar>, Without<Platform>)>,
+    mut platforms: Query<&mut Transform, With<Platform>>,
+) {
+    let Ok(avatar) = avatars.single() else {
+        return;
+    };
+    for mut transform in platforms.iter_mut() {
+        transform.rotation = avatar.rotation;
+    }
+}
+
 /// The scene boundaries' cylinder and grid floor, shown with `boundaries`.
 #[derive(Component)]
 pub struct Boundaries;
@@ -179,6 +238,7 @@ pub struct ShadowCatcher {
 
 /// The key light stands fixed in the world, in front of the subject as the camera is; the
 /// subject turns under it.
+#[allow(clippy::type_complexity)]
 fn apply_light(
     light: Res<StageLight>,
     mut keys: Query<(&mut DirectionalLight, &mut Transform), With<KeyLight>>,
@@ -186,6 +246,10 @@ fn apply_light(
     mut ambient: ResMut<AmbientLight>,
     catchers: Query<(&MeshMaterial3d<ShadowCatcherMaterial>, &ShadowCatcher)>,
     mut materials: ResMut<Assets<ShadowCatcherMaterial>>,
+    (platforms, mut standard): (
+        Query<&MeshMaterial3d<StandardMaterial>, With<Platform>>,
+        ResMut<Assets<StandardMaterial>>,
+    ),
 ) {
     for (mut directional, mut transform) in keys.iter_mut() {
         directional.illuminance = light.illuminance;
@@ -197,6 +261,16 @@ fn apply_light(
         ambient.brightness = light.ambient;
         for mut exposure in cameras.iter_mut() {
             exposure.ev100 = bevy::render::camera::Exposure::EV100_BLENDER - light.exposure;
+        }
+        for handle in platforms.iter() {
+            if let Some(material) = standard.get_mut(&handle.0) {
+                material.base_color = Color::linear_rgb(
+                    light.platform_base,
+                    light.platform_base,
+                    light.platform_base,
+                );
+                material.emissive = platform_emissive(light.platform_emission);
+            }
         }
         for (handle, catcher) in catchers.iter() {
             if let Some(material) = materials.get_mut(&handle.0) {
@@ -223,6 +297,10 @@ fn place_floors(
         Without<Boundaries>,
     >,
     mut boundaries: Query<&mut Visibility, (With<Boundaries>, Without<ShadowCatcher>)>,
+    mut platforms: Query<
+        &mut Visibility,
+        (With<Platform>, Without<Boundaries>, Without<ShadowCatcher>),
+    >,
     mut materials: ResMut<Assets<ShadowCatcherMaterial>>,
 ) {
     if !orbit.is_changed() {
@@ -237,6 +315,9 @@ fn place_floors(
     };
     for mut visibility in boundaries.iter_mut() {
         visibility.set_if_neq(shown(orbit.boundaries));
+    }
+    for mut visibility in platforms.iter_mut() {
+        visibility.set_if_neq(shown(orbit.platform && !orbit.item_view));
     }
     for (catcher, handle, mut transform, mut visibility) in catchers.iter_mut() {
         // the grid floor stands in for the avatar's shadow and glow, as in the renderer
