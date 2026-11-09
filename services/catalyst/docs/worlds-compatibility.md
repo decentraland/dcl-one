@@ -94,8 +94,10 @@ difference not listed here is a gap, not a decision.
   a fixed 60-second window from the first attempt
   (`SHARED_SECRET_MAX_ATTEMPTS_PER_MINUTE`). Each attempt is reserved before
   the secret is checked and the count is cleared by a right secret
-  (upstream also clears it when the owner joins). If the counter cannot be
-  written the mint answers 503.
+  (upstream also clears it when the owner joins). A caller already out of
+  attempts gets 429 before any ban or access check, as upstream; that check
+  charges nothing. If the counter cannot be read or written the mint answers
+  503.
 - **Scene bans in the lobby.** A wallet banned from the world's active scene
   is refused the world lobby too (`/worlds/{name}/comms` and
   `/get-comms-adapter`, 401 `You are banned from world "<name>".`);

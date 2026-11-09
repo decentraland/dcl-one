@@ -4,11 +4,12 @@ import {
   useContext,
   useEffect,
   useRef,
+  type ComponentType,
   type HTMLAttributes,
   type ReactNode
 } from 'react'
 import { FigmaInteractions } from './figma-interactions'
-import { iconComponents } from '../generated/icons'
+import { iconComponents, isIconComponentName, type IconProps } from '../generated/icons'
 import {
   pickView,
   registerComponent,
@@ -214,7 +215,10 @@ function renderNode(
         </span>
       )
     case 'icon': {
-      const Icon = node.icon ? iconComponents[node.icon.component] : undefined
+      const Icon: ComponentType<IconProps> | undefined =
+        node.icon && isIconComponentName(node.icon.component)
+          ? iconComponents[node.icon.component]
+          : undefined
       return (
         <span key={key} {...common}>
           {override ??

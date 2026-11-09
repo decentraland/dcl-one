@@ -5,6 +5,9 @@ import { createShopClient } from "../../api/shop";
 import { fetchShopListingForItem } from "../../detail/api";
 import { fetchTradeForItem } from "./api";
 
+/** Creator sales off, as a page has them until the switch says yes. */
+const OFF = () => false;
+
 describe("an item line's live trade", () => {
   it("is the creator's primary sale only: an item whose only listing is a resale has none, and no trade is read", async () => {
     const transport = catalogTransport("ok", {
@@ -32,11 +35,11 @@ describe("the in-world shell's item read", () => {
       "/v3/catalog/shop": (url: URL) => ({ data: url.searchParams.get("listingType") === "primary" ? [] : [RESALE_WEARABLE], total: 1 }),
     });
     const client = createShopClient({ base: "http://shop.test", mode: "canonical", transport, signer: null });
-    expect(await fetchShopListingForItem(COLLECTION, ITEM_ID, { client })).toBeNull();
+    expect(await fetchShopListingForItem(COLLECTION, ITEM_ID, { client, creatorSales: OFF })).toBeNull();
     const asked = transport.calls.map((c) => new URL(c.url, "http://shop.test")).filter((u) => u.pathname.endsWith("/v3/catalog/shop"));
     expect(asked.length).toBeGreaterThan(0);
     expect(asked.every((u) => u.searchParams.get("listingType") === "primary")).toBe(true);
     const leaky = catalogClient("ok", { "/v3/catalog/shop": { data: [RESALE_WEARABLE], total: 1 } });
-    expect(await fetchShopListingForItem(COLLECTION, ITEM_ID, { client: leaky })).toBeNull();
+    expect(await fetchShopListingForItem(COLLECTION, ITEM_ID, { client: leaky, creatorSales: OFF })).toBeNull();
   });
 });

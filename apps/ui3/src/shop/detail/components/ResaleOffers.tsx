@@ -15,8 +15,8 @@ import { useShopQuery } from "../../discovery/query";
 import IndexNotice from "../../discovery/components/IndexNotice";
 import { useListingsFreshness } from "../../discovery/hooks";
 import { fetchResaleTokenInfos, type ClassicOrder } from "../api";
+import { shopReads } from "../../discovery/reads";
 import "./resaleoffers.css";
-import { shopClient } from "../../api/host";
 
 const PAGE = 8;
 
@@ -40,7 +40,7 @@ export default function ResaleOffers({
   const visible = useMemo(() => resales.slice(page * PAGE, page * PAGE + PAGE), [resales, page]);
   const freshness = useListingsFreshness();
   const missing = visible.filter((r) => r.tokenId && (!r.seller || !r.issuedId)).map((r) => r.tokenId!);
-  const { data: infos } = useShopQuery(missing.length ? ["resale-infos", contractAddress, ...missing] : null, (signal) => fetchResaleTokenInfos(contractAddress, missing, { client: shopClient(), signal }), {
+  const { data: infos } = useShopQuery(missing.length ? ["resale-infos", contractAddress, ...missing] : null, (signal) => fetchResaleTokenInfos(contractAddress, missing, shopReads(signal)), {
     staleMs: 60_000,
   });
 

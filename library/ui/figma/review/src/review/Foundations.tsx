@@ -23,18 +23,13 @@ type Section = (typeof sections)[number]
 // Icons render through the generated icon components, never through Figma's own SVG exports. An icon with an
 // active state takes `active`, so each variant tile draws its own art; no other icon is passed the prop.
 const iconComponents = new Map(
-  generatedIcons.iconMeta.map((meta) => [
-    meta.name,
-    {
-      hasActiveState: meta.hasActiveState,
-      Icon: (
-        generatedIcons as unknown as Record<
-          string,
-          ComponentType<generatedIcons.ActiveIconProps> | undefined
-        >
-      )[meta.component]
-    }
-  ])
+  generatedIcons.iconMeta.map((meta) => {
+    const Icon: ComponentType<generatedIcons.ActiveIconProps> =
+      generatedIcons.isActiveIconComponentName(meta.component)
+        ? generatedIcons.activeIconComponents[meta.component]
+        : generatedIcons.iconComponents[meta.component]
+    return [meta.name, { hasActiveState: meta.hasActiveState, Icon }]
+  })
 )
 
 /** The props a Foundations tile passes to draw one source variant of an icon. */

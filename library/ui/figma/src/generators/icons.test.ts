@@ -43,6 +43,43 @@ describe('generateIcons', () => {
     })
   })
 
+  describe('when a monochrome icon draws through a mask', () => {
+    const svg =
+      '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><mask id="m"><path d="M0 0h2v2H0z" fill="#FFF"/><g fill="#FFF"><path d="M1 1h10v10H1z"/><circle cx="16" cy="16" r="4"/></g></mask><path d="M0 0h24v24H0z" fill="#FFF" mask="url(#m)"/></svg>'
+
+    it('should keep the paint of the mask and of everything nested in it', () => {
+      const { files, meta } = generateIcons([icon({ svg })], context)
+      const source = contentOf(files, 'icons/general.tsx')
+      const mask = source.slice(source.indexOf('<mask'), source.indexOf('</mask>'))
+
+      expect(meta[0]?.monochrome).toBe(true)
+      expect(mask).toMatch(/<path fill="#fff" d="M0 0h2v2H0z"/)
+      expect(mask).toContain('<g fill="#fff">')
+      expect(mask).not.toContain('currentColor')
+    })
+
+    it('should still turn the same paint outside the mask into currentColor', () => {
+      const { files } = generateIcons([icon({ svg })], context)
+      const source = contentOf(files, 'icons/general.tsx')
+      const outside = source.slice(source.indexOf('</mask>'))
+
+      expect(outside).toMatch(/<path fill="currentColor" d="M0 0h24v24H0z"/)
+      expect(outside).not.toContain('#fff')
+    })
+  })
+
+  describe('when an icon mixes colors and has a mask', () => {
+    it('should keep every original color, inside and outside the mask', () => {
+      const svg =
+        '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><mask id="m" fill="#fff"><path d="M1 1h10v10H1z"/></mask><path d="M0 0h24v24H0z" fill="#FF2D55" mask="url(#m)"/></svg>'
+      const source = contentOf(generateIcons([icon({ svg })], context).files, 'icons/general.tsx')
+
+      expect(source).toContain('fill="#fff"')
+      expect(source).toContain('fill="#ff2d55"')
+      expect(source).not.toContain('currentColor')
+    })
+  })
+
   describe('when two figma names resolve to the same identifier', () => {
     it('should generate distinct component names', () => {
       const { meta } = generateIcons(
