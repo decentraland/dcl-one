@@ -8,12 +8,14 @@ use bevy::{
     render::render_resource::Extent3d,
 };
 use common::{access_status::AccessStatus, debug_panic, structs::AudioSettings, util::AsH160};
+use dcl_component::proto_components::sdk::components::VideoState;
 use livestream_manager::{
     ActiveAudioTransmitter, ActiveTransmitter, ActiveVideoCast, AudioTransmitterKind,
-    AudioTransmitterVolume, TransmissionUpdated, TransmitterKind,
+    AudioTransmitterVolume, TransmissionImageResized, TransmitterKind,
 };
 #[cfg(target_arch = "wasm32")]
 use media::VideoData;
+use wallet::Wallet;
 #[cfg(not(target_arch = "wasm32"))]
 use {
     bevy::ecs::world::OnDespawn,
@@ -50,6 +52,7 @@ use crate::{
         },
         LivekitRuntimeRes,
     },
+    voice_room::{ActiveVoiceRoom, VoiceRoom},
 };
 
 pub struct LivekitTrackPlugin;
@@ -59,7 +62,9 @@ pub struct LivekitTrackPlugin;
 struct AudioPolicy<'w, 's> {
     settings: Res<'w, AudioSettings>,
     access: Res<'w, AccessStatus>,
-    voice_rooms: Query<'w, 's, (), With<crate::voice_room::VoiceRoom>>,
+    wallet: Res<'w, Wallet>,
+    active_voice: Res<'w, ActiveVoiceRoom>,
+    voice_rooms: Query<'w, 's, (), With<VoiceRoom>>,
     participants: Query<'w, 's, (&'static LivekitParticipant, &'static HostedBy)>,
 }
 
@@ -70,22 +75,24 @@ impl AudioPolicy<'_, '_> {
             .is_ok_and(|(_, room)| self.voice_rooms.contains(room.get()))
     }
 
+    fn allows_voice_microphone(&self, publisher: &PublishedBy) -> bool {
+        let owner = self.wallet.address();
+        self.participants
+            .get(publisher.get())
+            .is_ok_and(|(participant, room)| {
+                self.active_voice.is_owned_by(room.get(), owner)
+                    && participant
+                        .identity()
+                        .as_str()
+                        .as_h160()
+                        .is_some_and(|address| self.access.allows_voice_from(owner, address))
+            })
+    }
+
     fn volume(&self, publisher: &PublishedBy, microphone: bool) -> f32 {
         if !self.is_voice(publisher) {
-            return self.settings.scene();
-        }
-        if !microphone {
-            return 0.0;
-        }
-        let allowed = self
-            .participants
-            .get(publisher.get())
-            .ok()
-            .and_then(|(participant, _)| participant.identity().as_str().as_h160())
-            .is_some_and(|address| {
-                !self.access.is_blocked(address) && !self.access.is_blocked_by(address)
-            });
-        if allowed {
+            self.settings.scene()
+        } else if microphone && self.allows_voice_microphone(publisher) {
             self.settings.voice()
         } else {
             0.0
@@ -395,7 +402,7 @@ fn subscribe_to_audio_track(
     mut commands: Commands,
     tracks: Query<(&LivekitTrack, &PublishedBy), With<Audio>>,
     participants: Query<&HostedBy>,
-    data_only_rooms: Query<(), With<crate::private_chat::PrivateChatRoom>>,
+    non_spatial_rooms: Query<(), Or<(With<crate::private_chat::PrivateChatRoom>, With<VoiceRoom>)>>,
     livekit_runtime: LivekitRuntimeRes,
 ) {
     let entity = trigger.target();
@@ -419,7 +426,7 @@ fn subscribe_to_audio_track(
     };
     if participants
         .get(publisher.get())
-        .is_ok_and(|room| data_only_rooms.contains(room.get()))
+        .is_ok_and(|room| non_spatial_rooms.contains(room.get()))
     {
         return;
     }
@@ -448,10 +455,16 @@ fn subscribe_to_audio_track(
 fn subscribe_to_track(
     trigger: Trigger<SubscribeToTrack>,
     mut commands: Commands,
-    tracks: Query<(&LivekitTrack, &PublishedBy, AnyOf<(&Audio, &Video)>)>,
+    tracks: Query<(
+        &LivekitTrack,
+        &PublishedBy,
+        AnyOf<(&Audio, &Video)>,
+        Has<Microphone>,
+    )>,
     participants: Query<&HostedBy>,
     data_only_rooms: Query<(), With<crate::private_chat::PrivateChatRoom>>,
     livekit_runtime: LivekitRuntimeRes,
+    policy: AudioPolicy,
 ) {
     let entity = trigger.target();
 
@@ -459,13 +472,18 @@ fn subscribe_to_track(
         error!("SubscribeToTrack is an entity event. Call it with 'Commands::trigger_targets'.");
         return;
     }
-    let Ok((track, publisher, audio_or_video)) = tracks.get(entity) else {
+    let Ok((track, publisher, audio_or_video, microphone)) = tracks.get(entity) else {
         error!("Can't subscribe to {} because it is not a track.", entity);
         return;
     };
     if participants
         .get(publisher.get())
         .is_ok_and(|room| data_only_rooms.contains(room.get()))
+    {
+        return;
+    }
+    if policy.is_voice(publisher)
+        && !(audio_or_video.0.is_some() && microphone && policy.allows_voice_microphone(publisher))
     {
         return;
     }
@@ -667,9 +685,13 @@ fn video_track_is_now_subscribed(
 
     let (sender, receiver) = mpsc::channel(60);
     let handle = runtime.spawn(livekit_video_thread(video, publication, sender));
-    commands
-        .entity(entity)
-        .try_insert((LivekitTrackTask(handle), VideoFrameReceiver { receiver }));
+    commands.entity(entity).try_insert((
+        LivekitTrackTask(handle),
+        VideoFrameReceiver {
+            receiver,
+            last_received: 0.,
+        },
+    ));
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -698,9 +720,14 @@ fn video_track_is_now_subscribed(
 
     let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
     let (video_sender, video_receiver) = tokio::sync::mpsc::channel(10);
-    let image = (*active_transmitter).clone();
+    let image = active_transmitter.image.clone();
     // the page attaches the track's video element to the media host under this id
-    let media_id = media::adopt_video(command_receiver, video_sender, &image);
+    let media_id = media::adopt_video(
+        command_receiver,
+        video_sender,
+        active_transmitter.state.clone(),
+        &image,
+    );
     video.attach(media_id);
     commands.entity(entity).try_insert(HtmlMediaEntity {
         _commands: command_sender,
@@ -722,7 +749,7 @@ fn video_track_is_now_unsubscribed(
 fn queue_frame_copy(
     mut video_tracks: Query<&mut HtmlMediaEntity, (With<Video>, With<Subscribed>)>,
     mut images: ResMut<Assets<Image>>,
-    mut transmission_updated: EventWriter<TransmissionUpdated>,
+    mut transmission_image_resized: EventWriter<TransmissionImageResized>,
 ) {
     for mut html_media_entity in video_tracks.iter_mut() {
         while let Ok(data) = html_media_entity.video.try_recv() {
@@ -741,33 +768,50 @@ fn queue_frame_copy(
                 height: info.height,
                 depth_or_array_layers: 1,
             };
-            transmission_updated.write(TransmissionUpdated);
+            transmission_image_resized.write(TransmissionImageResized);
         }
     }
 }
 
-fn active_transmitter_added(trigger: Trigger<OnAdd, ActiveTransmitter>, mut commands: Commands) {
+fn active_transmitter_added(
+    trigger: Trigger<OnAdd, ActiveTransmitter>,
+    mut commands: Commands,
+    active_transmitters: Query<&ActiveTransmitter>,
+) {
     let entity = trigger.target();
     commands.entity(entity).trigger(SubscribeToTrack);
+
+    let Ok(active_transmitter) = active_transmitters.get(entity) else {
+        unreachable!("Infallible query.");
+    };
+    active_transmitter.send_if_modified(VideoState::VsLoading);
 }
 
 fn active_transmitter_removed(
     trigger: Trigger<OnRemove, ActiveTransmitter>,
     mut commands: Commands,
+    active_transmitters: Query<&ActiveTransmitter>,
 ) {
     let entity = trigger.target();
     commands.entity(entity).queue_handled(
         entity_command::trigger(UnsubscribeToTrack),
         bevy::ecs::error::debug,
     );
+
+    let Ok(active_transmitter) = active_transmitters.get(entity) else {
+        unreachable!("Infallible query.");
+    };
+    active_transmitter.send_if_modified(VideoState::VsLoading);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+const BUFFER_THRESHOLD: f64 = 1.;
 #[cfg(not(target_arch = "wasm32"))]
 fn copy_frame(
     mut commands: Commands,
     active_transmitter: Single<(Entity, &ActiveTransmitter, &mut VideoFrameReceiver)>,
     mut images: ResMut<Assets<Image>>,
-    mut transmission_updated: EventWriter<TransmissionUpdated>,
+    time: Res<Time<Real>>,
 ) {
     let (entity, active_transmitter, mut video_frame_receiver): (
         Entity,
@@ -775,23 +819,35 @@ fn copy_frame(
         Mut<VideoFrameReceiver>,
     ) = active_transmitter.into_inner();
 
-    let Some(image) = images.get_mut(active_transmitter.id()) else {
+    let Some(image) = images.get_mut(active_transmitter.image.id()) else {
         debug_panic!("ActiveTransmitter image handle is invalid");
     };
 
     let mut frame = None;
     loop {
-        match video_frame_receiver.try_recv() {
-            Ok(new_frame) => frame = Some(new_frame),
-            Err(mpsc::error::TryRecvError::Empty) => break,
+        match video_frame_receiver.receiver.try_recv() {
+            Ok(new_frame) => {
+                frame = Some(new_frame);
+                video_frame_receiver.last_received = time.elapsed_secs_f64();
+            }
+            Err(mpsc::error::TryRecvError::Empty) => {
+                let elapsed = time.elapsed_secs_f64();
+                if elapsed > video_frame_receiver.last_received + BUFFER_THRESHOLD {
+                    active_transmitter.send_if_modified(VideoState::VsBuffering);
+                    video_frame_receiver.last_received = elapsed;
+                }
+                break;
+            }
             Err(mpsc::error::TryRecvError::Disconnected) => {
                 error!("VideoFrameReceiver has disconnected.");
+                active_transmitter.send_if_modified(VideoState::VsError);
                 commands.entity(entity).try_remove::<VideoFrameReceiver>();
                 break;
             }
         }
     }
     if let Some(frame) = frame {
+        active_transmitter.send_if_modified(VideoState::VsPlaying);
         if image.width() != frame.width() || image.height() != frame.height() {
             debug!("Resizing active transmitter image.");
             image.resize(Extent3d {
@@ -799,7 +855,7 @@ fn copy_frame(
                 height: frame.height(),
                 depth_or_array_layers: 1,
             });
-            transmission_updated.write(TransmissionUpdated);
+            commands.send_event(TransmissionImageResized);
         }
         if let Some(data) = &mut image.data {
             // TODO verify this transfer priority

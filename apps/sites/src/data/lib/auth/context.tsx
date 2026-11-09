@@ -11,12 +11,13 @@ import {
   subscribe,
 } from "./session";
 import type { SignedRequest } from "./signer";
+import { forgetSignIn, recordSignIn } from "./signin-kind";
 import {
   clearThirdwebSession,
   setThirdwebSession,
 } from "./thirdweb/session";
 import { hasThirdwebClientId } from "./thirdweb/config";
-import type { ThirdwebAuthResult, ThirdwebSocialProvider } from "./thirdweb/api";
+import type { ThirdwebAuthResult } from "./thirdweb/api";
 import type { WalletConnectSession } from "./walletconnect";
 import type { AuthIdentity, SignedFetchMetadata } from "./types";
 import { detectWallets, hasWallet, selectWallet, type DetectedWallet } from "./wallet";
@@ -32,8 +33,11 @@ async function identityFromInApp(
   const signer = makeInAppSigner(auth);
   const next = await createIdentityWith(signer.address, signer.personalSign, opts);
   setThirdwebSession({ token: signer.token, address: signer.address });
+  recordSignIn(next.signer, "managed");
   return next;
 }
+
+const MAGIC_LOGOUT_WAIT_MS = 2_000;
 
 type AuthStatus = "anonymous" | "connecting" | "connected" | "expired";
 
@@ -55,15 +59,12 @@ type UseAuth = {
     expirationMs?: number;
   }) => Promise<WalletConnectSession>;
   startEmailSignIn: (email: string) => Promise<void>;
+  /** Null when the code fails (the reason in `error`); with `rethrow`, the failure itself is thrown instead. */
   verifyEmailSignIn: (
     email: string,
     code: string,
-    opts?: { expirationMs?: number },
+    opts?: { expirationMs?: number; rethrow?: boolean },
   ) => Promise<AuthIdentity | null>;
-  startSocialSignIn: (
-    provider: ThirdwebSocialProvider,
-    redirectUrl: string,
-  ) => void;
   completeInAppSession: (
     auth: Pick<ThirdwebAuthResult, "token" | "walletAddress">,
     opts?: { expirationMs?: number },
@@ -73,7 +74,8 @@ type UseAuth = {
     signerPrivateKey?: `0x${string}`,
     opts?: { expirationMs?: number },
   ) => Promise<AuthIdentity | null>;
-  disconnect: () => void;
+  /** Signs out at once; resolves once Magic's own session has ended too (at most a couple of seconds). */
+  disconnect: () => Promise<void>;
   sign: (
     method: string,
     url: string,
@@ -104,6 +106,7 @@ export function useAuth(): UseAuth {
         if (opts?.walletRdns) selectWallet(opts.walletRdns);
         const { createIdentity } = await import("./identity");
         const next = await createIdentity(opts);
+        recordSignIn(next.signer, "web3");
         setIdentity(next);
         return next;
       } catch (err) {
@@ -166,7 +169,7 @@ export function useAuth(): UseAuth {
   );
 
   const verifyEmailSignIn = useCallback(
-    async (email: string, code: string, opts?: { expirationMs?: number }) => {
+    async (email: string, code: string, opts?: { expirationMs?: number; rethrow?: boolean }) => {
       setError(null);
       setConnecting(true);
       try {
@@ -177,24 +180,10 @@ export function useAuth(): UseAuth {
         return next;
       } catch (err) {
         setError((err as Error)?.message ?? "That code didn't work.");
+        if (opts?.rethrow) throw err;
         return null;
       } finally {
         setConnecting(false);
-      }
-    },
-    [],
-  );
-
-  const startSocialSignIn = useCallback(
-    async (provider: ThirdwebSocialProvider, redirectUrl: string) => {
-      setError(null);
-      if (typeof window !== "undefined") {
-        try {
-          const { socialLoginUrl } = await import("./thirdweb/api");
-          window.location.href = socialLoginUrl(provider, redirectUrl);
-        } catch (err) {
-          setError((err as Error)?.message ?? "Couldn't start social sign-in.");
-        }
       }
     },
     [],
@@ -217,18 +206,23 @@ export function useAuth(): UseAuth {
     [],
   );
 
-  const disconnect = useCallback(() => {
+  const disconnect = useCallback(async () => {
     setError(null);
     // The Explorer's account is the Explorer's to end; the website's own session stays as it is.
     if (hostOwnsSession()) return;
     clearThirdwebSession();
+    // Magic keeps its own session for the account; sign-out ends it too (magic-session.ts).
+    const magicEnded = import("./magic-session").then(({ endMagicSession }) => endMagicSession()).catch(() => {});
     clearStored();
+    forgetSignIn();
     void fetch("/auth/callback", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ signout: true }),
       keepalive: true,
     }).catch(() => {});
+    // A caller about to leave the page (switching accounts) waits for Magic, but never long.
+    await Promise.race([magicEnded, new Promise<void>((resolve) => setTimeout(resolve, MAGIC_LOGOUT_WAIT_MS))]);
   }, []);
 
   const sign = useCallback(
@@ -273,7 +267,6 @@ export function useAuth(): UseAuth {
       connectWalletConnect,
       startEmailSignIn,
       verifyEmailSignIn,
-      startSocialSignIn,
       completeInAppSession,
       devHost: isDevHost(),
       connectWithKey,
@@ -290,7 +283,6 @@ export function useAuth(): UseAuth {
       connectWalletConnect,
       startEmailSignIn,
       verifyEmailSignIn,
-      startSocialSignIn,
       completeInAppSession,
       connectWithKey,
       disconnect,

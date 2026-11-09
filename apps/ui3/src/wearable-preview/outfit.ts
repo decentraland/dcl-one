@@ -37,7 +37,8 @@ interface EntityData {
 export interface Entity {
   pointers?: string[];
   content?: { file: string; hash: string }[];
-  metadata?: { data?: EntityData };
+  /** A wearable's files are under `data`; an emote's (ADR-74) under `emoteDataADR74`. */
+  metadata?: { data?: EntityData; emoteDataADR74?: { representations?: Representation[]; loop?: boolean } };
 }
 
 interface Avatar {

@@ -139,6 +139,7 @@ impl Plugin for VoiceRoomPlugin {
                     ("Session", "session"),
                     ("Connection", "phase"),
                     ("Failure", "failure"),
+                    ("Block status ready", "blockStatusReady"),
                     ("Proximity microphone suppressed", "proximitySuppressed"),
                     ("Microphone cleanup pending", "microphoneCleanupPending"),
                 ],
@@ -159,6 +160,10 @@ pub(crate) struct ActiveVoiceRoom {
 }
 
 impl ActiveVoiceRoom {
+    pub(crate) fn is_owned_by(&self, room: Entity, owner: Option<Address>) -> bool {
+        self.routing.active == Some(room) && owner.is_some() && self.owner == owner
+    }
+
     fn leave(&mut self, commands: &mut Commands, mic: &mut MicState) {
         if let Some(room) = self.routing.active {
             commands.entity(room).try_despawn();
@@ -248,6 +253,7 @@ pub(crate) fn update_voice_room(
 fn subscribe_voice_tracks(
     mut commands: Commands,
     active: Res<ActiveVoiceRoom>,
+    wallet: Res<Wallet>,
     access: Res<AccessStatus>,
     participants: Query<(&LivekitParticipant, &HostedBy), Without<Local>>,
     tracks: Query<
@@ -261,6 +267,7 @@ fn subscribe_voice_tracks(
         With<Microphone>,
     >,
 ) {
+    let owner = wallet.address();
     for (entity, track, publisher, subscribed, subscribing) in &tracks {
         let Ok((participant, room)) = participants.get(publisher.get()) else {
             continue;
@@ -268,11 +275,12 @@ fn subscribe_voice_tracks(
         if Some(room.get()) != active.routing.active {
             continue;
         }
-        let allowed = participant
-            .identity()
-            .as_str()
-            .as_h160()
-            .is_some_and(|address| !access.is_blocked(address) && !access.is_blocked_by(address));
+        let allowed = active.is_owned_by(room.get(), owner)
+            && participant
+                .identity()
+                .as_str()
+                .as_h160()
+                .is_some_and(|address| access.allows_voice_from(owner, address));
         if allowed && !subscribed && !subscribing {
             commands.entity(entity).trigger(SubscribeToTrack);
         } else if !allowed && (subscribed || subscribing) {
@@ -299,6 +307,8 @@ struct VoiceRoomCommand {
 fn voice_room_command(
     mut input: ConsoleCommand<VoiceRoomCommand>,
     active: Res<ActiveVoiceRoom>,
+    wallet: Res<Wallet>,
+    access: Res<AccessStatus>,
     rooms: Query<
         (
             Has<Connected>,
@@ -329,6 +339,7 @@ fn voice_room_command(
     input.reply_ok(
         serde_json::json!({"active": active.routing.active.is_some(), "session": active.session,
         "phase": phase, "failure": room.and_then(|(_, _, _, recovery)| recovery.failure),
+        "blockStatusReady": access.blocks_ready_for(wallet.address()),
         "proximitySuppressed": active.routing.active.is_some(),
         "microphoneCleanupPending": drains.map_or(0, |drain| drain.pending())})
         .to_string(),

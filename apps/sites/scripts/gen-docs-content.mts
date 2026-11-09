@@ -18,6 +18,8 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
+import { validateDocs } from "./docs-validation.mts";
 import { DocsMedia, rasterKind, webpName } from "./docs-images.mts";
 import { RemoteImages } from "./docs-remote-images.mts";
 
@@ -29,8 +31,28 @@ const OUT = path.resolve(process.env.OUT || path.join(SITES, "content/docs"));
 const BASE = "/docs";
 const media = new DocsMedia({ output: OUT, base: BASE, readOnly: CHECK });
 const remote = new RemoteImages({ output: OUT, mirrors: [MIRRORS, `${MIRRORS}-archived`], media, base: BASE, readOnly: CHECK });
-// The favicon stays a PNG: browsers' icon support is narrower than <img>'s.
-const KEEP_ORIGINAL = new Set(["player/images/favicon.png"]);
+const KEEP_ORIGINAL = new Set(["player/images/favicon.ico"]);
+
+const LEGACY_URLS: Record<string, string> = {
+  "/docs/faqs/my-account/": "/docs/player/faqs/my-account/",
+  "/docs/creator/scenes-sdk7/getting-started/vibe-coding/": "/docs/creator/sdk7/getting-started/vibe-coding/",
+  "/docs/creator/scenes-sdk7/optimizing/scene-limitations/": "/docs/creator/sdk7/optimizing/scene-limitations/",
+  "/docs/creator/development-guide/3d-model-animations/": "/docs/creator/sdk7/3d-essentials/3d-model-animations/",
+  "/docs/creator/development-guide/sdk7/colliders/": "/docs/creator/sdk7/3d-essentials/colliders/",
+  "/docs/creator/development-guide/scene-limitations/": "/docs/creator/sdk7/optimizing/scene-limitations/",
+  "/docs/creator/emotes/avatar-rig/": "/docs/creator/wearables-and-emotes/emotes/avatar-rig/",
+  "/docs/creator/development-guide/materials/": "/docs/creator/sdk7/3d-essentials/materials/",
+  "/docs/decentraland/faq/": "/docs/player/faqs/decentraland-101/",
+  "/docs/blockchain-integration/transactions-in-polygon/": "/docs/player/blockchain-integration/transactions-in-polygon/",
+  "/docs/creator/scenes-sdk7/designing-the-experience/playtests/": "/docs/creator/sdk7/design-experience/playtests/",
+  "/docs/creator/emotes/props-and-sounds/": "/docs/creator/wearables-and-emotes/emotes/props-and-sounds/",
+  "/docs/creator/wearables/creating-wearables/": "/docs/creator/wearables-and-emotes/wearables/creating-wearables/",
+  "/docs/creator/wearables/wearables-editor-user-guide/": "/docs/creator/wearables-and-emotes/publishing/publishing-collections/",
+  "/docs/creator/development-guide/sdk7/smart-wearables/": "/docs/creator/sdk7/projects/smart-wearables/",
+};
+const FALLBACK = "creator/images/wearables-and-emotes/creating-wearables/19_skin_uv.webp";
+const FALLBACK_SHA256 = "faf9d0eb4c552ab630da2d11095ff8dd527c6138d872fff357811fd3f16e3dbf";
+const generatedPages = new Map<string, string>();
 
 interface DocSpace { id: string; title: string; blurb: string; icon: "home" | "laptop" | "document" | "api" | "spark"; header?: boolean }
 
@@ -97,12 +119,16 @@ function cleanUrl(srcRel: string): string {
 function resolveLink(fromRel: string, target: string, fuzzy = false): string {
   if (!target) return target;
   const trimmed = target.trim();
+  if (trimmed.startsWith("/docs/")) return target;
   if (trimmed.startsWith("<") && trimmed.endsWith(">")) return "<" + resolveLink(fromRel, trimmed.slice(1, -1), fuzzy) + ">";
   const [rawPath, hash] = splitHash(trimmed);
   const anchor = hash ? "#" + hash : "";
   if (/^https?:\/\//i.test(rawPath)) {
     const m = rawPath.match(/^https?:\/\/docs\.decentraland\.org\/?(.*)$/i);
-    return m ? cleanUrl(m[1] || "") + anchor : target;
+    if (!m) return target;
+    const url = cleanUrl(m[1] || "");
+    if (url === "/docs/decentraland/faq/" && (hash === "what-is-land" || hash === "what-is-an-estate")) return LEGACY_URLS[url];
+    return (LEGACY_URLS[url] ?? url) + anchor;
   }
   if (/^[a-z][a-z0-9+.-]*:/i.test(rawPath) || rawPath === "" || rawPath.startsWith("#")) return target;
   const clean = rawPath.replace(/\\([_*()[\]#~.-])/g, "$1");
@@ -123,7 +149,7 @@ function resolveLink(fromRel: string, target: string, fuzzy = false): string {
   }
   let url = cleanUrl(abs);
   if (fuzzy && PAGE_URLS.size && !PAGE_URLS.has(url)) url = fuzzyPage(url, fromRel) ?? url;
-  return url + anchor;
+  return (LEGACY_URLS[url] ?? url) + anchor;
 }
 
 // The WebP name for a raster source asset, or null for anything served as-is. A name
@@ -136,11 +162,11 @@ function replacement(real: string): string | null {
   let head: Buffer;
   try {
     const fd = fss.openSync(file, "r");
-    try { head = Buffer.alloc(8); fss.readSync(fd, head, 0, 8, 0); } finally { fss.closeSync(fd); }
+    try { head = Buffer.alloc(12); fss.readSync(fd, head, 0, 12, 0); } finally { fss.closeSync(fd); }
   } catch { return null; }
   if (!rasterKind(head)) return null;
   let name = webpName(real);
-  if ((rasterNames.has(name) && rasterNames.get(name) !== real) || fss.existsSync(path.join(SRC, name))) name = `${real}.webp`;
+  if ((rasterNames.has(name) && rasterNames.get(name) !== real) || (name !== real && fss.existsSync(path.join(SRC, name)))) name = `${real}.webp`;
   rasters.set(real, name);
   rasterNames.set(name, real);
   return name;
@@ -188,7 +214,7 @@ function findAsset(abs: string, fromRel: string): string {
 function stashCode(md: string): { text: string; restore: (s: string) => string } {
   const stash: string[] = [];
   const keep = (m: string) => `\x00${stash.push(m) - 1}\x00`;
-  const text = md.replace(/```[\s\S]*?```/g, keep).replace(/~~~[\s\S]*?~~~/g, keep).replace(/`[^`\n]*`/g, keep);
+  const text = md.replace(/<!--[\s\S]*?-->/g, keep).replace(/```[\s\S]*?```/g, keep).replace(/~~~[\s\S]*?~~~/g, keep).replace(/`[^`\n]*`/g, keep);
   return { text, restore: (s) => s.replace(/\x00(\d+)\x00/g, (_m, i) => stash[Number(i)]) };
 }
 
@@ -242,6 +268,16 @@ function rewriteLinks(md: string, fromRel: string): string {
   return restore(vendorRemoteImages(s));
 }
 
+function repairSource(body: string): string {
+  return body
+    .replace(/\\\x01src="\.\.\/images\/wearables-and-emotes\/creating-wearables\/19\\_skin\\_uv\.png"width="600"\/>/g,
+      `![Avatar skin UV map](/docs/${FALLBACK})`)
+    .replace(/!\[\x01\]/g, "![]")
+    .replace(/alt="\x01"/g, 'alt=""')
+    .replace(/https:\/\/github\.com\/lordlikedao\/documentation\/blob\/main\/static\/images\/DAO%20Organizational%20Chart\/Revocation\.png\?raw=true/g,
+      "/docs/player/images/DAO%20Organizational%20Chart/Revocation.webp");
+}
+
 function stripFrontMatter(raw: string): { fm: string; body: string } {
   if (!raw.startsWith("---")) return { fm: "", body: raw };
   const end = raw.indexOf("\n---", 3);
@@ -280,7 +316,7 @@ function hintsToBlockquote(md: string): string {
     const close = line.match(/^[ \t]*\{%\s*endhint\s*%\}[ \t]*$/);
     if (open) { inHint = true; out.push("", `> [!${LABEL[open[1]] || "NOTE"}]`); continue; }
     if (close) { inHint = false; out.push(""); continue; }
-    out.push(inHint ? "> " + line : line);
+    out.push(inHint ? (line.trim() ? "> " + line : ">") : line);
   }
   return out.join("\n");
 }
@@ -405,6 +441,7 @@ function pageFile(url: string): string {
 
 async function addPage(entry: Omit<PageEntry, "file" | "tokens">, md: string): Promise<void> {
   const file = pageFile(entry.url);
+  generatedPages.set(entry.url, md);
   const tokens = countTokens(md);
   pages.push({ ...entry, file, ...(tokens === undefined ? {} : { tokens }) });
   await writeText(file, md);
@@ -412,7 +449,7 @@ async function addPage(entry: Omit<PageEntry, "file" | "tokens">, md: string): P
 
 async function writePage(srcRel: string): Promise<void> {
   const { fm, body } = stripFrontMatter(await fs.readFile(path.join(SRC, srcRel), "utf8"));
-  let cleaned = rewriteLinks(embeds(body), srcRel).trim();
+  let cleaned = rewriteLinks(embeds(repairSource(body)), srcRel).trim();
   const title = fmField(fm, "title") || (cleaned.match(/^#\s+(.+)$/m)?.[1]?.trim()) || path.basename(srcRel, ".md");
   const description = fmField(fm, "description");
   if (!/^#\s+/.test(cleaned)) cleaned = `# ${title}\n\n${cleaned}`;
@@ -498,7 +535,7 @@ async function main(): Promise<void> {
     return fss.existsSync(dir) ? walkMd(dir).map((f) => path.relative(SRC, f).replace(/\\/g, "/")) : [];
   });
   const remoteUrls = new Set<string>();
-  for (const rel of sources) for (const url of remoteImageUrls(stripFrontMatter(fss.readFileSync(path.join(SRC, rel), "utf8")).body)) remoteUrls.add(url);
+  for (const rel of sources) for (const url of remoteImageUrls(repairSource(stripFrontMatter(fss.readFileSync(path.join(SRC, rel), "utf8")).body))) remoteUrls.add(url);
   await remote.vendor(remoteUrls);
 
   const nav: Record<string, NavNode> = {};
@@ -520,7 +557,7 @@ async function main(): Promise<void> {
   // GitBook exposes the Player space at its site root; /docs/player/ stays as the
   // compatibility alias while /docs/ renders the same page with the Player nav.
   const rootParts = stripFrontMatter(await fs.readFile(path.join(SRC, "player/README.md"), "utf8"));
-  const rootBody = rewriteLinks(embeds(rootParts.body), "player/README.md").trim();
+  const rootBody = rewriteLinks(embeds(repairSource(rootParts.body)), "player/README.md").trim();
   await addPage({
     url: `${BASE}/`, title: "Welcome", description: "Everything you need to know to show up, hang out, and be part of Decentraland.",
     icon: fmField(rootParts.fm, "icon"), space: "player", source: "player/README.md", updatedAt: sourceUpdatedAt("player/README.md"), navUrl: `${BASE}/player/`,
@@ -528,11 +565,16 @@ async function main(): Promise<void> {
   const homeSearch = searchIndex.find((entry) => entry.url === `${BASE}/player/`);
   if (homeSearch) searchIndex.unshift({ ...homeSearch, url: `${BASE}/` });
 
-  referencedAssets.add("player/images/favicon.png");
+  referencedAssets.add("player/images/favicon.ico");
+  referencedAssets.add("player/images/DAO Organizational Chart/Revocation.webp");
+  expected.add(FALLBACK);
+  const fallback = await fs.readFile(path.join(OUT, FALLBACK)).catch(() => null);
+  if (!fallback || createHash("sha256").update(fallback).digest("hex") !== FALLBACK_SHA256) drift.push(`missing or altered pinned image: ${FALLBACK}`);
+  else media.entries.set(`${BASE}/${FALLBACK}`, { source: "creator/images/wearables-and-emotes/creating-wearables/19_skin_uv.png", encoder: "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:", key: "29b46ad7520413bbdc2bac62", width: 1600, height: 815, bytes: 54890, sourceBytes: 832188 });
   let copied = 0;
   for (const rel of [...referencedAssets].sort()) {
     if (await copyAsset(rel)) copied++;
-    else console.warn(`[docs-content] missing asset ${rel}`);
+    else drift.push(`missing source asset: ${rel}`);
   }
   for (const [real, webp] of [...rasters.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     media.replace(fss.readFileSync(path.join(SRC, real)), webp, real);
@@ -547,7 +589,7 @@ async function main(): Promise<void> {
   pages.sort((a, b) => (a.url < b.url ? -1 : a.url > b.url ? 1 : 0));
   const manifest = {
     generator: "sites/scripts/gen-docs-content.mts",
-    source: { repo: "decentraland/docs", commit, committedAt },
+    source: { repo: "decentraland/docs", commit, committedAt, fallbackMedia: [{ file: FALLBACK, sourceCommit: "452eabb509a8a1806d3c503a94adbb886711e53f", sourceFile: "creator/images/wearables-and-emotes/creating-wearables/19_skin_uv.png", sourceSha256: "25cf00f8fb30012e1e8cd8eb646a55cbafb744c2dcec009adecc3161fb2f0493", sha256: FALLBACK_SHA256 }] },
     spaces: SPACES,
     nav,
     pages,
@@ -556,10 +598,11 @@ async function main(): Promise<void> {
   await writeText("search-index.json", JSON.stringify(searchIndex));
   await writeText("_media.json", media.manifest());
   await writeText("_remote/sources.json", remote.manifest());
-  await pruneStale();
-
+  for (const problem of validateDocs(generatedPages, expected)) drift.push(problem);
   const failed = [...remote.entries.entries()].filter(([, e]) => "error" in e);
-  for (const [url, e] of failed) console.warn(`[docs-content] remote image not vendored (${"error" in e ? e.error : ""}): ${url}`);
+  for (const [url, e] of failed) drift.push(`remote image not vendored (${"error" in e ? e.error : ""}): ${url}`);
+  if (!CHECK && drift.length) throw new Error(`invalid generated docs:\n${drift.join("\n")}`);
+  await pruneStale();
   if (CHECK) {
     if (drift.length) {
       console.error(`[docs-content] content/docs is stale (${drift.length}):\n  ${drift.slice(0, 40).join("\n  ")}${drift.length > 40 ? "\n  ..." : ""}`);
@@ -569,6 +612,7 @@ async function main(): Promise<void> {
     console.log(`[docs-content] content/docs matches ${SRC} @ ${commit.slice(0, 12)} (${pages.length} pages)`);
     return;
   }
+  if (drift.length) throw new Error(`invalid generated docs:\n${drift.join("\n")}`);
   console.log(`[docs-content] ${pages.length} pages, ${copied} assets, ${rasters.size} images replaced by webp, ${remote.files().length} remote images (${failed.length} unreachable) -> ${path.relative(process.cwd(), OUT) || OUT}`);
 }
 

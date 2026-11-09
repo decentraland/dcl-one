@@ -7,6 +7,7 @@ import type { Order } from "@catalyst-api/market/Order";
 import { fetchUnified, fetchShopListingsRaw, shopListingToItem, type Opts, type UnifiedListing } from "../discovery/api";
 import { toGender, type CatalogItem, type Gender, type RawCollectionItem } from "../discovery/lib/catalogItem";
 import { shopClient, type ShopClient } from "../api/shop";
+import { isResale } from "../market/access-rule";
 
 function c(opts?: Opts): ShopClient {
   return opts?.client ?? shopClient();
@@ -38,14 +39,22 @@ export async function fetchUnifiedListingForItem(contractAddress: string, itemId
   return pickItemListing(items);
 }
 
-export async function fetchPrimaryListingForItem(contractAddress: string, itemId: string, opts?: Opts): Promise<UnifiedListing | null> {
-  const { items } = await fetchUnified({ contractAddress, itemId, first: 5, listingType: "primary" }, opts);
-  return items.find((l) => !l.tokenId) ?? null;
+/** The item page's listing query: `primary` (the creator's sale only) unless the Marketplace is on for the visitor.
+ * The sites loader primes the `primary` key, the one a first render reads while the Marketplace is still pending. */
+export function itemListingKey(contractAddress: string, itemId: string, scope: "all" | "primary") {
+  return ["shop-item", contractAddress, itemId, scope] as const;
 }
 
+export async function fetchPrimaryListingForItem(contractAddress: string, itemId: string, opts?: Opts): Promise<UnifiedListing | null> {
+  const { items } = await fetchUnified({ contractAddress, itemId, first: 5, listingType: "primary" }, opts);
+  return items.find((l) => !isResale(l)) ?? null;
+}
+
+/** An item's creator listing, for buying the item itself (the in-world shell's BUY): primary sales only, never a resale. */
 export async function fetchShopListingForItem(contractAddress: string, itemId: string, opts?: Opts): Promise<CatalogItem | null> {
-  const { listings } = await fetchShopListingsRaw({ contractAddress, itemId, first: 1 }, opts);
-  return listings[0] ? shopListingToItem(listings[0]) : null;
+  const { listings } = await fetchShopListingsRaw({ contractAddress, itemId, first: 1, listingType: "primary" }, opts);
+  const row = listings[0] ? shopListingToItem(listings[0]) : null;
+  return row && !isResale(row) ? row : null;
 }
 
 export async function fetchStoreMintState(contractAddress: string, itemId: string, opts?: Opts): Promise<{ priceWei: string; available: number } | null> {

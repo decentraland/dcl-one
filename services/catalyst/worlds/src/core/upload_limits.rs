@@ -2,9 +2,12 @@
 //! takes a concurrency slot plus a zero-byte lease grown from actual parsed payload
 //! bytes -- never from Content-Length, which includes multipart framing.
 
+use std::collections::HashMap;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::http::{HeaderMap, header};
+use parking_lot::Mutex;
 
 pub const DEFAULT_MAX_IN_FLIGHT_UPLOAD_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
@@ -27,6 +30,12 @@ pub const INVALID_CONTENT_LENGTH_MESSAGE: &str = "Invalid Content-Length header.
 pub const TOO_MANY_FIELDS_MESSAGE: &str = "The multipart request has too many fields.";
 pub const TOO_MANY_PARTS_MESSAGE: &str = "The multipart request has too many parts.";
 
+/// Upstream's `fieldsLimit` text (`src/controllers/multipart/middleware.ts`), naming the
+/// route's field cap.
+pub fn too_many_fields_message(max_fields: usize) -> String {
+    format!("{TOO_MANY_FIELDS_MESSAGE} The maximum allowed is {max_fields}.")
+}
+
 pub const MAX_MULTIPART_FIELD_VALUE_BYTES: usize = 1024 * 1024;
 
 pub const MAX_MULTIPART_FIELDS: usize = 100;
@@ -48,6 +57,8 @@ pub struct UploadLimits {
     pub max_in_flight_upload_files: u64,
     pub multipart_upload_timeout_ms: u64,
     pub deployment_processing_timeout_ms: u64,
+    pub max_concurrent_uploads_per_source: u64,
+    pub max_in_flight_upload_bytes_per_source: u64,
 }
 
 impl Default for UploadLimits {
@@ -58,6 +69,8 @@ impl Default for UploadLimits {
             max_in_flight_upload_files: DEFAULT_MAX_IN_FLIGHT_UPLOAD_FILES,
             multipart_upload_timeout_ms: DEFAULT_MULTIPART_UPLOAD_TIMEOUT_MS,
             deployment_processing_timeout_ms: DEFAULT_DEPLOYMENT_PROCESSING_TIMEOUT_MS,
+            max_concurrent_uploads_per_source: DEFAULT_MAX_CONCURRENT_UPLOADS_PER_SOURCE,
+            max_in_flight_upload_bytes_per_source: DEFAULT_MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE,
         }
     }
 }
@@ -88,6 +101,16 @@ impl UploadLimits {
             "DEPLOYMENT_PROCESSING_TIMEOUT_MS",
             self.deployment_processing_timeout_ms,
         )?;
+        positive_limit(
+            "MAX_CONCURRENT_UPLOADS_PER_SOURCE",
+            self.max_concurrent_uploads_per_source,
+        )?;
+        if self.max_in_flight_upload_bytes_per_source < max_upload_size_bytes {
+            anyhow::bail!(
+                "MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE ({}) must fit one maximum-size upload ({max_upload_size_bytes} bytes).",
+                self.max_in_flight_upload_bytes_per_source
+            );
+        }
         if self.max_in_flight_upload_bytes < max_upload_size_bytes {
             anyhow::bail!(
                 "MAX_IN_FLIGHT_UPLOAD_BYTES ({}) must be greater than or equal to maxSizeInBytes ({max_upload_size_bytes})",
@@ -250,9 +273,138 @@ pub fn active_uploads() -> u64 {
     ACTIVE_UPLOADS.load(Ordering::Acquire)
 }
 
+pub const DEFAULT_MAX_CONCURRENT_UPLOADS_PER_SOURCE: u64 = 4;
+
+pub const DEFAULT_MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE: u64 = 350 * 1024 * 1024;
+
+pub const SOURCE_LIMIT_MESSAGE: &str =
+    "Too many uploads in progress from this client, please retry shortly.";
+
+const SOURCE_RETRY_AFTER_SECONDS: u64 = 5;
+
+/// Uploads and charged bytes in flight per client source; only sources with an upload hold an entry.
+static SOURCES: LazyLock<Mutex<HashMap<String, (u64, u64)>>> = LazyLock::new(Default::default);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceLimitReason {
+    Concurrency,
+    Bytes,
+}
+
+impl SourceLimitReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Concurrency => "source_concurrency",
+            Self::Bytes => "source_bytes",
+        }
+    }
+}
+
+/// One admitted upload's share of its source's allowance, returned on drop.
+pub struct SourceUploadLease {
+    source: String,
+    bytes: u64,
+}
+
+impl Drop for SourceUploadLease {
+    fn drop(&mut self) {
+        let mut sources = SOURCES.lock();
+        if let Some((uploads, bytes)) = sources.get_mut(&self.source) {
+            *uploads = uploads.saturating_sub(1);
+            *bytes = bytes.saturating_sub(self.bytes);
+            if *uploads == 0 {
+                sources.remove(&self.source);
+            }
+        }
+    }
+}
+
+/// What a request is charged against its source before its body is read: the declared length, else the route's cap.
+pub fn source_charge(declared: Option<u64>, max_request_bytes: u64) -> u64 {
+    declared.map_or(max_request_bytes, |d| d.min(max_request_bytes))
+}
+
+/// Admits an upload of up to `bytes` from `source` while it has fewer than `max_uploads` and `max_bytes` in flight.
+pub fn try_acquire_source(
+    source: &str,
+    bytes: u64,
+    max_uploads: u64,
+    max_bytes: u64,
+) -> Result<SourceUploadLease, SourceLimitReason> {
+    let mut sources = SOURCES.lock();
+    let entry = sources.entry(source.to_string()).or_insert((0, 0));
+    let result = if entry.0 >= max_uploads {
+        Err(SourceLimitReason::Concurrency)
+    } else if entry.1.saturating_add(bytes) > max_bytes {
+        Err(SourceLimitReason::Bytes)
+    } else {
+        entry.0 += 1;
+        entry.1 += bytes;
+        Ok(SourceUploadLease {
+            source: source.to_string(),
+            bytes,
+        })
+    };
+    if entry.0 == 0 {
+        sources.remove(source);
+    }
+    result
+}
+
+/// Per-source admission for a multipart route (`route` labels the metrics). A request without a
+/// client address (internal callers, no gateway) is not limited per source, only counted.
+pub fn admit_source(
+    headers: &HeaderMap,
+    limits: &UploadLimits,
+    route: &'static str,
+    max_request_bytes: u64,
+) -> Result<Option<SourceUploadLease>, SourceLimitReason> {
+    let ip = crate::shared::client_ip::client_ip(headers);
+    if ip.is_empty() {
+        metrics::counter!("multipart_upload_unattributed", "route" => route).increment(1);
+        return Ok(None);
+    }
+    let declared = match declared_content_length(headers) {
+        DeclaredContentLength::Bytes(n) => Some(n),
+        _ => None,
+    };
+    let source = crate::shared::client_ip::source_key(&ip);
+    try_acquire_source(
+        &source,
+        source_charge(declared, max_request_bytes),
+        limits.max_concurrent_uploads_per_source,
+        limits.max_in_flight_upload_bytes_per_source,
+    )
+    .map(Some)
+    .inspect_err(|reason| {
+        metrics::counter!("multipart_upload_rejections", "route" => route, "reason" => reason.as_str())
+            .increment(1);
+        tracing::warn!(route, source = %source, reason = reason.as_str(), "multipart upload shed: per-source limit");
+    })
+}
+
+pub fn source_limit_response() -> axum::response::Response {
+    use axum::response::IntoResponse;
+    (
+        axum::http::StatusCode::TOO_MANY_REQUESTS,
+        [("Retry-After", SOURCE_RETRY_AFTER_SECONDS.to_string())],
+        axum::Json(DeployRejection {
+            error: "Too Many Requests".to_string(),
+            message: SOURCE_LIMIT_MESSAGE.to_string(),
+        }),
+    )
+        .into_response()
+}
+
 // The shed and timeout answers live with the worlds envelope, whose
 // `ApiError` renders them too.
 pub use crate::comms::worlds_envelope::{DeployRejection, shed_response, timeout_response};
+
+/// 413 `{"error":"Payload Too Large","message":…}`, as upstream's multipart
+/// parser answers a size or count limit (`upload-error-handler.ts`).
+pub fn too_large(message: impl Into<String>) -> crate::comms::worlds_envelope::ApiError {
+    crate::comms::worlds_envelope::ApiError::http(413, message)
+}
 
 #[cfg(test)]
 mod tests {
@@ -428,6 +580,31 @@ mod tests {
     }
 
     #[test]
+    fn a_source_is_bounded_by_uploads_and_bytes_and_released_on_drop() {
+        let source = format!("test-source-{}", rand::random::<u64>());
+        let a = try_acquire_source(&source, 100, 2, 250).unwrap();
+        assert_eq!(
+            try_acquire_source(&source, 151, 2, 250).err(),
+            Some(SourceLimitReason::Bytes)
+        );
+        let b = try_acquire_source(&source, 150, 2, 250).unwrap();
+        assert_eq!(
+            try_acquire_source(&source, 0, 2, 250).err(),
+            Some(SourceLimitReason::Concurrency)
+        );
+        assert!(try_acquire_source("another-source", 250, 2, 250).is_ok());
+        drop(a);
+        drop(b);
+        assert!(
+            !SOURCES.lock().contains_key(&source),
+            "an idle source holds no entry"
+        );
+        assert_eq!(source_charge(None, 350), 350);
+        assert_eq!(source_charge(Some(10), 350), 10);
+        assert_eq!(source_charge(Some(1_000), 350), 350);
+    }
+
+    #[test]
     fn limiter_knobs_reject_zero_with_upstream_message_shape() {
         assert_eq!(positive_limit("MAX_CONCURRENT_UPLOADS", 40).unwrap(), 40);
         let err = positive_limit("MAX_CONCURRENT_UPLOADS", 0).unwrap_err();
@@ -435,6 +612,34 @@ mod tests {
             err.to_string(),
             "MAX_CONCURRENT_UPLOADS must be a positive integer, got 0"
         );
+    }
+
+    /// `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE` is shared with content's
+    /// deploys: the config refuses what this check would refuse at startup.
+    #[test]
+    fn the_shared_per_source_byte_floor_is_one_world_deploy() {
+        let max_upload = super::super::deploy::MAX_UPLOAD_SIZE_BYTES as u64;
+        let parse = |bytes: u64| {
+            crate::config::Config::parse_for_tests(&[
+                "x",
+                "--database-url",
+                "postgres:///c",
+                "--max-in-flight-upload-bytes-per-source",
+                &bytes.to_string(),
+            ])
+        };
+        assert!(parse(max_upload - 1).is_err());
+        let set = parse(max_upload)
+            .unwrap()
+            .content
+            .max_in_flight_upload_bytes_per_source
+            .unwrap();
+        let limits = UploadLimits {
+            max_in_flight_upload_bytes_per_source: set,
+            ..UploadLimits::default()
+        };
+        assert!(limits.validate(max_upload).is_ok());
+        assert!(DEFAULT_MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE >= max_upload);
     }
 
     #[test]

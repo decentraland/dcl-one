@@ -6,7 +6,7 @@ In-world, your profile helps others get to know who you are. When you hover over
 
 You'll see a pencil icon next to the Profile components you can edit, such as your username and 'About Me' section. Writing a little bit about yourself and your interests can make it easier to make friends, but be mindful not to share sensitive personal information.
 
-![](/docs/player/images/media/enji.webp)
+![](/docs/player/images/media/enji.webp)
 
 ## Badges
 
@@ -14,7 +14,7 @@ Badges are a fun way to celebrate your achievements and activities in Decentrala
 
 Check the Badges tab of your profile to see your Badges progress and what you need to do to unlock a new Badge or the next tier of a Badge you've already earned.
 
-![](/docs/player/images/media/badge.webp) ![](/docs/player/images/media/badge2.webp)
+![](/docs/player/images/media/badge.webp) ![](/docs/player/images/media/badge2.webp)
 
 ## Photos
 
@@ -28,4 +28,4 @@ Help others get to know you by sharing your favorite pictures of your time in De
 
 You're set! Any photo marked as Public will appear in your Profile. To remove a photo, just toggle off the Public setting.
 
-![](/docs/player/images/media/Pictures.webp)
+![](/docs/player/images/media/Pictures.webp)

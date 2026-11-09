@@ -298,7 +298,8 @@ export function catalogTransport(scenario: CatalogScenario = "ok", overrides: Ca
     const answer = answers[path];
     if (answer === undefined) return { status: 404, body: JSON.stringify({ error: `no fixture for ${path}` }) };
     if (scenario === "empty") return { status: 200, body: JSON.stringify(path.endsWith("/suggested") ? { data: [], personalized: false } : { data: [], total: 0 }) };
-    const body = typeof answer === "function" ? (answer as (u: URL) => unknown)(url) : answer;
+    // An answer may be a promise: a test holds a read open to see the page before it lands.
+    const body = await (typeof answer === "function" ? (answer as (u: URL) => unknown)(url) : answer);
     return { status: 200, body: JSON.stringify(body) };
   };
   return Object.assign(transport, { calls });
@@ -330,8 +331,8 @@ export type HarnessProps = {
   children: ReactNode;
   /** The route pattern the page is mounted at (e.g. `/shop/item/:contractAddress/:itemId`). */
   path?: string;
-  /** Where the memory router starts. */
-  entry?: string;
+  /** Where the memory router starts: a path, or a location with its navigation state. */
+  entry?: string | { pathname: string; search?: string; state?: unknown };
   session?: SessionKind;
   scenario?: CatalogScenario;
   overrides?: CatalogAnswers;
@@ -339,8 +340,9 @@ export type HarnessProps = {
   offers?: OfferSource;
   host?: ShopWalletHost;
   cart?: CartStore;
-  /** The feature-flags service's answer (lib/remoteFlags.ts); every rollout flag is off unless named here. */
-  remoteFlags?: Record<string, boolean>;
+  /** The feature-flags service's answer (lib/remoteFlags.ts); every rollout flag is off unless named here. Null
+   * leaves it unanswered, so the page reads the service (a test stubs it). */
+  remoteFlags?: Record<string, boolean> | null;
 };
 
 /**

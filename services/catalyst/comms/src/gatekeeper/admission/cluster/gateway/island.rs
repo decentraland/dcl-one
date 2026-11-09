@@ -380,6 +380,7 @@ mod tests {
             "metadata",
         ] {
             let mut participant = ParticipantInfo {
+                attributes: Default::default(),
                 sid: "PA_fixture".into(),
                 identity: WALLET.into(),
                 metadata: Some(
@@ -389,6 +390,7 @@ mod tests {
                     .to_string(),
                 ),
                 can_update_metadata: Some(false),
+                joined_at: None,
             };
             match invalid {
                 "writable" => participant.can_update_metadata = Some(true),

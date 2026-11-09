@@ -1,26 +1,21 @@
 //! Social-owned implementation of the gatekeeper directory.
-use crate::comms::interfaces::{ModerationNotification, SocialDirectory, StreamingNotification};
+use crate::comms::interfaces::{
+    ModerationNotification, SocialDirectory, StreamingNotification, UserNotification,
+};
 use crate::{Address, CommunityId};
 use chrono::NaiveDateTime;
 use sqlx::PgPool;
 
+const STREAMING_NS: uuid::Uuid = uuid::Uuid::from_bytes([
+    0x5b, 0x0e, 0x7c, 0x1a, 0x3d, 0x42, 0x4f, 0x8b, 0x9a, 0x61, 0x2c, 0xe4, 0x77, 0x08, 0xd3, 0x95,
+]);
+
 pub struct Directory {
     pool: PgPool,
-    /// The social RPC's fan-out, attached in `serve` once it exists.
-    updates: std::sync::OnceLock<crate::rpc::pubsub::PubSub>,
 }
 impl Directory {
     pub fn new(pool: PgPool) -> Self {
-        Self {
-            pool,
-            updates: std::sync::OnceLock::new(),
-        }
-    }
-
-    /// Attaches the social RPC's fan-out (once): a room the gatekeeper
-    /// closes reaches the open community voice streams as ENDED.
-    pub fn set_updates(&self, updates: crate::rpc::pubsub::PubSub) {
-        let _ = self.updates.set(updates);
+        Self { pool }
     }
 }
 
@@ -32,6 +27,24 @@ impl SocialDirectory for Directory {
         notification: &ModerationNotification,
     ) -> Result<(), sqlx::Error> {
         crate::notifications::moderation::insert(transaction, notification).await
+    }
+    async fn notify_user_notifications(
+        &self,
+        transaction: &mut sqlx::PgConnection,
+        notifications: &[UserNotification],
+    ) -> Result<(), sqlx::Error> {
+        let batch: Vec<_> = notifications
+            .iter()
+            .map(|n| crate::notifications::store::NewNotification {
+                id: n.id,
+                address: n.recipient.clone(),
+                kind: n.kind.to_string(),
+                metadata: n.metadata.clone(),
+                occurred_at: n.occurred_at,
+            })
+            .collect();
+        crate::notifications::store::insert_notifications(transaction, &batch).await?;
+        Ok(())
     }
     async fn community_members(&self, community: CommunityId) -> Result<Vec<Address>, sqlx::Error> {
         sqlx::query_scalar("SELECT member_address FROM social.community_members WHERE community_id = $1 ORDER BY member_address").bind(community).fetch_all(&self.pool).await
@@ -47,29 +60,51 @@ impl SocialDirectory for Directory {
         sqlx::query("INSERT INTO social.user_settings (address, private_messages_privacy, updated_at) VALUES ($1, $2, $3) ON CONFLICT (address) DO UPDATE SET private_messages_privacy = EXCLUDED.private_messages_privacy, updated_at = EXCLUDED.updated_at").bind(address).bind(privacy).bind(chrono::Utc::now().naive_utc()).execute(&self.pool).await?;
         Ok(())
     }
-    async fn notify_community_voice_ended(
+    async fn record_community_voice_ended(
         &self,
         community: CommunityId,
         event_key: &str,
         event: &serde_json::Value,
         occurred_at: NaiveDateTime,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query("INSERT INTO social.notifications (id, address, type, metadata, broadcast_key, occurred_at, read, created_at) SELECT gen_random_uuid(), m.member_address, 'community-streaming-ended', $2, $3, $4, FALSE, $4 FROM social.community_members m WHERE m.community_id = $1 ON CONFLICT (address, broadcast_key) WHERE broadcast_key IS NOT NULL DO NOTHING").bind(community).bind(event).bind(event_key).bind(occurred_at).execute(&self.pool).await?;
-        Ok(())
+        // Ranking only: upstream produced no member notification for this event.
+        let mut tx = self.pool.begin().await?;
+        crate::communities::ranking::record_stream(
+            &mut tx,
+            community.as_uuid(),
+            event_key,
+            event,
+            occurred_at,
+        )
+        .await?;
+        tx.commit().await
     }
     async fn notify_streaming_notification(
         &self,
         notification: &StreamingNotification,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query("INSERT INTO social.notifications (id, address, type, metadata, broadcast_key, occurred_at, read, created_at) VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, FALSE, $5) ON CONFLICT (address, broadcast_key) WHERE broadcast_key IS NOT NULL DO NOTHING").bind(&notification.recipient).bind(notification.kind.as_str()).bind(&notification.metadata).bind(&notification.event_key).bind(notification.occurred_at).execute(&self.pool).await?;
+        let notice = crate::notifications::store::NewNotification {
+            id: uuid::Uuid::new_v5(
+                &STREAMING_NS,
+                format!(
+                    "{}:{}",
+                    notification.event_key,
+                    notification.recipient.as_str()
+                )
+                .as_bytes(),
+            ),
+            address: notification.recipient.clone(),
+            kind: notification.kind.as_str().to_string(),
+            metadata: notification.metadata.clone(),
+            occurred_at: notification.occurred_at,
+        };
+        crate::notifications::store::insert_keyed_notification(
+            &self.pool,
+            &notification.event_key,
+            &notice,
+        )
+        .await?;
         Ok(())
-    }
-    async fn community_voice_room_closed(&self, community: CommunityId) {
-        if let Some(updates) = self.updates.get() {
-            updates
-                .community_voice_closed(&self.pool, community.as_uuid())
-                .await;
-        }
     }
 }
 
@@ -124,5 +159,103 @@ mod tests {
         let row: (String, serde_json::Value) = sqlx::query_as("SELECT type, metadata FROM social.notifications WHERE address = $1 AND broadcast_key = $2").bind(&address).bind(&notification.event_key).fetch_one(&pool).await.unwrap();
         assert_eq!(row.0, "streaming_place_updated");
         assert_eq!(row.1, notification.metadata);
+        let deliveries: i64 = sqlx::query_scalar("SELECT count(*) FROM social.notifications n JOIN social.notification_deliveries d ON d.notification_id = n.id WHERE n.address = $1 AND n.broadcast_key = $2").bind(&address).bind(&notification.event_key).fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            deliveries, 1,
+            "streaming notices enter the email outbox once"
+        );
+    }
+
+    #[tokio::test]
+    async fn community_voice_end_ranks_once_and_notifies_no_member() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let directory = Directory::new(pool.clone());
+        let community = uuid::Uuid::new_v4();
+        let member =
+            Address::parse(&format!("0x00000000{}", uuid::Uuid::new_v4().simple())).unwrap();
+        sqlx::query(
+            "INSERT INTO social.communities (id,name,owner_address) VALUES ($1,'Voice',$2)",
+        )
+        .bind(community)
+        .bind(&member)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO social.community_members (community_id,member_address,role) VALUES ($1,$2,'owner')")
+            .bind(community).bind(&member).execute(&pool).await.unwrap();
+        let key = format!("community-streaming-ended-{}", uuid::Uuid::new_v4());
+        let event = serde_json::json!({"metadata":{"communityId":community,"totalParticipants":3}});
+        for _ in 0..2 {
+            directory
+                .record_community_voice_ended(
+                    CommunityId::from_uuid(community),
+                    &key,
+                    &event,
+                    chrono::Utc::now().naive_utc(),
+                )
+                .await
+                .unwrap();
+        }
+        let notices: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM social.notifications WHERE address = $1")
+                .bind(&member)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(notices, 0);
+        let streams: i32 = sqlx::query_scalar(
+            "SELECT ranking_streams_count FROM social.communities WHERE id = $1",
+        )
+        .bind(community)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(streams, 1, "a replayed key ranks once");
+    }
+
+    #[tokio::test]
+    async fn user_notices_land_in_the_producers_transaction_once() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let directory = Directory::new(pool.clone());
+        let address =
+            Address::parse(&format!("0x00000000{}", uuid::Uuid::new_v4().simple())).unwrap();
+        let notice = UserNotification {
+            id: uuid::Uuid::new_v4(),
+            recipient: address.clone(),
+            kind: "worlds_permission_granted",
+            metadata: serde_json::json!({"title": "World Permission Granted"}),
+            occurred_at: chrono::Utc::now().naive_utc(),
+        };
+        let count = || async {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM social.notifications n \
+                   JOIN social.notification_deliveries d ON d.notification_id = n.id \
+                  WHERE n.address = $1 AND n.type = 'worlds_permission_granted'",
+            )
+            .bind(&address)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        let mut tx = pool.begin().await.unwrap();
+        directory
+            .notify_user_notifications(&mut tx, std::slice::from_ref(&notice))
+            .await
+            .unwrap();
+        tx.rollback().await.unwrap();
+        assert_eq!(count().await, 0, "a rolled-back change leaves no notice");
+        for _ in 0..2 {
+            let mut tx = pool.begin().await.unwrap();
+            directory
+                .notify_user_notifications(&mut tx, std::slice::from_ref(&notice))
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+        }
+        assert_eq!(count().await, 1);
     }
 }

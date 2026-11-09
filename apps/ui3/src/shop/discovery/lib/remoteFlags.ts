@@ -7,7 +7,8 @@
 // As upstream, the file lives in a module snapshot for 60s rather than in the query cache, so a page
 // invalidating its queries (after a purchase) does not switch a flag off while it refetches. A read gets
 // 3s and one retry; a failed refresh keeps the last answer, and a mount or focus 10s later tries again.
-// Flags a host (or a test) primes are kept: no read replaces them.
+// Flags a host (or a test) primes are kept: no read replaces them. As upstream, a variant keeps only its string
+// payload (an address list, for one).
 
 import { useEffect, useSyncExternalStore } from "react";
 
@@ -20,12 +21,29 @@ const BACKOFF_MS = 10_000;
 export const REMOTE_FLAG = {
   /** Whether the Shop asks for personalised suggestions at all; the row still hides itself without a signal. */
   suggestedForYou: "shop-suggested-for-you",
+  /** Creators' running sales: discounted prices, the Best Deals rail and the deals filter (shop@94584a5c useCreatorSalesEnabled). */
+  creatorSales: "shop-creator-sales",
+  /**
+   * The Marketplace inside the Shop: resales, bids, LAND, NAME resale, listing and selling, an item's owners and
+   * sales, favorites lists. Shown only with this on AND a web3 wallet session (market/access.tsx). That only decides
+   * what is drawn: the lock is the node's shop service reading the same key and refusing those calls while it is
+   * off, so the flag is turned on only where the node does.
+   */
+  marketplaceFeatures: "shop-marketplace-features",
+  /**
+   * The creator's store dashboard, My Store (shop@3a322cf9 useMyStoreAccess). Its variant may name accounts, and
+   * then only they get in (seller/lib/featureFlags.ts).
+   */
+  myStore: "shop-my-store",
 } as const;
 
 export type RemoteFlag = (typeof REMOTE_FLAG)[keyof typeof REMOTE_FLAG];
 
+/** The flags file as kept: each flag on only where it says `true`, and each enabled variant's string payload. */
+export type RemoteFlagsAnswer = { flags: Record<string, boolean>; variants: Record<string, string> };
+
 type FlagsWindow = Window & typeof globalThis & { __SHOP_FEATURE_FLAGS__?: string };
-type Snapshot = { at: number; primed: boolean; flags: Readonly<Record<string, boolean>> };
+type Snapshot = { at: number; primed: boolean; flags: Readonly<Record<string, boolean>>; variants: Readonly<Record<string, string>> };
 
 let snapshot: Snapshot | null = null;
 let inflight: Promise<void> | null = null;
@@ -46,18 +64,46 @@ function service(): string {
   return (declared || DEFAULT_SERVICE).replace(/\/$/, "");
 }
 
-function publish(next: Snapshot | null): void {
-  snapshot = next;
+/** Bumped whenever the answer changes or a read gives up, so a gate waiting for an answer re-renders either way. */
+let version = 0;
+
+function notify(): void {
+  version++;
   for (const l of listeners) l();
 }
 
-export async function fetchRemoteFlags(signal?: AbortSignal): Promise<Record<string, boolean>> {
+function publish(next: Snapshot | null): void {
+  snapshot = next;
+  notify();
+}
+
+/**
+ * The service's answer as upstream keeps it (shop@3a322cf9 fetchSnapshot): a flag on only where it says `true`, and a
+ * variant's payload only when the variant is enabled and its value a string; the rest of the envelope is dropped.
+ */
+export function parseRemoteFlags(body: unknown): RemoteFlagsAnswer {
+  const file = (body && typeof body === "object" ? body : {}) as {
+    flags?: Record<string, unknown> | null;
+    variants?: Record<string, { enabled?: unknown; payload?: { value?: unknown } | null } | null> | null;
+  };
+  const flags: Record<string, boolean> = {};
+  for (const [key, value] of Object.entries(file.flags ?? {})) flags[key] = value === true;
+  const variants: Record<string, string> = {};
+  for (const [key, variant] of Object.entries(file.variants ?? {})) {
+    const value = variant?.payload?.value;
+    if (variant?.enabled === true && typeof value === "string") variants[key] = value;
+  }
+  return { flags, variants };
+}
+
+export async function readRemoteFlags(signal?: AbortSignal): Promise<RemoteFlagsAnswer> {
   const res = await fetch(`${service()}/${APP}.json`, { signal });
   if (!res.ok) throw new Error(`feature flags: HTTP ${res.status}`);
-  const body = (await res.json()) as { flags?: Record<string, unknown> } | null;
-  const flags: Record<string, boolean> = {};
-  for (const [key, value] of Object.entries(body?.flags ?? {})) flags[key] = value === true;
-  return flags;
+  return parseRemoteFlags(await res.json());
+}
+
+export async function fetchRemoteFlags(signal?: AbortSignal): Promise<Record<string, boolean>> {
+  return (await readRemoteFlags(signal)).flags;
 }
 
 /**
@@ -75,16 +121,20 @@ export function refreshRemoteFlags(now = Date.now()): Promise<void> {
   const read: Promise<void> = (async () => {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const flags = await fetchRemoteFlags(AbortSignal.timeout(TIMEOUT_MS));
+        const { flags, variants } = await readRemoteFlags(AbortSignal.timeout(TIMEOUT_MS));
         if (generation !== started) return;
         failedAt = null;
-        publish({ at: stamp(), primed: false, flags });
+        publish({ at: stamp(), primed: false, flags, variants });
         return;
       } catch {
         // Retried once; after that the last answer (or "off") stands until the backoff passes.
       }
     }
-    if (generation === started) failedAt = stamp();
+    if (generation === started) {
+      // The answer stays as it was, but a gate waiting for one moves on: an unread flag is off.
+      failedAt = stamp();
+      notify();
+    }
   })().finally(() => {
     if (inflight === read) inflight = null;
   });
@@ -92,23 +142,66 @@ export function refreshRemoteFlags(now = Date.now()): Promise<void> {
   return read;
 }
 
-/** Hold these flags as the service's answer: a host that knows them, and tests, skip the read. Null forgets them. */
-export function primeRemoteFlags(flags: Record<string, boolean> | null): void {
+/** Whether the flags were primed (by a server render, a host or a test) rather than read here. */
+export function remoteFlagsPrimed(): boolean {
+  return snapshot?.primed === true;
+}
+
+/**
+ * Hold these flags as the service's answer: a host that knows them, and tests, skip the read. Null forgets them. A
+ * primed answer is kept for the document's life (every server-rendered Shop page primes one): a flag switched off
+ * upstream reaches an open tab on its next full load, not within the session. Variants not given are none.
+ */
+export function primeRemoteFlags(flags: Record<string, boolean> | null, variants: Record<string, string> = {}): void {
   generation++;
   failedAt = null;
   // A read already running belongs to the old generation; the next refresh starts its own.
   inflight = null;
-  publish(flags ? { at: Date.now(), primed: true, flags: { ...flags } } : null);
+  publish(flags ? { at: Date.now(), primed: true, flags: { ...flags }, variants: { ...variants } } : null);
 }
 
-/** One rollout flag; false until the service answers yes. */
-export function useRemoteFlag(flag: RemoteFlag): boolean {
-  const current = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+/** A rollout flag's variant payload as last answered (upstream's getAddressListVariant reads it), or null without one. */
+export function remoteFlagVariant(flag: RemoteFlag): string | null {
+  return snapshot?.variants[`${APP}-${flag}`] ?? null;
+}
+
+/**
+ * One rollout flag as last answered, outside React: false until an answer says yes. A page the server rendered has
+ * its answer primed before its first render (sites primes the loader's flags on both sides), so the two agree.
+ */
+export function remoteFlag(flag: RemoteFlag): boolean {
+  return snapshot?.flags[`${APP}-${flag}`] === true;
+}
+
+function useRefreshOnMount(): void {
   useEffect(() => {
     void refreshRemoteFlags();
     const onFocus = () => void refreshRemoteFlags();
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, []);
+}
+
+/** One rollout flag; false until the service answers yes. */
+export function useRemoteFlag(flag: RemoteFlag): boolean {
+  const current = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  useRefreshOnMount();
   return current?.flags[`${APP}-${flag}`] === true;
+}
+
+/**
+ * One rollout flag, or null while nothing has answered yet: a gate that would otherwise send a visitor away can
+ * wait for the answer instead. A read that gave up answers false, as a flag that cannot be read is off.
+ */
+export function remoteFlagState(flag: RemoteFlag): boolean | null {
+  if (snapshot) return snapshot.flags[`${APP}-${flag}`] === true;
+  return failedAt !== null ? false : null;
+}
+
+const getVersion = () => version;
+
+export function useRemoteFlagState(flag: RemoteFlag): boolean | null {
+  useSyncExternalStore(subscribe, getVersion, getVersion);
+  useRefreshOnMount();
+  return remoteFlagState(flag);
 }

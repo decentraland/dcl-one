@@ -3,7 +3,11 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use bevy::{log::debug, platform::collections::HashMap, prelude::error};
+use bevy::{
+    log::{debug, warn},
+    platform::collections::HashMap,
+    prelude::error,
+};
 use futures_channel::mpsc::{unbounded, UnboundedSender};
 use futures_lite::StreamExt;
 use js_sys::{Object, Reflect};
@@ -79,7 +83,8 @@ extern "C" {
 
     async fn local_audio_track_new(options: JsValue) -> JsValue;
     fn local_audio_track_set_enabled(track: &JsValue, enabled: bool);
-    fn local_audio_track_stop(track: &JsValue);
+    #[wasm_bindgen(catch)]
+    fn local_audio_track_stop(track: &JsValue) -> Result<(), JsValue>;
 
     fn local_track_publication_sid(local_track_publication: &JsValue) -> String;
     fn local_track_publication_kind(local_track_publication: &JsValue) -> String;
@@ -96,13 +101,13 @@ const ID_PROPERTY: &str = "__bevyLivekitId";
 #[derive(Default)]
 pub(super) struct Registry {
     next_id: ObjectId,
-    /// Remote participants, publications, remote tracks and local tracks.
-    objects: HashMap<ObjectId, JsValue>,
+    /// Remote handles belong to a room. Local tracks survive room removal until stop/unpublish.
+    objects: HashMap<ObjectId, (Option<RoomId>, JsValue)>,
 }
 
 impl Registry {
     /// The object's id, allocated (and stamped on it) on first sight.
-    fn id_of(&mut self, object: &JsValue) -> ObjectId {
+    fn id_of(&mut self, object: &JsValue, room: Option<RoomId>) -> ObjectId {
         let id = Reflect::get(object, &ID_PROPERTY.into())
             .ok()
             .and_then(|id| id.as_f64())
@@ -112,14 +117,16 @@ impl Registry {
                 let _ = Reflect::set(object, &ID_PROPERTY.into(), &JsValue::from(self.next_id));
                 self.next_id
             });
-        self.objects.entry(id).or_insert_with(|| object.clone());
+        self.objects
+            .entry(id)
+            .or_insert_with(|| (room, object.clone()));
         id
     }
 
     /// A clone (the registry's borrow must not be held while calling into livekit-client, whose
     /// events re-enter it).
     fn get(&self, id: ObjectId) -> Option<JsValue> {
-        let object = self.objects.get(&id).cloned();
+        let object = self.objects.get(&id).map(|(_, object)| object.clone());
         if object.is_none() {
             debug!("unknown livekit object {id}");
         }
@@ -127,12 +134,24 @@ impl Registry {
     }
 
     pub(super) fn release(&mut self, id: ObjectId) {
-        self.objects.remove(&id);
+        self.take(id);
     }
 
-    pub(super) fn remote_participant(&mut self, object: &JsValue) -> RemoteParticipant {
+    fn take(&mut self, id: ObjectId) -> Option<JsValue> {
+        self.objects.remove(&id).map(|(_, object)| object)
+    }
+
+    fn release_room(&mut self, room: RoomId) {
+        self.objects.retain(|_, (owner, _)| *owner != Some(room));
+    }
+
+    pub(super) fn remote_participant(
+        &mut self,
+        object: &JsValue,
+        room: RoomId,
+    ) -> RemoteParticipant {
         RemoteParticipant {
-            id: self.id_of(object),
+            id: self.id_of(object, Some(room)),
             sid: ParticipantSid(remote_participant_sid(object)),
             identity: ParticipantIdentity(remote_participant_identity(object)),
             metadata: remote_participant_metadata(object).unwrap_or_default(),
@@ -143,17 +162,21 @@ impl Registry {
         if remote_participant_is_local(object) {
             Participant::Local(local_participant(object, room))
         } else {
-            Participant::Remote(self.remote_participant(object))
+            Participant::Remote(self.remote_participant(object, room))
         }
     }
 
-    pub(super) fn remote_track_publication(&mut self, object: &JsValue) -> RemoteTrackPublication {
+    pub(super) fn remote_track_publication(
+        &mut self,
+        object: &JsValue,
+        room: RoomId,
+    ) -> RemoteTrackPublication {
         let track = remote_track_publication_track(object);
         let track = (!(track.is_null() || track.is_undefined()))
-            .then(|| self.remote_track(&track))
+            .then(|| self.remote_track(&track, room))
             .flatten();
         RemoteTrackPublication {
-            id: self.id_of(object),
+            id: self.id_of(object, Some(room)),
             sid: remote_track_publication_sid(object),
             kind: TrackKind::from_js_str(&remote_track_publication_kind(object)),
             source: TrackSource::from_js_str(&remote_track_publication_source(object)),
@@ -161,8 +184,8 @@ impl Registry {
         }
     }
 
-    pub(super) fn remote_track(&mut self, object: &JsValue) -> Option<RemoteTrack> {
-        let id = self.id_of(object);
+    pub(super) fn remote_track(&mut self, object: &JsValue, room: RoomId) -> Option<RemoteTrack> {
+        let id = self.id_of(object, Some(room));
         let sid = get_string(object, "sid").unwrap_or_default();
         match get_string(object, "kind").as_deref() {
             Some("audio") => Some(RemoteTrack::Audio(RemoteAudioTrack { id, sid })),
@@ -276,8 +299,12 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
             });
         }
         LivekitCommand::DropRoom(room) => {
-            host.borrow_mut().pending.cancel(room);
-            let host_room = host.borrow_mut().rooms.remove(&room);
+            let host_room = {
+                let mut host = host.borrow_mut();
+                host.pending.cancel(room);
+                host.registry.release_room(room);
+                host.rooms.remove(&room)
+            };
             if let Some(host_room) = host_room {
                 room_drop(&host_room.room);
             }
@@ -363,7 +390,7 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
                     Err("could not create the local audio track".to_owned())
                 } else {
                     local_audio_track_set_enabled(&track, false);
-                    let id = host.borrow_mut().registry.id_of(&track);
+                    let id = host.borrow_mut().registry.id_of(&track, None);
                     Ok(LocalAudioTrack {
                         id,
                         // assigned when the track is published
@@ -376,11 +403,12 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
         LivekitCommand::SetLocalAudioEnabled { track, enabled } => {
             let track = host.borrow().registry.get(track);
             if let Some(track) = track {
-                local_audio_track_set_enabled(&track, enabled);
                 // A revoked publication is never reused. Stop its physical source now,
                 // including while publishTrack still awaits a signaling response.
-                if !enabled {
-                    local_audio_track_stop(&track);
+                if enabled {
+                    local_audio_track_set_enabled(&track, true);
+                } else if let Err(err) = local_audio_track_stop(&track) {
+                    warn!("failed to stop the revoked microphone: {}", js_error(err));
                 }
             }
         }
@@ -392,10 +420,7 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
             let source = host.borrow().registry.get(track);
             let result = source
                 .ok_or_else(|| "microphone source unavailable".to_owned())
-                .map(|track| {
-                    local_audio_track_set_enabled(&track, false);
-                    local_audio_track_stop(&track);
-                });
+                .and_then(|track| local_audio_track_stop(&track).map_err(js_error));
             if release {
                 host.borrow_mut().registry.release(track);
             }
@@ -429,22 +454,24 @@ fn serve(command: LivekitCommand, host: &SharedHost, events: &UnboundedSender<Li
             room,
             track,
         } => {
-            let (local_participant, js_track) = local_participant_and_track(host, room, track);
-            let host = host.clone();
+            // The local track lifetime ends even if DropRoom already removed its room.
+            let js_track = host.borrow_mut().registry.take(track);
+            let local_participant = host
+                .borrow()
+                .rooms
+                .get(&room)
+                .map(|r| room_local_participant(&r.room));
             let events = events.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let result = match (local_participant, js_track) {
-                    (Ok(local_participant), Ok(js_track)) => {
-                        let result =
-                            local_participant_unpublish_track(&local_participant, &js_track)
-                                .await
-                                .map(|publication| local_track_publication(&publication))
-                                .map_err(js_error);
-                        // stopLocalTrackOnUnpublish: the track is done
-                        host.borrow_mut().registry.release(track);
-                        result
+                    (Some(local_participant), Some(js_track)) => {
+                        local_participant_unpublish_track(&local_participant, &js_track)
+                            .await
+                            .map(|publication| local_track_publication(&publication))
+                            .map_err(js_error)
                     }
-                    (Err(err), _) | (_, Err(err)) => Err(err),
+                    (None, _) => Err(format!("unknown room {room}")),
+                    (_, None) => Err(format!("unknown local track {track}")),
                 };
                 reply(&events, request, Reply::Publish(result));
             });
@@ -477,7 +504,11 @@ async fn connect(
         let host = host.clone();
         let events = events.clone();
         move |room_event: JsValue| {
-            let event = RoomEvent::from_js(&room_event, room, &mut host.borrow_mut().registry);
+            let mut host = host.borrow_mut();
+            if !host.rooms.contains_key(&room) && !host.pending.accepts_events(room) {
+                return;
+            }
+            let event = RoomEvent::from_js(&room_event, room, &mut host.registry);
             if let Some(event) = event {
                 let _ = events.unbounded_send(LivekitEvent::Room { room, event });
             }
@@ -493,13 +524,16 @@ async fn connect(
     )
     .await;
     let wanted = host.borrow_mut().pending.finish(room);
-    let js_room = result.map_err(|error| super::RoomError {
-        message: "LiveKit connection failed".to_owned(),
-        status: Reflect::get(&error, &"status".into())
-            .ok()
-            .and_then(|value| value.as_f64())
-            .filter(|value| (100.0..600.0).contains(value))
-            .map(|value| value as u16),
+    let js_room = result.map_err(|error| {
+        host.borrow_mut().registry.release_room(room);
+        super::RoomError {
+            message: "LiveKit connection failed".to_owned(),
+            status: Reflect::get(&error, &"status".into())
+                .ok()
+                .and_then(|value| value.as_f64())
+                .filter(|value| (100.0..600.0).contains(value))
+                .map(|value| value as u16),
+        }
     })?;
     if !wanted {
         room_drop(&js_room);
@@ -549,7 +583,6 @@ fn build_room_options(room_options: &RoomOptions) -> JsValue {
     set(&object, "dynacast", room_options.dynacast);
     set(&object, "stopLocalTrackOnUnpublish", true);
     set(&object, "disconnectOnPageLeave", true);
-    set(&object, "webAudioMix", true);
     object.into()
 }
 

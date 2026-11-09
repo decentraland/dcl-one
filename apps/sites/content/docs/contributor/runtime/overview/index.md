@@ -2,7 +2,7 @@
 
 The Decentraland scene runtime is the sandboxed execution environment where a [scene](/docs/contributor/content/entity-types/scenes/) runs its main script.
 
-Each scene runs inside its own isolated runtime. Within it, it has access to certain [global objects](/docs/contributor/runtime/globals/) and can import [modules](/docs/contributor/modules/) from the runtime library.
+Each scene runs inside its own isolated runtime. Within it, it has access to certain [global objects](/docs/contributor/runtime/globals/) and can import [modules](/docs/contributor/runtime/modules/) from the runtime library.
 
 ```mermaid
 flowchart TB

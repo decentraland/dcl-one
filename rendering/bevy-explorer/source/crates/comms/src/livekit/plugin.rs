@@ -135,8 +135,8 @@ fn start_livekit(
         };
         if let Ok(mut transport) = existing.get_mut(ev.entity) {
             transport.address.clone_from(&ev.address);
-            entity.remove::<(super::room::Connecting, super::room::ConnectFailed)>();
-            entity.insert(super::room::Connecting);
+            entity.try_remove::<(super::room::Connecting, super::room::ConnectFailed)>();
+            entity.try_insert(super::room::Connecting);
             continue;
         }
         info!("starting livekit protocol");
@@ -148,7 +148,7 @@ fn start_livekit(
         // connect-time version. Peers reach this transport for guest profile request/response by
         // picking a profile-capable transport at request time, not off any announcement of ours.
 
-        entity.insert((
+        entity.try_insert((
             components,
             super::RoomSender {
                 sender: sender.clone(),
@@ -156,13 +156,46 @@ fn start_livekit(
             },
         ));
         if let Some(context) = ev.context {
-            entity.insert(Transport {
+            entity.try_insert(Transport {
                 transport_type: TransportType::Livekit,
                 sender,
                 control: Some(control_sender),
                 context,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod stale_start_tests {
+    use super::*;
+
+    #[derive(Resource)]
+    struct Departing(Entity);
+
+    #[test]
+    fn adapter_start_after_queued_despawn_is_harmless() {
+        let mut app = App::new();
+        let owner = app.world_mut().spawn_empty().id();
+        app.insert_resource(Departing(owner))
+            .add_event::<StartLivekit>()
+            .add_systems(
+                Update,
+                (
+                    |mut commands: Commands, departing: Res<Departing>| {
+                        commands.entity(departing.0).despawn();
+                    },
+                    start_livekit,
+                )
+                    .chain_ignore_deferred(),
+            );
+        app.world_mut().send_event(StartLivekit {
+            entity: owner,
+            address: "wss://example.org?access_token=test".into(),
+            context: None,
+        });
+        app.update();
+        assert!(app.world().get_entity(owner).is_err());
     }
 }
 

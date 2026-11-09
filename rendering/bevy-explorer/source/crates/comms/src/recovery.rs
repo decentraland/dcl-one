@@ -11,6 +11,10 @@ impl PendingConnections {
             *cancelled = true;
         }
     }
+
+    pub fn accepts_events(&self, id: u32) -> bool {
+        self.0.get(&id) == Some(&false)
+    }
     pub fn finish(&mut self, id: u32) -> bool {
         self.0.remove(&id) == Some(false)
     }
@@ -50,10 +54,13 @@ mod tests {
     fn a_cancelled_page_connect_can_never_be_installed() {
         let mut pending = PendingConnections::default();
         pending.start(7);
+        assert!(pending.accepts_events(7));
         pending.cancel(7);
+        assert!(!pending.accepts_events(7));
         assert!(!pending.finish(7));
         pending.start(8);
         assert!(pending.finish(8));
+        assert!(!pending.accepts_events(8));
         pending.cancel(9);
         assert!(!pending.finish(9));
         assert!(!pending.finish(8));

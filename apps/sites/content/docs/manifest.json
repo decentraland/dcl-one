@@ -2,8 +2,17 @@
  "generator": "sites/scripts/gen-docs-content.mts",
  "source": {
   "repo": "decentraland/docs",
-  "commit": "452eabb509a8a1806d3c503a94adbb886711e53f",
-  "committedAt": "2026-09-24T18:34:24-03:00"
+  "commit": "8a67669b5f811c930f7928a234484147f7e09b33",
+  "committedAt": "2026-11-05T17:46:31-03:00",
+  "fallbackMedia": [
+   {
+    "file": "creator/images/wearables-and-emotes/creating-wearables/19_skin_uv.webp",
+    "sourceCommit": "452eabb509a8a1806d3c503a94adbb886711e53f",
+    "sourceFile": "creator/images/wearables-and-emotes/creating-wearables/19_skin_uv.png",
+    "sourceSha256": "25cf00f8fb30012e1e8cd8eb646a55cbafb744c2dcec009adecc3161fb2f0493",
+    "sha256": "faf9d0eb4c552ab630da2d11095ff8dd527c6138d872fff357811fd3f16e3dbf"
+   }
+  ]
  },
  "spaces": [
   {
@@ -308,6 +317,13 @@
        "children": [
         {
          "type": "item",
+         "title": "Mission, Vision and Roles",
+         "url": "/docs/player/dao/mission-vision-and-roles/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
          "title": "What is the DAO",
          "url": "/docs/player/dao/what-is-the-dao/",
          "icon": null,
@@ -396,6 +412,422 @@
        "url": "/docs/creator/tutorials/examples/",
        "icon": null,
        "children": []
+      },
+      {
+       "type": "item",
+       "title": "Start here",
+       "url": "/docs/creator/tutorials/examples/getting-started/",
+       "icon": null,
+       "children": [
+        {
+         "type": "item",
+         "title": "SDK7 scene template",
+         "url": "/docs/creator/tutorials/examples/getting-started/sdk7-scene-template/",
+         "icon": null,
+         "children": []
+        }
+       ]
+      },
+      {
+       "type": "item",
+       "title": "Published Games",
+       "url": "/docs/creator/tutorials/examples/published-games/",
+       "icon": null,
+       "children": [
+        {
+         "type": "item",
+         "title": "Alien Scrapyard",
+         "url": "/docs/creator/tutorials/examples/published-games/alien-scrapyard/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Astro Crew",
+         "url": "/docs/creator/tutorials/examples/published-games/astro-crew/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Bloom Garden",
+         "url": "/docs/creator/tutorials/examples/published-games/bloom-garden/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Clean The Club",
+         "url": "/docs/creator/tutorials/examples/published-games/clean-the-club/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Cozy Farm",
+         "url": "/docs/creator/tutorials/examples/published-games/cozy-farm/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Dead Surge",
+         "url": "/docs/creator/tutorials/examples/published-games/dead-surge/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Fastlane Bowling",
+         "url": "/docs/creator/tutorials/examples/published-games/fastlane-bowling/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Flag Tag",
+         "url": "/docs/creator/tutorials/examples/published-games/flag-tag/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Goal Legends",
+         "url": "/docs/creator/tutorials/examples/published-games/goal-legends/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Kick Off",
+         "url": "/docs/creator/tutorials/examples/published-games/kick-off/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Monster Recon",
+         "url": "/docs/creator/tutorials/examples/published-games/monster-recon/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "My Dear Pet",
+         "url": "/docs/creator/tutorials/examples/published-games/my-dear-pet/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Pigeon Deluxe",
+         "url": "/docs/creator/tutorials/examples/published-games/pigeon-deluxe/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Prime Drive",
+         "url": "/docs/creator/tutorials/examples/published-games/prime-drive/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Shroom Zoom",
+         "url": "/docs/creator/tutorials/examples/published-games/shroom-zoom/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Sky Chaser",
+         "url": "/docs/creator/tutorials/examples/published-games/sky-chaser/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Slay the Steps",
+         "url": "/docs/creator/tutorials/examples/published-games/slay-the-steps/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Slide Penguin",
+         "url": "/docs/creator/tutorials/examples/published-games/slide-penguin/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "The Fortune Teller",
+         "url": "/docs/creator/tutorials/examples/published-games/the-fortune-teller/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Tower of Madness",
+         "url": "/docs/creator/tutorials/examples/published-games/tower-of-madness/",
+         "icon": null,
+         "children": []
+        }
+       ]
+      },
+      {
+       "type": "item",
+       "title": "Gameplay and interaction",
+       "url": "/docs/creator/tutorials/examples/gameplay-interaction/",
+       "icon": null,
+       "children": [
+        {
+         "type": "item",
+         "title": "Input modifier",
+         "url": "/docs/creator/tutorials/examples/gameplay-interaction/input-modifier/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Particle system",
+         "url": "/docs/creator/tutorials/examples/gameplay-interaction/particle-system/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Pointer lock control",
+         "url": "/docs/creator/tutorials/examples/gameplay-interaction/pointer-lock-control/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Raycasting and collider layers",
+         "url": "/docs/creator/tutorials/examples/gameplay-interaction/raycasting-and-collider-layers/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Trigger areas",
+         "url": "/docs/creator/tutorials/examples/gameplay-interaction/trigger-areas/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Zombie Attack",
+         "url": "/docs/creator/tutorials/examples/gameplay-interaction/zombie-attack/",
+         "icon": null,
+         "children": []
+        }
+       ]
+      },
+      {
+       "type": "item",
+       "title": "UI, camera, and player experience",
+       "url": "/docs/creator/tutorials/examples/ui-camera-player/",
+       "icon": null,
+       "children": [
+        {
+         "type": "item",
+         "title": "NPC Toolkit",
+         "url": "/docs/creator/tutorials/examples/ui-camera-player/npc-toolkit/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Spectate mode",
+         "url": "/docs/creator/tutorials/examples/ui-camera-player/spectate-mode/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "UI animations",
+         "url": "/docs/creator/tutorials/examples/ui-camera-player/ui-animations/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "UI safe areas",
+         "url": "/docs/creator/tutorials/examples/ui-camera-player/ui-safe-areas/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Virtual cameras",
+         "url": "/docs/creator/tutorials/examples/ui-camera-player/virtual-cameras/",
+         "icon": null,
+         "children": []
+        }
+       ]
+      },
+      {
+       "type": "item",
+       "title": "Multiplayer",
+       "url": "/docs/creator/tutorials/examples/multiplayer-data-services/",
+       "icon": null,
+       "children": [
+        {
+         "type": "item",
+         "title": "Mini Games library",
+         "url": "/docs/creator/tutorials/examples/multiplayer-data-services/mini-games-library/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Multiplayer Server leaderboard",
+         "url": "/docs/creator/tutorials/examples/multiplayer-data-services/authoritative-server-leaderboard/",
+         "icon": null,
+         "children": []
+        }
+       ]
+      },
+      {
+       "type": "item",
+       "title": "External services",
+       "url": "/docs/creator/tutorials/examples/external-services/",
+       "icon": null,
+       "children": [
+        {
+         "type": "item",
+         "title": "Data from a spreadsheet",
+         "url": "/docs/creator/tutorials/examples/external-services/spreadsheet-data/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Third-party guest book",
+         "url": "/docs/creator/tutorials/examples/external-services/third-party-guest-book/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Third-party leaderboard",
+         "url": "/docs/creator/tutorials/examples/external-services/third-party-leaderboard/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Third-party player authentication",
+         "url": "/docs/creator/tutorials/examples/external-services/third-party-player-authentication/",
+         "icon": null,
+         "children": []
+        }
+       ]
+      },
+      {
+       "type": "item",
+       "title": "Audio, video, and environment",
+       "url": "/docs/creator/tutorials/examples/audio-video-environment/",
+       "icon": null,
+       "children": [
+        {
+         "type": "item",
+         "title": "Audio visualization",
+         "url": "/docs/creator/tutorials/examples/audio-video-environment/audio-visualization/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Dynamic lights",
+         "url": "/docs/creator/tutorials/examples/audio-video-environment/dynamic-lights/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Skybox control",
+         "url": "/docs/creator/tutorials/examples/audio-video-environment/skybox-control/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Video streaming",
+         "url": "/docs/creator/tutorials/examples/audio-video-environment/video-streaming/",
+         "icon": null,
+         "children": []
+        }
+       ]
+      },
+      {
+       "type": "item",
+       "title": "Performance and scene systems",
+       "url": "/docs/creator/tutorials/examples/performance-scene-systems/",
+       "icon": null,
+       "children": [
+        {
+         "type": "item",
+         "title": "Asset loading",
+         "url": "/docs/creator/tutorials/examples/performance-scene-systems/asset-loading/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Material and texture gallery",
+         "url": "/docs/creator/tutorials/examples/performance-scene-systems/material-and-texture-gallery/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Modifier areas",
+         "url": "/docs/creator/tutorials/examples/performance-scene-systems/modifier-areas/",
+         "icon": null,
+         "children": []
+        }
+       ]
+      },
+      {
+       "type": "item",
+       "title": "Scene management and feedback",
+       "url": "/docs/creator/tutorials/examples/scene-management-feedback/",
+       "icon": null,
+       "children": [
+        {
+         "type": "item",
+         "title": "Scene Feedback",
+         "url": "/docs/creator/tutorials/examples/scene-management-feedback/playtest-feedback/",
+         "icon": null,
+         "children": []
+        }
+       ]
+      },
+      {
+       "type": "item",
+       "title": "Rewards",
+       "url": "/docs/creator/tutorials/examples/rewards/",
+       "icon": null,
+       "children": [
+        {
+         "type": "item",
+         "title": "Clap-to-claim dispenser",
+         "url": "/docs/creator/tutorials/examples/rewards/clap-to-claim-dispenser/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Reward claim dispenser",
+         "url": "/docs/creator/tutorials/examples/rewards/reward-claim-dispenser/",
+         "icon": null,
+         "children": []
+        }
+       ]
       },
       {
        "type": "item",
@@ -904,6 +1336,13 @@
          "url": "/docs/creator/sdk7/design-experience/ux-ui-guide/",
          "icon": null,
          "children": []
+        },
+        {
+         "type": "item",
+         "title": "Playtests",
+         "url": "/docs/creator/sdk7/design-experience/playtests/",
+         "icon": null,
+         "children": []
         }
        ]
       },
@@ -1173,6 +1612,13 @@
          "type": "item",
          "title": "Debug in Production",
          "url": "/docs/creator/sdk7/debugging/debug-in-prod/",
+         "icon": null,
+         "children": []
+        },
+        {
+         "type": "item",
+         "title": "Scene Insights",
+         "url": "/docs/creator/sdk7/debugging/scene-insights/",
          "icon": null,
          "children": []
         },
@@ -1906,6 +2352,13 @@
        "url": "/docs/creator/rewards/integrations/",
        "icon": null,
        "children": []
+      },
+      {
+       "type": "item",
+       "title": "Gifting Credits (Beta)",
+       "url": "/docs/creator/rewards/gifting-credits/",
+       "icon": null,
+       "children": []
       }
      ],
      "url": null
@@ -2034,7 +2487,7 @@
       {
        "type": "item",
        "title": "Entity Types",
-       "url": null,
+       "url": "/docs/contributor/content/entity-types/",
        "icon": null,
        "children": [
         {
@@ -2098,7 +2551,7 @@
       {
        "type": "item",
        "title": "Practice",
-       "url": null,
+       "url": "/docs/contributor/content/practice/",
        "icon": null,
        "children": [
         {
@@ -2169,7 +2622,7 @@
       {
        "type": "item",
        "title": "Runtime Modules",
-       "url": null,
+       "url": "/docs/contributor/runtime/modules/",
        "icon": null,
        "children": [
         {
@@ -2219,7 +2672,7 @@
       {
        "type": "item",
        "title": "Components",
-       "url": null,
+       "url": "/docs/contributor/runtime/components/",
        "icon": null,
        "children": [
         {
@@ -2276,7 +2729,7 @@
       {
        "type": "item",
        "title": "Transport Types",
-       "url": null,
+       "url": "/docs/contributor/communications/transport-types/",
        "icon": null,
        "children": [
         {
@@ -2816,7 +3269,7 @@
    "icon": "terminal",
    "space": "apis",
    "source": "apis/README.md",
-   "updatedAt": "2025-12-17T11:05:01Z",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "apis/index.md"
   },
   {
@@ -3256,8 +3709,18 @@
    "icon": "hand-wave",
    "space": "contributor",
    "source": "contributor/README.md",
-   "updatedAt": "2025-12-29T10:03:10-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/index.md"
+  },
+  {
+   "url": "/docs/contributor/architecture/",
+   "title": "Architecture",
+   "description": null,
+   "icon": null,
+   "space": "contributor",
+   "source": "contributor/architecture/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "contributor/architecture/index.md"
   },
   {
    "url": "/docs/contributor/architecture/architecture/",
@@ -3266,7 +3729,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/architecture/architecture.md",
-   "updatedAt": "2025-12-29T10:03:10-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/architecture/architecture/index.md"
   },
   {
@@ -3276,7 +3739,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/architecture/catalyst.md",
-   "updatedAt": "2026-05-20T16:41:29-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/architecture/catalyst/index.md"
   },
   {
@@ -3286,7 +3749,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/architecture/infrastructure.md",
-   "updatedAt": "2025-11-11T16:44:40-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/architecture/infrastructure/index.md"
   },
   {
@@ -3296,8 +3759,18 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/architecture/services.md",
-   "updatedAt": "2025-11-11T16:44:40-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/architecture/services/index.md"
+  },
+  {
+   "url": "/docs/contributor/authentication/",
+   "title": "Authentication",
+   "description": null,
+   "icon": null,
+   "space": "contributor",
+   "source": "contributor/authentication/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "contributor/authentication/index.md"
   },
   {
    "url": "/docs/contributor/authentication/authchain/",
@@ -3306,7 +3779,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/authentication/authchain.md",
-   "updatedAt": "2025-11-10T17:25:21-03:00",
+   "updatedAt": "2026-10-27T10:42:52-03:00",
    "file": "contributor/authentication/authchain/index.md"
   },
   {
@@ -3316,8 +3789,18 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/authentication/signed-fetch.md",
-   "updatedAt": "2025-11-10T17:25:21-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/authentication/signed-fetch/index.md"
+  },
+  {
+   "url": "/docs/contributor/catalyst/",
+   "title": "Catalyst",
+   "description": null,
+   "icon": null,
+   "space": "contributor",
+   "source": "contributor/catalyst/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "contributor/catalyst/index.md"
   },
   {
    "url": "/docs/contributor/catalyst/glossary/",
@@ -3340,13 +3823,23 @@
    "file": "contributor/catalyst/realm-selection/index.md"
   },
   {
+   "url": "/docs/contributor/communications/",
+   "title": "Communications",
+   "description": null,
+   "icon": null,
+   "space": "contributor",
+   "source": "contributor/communications/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "contributor/communications/index.md"
+  },
+  {
    "url": "/docs/contributor/communications/archipelago/",
    "title": "archipelago",
    "description": null,
    "icon": null,
    "space": "contributor",
    "source": "contributor/communications/archipelago.md",
-   "updatedAt": "2025-11-10T17:33:26-03:00",
+   "updatedAt": "2026-10-27T10:42:52-03:00",
    "file": "contributor/communications/archipelago/index.md"
   },
   {
@@ -3356,7 +3849,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/communications/main-realm.md",
-   "updatedAt": "2025-11-10T17:25:21-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/communications/main-realm/index.md"
   },
   {
@@ -3366,7 +3859,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/communications/messages.md",
-   "updatedAt": "2025-11-10T17:39:21-03:00",
+   "updatedAt": "2026-10-26T21:34:02-03:00",
    "file": "contributor/communications/messages/index.md"
   },
   {
@@ -3376,8 +3869,18 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/communications/overview.md",
-   "updatedAt": "2025-11-10T17:39:21-03:00",
+   "updatedAt": "2026-10-26T21:34:02-03:00",
    "file": "contributor/communications/overview/index.md"
+  },
+  {
+   "url": "/docs/contributor/communications/transport-types/",
+   "title": "Transport Types",
+   "description": null,
+   "icon": null,
+   "space": "contributor",
+   "source": "contributor/communications/transport-types/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "contributor/communications/transport-types/index.md"
   },
   {
    "url": "/docs/contributor/communications/transport-types/livekit/",
@@ -3386,7 +3889,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/communications/transport-types/livekit.md",
-   "updatedAt": "2025-12-17T11:05:01Z",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/communications/transport-types/livekit/index.md"
   },
   {
@@ -3396,7 +3899,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/communications/transport-types/offline.md",
-   "updatedAt": "2025-12-17T11:05:01Z",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/communications/transport-types/offline/index.md"
   },
   {
@@ -3406,7 +3909,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/communications/transport-types/signed-login.md",
-   "updatedAt": "2025-11-12T14:10:29-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/communications/transport-types/signed-login/index.md"
   },
   {
@@ -3416,7 +3919,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/communications/transport-types/simulator.md",
-   "updatedAt": "2025-12-17T11:05:01Z",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/communications/transport-types/simulator/index.md"
   },
   {
@@ -3426,7 +3929,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/communications/transport-types/websocket.md",
-   "updatedAt": "2025-12-17T11:05:01Z",
+   "updatedAt": "2026-10-27T10:42:52-03:00",
    "file": "contributor/communications/transport-types/websocket/index.md"
   },
   {
@@ -3436,8 +3939,18 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/communications/transports.md",
-   "updatedAt": "2025-11-10T17:25:21-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/communications/transports/index.md"
+  },
+  {
+   "url": "/docs/contributor/content/",
+   "title": "Content System",
+   "description": null,
+   "icon": null,
+   "space": "contributor",
+   "source": "contributor/content/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "contributor/content/index.md"
   },
   {
    "url": "/docs/contributor/content/collections/",
@@ -3446,7 +3959,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/content/collections.md",
-   "updatedAt": "2025-12-17T11:05:01Z",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/content/collections/index.md"
   },
   {
@@ -3456,8 +3969,18 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/content/entities.md",
-   "updatedAt": "2025-12-17T11:05:01Z",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/content/entities/index.md"
+  },
+  {
+   "url": "/docs/contributor/content/entity-types/",
+   "title": "Entity Types",
+   "description": null,
+   "icon": null,
+   "space": "contributor",
+   "source": "contributor/content/entity-types/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "contributor/content/entity-types/index.md"
   },
   {
    "url": "/docs/contributor/content/entity-types/emotes/",
@@ -3466,7 +3989,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/content/entity-types/emotes.md",
-   "updatedAt": "2025-12-17T11:05:01Z",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/content/entity-types/emotes/index.md"
   },
   {
@@ -3476,7 +3999,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/content/entity-types/outfits.md",
-   "updatedAt": "2025-12-17T11:05:01Z",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/content/entity-types/outfits/index.md"
   },
   {
@@ -3486,7 +4009,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/content/entity-types/profiles.md",
-   "updatedAt": "2025-12-17T11:05:01Z",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/content/entity-types/profiles/index.md"
   },
   {
@@ -3496,7 +4019,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/content/entity-types/scenes.md",
-   "updatedAt": "2026-02-27T15:49:51-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/content/entity-types/scenes/index.md"
   },
   {
@@ -3506,7 +4029,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/content/entity-types/stores.md",
-   "updatedAt": "2025-12-17T11:05:01Z",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/content/entity-types/stores/index.md"
   },
   {
@@ -3516,7 +4039,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/content/entity-types/wearables.md",
-   "updatedAt": "2025-12-17T11:05:01Z",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/content/entity-types/wearables/index.md"
   },
   {
@@ -3526,7 +4049,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/content/file-system.md",
-   "updatedAt": "2025-11-10T17:25:21-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/content/file-system/index.md"
   },
   {
@@ -3536,7 +4059,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/content/overview.md",
-   "updatedAt": "2025-11-10T17:39:21-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/content/overview/index.md"
   },
   {
@@ -3546,8 +4069,18 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/content/pointers.md",
-   "updatedAt": "2025-12-17T11:05:01Z",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/content/pointers/index.md"
+  },
+  {
+   "url": "/docs/contributor/content/practice/",
+   "title": "Content API Examples",
+   "description": null,
+   "icon": null,
+   "space": "contributor",
+   "source": "contributor/content/practice/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "contributor/content/practice/index.md"
   },
   {
    "url": "/docs/contributor/content/practice/cli-examples/",
@@ -3556,7 +4089,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/content/practice/cli-examples.md",
-   "updatedAt": "2025-12-17T11:05:01Z",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/content/practice/cli-examples/index.md"
   },
   {
@@ -3566,7 +4099,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/content/practice/python-examples.md",
-   "updatedAt": "2025-12-17T11:05:01Z",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/content/practice/python-examples/index.md"
   },
   {
@@ -3576,8 +4109,18 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/content/snapshots.md",
-   "updatedAt": "2025-12-17T11:05:01Z",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/content/snapshots/index.md"
+  },
+  {
+   "url": "/docs/contributor/contributor-guides/",
+   "title": "Contributor Guides",
+   "description": null,
+   "icon": null,
+   "space": "contributor",
+   "source": "contributor/contributor-guides/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "contributor/contributor-guides/index.md"
   },
   {
    "url": "/docs/contributor/contributor-guides/api-documentation/",
@@ -3746,7 +4289,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/contributor-guides/web-ui-standards/README.md",
-   "updatedAt": "2026-01-08T17:51:43-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/contributor-guides/web-ui-standards/index.md"
   },
   {
@@ -3756,7 +4299,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/contributor-guides/web-ui-standards/custom-components.md",
-   "updatedAt": "2025-11-10T16:49:06-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/contributor-guides/web-ui-standards/custom-components/index.md"
   },
   {
@@ -3786,7 +4329,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/contributor-guides/web-ui-standards/styling-and-theming.md",
-   "updatedAt": "2025-11-10T18:03:15Z",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/contributor-guides/web-ui-standards/styling-and-theming/index.md"
   },
   {
@@ -3840,13 +4383,23 @@
    "file": "contributor/contributor-guides/well-known-components/logic-components/index.md"
   },
   {
+   "url": "/docs/contributor/runtime/",
+   "title": "Scene Runtime",
+   "description": null,
+   "icon": null,
+   "space": "contributor",
+   "source": "contributor/runtime/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "contributor/runtime/index.md"
+  },
+  {
    "url": "/docs/contributor/runtime/basic-components/",
    "title": "basic-components",
    "description": null,
    "icon": null,
    "space": "contributor",
    "source": "contributor/runtime/basic-components.md",
-   "updatedAt": "2026-07-16T01:36:46+02:00",
+   "updatedAt": "2026-10-26T21:34:02-03:00",
    "file": "contributor/runtime/basic-components/index.md"
   },
   {
@@ -3856,8 +4409,18 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/runtime/basic-entities.md",
-   "updatedAt": "2025-11-10T17:25:21-03:00",
+   "updatedAt": "2026-10-26T21:34:02-03:00",
    "file": "contributor/runtime/basic-entities/index.md"
+  },
+  {
+   "url": "/docs/contributor/runtime/components/",
+   "title": "Runtime Components",
+   "description": null,
+   "icon": null,
+   "space": "contributor",
+   "source": "contributor/runtime/components/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "contributor/runtime/components/index.md"
   },
   {
    "url": "/docs/contributor/runtime/components/component-creation/",
@@ -3876,7 +4439,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/runtime/execution.md",
-   "updatedAt": "2025-11-10T17:33:26-03:00",
+   "updatedAt": "2026-10-26T21:34:02-03:00",
    "file": "contributor/runtime/execution/index.md"
   },
   {
@@ -3886,8 +4449,18 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/runtime/globals.md",
-   "updatedAt": "2025-11-10T16:30:29-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/runtime/globals/index.md"
+  },
+  {
+   "url": "/docs/contributor/runtime/modules/",
+   "title": "Runtime Modules",
+   "description": null,
+   "icon": null,
+   "space": "contributor",
+   "source": "contributor/runtime/modules/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "contributor/runtime/modules/index.md"
   },
   {
    "url": "/docs/contributor/runtime/modules/engine-api/",
@@ -3896,7 +4469,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/runtime/modules/engine-api.md",
-   "updatedAt": "2025-12-17T11:05:01Z",
+   "updatedAt": "2026-10-27T10:42:52-03:00",
    "file": "contributor/runtime/modules/engine-api/index.md"
   },
   {
@@ -3906,7 +4479,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/runtime/modules/players.md",
-   "updatedAt": "2025-11-12T14:10:29-03:00",
+   "updatedAt": "2026-10-26T21:34:02-03:00",
    "file": "contributor/runtime/modules/players/index.md"
   },
   {
@@ -3916,7 +4489,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/runtime/modules/restricted-actions.md",
-   "updatedAt": "2025-12-26T12:07:58-03:00",
+   "updatedAt": "2026-11-03T16:12:17+01:00",
    "file": "contributor/runtime/modules/restricted-actions/index.md"
   },
   {
@@ -3936,7 +4509,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/runtime/modules/signed-fetch.md",
-   "updatedAt": "2025-12-17T11:05:01Z",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/runtime/modules/signed-fetch/index.md"
   },
   {
@@ -3946,7 +4519,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/runtime/modules/user-identity.md",
-   "updatedAt": "2025-11-12T14:10:29-03:00",
+   "updatedAt": "2026-10-26T21:34:02-03:00",
    "file": "contributor/runtime/modules/user-identity/index.md"
   },
   {
@@ -3956,7 +4529,7 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/runtime/overview.md",
-   "updatedAt": "2025-11-10T17:39:21-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/runtime/overview/index.md"
   },
   {
@@ -3966,8 +4539,18 @@
    "icon": null,
    "space": "contributor",
    "source": "contributor/runtime/permissions.md",
-   "updatedAt": "2025-11-10T16:30:29-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "contributor/runtime/permissions/index.md"
+  },
+  {
+   "url": "/docs/contributor/social-service/",
+   "title": "Social Service",
+   "description": null,
+   "icon": null,
+   "space": "contributor",
+   "source": "contributor/social-service/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "contributor/social-service/index.md"
   },
   {
    "url": "/docs/contributor/social-service/get-friends/",
@@ -4030,6 +4613,16 @@
    "file": "contributor/social-service/ws/index.md"
   },
   {
+   "url": "/docs/contributor/tutorials/",
+   "title": "Contributor Tutorials",
+   "description": null,
+   "icon": null,
+   "space": "contributor",
+   "source": "contributor/tutorials/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "contributor/tutorials/index.md"
+  },
+  {
    "url": "/docs/contributor/tutorials/getting-started/",
    "title": "On the /catalyst-owner folder",
    "description": null,
@@ -4066,8 +4659,18 @@
    "icon": "hand-wave",
    "space": "creator",
    "source": "creator/README.md",
-   "updatedAt": "2026-08-28T16:03:19-03:00",
+   "updatedAt": "2026-10-26T20:30:29-03:00",
    "file": "creator/index.md"
+  },
+  {
+   "url": "/docs/creator/3d-modeling/",
+   "title": "3D Modeling",
+   "description": null,
+   "icon": null,
+   "space": "creator",
+   "source": "creator/3d-modeling/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "creator/3d-modeling/index.md"
   },
   {
    "url": "/docs/creator/3d-modeling/3d-models/",
@@ -4076,7 +4679,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/3d-modeling/3d-models.md",
-   "updatedAt": "2026-07-23T09:33:30-03:00",
+   "updatedAt": "2026-10-26T20:30:29-03:00",
    "file": "creator/3d-modeling/3d-models/index.md"
   },
   {
@@ -4086,7 +4689,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/3d-modeling/animations.md",
-   "updatedAt": "2026-06-03T12:55:46+02:00",
+   "updatedAt": "2026-10-27T10:06:03-03:00",
    "file": "creator/3d-modeling/animations/index.md"
   },
   {
@@ -4096,7 +4699,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/3d-modeling/colliders.md",
-   "updatedAt": "2026-06-03T12:55:46+02:00",
+   "updatedAt": "2026-10-29T17:58:58-03:00",
    "file": "creator/3d-modeling/colliders/index.md"
   },
   {
@@ -4106,7 +4709,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/3d-modeling/create-a-rig.md",
-   "updatedAt": "2026-06-15T12:06:55-03:00",
+   "updatedAt": "2026-10-27T10:06:03-03:00",
    "file": "creator/3d-modeling/create-a-rig/index.md"
   },
   {
@@ -4116,7 +4719,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/3d-modeling/materials.md",
-   "updatedAt": "2026-06-03T12:55:46+02:00",
+   "updatedAt": "2026-10-26T20:30:29-03:00",
    "file": "creator/3d-modeling/materials/index.md"
   },
   {
@@ -4126,7 +4729,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/3d-modeling/meshes.md",
-   "updatedAt": "2026-09-24T18:25:30-03:00",
+   "updatedAt": "2026-10-27T10:06:03-03:00",
    "file": "creator/3d-modeling/meshes/index.md"
   },
   {
@@ -4136,7 +4739,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/3d-modeling/textures.md",
-   "updatedAt": "2026-06-03T12:55:46+02:00",
+   "updatedAt": "2026-10-27T09:46:46-03:00",
    "file": "creator/3d-modeling/textures/index.md"
   },
   {
@@ -4166,7 +4769,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/build-for-mobile/develop/input-on-mobile.md",
-   "updatedAt": "2026-08-13T15:58:31-03:00",
+   "updatedAt": "2026-11-05T11:17:19-03:00",
    "file": "creator/build-for-mobile/develop/input-on-mobile/index.md"
   },
   {
@@ -4176,7 +4779,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/build-for-mobile/develop/optimize-performance.md",
-   "updatedAt": "2026-08-28T17:26:29-03:00",
+   "updatedAt": "2026-10-26T20:30:29-03:00",
    "file": "creator/build-for-mobile/develop/optimize-performance/index.md"
   },
   {
@@ -4186,7 +4789,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/build-for-mobile/develop/preview-on-mobile.md",
-   "updatedAt": "2026-07-27T16:13:37-03:00",
+   "updatedAt": "2026-10-26T20:30:29-03:00",
    "file": "creator/build-for-mobile/develop/preview-on-mobile/index.md"
   },
   {
@@ -4196,7 +4799,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/build-for-mobile/develop/safe-area.md",
-   "updatedAt": "2026-08-18T07:34:15-03:00",
+   "updatedAt": "2026-10-26T20:30:29-03:00",
    "file": "creator/build-for-mobile/develop/safe-area/index.md"
   },
   {
@@ -4206,7 +4809,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/build-for-mobile/develop/ui-best-practices.md",
-   "updatedAt": "2026-09-24T10:50:56-03:00",
+   "updatedAt": "2026-11-05T11:17:19-03:00",
    "file": "creator/build-for-mobile/develop/ui-best-practices/index.md"
   },
   {
@@ -4236,7 +4839,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/build-for-mobile/mobile-client/missing-features.md",
-   "updatedAt": "2026-08-21T20:27:52-03:00",
+   "updatedAt": "2026-10-20T08:15:34-03:00",
    "file": "creator/build-for-mobile/mobile-client/missing-features/index.md"
   },
   {
@@ -4246,7 +4849,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/build-for-mobile/mobile-client/overview.md",
-   "updatedAt": "2026-08-28T17:26:29-03:00",
+   "updatedAt": "2026-11-05T11:17:19-03:00",
    "file": "creator/build-for-mobile/mobile-client/overview/index.md"
   },
   {
@@ -4276,7 +4879,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/build-for-mobile/publish/get-featured.md",
-   "updatedAt": "2026-07-27T16:13:37-03:00",
+   "updatedAt": "2026-10-26T20:30:29-03:00",
    "file": "creator/build-for-mobile/publish/get-featured/index.md"
   },
   {
@@ -4296,8 +4899,18 @@
    "icon": null,
    "space": "creator",
    "source": "creator/glossary.md",
-   "updatedAt": "2026-08-28T17:26:29-03:00",
+   "updatedAt": "2026-10-13T10:15:47-03:00",
    "file": "creator/glossary/index.md"
+  },
+  {
+   "url": "/docs/creator/marketplace/",
+   "title": "Marketplace",
+   "description": null,
+   "icon": null,
+   "space": "creator",
+   "source": "creator/marketplace/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "creator/marketplace/index.md"
   },
   {
    "url": "/docs/creator/marketplace/estates-marketplace-integrations/",
@@ -4306,7 +4919,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/marketplace/estates-marketplace-integrations.md",
-   "updatedAt": "2026-08-24T14:17:08-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/marketplace/estates-marketplace-integrations/index.md"
   },
   {
@@ -4320,14 +4933,34 @@
    "file": "creator/marketplace/info-from-land/index.md"
   },
   {
+   "url": "/docs/creator/rewards/",
+   "title": "Rewards",
+   "description": null,
+   "icon": null,
+   "space": "creator",
+   "source": "creator/rewards/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "creator/rewards/index.md"
+  },
+  {
    "url": "/docs/creator/rewards/getting-started/",
    "title": "Getting Started",
    "description": ">-",
    "icon": null,
    "space": "creator",
    "source": "creator/rewards/getting-started.md",
-   "updatedAt": "2026-08-28T17:26:29-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "creator/rewards/getting-started/index.md"
+  },
+  {
+   "url": "/docs/creator/rewards/gifting-credits/",
+   "title": "Gifting Credits (Beta)",
+   "description": ">-",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/rewards/gifting-credits.md",
+   "updatedAt": "2026-10-26T20:30:29-03:00",
+   "file": "creator/rewards/gifting-credits/index.md"
   },
   {
    "url": "/docs/creator/rewards/integrations/",
@@ -4336,7 +4969,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/rewards/integrations.md",
-   "updatedAt": "2026-08-28T17:26:29-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "creator/rewards/integrations/index.md"
   },
   {
@@ -4346,7 +4979,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/rewards/overview.md",
-   "updatedAt": "2026-08-28T17:26:29-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/rewards/overview/index.md"
   },
   {
@@ -4356,7 +4989,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/rewards/transactions.md",
-   "updatedAt": "2026-08-28T17:26:29-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/rewards/transactions/index.md"
   },
   {
@@ -4366,8 +4999,18 @@
    "icon": null,
    "space": "creator",
    "source": "creator/rewards/users-and-roles.md",
-   "updatedAt": "2026-08-28T17:26:29-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/rewards/users-and-roles/index.md"
+  },
+  {
+   "url": "/docs/creator/scene-editor/",
+   "title": "Scene Editor",
+   "description": null,
+   "icon": null,
+   "space": "creator",
+   "source": "creator/scene-editor/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "creator/scene-editor/index.md"
   },
   {
    "url": "/docs/creator/scene-editor/build/",
@@ -4386,7 +5029,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/build/components.md",
-   "updatedAt": "2026-09-24T10:50:56-03:00",
+   "updatedAt": "2026-10-26T21:25:02-03:00",
    "file": "creator/scene-editor/build/components/index.md"
   },
   {
@@ -4396,7 +5039,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/build/import-items.md",
-   "updatedAt": "2026-09-17T17:43:35-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/scene-editor/build/import-items/index.md"
   },
   {
@@ -4406,7 +5049,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/build/nfts.md",
-   "updatedAt": "2026-07-13T14:56:54-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/scene-editor/build/nfts/index.md"
   },
   {
@@ -4426,7 +5069,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/build/spawn-areas.md",
-   "updatedAt": "2026-07-13T14:56:54-03:00",
+   "updatedAt": "2026-10-26T20:30:29-03:00",
    "file": "creator/scene-editor/build/spawn-areas/index.md"
   },
   {
@@ -4436,7 +5079,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/build/ui-editor.md",
-   "updatedAt": "2026-09-24T14:07:07Z",
+   "updatedAt": "2026-11-05T11:17:19-03:00",
    "file": "creator/scene-editor/build/ui-editor/index.md"
   },
   {
@@ -4446,7 +5089,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/code/README.md",
-   "updatedAt": "2026-09-11T16:55:01-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/scene-editor/code/index.md"
   },
   {
@@ -4456,7 +5099,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/code/ai-assistant.md",
-   "updatedAt": "2026-09-24T14:07:07Z",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/scene-editor/code/ai-assistant/index.md"
   },
   {
@@ -4466,7 +5109,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/code/overview.md",
-   "updatedAt": "2026-09-11T16:55:01-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/scene-editor/code/overview/index.md"
   },
   {
@@ -4476,7 +5119,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/code/reference-items.md",
-   "updatedAt": "2026-07-13T14:56:54-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/scene-editor/code/reference-items/index.md"
   },
   {
@@ -4486,7 +5129,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/code/script-component.md",
-   "updatedAt": "2026-09-10T14:53:04-03:00",
+   "updatedAt": "2026-10-26T20:30:29-03:00",
    "file": "creator/scene-editor/code/script-component/index.md"
   },
   {
@@ -4506,7 +5149,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/configure/scene-settings.md",
-   "updatedAt": "2026-09-24T10:50:56-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/scene-editor/configure/scene-settings/index.md"
   },
   {
@@ -4536,7 +5179,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/get-started/about-editor.md",
-   "updatedAt": "2026-09-24T10:50:56-03:00",
+   "updatedAt": "2026-10-27T09:46:46-03:00",
    "file": "creator/scene-editor/get-started/about-editor/index.md"
   },
   {
@@ -4546,7 +5189,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/get-started/editor-installation.md",
-   "updatedAt": "2026-09-11T16:55:01-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/scene-editor/get-started/editor-installation/index.md"
   },
   {
@@ -4556,7 +5199,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/get-started/manage-scenes.md",
-   "updatedAt": "2026-09-11T16:55:01-03:00",
+   "updatedAt": "2026-10-26T20:30:29-03:00",
    "file": "creator/scene-editor/get-started/manage-scenes/index.md"
   },
   {
@@ -4566,7 +5209,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/get-started/migrate-from-web.md",
-   "updatedAt": "2026-07-10T16:52:59-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/scene-editor/get-started/migrate-from-web/index.md"
   },
   {
@@ -4576,7 +5219,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/get-started/scene-editor-essentials.md",
-   "updatedAt": "2026-09-17T17:43:35-03:00",
+   "updatedAt": "2026-10-27T09:46:46-03:00",
    "file": "creator/scene-editor/get-started/scene-editor-essentials/index.md"
   },
   {
@@ -4596,7 +5239,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/interactivity/custom-items.md",
-   "updatedAt": "2026-07-13T14:56:54-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/scene-editor/interactivity/custom-items/index.md"
   },
   {
@@ -4606,7 +5249,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/interactivity/make-any-item-smart.md",
-   "updatedAt": "2026-09-11T16:55:01-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/scene-editor/interactivity/make-any-item-smart/index.md"
   },
   {
@@ -4616,7 +5259,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/interactivity/modifier-areas.md",
-   "updatedAt": "2026-09-11T16:55:01-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/scene-editor/interactivity/modifier-areas/index.md"
   },
   {
@@ -4626,7 +5269,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/interactivity/smart-items-advanced.md",
-   "updatedAt": "2026-07-13T14:56:54-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/scene-editor/interactivity/smart-items-advanced/index.md"
   },
   {
@@ -4636,7 +5279,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/interactivity/smart-items.md",
-   "updatedAt": "2026-09-17T21:01:12Z",
+   "updatedAt": "2026-10-27T09:46:46-03:00",
    "file": "creator/scene-editor/interactivity/smart-items/index.md"
   },
   {
@@ -4646,7 +5289,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/interactivity/states-and-conditions.md",
-   "updatedAt": "2026-07-10T16:59:27-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/scene-editor/interactivity/states-and-conditions/index.md"
   },
   {
@@ -4656,7 +5299,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/interactivity/trigger-area.md",
-   "updatedAt": "2026-09-24T10:50:56-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/scene-editor/interactivity/trigger-area/index.md"
   },
   {
@@ -4666,7 +5309,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/interactivity/video-screen.md",
-   "updatedAt": "2026-07-13T14:56:54-03:00",
+   "updatedAt": "2026-10-26T21:25:02-03:00",
    "file": "creator/scene-editor/interactivity/video-screen/index.md"
   },
   {
@@ -4686,7 +5329,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/live-ops/live-streaming.md",
-   "updatedAt": "2026-07-13T14:56:54-03:00",
+   "updatedAt": "2026-10-26T20:30:29-03:00",
    "file": "creator/scene-editor/live-ops/live-streaming/index.md"
   },
   {
@@ -4696,7 +5339,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/live-ops/scene-admin.md",
-   "updatedAt": "2026-07-28T09:49:24-03:00",
+   "updatedAt": "2026-10-26T20:30:29-03:00",
    "file": "creator/scene-editor/live-ops/scene-admin/index.md"
   },
   {
@@ -4706,7 +5349,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/live-ops/server-data.md",
-   "updatedAt": "2026-07-22T13:11:47-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/scene-editor/live-ops/server-data/index.md"
   },
   {
@@ -4726,8 +5369,18 @@
    "icon": null,
    "space": "creator",
    "source": "creator/scene-editor/publish/publish-scene.md",
-   "updatedAt": "2026-09-17T17:43:35-03:00",
+   "updatedAt": "2026-10-29T17:18:53-03:00",
    "file": "creator/scene-editor/publish/publish-scene/index.md"
+  },
+  {
+   "url": "/docs/creator/sdk7/",
+   "title": "SDK7",
+   "description": null,
+   "icon": null,
+   "space": "creator",
+   "source": "creator/sdk7/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "creator/sdk7/index.md"
   },
   {
    "url": "/docs/creator/sdk7/2d-ui/",
@@ -4756,7 +5409,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/2d-ui/onscreen-ui.md",
-   "updatedAt": "2026-09-24T10:50:56-03:00",
+   "updatedAt": "2026-11-05T10:26:06-03:00",
    "file": "creator/sdk7/2d-ui/onscreen-ui/index.md"
   },
   {
@@ -4776,7 +5429,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/2d-ui/ui_background.md",
-   "updatedAt": "2026-07-09T10:44:23-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/sdk7/2d-ui/ui_background/index.md"
   },
   {
@@ -4796,7 +5449,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/2d-ui/ui_input_binding.md",
-   "updatedAt": "2026-08-13T15:58:31-03:00",
+   "updatedAt": "2026-10-27T09:46:46-03:00",
    "file": "creator/sdk7/2d-ui/ui_input_binding/index.md"
   },
   {
@@ -4806,7 +5459,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/2d-ui/ui_special_types.md",
-   "updatedAt": "2026-08-13T09:51:47-03:00",
+   "updatedAt": "2026-10-16T17:59:29-03:00",
    "file": "creator/sdk7/2d-ui/ui_special_types/index.md"
   },
   {
@@ -4816,7 +5469,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/2d-ui/ui_text.md",
-   "updatedAt": "2026-09-10T14:53:04-03:00",
+   "updatedAt": "2026-10-29T17:18:53-03:00",
    "file": "creator/sdk7/2d-ui/ui_text/index.md"
   },
   {
@@ -4836,7 +5489,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/3d-essentials/3d-model-animations.md",
-   "updatedAt": "2026-08-13T12:29:12-03:00",
+   "updatedAt": "2026-10-20T14:23:16-03:00",
    "file": "creator/sdk7/3d-essentials/3d-model-animations/index.md"
   },
   {
@@ -4846,7 +5499,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/3d-essentials/camera.md",
-   "updatedAt": "2026-09-24T21:31:55Z",
+   "updatedAt": "2026-11-05T11:17:19-03:00",
    "file": "creator/sdk7/3d-essentials/camera/index.md"
   },
   {
@@ -4856,7 +5509,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/3d-essentials/colliders.md",
-   "updatedAt": "2026-07-09T14:16:34-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/sdk7/3d-essentials/colliders/index.md"
   },
   {
@@ -4876,7 +5529,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/3d-essentials/entity-positioning.md",
-   "updatedAt": "2026-09-24T18:25:30-03:00",
+   "updatedAt": "2026-11-05T10:26:06-03:00",
    "file": "creator/sdk7/3d-essentials/entity-positioning/index.md"
   },
   {
@@ -4886,7 +5539,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/3d-essentials/lights.md",
-   "updatedAt": "2026-09-10T14:53:04-03:00",
+   "updatedAt": "2026-11-03T18:57:49Z",
    "file": "creator/sdk7/3d-essentials/lights/index.md"
   },
   {
@@ -4896,7 +5549,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/3d-essentials/materials.md",
-   "updatedAt": "2026-08-19T00:06:47+02:00",
+   "updatedAt": "2026-11-05T10:26:06-03:00",
    "file": "creator/sdk7/3d-essentials/materials/index.md"
   },
   {
@@ -4906,7 +5559,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/3d-essentials/move-entities.md",
-   "updatedAt": "2026-08-11T02:17:06+02:00",
+   "updatedAt": "2026-10-29T17:18:53-03:00",
    "file": "creator/sdk7/3d-essentials/move-entities/index.md"
   },
   {
@@ -4926,7 +5579,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/3d-essentials/shape-components.md",
-   "updatedAt": "2026-07-09T14:51:49-03:00",
+   "updatedAt": "2026-10-26T21:25:02-03:00",
    "file": "creator/sdk7/3d-essentials/shape-components/index.md"
   },
   {
@@ -4936,7 +5589,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/3d-essentials/sounds.md",
-   "updatedAt": "2026-08-13T20:40:16Z",
+   "updatedAt": "2026-10-29T17:18:53-03:00",
    "file": "creator/sdk7/3d-essentials/sounds/index.md"
   },
   {
@@ -4956,7 +5609,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/3d-essentials/text.md",
-   "updatedAt": "2026-07-09T14:51:49-03:00",
+   "updatedAt": "2026-10-29T17:58:58-03:00",
    "file": "creator/sdk7/3d-essentials/text/index.md"
   },
   {
@@ -4966,7 +5619,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/3d-essentials/trigger-areas.md",
-   "updatedAt": "2026-08-19T00:06:47+02:00",
+   "updatedAt": "2026-10-26T21:25:02-03:00",
    "file": "creator/sdk7/3d-essentials/trigger-areas/index.md"
   },
   {
@@ -5006,7 +5659,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/architecture/data-oriented-programming.md",
-   "updatedAt": "2026-05-20T15:45:47-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/sdk7/architecture/data-oriented-programming/index.md"
   },
   {
@@ -5016,7 +5669,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/architecture/entities-components.md",
-   "updatedAt": "2026-09-11T16:02:52-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/sdk7/architecture/entities-components/index.md"
   },
   {
@@ -5026,7 +5679,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/architecture/querying-components.md",
-   "updatedAt": "2026-07-09T11:56:58-03:00",
+   "updatedAt": "2026-10-26T21:25:02-03:00",
    "file": "creator/sdk7/architecture/querying-components/index.md"
   },
   {
@@ -5046,7 +5699,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/architecture/systems.md",
-   "updatedAt": "2026-07-09T10:44:23-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/sdk7/architecture/systems/index.md"
   },
   {
@@ -5076,7 +5729,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/blockchain/deploying-your-own-transactions-server.md",
-   "updatedAt": "2026-07-09T17:10:17-03:00",
+   "updatedAt": "2026-10-27T10:42:52-03:00",
    "file": "creator/sdk7/blockchain/deploying-your-own-transactions-server/index.md"
   },
   {
@@ -5116,7 +5769,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/debugging/debug-in-preview.md",
-   "updatedAt": "2026-09-24T18:25:30-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/sdk7/debugging/debug-in-preview/index.md"
   },
   {
@@ -5126,7 +5779,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/debugging/debug-in-prod.md",
-   "updatedAt": "2026-09-07T17:35:44-03:00",
+   "updatedAt": "2026-11-03T10:06:02-03:00",
    "file": "creator/sdk7/debugging/debug-in-prod/index.md"
   },
   {
@@ -5136,8 +5789,18 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/debugging/report-bug.md",
-   "updatedAt": "2026-05-20T15:45:47-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/sdk7/debugging/report-bug/index.md"
+  },
+  {
+   "url": "/docs/creator/sdk7/debugging/scene-insights/",
+   "title": "Scene Insights",
+   "description": "Search persistent Multiplayer Server logs, follow live logs, and inspect scene performance metrics.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/sdk7/debugging/scene-insights.md",
+   "updatedAt": "2026-11-03T15:39:38-03:00",
+   "file": "creator/sdk7/debugging/scene-insights/index.md"
   },
   {
    "url": "/docs/creator/sdk7/debugging/troubleshooting/",
@@ -5156,7 +5819,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/design-experience/README.md",
-   "updatedAt": "2025-11-12T16:23:06-03:00",
+   "updatedAt": "2026-10-21T17:19:36-03:00",
    "file": "creator/sdk7/design-experience/index.md"
   },
   {
@@ -5166,7 +5829,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/design-experience/design-games.md",
-   "updatedAt": "2026-09-11T16:02:52-03:00",
+   "updatedAt": "2026-10-29T17:18:53-03:00",
    "file": "creator/sdk7/design-experience/design-games/index.md"
   },
   {
@@ -5180,13 +5843,23 @@
    "file": "creator/sdk7/design-experience/mvp-guidelines/index.md"
   },
   {
+   "url": "/docs/creator/sdk7/design-experience/playtests/",
+   "title": "Playtest Your Games",
+   "description": "How to run playtests of your Decentraland game and turn player feedback into improvements",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/sdk7/design-experience/playtests.md",
+   "updatedAt": "2026-10-29T17:58:58-03:00",
+   "file": "creator/sdk7/design-experience/playtests/index.md"
+  },
+  {
    "url": "/docs/creator/sdk7/design-experience/ux-ui-guide/",
    "title": "UX & UI Guide",
    "description": "Tips and practices to build scenes where players will want to stay and return!",
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/design-experience/ux-ui-guide.md",
-   "updatedAt": "2026-09-24T10:50:56-03:00",
+   "updatedAt": "2026-11-05T11:17:19-03:00",
    "file": "creator/sdk7/design-experience/ux-ui-guide/index.md"
   },
   {
@@ -5206,7 +5879,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/getting-started/coding-scenes.md",
-   "updatedAt": "2026-07-09T11:03:23-03:00",
+   "updatedAt": "2026-10-26T20:30:29-03:00",
    "file": "creator/sdk7/getting-started/coding-scenes/index.md"
   },
   {
@@ -5216,7 +5889,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/getting-started/dev-workflow.md",
-   "updatedAt": "2026-08-28T16:03:19-03:00",
+   "updatedAt": "2026-10-27T10:42:52-03:00",
    "file": "creator/sdk7/getting-started/dev-workflow/index.md"
   },
   {
@@ -5226,7 +5899,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/getting-started/preview-scene.md",
-   "updatedAt": "2026-09-24T14:07:07Z",
+   "updatedAt": "2026-10-26T21:25:02-03:00",
    "file": "creator/sdk7/getting-started/preview-scene/index.md"
   },
   {
@@ -5236,7 +5909,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/getting-started/sdk-101.md",
-   "updatedAt": "2026-08-28T16:03:19-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "creator/sdk7/getting-started/sdk-101/index.md"
   },
   {
@@ -5256,7 +5929,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/getting-started/using-the-cli.md",
-   "updatedAt": "2026-08-28T16:03:19-03:00",
+   "updatedAt": "2026-10-23T15:29:09-03:00",
    "file": "creator/sdk7/getting-started/using-the-cli/index.md"
   },
   {
@@ -5266,7 +5939,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/getting-started/vibe-coding.md",
-   "updatedAt": "2026-09-10T14:53:04-03:00",
+   "updatedAt": "2026-11-03T10:06:02-03:00",
    "file": "creator/sdk7/getting-started/vibe-coding/index.md"
   },
   {
@@ -5296,7 +5969,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/interactivity/avatars/avatar-animations.md",
-   "updatedAt": "2026-09-11T16:02:52-03:00",
+   "updatedAt": "2026-11-03T16:12:17+01:00",
    "file": "creator/sdk7/interactivity/avatars/avatar-animations/index.md"
   },
   {
@@ -5306,7 +5979,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/interactivity/avatars/avatar-nametags.md",
-   "updatedAt": "2026-09-11T16:02:52-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/sdk7/interactivity/avatars/avatar-nametags/index.md"
   },
   {
@@ -5326,7 +5999,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/interactivity/avatars/modifier-areas.md",
-   "updatedAt": "2026-09-11T16:02:52-03:00",
+   "updatedAt": "2026-11-05T10:26:06-03:00",
    "file": "creator/sdk7/interactivity/avatars/modifier-areas/index.md"
   },
   {
@@ -5336,7 +6009,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/interactivity/avatars/move-player.md",
-   "updatedAt": "2026-09-11T16:02:52-03:00",
+   "updatedAt": "2026-11-05T11:17:19-03:00",
    "file": "creator/sdk7/interactivity/avatars/move-player/index.md"
   },
   {
@@ -5346,7 +6019,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/interactivity/avatars/npc-avatars.md",
-   "updatedAt": "2026-09-11T16:02:52-03:00",
+   "updatedAt": "2026-10-29T17:18:53-03:00",
    "file": "creator/sdk7/interactivity/avatars/npc-avatars/index.md"
   },
   {
@@ -5376,7 +6049,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/interactivity/button-events/click-events.md",
-   "updatedAt": "2026-08-06T11:50:13-03:00",
+   "updatedAt": "2026-11-05T11:17:19-03:00",
    "file": "creator/sdk7/interactivity/button-events/click-events/index.md"
   },
   {
@@ -5406,7 +6079,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/interactivity/button-events/system-based-events.md",
-   "updatedAt": "2026-09-10T14:53:04-03:00",
+   "updatedAt": "2026-10-26T21:25:02-03:00",
    "file": "creator/sdk7/interactivity/button-events/system-based-events/index.md"
   },
   {
@@ -5416,7 +6089,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/interactivity/deprecated-functions.md",
-   "updatedAt": "2026-09-11T16:02:52-03:00",
+   "updatedAt": "2026-10-26T21:25:02-03:00",
    "file": "creator/sdk7/interactivity/deprecated-functions/index.md"
   },
   {
@@ -5426,7 +6099,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/interactivity/event-listeners.md",
-   "updatedAt": "2026-09-11T16:02:52-03:00",
+   "updatedAt": "2026-11-05T10:26:06-03:00",
    "file": "creator/sdk7/interactivity/event-listeners/index.md"
   },
   {
@@ -5436,7 +6109,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/interactivity/external-links.md",
-   "updatedAt": "2026-09-11T16:02:52-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/sdk7/interactivity/external-links/index.md"
   },
   {
@@ -5446,7 +6119,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/interactivity/mouse-movement.md",
-   "updatedAt": "2026-09-11T16:02:52-03:00",
+   "updatedAt": "2026-09-21T19:46:19+02:00",
    "file": "creator/sdk7/interactivity/mouse-movement/index.md"
   },
   {
@@ -5456,7 +6129,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/interactivity/player-physics.md",
-   "updatedAt": "2026-09-11T16:02:52-03:00",
+   "updatedAt": "2026-10-29T17:18:53-03:00",
    "file": "creator/sdk7/interactivity/player-physics/index.md"
   },
   {
@@ -5476,17 +6149,17 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/interactivity/runtime-data.md",
-   "updatedAt": "2026-09-10T14:53:04-03:00",
+   "updatedAt": "2026-10-23T15:08:52-03:00",
    "file": "creator/sdk7/interactivity/runtime-data/index.md"
   },
   {
    "url": "/docs/creator/sdk7/interactivity/skybox-control/",
    "title": "Skybox Control",
-   "description": "Change the skybox time",
+   "description": "Change the skybox time, replace the sky with your own texture, or recolor the sky, clouds and stars and control the sun and fog",
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/interactivity/skybox-control.md",
-   "updatedAt": "2026-08-19T00:06:47+02:00",
+   "updatedAt": "2026-11-05T11:17:19-03:00",
    "file": "creator/sdk7/interactivity/skybox-control/index.md"
   },
   {
@@ -5496,7 +6169,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/interactivity/touch-screen-controls.md",
-   "updatedAt": "2026-08-13T15:58:31-03:00",
+   "updatedAt": "2026-11-05T11:17:19-03:00",
    "file": "creator/sdk7/interactivity/touch-screen-controls/index.md"
   },
   {
@@ -5506,7 +6179,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/interactivity/user-data.md",
-   "updatedAt": "2026-08-20T09:52:02-03:00",
+   "updatedAt": "2026-11-05T11:17:19-03:00",
    "file": "creator/sdk7/interactivity/user-data/index.md"
   },
   {
@@ -5566,7 +6239,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/media/audio-analysis.md",
-   "updatedAt": "2026-09-02T17:24:53-03:00",
+   "updatedAt": "2026-11-05T10:26:06-03:00",
    "file": "creator/sdk7/media/audio-analysis/index.md"
   },
   {
@@ -5586,7 +6259,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/media/display-a-certified-nft.md",
-   "updatedAt": "2026-07-09T17:39:21-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/sdk7/media/display-a-certified-nft/index.md"
   },
   {
@@ -5596,7 +6269,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/media/video-playing.md",
-   "updatedAt": "2026-08-20T09:52:02-03:00",
+   "updatedAt": "2026-10-26T21:25:02-03:00",
    "file": "creator/sdk7/media/video-playing/index.md"
   },
   {
@@ -5616,7 +6289,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/networking/authoritative-servers.md",
-   "updatedAt": "2026-08-03T11:27:49-03:00",
+   "updatedAt": "2026-11-05T10:26:06-03:00",
    "file": "creator/sdk7/networking/authoritative-servers/index.md"
   },
   {
@@ -5626,7 +6299,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/networking/network-connections.md",
-   "updatedAt": "2026-07-09T10:44:23-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/sdk7/networking/network-connections/index.md"
   },
   {
@@ -5636,7 +6309,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/networking/serverless-multiplayer.md",
-   "updatedAt": "2026-07-22T13:11:47-03:00",
+   "updatedAt": "2026-10-26T21:25:02-03:00",
    "file": "creator/sdk7/networking/serverless-multiplayer/index.md"
   },
   {
@@ -5646,7 +6319,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/networking/third-party-servers.md",
-   "updatedAt": "2026-07-22T13:11:47-03:00",
+   "updatedAt": "2026-10-01T10:52:10-03:00",
    "file": "creator/sdk7/networking/third-party-servers/index.md"
   },
   {
@@ -5666,7 +6339,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/optimizing/performance-optimization.md",
-   "updatedAt": "2026-09-10T14:53:04-03:00",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
    "file": "creator/sdk7/optimizing/performance-optimization/index.md"
   },
   {
@@ -5676,7 +6349,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/optimizing/pre-load-resources.md",
-   "updatedAt": "2026-08-19T00:06:47+02:00",
+   "updatedAt": "2026-11-05T10:26:06-03:00",
    "file": "creator/sdk7/optimizing/pre-load-resources/index.md"
   },
   {
@@ -5686,7 +6359,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/optimizing/scene-limitations.md",
-   "updatedAt": "2026-09-24T18:25:30-03:00",
+   "updatedAt": "2026-11-05T10:26:06-03:00",
    "file": "creator/sdk7/optimizing/scene-limitations/index.md"
   },
   {
@@ -5706,7 +6379,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/other/migrate-legacy-sdk6-scenes.md",
-   "updatedAt": "2026-07-17T16:06:26-03:00",
+   "updatedAt": "2026-10-08T12:36:18-03:00",
    "file": "creator/sdk7/other/migrate-legacy-sdk6-scenes/index.md"
   },
   {
@@ -5776,7 +6449,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/projects/kinds-of-project.md",
-   "updatedAt": "2026-07-29T09:34:29+02:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/sdk7/projects/kinds-of-project/index.md"
   },
   {
@@ -5786,7 +6459,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/projects/portable-experiences.md",
-   "updatedAt": "2026-09-11T16:02:52-03:00",
+   "updatedAt": "2026-10-29T10:59:29-03:00",
    "file": "creator/sdk7/projects/portable-experiences/index.md"
   },
   {
@@ -5796,7 +6469,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/projects/scene-files.md",
-   "updatedAt": "2026-07-09T11:56:58-03:00",
+   "updatedAt": "2026-11-05T10:26:06-03:00",
    "file": "creator/sdk7/projects/scene-files/index.md"
   },
   {
@@ -5806,7 +6479,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/projects/scene-metadata.md",
-   "updatedAt": "2026-09-24T10:50:56-03:00",
+   "updatedAt": "2026-10-29T10:59:29-03:00",
    "file": "creator/sdk7/projects/scene-metadata/index.md"
   },
   {
@@ -5816,7 +6489,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/projects/smart-wearables.md",
-   "updatedAt": "2026-09-11T16:02:52-03:00",
+   "updatedAt": "2026-10-29T17:58:58-03:00",
    "file": "creator/sdk7/projects/smart-wearables/index.md"
   },
   {
@@ -5846,7 +6519,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/publishing/make-discoverable.md",
-   "updatedAt": "2026-07-10T10:08:43-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "creator/sdk7/publishing/make-discoverable/index.md"
   },
   {
@@ -5866,7 +6539,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/publishing/publishing.md",
-   "updatedAt": "2026-09-14T17:41:35-03:00",
+   "updatedAt": "2026-10-29T17:58:58-03:00",
    "file": "creator/sdk7/publishing/publishing/index.md"
   },
   {
@@ -5886,7 +6559,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/releases/alpha-testing-guidelines.md",
-   "updatedAt": "2026-07-10T10:08:58-03:00",
+   "updatedAt": "2026-10-06T20:26:33+01:00",
    "file": "creator/sdk7/releases/alpha-testing-guidelines/index.md"
   },
   {
@@ -5896,7 +6569,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/sdk7/releases/releases.md",
-   "updatedAt": "2026-09-17T17:43:35-03:00",
+   "updatedAt": "2026-10-29T17:18:53-03:00",
    "file": "creator/sdk7/releases/releases/index.md"
   },
   {
@@ -5926,8 +6599,18 @@
    "icon": null,
    "space": "creator",
    "source": "creator/studio-onboarding.md",
-   "updatedAt": "2026-09-11T08:26:42-03:00",
+   "updatedAt": "2026-10-08T12:20:12Z",
    "file": "creator/studio-onboarding/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/",
+   "title": "Creator Tutorials",
+   "description": null,
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "creator/tutorials/index.md"
   },
   {
    "url": "/docs/creator/tutorials/creating-a-wearable-series/",
@@ -5936,18 +6619,608 @@
    "icon": null,
    "space": "creator",
    "source": "creator/tutorials/creating-a-wearable-series.md",
-   "updatedAt": "2026-06-03T12:55:46+02:00",
+   "updatedAt": "2026-10-26T21:25:02-03:00",
    "file": "creator/tutorials/creating-a-wearable-series/index.md"
   },
   {
    "url": "/docs/creator/tutorials/examples/",
-   "title": "Examples",
-   "description": ">-",
+   "title": "Example Scenes",
+   "description": "A curated, AI-readable index of Decentraland SDK7 example scenes, mechanics, and reusable systems.",
    "icon": null,
    "space": "creator",
    "source": "creator/tutorials/examples.md",
-   "updatedAt": "2026-08-28T17:26:29-03:00",
+   "updatedAt": "2026-11-03T13:31:27-03:00",
    "file": "creator/tutorials/examples/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/AGENTS/",
+   "title": "Example scene catalog",
+   "description": null,
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/AGENTS.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/AGENTS/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/audio-video-environment/",
+   "title": "Audio, video, and environment",
+   "description": "Media, lighting, and environment controls.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/audio-video-environment/README.md",
+   "updatedAt": "2026-11-03T13:26:53-03:00",
+   "file": "creator/tutorials/examples/audio-video-environment/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/audio-video-environment/audio-visualization/",
+   "title": "Audio visualization",
+   "description": "Using live audio data to drive visual scene behaviour.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/audio-video-environment/audio-visualization.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/audio-video-environment/audio-visualization/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/audio-video-environment/dynamic-lights/",
+   "title": "Dynamic lights",
+   "description": "Changing lights at runtime.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/audio-video-environment/dynamic-lights.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/audio-video-environment/dynamic-lights/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/audio-video-environment/skybox-control/",
+   "title": "Skybox control",
+   "description": "Updating skybox time and transition settings from scene code.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/audio-video-environment/skybox-control.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/audio-video-environment/skybox-control/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/audio-video-environment/video-streaming/",
+   "title": "Video streaming",
+   "description": "Playing streamed video on a scene surface.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/audio-video-environment/video-streaming.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/audio-video-environment/video-streaming/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/external-services/",
+   "title": "External services",
+   "description": "Connecting scenes to external APIs, data sources, and third-party servers.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/external-services/README.md",
+   "updatedAt": "2026-11-03T13:26:53-03:00",
+   "file": "creator/tutorials/examples/external-services/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/external-services/spreadsheet-data/",
+   "title": "Data from a spreadsheet",
+   "description": "Scene content driven by a Google Sheet, updated without redeploying.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/external-services/spreadsheet-data.md",
+   "updatedAt": "2026-11-03T13:26:53-03:00",
+   "file": "creator/tutorials/examples/external-services/spreadsheet-data/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/external-services/third-party-guest-book/",
+   "title": "Third-party guest book",
+   "description": "A guest book backed by an external HTTP service.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/external-services/third-party-guest-book.md",
+   "updatedAt": "2026-11-03T13:26:53-03:00",
+   "file": "creator/tutorials/examples/external-services/third-party-guest-book/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/external-services/third-party-leaderboard/",
+   "title": "Third-party leaderboard",
+   "description": "A persistent leaderboard backed by an external HTTP service.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/external-services/third-party-leaderboard.md",
+   "updatedAt": "2026-11-03T13:26:53-03:00",
+   "file": "creator/tutorials/examples/external-services/third-party-leaderboard/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/external-services/third-party-player-authentication/",
+   "title": "Third-party player authentication",
+   "description": "Verifying player identity for requests sent to an external service.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/external-services/third-party-player-authentication.md",
+   "updatedAt": "2026-11-03T13:26:53-03:00",
+   "file": "creator/tutorials/examples/external-services/third-party-player-authentication/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/gameplay-interaction/",
+   "title": "Gameplay and interaction",
+   "description": "Core gameplay mechanics and player interactions.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/gameplay-interaction/README.md",
+   "updatedAt": "2026-10-26T16:34:11-03:00",
+   "file": "creator/tutorials/examples/gameplay-interaction/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/gameplay-interaction/input-modifier/",
+   "title": "Input modifier",
+   "description": "Changing or constraining player movement input in part of a scene.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/gameplay-interaction/input-modifier.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/gameplay-interaction/input-modifier/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/gameplay-interaction/particle-system/",
+   "title": "Particle system",
+   "description": "Fire, smoke, sparks, snow, and other particle effects.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/gameplay-interaction/particle-system.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/gameplay-interaction/particle-system/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/gameplay-interaction/pointer-lock-control/",
+   "title": "Pointer lock control",
+   "description": "Capturing mouse input for custom controls.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/gameplay-interaction/pointer-lock-control.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/gameplay-interaction/pointer-lock-control/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/gameplay-interaction/raycasting-and-collider-layers/",
+   "title": "Raycasting and collider layers",
+   "description": "Pointing at scene geometry and controlling which colliders react to a raycast.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/gameplay-interaction/raycasting-and-collider-layers.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/gameplay-interaction/raycasting-and-collider-layers/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/gameplay-interaction/trigger-areas/",
+   "title": "Trigger areas",
+   "description": "Detecting players entering and leaving areas, including collider-based triggers.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/gameplay-interaction/trigger-areas.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/gameplay-interaction/trigger-areas/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/gameplay-interaction/zombie-attack/",
+   "title": "Zombie Attack",
+   "description": "A complete, playable game scene with enemies and scoring.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/gameplay-interaction/zombie-attack.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/gameplay-interaction/zombie-attack/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/getting-started/",
+   "title": "Start here",
+   "description": "Core SDK7 references and starting points for new scenes.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/getting-started/README.md",
+   "updatedAt": "2026-10-26T16:34:11-03:00",
+   "file": "creator/tutorials/examples/getting-started/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/getting-started/sdk7-scene-template/",
+   "title": "SDK7 scene template",
+   "description": "A clean starting point for a new TypeScript SDK7 scene.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/getting-started/sdk7-scene-template.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/getting-started/sdk7-scene-template/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/multiplayer-data-services/",
+   "title": "Multiplayer",
+   "description": "Multiplayer patterns and server-owned shared state.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/multiplayer-data-services/README.md",
+   "updatedAt": "2026-11-03T13:26:53-03:00",
+   "file": "creator/tutorials/examples/multiplayer-data-services/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/multiplayer-data-services/authoritative-server-leaderboard/",
+   "title": "Multiplayer Server leaderboard",
+   "description": "A server-owned leaderboard that validates scores, stores totals, and broadcasts rankings.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/multiplayer-data-services/authoritative-server-leaderboard.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/multiplayer-data-services/authoritative-server-leaderboard/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/multiplayer-data-services/mini-games-library/",
+   "title": "Mini Games library",
+   "description": "Player queues, scoreboards, and supporting logic for multiplayer mini games.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/multiplayer-data-services/mini-games-library.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/multiplayer-data-services/mini-games-library/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/performance-scene-systems/",
+   "title": "Performance and scene systems",
+   "description": "Asset loading and scene-level systems.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/performance-scene-systems/README.md",
+   "updatedAt": "2026-11-03T13:26:53-03:00",
+   "file": "creator/tutorials/examples/performance-scene-systems/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/performance-scene-systems/asset-loading/",
+   "title": "Asset loading",
+   "description": "Loading scene assets on demand rather than all at once.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/performance-scene-systems/asset-loading.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/performance-scene-systems/asset-loading/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/performance-scene-systems/material-and-texture-gallery/",
+   "title": "Material and texture gallery",
+   "description": "Material, texture, and GLTF node modifier patterns.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/performance-scene-systems/material-and-texture-gallery.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/performance-scene-systems/material-and-texture-gallery/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/performance-scene-systems/modifier-areas/",
+   "title": "Modifier areas",
+   "description": "Applying area-specific settings such as hiding player name tags.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/performance-scene-systems/modifier-areas.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/performance-scene-systems/modifier-areas/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/",
+   "title": "Published Games",
+   "description": "Released Decentraland scenes that demonstrate real-world mechanics.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/README.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/alien-scrapyard/",
+   "title": "Alien Scrapyard",
+   "description": "Cooperative building rounds with data-defined construction puzzles and phase-driven",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/alien-scrapyard.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/alien-scrapyard/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/astro-crew/",
+   "title": "Astro Crew",
+   "description": "Cooperative spaceship combat with server-owned game state, persistent progression,",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/astro-crew.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/astro-crew/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/bloom-garden/",
+   "title": "Bloom Garden",
+   "description": "A cooperative garden with persistent plant state, server-clock offset estimation, and",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/bloom-garden.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/bloom-garden/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/clean-the-club/",
+   "title": "Clean The Club",
+   "description": "Cooperative nightclub cleanup with shared component polling and avatar-attached props",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/clean-the-club.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/clean-the-club/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/cozy-farm/",
+   "title": "Cozy Farm",
+   "description": "A social farming game with timed crop-growth stages, fertilizer modifiers, and",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/cozy-farm.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/cozy-farm/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/dead-surge/",
+   "title": "Dead Surge",
+   "description": "Zombie survival with weapon progression, pooled reward text, and local enemy steering",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/dead-surge.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/dead-surge/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/fastlane-bowling/",
+   "title": "Fastlane Bowling",
+   "description": "Multiplayer bowling with server-simulated physics, persistent progression, batched",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/fastlane-bowling.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/fastlane-bowling/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/flag-tag/",
+   "title": "Flag Tag",
+   "description": "Multiplayer keep-away with timed rounds, persistent leaderboards, pooled projectiles,",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/flag-tag.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/flag-tag/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/goal-legends/",
+   "title": "Goal Legends",
+   "description": "Multiplayer penalty shootouts with server-run matches, persistent leaderboards,",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/goal-legends.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/goal-legends/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/kick-off/",
+   "title": "Kick Off",
+   "description": "A World Cup prediction scene with charged ball kicks, immediate local motion feedback,",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/kick-off.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/kick-off/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/monster-recon/",
+   "title": "Monster Recon",
+   "description": "Memory matching followed by trigger-based monster chases, with collectible",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/monster-recon.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/monster-recon/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/my-dear-pet/",
+   "title": "My Dear Pet",
+   "description": "Pet collecting with acceleration and braking for movement, plus phase-offset animation",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/my-dear-pet.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/my-dear-pet/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/pigeon-deluxe/",
+   "title": "Pigeon Deluxe",
+   "description": "Timed parcel delivery with pickup and drop-off areas, an avatar-mounted direction",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/pigeon-deluxe.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/pigeon-deluxe/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/prime-drive/",
+   "title": "Prime Drive",
+   "description": "Three-lane racing with recycled scenery, distance-based record ghosts, and persistent",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/prime-drive.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/prime-drive/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/shroom-zoom/",
+   "title": "Shroom Zoom",
+   "description": "Platforming with trigger-activated bounce raycasts, player impulses, and collectible",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/shroom-zoom.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/shroom-zoom/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/sky-chaser/",
+   "title": "Sky Chaser",
+   "description": "Multiplayer package-catching rounds with persistent leaderboards, pooled projectiles,",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/sky-chaser.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/sky-chaser/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/slay-the-steps/",
+   "title": "Slay the Steps",
+   "description": "A multiplayer Festive Trail scene with custom avatars, Marketplace integration, a",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/slay-the-steps.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/slay-the-steps/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/slide-penguin/",
+   "title": "Slide Penguin",
+   "description": "Penguin sliding with timed sweeping that modifies deceleration and scoring based on",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/slide-penguin.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/slide-penguin/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/the-fortune-teller/",
+   "title": "The Fortune Teller",
+   "description": "Social fortune-telling with explicit conversation-state transitions and a pivot-based",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/the-fortune-teller.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/the-fortune-teller/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/published-games/tower-of-madness/",
+   "title": "Tower of Madness",
+   "description": "Timed platforming through changing tower sections, with asset preloading and a",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/published-games/tower-of-madness.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/published-games/tower-of-madness/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/rewards/",
+   "title": "Rewards",
+   "description": "Scenes that give players wearables through Decentraland Rewards campaigns.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/rewards/README.md",
+   "updatedAt": "2026-11-03T13:31:27-03:00",
+   "file": "creator/tutorials/examples/rewards/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/rewards/clap-to-claim-dispenser/",
+   "title": "Clap-to-claim dispenser",
+   "description": "A wearable dispenser that players claim by doing the clap emote in a trigger area.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/rewards/clap-to-claim-dispenser.md",
+   "updatedAt": "2026-11-03T13:25:03-03:00",
+   "file": "creator/tutorials/examples/rewards/clap-to-claim-dispenser/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/rewards/reward-claim-dispenser/",
+   "title": "Reward claim dispenser",
+   "description": "Wearable dispensers and airdrop crates that claim rewards from a Rewards campaign.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/rewards/reward-claim-dispenser.md",
+   "updatedAt": "2026-11-03T13:31:27-03:00",
+   "file": "creator/tutorials/examples/rewards/reward-claim-dispenser/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/scene-management-feedback/",
+   "title": "Scene management and feedback",
+   "description": "Tools for managing scenes and collecting player feedback.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/scene-management-feedback/README.md",
+   "updatedAt": "2026-11-03T13:26:53-03:00",
+   "file": "creator/tutorials/examples/scene-management-feedback/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/scene-management-feedback/playtest-feedback/",
+   "title": "Scene Feedback",
+   "description": "Collect player ratings and comments during play or through a feedback button, kiosk, or",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/scene-management-feedback/playtest-feedback.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/scene-management-feedback/playtest-feedback/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/ui-camera-player/",
+   "title": "UI, camera, and player experience",
+   "description": "Interface, camera, and player-facing systems.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/ui-camera-player/README.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/ui-camera-player/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/ui-camera-player/npc-toolkit/",
+   "title": "NPC Toolkit",
+   "description": "Reusable NPC behaviours and dialogue UI for SDK7 scenes.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/ui-camera-player/npc-toolkit.md",
+   "updatedAt": "2026-11-03T13:20:39-03:00",
+   "file": "creator/tutorials/examples/ui-camera-player/npc-toolkit/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/ui-camera-player/spectate-mode/",
+   "title": "Spectate mode",
+   "description": "A spectator-style camera and player viewing flow.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/ui-camera-player/spectate-mode.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/ui-camera-player/spectate-mode/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/ui-camera-player/ui-animations/",
+   "title": "UI animations",
+   "description": "Animated UI elements, sprite sheets, and loading indicators.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/ui-camera-player/ui-animations.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/ui-camera-player/ui-animations/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/ui-camera-player/ui-safe-areas/",
+   "title": "UI safe areas",
+   "description": "Positioning interface elements around screen insets and safe areas.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/ui-camera-player/ui-safe-areas.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/ui-camera-player/ui-safe-areas/index.md"
+  },
+  {
+   "url": "/docs/creator/tutorials/examples/ui-camera-player/virtual-cameras/",
+   "title": "Virtual cameras",
+   "description": "Creating and switching to scene-defined cameras.",
+   "icon": null,
+   "space": "creator",
+   "source": "creator/tutorials/examples/ui-camera-player/virtual-cameras.md",
+   "updatedAt": "2026-10-26T16:43:00-03:00",
+   "file": "creator/tutorials/examples/ui-camera-player/virtual-cameras/index.md"
   },
   {
    "url": "/docs/creator/tutorials/video-emotes/",
@@ -5970,6 +7243,16 @@
    "file": "creator/tutorials/video/index.md"
   },
   {
+   "url": "/docs/creator/wearables-and-emotes/",
+   "title": "Wearables and Emotes",
+   "description": null,
+   "icon": null,
+   "space": "creator",
+   "source": "creator/wearables-and-emotes/README.md",
+   "updatedAt": "2026-10-26T20:50:41-03:00",
+   "file": "creator/wearables-and-emotes/index.md"
+  },
+  {
    "url": "/docs/creator/wearables-and-emotes/emotes/",
    "title": "Emotes Overview",
    "description": "An overview of emotes NFTs for Decentraland",
@@ -5986,7 +7269,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/wearables-and-emotes/emotes/avatar-rig.md",
-   "updatedAt": "2026-06-03T12:55:46+02:00",
+   "updatedAt": "2026-10-27T10:06:03-03:00",
    "file": "creator/wearables-and-emotes/emotes/avatar-rig/index.md"
   },
   {
@@ -5996,7 +7279,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/wearables-and-emotes/emotes/creating-emotes.md",
-   "updatedAt": "2026-06-03T12:55:46+02:00",
+   "updatedAt": "2026-10-27T10:06:03-03:00",
    "file": "creator/wearables-and-emotes/emotes/creating-emotes/index.md"
   },
   {
@@ -6006,7 +7289,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/wearables-and-emotes/emotes/particles-in-emotes.md",
-   "updatedAt": "2026-07-29T14:58:27-03:00",
+   "updatedAt": "2026-10-27T10:06:03-03:00",
    "file": "creator/wearables-and-emotes/emotes/particles-in-emotes/index.md"
   },
   {
@@ -6026,7 +7309,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/wearables-and-emotes/emotes/rig-features.md",
-   "updatedAt": "2026-06-03T12:55:46+02:00",
+   "updatedAt": "2026-10-29T17:18:53-03:00",
    "file": "creator/wearables-and-emotes/emotes/rig-features/index.md"
   },
   {
@@ -6046,7 +7329,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/wearables-and-emotes/manage-collections/creating-a-collection.md",
-   "updatedAt": "2025-12-17T11:05:01Z",
+   "updatedAt": "2026-10-26T20:30:29-03:00",
    "file": "creator/wearables-and-emotes/manage-collections/creating-a-collection/index.md"
   },
   {
@@ -6056,7 +7339,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/wearables-and-emotes/manage-collections/uploading-emotes.md",
-   "updatedAt": "2026-06-15T12:06:55-03:00",
+   "updatedAt": "2026-10-27T10:06:03-03:00",
    "file": "creator/wearables-and-emotes/manage-collections/uploading-emotes/index.md"
   },
   {
@@ -6066,7 +7349,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/wearables-and-emotes/manage-collections/uploading-smart-wearables.md",
-   "updatedAt": "2026-01-30T13:27:19-03:00",
+   "updatedAt": "2026-10-27T10:06:03-03:00",
    "file": "creator/wearables-and-emotes/manage-collections/uploading-smart-wearables/index.md"
   },
   {
@@ -6076,7 +7359,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/wearables-and-emotes/manage-collections/uploading-wearables.md",
-   "updatedAt": "2026-06-15T12:06:55-03:00",
+   "updatedAt": "2026-10-27T09:46:46-03:00",
    "file": "creator/wearables-and-emotes/manage-collections/uploading-wearables/index.md"
   },
   {
@@ -6106,7 +7389,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/wearables-and-emotes/publishing/publishing-collections.md",
-   "updatedAt": "2026-04-21T11:27:33-03:00",
+   "updatedAt": "2026-11-04T17:10:51-03:00",
    "file": "creator/wearables-and-emotes/publishing/publishing-collections/index.md"
   },
   {
@@ -6116,7 +7399,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/wearables-and-emotes/wearables/README.md",
-   "updatedAt": "2026-06-15T12:06:55-03:00",
+   "updatedAt": "2026-10-26T20:30:29-03:00",
    "file": "creator/wearables-and-emotes/wearables/index.md"
   },
   {
@@ -6126,7 +7409,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/wearables-and-emotes/wearables/creating-wearables.md",
-   "updatedAt": "2026-06-15T12:06:55-03:00",
+   "updatedAt": "2026-11-04T17:10:51-03:00",
    "file": "creator/wearables-and-emotes/wearables/creating-wearables/index.md"
   },
   {
@@ -6136,7 +7419,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/wearables-and-emotes/wearables/linked-wearables.md",
-   "updatedAt": "2026-01-30T13:27:19-03:00",
+   "updatedAt": "2026-10-26T21:41:26-03:00",
    "file": "creator/wearables-and-emotes/wearables/linked-wearables/index.md"
   },
   {
@@ -6146,7 +7429,7 @@
    "icon": null,
    "space": "creator",
    "source": "creator/wearables-and-emotes/wearables/spring-bones.md",
-   "updatedAt": "2026-06-15T12:06:55-03:00",
+   "updatedAt": "2026-10-27T10:06:03-03:00",
    "file": "creator/wearables-and-emotes/wearables/spring-bones/index.md"
   },
   {
@@ -6186,7 +7469,7 @@
    "icon": null,
    "space": "player",
    "source": "player/blockchain-integration/get-a-wallet.md",
-   "updatedAt": "2026-05-20T16:41:29-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "player/blockchain-integration/get-a-wallet/index.md"
   },
   {
@@ -6206,7 +7489,7 @@
    "icon": null,
    "space": "player",
    "source": "player/dao/README.md",
-   "updatedAt": "2025-11-12T10:44:31-03:00",
+   "updatedAt": "2026-10-12T17:59:30-03:00",
    "file": "player/dao/index.md"
   },
   {
@@ -6228,6 +7511,16 @@
    "source": "player/dao/how-does-the-dao-work.md",
    "updatedAt": "2025-11-11T16:36:13-03:00",
    "file": "player/dao/how-does-the-dao-work/index.md"
+  },
+  {
+   "url": "/docs/player/dao/mission-vision-and-roles/",
+   "title": "Mission, Vision and Roles",
+   "description": ">-",
+   "icon": null,
+   "space": "player",
+   "source": "player/dao/mission-vision-and-roles.md",
+   "updatedAt": "2026-10-12T17:59:30-03:00",
+   "file": "player/dao/mission-vision-and-roles/index.md"
   },
   {
    "url": "/docs/player/dao/the-dao-fund/",
@@ -6276,7 +7569,7 @@
    "icon": null,
    "space": "player",
    "source": "player/dao/what-is-the-dao.md",
-   "updatedAt": "2025-11-11T16:36:13-03:00",
+   "updatedAt": "2026-10-12T17:59:30-03:00",
    "file": "player/dao/what-is-the-dao/index.md"
   },
   {
@@ -6306,7 +7599,7 @@
    "icon": null,
    "space": "player",
    "source": "player/decentraland-in-world/customizing-your-avatar.md",
-   "updatedAt": "2026-05-20T16:41:29-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "player/decentraland-in-world/customizing-your-avatar/index.md"
   },
   {
@@ -6316,7 +7609,7 @@
    "icon": null,
    "space": "player",
    "source": "player/decentraland-in-world/earning-rewards.md",
-   "updatedAt": "2026-05-20T16:41:29-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "player/decentraland-in-world/earning-rewards/index.md"
   },
   {
@@ -6326,7 +7619,7 @@
    "icon": null,
    "space": "player",
    "source": "player/decentraland-in-world/exploring.md",
-   "updatedAt": "2026-05-20T16:41:29-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "player/decentraland-in-world/exploring/index.md"
   },
   {
@@ -6346,7 +7639,7 @@
    "icon": null,
    "space": "player",
    "source": "player/decentraland-in-world/friends-and-chatting.md",
-   "updatedAt": "2026-05-20T16:41:29-03:00",
+   "updatedAt": "2026-10-26T20:30:29-03:00",
    "file": "player/decentraland-in-world/friends-and-chatting/index.md"
   },
   {
@@ -6356,7 +7649,7 @@
    "icon": null,
    "space": "player",
    "source": "player/decentraland-in-world/overview.md",
-   "updatedAt": "2026-05-20T16:41:29-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "player/decentraland-in-world/overview/index.md"
   },
   {
@@ -6366,7 +7659,7 @@
    "icon": null,
    "space": "player",
    "source": "player/decentraland-in-world/settings-and-performance.md",
-   "updatedAt": "2026-05-20T16:41:29-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "player/decentraland-in-world/settings-and-performance/index.md"
   },
   {
@@ -6376,7 +7669,7 @@
    "icon": null,
    "space": "player",
    "source": "player/decentraland-in-world/shortcuts-and-chat-commands.md",
-   "updatedAt": "2026-05-20T16:41:29-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "player/decentraland-in-world/shortcuts-and-chat-commands/index.md"
   },
   {
@@ -6386,7 +7679,7 @@
    "icon": null,
    "space": "player",
    "source": "player/decentraland-in-world/your-profile.md",
-   "updatedAt": "2026-05-20T16:41:29-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "player/decentraland-in-world/your-profile/index.md"
   },
   {
@@ -6416,7 +7709,7 @@
    "icon": null,
    "space": "player",
    "source": "player/faqs/creating-in-decentraland.md",
-   "updatedAt": "2025-11-10T18:11:10Z",
+   "updatedAt": "2026-10-06T09:30:06-03:00",
    "file": "player/faqs/creating-in-decentraland/index.md"
   },
   {
@@ -6426,7 +7719,7 @@
    "icon": null,
    "space": "player",
    "source": "player/faqs/decentraland-101.md",
-   "updatedAt": "2026-05-20T16:41:29-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "player/faqs/decentraland-101/index.md"
   },
   {
@@ -6466,7 +7759,7 @@
    "icon": null,
    "space": "player",
    "source": "player/faqs/security.md",
-   "updatedAt": "2026-05-20T16:41:29-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "player/faqs/security/index.md"
   },
   {
@@ -6486,7 +7779,7 @@
    "icon": null,
    "space": "player",
    "source": "player/introduction/about-decentraland.md",
-   "updatedAt": "2026-04-23T09:48:22-03:00",
+   "updatedAt": "2026-10-12T17:59:30-03:00",
    "file": "player/introduction/about-decentraland/index.md"
   },
   {
@@ -6516,7 +7809,7 @@
    "icon": null,
    "space": "player",
    "source": "player/marketplace/land-manager.md",
-   "updatedAt": "2026-05-20T16:41:29-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "player/marketplace/land-manager/index.md"
   },
   {
@@ -6526,7 +7819,7 @@
    "icon": null,
    "space": "player",
    "source": "player/marketplace/marketplace.md",
-   "updatedAt": "2026-05-20T16:41:29-03:00",
+   "updatedAt": "2026-10-26T18:20:25-03:00",
    "file": "player/marketplace/marketplace/index.md"
   },
   {
@@ -6536,7 +7829,7 @@
    "icon": null,
    "space": "player",
    "source": "player/marketplace/rentals.md",
-   "updatedAt": "2026-05-20T16:41:29-03:00",
+   "updatedAt": "2026-10-26T20:30:29-03:00",
    "file": "player/marketplace/rentals/index.md"
   },
   {
@@ -6546,7 +7839,7 @@
    "icon": null,
    "space": "player",
    "source": "player/mobile-app/README.md",
-   "updatedAt": "2026-07-27T16:13:37-03:00",
+   "updatedAt": "2026-10-26T20:30:29-03:00",
    "file": "player/mobile-app/index.md"
   },
   {
@@ -6556,7 +7849,7 @@
    "icon": null,
    "space": "player",
    "source": "player/mobile-app/controls.md",
-   "updatedAt": "2026-04-23T09:48:22-03:00",
+   "updatedAt": "2026-10-26T20:30:29-03:00",
    "file": "player/mobile-app/controls/index.md"
   },
   {

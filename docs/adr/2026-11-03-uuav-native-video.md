@@ -11,7 +11,8 @@ nothing shipped is reproducible, every frame crosses the CPU, and a demuxer
 crash takes the engine down. UUAV, the player built for the Unity Explorer,
 decodes in hardware out of process, inside a sandbox, with crash recovery.
 Its sources now live at `library/uuav`; the Explorer-side integration
-follows in a later change.
+follows in a later change, once it shows frames on every desktop
+platform, Windows included.
 
 ## Decision
 
@@ -40,8 +41,8 @@ follows in a later change.
   mbedTLS); Windows uses the hash-pinned BtbN LGPL shared build, macOS and
   Linux build FFmpeg from the pinned source commit.
 - Two workflows enforce the lock: `uuav-verify.yml` on every change to the
-  tree or the tooling, `uuav-native.yml` on the `ci:uuav-native` label or
-  by hand, rebuilding all targets and running the reproducibility gates
+  tree or the tooling, `uuav-native.yml` on the `ci:uuav-native` label (PRs
+  touching the UUAV inputs) or by hand, rebuilding all targets and running the reproducibility gates
   (same-runner determinism, byte reproduction on the pinned toolchain).
   Neither commits; relocking is a reviewed human step.
 - The workspace pins its own Rust toolchain (`library/uuav/rust-toolchain.toml`),

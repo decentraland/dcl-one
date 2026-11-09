@@ -10,7 +10,7 @@ Decentraland offers different ways to stream live video into your scene:
 - **Stream** _(Advanced Mode)_: Use a streaming software like [OBS](https://obsproject.com/) to stream through Decentraland's streaming infrastructure. This mode allows you to have more control over the stream, like screen layout and audio sources.
 - **Video URL** _(Advanced Mode)_: Point to your own streaming infrastructure, by pasting the URL into the **Video URL** field.
 
-<img src="/docs/.gitbook/assets/streaming-modes.webp" alt="Stream methods" width="400"/>
+<img src="/docs/creator/.gitbook/assets/streaming-modes.webp" alt="Stream methods" width="400"/>
 
 Streaming works in Worlds and Genesis City, with no audience limits on the scene side.
 
@@ -43,7 +43,7 @@ Once your scene is published, you can enter as a user with admin permissions and
 
 Enter your published scene as an admin user, and open the admin panel. Select the **Video** tab, then select the **DCL Cast** functionality.
 
-   <img src="/docs/.gitbook/assets/dcl-cast.webp" alt="DCL Cast" width="400"/>
+   <img src="/docs/creator/.gitbook/assets/dcl-cast.webp" alt="DCL Cast" width="400"/>
 
 You'll see two links that you can copy and share with others.
 
@@ -52,7 +52,7 @@ You'll see two links that you can copy and share with others.
 
 > [!CAUTION]
 >   **❗Warning**: Treat the streaming link as a secret, only share it with people you trust. Reset the link between presenters if needed.
-> 
+>
 >   When finished streaming, close the DCL Cast browser tab to free the channel.
 
 
@@ -66,13 +66,13 @@ When ready to stream, click the **Activate** button to make the stream visible t
 
 If for any reason you need to reset the room, click the **Reset Room** button to generate a new one. Anyone who's currently streaming will be disconnected.
 
- <img src="/docs/.gitbook/assets/reset-room.webp" alt="Reset room" width="150"/>
+ <img src="/docs/creator/.gitbook/assets/reset-room.webp" alt="Reset room" width="150"/>
 
 ### Using the DCL Cast app
 
 When someone pastes the speaker link into a browser, they'll see a screen like this:
 
- <img src="/docs/.gitbook/assets/dcl-cast-landing.webp" alt="DCL Cast app" width="400"/>
+ <img src="/docs/creator/.gitbook/assets/dcl-cast-landing.webp" alt="DCL Cast app" width="400"/>
 
 The browser will ask for permission to share your camera and microphone. You can also configure the different input devices to use for the stream.
 
@@ -87,7 +87,7 @@ Once streaming, the app is similar to various familiar video conferencing apps, 
 
 The chat is read-only, and listens to all messages sent by players inside the scene in Decentraland. This is great to keep in touch with the audience, even if you're streaming from a different device.
 
- <img src="/docs/.gitbook/assets/dcl-cast-app.webp" alt="DCL Cast app" width="700"/>
+ <img src="/docs/creator/.gitbook/assets/dcl-cast-app.webp" alt="DCL Cast app" width="700"/>
 
 On the **Participants** tab you can see three lists:
 
@@ -95,7 +95,7 @@ On the **Participants** tab you can see three lists:
 - **Viewers**: The people who are currently watching the stream from a browser.
 - **In-world participants**: The players who are currently inside the scene, watching the stream in-world.
 
- <img src="/docs/.gitbook/assets/participants.webp" alt="Participants tab" width="200"/>
+ <img src="/docs/creator/.gitbook/assets/participants.webp" alt="Participants tab" width="200"/>
 
 If multiple speakers are present in a DCL Cast session, players in-world will hear the voices of all speakers, and the see the video will automatically switch to show whoever is currently emitting sound, to always show who's speaking.
 
@@ -115,9 +115,9 @@ This will force this source to be always shown on screen, regardless of if other
 > [!NOTE]
 > **📔 Tip**: If you're also in-world watching the stream, you may find it jarring to hear echo from audio repeated both in the DCL Cast app and in the Decentraland scene.
 > You can easily mute all audio from the DCL Cast app by toggling the speaker icon on the bottom-left of the screen
-> 
+>
 >  <img src="/docs/creator/.gitbook/assets/mute-dcl-cast.webp" alt="Participants tab" width="50"/>
-> 
+>
 > Otherwise you can mute audio in the Decentraland settings.
 
 
@@ -136,7 +136,7 @@ The presentation will now be a source that can be selected to show on screen, wh
 
 > [!WARNING]
 > **📔 Note**: Presentation files must be under 100 MB. Google slides presentations must be set to _public_.
-> 
+>
 > There can only be one active presentation at a time in a DCL Cast session.
 
 

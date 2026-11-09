@@ -1,17 +1,16 @@
 // Profile: the local player's profile card + any user's passport (View Profile).
 //   from: @dcl/sdk getPlayer() (address/name/isGuest)
 //       + the ENGINE's profile cache: BevyApi.getUserProfile (the full deployed profile — face +
-//         body snapshots, name, links, about-me) and ~system/Players getPlayerData (display
+//         body snapshots, name, links, about-me) and BevyApi.getCompactProfiles (display
 //         identity for a list)
 //       + catalyst lambda  GET /lambdas/users/:id/names  (owned NFT names)
-//       + badges service   GET badges.decentraland.org/users/:id/badges
-//       + camera-reel       GET camera-reel-service.decentraland.org/api/users/:id/images
+//       + badges service   GET <badges>/users/:id/badges
+//       + camera-reel       GET <cameraReel>/api/users/:id/images
 import { getPlayer } from '@dcl/sdk/players'
-import { getPlayerData } from '~system/Players'
-import { catalystBase, getJson } from '../http'
-import type { UserData } from '~system/Players'
+import { catalystBase, getJson, serviceBase } from '../http'
 import { resolveEquippedSet, resolveWearables } from './wearables'
 import { equippedSlots, resolveEquippedEmotes } from './emotes'
+import { profileSaveSettled } from './avatarDraft'
 import type { Badge, Profile, ProfileInfo, SaveProfileRequest } from '../../../src/engine/protocol'
 import type { SetAvatarData } from '../../../src/engine/generated'
 // Not via the generated barrel: it only re-exports the top-level files, not serde_json/.
@@ -65,10 +64,10 @@ export type SerializedProfile = {
  *  matches its cache on the lowercase form. */
 export const profileKey = (address: string): string => address.toLowerCase()
 
-/** A user's deployed profile as the ENGINE holds it — the same cache and fetch cascade (registry,
- *  catalyst, then peers) that nametags read, so a guest resolves too (their profile only exists
- *  on the wire), and a save made through `setAvatar` is visible on the next read without a cache
- *  of our own to keep in step. `undefined` when the engine can't resolve the address. */
+/** A user's deployed profile as the ENGINE holds it — the same cache and fetch cascade (catalyst,
+ *  then peers) that nametags read, so a guest resolves too (their profile only exists on the
+ *  wire), and a save made through `setAvatar` is visible on the next read without a cache of our
+ *  own to keep in step. `undefined` when the engine can't resolve the address. */
 export async function fetchProfile(address: string): Promise<SerializedProfile | undefined> {
   return await BevyApi.getUserProfile(profileKey(address)).catch(() => undefined)
 }
@@ -76,46 +75,40 @@ export async function fetchProfile(address: string): Promise<SerializedProfile |
 /** What a list row needs to show a person: their name, face, and claimed-name seal. */
 export type ProfileIdentity = { name: string; picture?: string; hasClaimedName: boolean }
 
-/** `hasClaimedName` rides the same payload, but isn't in the SDK's `UserData` typing. */
-type PlayerData = UserData & { hasClaimedName?: boolean }
+/** A profile's compact tier as the engine returns it (`common::profile::CompactProfile`). */
+export type CompactProfile = {
+  pointer: string
+  name: string
+  hasClaimedName: boolean
+  /** The claimed name's colour, 0–1 floats, when one is set. */
+  nameColor: { r: number; g: number; b: number } | null
+  /** The face snapshot's url; empty when the profile has none. */
+  thumbnailUrl: string
+}
 
-/**
- * Ceiling on one lookup. Each address costs a slot in the scene's per-tick RPC budget
- * (1000, shared with every other call the bridge makes that tick), so a service that
- * ignores its `limit` param has to cost a truncated list rather than a broken tick. The
- * real callers ask for at most 120 — 100 members plus 20 post authors. Anything dropped
- * still renders, as its shortened address.
- */
+/** The most addresses one `getCompactProfiles` call takes (the engine rejects more). */
 const MAX_IDENTITIES = 200
 
 /**
  * Resolve display identity for a list of addresses through the ENGINE's profile cache —
- * the one the nametags, chat and passport UI already read. `getPlayerData` asks about one
- * address, but the engine batches every address it doesn't already hold into a single
- * registry request, so asking about a whole list at once still costs one round trip and
+ * the one the nametags, chat and passport UI already read — in one call: the engine asks the
+ * catalyst for the compact profiles of every address it doesn't already hold, in batches, and
  * anyone already on screen costs nothing. Returns a lookup that always answers: an address
- * with no (or an unresolvable) profile falls back to its shortened form.
+ * with no (or an unresolvable) profile falls back to its shortened form, as does every address
+ * past the first `MAX_IDENTITIES`.
  */
 export async function fetchIdentities(addresses: string[]): Promise<(address: string) => ProfileIdentity> {
   const unique = [...new Set(addresses.filter((a) => a !== '').map(profileKey))]
   if (unique.length > MAX_IDENTITIES) console.error(`[profile] ${unique.length} addresses asked for, resolving the first ${MAX_IDENTITIES}`)
-  const wanted = unique.slice(0, MAX_IDENTITIES)
-  const resolved = new Map<string, PlayerData>()
-  await Promise.all(
-    wanted.map(async (address) => {
-      const data = await getPlayerData({ userId: address })
-        .then((res) => res.data)
-        .catch(() => undefined)
-      if (data != null) resolved.set(address, data)
-    })
-  )
+  const found = await BevyApi.getCompactProfiles(unique.slice(0, MAX_IDENTITIES)).catch((): CompactProfile[] => [])
+  const resolved = new Map(found.map((profile) => [profileKey(profile.pointer), profile]))
   return (address) => identityOf(resolved.get(profileKey(address)), address)
 }
 
-function identityOf(data: PlayerData | undefined, address: string): ProfileIdentity {
+function identityOf(data: CompactProfile | undefined, address: string): ProfileIdentity {
   return {
-    name: data?.displayName != null && data.displayName !== '' ? data.displayName : shortAddress(address),
-    picture: httpOrUndef(data?.avatar?.snapshots?.face256),
+    name: data != null && data.name !== '' ? data.name : shortAddress(address),
+    picture: httpOrUndef(data?.thumbnailUrl),
     hasClaimedName: data?.hasClaimedName ?? false
   }
 }
@@ -232,7 +225,9 @@ const tierCache = new Map<string, Promise<ApiTier[] | undefined>>()
 async function fetchTiers(badgeId: string): Promise<ApiTier[] | undefined> {
   let tiers = tierCache.get(badgeId)
   if (tiers == null) {
-    tiers = getJson<TiersResponse>(`https://badges.decentraland.org/badges/${badgeId}/tiers`).then((r) => r?.data?.tiers)
+    tiers = serviceBase('badges')
+      .then(async (badges) => await getJson<TiersResponse>(`${badges}/badges/${badgeId}/tiers`))
+      .then((r) => r?.data?.tiers)
     tiers.catch(() => tierCache.delete(badgeId))
     tierCache.set(badgeId, tiers)
   }
@@ -290,9 +285,9 @@ type BadgesFetch = {
 // `includeLocked` (your own passport) adds the badges not earned yet; the service only lists them
 // on request, and unity-explorer only asks for its own user.
 async function fetchBadges(address: string, includeLocked: boolean): Promise<BadgesFetch | undefined> {
-  const r = await getJson<BadgesResponse>(`https://badges.decentraland.org/users/${address}/badges?includeNotAchieved=${includeLocked}`).catch(
-    () => undefined
-  )
+  const r = await serviceBase('badges')
+    .then(async (badges) => await getJson<BadgesResponse>(`${badges}/users/${address}/badges?includeNotAchieved=${includeLocked}`))
+    .catch(() => undefined)
   const achieved = r?.data?.achieved
   if (achieved == null) return undefined
   // Newest first: the service's order is its badge catalogue, which means nothing to a reader.
@@ -310,9 +305,9 @@ async function fetchBadges(address: string, includeLocked: boolean): Promise<Bad
 // --- camera-reel photos --------------------------------------------------------
 type ReelResponse = { images?: Array<{ url?: string; thumbnailUrl?: string }> }
 async function fetchPhotos(address: string): Promise<string[] | undefined> {
-  const r = await getJson<ReelResponse>(
-    `https://camera-reel-service.decentraland.org/api/users/${address}/images?limit=12&offset=0&compact=true`
-  ).catch(() => undefined)
+  const r = await serviceBase('cameraReel')
+    .then(async (reel) => await getJson<ReelResponse>(`${reel}/api/users/${address}/images?limit=12&offset=0&compact=true`))
+    .catch(() => undefined)
   const imgs = r?.images
   if (imgs == null) return undefined
   return imgs.map((i) => i.thumbnailUrl ?? i.url).filter((u): u is string => typeof u === 'string')
@@ -396,7 +391,8 @@ export function registerProfile(ctx: Ctx): void {
     }
     const extras = toProfileExtras(msg)
     if (Object.keys(extras).length > 0) data.profileExtras = extras
-    if (data.base == null && data.profileExtras == null) {
+    if (msg.nameColor !== undefined) data.nameColor = { ...msg.nameColor, clear: false }
+    if (data.base == null && data.profileExtras == null && data.nameColor == null) {
       ctx.send({ kind: 'profileSaved', ok: true })
       return
     }
@@ -408,12 +404,15 @@ export function registerProfile(ctx: Ctx): void {
       await BevyApi.setAvatar(data)
     } catch (e) {
       if (signedOut()) return
+      // a save that a later one replaced settles nothing: the later one carries it
+      if (!String(e).includes('cancelled')) profileSaveSettled(false)
       console.error('[profile] save failed', e)
       ctx.send({ kind: 'profileSaved', ok: false, error: e instanceof Error ? e.message : String(e) })
       return
     }
 
     if (signedOut()) return
+    profileSaveSettled(true)
     ctx.send({ kind: 'profileSaved', ok: true })
     // setAvatar amends the engine's own copy of the profile before it resolves, so re-reading it
     // is the post-save state — no need to fold the edit in by hand.

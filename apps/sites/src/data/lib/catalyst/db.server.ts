@@ -69,7 +69,6 @@ export const dbSource: PlacesSource = {
       const c = parseCategory({
         name: r.name,
         count: Number(r.count),
-        active: true,
         i18n: { en: categoryI18nEn(r.name) },
       });
       return c ? [c] : [];

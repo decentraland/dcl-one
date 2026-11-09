@@ -31,8 +31,8 @@ use system_bridge::BlockingStatusData;
 #[cfg(feature = "social")]
 use system_bridge::NameColor;
 use system_bridge::{
-    BlockUpdateData, FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, SystemApi,
+    BlockUpdateData, CommunityMemberConnectivityData, FriendConnectivityEvent, FriendData,
+    FriendRequestData, FriendStatusData, FriendshipEventUpdate, SystemApi,
 };
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver},
@@ -48,20 +48,24 @@ impl Plugin for SocialPlugin {
         app.add_plugins(runtime::SocialRuntimePlugin);
         app.add_event::<FriendshipEvent>();
         app.add_event::<ConnectivityEvent>();
+        app.add_event::<CommunityConnectivityEvent>();
         app.add_event::<BlockUpdateEvent>();
         app.add_event::<DirectChatEvent>();
         app.init_resource::<SocialClient>();
         app.init_resource::<AccessStatus>();
         app.init_resource::<SocialConsumerRequested>();
         app.add_event::<SocialStateChanged>();
-        app.add_systems(PostUpdate, update_social_client);
-        app.add_systems(PostUpdate, init_social_client);
+        app.add_systems(
+            PostUpdate,
+            (init_social_client, update_social_client).chain(),
+        );
         app.add_systems(
             PostUpdate,
             (
                 handle_social_requests,
                 pipe_friendship_events_to_scene,
                 pipe_connectivity_events_to_scene,
+                pipe_community_connectivity_to_scene,
                 pipe_block_updates_to_scene,
                 // not in the social dev binary, which has no config or settings
                 sync_dm_privacy
@@ -92,19 +96,30 @@ fn update_social_client(
 ) {
     let identity = wallet.address();
     access.set_identity(identity);
-    // init_social_client replaces the handler on wallet changes. It may run
-    // later in PostUpdate, so do not publish the departing account's updates.
+    // A wallet change also replaces the handler for a new login to the same address.
     if identity.is_none() || wallet.is_changed() {
+        access.invalidate_blocks();
         return;
     }
     let Some(client) = social.0.as_mut() else {
+        access.invalidate_blocks();
         return;
     };
-    if client.update() {
-        access.replace_blocks(
-            client.blocked.iter().copied(),
-            client.blocked_by.iter().copied(),
-        );
+    let updated = client.update();
+    #[cfg(feature = "social")]
+    match client.block_snapshot_owner() {
+        Some(owner) if Some(owner) == identity => {
+            if updated {
+                access.replace_blocks(
+                    owner,
+                    client.blocked.iter().copied(),
+                    client.blocked_by.iter().copied(),
+                );
+            }
+        }
+        _ => access.invalidate_blocks(),
+    }
+    if updated {
         changed.write(SocialStateChanged);
     }
 }
@@ -138,6 +153,7 @@ fn is_social_consumer_request(event: &SystemApi) -> bool {
             | SystemApi::GetBlockUpdateStream(_)
             | SystemApi::GetDmUserStateStream(_, _)
             | SystemApi::SetVoiceRoom { .. }
+            | SystemApi::GetCommunityConnectivityStream(_)
     )
 }
 
@@ -377,9 +393,10 @@ fn debug_write_social(social: Res<SocialClient>, mut debug: ResMut<DebugInfo>) {
     debug.info.insert(
         "Social client",
         format!(
-            "live={}, initialized={}",
+            "live={}, initialized={}, block status ready={}",
             client.live(),
-            client.is_initialized
+            client.is_initialized,
+            client.block_snapshot_owner().is_some(),
         ),
     );
     debug.info.insert(
@@ -417,10 +434,12 @@ fn init_social_client(
     mut commands: Commands,
     wallet: Res<Wallet>,
     mut social: ResMut<SocialClient>,
+    mut access: ResMut<AccessStatus>,
     mut friends: Local<Option<UnboundedReceiver<FriendshipEvent>>>,
     mut connectivity: Local<Option<UnboundedReceiver<ConnectivityEvent>>>,
     mut block_updates: Local<Option<UnboundedReceiver<BlockUpdateEvent>>>,
     mut chats: Local<Option<UnboundedReceiver<DirectChatEvent>>>,
+    mut community_connectivity: Local<Option<UnboundedReceiver<CommunityConnectivityEvent>>>,
     social_runtime: runtime::SocialRuntimeRes,
     mut restart: ResMut<RestartSocialRequested>,
     mut consumer_requested: ResMut<SocialConsumerRequested>,
@@ -440,6 +459,7 @@ fn init_social_client(
         *connectivity = None;
         *block_updates = None;
         *chats = None;
+        *community_connectivity = None;
     }
 
     let restart_requested = std::mem::take(&mut restart.0);
@@ -449,15 +469,18 @@ fn init_social_client(
         // connection so the old async task observes its channels closed and tears
         // down its WS, rather than overlapping with the new one.
         social.0 = None;
+        access.invalidate_blocks();
         *friends = None;
         *connectivity = None;
         *block_updates = None;
         *chats = None;
+        *community_connectivity = None;
 
         let (f_sx, f_rx) = unbounded_channel();
         let (conn_sx, conn_rx) = unbounded_channel();
         let (block_sx, block_rx) = unbounded_channel();
         let (c_sx, c_rx) = unbounded_channel();
+        let (community_sx, community_rx) = unbounded_channel();
         let client = SocialClientHandler::connect(
             wallet.clone(),
             &social_runtime,
@@ -479,12 +502,20 @@ fn init_social_client(
             move |c| {
                 let _ = c_sx.send(DirectChatEvent(c));
             },
+            move |community_id, address, status| {
+                let _ = community_sx.send(CommunityConnectivityEvent {
+                    community_id: community_id.to_owned(),
+                    address,
+                    status: status as i32,
+                });
+            },
         );
         social.0 = client;
         *friends = Some(f_rx);
         *connectivity = Some(conn_rx);
         *block_updates = Some(block_rx);
         *chats = Some(c_rx);
+        *community_connectivity = Some(community_rx);
     }
 
     drain_events(
@@ -493,6 +524,7 @@ fn init_social_client(
         &mut connectivity,
         &mut block_updates,
         &mut chats,
+        &mut community_connectivity,
     );
 }
 
@@ -506,6 +538,7 @@ fn init_social_client(
     mut connectivity: Local<Option<UnboundedReceiver<ConnectivityEvent>>>,
     mut block_updates: Local<Option<UnboundedReceiver<BlockUpdateEvent>>>,
     mut chats: Local<Option<UnboundedReceiver<DirectChatEvent>>>,
+    mut community_connectivity: Local<Option<UnboundedReceiver<CommunityConnectivityEvent>>>,
     mut consumer_requested: ResMut<SocialConsumerRequested>,
     mut system_api_events: EventReader<SystemApi>,
 ) {
@@ -523,6 +556,7 @@ fn init_social_client(
         *connectivity = None;
         *block_updates = None;
         *chats = None;
+        *community_connectivity = None;
     }
 
     let reconnect_signal = wallet.is_changed() || social.0.is_none();
@@ -531,6 +565,7 @@ fn init_social_client(
         let (conn_sx, conn_rx) = unbounded_channel();
         let (block_sx, block_rx) = unbounded_channel();
         let (c_sx, c_rx) = unbounded_channel();
+        let (community_sx, community_rx) = unbounded_channel();
         let client = SocialClientHandler::connect(
             wallet.clone(),
             move |f| {
@@ -551,12 +586,20 @@ fn init_social_client(
             move |c| {
                 let _ = c_sx.send(DirectChatEvent(c));
             },
+            move |community_id, address, status| {
+                let _ = community_sx.send(CommunityConnectivityEvent {
+                    community_id: community_id.to_owned(),
+                    address,
+                    status: status as i32,
+                });
+            },
         );
         social.0 = client;
         *friends = Some(f_rx);
         *connectivity = Some(conn_rx);
         *block_updates = Some(block_rx);
         *chats = Some(c_rx);
+        *community_connectivity = Some(community_rx);
     }
 
     drain_events(
@@ -565,6 +608,7 @@ fn init_social_client(
         &mut connectivity,
         &mut block_updates,
         &mut chats,
+        &mut community_connectivity,
     );
 }
 
@@ -574,6 +618,7 @@ fn drain_events(
     connectivity: &mut Option<UnboundedReceiver<ConnectivityEvent>>,
     block_updates: &mut Option<UnboundedReceiver<BlockUpdateEvent>>,
     chats: &mut Option<UnboundedReceiver<DirectChatEvent>>,
+    community_connectivity: &mut Option<UnboundedReceiver<CommunityConnectivityEvent>>,
 ) {
     while let Some(f) = friends.as_mut().and_then(|rx| rx.try_recv().ok()) {
         commands.send_event(f);
@@ -586,6 +631,12 @@ fn drain_events(
     }
     while let Some(c) = chats.as_mut().and_then(|rx| rx.try_recv().ok()) {
         commands.send_event(c);
+    }
+    while let Some(ev) = community_connectivity
+        .as_mut()
+        .and_then(|rx| rx.try_recv().ok())
+    {
+        commands.send_event(ev);
     }
 }
 
@@ -1197,6 +1248,47 @@ fn pipe_connectivity_events_to_scene(
     }
 }
 
+/// A member of one of the local user's communities came online or went offline; `status` is
+/// the proto `ConnectivityStatus` (0 online, 1 offline).
+#[derive(Event, Debug, Clone)]
+pub struct CommunityConnectivityEvent {
+    pub community_id: String,
+    pub address: Address,
+    pub status: i32,
+}
+
+/// Pipes CommunityConnectivityEvent bevy events to scene stream subscribers
+fn pipe_community_connectivity_to_scene(
+    mut requests: EventReader<SystemApi>,
+    mut events: EventReader<CommunityConnectivityEvent>,
+    mut senders: Local<Vec<RpcStreamSender<CommunityMemberConnectivityData>>>,
+) {
+    senders.extend(requests.read().filter_map(|ev| {
+        if let SystemApi::GetCommunityConnectivityStream(sender) = ev {
+            Some(sender.clone())
+        } else {
+            None
+        }
+    }));
+    senders.retain(|s| !s.is_closed());
+
+    if senders.is_empty() {
+        events.clear();
+        return;
+    }
+
+    for ev in events.read() {
+        let data = CommunityMemberConnectivityData {
+            community_id: ev.community_id.clone(),
+            address: format!("{:#x}", ev.address),
+            status: if ev.status == 0 { "online" } else { "offline" }.to_owned(),
+        };
+        for sender in senders.iter() {
+            let _ = sender.send(data.clone());
+        }
+    }
+}
+
 fn friendship_event_to_update(body: &Option<FriendshipEventBody>) -> Option<FriendshipEventUpdate> {
     #[cfg(feature = "social")]
     {
@@ -1355,6 +1447,7 @@ mod access_status_tests {
             .add_systems(PostUpdate, update_social_client);
         let scope = AccessScope::PrivateChat;
         let blocked = Address::from([3; 20]);
+        let peer = Address::from([4; 20]);
 
         app.world_mut()
             .resource_mut::<Wallet>()
@@ -1362,13 +1455,19 @@ mod access_status_tests {
         app.update();
         {
             let mut status = app.world_mut().resource_mut::<AccessStatus>();
+            let owner = status.identity().unwrap();
             status.set_denied(scope.clone());
-            status.replace_blocks([blocked], [blocked]);
+            status.replace_blocks(owner, [blocked], [blocked]);
+            assert!(status.allows_voice_from(Some(owner), peer));
         }
 
-        // A normal social update must preserve a room's terminal admission result.
+        // Missing the client invalidates block state without clearing room admission.
         app.update();
-        assert!(app.world().resource::<AccessStatus>().is_denied(&scope));
+        {
+            let status = app.world().resource::<AccessStatus>();
+            assert!(status.is_denied(&scope));
+            assert!(!status.allows_voice_from(status.identity(), peer));
+        }
 
         for next_seed in [Some([2; 32]), None] {
             {
@@ -1388,10 +1487,13 @@ mod access_status_tests {
             assert!(!status.is_denied(&scope));
             assert!(!status.is_blocked(blocked));
             assert!(!status.is_blocked_by(blocked));
+            assert!(!status.allows_voice_from(status.identity(), peer));
 
             let mut status = app.world_mut().resource_mut::<AccessStatus>();
             status.set_denied(scope.clone());
-            status.replace_blocks([blocked], [blocked]);
+            if let Some(owner) = status.identity() {
+                status.replace_blocks(owner, [blocked], [blocked]);
+            }
         }
     }
 }

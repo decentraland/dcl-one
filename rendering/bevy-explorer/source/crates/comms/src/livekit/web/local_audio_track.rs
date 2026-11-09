@@ -30,20 +30,14 @@ impl LocalAudioTrack {
         }
     }
 
-    pub async fn new(options: AudioCaptureOptions) -> RoomResult<Self> {
+    /// The inner result is the page's explicit creation reply. An outer error leaves the
+    /// caller without proof that the page did not create a capture source.
+    pub(crate) async fn new(options: AudioCaptureOptions) -> RoomResult<Result<Self, String>> {
         match request(|request| LivekitCommand::CreateLocalAudioTrack { request, options }).await? {
-            Reply::LocalAudioTrack(result) => result.map_err(RoomError::from),
+            Reply::LocalAudioTrack(result) => Ok(result),
             other => Err(RoomError::from(format!(
                 "unexpected reply to local audio track: {other:?}"
             ))),
-        }
-    }
-
-    /// A track the page could not create; publishing it fails.
-    pub fn unavailable() -> Self {
-        Self {
-            id: 0,
-            sid: TrackSid(String::new()),
         }
     }
 

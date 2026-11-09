@@ -26,7 +26,10 @@
 # (explorer-automation's `win-gpu-t4-explorer`; an org admin enables it for this repository), and
 # the zone accounts in the `e2e` environment (DCL_E2E_ACCOUNT_KEYS, comma-separated private keys,
 # one per worker). Until the variable is set the scenarios job is skipped; the Inputs job's summary
-# says what would have run.
+# says what would have run. That image carries MinGit alone, so the job runs its steps in
+# PowerShell, puts a pinned git-lfs on PATH before the checkout (the scenes' assets), and drives
+# Chrome where the image has it, else a pinned Chrome for Testing build. The scenes' CLI is built on a
+# hosted Windows runner and handed over, so the image needs no Rust toolchain, MSVC or bash.
 #
 # GitHub starts `workflow_run`, `schedule` and `workflow_dispatch` only from the workflow file on
 # the default branch: until this file is on main, only the pull request jobs run.
@@ -52,7 +55,7 @@ name: Bevy Explorer / E2E
   workflow_dispatch:
     inputs:
       sha:
-        description: Commit whose Bevy CI web app and suite to run (empty = main's newest)
+        description: Commit whose suite to run, with the web app its Bevy CI run built, else main's newest (empty = main's newest)
         required: false
         default: ''
       group:
@@ -159,10 +162,55 @@ jobs:
         run: >-
           echo 'The scenarios are skipped: the BEVY_E2E_WINDOWS_RUNNER repository variable names no runner.'
           >> "$GITHUB_STEP_SUMMARY"
+  # The scenes' CLI, built where the Rust toolchain, the MSVC linker and bash are: a hosted
+  # Windows runner. The GPU image gets the executable. A pull request's run restores the cache
+  # and saves none: only a first attempt that built main's head writes it.
+  scene-cli:
+    name: dcl-scene-cli (Windows)
+    needs: inputs
+    if: needs.inputs.outputs.run == 'true' && vars.BEVY_E2E_WINDOWS_RUNNER != '' && (github.event.inputs.group || 'both') != 'inworld'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      # The workspace's rust-toolchain.toml adds components and wasm targets the CLI never uses:
+      # every cargo call takes the minimal toolchain installed below instead.
+      RUSTUP_TOOLCHAIN: 1.99.1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.inputs.outputs.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: 1.99.1
+      - name: Prepare the pinned native toolchain for caching
+        run: python apps/bevy-explorer/prepare-native-cache.py
+      # The crate is a member of the services/catalyst workspace: cargo builds and caches under
+      # that workspace's target.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: services/catalyst -> target
+          key: e2e-scene-cli
+          save-if: ${{ needs.inputs.outputs.pr == '' && needs.inputs.outputs.sha == github.sha && github.run_attempt == '1' }}
+      - name: Build dcl-scene-cli
+        working-directory: services/catalyst
+        run: cargo build --release --locked -p dcl-scene-cli
+      # Kept for a few days, so a re-run of the scenarios job alone still finds it.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dcl-scene-cli-windows-${{ needs.inputs.outputs.sha }}
+          path: services/catalyst/target/release/dcl-scene-cli.exe
+          if-no-files-found: error
+          retention-days: 3
   scenarios:
     name: Scenarios (Windows GPU)
-    needs: inputs
-    if: needs.inputs.outputs.run == 'true' && vars.BEVY_E2E_WINDOWS_RUNNER != ''
+    needs: [inputs, scene-cli]
+    # scene-cli is skipped for the InWorld group alone, and may have failed: the InWorld
+    # scenarios run either way, the visual steps only with its executable, and the job fails at
+    # its end when the visual group could not run.
+    if: ${{ !cancelled() && needs.inputs.outputs.run == 'true' && vars.BEVY_E2E_WINDOWS_RUNNER != '' }}
     runs-on: ${{ vars.BEVY_E2E_WINDOWS_RUNNER }}
     environment: e2e
     timeout-minutes: 100
@@ -171,7 +219,7 @@ jobs:
       actions: read
     defaults:
       run:
-        shell: bash
+        shell: powershell
         working-directory: apps/bevy-explorer/e2e
     env:
       GROUP: ${{ github.event.inputs.group || 'both' }}
@@ -179,7 +227,29 @@ jobs:
       DCL_E2E_BASE_DOMAIN: ${{ vars.DCL_E2E_BASE_DOMAIN || 'decentraland.zone' }}
       DCL_E2E_REALM: ${{ vars.DCL_E2E_REALM || 'https://peer.decentraland.zone' }}
       DCL_E2E_WORKER: '0'
+      # The app's "Enable GPU acceleration" page asks for the first of these: without them the
+      # browser gave WebGPU no adapter. The GPU probe step passes them on as CHROME_EXTRA_ARGS,
+      # with the GPU's LUID when the browser starts on the VM's display adapter instead.
+      WEBGPU_FLAGS: --enable-unsafe-webgpu --ignore-gpu-blocklist
     steps:
+      # The checkout fetches the scenes' assets through git-lfs, which the image's MinGit lacks:
+      # the pinned release goes on PATH first, checked against the sum the release signs.
+      - name: Put git-lfs on PATH
+        working-directory: ${{ runner.temp }}
+        env:
+          GIT_LFS_VERSION: '3.8.1'
+          GIT_LFS_SHA256: 5bb771c12b3dacc535e912d0270a010c209d4da2e63819c5918e3547c2defed9
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $zip = "git-lfs-windows-amd64-v$env:GIT_LFS_VERSION.zip"
+          Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/git-lfs/git-lfs/releases/download/v$env:GIT_LFS_VERSION/$zip" -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:GIT_LFS_SHA256) { throw "$zip has sha256 $hash, not $env:GIT_LFS_SHA256" }
+          Expand-Archive -Path $zip -DestinationPath git-lfs -Force
+          $exe = Get-ChildItem -Path git-lfs -Filter git-lfs.exe -Recurse | Select-Object -First 1
+          Add-Content -Path $env:GITHUB_PATH -Value $exe.DirectoryName
+          & $exe.FullName version
       # The suite and the scenes at the commit under test; the scenes' assets are in Git LFS.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -200,6 +270,55 @@ jobs:
           github-token: ${{ github.token }}
       - name: Install the suite
         run: npm ci
+      # The web driver looks for Chrome under Google's install paths; an image without one gets
+      # the pinned Chrome for Testing build, checked against the sum recorded here (Google
+      # publishes none), which CHROME_PATH points the driver at. The image's Edge is not used: it
+      # gave WebGPU no adapter.
+      - name: Find a browser
+        working-directory: ${{ runner.temp }}
+        env:
+          CHROME_VERSION: '157.0.8103.38'
+          CHROME_SHA256: ae0deef27d449e1d7529df7705d609bab102de48464da13567ed3dd2ee1a0586
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $installed = @("$env:ProgramFiles\Google\Chrome\Application\chrome.exe", "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe", "$env:LocalAppData\Google\Chrome\Application\chrome.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($installed) { Write-Output "Chrome: $installed"; exit 0 }
+          $zip = 'chrome-win64.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri "https://storage.googleapis.com/chrome-for-testing-public/$env:CHROME_VERSION/win64/$zip" -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:CHROME_SHA256) { throw "$zip has sha256 $hash, not $env:CHROME_SHA256" }
+          Expand-Archive -Path $zip -DestinationPath chrome -Force
+          $exe = Join-Path (Get-Location) 'chrome\chrome-win64\chrome.exe'
+          if (-not (Test-Path $exe)) { throw "$zip holds no chrome-win64\chrome.exe" }
+          Write-Output "Chrome for Testing $env:CHROME_VERSION at $exe"
+          Add-Content -Path $env:GITHUB_ENV -Value "CHROME_PATH=$exe"
+      # What the scenarios will find, said in seconds rather than after a boot's timeout: the
+      # GPU and its driver, whether the job's session is interactive, and the GPU the browser
+      # gives a page, bare and then with the scenarios' flags (`npm run gpu-probe`, chrome://gpu
+      # into the report). On the VM the browser starts on the paravirtual display adapter and
+      # WebGPU finds no hardware there; the probe names the NVIDIA adapter's LUID, and the
+      # scenarios start their browser on it. CHROME_EXTRA_ARGS is set here, first thing, so a
+      # probe that fails still leaves the scenarios their flags.
+      - name: GPU probe
+        continue-on-error: true
+        run: |
+          Add-Content -Path $env:GITHUB_ENV -Value "CHROME_EXTRA_ARGS=$env:WEBGPU_FLAGS"
+          Get-CimInstance Win32_VideoController | ForEach-Object { Write-Output "video controller: $($_.Name) driver=$($_.DriverVersion) status=$($_.Status)" }
+          Write-Output "session: interactive=$([Environment]::UserInteractive) id=$((Get-Process -Id $PID).SessionId)"
+          $smi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+          if ($smi) { & $smi.Source } else { Write-Output 'nvidia-smi: not on PATH' }
+          $env:CHROME_EXTRA_ARGS = ''
+          npm run gpu-probe
+          $env:CHROME_EXTRA_ARGS = $env:WEBGPU_FLAGS
+          $lines = npm run gpu-probe -- --adapter nvidia 2>&1 | ForEach-Object { "$_" }
+          $lines
+          $luid = ($lines | Select-String -Pattern '^adapter-luid: (\S+)' | Select-Object -First 1)
+          if ($luid) {
+            $value = $luid.Matches[0].Groups[1].Value
+            Add-Content -Path $env:GITHUB_ENV -Value "CHROME_EXTRA_ARGS=$env:WEBGPU_FLAGS --use-adapter-luid=$value"
+            Write-Output "the scenarios' browser starts on adapter LUID $value"
+          }
       # The accounts secret is on the two scenario steps alone: never in the environment of the
       # install, the builds, or the report.
       - name: InWorld scenarios
@@ -210,30 +329,23 @@ jobs:
         env:
           DCL_E2E_ACCOUNT_KEYS: ${{ secrets.DCL_E2E_ACCOUNT_KEYS }}
         run: npm run e2e -- --inworld
-      # The visual scenes are built with dcl-scene-cli and served from the runner. A pull
-      # request's run restores the cache and saves none: only main's code writes it.
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
-        if: env.GROUP != 'inworld'
+      # The visual scenes are built with the dcl-scene-cli the scene-cli job built, and served
+      # from the runner.
+      - name: Download dcl-scene-cli
+        if: env.GROUP != 'inworld' && needs.scene-cli.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          toolchain: 1.99.1
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        if: env.GROUP != 'inworld'
-        with:
-          workspaces: apps/dcl-scene-cli
-          key: e2e-scene-cli
-          save-if: ${{ needs.inputs.outputs.pr == '' }}
-      - name: Build dcl-scene-cli
-        if: env.GROUP != 'inworld'
-        working-directory: apps/dcl-scene-cli
-        run: cargo build --release --locked
+          name: dcl-scene-cli-windows-${{ needs.inputs.outputs.sha }}
+          path: scene-cli
       - name: Build the visual scenes
-        if: env.GROUP != 'inworld'
+        if: env.GROUP != 'inworld' && needs.scene-cli.result == 'success'
         env:
-          DCL_SCENE_CLI: ${{ github.workspace }}/apps/dcl-scene-cli/target/release/dcl-scene-cli.exe
+          # A backslash path: build-scenes.ts spawns it through cmd.exe, which reads a `/` as a switch.
+          DCL_SCENE_CLI: ${{ github.workspace }}\scene-cli\dcl-scene-cli.exe
         run: npm run build-scenes
       - name: Visual scenarios
         id: visual
-        if: env.GROUP != 'inworld'
+        if: env.GROUP != 'inworld' && needs.scene-cli.result == 'success'
         continue-on-error: true
         timeout-minutes: 30
         env:
@@ -257,9 +369,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
       - name: Fail when a group failed
-        if: steps.inworld.outcome == 'failure' || steps.visual.outcome == 'failure'
+        if: steps.inworld.outcome == 'failure' || steps.visual.outcome == 'failure' || (env.GROUP != 'inworld' && needs.scene-cli.result != 'success')
         run: |
-          echo "InWorld: ${{ steps.inworld.outcome }}; Visual: ${{ steps.visual.outcome }}"
+          Write-Output "InWorld: ${{ steps.inworld.outcome }}; Visual: ${{ steps.visual.outcome }}; dcl-scene-cli build: ${{ needs.scene-cli.result }}"
           exit 1
   # The pull request's status comment, from the report the scenarios uploaded. This job holds no
   # secret; the report is data to it (the JUnit files `node --test` wrote).

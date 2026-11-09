@@ -87,8 +87,8 @@ fn initiate_room_connection(
         debug!("Can't connect because new connections are disabled.");
         commands
             .entity(trigger.target())
-            .remove::<Connecting>()
-            .insert(ConnectFailed);
+            .try_remove::<Connecting>()
+            .try_insert(ConnectFailed);
         return;
     }
 
@@ -105,8 +105,8 @@ fn initiate_room_connection(
         recovery.failure = Some(FailureKind::Invalid);
         commands
             .entity(entity)
-            .remove::<Connecting>()
-            .insert(ConnectFailed);
+            .try_remove::<Connecting>()
+            .try_insert(ConnectFailed);
         return;
     };
 
@@ -144,7 +144,7 @@ fn poll_connecting_rooms(
                     commands
                         .entity(entity)
                         .try_insert(room)
-                        .remove::<ConnectingLivekitRoom>();
+                        .try_remove::<ConnectingLivekitRoom>();
                 }
                 Err(err) => {
                     let err = if err.kind == FailureKind::Denied {
@@ -161,7 +161,7 @@ fn poll_connecting_rooms(
                     commands
                         .entity(entity)
                         .try_insert(ConnectFailed)
-                        .remove::<(ConnectingLivekitRoom, Connecting)>();
+                        .try_remove::<(ConnectingLivekitRoom, Connecting)>();
                 }
             }
         }
@@ -429,6 +429,11 @@ fn process_network_message(
                         NetworkMessageRecipient::AuthServer => {
                             vec![ParticipantIdentity("authoritative-server".to_string())]
                         }
+                        NetworkMessageRecipient::MessageRouter => {
+                            vec![ParticipantIdentity(
+                                crate::community_chat::message_router_identity(),
+                            )]
+                        }
                     };
 
                     let size = payload.len();
@@ -669,11 +674,11 @@ pub(super) fn restart_room(
 ) {
     if let Some(island) = island {
         if let Ok(mut owner) = commands.get_entity(island) {
-            owner.insert(crate::archipelago::RefreshIsland);
-            commands.entity(entity).insert(RoomSuspended);
+            owner.try_insert(crate::archipelago::RefreshIsland);
+            commands.entity(entity).try_insert(RoomSuspended);
         }
     } else if refreshable {
-        commands.entity(entity).insert(NeedsAdapter);
+        commands.entity(entity).try_insert(NeedsAdapter);
     } else {
         commands.entity(entity).try_insert(Connecting);
     }

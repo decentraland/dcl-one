@@ -1,0 +1,87 @@
+/* from: shop@3a322cf9:app/src/pages/MyStore.styles.ts (Pager, pageControl, PageBtn, PageNum, PageGap).
+   Tokens: radius.btn 8px, glassFaint rgba(255,255,255,.1), softWhite #fcfcfc, text #161518, gray4 #cfcdd4. */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.arrow,
+.num {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0.5px solid rgba(255, 255, 255, 0.5);
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.46px;
+  color: #fcfcfc;
+  cursor: pointer;
+}
+
+.arrow:hover:not(:disabled),
+.num:hover:not(:disabled) {
+  border-color: #fcfcfc;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.arrow:focus-visible,
+.num:focus-visible {
+  outline: 2px solid #fcfcfc;
+  outline-offset: 2px;
+}
+
+.arrow:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.prev {
+  transform: rotate(90deg);
+}
+
+.next {
+  transform: rotate(-90deg);
+}
+
+/* Page numbers are soft filled tiles; only the arrows carry the hairline. */
+.num {
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* The page you are on is the one solid control in the row. */
+.num[aria-current="page"],
+.num[aria-current="page"]:hover {
+  background: #fcfcfc;
+  border-color: #fcfcfc;
+  color: #161518;
+  cursor: default;
+}
+
+/* As wide as a page number, so a slot holding the ellipsis takes the same room as one holding a page. */
+.gap {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  font-size: 12px;
+  color: #cfcdd4;
+}
+
+/* Nine controls in a phone's width: tighter, but never wrapping, which would move the arrows too. */
+@media (max-width: 768px) {
+  .pager {
+    gap: 6px;
+  }
+}

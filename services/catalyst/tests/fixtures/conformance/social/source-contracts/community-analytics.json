@@ -1,0 +1,337 @@
+{
+  "source": "decentraland/social-service-ea",
+  "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+  "node": "v26.12.0",
+  "sources": [
+    {
+      "path": "src/types/analytics.ts",
+      "sha256": "3e552fb571baf5c4086d2476f9154309961e886823669aa01a62bb935acdc0b6"
+    },
+    {
+      "path": "src/logic/community/members.ts",
+      "sha256": "b0dc7df3813564faeb11e7cd6e2d187b436cc79af8df0542e3968c57ce5160d1"
+    },
+    {
+      "path": "src/logic/community/bans.ts",
+      "sha256": "915b2cbc7c886e39b08150681a2bcd31c2a8a0494c8d1b310dd5475a5bf6e72d"
+    },
+    {
+      "path": "src/logic/community/communities.ts",
+      "sha256": "b5da768f47f9fcb5a400c25fa16a278fb4c2b7b8be7bbabbda94981951ad1391"
+    },
+    {
+      "path": "src/logic/community/requests.ts",
+      "sha256": "7198b9ec1ed580691496061d3ce75a98fb3dc063675ed45ac4227ea17d99d8bf"
+    },
+    {
+      "path": "src/adapters/communities-db.ts",
+      "sha256": "0748e0d7f408e5565a89ff87975eea64fd84ff9c2213bb1038149a3473f0ad8a"
+    }
+  ],
+  "scope": "Actual seven source community analytics hook locations; domain dependencies are local mocks. Emission and DB/pubsub call order, no-ops and selected DB failures are captured. The SDK transport is covered separately; this capture does not establish database atomicity.",
+  "id": "AABBCCDD-0000-4000-8000-000000000001",
+  "requestId": "bbeeffaa-0000-4000-8000-000000000002",
+  "otherRequestId": "00000000-0000-4000-8000-000000000003",
+  "owner": "0x1111111111111111111111111111111111111111",
+  "member": "0x2222222222222222222222222222222222222222",
+  "cases": [
+    {
+      "name": "join",
+      "analytics": [
+        {
+          "event": "JOIN_COMMUNITY",
+          "properties": {
+            "community_id": "AABBCCDD-0000-4000-8000-000000000001",
+            "user_id": "0x2222222222222222222222222222222222222222",
+            "request_id": "bbeeffaa-0000-4000-8000-000000000002"
+          }
+        }
+      ],
+      "trace": [
+        "db:join",
+        "analytics:JOIN_COMMUNITY",
+        "pubsub"
+      ]
+    },
+    {
+      "name": "join-no-request",
+      "analytics": [
+        {
+          "event": "JOIN_COMMUNITY",
+          "properties": {
+            "community_id": "AABBCCDD-0000-4000-8000-000000000001",
+            "user_id": "0x2222222222222222222222222222222222222222"
+          }
+        }
+      ],
+      "trace": [
+        "db:join",
+        "analytics:JOIN_COMMUNITY",
+        "pubsub"
+      ]
+    },
+    {
+      "name": "join-existing",
+      "analytics": [],
+      "trace": []
+    },
+    {
+      "name": "join-write-failure",
+      "analytics": [],
+      "trace": [
+        "db:join"
+      ],
+      "error": "fixture join failure"
+    },
+    {
+      "name": "kick",
+      "analytics": [
+        {
+          "event": "KICK_MEMBER_FROM_COMMUNITY",
+          "properties": {
+            "community_id": "AABBCCDD-0000-4000-8000-000000000001",
+            "kicker_user_id": "0x1111111111111111111111111111111111111111",
+            "target_user_id": "0x2222222222222222222222222222222222222222"
+          }
+        }
+      ],
+      "trace": [
+        "db:kick",
+        "db:unlike",
+        "analytics:KICK_MEMBER_FROM_COMMUNITY",
+        "pubsub"
+      ]
+    },
+    {
+      "name": "kick-nonmember",
+      "analytics": [],
+      "trace": []
+    },
+    {
+      "name": "leave",
+      "analytics": [
+        {
+          "event": "LEAVE_COMMUNITY",
+          "properties": {
+            "community_id": "AABBCCDD-0000-4000-8000-000000000001",
+            "user_id": "0x2222222222222222222222222222222222222222"
+          }
+        }
+      ],
+      "trace": [
+        "db:kick",
+        "db:unlike",
+        "analytics:LEAVE_COMMUNITY",
+        "pubsub"
+      ]
+    },
+    {
+      "name": "leave-nonmember",
+      "analytics": [],
+      "trace": []
+    },
+    {
+      "name": "ban",
+      "analytics": [
+        {
+          "event": "BAN_MEMBER_FROM_COMMUNITY",
+          "properties": {
+            "community_id": "AABBCCDD-0000-4000-8000-000000000001",
+            "banner_user_id": "0x1111111111111111111111111111111111111111",
+            "target_user_id": "0x2222222222222222222222222222222222222222"
+          }
+        }
+      ],
+      "trace": [
+        "db:kick",
+        "db:unlike",
+        "analytics:BAN_MEMBER_FROM_COMMUNITY",
+        "db:ban",
+        "db:remove-member-requests",
+        "pubsub"
+      ]
+    },
+    {
+      "name": "ban-nonmember",
+      "analytics": [],
+      "trace": [
+        "db:ban",
+        "db:remove-member-requests",
+        "pubsub"
+      ]
+    },
+    {
+      "name": "ban-later-write-failure",
+      "analytics": [
+        {
+          "event": "BAN_MEMBER_FROM_COMMUNITY",
+          "properties": {
+            "community_id": "AABBCCDD-0000-4000-8000-000000000001",
+            "banner_user_id": "0x1111111111111111111111111111111111111111",
+            "target_user_id": "0x2222222222222222222222222222222222222222"
+          }
+        }
+      ],
+      "trace": [
+        "db:kick",
+        "db:unlike",
+        "analytics:BAN_MEMBER_FROM_COMMUNITY",
+        "db:ban"
+      ],
+      "error": "fixture ban failure"
+    },
+    {
+      "name": "privacy-accept-all",
+      "analytics": [
+        {
+          "event": "ACCEPT_ALL_REQUESTS_TO_JOIN",
+          "properties": {
+            "community_id": "AABBCCDD-0000-4000-8000-000000000001",
+            "requests_ids": [
+              "bbeeffaa-0000-4000-8000-000000000002",
+              "00000000-0000-4000-8000-000000000003"
+            ]
+          }
+        }
+      ],
+      "trace": [
+        "db:accept-all",
+        "analytics:ACCEPT_ALL_REQUESTS_TO_JOIN"
+      ]
+    },
+    {
+      "name": "privacy-no-requests",
+      "analytics": [],
+      "trace": [
+        "db:accept-all"
+      ]
+    },
+    {
+      "name": "opposite-request",
+      "analytics": [
+        {
+          "event": "JOIN_COMMUNITY",
+          "properties": {
+            "community_id": "AABBCCDD-0000-4000-8000-000000000001",
+            "user_id": "0x2222222222222222222222222222222222222222",
+            "request_id": "bbeeffaa-0000-4000-8000-000000000002"
+          }
+        }
+      ],
+      "trace": [
+        "db:join",
+        "analytics:JOIN_COMMUNITY",
+        "pubsub"
+      ]
+    },
+    {
+      "name": "duplicate-request",
+      "analytics": [],
+      "trace": []
+    },
+    {
+      "name": "accept-request",
+      "analytics": [],
+      "trace": [
+        "db:join",
+        "pubsub"
+      ]
+    },
+    {
+      "name": "reject-request",
+      "analytics": [
+        {
+          "event": "REJECT_COMMUNITY_REQUEST",
+          "properties": {
+            "request_id": "bbeeffaa-0000-4000-8000-000000000002",
+            "community_id": "aabbccdd-0000-4000-8000-000000000001",
+            "type": "request_to_join",
+            "member_address": "0x2222222222222222222222222222222222222222",
+            "caller_address": "0x1111111111111111111111111111111111111111"
+          }
+        }
+      ],
+      "trace": [
+        "db:remove-request",
+        "analytics:REJECT_COMMUNITY_REQUEST"
+      ]
+    },
+    {
+      "name": "reject-uppercase-request",
+      "analytics": [
+        {
+          "event": "REJECT_COMMUNITY_REQUEST",
+          "properties": {
+            "request_id": "BBEEFFAA-0000-4000-8000-000000000002",
+            "community_id": "aabbccdd-0000-4000-8000-000000000001",
+            "type": "request_to_join",
+            "member_address": "0x2222222222222222222222222222222222222222",
+            "caller_address": "0x1111111111111111111111111111111111111111"
+          }
+        }
+      ],
+      "trace": [
+        "db:remove-request",
+        "analytics:REJECT_COMMUNITY_REQUEST"
+      ]
+    },
+    {
+      "name": "cancel-request",
+      "analytics": [
+        {
+          "event": "CANCEL_COMMUNITY_REQUEST",
+          "properties": {
+            "request_id": "bbeeffaa-0000-4000-8000-000000000002",
+            "community_id": "aabbccdd-0000-4000-8000-000000000001",
+            "type": "request_to_join",
+            "member_address": "0x2222222222222222222222222222222222222222",
+            "caller_address": "0x2222222222222222222222222222222222222222"
+          }
+        }
+      ],
+      "trace": [
+        "db:remove-request",
+        "analytics:CANCEL_COMMUNITY_REQUEST"
+      ]
+    }
+  ],
+  "adapterCalls": [
+    {
+      "sql": "INSERT INTO community_members (community_id, member_address, role) SELECT cr.community_id, cr.member_address, $1 FROM community_requests cr WHERE cr.community_id = $2 AND cr.type = $3 AND NOT EXISTS ( SELECT 1 FROM community_bans cb WHERE cb.community_id = cr.community_id AND cb.banned_address = cr.member_address AND cb.active = true ) ON CONFLICT (community_id, member_address) DO NOTHING",
+      "values": [
+        "member",
+        "AABBCCDD-0000-4000-8000-000000000001",
+        "request_to_join"
+      ]
+    },
+    {
+      "sql": "DELETE FROM community_requests cr WHERE cr.community_id = $1 AND cr.type = $2 AND NOT EXISTS ( SELECT 1 FROM community_bans cb WHERE cb.community_id = cr.community_id AND cb.banned_address = cr.member_address AND cb.active = true ) RETURNING id",
+      "values": [
+        "AABBCCDD-0000-4000-8000-000000000001",
+        "request_to_join"
+      ]
+    },
+    {
+      "sql": "INSERT INTO community_members (community_id, member_address, role) VALUES ($1, $2, $3) ON CONFLICT (community_id, member_address) DO NOTHING",
+      "values": [
+        "aabbccdd-0000-4000-8000-000000000001",
+        "0x2222222222222222222222222222222222222222",
+        "member"
+      ]
+    },
+    {
+      "sql": "DELETE FROM community_requests WHERE community_id = $1 AND member_address = $2 RETURNING id",
+      "values": [
+        "aabbccdd-0000-4000-8000-000000000001",
+        "0x2222222222222222222222222222222222222222"
+      ]
+    }
+  ],
+  "adapterResults": {
+    "acceptAll": [
+      "bbeeffaa-0000-4000-8000-000000000002",
+      "00000000-0000-4000-8000-000000000003"
+    ],
+    "join": "bbeeffaa-0000-4000-8000-000000000002"
+  }
+}

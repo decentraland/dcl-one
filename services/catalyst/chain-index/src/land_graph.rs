@@ -15,12 +15,13 @@ use serde_json::{Value, json};
 use crate::shared::cache::TtlMap;
 
 use super::ChainIndex;
-use super::graph::{THE_GRAPH_PAGE_SIZE, graph_query};
+use super::graph::{FULL_WALK_PAGES, THE_GRAPH_PAGE_SIZE, graph_query};
 
 const TTL: Duration = Duration::from_secs(60);
 const MAX_ENTRIES: usize = 50_000;
-/// Pages walked per lookup (1000 rows each) before the answer is cut off.
-const MAX_PAGES: usize = 20;
+/// Pages walked per lookup (1000 rows each): lamb2 walks every page, so
+/// this is only the runaway guard.
+const MAX_PAGES: usize = FULL_WALK_PAGES;
 
 pub struct Caches {
     operators: TtlMap<(i64, i64), Arc<Option<ParcelOperators>>>,

@@ -70,6 +70,42 @@ pub struct LambdaProfiles {
     pub avatars: Vec<SerializedProfile>,
 }
 
+/// The compact profile tier: what a list row shows of a person, in the shape of the
+/// catalyst's `POST /lambdas/profiles/metadata` (upstream's `ProfileMetadataDTO`). No field
+/// skips serializing: the scene IPC encodes this struct positionally.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompactProfile {
+    /// The owner's address
+    pub pointer: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub has_claimed_name: bool,
+    #[serde(default)]
+    pub name_color: Option<Color3>,
+    /// The face snapshot's url; empty when the profile has none
+    #[serde(default)]
+    pub thumbnail_url: String,
+}
+
+impl From<&SerializedProfile> for CompactProfile {
+    fn from(profile: &SerializedProfile) -> Self {
+        Self {
+            pointer: profile.eth_address.to_lowercase(),
+            name: profile.name.clone(),
+            has_claimed_name: profile.has_claimed_name,
+            name_color: profile.name_color,
+            thumbnail_url: profile
+                .avatar
+                .snapshots
+                .as_ref()
+                .map(|snapshots| snapshots.face256.clone())
+                .unwrap_or_default(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SerializedProfile {
@@ -155,5 +191,43 @@ impl Default for SerializedProfile {
                 ),
             ]),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_profile_of_a_full_profile() {
+        let color = Color3 {
+            r: 1.0,
+            g: 0.5,
+            b: 0.0,
+        };
+        let mut profile = SerializedProfile {
+            name: "Ryumi".to_owned(),
+            eth_address: "0xAbCdEf0000000000000000000000000000000001".to_owned(),
+            has_claimed_name: true,
+            name_color: Some(color),
+            ..Default::default()
+        };
+        profile.avatar.snapshots = Some(AvatarSnapshots {
+            face256: "https://cdn.example/entities/bafy/face.png".to_owned(),
+            body: "https://cdn.example/entities/bafy/body.png".to_owned(),
+        });
+        assert_eq!(
+            CompactProfile::from(&profile),
+            CompactProfile {
+                pointer: "0xabcdef0000000000000000000000000000000001".to_owned(),
+                name: "Ryumi".to_owned(),
+                has_claimed_name: true,
+                name_color: Some(color),
+                thumbnail_url: "https://cdn.example/entities/bafy/face.png".to_owned(),
+            }
+        );
+
+        profile.avatar.snapshots = None;
+        assert_eq!(CompactProfile::from(&profile).thumbnail_url, "");
     }
 }

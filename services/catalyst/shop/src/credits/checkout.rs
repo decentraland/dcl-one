@@ -566,7 +566,8 @@ pub const CAPTCHA_PURGE_BATCH: i64 = 5_000;
 pub(crate) const OUTBOX_TICK_SQL: &str = "WITH expired AS ( \
          UPDATE credits.authorizations SET status = CASE status WHEN 'retired' THEN 'released' ELSE 'expired' END \
          WHERE status IN ('authorized', 'retired') AND expires_at <= LEAST($2, CASE WHEN $5::bigint IS NULL THEN $2 ELSE \
-         COALESCE((SELECT folded_block_time FROM credits.usage_index_cursor WHERE chain_id = $5::bigint), \
+         COALESCE((SELECT c.folded_block_time FROM credits.usage_index_cursor c WHERE c.chain_id = $5::bigint \
+                   AND (credits.authorizations.contract IS NULL OR c.contract = credits.authorizations.contract)), \
                   '-infinity'::timestamp) END) RETURNING 1 \
      ), purged AS ( \
          DELETE FROM credits.captcha_challenges WHERE ctid = ANY (ARRAY( \

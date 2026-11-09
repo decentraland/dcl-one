@@ -4,7 +4,7 @@
 
 There are different types of content that you can make for Decentraland.
 
-![](/docs/creator/images/content-types.webp)
+![](/docs/creator/images/content-types.webp)
 
 ## Scenes
 
@@ -85,7 +85,7 @@ A portable experience is linked to a NAME token. NAME tokens can be bought in th
 
 Portable experiences can be activated as part of the interactive code of a scene (either in LAND or a World).
 
-Players are prompted asking if they want to run this portable experience, and if they do they'll carry it with them wherever they go for the rest of their session. [Learn more](/docs/creator/sdk7/projects/portable-experiences/). -->
+Players are prompted asking if they want to run this portable experience, and if they do they'll carry it with them wherever they go for the rest of their session. [Learn more](../projects/portable-experiences.md). -->
 
 ### Smart Wearables
 

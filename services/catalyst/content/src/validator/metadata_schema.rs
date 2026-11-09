@@ -50,6 +50,12 @@ pub fn validate_metadata(entity: &Entity) -> ValidationResponse {
     }
 }
 
+/// A scene's metadata against `Scene.validate`: the first failure, as a
+/// path and an ajv-style reason.
+pub fn validate_scene_metadata(metadata: &Value) -> Result<(), String> {
+    scene(metadata)
+}
+
 /// The ADR-287 properties that make an emote social, all or none.
 pub(super) const SOCIAL_EMOTE_PROPS: [&str; 3] =
     ["startAnimation", "randomizeOutcomes", "outcomes"];

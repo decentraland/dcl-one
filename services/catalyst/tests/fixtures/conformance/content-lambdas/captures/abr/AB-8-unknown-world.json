@@ -1,0 +1,25 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://asset-bundle-registry.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/worlds/doesnotexist-abr.dcl.eth/manifest",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "58"
+    },
+    "body": {
+      "occupied": [],
+      "spawn_coordinate": {
+        "x": 0,
+        "y": 0
+      },
+      "total": 0
+    }
+  }
+}

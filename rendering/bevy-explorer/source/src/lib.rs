@@ -24,7 +24,7 @@ use std::str::FromStr;
 
 use analytics::{metrics::MetricsPlugin, segment_system::SegmentConfig};
 use assets::EmbedAssetsPlugin;
-use av::AVPlayerPlugin;
+use av::plugin::AVPlayerPlugin;
 use avatar::AvatarPlugin;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::window::{PresentMode, WindowResolution};
@@ -41,6 +41,7 @@ use bevy::{
 };
 #[cfg(not(debug_assertions))]
 use build_time::build_time_utc;
+use camera_reel::CameraReelPlugin;
 use collectibles::CollectiblesPlugin;
 use common::{
     inputs::InputMap,
@@ -202,6 +203,17 @@ pub struct DecentralandArguments {
     pub launch: LaunchOptions,
     #[command(flatten)]
     pub client: ClientOptions,
+    /// Route first-party HTTP APIs through this gateway; other services keep their configured destinations.
+    ///
+    /// A hostname beginning with `gateway.` selects service aliases and gateway signing paths;
+    /// any other hostname uses direct Catalyst paths. Explicit service flags take precedence.
+    /// Pulse, social/Ethereum WebSockets, storage delegations and auth/reels pages are not remapped:
+    /// use --pulse-server HOST[:PORT], --social-rpc WS(S)://..., --ethereum-rpc WS(S)://...,
+    /// --storage HTTPS://..., --auth-page or --reels as needed. Otherwise they use --base-domain
+    /// (decentraland.org by default); Pulse also honors PULSE_SERVER before the domain fallback.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[arg(long, value_name = "url", help_heading = system_api_types::launch_options::help_heading::SERVICES)]
+    pub gateway: Option<String>,
     /// Skip the sign-in screen with an auto guest-login (default HUD only; `?guest=1` on web)
     #[arg(long)]
     pub guest: bool,
@@ -279,6 +291,10 @@ pub struct DecentralandArguments {
     /// harness's spelling `-logFile` is accepted too
     #[arg(long, value_name = "path", help_heading = DEBUG)]
     pub log_file: Option<std::path::PathBuf>,
+    /// Expose observed native engine HTTP transfers to Chrome DevTools on a loopback port
+    #[cfg(not(target_arch = "wasm32"))]
+    #[arg(long, value_name = "port", help_heading = DEBUG)]
+    pub network_devtools: Option<u16>,
     // `--automation-token` and `--automation-port`: the loopback console server
     #[cfg(not(target_arch = "wasm32"))]
     #[command(flatten)]
@@ -637,12 +653,17 @@ impl DecentralandApp {
             .add_plugins(WalletPlugin)
             .add_plugins(CommsPlugin)
             .add_plugins(SocialPlugin)
+            // Keep ImageProcessingPlugin ahead of NftShapePlugin. Bevy gives an image path
+            // without an extension to the last image loader registered, which must stay
+            // NftShapePlugin's ExtendedImageLoader (16-bit conversion, size cap); Ktx2Loader,
+            // registered before it, then only ever sees `.ktx2` paths.
+            .add_plugins(ImageProcessingPlugin)
             .add_plugins(NftShapePlugin)
             .add_plugins(TweenPlugin)
             .add_plugins(CollectiblesPlugin)
             .add_plugins(WorldUiPlugin)
             .add_plugins(TextureCameraPlugin)
-            .add_plugins(ImageProcessingPlugin)
+            .add_plugins(CameraReelPlugin)
             .add_plugins(SystemBridgePlugin { bare: false })
             .add_plugins(world_state::WorldStatePlugin)
             .add_plugins(deep_link::DeepLinkPlugin)

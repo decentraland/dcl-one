@@ -40,6 +40,7 @@ futures-lite = { workspace = true }
 reqwest = { workspace = true }
 prost = { workspace = true }
 async-std = { workspace = true }
+rand = { workspace = true }
 bevy_kira_audio = { workspace = true }
 kira = { workspace = true }
 futures-util = { workspace = true }
@@ -52,10 +53,7 @@ base64 = { workspace = true }
 modular-bitfield = "0.11"
 
 cid = "0.11.0"
-multipart = { version = "0.18.0", default-features = false, features = [
-  "client",
-  "lazy_static",
-] }
+multipart = { workspace = true }
 image = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

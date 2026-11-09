@@ -9,7 +9,7 @@ import { BevyApi } from '../bevy-api'
 import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'
 
-const AXIS_ACTION = /^(Camera|Pointer)(Zoom)?(In|Out|Up|Down|Left|Right)$/
+const AXIS_ACTION = /^(Camera|Pointer|PhotoCamera|PhotoTilt)(Zoom)?(In|Out|Up|Down|Left|Right)$/
 
 export function registerSystemAction(ctx: Ctx): void {
   relay('systemAction', async () => await BevyApi.getSystemActionStream(), (ev) => {

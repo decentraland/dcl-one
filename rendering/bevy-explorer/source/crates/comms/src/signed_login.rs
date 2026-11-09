@@ -39,13 +39,24 @@ fn start_signed_login(
         let mut metadata = serde_json::json!({
             "intent": "dcl:explorer:comms-handshake", "signer": "dcl:explorer",
             "isGuest": wallet.is_guest(), "origin": origin.origin().ascii_serialization(),
-            "deviceIdentifier": config.user_id,
         });
+        // A realm chooses its login endpoint. Do not let third-party realms correlate wallets
+        // through the installation's persistent identifier.
+        if crate::adapter::validate_url(&event.address).is_ok_and(|url| {
+            url.scheme() == "https"
+                && url.host_str().is_some_and(|host| {
+                    ["decentraland.org", "decentraland.zone"]
+                        .iter()
+                        .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
+                })
+        }) {
+            metadata["deviceIdentifier"] = serde_json::json!(config.user_id);
+        }
         if let Some(secret) = &secret.0 {
             metadata["secret"] = serde_json::json!(secret);
         }
         if let Ok(mut entity) = commands.get_entity(event.entity) {
-            entity.insert((
+            entity.try_insert((
                 CredentialRequest {
                     method: "POST",
                     url: event.address.clone(),
@@ -59,6 +70,45 @@ fn start_signed_login(
                     realm.address.clone(),
                 )),
             ));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_login_endpoints_cannot_receive_the_installation_identifier() {
+        for (address, allowed) in [
+            ("https://comms-gatekeeper.decentraland.org/login", true),
+            ("https://comms-gatekeeper.decentraland.zone/login", true),
+            ("https://custom.example/login", false),
+            ("https://decentraland.org.attacker.example/login", false),
+            ("http://localhost:8000/login", false),
+        ] {
+            let mut app = App::new();
+            let mut realm = CurrentRealm::default();
+            realm.address = "https://realm.example".into();
+            app.insert_resource(realm)
+                .init_resource::<Wallet>()
+                .init_resource::<AppConfig>()
+                .init_resource::<WorldCommsSecret>()
+                .add_plugins(SignedLoginPlugin);
+            let owner = app.world_mut().spawn_empty().id();
+            app.world_mut().send_event(StartSignedLogin {
+                entity: owner,
+                address: address.into(),
+                context: owner,
+            });
+            app.update();
+            let request = app.world().get::<CredentialRequest>(owner).unwrap();
+            let metadata: serde_json::Value = serde_json::from_str(&request.metadata).unwrap();
+            assert_eq!(
+                metadata.get("deviceIdentifier").is_some(),
+                allowed,
+                "{address}"
+            );
         }
     }
 }

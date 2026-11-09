@@ -1559,7 +1559,6 @@ dependencies = [
  "clap",
  "dcl-auth",
  "dcl-http",
- "flate2",
  "futures",
  "getrandom 0.4.3",
  "hex",
@@ -1629,13 +1628,16 @@ name = "catalyst-camera-reel"
 version = "0.1.0"
 dependencies = [
  "alloy",
+ "anyhow",
  "axum",
  "base64 0.23.1",
  "bytes",
  "catalyst-builder",
  "catalyst-content",
  "catalyst-db",
+ "catalyst-jobs",
  "catalyst-shared",
+ "catalyst-social",
  "catalyst-storage",
  "chrono",
  "dcl-auth",
@@ -1733,6 +1735,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "ipnet",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -1768,6 +1772,7 @@ dependencies = [
  "futures",
  "hex",
  "image",
+ "ipnet",
  "libc",
  "metrics",
  "parking_lot",
@@ -1794,6 +1799,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "hex",
+ "libc",
  "sha2 0.11.1",
  "sqlx",
  "thiserror",
@@ -1949,10 +1955,13 @@ dependencies = [
  "hex",
  "hmac 0.13.0",
  "http-body",
+ "ipnet",
+ "metrics",
  "prost",
  "reqwest",
  "serde",
  "serde_json",
+ "sha1 0.11.0",
  "sha2 0.11.1",
  "sqlx",
  "thiserror",
@@ -1985,6 +1994,7 @@ dependencies = [
  "catalyst-config",
  "catalyst-content",
  "catalyst-db",
+ "catalyst-explore",
  "catalyst-fed",
  "catalyst-jobs",
  "catalyst-land-authz",
@@ -2001,6 +2011,7 @@ dependencies = [
  "getrandom 0.4.3",
  "hex",
  "hmac 0.13.0",
+ "ipnet",
  "k256",
  "parking_lot",
  "rand 0.10.3",
@@ -2047,9 +2058,12 @@ dependencies = [
  "dcl-auth",
  "dcl-http",
  "futures",
+ "handlebars",
  "hex",
+ "hmac 0.13.0",
  "icu_properties",
  "image",
+ "ipnet",
  "libc",
  "metrics",
  "multer",
@@ -2059,6 +2073,9 @@ dependencies = [
  "openmls_traits",
  "parking_lot",
  "prost",
+ "prost-build",
+ "prost-types",
+ "protox",
  "reqwest",
  "rustls",
  "serde",
@@ -2091,6 +2108,7 @@ dependencies = [
  "dcl-auth",
  "futures",
  "libc",
+ "metrics",
  "parking_lot",
  "serde",
  "serde_json",
@@ -2120,6 +2138,8 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm 0.11.1",
  "alloy",
+ "alloy-primitives",
+ "alloy-sol-types",
  "anyhow",
  "async-trait",
  "axum",
@@ -2143,6 +2163,7 @@ dependencies = [
  "flate2",
  "futures",
  "hex",
+ "metrics",
  "parking_lot",
  "proptest",
  "rand 0.10.3",
@@ -2725,6 +2746,16 @@ dependencies = [
 
 [[package]]
 name = "darling"
+version = "0.20.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc7f46116c46ff9ab3eb1597a45688b6715c6e628b5c133e288e709a29bcb4ee"
+dependencies = [
+ "darling_core 0.20.11",
+ "darling_macro 0.20.11",
+]
+
+[[package]]
+name = "darling"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25ae13da2f202d56bd7f91c25fba009e7717a1e4a1cc98a76d844b65ae912e9d"
@@ -2741,6 +2772,20 @@ checksum = "ed17f5901b6630b993ca003def43f2f8ef4014fc13b047b57aad617ff32bc2ec"
 dependencies = [
  "darling_core 0.24.1",
  "darling_macro 0.24.1",
+]
+
+[[package]]
+name = "darling_core"
+version = "0.20.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d00b9596d185e565c2207a0b01f8bd1a135483d02d9b7b0a54b11da8d53412e"
+dependencies = [
+ "fnv",
+ "ident_case",
+ "proc-macro2",
+ "quote",
+ "strsim",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -2768,6 +2813,17 @@ dependencies = [
  "quote",
  "strsim",
  "syn 3.0.9",
+]
+
+[[package]]
+name = "darling_macro"
+version = "0.20.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc34b93ccb385b40dc71c6fceac4b2ad23662c7eeb248cf10d529b7e055b6ead"
+dependencies = [
+ "darling_core 0.20.11",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -3059,6 +3115,37 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "derive_builder"
+version = "0.20.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "507dfb09ea8b7fa618fcf76e953f4f5e192547945816d5358edffe39f6f94947"
+dependencies = [
+ "derive_builder_macro",
+]
+
+[[package]]
+name = "derive_builder_core"
+version = "0.20.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d5bcf7b024d6835cfb3d473887cd966994907effbe9227e8c8219824d06c4e8"
+dependencies = [
+ "darling 0.20.11",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "derive_builder_macro"
+version = "0.20.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab63b0e2bf4d5928aff72e83a7dace85d7bba5fe12dcc3c5a572d78caffd3f3c"
+dependencies = [
+ "derive_builder_core",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -3882,6 +3969,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c7ed2f2edad8a14c8186b847909a41fbb9c3eafa44f88bd891114ed5019da09"
 dependencies = [
  "hashbrown 0.16.1",
+]
+
+[[package]]
+name = "handlebars"
+version = "6.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75c54236f9045c8004a77942bebc52145b4844639db934a5c70fe08617fbe61a"
+dependencies = [
+ "derive_builder",
+ "log",
+ "num-order",
+ "pest",
+ "pest_derive",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -5689,6 +5792,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-modular"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd8e500409e6cd603b03e477c26a6caecdc27ac58979a53e881c75eafc079f44"
+
+[[package]]
+name = "num-order"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "537b596b97c40fcf8056d153049eb22f481c17ebce72a513ec9286e4986d1bb6"
+dependencies = [
+ "num-modular",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6479,6 +6597,38 @@ dependencies = [
  "psm",
  "stacker",
  "ucd-trie",
+]
+
+[[package]]
+name = "pest_derive"
+version = "2.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "203e46697708f7519ab1608393cf89239cafb46b8e6d08a8ffe359359b11ef44"
+dependencies = [
+ "pest",
+ "pest_generator",
+]
+
+[[package]]
+name = "pest_generator"
+version = "2.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e84ae6340a458d3d6cfc73cf328cf3cfe90b2484cd0de25eb66aa954615ed4d5"
+dependencies = [
+ "pest",
+ "pest_meta",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
+]
+
+[[package]]
+name = "pest_meta"
+version = "2.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b57f92f32b3dbce6598fd8f5cdf1f06a6072570b8103fa21728fa9036923e710"
+dependencies = [
+ "pest",
 ]
 
 [[package]]

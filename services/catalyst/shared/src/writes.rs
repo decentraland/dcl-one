@@ -1,6 +1,5 @@
 //! The write switches every domain applies: the route-local [`Gate`]
-//! middleware (the creator plane's, reused by camera-reel and the telemetry
-//! console), the data plane's [`DataWrites`] (`DATA_WRITES_ENABLED`) and the
+//! middleware (the creator plane's, reused by camera-reel), the data plane's [`DataWrites`] (`DATA_WRITES_ENABLED`) and the
 //! operator plane's [`OPS_WRITES_ENABLED`]. Off, a gated mutating request
 //! answers 503 with a `Retry-After`; the reads keep answering. On, a write
 //! still waits for the restore stamps ([`restore`]) when the node has them:
@@ -26,7 +25,7 @@ pub use restore::{Hold, RestoreStamps};
 /// set; the twin of `SOCIAL_WRITES_ENABLED`.
 pub const OPS_WRITES_ENABLED: &str = "OPS_WRITES_ENABLED";
 
-pub const WRITES_DISABLED_MESSAGE: &str = "operator-plane writes are disabled on this node (OPS_WRITES_ENABLED=false): a backup restore has to be demonstrated before this node accepts credits, telemetry console or registry writes";
+pub const WRITES_DISABLED_MESSAGE: &str = "operator-plane writes are disabled on this node (OPS_WRITES_ENABLED=false): a backup restore has to be demonstrated before this node accepts credits or registry writes";
 
 /// Why a gated write is refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -568,36 +567,23 @@ mod tests {
         ("builder/src/catalog.rs", "create"),
         ("builder/src/drafts.rs", "create"),
         ("builder/src/projects.rs", "create"),
-        (
-            "camera-reel/src/handlers/images.rs",
-            "create",
-        ),
-        (
-            "content/src/deploy_remote_entity.rs",
-            "content",
-        ),
+        ("camera-reel/src/handlers/images.rs", "create"),
+        ("content/src/deploy_remote_entity.rs", "content"),
+        ("content/src/partial_deployments.rs", "content"),
         ("content/src/read_through.rs", "mirror"),
         ("content/src/snapshot_gen.rs", "content"),
         ("content/src/write_deployer.rs", "content"),
         ("explore/src/api/posters.rs", "mirror"),
         ("explore/src/api/satellite.rs", "mirror"),
-        (
-            "explore/src/api/world_manifest.rs",
-            "mirror",
-        ),
+        ("explore/src/api/world_manifest.rs", "mirror"),
         ("explore/src/events/posters.rs", "data"),
         ("shop/src/outfits/mod.rs", "data"),
         ("social/src/communities/fed.rs", "social"),
-        (
-            "social/src/communities/thumbnail.rs",
-            "social",
-        ),
+        ("social/src/communities/thumbnail.rs", "social"),
         ("social/src/messaging.rs", "social"),
-        (
-            "social/src/profile_images/cache.rs",
-            "mirror",
-        ),
+        ("social/src/profile_images/cache.rs", "mirror"),
         ("worlds/src/core/deploy.rs", "worlds"),
+        ("worlds/src/core/partial.rs", "worlds"),
         ("worlds/src/core/settings.rs", "worlds"),
         ("worlds/src/mirror.rs", "worlds"),
     ];
@@ -629,12 +615,12 @@ mod tests {
                 walk(&krate.path().join("src"), &mut files);
             }
         }
-        // Every call of a Storage writer: `store`, `rekey` and
+        // Every call of a Storage writer: `store`, `store_file`, `rekey` and
         // `create_staging_file`, its arguments read to the closing parenthesis
         // however rustfmt wrapped them. Not a store: an accessor's (no
         // arguments) and an atomic's (its last argument an ordering).
         let writes_blobs = |text: &str| {
-            ["store(", "rekey(", "create_staging_file("]
+            ["store(", "store_file(", "rekey(", "create_staging_file("]
                 .iter()
                 .any(|method| {
                     text.match_indices(&format!(".{method}")).any(|(at, call)| {

@@ -956,8 +956,7 @@ latest_owner AS (
 merged AS (
     SELECT token_address, token_id,
            NULLIF(w.owner, $3) AS owner,
-           NULLIF(o.operator, $3) AS operator,
-           NULLIF(u.update_operator, $3) AS update_operator,
+           o.operator, u.update_operator,
            lt.block_number AS updated_block, lt.log_index AS updated_log
     FROM latest_touch lt
     LEFT JOIN latest_operator o USING (token_address, token_id)
@@ -1030,8 +1029,10 @@ ON CONFLICT (land_token_id) DO UPDATE SET
 /// with `block_number > since` touched (`since = None`: every key, the
 /// rebuild). Each per-token leg is decided by the single latest event that
 /// touches it, so "granted then revoked" and "granted then transferred
-/// away" both end denied; the zero address is stored as no grant at all;
-/// `owner` is the latest `Transfer`'s `to`; a LAND's estate is its latest
+/// away" both end denied: a transfer stores NULL, a grant to the zero
+/// address stores the zero address (the land-manager subgraph's cleared
+/// leg, which `deploy_flags_for` reads as no grant); `owner` is the latest
+/// `Transfer`'s `to`, NULL for the zero address; a LAND's estate is its latest
 /// `AddLand` unless a later `RemoveLand` deleted the row.
 pub async fn fold(
     pool: &PgPool,

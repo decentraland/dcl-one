@@ -185,6 +185,19 @@ pub(crate) struct MicrophonePublication {
 }
 
 impl MicrophonePublication {
+    fn should_remove(&self, eligible: bool) -> bool {
+        // A completed attempt occupies its route until mic eligibility or the room changes.
+        // An unexpected task exit still needs revocation, including the drain barrier.
+        !eligible
+            || self.revoked.load(Ordering::SeqCst)
+            || (self.task.is_finished()
+                && !self
+                    .state
+                    .lock()
+                    .unwrap_or_else(|err| err.into_inner())
+                    .complete)
+    }
+
     pub(crate) fn revoke(&self) {
         self.revoked.store(true, Ordering::SeqCst);
         let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
@@ -211,10 +224,16 @@ fn complete_publication(state: &Mutex<PublicationControl>, drain: &MicrophoneDra
     let mut state = state.lock().unwrap_or_else(|err| err.into_inner());
     state.complete = true;
     state.transmitting = false;
-    // Missing browser acknowledgment fails closed, even after the owner is gone.
-    if state.draining && stopped {
-        state.draining = false;
-        drain.0.fetch_sub(1, Ordering::SeqCst);
+    if stopped {
+        state.track = None;
+        if state.draining {
+            state.draining = false;
+            drain.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    } else if !state.draining {
+        // Missing acknowledgment fails closed even if cleanup failed before revocation.
+        state.draining = true;
+        drain.0.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -506,10 +525,7 @@ fn reconcile_publications(
     let mut revoking = false;
     for (entity, _, room, publication) in &participants {
         if let Some(publication) = publication {
-            if !eligible(room.get())
-                || publication.revoked.load(Ordering::SeqCst)
-                || publication.task.is_finished()
-            {
+            if publication.should_remove(eligible(room.get())) {
                 commands.entity(entity).remove::<MicrophonePublication>();
                 revoking = true;
             }
@@ -550,7 +566,19 @@ fn reconcile_publications(
                 build_audio_local_track(receiver, sample_rate, channels, task_revoked.clone())
                     .await;
             #[cfg(target_arch = "wasm32")]
-            let track = build_audio_local_track().await;
+            let track = match build_audio_local_track().await {
+                Ok(Ok(track)) => track,
+                Ok(Err(err)) => {
+                    warn!("microphone creation failed: {err}");
+                    complete_publication(&task_state, &task_drain, true);
+                    return;
+                }
+                Err(err) => {
+                    warn!("microphone creation was not acknowledged: {err}");
+                    complete_publication(&task_state, &task_drain, false);
+                    return;
+                }
+            };
             // Both backends create tracks muted. Publishing itself may outlive cancellation;
             // a canceled publication is never unmuted.
             {
@@ -590,7 +618,10 @@ fn reconcile_publications(
             // page operation, so no later route races an asynchronous old media operation.
             mute_local_track(&track, true);
             #[cfg(not(target_arch = "wasm32"))]
-            capture.abort();
+            {
+                capture.abort();
+                let _ = capture.await;
+            }
             #[cfg(target_arch = "wasm32")]
             let stopped = track.stop(!published).await.is_ok();
             #[cfg(not(target_arch = "wasm32"))]
@@ -725,7 +756,7 @@ async fn build_audio_local_track(
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn build_audio_local_track() -> LocalAudioTrack {
+async fn build_audio_local_track() -> super::web::RoomResult<Result<LocalAudioTrack, String>> {
     LocalAudioTrack::new(AudioCaptureOptions {
         echo_cancellation: Some(true),
         noise_suppression: Some(true),
@@ -733,11 +764,6 @@ async fn build_audio_local_track() -> LocalAudioTrack {
         ..Default::default()
     })
     .await
-    .unwrap_or_else(|err| {
-        // as before the page host: the publish of the unusable track fails and is logged
-        error!("Failed to create local audio track due to '{err}'.");
-        LocalAudioTrack::unavailable()
-    })
 }
 
 fn ping_enabled(mut commands: Commands) {
@@ -802,6 +828,38 @@ mod routing_tests {
         drop(publication);
         complete_publication(&state, &drain, false);
         assert_eq!(drain.pending(), 1);
+    }
+
+    #[test]
+    fn failed_stop_before_revoke_keeps_routing_closed() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let drain = MicrophoneDrain::default();
+        let publication = pending(&runtime, &drain);
+        complete_publication(&publication.state, &drain, false);
+        assert_eq!(drain.pending(), 1);
+        drop(publication);
+        assert_eq!(drain.pending(), 1);
+    }
+
+    #[test]
+    fn failed_attempt_stays_in_place_until_route_is_ineligible() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let drain = MicrophoneDrain::default();
+        let mut publication = pending(&runtime, &drain);
+        let state = publication.state.clone();
+        let task_drain = drain.clone();
+        publication.task.abort();
+        publication.task =
+            runtime.spawn(async move { complete_publication(&state, &task_drain, true) });
+        runtime.block_on(&mut publication.task).unwrap();
+        assert!(publication.task.is_finished());
+        // A finished attempt is still a route occupant until it is explicitly revoked.
+        assert!(!publication.should_remove(true));
+        assert!(publication.should_remove(false));
     }
 
     #[test]

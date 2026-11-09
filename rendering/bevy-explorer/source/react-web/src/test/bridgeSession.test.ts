@@ -13,15 +13,26 @@ vi.mock('../../bridge-scene/node_modules/@dcl/sdk/ecs.js', () => ({
     }
   }
 }))
+vi.mock('../../bridge-scene/src/domains/profile', () => ({fetchIdentities: vi.fn(async () => () => ({}))}))
 let player: { userId: string } | null = null
 const { openExternalUrl } = vi.hoisted(() => ({ openExternalUrl: vi.fn() }))
 vi.mock('~system/RestrictedActions', () => ({ openExternalUrl }))
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/players/index.js', () => ({ getPlayer: () => player }))
 vi.mock('../../bridge-scene/src/bevy-api', () => ({
   BevyApi: {
+    kernelFetch: vi.fn(async () => ({ ok: true, body: '{"data":{"notifications":[]}}' })),
+    getServiceUrls: vi.fn(async () => ({
+      notifications: 'https://gateway.example.org/notifications',
+      events: 'https://example.org/mounted/events',
+      socialApi: 'https://custom.example/social',
+      cameraReel: 'https://example.org/mounted/camera-reel-service',
+      reels: 'https://share.example/reels',
+      catalyst: 'https://custom.example/peer'
+    })),
     loginPrevious: vi.fn(async () => ({ success: true, error: '' })),
     logout: vi.fn(),
-    getSceneLoadingUIStream: vi.fn(() => new Promise(() => {}))
+    getSceneLoadingUIStream: vi.fn(() => new Promise(() => {})),
+    social: { getCommunityConnectivityStream: vi.fn(() => new Promise(() => {})) }
   }
 }))
 
@@ -83,6 +94,53 @@ describe('bridge session', () => {
     player = { userId: '0xb' } // a login the bridge did not relay (the web console command)
     frame()
     expect(readies(sent)).toBe(2)
+  })
+})
+
+describe('bridge service URLs', () => {
+  it('uses the engine-resolved APIs for notifications, community detail and profiles', async () => {
+    const { registerCommunities } = await import('../../bridge-scene/src/domains/communities')
+    const { registerNotifications } = await import('../../bridge-scene/src/domains/notifications')
+    const { catalystBase } = await import('../../bridge-scene/src/http')
+    const { BevyApi } = await import('../../bridge-scene/src/bevy-api')
+    const { ctx, req } = fakeCtx()
+    registerNotifications(ctx)
+    registerCommunities(ctx)
+
+    await req({ kind: 'getNotifications' })
+    await req({ kind: 'getCommunityDetail', id: 'some/id' })
+    for (const url of [
+      'https://gateway.example.org/notifications/notifications?limit=50&from=0',
+      'https://example.org/mounted/events/api/events?community_id=some%2Fid&list=upcoming',
+      'https://custom.example/social/v2/communities/some%2Fid/members?limit=100',
+      'https://example.org/mounted/camera-reel-service/api/communities/some%2Fid/images?limit=30'
+    ]) {
+      expect(BevyApi.kernelFetch).toHaveBeenCalledWith(expect.objectContaining({
+        url, init: expect.objectContaining({ method: 'GET' })
+      }))
+    }
+    expect(await catalystBase()).toBe('https://custom.example/peer')
+    expect(BevyApi.getServiceUrls).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('member-of list', () => {
+  it('sends nothing for an answer without a results list, and an empty list only for an empty one', async () => {
+    const { registerCommunities } = await import('../../bridge-scene/src/domains/communities')
+    const { BevyApi } = await import('../../bridge-scene/src/bevy-api')
+    const { ctx, req, sent } = fakeCtx()
+    registerCommunities(ctx)
+    const answer = (body: string): void => {
+      vi.mocked(BevyApi.kernelFetch).mockResolvedValueOnce({ ok: true, status: 200, body } as never)
+    }
+    for (const body of ['', '{}', '{"data":{}}']) {
+      answer(body)
+      await req({ kind: 'getCommunityChannels' })
+    }
+    expect(sent.filter((m) => m.kind === 'communityChannels')).toEqual([])
+    answer('{"results":[]}')
+    await req({ kind: 'getCommunityChannels' })
+    expect(sent.filter((m) => m.kind === 'communityChannels')).toEqual([{ kind: 'communityChannels', communities: [] }])
   })
 })
 

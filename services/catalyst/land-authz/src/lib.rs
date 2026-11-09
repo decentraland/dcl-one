@@ -12,27 +12,32 @@
 //! Where each consumer reads:
 //! - `GET /lambdas/parcels/{x}/{y}/operators` (comms' `COMMS_LAND_OPERATORS_URL`
 //!   shape): **index** once [`indexer::index_ready`]; before that the
-//!   unavailable envelope (`Source::LandAuthzIndex`), never owner-only
-//!   presented as the operators.
+//!   land-manager subgraph (`LAND_SUBGRAPH_URL`, `chain_index::land_graph`),
+//!   never owner-only presented as the operators; the unavailable envelope
+//!   (`Source::LandAuthzIndex`) without it.
 //! - `GET /lambdas/users/{address}/lands-permissions`: **index** (the
-//!   `token_right_update_operator_idx` reverse lookup, paged); envelope
-//!   before readiness. The old route's second source, the land-manager
-//!   subgraph (`LAND_SUBGRAPH_URL`), is not configured in v2.
-//! - `GET /lambdas/users/{address}/parcels/{x}/{y}/permissions` and the
-//!   `POST .../parcels/permissions` batch: **index** for every leg once
-//!   ready; before that the owner leg from the marketplace subgraph reader
-//!   (`marketplace::graph::parcels_at`) and the four operator legs
-//!   undecided: denied for the write decision (fail-closed, the old
-//!   validator's behaviour with no resolver attached) and serialized as
-//!   `null` on the permissions routes (the marketplace subgraph's Parcel
-//!   and Estate carry no operator, updateOperator, updateManager or
-//!   approvedForAll; the old fallback read them from the land-manager
-//!   subgraph, `LAND_SUBGRAPH_URL`, which v2 does not configure); the
-//!   `x-land-authz-source` header says which. Envelope when neither source
-//!   exists.
+//!   `token_right_update_operator_idx` reverse lookup, paged); before
+//!   readiness the land-manager subgraph, else the envelope.
+//! - `GET /lambdas/users/{address}/parcels/{x}/{y}/permissions`: five
+//!   booleans from the **index** once ready; before that from the
+//!   land-manager subgraph's operators, as lamb2 computes them; with
+//!   neither, lamb2's bare 500. The `x-land-authz-source` header names the
+//!   source.
+//! - `POST .../parcels/permissions` (the batch, this tree's own): **index**
+//!   for every leg once ready; before that the owner leg from the
+//!   marketplace subgraph reader (`chain_index::graph::parcels_at`) and the
+//!   four operator legs undecided: denied for the write decision
+//!   (fail-closed, the old validator's behaviour with no resolver attached)
+//!   and serialized as `null` (the marketplace subgraph's Parcel and Estate
+//!   carry no operator, updateOperator, updateManager or approvedForAll);
+//!   the `x-land-authz-source` header says which. Envelope when neither
+//!   source exists.
 //! - `GET /lambdas/land-authz/status`: the cursor row, readiness and lag.
-//! - [`can_deploy`]: the same decision as the permissions route, for the
-//!   write paths; [`owns_land_at`]: the LAND leg of `worlds::policy`.
+//! - [`can_deploy`]: the decision the batch route reports, for the write
+//!   paths; once the index is ready, the single permissions route's flags
+//!   too. Before that the write paths stay owner-only and fail-closed, so a
+//!   subgraph-reported operator leg does not yet grant a deploy;
+//!   [`owns_land_at`]: the LAND leg of `worlds::policy`.
 //!
 //! What changed against the old crate: its resolver joined
 //! `squid_marketplace.parcel` and `.estate` for coordinates, ownership and
@@ -44,9 +49,10 @@
 //! `index_cursor.folded_block` is set (a completed full replay, folded within
 //! 25 blocks of the chain head) and `folded_at` is at most 30 minutes old;
 //! until then the marketplace subgraph reader (`marketplace::graph::parcels_at`,
-//! `owns_land_at`) answers the owner leg and nothing answers the operator
-//! legs. The job runs only with `LAND_AUTHZ_INDEX_ENABLED=true` and
-//! `ETH_RPC_URL`; off, the readers keep using the fallback.
+//! `owns_land_at`) answers the owner leg for the write paths and the
+//! land-manager subgraph answers the read routes above. The job runs only
+//! with `LAND_AUTHZ_INDEX_ENABLED=true` and `ETH_RPC_URL`; off, the readers
+//! keep using the fallbacks.
 
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
@@ -104,12 +110,19 @@ pub const ALL_KINDS: [&str; 7] = [
 
 /// A parcel's resolved subject: whose parcel it is (the estate's owner when
 /// it sits in one), which registry decides, and the two per-token legs.
+/// `operator` and `update_operator` are what the land-manager subgraph
+/// answers: `None` for a leg never set, the zero address for one cleared
+/// on chain. `deploy_update_operator` is the update operator the deploy
+/// check reads, where a cleared leg is no leg (the chain cannot tell the
+/// two apart), so a parcel's cleared update operator falls back to its
+/// estate's.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParcelSubject {
     pub owner: String,
     pub registry: String,
     pub operator: Option<String>,
     pub update_operator: Option<String>,
+    pub deploy_update_operator: Option<String>,
     pub belongs_to_estate: bool,
 }
 
@@ -270,6 +283,12 @@ pub struct Decision {
     pub flags: ParcelPermissionFlags,
 }
 
+/// A published parcel-membership answer. `None` inside this answer means the
+/// parcel belongs to no estate; absence of an answer means the index is unready.
+pub struct EstateMembership {
+    pub estate_id: Option<String>,
+}
+
 /// Why no decision could be made: the caller refuses the write (never
 /// grants), and a route answers the unavailable envelope.
 #[derive(Debug, thiserror::Error)]
@@ -313,6 +332,36 @@ impl LandAuthzState {
     /// The cursor row when the local index may answer on the database clock.
     pub async fn ready(&self) -> Option<Cursor> {
         indexer::ready_cursor(&self.pool, &self.settings.network).await
+    }
+
+    /// One indexed coordinate lookup on the caller's connection, including the
+    /// publication check in the same SQL snapshot on the database clock (as
+    /// `ready`). Event edits already hold a connection and must not acquire
+    /// another from a potentially full pool.
+    pub async fn estate_at(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        x: i32,
+        y: i32,
+    ) -> Result<Option<EstateMembership>, sqlx::Error> {
+        let answer: Option<(Option<String>,)> = sqlx::query_as(
+            "SELECT el.estate_token_id::text FROM land_authz.index_cursor c \
+             LEFT JOIN land_authz.token_right p ON p.token_address=c.land_registry AND p.x=$4 AND p.y=$5 \
+             LEFT JOIN land_authz.estate_land el ON el.land_token_id=p.token_id \
+             WHERE c.network=$1 AND c.land_registry=$2 AND c.estate_registry=$3 \
+               AND c.full_replay_started AND c.folded_block=c.last_block \
+               AND c.folded_at <= timezone('UTC', now()) \
+               AND c.folded_at >= timezone('UTC', now()) - make_interval(secs => $6)",
+        )
+        .bind(&self.settings.network)
+        .bind(&self.settings.land_registry)
+        .bind(&self.settings.estate_registry)
+        .bind(x)
+        .bind(y)
+        .bind(indexer::READY_WINDOW.num_seconds() as f64)
+        .fetch_optional(conn)
+        .await?;
+        Ok(answer.map(|(estate_id,)| EstateMembership { estate_id }))
     }
 
     /// The marketplace reader, when one with a subgraph URL is attached.
@@ -369,12 +418,12 @@ pub async fn can_deploy_batch(
         let source = DecisionSource::Index {
             folded_block: cursor.folded_block.unwrap_or(cursor.last_block),
         };
-        let rights = state.store().rights_batch(parcels).await?;
+        let rights = state.store().deploy_rights_batch(parcels).await?;
         return Ok(rights
             .into_iter()
             .map(|r| match r {
                 Some(rights) => {
-                    let flags = rights.flags_for(actor);
+                    let flags = rights.deploy_flags_for(actor);
                     let verdict = flags
                         .granting_leg()
                         .map_or(Verdict::Denied, Verdict::Granted);
@@ -480,6 +529,8 @@ mod unit_tests {
         assert_eq!(decode_land_token_id(id).unwrap(), (37, 55));
         let negative = "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe";
         assert_eq!(decode_land_token_id(negative).unwrap(), (-1, -2));
+        let exception_block = "0x000000000000000000000000000000a30000000000000000000000000000003b";
+        assert_eq!(decode_land_token_id(exception_block).unwrap(), (163, 59));
         assert_eq!(decode_land_token_id("0x12"), None);
     }
 

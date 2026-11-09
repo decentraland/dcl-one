@@ -150,10 +150,11 @@ npm test --prefix react-web           # HUD, deterministic (vitest, no engine)
 npm run test:e2e --prefix react-web   # HUD against a real engine (playwright, needs a GPU)
 ```
 
-CI's Test Suite builds the engine tests with the `ci-test` profile. The scene tests spawn the `dcl_deno_ipc` sidecar from the same profile directory, so build it first:
+CI's Test Suite builds the engine tests with the `ci-test` profile. The `dcl_deno_ipc` integration
+test makes Cargo build the runnable sidecar in the same profile directory, where the scene tests
+look for it.
 
 ```bash
-cargo build --package dcl_deno_ipc --profile ci-test --locked
 cargo test --all --profile ci-test --locked -- --test-threads=1
 ```
 
@@ -168,12 +169,20 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
 (loopback), with no marker in the text. Arguments split on whitespace.
 
 - State: `/world_state` (`inWorld`, `arrivals`, which grows on every return to the world, so a wait
-  after a teleport reads it first), `/avatar_state [all|<address>]`, `/chat_history [count]`,
+  after a teleport reads it first), `/avatar_state [all|<address>]`, `/chat_history [count]`
+  (Nearby only), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
+  stored lines), `/community_state` (community chat's router, channels and counters),
   `/voice_state`, `/voice_room [status|leave]` (on-demand voice and proximity suppression),
   `/connectivity_state` (safe room state, offline warning and reachability probe),
   `/connectivity_retry` (immediate recovery without overriding denied access),
-  `/entity_screen_position <entity> [--bounds]`, plus the older `/player_position`,
+  `/entity_screen_position <entity> [--bounds]`, `/photo_mode [on|off]` (the camera
+  reel's in-world camera: its state, or open or close it) and `/take_photo` (a photo, captured
+  and uploaded; the reply is the state, a refusal names why), plus the older `/player_position`,
   `/get_user_data`, `/connected_players`, `/time` and the scene commands.
+- Chat: `/chat <channel> <word>`, `/dm <address> <message>`, `/community_chat <id> <message>`
+  and `/react <channel> <message id> <emoji>` send as the HUD does; `/community_channels [add
+  <id>|remove <id>|clear]` lists or edits the community channels the engine listens to, which
+  the HUD sets from the user's communities (the engine drops community messages on any other).
 - In development builds the lower-right bug button toggles the debug panel. In all builds,
   open **Sidebar settings (•••) → Debug panel** or type `/debug` in chat. Search by
   section or control, or enter `/debug Performance` directly. Expanded sections refresh
@@ -188,6 +197,11 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
   `hidden`, `enabled`, `actionable`; `"timeout"` ms). A selector is the name or JSON
   `{"name", "role", "index", "exact"}`; several matches need an `index`.
+- Signing in through the HUD (web, under a test runner driving the browser): `/hud_login
+  <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>]
+  [--position <x,y>]`, with an AuthIdentity encoded as `/login_identity` takes it, lands in the
+  lobby or on the way to the destination; `/login_identity` alone signs the engine in under a HUD
+  that keeps its start page.
 - Input: `/press_key <code> [--state down|up]` (`KeyboardEvent.code` names) and
   `/click_at <x> <y> [--button left|right|middle]`. Natively these and the HUD commands go through
   CEF and the window's own input, always real. On the web the page needs a DevTools client to make

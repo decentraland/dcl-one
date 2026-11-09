@@ -1,0 +1,20 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/content/entities/scene/?pointer=0,0",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "cache-control": "public, max-age=10",
+      "vary": "accept-encoding"
+    },
+    "body": "<elided: the same bytes as GET /content/entities/scene?pointer=0,0 (sha256 equal)>"
+  },
+  "note": "The response body was compared with the canonical path's and is identical; it is elided because the scene metadata names its author. Each entity's top-level key order was: version, id, type, timestamp, pointers, content, metadata."
+}

@@ -1,5 +1,6 @@
 use anyhow::{anyhow, bail};
 use bevy::{
+    platform::collections::HashMap,
     prelude::*,
     tasks::{IoTaskPool, Task},
 };
@@ -55,6 +56,7 @@ impl Plugin for ArchipelagoPlugin {
                 start_archipelago,
                 connect_websocket,
                 manage_islands.run_if(not(resource_exists::<WorldHold>)),
+                collect_realm_subscribers,
                 settle_island.run_if(not(resource_exists::<WorldHold>)),
             )
                 .chain(),
@@ -62,6 +64,7 @@ impl Plugin for ArchipelagoPlugin {
 
         app.add_event::<StartArchipelago>();
         app.init_resource::<IslandChannel>();
+        app.init_resource::<RealmSubscribers>();
     }
 }
 
@@ -130,8 +133,8 @@ pub fn start_archipelago(
         let Ok(mut entity) = commands.get_entity(ev.entity) else {
             return;
         };
-        entity.remove::<ArchipelagoConnection>();
-        entity.insert((
+        entity.try_remove::<ArchipelagoConnection>();
+        entity.try_insert((
             Transport {
                 transport_type: TransportType::Archipelago,
                 sender,
@@ -155,6 +158,23 @@ pub fn start_archipelago(
 struct IslandAssignment {
     active: Option<Entity>,
     pending: Option<Entity>,
+    // Credential refresh replaces the island entity, but must retain its retry budget.
+    retries: HashMap<String, crate::recovery::RetryState>,
+}
+
+#[derive(Resource, Default)]
+struct RealmSubscribers(Vec<RpcEventSender>);
+
+fn collect_realm_subscribers(
+    mut events: EventReader<RpcCallEvent>,
+    mut subscribers: ResMut<RealmSubscribers>,
+) {
+    subscribers.0.retain(|sender| !sender.is_closed());
+    for event in events.read() {
+        if let RpcCall::SubscribeRealmChanged { sender } = &event.call {
+            subscribers.0.push(sender.clone());
+        }
+    }
 }
 
 #[derive(Component)]
@@ -191,6 +211,13 @@ fn manage_islands(
     islands: Query<(&IslandName, &IslandOwner)>,
     health: Query<&ConnectionHealth>,
     #[cfg(feature = "livekit")] connected: Query<(), With<crate::livekit::room::Connected>>,
+    #[cfg(feature = "livekit")] connecting: Query<
+        (),
+        Or<(
+            With<crate::livekit::room::Connecting>,
+            With<crate::livekit::room::Reconnecting>,
+        )>,
+    >,
 ) {
     let mut latest = None;
     while let Ok(island) = channel.receiver.try_recv() {
@@ -214,12 +241,21 @@ fn manage_islands(
         if islands
             .get(active)
             .is_ok_and(|(name, owner)| name.0 == island.name && owner.0 == island.owner)
-            && island_connected(
+            && (island_connected(
                 active,
                 &health,
                 #[cfg(feature = "livekit")]
                 &connected,
-            )
+            ) || {
+                #[cfg(feature = "livekit")]
+                {
+                    connecting.contains(active)
+                }
+                #[cfg(not(feature = "livekit"))]
+                {
+                    false
+                }
+            })
         {
             if let Some(pending) = assignment
                 .pending
@@ -227,9 +263,36 @@ fn manage_islands(
                 .filter(|pending| *pending != active)
             {
                 if let Ok(mut entity) = commands.get_entity(pending) {
-                    entity.despawn();
+                    entity.try_despawn();
                 }
             }
+            return;
+        }
+    }
+    if let Some(pending) = assignment.pending {
+        let same = islands
+            .get(pending)
+            .is_ok_and(|(name, owner)| name.0 == island.name && owner.0 == island.owner);
+        let busy = island_connected(
+            pending,
+            &health,
+            #[cfg(feature = "livekit")]
+            &connected,
+        ) || {
+            #[cfg(feature = "livekit")]
+            {
+                connecting.contains(pending)
+            }
+            #[cfg(not(feature = "livekit"))]
+            {
+                false
+            }
+        };
+        if same && busy {
+            // This fresh assignment confirms the in-flight candidate without dialing a duplicate.
+            commands
+                .entity(pending)
+                .try_insert(IslandGeneration(island.generation));
             return;
         }
     }
@@ -237,11 +300,19 @@ fn manage_islands(
         if let Some(pending) = assignment.pending.replace(entity) {
             if Some(pending) != assignment.active {
                 if let Ok(mut old) = commands.get_entity(pending) {
-                    old.despawn();
+                    old.try_despawn();
                 }
             }
         }
-        commands.entity(entity).insert((
+        commands.entity(entity).try_insert((
+            RoomRecovery {
+                retry: assignment
+                    .retries
+                    .get(&island.name)
+                    .cloned()
+                    .unwrap_or_default(),
+                failure: None,
+            },
             IslandOwner(island.owner),
             IslandGeneration(island.generation),
             IslandName(island.name),
@@ -258,14 +329,8 @@ fn settle_island(
     #[cfg(feature = "livekit")] connected: Query<(), With<crate::livekit::room::Connected>>,
     islands: Query<(&IslandName, &IslandOwner, &IslandGeneration)>,
     current_realm: Res<CurrentRealm>,
-    mut senders: Local<Vec<RpcEventSender>>,
-    mut events: EventReader<RpcCallEvent>,
+    mut senders: ResMut<RealmSubscribers>,
 ) {
-    for event in events.read() {
-        if let RpcCall::SubscribeRealmChanged { sender } = &event.call {
-            senders.push(sender.clone());
-        }
-    }
     for (owner, transport, mut assignment) in &mut owners {
         if assignment
             .active
@@ -283,7 +348,7 @@ fn settle_island(
         if pending_owner.0 != owner || generation.0 != transport.generation {
             assignment.pending = None;
             if pending_owner.0 == owner && Some(pending) != assignment.active {
-                commands.entity(pending).despawn();
+                commands.entity(pending).try_despawn();
             }
             continue;
         }
@@ -301,17 +366,18 @@ fn settle_island(
             .filter(|old| *old != pending)
         {
             if let Ok(mut entity) = commands.get_entity(old) {
-                entity.despawn();
+                entity.try_despawn();
             }
         }
         assignment.pending = None;
+        assignment.retries.clear();
         let server = current_realm
             .config
             .realm_name
             .as_deref()
             .unwrap_or_default();
         let message = json!({"serverName": server, "room": name.0, "displayName": format!("{server}-{}", name.0), "domain": current_realm.address}).to_string();
-        senders.retain(|sender| {
+        senders.0.retain(|sender| {
             let _ = sender.send(message.clone());
             !sender.is_closed()
         });
@@ -326,19 +392,33 @@ fn refresh_island(
             &mut ArchipelagoTransport,
             &ConnectionHealth,
             Has<CredentialRequest>,
+            &mut IslandAssignment,
         ),
         With<RefreshIsland>,
     >,
     mut starts: EventWriter<StartArchipelago>,
+    islands: Query<(&IslandName, &RoomRecovery)>,
 ) {
-    for (entity, mut transport, health, refreshable) in &mut owners {
+    for (entity, mut transport, health, refreshable, mut assignment) in &mut owners {
+        for island in [assignment.active, assignment.pending]
+            .into_iter()
+            .flatten()
+        {
+            if let Ok((name, recovery)) = islands.get(island) {
+                if recovery.failure == Some(FailureKind::Transient) {
+                    assignment
+                        .retries
+                        .insert(name.0.clone(), recovery.retry.clone());
+                }
+            }
+        }
         health.disconnected();
         transport.generation = transport.generation.wrapping_add(1);
         commands
             .entity(entity)
-            .remove::<(RefreshIsland, ArchipelagoConnection)>();
+            .try_remove::<(RefreshIsland, ArchipelagoConnection)>();
         if refreshable {
-            commands.entity(entity).insert(NeedsAdapter);
+            commands.entity(entity).try_insert(NeedsAdapter);
         } else {
             starts.write(StartArchipelago {
                 entity,
@@ -427,9 +507,11 @@ fn reconnect_websocket(
                 .copied()
                 .unwrap_or(AdmissionError::new(FailureKind::Transient));
             recovery.fail(time.elapsed_secs_f64(), error);
-            commands.entity(entity).remove::<ArchipelagoConnection>();
+            commands
+                .entity(entity)
+                .try_remove::<ArchipelagoConnection>();
             if refreshable && !error.terminal() {
-                commands.entity(entity).insert(NeedsAdapter);
+                commands.entity(entity).try_insert(NeedsAdapter);
             }
             warn!(?entity, kind = ?error.kind, "archipelago disconnected");
         }
@@ -749,6 +831,101 @@ mod tests {
             .is_ok());
     }
 
+    #[cfg(feature = "livekit")]
+    #[test]
+    fn repeated_assignment_keeps_an_existing_sdk_attempt() {
+        for active in [false, true] {
+            let mut app = island_app();
+            let owner = owner(app.world_mut(), 7);
+            let room = island(app.world_mut(), owner, 7, "same", false);
+            app.world_mut().entity_mut(room).insert((
+                crate::livekit::LivekitTransport {
+                    address: "wss://example.org?access_token=test".into(),
+                    retries: 0,
+                },
+                crate::livekit::room::Connecting,
+            ));
+            let mut assignment = app.world_mut().get_mut::<IslandAssignment>(owner).unwrap();
+            if active {
+                assignment.active = Some(room);
+            } else {
+                assignment.pending = Some(room);
+            }
+            assign(&app, owner, 7, "same");
+            app.update();
+            let assignment = app.world().get::<IslandAssignment>(owner).unwrap();
+            assert_eq!(
+                if active {
+                    assignment.active
+                } else {
+                    assignment.pending
+                },
+                Some(room)
+            );
+            assert!(app.world().resource::<Events<StartWsRoom>>().is_empty());
+        }
+    }
+
+    #[test]
+    fn failed_island_retry_budget_survives_assignment_refresh() {
+        let mut app = island_app();
+        let owner = owner(app.world_mut(), 7);
+        let failed = island(app.world_mut(), owner, 7, "same", false);
+        let mut recovery = RoomRecovery::default();
+        recovery.fail(0.0, AdmissionError::new(FailureKind::Transient));
+        recovery.fail(1.0, AdmissionError::new(FailureKind::Transient));
+        app.world_mut().entity_mut(failed).insert(recovery);
+        app.world_mut()
+            .get_mut::<IslandAssignment>(owner)
+            .unwrap()
+            .pending = Some(failed);
+        app.world_mut().entity_mut(owner).insert(RefreshIsland);
+        app.update();
+        let generation = app
+            .world()
+            .get::<ArchipelagoTransport>(owner)
+            .unwrap()
+            .generation;
+        assign(&app, owner, generation, "same");
+        app.update();
+        let replacement = app
+            .world()
+            .get::<IslandAssignment>(owner)
+            .unwrap()
+            .pending
+            .unwrap();
+        let mut recovery = app
+            .world_mut()
+            .get_mut::<RoomRecovery>(replacement)
+            .unwrap();
+        assert_eq!(recovery.retry.attempts, 2);
+        recovery.fail(3.0, AdmissionError::new(FailureKind::Transient));
+        assert_eq!(recovery.retry.due, 7.0);
+    }
+
+    #[test]
+    fn subscriptions_registered_during_hold_survive_until_handoff() {
+        let mut app = island_app();
+        app.insert_resource(WorldHold);
+        let (sender, mut receiver) = RpcEventSender::channel();
+        app.world_mut()
+            .send_event(RpcCallEvent::engine(RpcCall::SubscribeRealmChanged {
+                sender,
+            }));
+        for _ in 0..4 {
+            app.update();
+        }
+        app.world_mut().remove_resource::<WorldHold>();
+        let owner = owner(app.world_mut(), 7);
+        let room = island(app.world_mut(), owner, 7, "arrived", true);
+        app.world_mut()
+            .get_mut::<IslandAssignment>(owner)
+            .unwrap()
+            .pending = Some(room);
+        app.update();
+        assert!(receiver.try_recv().unwrap().contains("arrived"));
+    }
+
     #[test]
     fn stale_last_events_cannot_hide_a_current_assignment() {
         let mut app = island_app();
@@ -809,6 +986,7 @@ mod tests {
         app.world_mut().entity_mut(owner).insert(IslandAssignment {
             active: Some(active),
             pending: Some(obsolete),
+            ..Default::default()
         });
         assign(&app, owner, 7, "active");
 
@@ -832,6 +1010,7 @@ mod tests {
             app.world_mut().entity_mut(owner).insert(IslandAssignment {
                 active: Some(active),
                 pending: Some(pending),
+                ..Default::default()
             });
             if disappeared {
                 app.world_mut().despawn(pending);
@@ -855,6 +1034,7 @@ mod tests {
         app.world_mut().entity_mut(owner).insert(IslandAssignment {
             active: Some(active),
             pending: Some(pending),
+            ..Default::default()
         });
         app.insert_resource(WorldHold);
         assign(&app, owner, 7, "latest");

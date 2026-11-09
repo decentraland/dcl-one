@@ -10,6 +10,7 @@ function error(...args) {
 
 var audioContext = null;
 var microphonePermission = "denied";
+const roomPlayback = new WeakMap();
 
 /**
  * @param {function} on_change called with the permission state now and whenever it changes
@@ -61,15 +62,16 @@ export function promptMicrophonePermission() {
  * @returns livekit.Room
  */
 export async function room_connect(url, token, room_options, room_connect_options, handler) {
-    const room = new LivekitClient.Room(room_options);
-
-    set_room_event_handler(room, handler);
+    // The page supplies the only audio graph. SDK Web Audio mixing would bypass its gain.
+    const room = new LivekitClient.Room({ ...room_options, webAudioMix: false });
+    const tracks = new Set();
+    roomPlayback.set(room, tracks);
+    set_room_event_handler(room, handler, tracks);
 
     try {
         await room.connect(url, token, room_connect_options);
     } catch (err) {
-        // the handler does not outlive a failed connect
-        room.removeAllListeners();
+        release_room_playback(room);
         throw err;
     }
 
@@ -91,8 +93,20 @@ export async function room_close(room) {
 export function room_drop(room) {
     // A connect may finish after its engine owner has gone. No later Close command
     // is guaranteed, so releasing the page handle must also close the SDK session.
-    void room.disconnect().catch(() => {});
+    if (release_room_playback(room)) {
+        void room.disconnect().catch(() => {});
+    }
+}
+
+function release_room_playback(room) {
+    const tracks = roomPlayback.get(room);
+    if (tracks === null) return false;
+    roomPlayback.set(room, null);
+    // Disconnect may emit unsubscribe events after the Rust event closure is gone.
     room.removeAllListeners();
+    tracks?.forEach(drop_track_playback);
+    tracks?.clear();
+    return true;
 }
 
 /**
@@ -118,7 +132,7 @@ export function room_local_participant(room) {
  * @param {livekit.Room} room 
  * @param {function} handler 
  */
-function set_room_event_handler(room, handler) {
+function set_room_event_handler(room, handler, tracks) {
     room.on(LivekitClient.RoomEvent.Connected, () => {
         const participants_with_tracks = Array
             .from(room.remoteParticipants.values())
@@ -220,23 +234,17 @@ function set_room_event_handler(room, handler) {
         (remote_track, remote_track_publication, remote_participant) => {
             log(`Subscribed to track ${remote_track.sid} of ${remote_participant.sid} (${remote_participant.identity}).`);
 
+            if (tracks.has(remote_track)) {
+                error(`Rebuilding playback of ${remote_track.sid} for ${remote_participant.sid} (${remote_participant.identity}).`);
+                drop_track_playback(remote_track);
+            }
+            tracks.add(remote_track);
             if (remote_track.kind === "audio") {
-                if (remote_track.trackRig) {
-                    error(`Rebuilding track rig of ${remote_track.sid} for ${remote_participant.sid} (${remote_participant.identity}).`);
-                    track_rig_drop(remote_track);
-                }
                 if (!audioContext) {
                     audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 }
 
                 if (remote_participant.identity.endsWith("-streamer") || remote_participant.identity.startsWith("stream:") || remote_participant.identity.startsWith("presentation-bot:")) {
-                    if (remote_track.audioElement) {
-                        error(`Rebuilding audio element of ${remote_track.sid} for ${remote_participant.sid} (${remote_participant.identity}).`);
-                        const audioElement = remote_track.audioElement;
-                        delete remote_track.audioElement;
-                        remote_track.detach(audioElement);
-                    }
-
                     const audioElement = remote_track.attach();
                     audioElement.volume = 0;
                     remote_track.audioElement = audioElement;
@@ -244,13 +252,6 @@ function set_room_event_handler(room, handler) {
                     track_rig_new(remote_track);
                 }
             } else if (remote_track.kind == "video") {
-                if (remote_track.videoElement) {
-                    error(`Rebuilding video element of ${remote_track.sid} for ${remote_participant.sid} (${remote_participant.identity}).`);
-                    const videoElement = remote_track.videoElement;
-                    delete remote_track.videoElement;
-                    remote_track.detach(videoElement);
-                }
-
                 const videoElement = remote_track.attach();
                 remote_track.videoElement = videoElement;
             }
@@ -270,15 +271,8 @@ function set_room_event_handler(room, handler) {
         // track
         (remote_track, remote_track_publication, remote_participant) => {
             log(`Unsubscribed to track ${remote_track.sid} of ${remote_participant.sid} (${remote_participant.identity}).`);
-            if (remote_track.kind === "audio") {
-                track_rig_drop(remote_track);
-            }
-            if (remote_track.audioElement) {
-                const audioElement = remote_track.audioElement;
-                delete remote_track.audioElement;
-                remote_track.detach(audioElement);
-                audioElement.remove();
-            }
+            tracks.delete(remote_track);
+            drop_track_playback(remote_track);
 
             handler({
                 type: 'trackUnsubscribed',
@@ -518,9 +512,9 @@ export function local_audio_track_stop(track) {
 function track_rig_new(remote_track) {
     log(`Creating new track rig for ${remote_track.sid}.`);
 
-    // dummy audioElement
+    // Keep the SDK attachment for playback lifecycle, but route sound through the gain below.
     const audioElement = remote_track.attach();
-    audioElement.volume = 0;
+    audioElement.muted = true;
 
     // use the track internal stream in playback
     const stream = new MediaStream([remote_track.mediaStreamTrack]);
@@ -552,9 +546,9 @@ function track_rig_new(remote_track) {
  * @param {livekit.RemoteTrack} remote_track 
  */
 function track_rig_drop(remote_track) {
-    log(`Dropping track rig of ${remote_track.sid}.`);
     const track_rig = remote_track.trackRig;
     if (track_rig) {
+        log(`Dropping track rig of ${remote_track.sid}.`);
         delete remote_track.trackRig;
 
         remote_track.detach(track_rig.audioElement);
@@ -562,6 +556,18 @@ function track_rig_drop(remote_track) {
         track_rig.pannerNode.disconnect();
         track_rig.gainNode.disconnect();
         track_rig.audioElement.pause();
+    }
+}
+
+function drop_track_playback(track) {
+    track_rig_drop(track);
+    for (const key of ["audioElement", "videoElement"]) {
+        const element = track[key];
+        if (element) {
+            delete track[key];
+            track.detach(element);
+            element.remove();
+        }
     }
 }
 
@@ -574,6 +580,7 @@ function track_rig_drop(remote_track) {
 export function remote_track_pan_and_volume(remote_track, pan, volume) {
     // log(`Setting pan and volume for track ${remote_track.sid}.`);
     const track_rig = remote_track.trackRig;
+    if (!track_rig) return;
     // kira's 0 (left) .. 1 (right) to the stereo panner's -1 .. 1
     track_rig.pannerNode.pan.value = Math.max(-1, Math.min(1, pan * 2 - 1));
     // Volume should be between 0 and 1 (or higher for boost)
@@ -601,7 +608,7 @@ export function remote_track_pan_and_volume(remote_track, pan, volume) {
 export function remote_audio_track_set_volume(remote_audio_track, volume) {
     if (remote_audio_track.trackRig) {
         remote_audio_track.trackRig.gainNode.gain.value = Math.max(0, volume);
-    } else {
+    } else if (remote_audio_track.audioElement) {
         remote_audio_track.setVolume(volume);
     }
 }

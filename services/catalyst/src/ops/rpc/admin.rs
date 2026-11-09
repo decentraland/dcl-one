@@ -5,7 +5,7 @@
 //! host by the same guard the readers use, or, under the private opt-in,
 //! by the narrow local deny-list. Every mutation records one
 //! `ops.admin_audit` row after the effect (actor `token:CATALYRST_RPC_ADMIN_TOKEN`, the credential's
-//! variable name, as the telemetry and credits bearers write theirs; domain `rpc`,
+//! variable name, as the credits bearer writes its; domain `rpc`,
 //! the upstream reduced to its host).
 
 use axum::extract::{Path, State};

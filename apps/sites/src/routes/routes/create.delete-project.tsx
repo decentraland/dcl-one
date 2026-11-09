@@ -504,7 +504,8 @@ function ConfirmStep({ d }: { d: LoaderData }) {
 
     let id = identity;
     if (!isConnected || !id) {
-      openSignIn();
+      // The reader has picked the scene and its options: sign in without leaving them.
+      openSignIn({ inPlace: true });
       setPhase("error");
       setErrorMsg("Sign in to delete this scene, then try again.");
       return;

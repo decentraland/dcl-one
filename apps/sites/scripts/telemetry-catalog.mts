@@ -393,7 +393,7 @@ function check(program: ts.Program, { events, dynamic }: HarvestResult): number 
 // Machine-readable event contract: events.ts is compile-time-only and erased at
 // runtime, so this emits a checked-in JSON contract \u{2014} event names + per-prop
 // structured kinds/enums \u{2014} that runtime consumers read instead (metric-ref
-// gate, track.ts's emit-path validator, catalyrst-telemetry's ingest validator).
+// gate, track.ts's emit-path validator).
 // Generated from the SAME harvest as events.ts, so the two never drift;
 // `--check` verifies it is in sync.
 

@@ -55,10 +55,22 @@ const UPSERT: &str = r#"
          categories, likes, dislikes, favorites, deployed_at, disabled, highlighted,
          raw, fetched_at, origin)
     SELECT u.id, u.base_position, u.title, u.description, u.creator_address,
-           COALESCE(m.content_rating, u.content_rating),
+           -- the pending rating has two spellings upstream (places::moderation):
+           -- the stored one is RP
+           COALESCE(m.content_rating, CASE WHEN u.content_rating = 'PR' THEN 'RP' ELSE u.content_rating END),
            ARRAY(SELECT jsonb_array_elements_text(u.categories)), u.likes, u.dislikes, u.favorites,
            u.deployed_at, COALESCE(m.disabled, u.disabled), COALESCE(m.highlighted, u.highlighted),
-           u.raw || COALESCE(r.overlay, '{}'::jsonb), timezone('UTC', now()), 'upstream'
+           u.raw
+               || CASE WHEN u.raw->>'content_rating' = 'PR' THEN '{"content_rating": "RP"}'::jsonb ELSE '{}'::jsonb END
+               || COALESCE(r.overlay, '{}'::jsonb)
+               -- an operator's disable carries its instant and reason into raw
+               -- (places::moderation), a re-enable clears upstream's
+               || CASE WHEN m.disabled IS TRUE THEN jsonb_build_object(
+                           'disabled_at', to_char(m.disabled_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+                           'disabled_reason', m.reason)
+                       WHEN m.disabled IS FALSE THEN '{"disabled_at": null, "disabled_reason": null}'::jsonb
+                       ELSE '{}'::jsonb END,
+           timezone('UTC', now()), 'upstream'
     FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[],
                 $7::jsonb[], $8::int4[], $9::int4[], $10::int4[], $11::timestamp[],
                 $12::boolean[], $13::boolean[], $14::jsonb[])

@@ -74,8 +74,8 @@ pub fn start_ws_room(
         info!("starting ws-room protocol");
         let (sender, receiver) = tokio::sync::mpsc::channel(1000);
 
-        // queue a profile version message
-        if let Some(current_profile) = current_profile.profile.as_ref() {
+        // Never announce an edit still deploying.
+        if let Some(current_profile) = current_profile.peer_profile() {
             let response = rfc4::Packet {
                 message: Some(rfc4::packet::Message::ProfileVersion(
                     rfc4::AnnounceProfileVersion {
@@ -90,8 +90,8 @@ pub fn start_ws_room(
         let Ok(mut entity) = commands.get_entity(ev.entity) else {
             return;
         };
-        entity.remove::<WebSocketConnection>();
-        entity.insert((
+        entity.try_remove::<WebSocketConnection>();
+        entity.try_insert((
             Transport {
                 transport_type: TransportType::WebsocketRoom,
                 sender,
@@ -174,9 +174,9 @@ fn reconnect_websocket(
                 .copied()
                 .unwrap_or(AdmissionError::new(FailureKind::Transient));
             recovery.fail(time.elapsed_secs_f64(), error);
-            commands.entity(entity).remove::<WebSocketConnection>();
+            commands.entity(entity).try_remove::<WebSocketConnection>();
             if refreshable && !error.terminal() {
-                commands.entity(entity).insert(NeedsAdapter);
+                commands.entity(entity).try_insert(NeedsAdapter);
             }
             warn!(?entity, kind = ?error.kind, "websocket room disconnected");
         }
@@ -342,6 +342,7 @@ async fn websocket_room_handler_inner(
                     from_alias,
                     body,
                     unreliable: next.unreliable,
+                    recipients: Vec::new(),
                 })),
             };
             let mut buf = Vec::default();

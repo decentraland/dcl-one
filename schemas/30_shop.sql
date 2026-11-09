@@ -185,6 +185,8 @@ CREATE TABLE shop.items (
     listings integer,
     owners integer,
     mirrored_at timestamp without time zone NOT NULL,
+    -- The subgraph `Item.searchText`, for the lambdas catalog's `textSearch`.
+    search_text text,
     PRIMARY KEY (network, contract_address, item_id),
     CONSTRAINT items_urn_key UNIQUE (urn),
     CONSTRAINT items_network_known CHECK (network IN ('ethereum', 'matic')),
@@ -369,7 +371,7 @@ CREATE TABLE shop.chain_cursor (
     reorg_rewinds integer NOT NULL DEFAULT 0,
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     PRIMARY KEY (indexer, network),
-    CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers')),
+    CONSTRAINT chain_cursor_indexer_known CHECK (indexer IN ('nft', 'trade_events', 'rentals', 'mana_transfers', 'sales')),
     CONSTRAINT chain_cursor_network_known CHECK (network IN ('ethereum', 'matic')),
     CONSTRAINT chain_cursor_fold_within_indexed CHECK (fold_through IS NULL OR fold_through <= last_block),
     CONSTRAINT chain_cursor_folded_within_indexed CHECK (folded_block IS NULL OR folded_block <= last_block),
@@ -16156,6 +16158,32 @@ CREATE INDEX rental_event_signature_idx ON shop.rental_event (signature) WHERE k
 -- The lessor's signer index: WHERE kind = 'signer_index_updated' AND signer = l.lessor.
 CREATE INDEX rental_event_signer_idx ON shop.rental_event (signer, new_index) WHERE kind = 'signer_index_updated';
 
+-- The chain notification producers' progress (shop/src/rentals/notices.rs,
+-- shop/src/market/{transfer,sale,royalty}_notices.rs), one row each (names in
+-- shop::market::notice_cursor::PRODUCERS), advanced in the transaction that
+-- inserts the page's notifications: the last chain position handled;
+-- `rental_ended` orders by the rental's end time first. Seeded on the first
+-- pass at the published head (kept in seed_*), so history is never announced.
+-- A reorg rewind or a late nft backfill within 1,000 blocks of the head moves
+-- the rows of the producers that read that index back, never below their
+-- seed (notice_cursor::plan_replay); reorg-stable ids keep the replay
+-- idempotent. Workload: seven rows, one update per producer page.
+CREATE TABLE shop.notification_cursor (
+    producer text PRIMARY KEY,
+    end_time bigint,
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    seed_end_time bigint,
+    seed_block bigint NOT NULL,
+    seed_log_index integer NOT NULL,
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    -- Exactly notice_cursor::PRODUCERS (a test compares them).
+    CONSTRAINT notification_cursor_producer_known CHECK (producer IN ('transfer_received', 'royalties_earned',
+        'rental_started', 'rental_ended', 'sales:traded:ethereum', 'sales:traded:matic', 'sales:order_successful:matic')),
+    CONSTRAINT notification_cursor_end_time_shape CHECK ((producer = 'rental_ended') = (end_time IS NOT NULL)),
+    CONSTRAINT notification_cursor_seed_end_time_shape CHECK ((producer = 'rental_ended') = (seed_end_time IS NOT NULL))
+);
+
 -- The MANA transactions wallets reported after sending them (SHOP.md slice
 -- 3, src/shop/mana/{executions,tracker}.rs), tracked to a verdict by the
 -- `executions-track` job: the
@@ -16270,6 +16298,23 @@ CREATE TABLE shop.coupon_state (
     revoked boolean NOT NULL DEFAULT false,
     checked_at timestamp(3) without time zone NOT NULL DEFAULT timezone('UTC', now())::timestamp(3),
     CONSTRAINT coupon_state_uses_nonneg CHECK (uses >= 0)
+);
+
+-- The favorite-discount producer (shop::coupons::favorites): when it started
+-- (coupons that took effect earlier are never announced) and each coupon's
+-- announcement state. Workload: one row per coupon, written by the one leased
+-- job every 5 minutes; the pending scan joins shop.coupons (small). The per
+-- user caps read social.notifications, which is the ledger.
+CREATE TABLE shop.favorite_discount_cursor (
+    id integer PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    started_at timestamp(3) without time zone NOT NULL
+);
+
+CREATE TABLE shop.coupon_favorites_announcement (
+    coupon_id uuid PRIMARY KEY REFERENCES shop.coupons(id) ON DELETE CASCADE,
+    notified_at timestamp(3) without time zone,
+    attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    next_attempt_at timestamp(3) without time zone
 );
 
 -- The market federation's signed-action log (src/marketplace/federation.rs,
@@ -16707,3 +16752,128 @@ CREATE TABLE shop.mana_transfer (
 );
 CREATE INDEX mana_transfer_sender ON shop.mana_transfer (network, sender, block_number DESC, log_index DESC);
 CREATE INDEX mana_transfer_recipient ON shop.mana_transfer (network, recipient, block_number DESC, log_index DESC);
+
+-- Tip forwards (POST /events-notifier/forward-blockchain) waiting for the
+-- MANA transfer index to reach their transaction. Workload: one row per tip,
+-- deleted once notified, rejected or an hour old; at most 20 per sender
+-- (under a per-sender advisory lock; past it the sender's oldest unmatched
+-- claim is evicted) and MARKETPLACE_TIP_MAX_PENDING in all (past it the
+-- oldest unmatched claim over 5 minutes old is evicted through
+-- tip_claim_created_at, else the forward is settled unstored if indexed or
+-- answered retryable 429); a resolve pass settles at most 500 that have a
+-- published transfer, found through mana_transfer_sender. A sender's claim
+-- never blocks another's: the key is (transaction, signer).
+CREATE TABLE shop.tip_claim (
+    transaction_hash text NOT NULL CHECK (transaction_hash ~ '^0x[0-9a-f]{64}$'),
+    sender text NOT NULL CHECK (sender ~ '^0x[0-9a-f]{40}$'),
+    created_at timestamp(3) without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    PRIMARY KEY (transaction_hash, sender)
+);
+CREATE INDEX tip_claim_sender ON shop.tip_claim (sender);
+CREATE INDEX tip_claim_created_at ON shop.tip_claim (created_at);
+
+-- The sales log on Polygon (the `sales` chain index,
+-- src/shop/market/sales_index.rs): a primary mint through the
+-- CollectionStore (`mint`: a mirrored collection's Issue whose `_caller` is
+-- the store; `buyer` the beneficiary, `item_id` the item sold at the item's
+-- price, `shop.items`) and the ERC721BidV2 lifecycle (`bid_created` with the
+-- bidder in `buyer`, the price and the expiry in unix seconds;
+-- `bid_accepted` with the seller and the price; `bid_cancelled`), each with
+-- the venue in `emitter`, the asset and its transaction. Workload: one row
+-- per kept log, appended with the cursor advance (hundreds a day at the
+-- chain's rate); read by the `shop.nft_bid` fold (the bid rows past the
+-- fold marker, then a bidder's rows over a token) and by readers walking
+-- the log forward from a position. A reorg rewind deletes past the rewind
+-- block and the next fold rebuilds the touched bids.
+CREATE TABLE shop.sale_event (
+    network text NOT NULL,
+    block_number bigint NOT NULL,
+    log_index integer NOT NULL,
+    block_time bigint NOT NULL,
+    kind text NOT NULL,
+    emitter varchar(42) NOT NULL,
+    contract_address varchar(42) NOT NULL,
+    token_id numeric(78,0) NOT NULL,
+    item_id numeric(78,0),
+    bid_id varchar(66),
+    buyer varchar(42) NOT NULL,
+    seller varchar(42),
+    price numeric(78,0),
+    expires_at bigint,
+    tx_hash varchar(66) NOT NULL,
+    PRIMARY KEY (network, block_number, log_index),
+    CONSTRAINT sale_event_network_known CHECK (network IN ('ethereum', 'matic')),
+    CONSTRAINT sale_event_kind_known CHECK (kind IN ('mint', 'bid_created', 'bid_accepted', 'bid_cancelled')),
+    CONSTRAINT sale_event_lowercase CHECK (emitter = lower(emitter) AND contract_address = lower(contract_address) AND buyer = lower(buyer)),
+    CONSTRAINT sale_event_token_nonneg CHECK (token_id >= 0),
+    CONSTRAINT sale_event_mint_fields CHECK ((kind = 'mint') = (item_id IS NOT NULL) AND (kind <> 'mint') = (bid_id IS NOT NULL)),
+    CONSTRAINT sale_event_bid_created_fields CHECK (kind <> 'bid_created' OR (price IS NOT NULL AND expires_at IS NOT NULL)),
+    CONSTRAINT sale_event_bid_accepted_fields CHECK (kind <> 'bid_accepted' OR (price IS NOT NULL AND seller IS NOT NULL)),
+    CONSTRAINT sale_event_tx_hash_shape CHECK (tx_hash ~ '^0x[0-9a-f]{64}$')
+);
+
+-- The fold's legs: a bidder's events over a token (DISTINCT ON
+-- (contract_address, token_id, buyer) ORDER BY block_number, log_index).
+CREATE INDEX sale_event_bidder_idx ON shop.sale_event (network, contract_address, token_id, buyer, block_number, log_index) WHERE kind <> 'mint';
+
+-- The bids fold: one row per bidder and token, as the ERC721BidV2 contract
+-- keeps them (`bidIdByTokenAndBidder`: a new bid by the same bidder on the
+-- same token replaces the old one without a cancellation). `bid_id`, price
+-- and expiry come from the latest `bid_created` of the key; `status` from
+-- the latest event at or after it (open, accepted, cancelled), or
+-- `invalidated` when another bid on the token was accepted after it (the
+-- contract drops the token's other bids without an event); `seller` is
+-- the token's owner when the bid was placed (the latest `shop.nft_event`
+-- transfer before it, filled on a later fold when the nft walk had not
+-- reached it yet) or the acceptance's seller. Bounded by the distinct
+-- (token, bidder) pairs ever bid; rewritten for the keys a fold touches.
+CREATE TABLE shop.nft_bid (
+    network text NOT NULL,
+    contract_address varchar(42) NOT NULL,
+    token_id numeric(78,0) NOT NULL,
+    bidder varchar(42) NOT NULL,
+    bid_id varchar(66) NOT NULL,
+    seller varchar(42),
+    price numeric(78,0) NOT NULL,
+    expires_at bigint NOT NULL,
+    status text NOT NULL,
+    created_block bigint NOT NULL,
+    created_log_index integer NOT NULL,
+    created_at bigint NOT NULL,
+    updated_block bigint NOT NULL,
+    updated_log_index integer NOT NULL,
+    updated_at bigint NOT NULL,
+    PRIMARY KEY (network, contract_address, token_id, bidder),
+    CONSTRAINT nft_bid_id_unique UNIQUE (network, bid_id),
+    CONSTRAINT nft_bid_network_known CHECK (network IN ('ethereum', 'matic')),
+    CONSTRAINT nft_bid_status_known CHECK (status IN ('open', 'accepted', 'cancelled', 'invalidated')),
+    CONSTRAINT nft_bid_lowercase CHECK (contract_address = lower(contract_address) AND bidder = lower(bidder))
+);
+
+-- The fold's "bids whose seller the nft walk had not reached yet".
+CREATE INDEX nft_bid_seller_unknown_idx ON shop.nft_bid (network) WHERE seller IS NULL;
+
+-- The fold's "open bids a later acceptance invalidated".
+CREATE INDEX nft_bid_open_idx ON shop.nft_bid (network) WHERE status = 'open';
+
+-- The venues a sale's royalties are computed for, with the cut the pinned
+-- contracts charge (`royaltiesCutPerMillion()`, read once at start and
+-- compared: a difference is a warning, never a rewrite). Four rows on
+-- Polygon: the legacy marketplace and the store charge no royalties.
+CREATE TABLE shop.sale_venue (
+    network text NOT NULL,
+    address varchar(42) NOT NULL,
+    kind text NOT NULL,
+    royalties_cut_per_million integer NOT NULL,
+    PRIMARY KEY (network, address),
+    CONSTRAINT sale_venue_network_known CHECK (network IN ('ethereum', 'matic')),
+    CONSTRAINT sale_venue_kind_known CHECK (kind IN ('marketplace_v1', 'marketplace_v2', 'bid_v2', 'store')),
+    CONSTRAINT sale_venue_lowercase CHECK (address = lower(address)),
+    CONSTRAINT sale_venue_cut_range CHECK (royalties_cut_per_million BETWEEN 0 AND 1000000)
+);
+
+INSERT INTO shop.sale_venue (network, address, kind, royalties_cut_per_million) VALUES
+    ('matic', '0x02080031b45a3c67d338dd4a2cc309d28756a160', 'marketplace_v1', 0),
+    ('matic', '0x480a0f4e360e8964e68858dd231c2922f1df45ef', 'marketplace_v2', 25000),
+    ('matic', '0xb96697fa4a3361ba35b774a42c58daccaad1b8e1', 'bid_v2', 25000),
+    ('matic', '0x214ffc0f0103735728dc66b61a22e4f163e275ae', 'store', 0);

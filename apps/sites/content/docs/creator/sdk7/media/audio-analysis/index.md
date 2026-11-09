@@ -271,6 +271,6 @@ type AudioAnalysisView = {
 
 - **8 bands, fixed.** The number of frequency bands is fixed at 8. There is no API to request more or fewer bands.
 - **One audio source per analysis.** Each `AudioAnalysis` component analyzes the audio from the entity it is attached to. To analyze several sources, attach `AudioAnalysis` to each one.
-- **Live video streams are not analyzed.** There is a known issue where `AudioAnalysis` receives no data when the `VideoPlayer` source is a non-progressive stream, like an `.m3u8` HLS URL: the stream's audio plays, but the analysis values stay at zero. Video files (like `.mp4`) are analyzed correctly.
+- **Video soundtracks are analyzed too.** `AudioAnalysis` reads the audio of a [`VideoPlayer`](/docs/creator/sdk7/media/video-playing/) the same way it reads an `AudioSource`, for both progressive video files (like `.mp4`) and live HLS streams (`.m3u8`). Attach `AudioAnalysis` to the same entity that holds the `VideoPlayer`.
 - **Paused audio reports no updates.** When the underlying audio is stopped or paused, the component values stop changing. Your last-read values remain in your view object until the audio plays again.
 - **Cheap, but not free.** Per-frame analysis is designed to be inexpensive (sub-millisecond per source on desktop). Avoid attaching `AudioAnalysis` to many sources at once if you don't need the data. Remove the component when a visualizer isn't visible.

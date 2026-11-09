@@ -237,6 +237,40 @@ impl Credits {
         .await
     }
 
+    /// What [`Self::reserve_credit_group`] would refuse for `address` asking
+    /// `charged_cents`, read without a lock: lets a caller refuse before
+    /// paying for an external read (the marketplace feed). The reservation
+    /// stays the arbiter; this only answers early what it would answer later.
+    pub async fn would_refuse(
+        &self,
+        address: &str,
+        charged_cents: i64,
+    ) -> Result<Option<ReserveRefusal>, ApiError> {
+        let (balance_cents, held, live): (i64, i64, i64) = sqlx::query_as(
+            "SELECT COALESCE((SELECT floor(available * $2::numeric)::bigint FROM credits.wallets WHERE address = $1), 0), \
+                    COALESCE(SUM(usd_cents), 0)::bigint, count(*)::bigint \
+             FROM credits.authorizations \
+             WHERE address = $1 AND status IN ('authorized', 'retired')",
+        )
+        .bind(address)
+        .bind(UsdCents::CENTS_PER_CREDIT)
+        .fetch_one(&self.pool)
+        .await?;
+        let spendable = (balance_cents - held).max(0);
+        Ok(if live >= MAX_LIVE_CREDITS_PER_WALLET {
+            Some(ReserveRefusal::TooManyLive {
+                balance_cents: spendable,
+            })
+        } else if charged_cents > balance_cents - held {
+            Some(ReserveRefusal::Insufficient {
+                balance_cents: spendable,
+                required_cents: charged_cents,
+            })
+        } else {
+            None
+        })
+    }
+
     async fn reserve_group(
         &self,
         g: &NewGroup<'_>,
@@ -245,13 +279,23 @@ impl Credits {
     ) -> Result<Result<ReserveOutcome, ReserveRefusal>, ApiError> {
         let mut tx = self.pool.begin().await?;
 
-        let available_cents: Option<i64> =
-            sqlx::query_scalar("SELECT floor(available * $2::numeric)::bigint FROM credits.wallets WHERE address = $1 FOR UPDATE")
-                .bind(g.address)
-                .bind(UsdCents::CENTS_PER_CREDIT)
-                .fetch_optional(&mut *tx)
-                .await?;
-        let balance_cents = available_cents.unwrap_or(0);
+        let wallet = sqlx::query(
+            "SELECT floor(available * $2::numeric)::bigint AS available_cents, \
+                    is_blocked_for_claiming AS blocked \
+             FROM credits.wallets WHERE address = $1 FOR UPDATE",
+        )
+        .bind(g.address)
+        .bind(UsdCents::CENTS_PER_CREDIT)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if wallet.as_ref().is_some_and(|w| w.get::<bool, _>("blocked")) {
+            return Err(ApiError::forbidden(
+                "wallet is blocked from the credits program",
+            ));
+        }
+        let balance_cents = wallet
+            .map(|w| w.get::<i64, _>("available_cents"))
+            .unwrap_or(0);
 
         let row = sqlx::query(
             "WITH prior AS ( \
@@ -466,6 +510,23 @@ impl Credits {
         .execute(&self.pool)
         .await?;
         Ok(res.rows_affected() as i64)
+    }
+
+    /// The authorization `address` already reserved under `idempotency_key`,
+    /// if any. The key is derived from the signer, and the address is
+    /// checked too, so no other wallet finds the row.
+    pub async fn authorization_for_key(
+        &self,
+        idempotency_key: &str,
+        address: &str,
+    ) -> Result<Option<String>, ApiError> {
+        Ok(sqlx::query_scalar(
+            "SELECT id FROM credits.authorizations WHERE idempotency_key = $1 AND address = $2",
+        )
+        .bind(idempotency_key)
+        .bind(address)
+        .fetch_optional(&self.pool)
+        .await?)
     }
 
     pub async fn get_authorization(&self, id: &str) -> Result<Option<AuthorizationRow>, ApiError> {

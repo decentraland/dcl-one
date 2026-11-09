@@ -211,7 +211,7 @@ export const SOURCE_REGISTRY: SourceEntry[] = [
     endpoint: "\u{2014}",
     usedBy: [],
     klass: "unbuilt",
-    note: "catalyrst-telemetry ingests Sentry-shaped events and groups them into issues, but every read is behind an admin guard and the data carries no scene or owner dimension. There is no query that means 'my world'.",
+    note: "The node keeps no error sink: scene crashes go to Segment with the rest of the client events, where nothing carries a scene or owner dimension. There is no query that means 'my world'.",
   },
   {
     id: "in-scene-bots",

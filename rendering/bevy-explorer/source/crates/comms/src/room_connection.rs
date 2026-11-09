@@ -10,7 +10,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use wallet::{sign_request, Wallet};
+use wallet::{sign_service_request, Wallet};
 
 use crate::{
     adapter::{parse_adapter, validate_url, AdapterKind},
@@ -197,10 +197,10 @@ fn publish_access(
     for (entity, scope, recovery) in &rooms {
         if recovery.failure == Some(FailureKind::Denied) {
             status.set_denied(scope.0.clone());
-            commands.entity(entity).insert(PublishedDenial);
+            commands.entity(entity).try_insert(PublishedDenial);
         } else if recovery.failure.is_none() {
             status.set_allowed(&scope.0);
-            commands.entity(entity).remove::<PublishedDenial>();
+            commands.entity(entity).try_remove::<PublishedDenial>();
         }
     }
 }
@@ -216,7 +216,7 @@ fn apply_access_changes(
     for (entity, scope, mut recovery) in &mut rooms {
         if recovery.failure == Some(FailureKind::Denied) && !status.is_denied(&scope.0) {
             recovery.reset();
-            commands.entity(entity).remove::<PublishedDenial>();
+            commands.entity(entity).try_remove::<PublishedDenial>();
         }
     }
 }
@@ -240,8 +240,7 @@ async fn request_adapter(
     if !matches!(url.scheme(), "http" | "https") {
         return Err(invalid());
     }
-    let uri = request.url.parse::<http::Uri>().map_err(|_| invalid())?;
-    let headers = sign_request(request.method, &uri, &wallet, request.metadata)
+    let headers = sign_service_request(request.method, &request.url, &wallet, request.metadata)
         .await
         .map_err(transient)?;
     let mut builder = client
@@ -251,8 +250,7 @@ async fn request_adapter(
     for (key, value) in headers {
         builder = builder.header(key, value);
     }
-    let response = builder
-        .send()
+    let response = platform::TracedJsonResponse::send(builder)
         .await
         .map_err(|_| AdmissionError::new(FailureKind::Transient))?;
     if !response.status().is_success() {
@@ -262,7 +260,7 @@ async fn request_adapter(
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse().ok());
         return Err(AdmissionError::status(
-            response.status().as_u16(),
+            response.discard().as_u16(),
             retry_after,
         ));
     }
@@ -296,11 +294,11 @@ fn request_credentials(
     };
     for (entity, request, recovery) in &requests {
         if recovery.can_retry(time.elapsed_secs_f64()) {
-            commands.entity(entity).insert(CredentialTask {
+            commands.entity(entity).try_insert(CredentialTask {
                 identity,
                 task: IoTaskPool::get().spawn_compat(request_adapter(
                     request.clone(),
-                    wallet.clone(),
+                    wallet.snapshot(),
                     ipfs.ipfs().client(),
                 )),
             });
@@ -324,13 +322,13 @@ fn finish_credentials(
 ) {
     for (entity, mut task, mut recovery, context, realm, suspended) in &mut requests {
         if suspended || wallet.address() != Some(task.identity) {
-            commands.entity(entity).remove::<CredentialTask>();
+            commands.entity(entity).try_remove::<CredentialTask>();
             continue;
         }
         let Some(result) = task.task.complete() else {
             continue;
         };
-        commands.entity(entity).remove::<CredentialTask>();
+        commands.entity(entity).try_remove::<CredentialTask>();
         match result.and_then(|adapter| {
             let (kind, _) =
                 parse_adapter(&adapter).map_err(|_| AdmissionError::new(FailureKind::Invalid))?;
@@ -342,7 +340,7 @@ fn finish_credentials(
             Ok(adapter) => {
                 // Keep failure count until the transport connects, so repeated expired tokens back off.
                 recovery.failure = None;
-                commands.entity(entity).remove::<NeedsAdapter>();
+                commands.entity(entity).try_remove::<NeedsAdapter>();
                 manager.connect_existing(&adapter, context.map(|context| context.0), entity);
             }
             Err(error) => {
@@ -367,6 +365,7 @@ mod tests {
         assert!(!health.is_connected());
     }
 
+    #[cfg(feature = "livekit")]
     fn completion_app() -> App {
         let mut app = App::new();
         let mut wallet = Wallet::default();
@@ -383,6 +382,7 @@ mod tests {
         app
     }
 
+    #[cfg(feature = "livekit")]
     fn completed(app: &App, result: Result<String, AdmissionError>) -> CredentialTask {
         let task = IoTaskPool::get_or_init(bevy::tasks::TaskPool::new).spawn(async move { result });
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);

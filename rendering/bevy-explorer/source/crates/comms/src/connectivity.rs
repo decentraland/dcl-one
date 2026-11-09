@@ -118,6 +118,35 @@ mod tests {
         assert!(!watchdog.connection_lost);
     }
 
+    #[test]
+    fn a_completed_probe_is_collected_before_its_deadline_is_sampled() {
+        let mut app = App::new();
+        app.insert_resource(ConnectivityMonitor(lost()));
+        let task = IoTaskPool::get_or_init(bevy::tasks::TaskPool::new).spawn(async { true });
+        while !task.is_finished() {
+            std::thread::yield_now();
+        }
+        let probe = app.world_mut().spawn(ReachabilityProbe(task)).id();
+        app.add_systems(
+            Update,
+            (
+                collect_probes,
+                |mut monitor: ResMut<ConnectivityMonitor>| {
+                    monitor.0.sample(14.0, false, false);
+                },
+            )
+                .chain(),
+        );
+        app.update();
+        assert!(
+            !app.world()
+                .resource::<ConnectivityMonitor>()
+                .0
+                .connection_lost
+        );
+        assert!(app.world().get_entity(probe).is_err());
+    }
+
     fn lost() -> Watchdog {
         let mut watchdog = Watchdog::default();
         watchdog.sample(0.0, true, false);
@@ -188,7 +217,10 @@ impl Plugin for ConnectivityPlugin {
         }
         app.init_resource::<ConnectivityMonitor>()
             .init_resource::<ConnectivityStatus>()
-            .add_systems(Update, (retry_connectivity, monitor_connectivity).chain())
+            .add_systems(
+                Update,
+                (retry_connectivity, collect_probes, monitor_connectivity).chain(),
+            )
             .add_console_command::<ConnectivityState, _>(connectivity_state)
             .add_console_command::<ConnectivityRetry, _>(connectivity_retry)
             .add_debug_section(DebugSection {
@@ -257,6 +289,22 @@ fn retry_connectivity(
     }
 }
 
+fn collect_probes(
+    mut commands: Commands,
+    mut probes: Query<(Entity, &mut ReachabilityProbe)>,
+    mut monitor: ResMut<ConnectivityMonitor>,
+) {
+    // A response already available at the deadline wins over the timeout.
+    for (entity, mut probe) in &mut probes {
+        if monitor.0.probe_deadline.is_none() {
+            commands.entity(entity).try_despawn();
+        } else if let Some(reachable) = probe.0.complete() {
+            monitor.0.finish_probe(reachable);
+            commands.entity(entity).try_despawn();
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn monitor_connectivity(
     mut commands: Commands,
@@ -278,7 +326,6 @@ fn monitor_connectivity(
         Option<&ConnectionHealth>,
     )>,
     #[cfg(feature = "livekit")] connected: Query<(), With<crate::livekit::room::Connected>>,
-    mut probes: Query<(Entity, &mut ReachabilityProbe)>,
     ipfs: IpfsAssetServer,
     mut monitor: ResMut<ConnectivityMonitor>,
     mut status: ResMut<ConnectivityStatus>,
@@ -352,14 +399,6 @@ fn monitor_connectivity(
         || offline
         || terminal;
     let start = monitor.0.sample(now, healthy, suppressed);
-    for (entity, mut probe) in &mut probes {
-        if monitor.0.probe_deadline.is_none() {
-            commands.entity(entity).despawn();
-        } else if let Some(reachable) = probe.0.complete() {
-            monitor.0.finish_probe(reachable);
-            commands.entity(entity).despawn();
-        }
-    }
     if start {
         let client = ipfs.ipfs().client();
         let url = base_domain::url(Service::Catalyst, "/about");

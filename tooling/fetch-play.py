@@ -40,25 +40,29 @@ UPLOAD_STEP = 'Upload the complete web app'
 MAX_BYTES = 2 * 1024**3
 
 
-def api(path, deadline=None):
+def server_error(stderr):
+    # gh reports "Service Unavailable (HTTP 503)" for a JSON error and "HTTP 503" for a bare one.
+    return re.search(r'\bHTTP (?:500|502|503|504)\b', stderr)
+
+
+def read(request, deadline=None, limit=60, attempts=None, transient=server_error):
     # Retry reads within the caller's existing wait budget. Non-waiting imports
-    # and final publication checks get only four retries; no writes are repeated.
+    # and final publication checks get only four retries; `attempts` caps the
+    # tries in either mode. No writes are repeated.
     attempt = 0
     while True:
-        timeout = 60 if deadline is None else min(60, deadline - time.monotonic())
+        timeout = limit if deadline is None else min(limit, deadline - time.monotonic())
         if timeout <= 0:
             raise TimeoutError('GitHub read exceeded the configured wait deadline')
         try:
-            response = subprocess.check_output(
-                ['gh', 'api', '--method', 'GET', f'repos/{REPO}/{path}'],
-                text=True, stderr=subprocess.PIPE, timeout=timeout)
+            return request(timeout)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-            transient = isinstance(exc, subprocess.TimeoutExpired) or re.search(
-                r'\(HTTP (?:500|502|503|504)\)', exc.stderr or '')
-            exhausted = attempt >= 4 if deadline is None else time.monotonic() >= deadline
-            if not transient or exhausted:
-                if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
-                    print(exc.stderr, file=sys.stderr, end='')
+            stderr = exc.stderr.decode(errors='replace') if isinstance(exc.stderr, bytes) else (exc.stderr or '')
+            if isinstance(exc, subprocess.CalledProcessError) and stderr:
+                print(stderr, file=sys.stderr, end='')
+            exhausted = (attempts is not None and attempt + 1 >= attempts) or (
+                attempt >= 4 if deadline is None else time.monotonic() >= deadline)
+            if exhausted or not (isinstance(exc, subprocess.TimeoutExpired) or transient(stderr)):
                 raise
             delay = min(30, 2 ** min(attempt + 1, 5))
             if deadline is not None:
@@ -68,8 +72,27 @@ def api(path, deadline=None):
             if deadline is not None and time.monotonic() >= deadline:
                 raise
             attempt += 1
-        else:
-            return json.loads(response)
+
+
+def api(path, deadline=None):
+    def request(timeout):
+        return json.loads(subprocess.check_output(
+            ['gh', 'api', '--method', 'GET', f'repos/{REPO}/{path}'],
+            text=True, stderr=subprocess.PIPE, timeout=timeout))
+    return read(request, deadline)
+
+
+def download(record, archive):
+    """Save an artifact archive; one failure short of a 4xx starts the file over.
+
+    The wait bounds the search for a run, not its download: each of the two
+    attempts gets 300 s, however little of the wait is left.
+    """
+    def request(timeout):
+        with archive.open('wb') as output:
+            subprocess.run(['gh', 'api', f'repos/{REPO}/actions/artifacts/{record["id"]}/zip'],
+                           stdout=output, stderr=subprocess.PIPE, check=True, timeout=timeout)
+    read(request, limit=300, attempts=2, transient=lambda stderr: not re.search(r'\bHTTP 4\d\d\b', stderr))
 
 
 def workflow_runs(deadline=None):
@@ -98,8 +121,13 @@ def current_pr():
     if os.environ.get('GITHUB_EVENT_NAME') != 'pull_request':
         return None
     event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
-    return {'number': event['number'], 'head': event['pull_request']['head']['sha'],
-            'base': event['pull_request']['base']['sha'], 'merge': os.environ['GITHUB_SHA']}
+    merge, head = os.environ['GITHUB_SHA'], event['pull_request']['head']['sha']
+    # The base bevy-ci.py selected the lanes with, so engine_changed() agrees with them.
+    spec = importlib.util.spec_from_file_location('bevy_ci', Path(__file__).with_name('bevy-ci.py'))
+    ci = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ci)
+    return {'number': event['number'], 'head': head,
+            'base': ci.tested_base(merge, head, event['pull_request']['base']['sha']), 'merge': merge}
 
 
 def inputs_at(revision):
@@ -233,9 +261,7 @@ def download_run(run, pr=None, production=False, receipt=None, deadline=None, *,
     with tempfile.TemporaryDirectory(prefix='play-ci-') as temporary:
         tmp = Path(temporary)
         archive = tmp / 'web.zip'
-        with archive.open('wb') as output:
-            subprocess.run(['gh', 'api', f'repos/{REPO}/actions/artifacts/{record["id"]}/zip'],
-                           stdout=output, check=True, timeout=300)
+        download(record, archive)
         with archive.open('rb') as stream:
             if hashlib.file_digest(stream, 'sha256').hexdigest() != checksum.split(':')[1]:
                 raise ValueError('GitHub Explorer archive digest mismatch')
@@ -264,6 +290,7 @@ def verify_production(receipt, wait=0):
         raise ValueError('Invalid production receipt or changed Explorer inputs')
     deadline = time.monotonic() + wait
     read_deadline = deadline if wait > 0 else None
+    poll_delay = 2
     while True:
         run = api(f'actions/runs/{proof["run_id"]}', read_deadline)
         if (not trusted(run) or run['id'] != proof['run_id'] or run['head_sha'] != proof['revision']
@@ -280,7 +307,8 @@ def verify_production(receipt, wait=0):
         if time.monotonic() >= deadline:
             raise RuntimeError('Complete Bevy CI is still pending; refusing publication')
         print(f'Waiting for complete Bevy CI run {run["id"]} before publication.', flush=True)
-        time.sleep(min(30, max(0, deadline - time.monotonic())))
+        time.sleep(min(poll_delay, max(0, deadline - time.monotonic())))
+        poll_delay = min(poll_delay * 2, 30)
 
 
 def fetch(wait=0, production=False, receipt=None):
@@ -290,8 +318,12 @@ def fetch(wait=0, production=False, receipt=None):
     match_inputs = production or engine_changed(pr)
     deadline = time.monotonic() + wait
     read_deadline = deadline if wait > 0 else None
+    poll_delay = 2
     checked = set()
     keys = {}
+    # The newest Bevy run of this commit and why it cannot supply the build: named for a rerun.
+    head = pr['head'] if pr else os.environ.get('GITHUB_SHA')
+    newest, hint = 0, None
     candidates = workflow_runs(read_deadline)
     while True:
         pending = set()
@@ -300,7 +332,12 @@ def fetch(wait=0, production=False, receipt=None):
             attempt = (run['id'], run['run_attempt'])
             if not trusted(run, pr) or attempt in checked:
                 continue
-            if run['status'] == 'completed' and run['conclusion'] != 'success':
+            failed = run['status'] == 'completed' and run['conclusion'] != 'success'
+            if match_inputs and run['head_sha'] == head and run['id'] >= newest:
+                # A rerun or a newer run of the commit, under way or succeeded, replaces an older failure.
+                newest = run['id']
+                hint = f'did not succeed: {run["id"]} ({run["conclusion"]})' if failed else None
+            if failed:
                 checked.add(attempt)
                 continue
             revision = pr['merge'] if run['event'] == 'pull_request' else run['head_sha']
@@ -327,6 +364,8 @@ def fetch(wait=0, production=False, receipt=None):
                     result = download_run(run, pr, production, receipt, read_deadline, producer=producer)
                     if result:
                         return result
+                    if run['id'] == newest:
+                        hint = f'succeeded, but its web artifact is unavailable: {run["id"]}'
             except ValueError as exc:
                 if producer is None:
                     raise  # the build of these very inputs is corrupt or tampered with
@@ -337,6 +376,8 @@ def fetch(wait=0, production=False, receipt=None):
         if not pending or time.monotonic() >= deadline:
             recovery = ('Refresh main with: gh workflow run bevy-explorer-ci.yml --ref main. '
                         'Wait for its successful web build, then retry with matching inputs. ')
+            if hint:
+                recovery = f'The Bevy CI run of this commit {hint}. Rerun it, then this job. ' + recovery
             if not production:
                 recovery += ('For local development, build with make bevy-web and use '
                              '--from-build apps/bevy-explorer/dist/web. ')
@@ -346,7 +387,8 @@ def fetch(wait=0, production=False, receipt=None):
         wanted = f'with inputs {expected[:12]}' if match_inputs else 'on main (this PR changes no engine input)'
         print(f'Waiting for a successful {gate} {wanted} '
               f'({"matching run in progress" if pending else "no matching uploaded producer"})', flush=True)
-        time.sleep(min(30, max(0, deadline - time.monotonic())))
+        time.sleep(min(poll_delay, max(0, deadline - time.monotonic())))
+        poll_delay = min(poll_delay * 2, 30)
         candidates = poll_runs(pending, read_deadline)
 
 

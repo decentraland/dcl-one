@@ -18,6 +18,7 @@ pub enum AccessScope {
 pub struct AccessStatus {
     identity: Option<Address>,
     denied: HashSet<AccessScope>,
+    blocks_ready: bool,
     blocked: HashSet<Address>,
     blocked_by: HashSet<Address>,
 }
@@ -31,8 +32,7 @@ impl AccessStatus {
         }
         self.identity = identity;
         self.denied.clear();
-        self.blocked.clear();
-        self.blocked_by.clear();
+        self.invalidate_blocks();
         true
     }
 
@@ -57,14 +57,34 @@ impl AccessStatus {
         self.denied.contains(scope)
     }
 
-    /// Replace both directions together from the existing social source.
+    /// Publish both directions from a successful snapshot and its subsequent updates.
     pub fn replace_blocks(
         &mut self,
+        owner: Address,
         blocked: impl IntoIterator<Item = Address>,
         blocked_by: impl IntoIterator<Item = Address>,
     ) {
+        if self.identity != Some(owner) {
+            return;
+        }
         self.blocked = blocked.into_iter().collect();
         self.blocked_by = blocked_by.into_iter().collect();
+        self.blocks_ready = true;
+    }
+
+    pub fn invalidate_blocks(&mut self) {
+        self.blocks_ready = false;
+        self.blocked.clear();
+        self.blocked_by.clear();
+    }
+
+    pub fn blocks_ready_for(&self, owner: Option<Address>) -> bool {
+        self.blocks_ready && owner.is_some() && self.identity == owner
+    }
+
+    /// Voice must wait for the current owner's authoritative block state.
+    pub fn allows_voice_from(&self, owner: Option<Address>, peer: Address) -> bool {
+        self.blocks_ready_for(owner) && !self.is_blocked(peer) && !self.is_blocked_by(peer)
     }
 
     /// Whether the local user blocked this address.
@@ -81,6 +101,48 @@ impl AccessStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn voice_waits_for_current_wallet_blocks_even_when_the_lists_are_empty() {
+        let owner = Address::from([1; 20]);
+        let other_owner = Address::from([2; 20]);
+        let peer = Address::from([3; 20]);
+        let mut status = AccessStatus::default();
+        status.set_identity(Some(owner));
+
+        assert!(!status.allows_voice_from(Some(owner), peer));
+        status.replace_blocks(owner, [], []);
+        assert!(status.allows_voice_from(Some(owner), peer));
+        assert!(!status.allows_voice_from(Some(other_owner), peer));
+        assert!(!status.allows_voice_from(None, peer));
+
+        status.set_identity(Some(other_owner));
+        status.replace_blocks(owner, [], []);
+        assert!(!status.allows_voice_from(Some(other_owner), peer));
+        status.replace_blocks(other_owner, [], []);
+        assert!(status.allows_voice_from(Some(other_owner), peer));
+    }
+
+    #[test]
+    fn voice_applies_both_block_directions_and_waits_again_after_invalidation() {
+        let owner = Address::from([1; 20]);
+        let blocked = Address::from([2; 20]);
+        let blocked_by = Address::from([3; 20]);
+        let peer = Address::from([4; 20]);
+        let mut status = AccessStatus::default();
+        status.set_identity(Some(owner));
+
+        status.replace_blocks(owner, [blocked], [blocked_by]);
+        assert!(!status.allows_voice_from(Some(owner), blocked));
+        assert!(!status.allows_voice_from(Some(owner), blocked_by));
+        assert!(status.allows_voice_from(Some(owner), peer));
+
+        status.invalidate_blocks();
+        assert!(!status.allows_voice_from(Some(owner), peer));
+        status.replace_blocks(owner, [], []);
+        assert!(status.allows_voice_from(Some(owner), blocked));
+        assert!(status.allows_voice_from(Some(owner), blocked_by));
+    }
 
     #[test]
     fn denial_applies_only_to_the_named_room_scope() {
@@ -120,18 +182,20 @@ mod tests {
     #[test]
     fn block_snapshots_preserve_direction_and_apply_unblocks() {
         let mut status = AccessStatus::default();
+        let owner = Address::from([4; 20]);
         let blocked = Address::from([1; 20]);
         let blocked_by = Address::from([2; 20]);
         let scene = AccessScope::Scene("scene".to_owned());
+        status.set_identity(Some(owner));
         status.set_denied(scene.clone());
 
-        status.replace_blocks([blocked], [blocked_by]);
+        status.replace_blocks(owner, [blocked], [blocked_by]);
         assert!(status.is_blocked(blocked));
         assert!(!status.is_blocked_by(blocked));
         assert!(!status.is_blocked(blocked_by));
         assert!(status.is_blocked_by(blocked_by));
 
-        status.replace_blocks([], [blocked_by]);
+        status.replace_blocks(owner, [], [blocked_by]);
         assert!(!status.is_blocked(blocked));
         assert!(status.is_blocked_by(blocked_by));
         assert!(status.is_denied(&scene));
@@ -146,7 +210,7 @@ mod tests {
         let room = AccessScope::PrivateChat;
         assert!(status.set_identity(Some(first)));
         status.set_denied(room.clone());
-        status.replace_blocks([blocked], [blocked]);
+        status.replace_blocks(first, [blocked], [blocked]);
 
         assert!(!status.set_identity(Some(first)));
         assert!(status.is_denied(&room));
@@ -160,7 +224,9 @@ mod tests {
             assert!(!status.is_blocked(blocked));
             assert!(!status.is_blocked_by(blocked));
             status.set_denied(room.clone());
-            status.replace_blocks([blocked], [blocked]);
+            if let Some(owner) = identity {
+                status.replace_blocks(owner, [blocked], [blocked]);
+            }
         }
     }
 }

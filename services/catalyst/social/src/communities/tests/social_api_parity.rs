@@ -1,8 +1,9 @@
 //! The social-api answers production gives (`decentraland/social-service-ea`
 //! at `fb3dcb8`; captures `tests/fixtures/conformance/social/social/`): the
-//! CORS layer, the probes under the gateway prefix, the error bodies, the
+//! probes under the gateway prefix, the error bodies, the
 //! member-communities order and the community places merged with their
-//! destinations.
+//! destinations. CORS uses executed b6b2cef source goldens: that source's
+//! preflight contract supersedes the older fb3dcb8 capture.
 
 use axum::http::{HeaderMap, Method};
 
@@ -40,13 +41,53 @@ async fn send(
     (status, headers, body.to_vec())
 }
 
-/// The headers the CORS layer owns; `allow` (the route's methods) and
-/// `content-length` are axum's, added after the layer as before it.
+/// Compare every application header, including unexpected extras. Only the
+/// date and transport framing/hop headers differ between the two HTTP servers.
+fn transport_header(name: &str) -> bool {
+    matches!(
+        name,
+        "date" | "content-length" | "transfer-encoding" | "connection" | "keep-alive"
+    )
+}
+
+/// The node adds `X-Content-Type-Options: nosniff` to every Social answer,
+/// which the source does not send: checked here, then left out of the
+/// comparison with the source's headers.
+pub(super) fn application_headers(
+    headers: &HeaderMap,
+) -> std::collections::BTreeMap<String, String> {
+    assert_eq!(
+        headers
+            .get("x-content-type-options")
+            .map(|value| value.as_bytes()),
+        Some(&b"nosniff"[..])
+    );
+    headers
+        .iter()
+        .filter(|(name, _)| {
+            !transport_header(name.as_str()) && name.as_str() != "x-content-type-options"
+        })
+        .map(|(name, value)| (name.as_str().to_owned(), value.to_str().unwrap().to_owned()))
+        .collect()
+}
+
+pub(super) fn source_application_headers(
+    headers: &Value,
+) -> std::collections::BTreeMap<String, String> {
+    headers
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(name, _)| !transport_header(name))
+        .map(|(name, value)| (name.clone(), value.as_str().unwrap().to_owned()))
+        .collect()
+}
+
 fn names(headers: &HeaderMap) -> Vec<&str> {
     let mut names: Vec<&str> = headers
         .keys()
         .map(|k| k.as_str())
-        .filter(|k| !matches!(*k, "allow" | "content-length"))
+        .filter(|k| !transport_header(k))
         .collect();
     names.sort();
     names
@@ -59,11 +100,6 @@ async fn the_preflight_and_an_origin_get_answer_as_production() {
     let Some(rig) = Rig::new(Settings::for_tests()).await else {
         return;
     };
-    for prefix in ["", "/social-api"] {
-        let notes = replayed(&rig.app, prefix, "preflight-communities").await;
-        assert!(notes.is_empty(), "{prefix}: {notes:#?}");
-    }
-
     // every route of the router, the local extensions too, and any requested headers
     let (status, headers, body) = send(
         &rig.app,
@@ -92,15 +128,17 @@ async fn the_preflight_and_an_origin_get_answer_as_production() {
         ]
     );
     for (name, value) in [
-        ("access-control-allow-headers", "*"),
+        (
+            "access-control-allow-headers",
+            "x-identity-auth-chain-0, content-type",
+        ),
         (
             "access-control-allow-methods",
-            "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS",
+            "GET,HEAD,OPTIONS,DELETE,POST,PUT,PATCH",
         ),
         ("access-control-allow-origin", "*"),
         ("access-control-max-age", "86400"),
-        ("vary", "accept-encoding"),
-        ("x-content-type-options", "nosniff"),
+        ("vary", "Access-Control-Request-Headers"),
     ] {
         assert_eq!(headers[name], value, "{name}");
     }
@@ -116,6 +154,13 @@ async fn the_preflight_and_an_origin_get_answer_as_production() {
     .await;
     assert_eq!(status.as_u16(), fx.response.status);
     for (name, value) in &fx.response.headers {
+        if name == "vary" {
+            assert!(
+                headers.get("vary").is_none(),
+                "the pinned source adds no compression Vary"
+            );
+            continue;
+        }
         let actual = headers[name.as_str()].to_str().unwrap();
         if name == "content-type" {
             assert!(actual.starts_with(value.as_str()), "{name}: {actual}");
@@ -130,7 +175,99 @@ async fn the_preflight_and_an_origin_get_answer_as_production() {
     let (_, headers, _) = send(&rig.app, Method::GET, "/v1/communities?limit=1", &[]).await;
     assert!(headers.get("access-control-allow-origin").is_none());
     assert!(headers.get("vary").is_none());
-    assert_eq!(headers["x-content-type-options"], "nosniff");
+    assert_eq!(
+        headers.get("x-content-type-options").unwrap(),
+        "nosniff",
+        "kept from the shared layer, unlike the source"
+    );
+    rig.finish();
+}
+
+#[tokio::test]
+async fn social_api_gateway_cors_and_unknown_paths_match_executed_source() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let fixture: Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/source-contracts/community-cors.json"
+    )))
+    .unwrap();
+    for case in fixture["cases"].as_array().unwrap() {
+        let request_headers: Vec<(&str, &str)> = case["headers"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str().unwrap()))
+            .collect();
+        let method = Method::from_bytes(case["method"].as_str().unwrap().as_bytes()).unwrap();
+        let path = format!("/social-api{}", case["path"].as_str().unwrap());
+        let (status, headers, body) = send(&rig.app, method, &path, &request_headers).await;
+        assert_eq!(
+            status.as_u16(),
+            case["status"].as_u64().unwrap() as u16,
+            "{}",
+            case["name"]
+        );
+        assert_eq!(
+            String::from_utf8(body).unwrap(),
+            case["body"].as_str().unwrap()
+        );
+        assert_eq!(
+            application_headers(&headers),
+            source_application_headers(&case["responseHeaders"]),
+            "{} complete application headers",
+            case["name"]
+        );
+    }
+    let (status, _, body) = send(&rig.app, Method::GET, "/unknown-root-path", &[ORIGIN]).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(body.is_empty());
+    rig.finish();
+}
+
+#[tokio::test]
+async fn social_api_methods_match_the_executed_source_server() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let rpc = Arc::new(crate::rpc::State::new(
+        rig.pool.clone(),
+        crate::rpc::Settings::default(),
+        None,
+        Arc::new(crate::rpc::voice::fake::FakeVoiceRooms::new(
+            rig.pool.clone(),
+        )),
+    ));
+    let app = Router::new().nest(
+        "/social-api",
+        crate::social_api_gateway(router(rig.state.clone()).merge(crate::rpc::http::router(rpc))),
+    );
+    let fixture: Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/source-contracts/community-routing.json"
+    )))
+    .unwrap();
+    for case in fixture["cases"].as_array().unwrap() {
+        let method = Method::from_bytes(case["method"].as_str().unwrap().as_bytes()).unwrap();
+        let path = format!("/social-api{}", case["path"].as_str().unwrap());
+        let (status, headers, body) = send(&app, method.clone(), &path, &[ORIGIN]).await;
+        assert_eq!(
+            status.as_u16(),
+            case["status"].as_u64().unwrap() as u16,
+            "{method} {path}"
+        );
+        assert_eq!(
+            String::from_utf8(body).unwrap(),
+            case["body"].as_str().unwrap(),
+            "{method} {path}"
+        );
+        assert_eq!(
+            application_headers(&headers),
+            source_application_headers(&case["headers"]),
+            "{method} {path} complete application headers"
+        );
+    }
     rig.finish();
 }
 
@@ -398,15 +535,21 @@ struct Places {
     seeded: Uuid,
     missing: Uuid,
     disabled: Uuid,
-    world: Uuid,
+    /// A world scene: a places-table row with `world = true` and its own
+    /// UUID, naming `world_name` (`Place/model.ts:149` keeps it out of the
+    /// destinations union).
+    world_scene: Uuid,
+    /// The catalogue world, keyed by its lowercased name
+    /// (`World/model.ts:466-469`).
     world_name: String,
     upper: Uuid,
 }
 
 impl Places {
     /// A public community whose places are, newest first: a seeded place,
-    /// one with no destination, a disabled one, a world name, a seeded place
-    /// stored in uppercase and an id that is neither a UUID nor a name.
+    /// one with no destination, a disabled one, a world name, a world
+    /// scene's UUID, a seeded place stored in uppercase and an id that is
+    /// neither a UUID nor a name.
     async fn seed(rig: &Rig) -> Self {
         let owner = wallet();
         let community = rig.community(&owner, false).await;
@@ -416,7 +559,7 @@ impl Places {
             seeded: Uuid::new_v4(),
             missing: Uuid::new_v4(),
             disabled: Uuid::new_v4(),
-            world: Uuid::new_v4(),
+            world_scene: Uuid::new_v4(),
             world_name: format!("w{}.dcl.eth", &tag[..12]),
             upper: Uuid::new_v4(),
         };
@@ -438,8 +581,16 @@ impl Places {
         .await;
         seed_destination(
             &rig.pool,
-            &p.world.to_string(),
+            &p.world_name,
             "a world",
+            false,
+            Some(&p.world_name),
+        )
+        .await;
+        seed_destination(
+            &rig.pool,
+            &p.world_scene.to_string(),
+            "a world scene",
             false,
             Some(&p.world_name),
         )
@@ -467,6 +618,7 @@ impl Places {
             self.missing.to_string(),
             self.disabled.to_string(),
             self.world_name.clone(),
+            self.world_scene.to_string(),
             self.upper.to_string().to_uppercase(),
             "not-a-place".to_string(),
         ]
@@ -479,7 +631,7 @@ impl Places {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{v}");
-        assert_eq!(v["data"]["total"], 6, "{v}");
+        assert_eq!(v["data"]["total"], 7, "{v}");
         let rows = v["data"]["results"].as_array().unwrap().clone();
         let ids: Vec<&str> = rows.iter().map(|r| r["id"].as_str().unwrap()).collect();
         assert_eq!(ids, self.stored(), "added_at DESC");
@@ -487,7 +639,10 @@ impl Places {
     }
 
     async fn clear(&self, rig: &Rig) {
-        let ids = [self.seeded, self.disabled, self.world, self.upper].map(|u| u.to_string());
+        let mut ids: Vec<String> = [self.seeded, self.disabled, self.world_scene, self.upper]
+            .map(|u| u.to_string())
+            .to_vec();
+        ids.push(self.world_name.clone());
         sqlx::query("DELETE FROM explore.place WHERE id = ANY($1)")
             .bind(&ids[..])
             .execute(&rig.pool)
@@ -512,7 +667,7 @@ fn keys(row: &Value) -> Vec<&str> {
     keys
 }
 
-const BARE: [&str; 3] = ["addedAt", "addedBy", "id"];
+const BARE: [&str; 1] = ["id"];
 
 #[tokio::test]
 async fn a_community_place_is_its_destination_when_the_id_names_one_exactly() {
@@ -532,10 +687,7 @@ async fn a_community_place_is_its_destination_when_the_id_names_one_exactly() {
             .is_some_and(|p| !p.is_empty()),
         "{seeded}"
     );
-    assert!(
-        seeded["addedBy"].is_string() && seeded["addedAt"].is_string(),
-        "{seeded}"
-    );
+    assert!(seeded.get("addedBy").is_none() && seeded.get("addedAt").is_none());
     assert!(
         seeded.get("communityId").is_none() && seeded.get("kind").is_none(),
         "{seeded}"
@@ -546,36 +698,49 @@ async fn a_community_place_is_its_destination_when_the_id_names_one_exactly() {
         .unwrap()
         .keys()
         .map(String::as_str)
-        .chain(["addedAt", "addedBy"])
         .collect();
     expected.sort();
     assert_eq!(keys(seeded), expected);
 
-    // no destination, a disabled place, a world name, an uppercase id, neither: bare
-    for row in &rows[1..] {
+    // the world name: the catalogue world keyed by that name
+    // (`World/model.ts:132-135,466-469`), with upstream's world-row constants
+    // (`Destination/model.ts:39-49`)
+    let world = &rows[3];
+    assert_eq!(world["id"], places.world_name, "{world}");
+    assert_eq!(world["title"], "a world");
+    assert_eq!(world["world"], true);
+    assert_eq!(world["world_name"], places.world_name);
+    assert_eq!(world["positions"], json!([]));
+    assert_eq!(world["base_position"], "0,0");
+    assert_eq!(keys(world), expected);
+
+    // no destination, a disabled place, a world scene's UUID, an uppercase
+    // id, neither: bare
+    for row in rows[1..3].iter().chain(&rows[4..]) {
         assert_eq!(keys(row), BARE, "{row}");
     }
 
-    // the world and the uppercase place exist: only the exact-id merge leaves them bare
+    // the world scene and the uppercase place exist: the destinations union
+    // reads `world is false` places and catalogue worlds (`Place/model.ts:149`,
+    // `Destination/model.ts:282-304`), so the scene's UUID is no destination;
+    // the uppercase id is one, and only the exact-id merge leaves its row bare
     let explore = &rig.state.explore;
-    let found = crate::explore::places::destinations::destinations_by_ids(
+    let scene = crate::explore::places::destinations::destinations_by_ids(
         explore,
-        vec![places.world.to_string()],
+        vec![places.world_scene.to_string()],
     )
     .await
     .unwrap();
-    assert_eq!(found.len(), 1);
-    assert_eq!(
-        found[0].world_name.as_deref(),
-        Some(places.world_name.as_str())
-    );
+    assert!(scene.is_empty(), "{scene:?}");
     let by_name = crate::explore::places::destinations::destinations_by_ids(
         explore,
         vec![places.world_name.clone()],
     )
     .await
     .unwrap();
-    assert!(by_name.is_empty(), "array semantics match ids only");
+    assert_eq!(by_name.len(), 1, "{by_name:?}");
+    assert_eq!(by_name[0].id, places.world_name);
+    assert!(by_name[0].world);
     let found = crate::explore::places::destinations::destinations_by_ids(
         explore,
         vec![places.upper.to_string().to_uppercase()],

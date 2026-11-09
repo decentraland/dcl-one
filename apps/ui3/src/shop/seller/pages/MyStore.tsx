@@ -12,6 +12,7 @@ import { formatMana, parseManaWei, type ManaWei } from "../../model/money";
 import { shopPath } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { EnsureQueryClient, formatDate, LoadFailure, Loading, ManaAmount, shortAddr } from "../../market/components/kit";
+import { useMarketplace, useMarketplaceAccess } from "../../market/access";
 import { fetchOpenOrderById } from "../../market/lib/api";
 import CreatorSales from "../components/CreatorSales";
 import ImportListings from "../components/ImportListings";
@@ -21,7 +22,7 @@ import { useStore, useStoreStats, type StorePeriod } from "../hooks";
 import { ShopSignInPanel } from "./SellerSignIn";
 import StoreDashboard from "./StoreDashboard";
 import type { PublishableItem } from "../lib/builder";
-import { myStoreAccess, useShopCapabilities } from "../lib/featureFlags";
+import { useMyStoreAccess, useShopCapabilities } from "../lib/featureFlags";
 import { fetchSalesPage } from "../lib/sales";
 import type { Delta } from "../lib/storeMetrics";
 import type { StoreCollection, StoreItem, StoreStats } from "../lib/storeStats";
@@ -253,6 +254,8 @@ export function MyStoreView({ address }: { address: string }) {
   const data = useStoreStats(address, period);
   const names = useMemo(() => Object.fromEntries((data.catalogue ?? []).map((i) => [i.contractAddress.toLowerCase(), i.collectionName])), [data.catalogue]);
   const items = data.catalogue?.length ?? 0;
+  // A public store (the account page) is the Marketplace's (market/access.tsx).
+  const marketplace = useMarketplace();
   return (
     <div className="mk-section">
       <div className="mk-page__head">
@@ -263,9 +266,11 @@ export function MyStoreView({ address }: { address: string }) {
           </p>
         </div>
         <div className="mk-actions">
-          <Link className="mk-link" to={shopPath("account", { address })}>
-            View your public store
-          </Link>
+          {marketplace ? (
+            <Link className="mk-link" to={shopPath("account", { address })}>
+              View your public store
+            </Link>
+          ) : null}
           <Link className="mk-link" to={shopPath("storeSettings")} state={{ from: shopPath("myStore") }}>
             Edit store
           </Link>
@@ -307,9 +312,11 @@ function OrderFromLink({ address }: { address: string }) {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const orderId = params.get("order")?.trim() || null;
+  // The link opens a resale listing's cancel page, which is the Marketplace's (market/access.tsx).
+  const access = useMarketplaceAccess();
   const [state, setState] = useState<"looking" | "gone" | "failed" | null>(orderId ? "looking" : null);
   useEffect(() => {
-    if (!orderId) return;
+    if (!orderId || access !== "on") return;
     let live = true;
     setState("looking");
     fetchOpenOrderById(address, orderId).then(
@@ -323,11 +330,13 @@ function OrderFromLink({ address }: { address: string }) {
     return () => {
       live = false;
     };
-  }, [address, orderId, navigate]);
+  }, [address, orderId, navigate, access]);
   if (!state) return null;
   return (
     <p className="mk-note" role="status" data-testid="shop-order-from-link">
-      {state === "looking"
+      {access === "off"
+        ? "Resale listings can't be managed in the Shop right now."
+        : state === "looking"
         ? "Opening the listing from your link…"
         : state === "gone"
           ? "The listing from your link is no longer open, so there is nothing to cancel."
@@ -337,9 +346,9 @@ function OrderFromLink({ address }: { address: string }) {
 }
 
 export default function MyStore() {
-  const { account } = useShopWallet();
-  const caps = useShopCapabilities();
-  if (myStoreAccess(caps, account) === "off") return <Navigate to={shopPath("overview")} replace />;
+  const { account, resolving } = useShopWallet();
+  // As upstream's MyStore: only an answer of "off" sends the visitor away; while it is pending the page renders.
+  if (useMyStoreAccess(account, resolving) === "off") return <Navigate to={shopPath("overview")} replace />;
   if (!account) return <ShopSignInPanel page="My Store" title="Sign in to view your store" body="See how your collections are selling, what needs attention, and the discounts you have running." />;
   return (
     <EnsureQueryClient>

@@ -1,0 +1,23 @@
+name: Install clang for webrtc-sys
+description: >-
+  Run apps/bevy-explorer/install-clang.sh with the LLVM release kept in the Actions cache. A
+  job restores the toolchain in seconds instead of downloading and unpacking the 2 GB release
+  tarball. The key hashes the script, so a change to what it extracts refills the entry.
+  Exports CC and CXX for the steps that follow.
+inputs:
+  llvm-version:
+    description: LLVM release to install.
+    required: false
+    default: '21.1.8'
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.tool_cache }}/llvm-${{ inputs.llvm-version }}
+        key: llvm-${{ inputs.llvm-version }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/bevy-explorer/install-clang.sh') }}
+    - run: "$GITHUB_WORKSPACE/apps/bevy-explorer/install-clang.sh"
+      shell: bash
+      env:
+        LLVM_VERSION: ${{ inputs.llvm-version }}
+        LLVM_ROOT: ${{ runner.tool_cache }}/llvm-${{ inputs.llvm-version }}

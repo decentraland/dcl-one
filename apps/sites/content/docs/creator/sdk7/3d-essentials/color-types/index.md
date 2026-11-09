@@ -68,9 +68,9 @@ TextShape.create(myEntity, {
 
 > [!WARNING]
 > **📔 Note**: `Color3` and `Color4` must be imported via
-> 
+>
 > > `import { Color3, Color4 } from "@dcl/sdk/math"`
-> 
+>
 > See [Imports](/docs/creator/sdk7/getting-started/coding-scenes/#imports) for how to handle these easily.
 
 

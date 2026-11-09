@@ -88,11 +88,11 @@ There are several ways in which your 3D models can be optimized to be lighter.
 
 When working with the [Creator Hub](/docs/creator/scene-editor/get-started/editor-installation/), you can see stats about the resources used by 3D models in your scene, and if they pass any of the [scene limitations](/docs/creator/sdk7/optimizing/scene-limitations/).
 
-![](/docs/creator/images/editor/triangle-limit1.webp)
+![](/docs/creator/images/editor/triangle-limit1.webp)
 
 You can expand this menu to view details.
 
-![](/docs/creator/images/editor/triangle-limit2.webp)
+![](/docs/creator/images/editor/triangle-limit2.webp)
 
 Here are some tips for improving on these metrics:
 
@@ -164,7 +164,7 @@ To verify if a scene has material Backface Culling issues, follow these steps:
 
 3. Under **Current Scene**, click the **Backface debugger** button.
 
-![](/docs/.gitbook/assets/debug-panel-backface-debugging.webp)
+![](/docs/creator/.gitbook/assets/debug-panel-backface-debugging.webp)
 
 4. Toggle **Force Backface Culling**: It shows the materials rendered with Backface Culling On. This is the actual rendering once the Optimization is in production. Toggle On & Off to spot materials that need fixing.
 
@@ -174,9 +174,9 @@ To verify if a scene has material Backface Culling issues, follow these steps:
 - **Green**: Materials with Backface Culling **On**.
 
 <p align="center">
-  <img src="/docs/.gitbook/assets/backface-culling-off.webp" 
+  <img src="/docs/creator/.gitbook/assets/backface-culling-off.webp"
        style="width:120px; height:120px; object-fit:contain;" />
-  <img src="/docs/.gitbook/assets/backface-culling-on.webp" 
+  <img src="/docs/creator/.gitbook/assets/backface-culling-on.webp"
        style="width:120px; height:120px; object-fit:contain;" />
   <br/>
   <em>Material with Backface Culling Off (left) vs. Backface Culling On (right)</em>
@@ -221,7 +221,7 @@ Avoid having many hidden UI elements, these also have an effect on performance e
 
 ## Landscape terrain in Worlds
 
-Scenes published to a [Decentraland World](/docs/creator/worlds/about/) are surrounded by an auto-generated landscape of grassland, trees, and sea. Rendering this landscape consumes part of the player's rendering budget. If your scene doesn't need it, you can [disable the landscape terrain](/docs/creator/sdk7/projects/scene-metadata/#landscape-terrain) in your `scene.json` to free up those resources for your scene's own content.
+Scenes published to a [Decentraland World](/docs/creator/sdk7/publishing/publishing-options/#decentraland-worlds) are surrounded by an auto-generated landscape of grassland, trees, and sea. Rendering this landscape consumes part of the player's rendering budget. If your scene doesn't need it, you can [disable the landscape terrain](/docs/creator/sdk7/projects/scene-metadata/#landscape-terrain) in your `scene.json` to free up those resources for your scene's own content.
 
 ## Monitor Performance
 

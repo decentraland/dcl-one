@@ -1,0 +1,28 @@
+/* Each layer is the design's box (insets in % of the icon) and its export, which spills past the box by
+   its stroke (insets in % of the box). The design's sub-pixel glints around the C are left out. */
+.icon {
+  position: relative;
+  display: inline-block;
+  flex: none;
+}
+.layer {
+  position: absolute;
+}
+.layer img {
+  position: absolute;
+  max-width: none;
+  left: calc(-1 * var(--l, 0%));
+  top: calc(-1 * var(--t, 0%));
+  width: calc(100% + var(--l, 0%) + var(--r, 0%));
+  height: calc(100% + var(--t, 0%) + var(--b, 0%));
+}
+.v0 { inset: 8.33% 10.26% 8.33% 10.82%; }
+.v1 { inset: 8.33% 10.26% 8.33% 10.82%; --t: 0.18%; --b: 0.18%; --l: 0.19%; --r: 0.19%; }
+.v2 { inset: 8.61% 10.67% 67.56% 34.71%; --t: 1.68%; --r: 0.52%; --b: 1.18%; }
+.v3 { inset: 66.46% 10.53% 8.75% 11.09%; --t: 1.4%; --r: 0.46%; --b: 2.02%; --l: 0.46%; }
+.v4 { inset: 13.02% 15.08% 13.01% 15.5%; --t: 0.27%; --b: 0.27%; --l: 0.29%; --r: 0.29%; }
+.v5 { inset: 16.73% 18.94% 17.01% 19.36%; --t: 0.23%; --b: 0.23%; --l: 0.24%; --r: 0.24%; }
+.v6 { inset: 16.88% 19.21% 64.05% 38.36%; --t: 1.31%; --r: 0.42%; --b: 0.92%; }
+.v7 { inset: 63.08% 19% 17.15% 19.36%; --t: 1.23%; --r: 0.41%; --b: 1.77%; --l: 0.41%; }
+.v8 { inset: 18.39% 20.73% 18.94% 21.15%; --t: 0.24%; --b: 0.24%; --l: 0.26%; --r: 0.26%; }
+.c { inset: 26.38% 32.99% 27.22% 30.1%; --t: 4.39%; --r: 8.22%; --b: 6.54%; --l: 5.51%; }

@@ -13,7 +13,7 @@ To add a user to the campaign.
 3. Complete the form by entering the user's wallet address (or ENS name) and selecting their role.
 4. Click the **Add User** button to finalize the addition.
 
-![](/docs/creator/images/rewards/users.webp)
+![](/docs/creator/images/rewards/users.webp)
 
 ## Permissions for roles
 

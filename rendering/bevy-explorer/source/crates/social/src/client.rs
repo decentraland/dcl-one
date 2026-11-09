@@ -25,6 +25,10 @@ use dcl_rpc::{
     transports::web_sockets::{Message, WebSocket, WebSocketTransport},
 };
 use futures_util::{pin_mut, select, FutureExt};
+use std::{
+    future::Future,
+    sync::atomic::{AtomicBool, Ordering},
+};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use web_time::Duration;
 
@@ -69,12 +73,19 @@ enum FriendData {
         sent_requests: HashMap<Address, FriendshipRequestResponse>,
         received_requests: HashMap<Address, FriendshipRequestResponse>,
         friends: HashMap<Address, FriendProfile>,
-        blocked: HashSet<Address>,
-        blocked_by: HashSet<Address>,
+        blocks: Option<BlockSnapshot>,
         dm_privacy: DmPrivacy,
     },
+    BlockSnapshot(BlockSnapshot),
     FriendshipEvent(friendship_update::Update),
     ConnectivityEvent {
+        address: Address,
+        status: ConnectivityStatus,
+    },
+    /// A member of a community the local user is in came online or went offline (from
+    /// SubscribeToCommunityMemberConnectivityUpdates); never `Away`.
+    CommunityConnectivityEvent {
+        community_id: String,
         address: Address,
         status: ConnectivityStatus,
     },
@@ -118,13 +129,23 @@ pub type BlockingStatus = (Vec<String>, Vec<String>);
 /// Result carried back over a oneshot reply for `GetBlockingStatus`.
 pub type BlockingStatusResult = Result<BlockingStatus, String>;
 
+struct BlockSnapshot {
+    blocked: HashSet<Address>,
+    blocked_by: HashSet<Address>,
+}
+
 /// Callback invoked when someone blocks / unblocks the local user.
 type BlockUpdateCallback = Box<dyn Fn(&str, bool) + Send + Sync + 'static>;
+/// Called with a community's id when one of its members comes online or goes offline.
+type CommunityConnectivityCallback =
+    Box<dyn Fn(&str, Address, ConnectivityStatus) + Send + Sync + 'static>;
 
 pub struct SocialClientHandler {
     sender: UnboundedSender<UpsertFriendshipRequest>,
     query_sender: UnboundedSender<SocialQuery>,
     friendship_receiver: UnboundedReceiver<FriendData>,
+    owner: Address,
+    blocks_ready: bool,
 
     pub is_initialized: bool,
     pub sent_requests: HashMap<Address, FriendshipRequestResponse>,
@@ -143,6 +164,7 @@ pub struct SocialClientHandler {
     friend_event_callback: Box<dyn Fn(&friendship_update::Update) + Send + Sync + 'static>,
     connectivity_callback: Box<dyn Fn(Address, ConnectivityStatus) + Send + Sync + 'static>,
     block_update_callback: BlockUpdateCallback,
+    community_connectivity_callback: CommunityConnectivityCallback,
     #[allow(dead_code)]
     chat_event_callback: Box<dyn Fn(DirectChatMessage) + Send + Sync + 'static>,
 }
@@ -155,7 +177,13 @@ impl SocialClientHandler {
         connectivity_callback: impl Fn(Address, ConnectivityStatus) + Send + Sync + 'static,
         block_update_callback: impl Fn(&str, bool) + Send + Sync + 'static,
         chat_callback: impl Fn(DirectChatMessage) + Send + Sync + 'static,
+        community_connectivity_callback: impl Fn(&str, Address, ConnectivityStatus)
+            + Send
+            + Sync
+            + 'static,
     ) -> Option<Self> {
+        let wallet = wallet.snapshot();
+        let owner = wallet.address()?;
         let (event_sx, event_rx) = mpsc::unbounded_channel();
         let (response_sx, response_rx) = mpsc::unbounded_channel();
         let (query_sx, query_rx) = mpsc::unbounded_channel();
@@ -175,6 +203,8 @@ impl SocialClientHandler {
             sender: event_sx,
             query_sender: query_sx,
             friendship_receiver: response_rx,
+            owner,
+            blocks_ready: false,
             sent_requests: Default::default(),
             received_requests: Default::default(),
             friends: Default::default(),
@@ -187,11 +217,22 @@ impl SocialClientHandler {
             connectivity_callback: Box::new(connectivity_callback),
             block_update_callback: Box::new(block_update_callback),
             chat_event_callback: Box::new(chat_callback),
+            community_connectivity_callback: Box::new(community_connectivity_callback),
         })
     }
 
     pub fn live(&self) -> bool {
         !self.friendship_receiver.is_closed()
+    }
+
+    pub(super) fn block_snapshot_owner(&self) -> Option<Address> {
+        (self.blocks_ready && self.is_initialized && self.live()).then_some(self.owner)
+    }
+
+    fn apply_block_snapshot(&mut self, snapshot: BlockSnapshot) {
+        self.blocked = snapshot.blocked;
+        self.blocked_by = snapshot.blocked_by;
+        self.blocks_ready = true;
     }
 
     fn make_user(address: Address) -> Option<User> {
@@ -410,18 +451,23 @@ impl SocialClientHandler {
                     sent_requests,
                     received_requests,
                     friends,
-                    blocked,
-                    blocked_by,
+                    blocks,
                     dm_privacy,
                 } => {
                     self.received_requests = received_requests;
                     self.sent_requests = sent_requests;
                     self.friends = friends;
-                    self.blocked = blocked;
-                    self.blocked_by = blocked_by;
+                    if let Some(snapshot) = blocks {
+                        self.apply_block_snapshot(snapshot);
+                    } else {
+                        self.blocks_ready = false;
+                        self.blocked.clear();
+                        self.blocked_by.clear();
+                    }
                     self.dm_privacy = dm_privacy;
                     self.is_initialized = true;
                 }
+                FriendData::BlockSnapshot(snapshot) => self.apply_block_snapshot(snapshot),
                 FriendData::FriendshipEvent(ev) => {
                     (self.friend_event_callback)(&ev);
                     match ev {
@@ -507,6 +553,13 @@ impl SocialClientHandler {
                         (self.connectivity_callback)(address, status);
                     }
                 }
+                FriendData::CommunityConnectivityEvent {
+                    community_id,
+                    address,
+                    status,
+                } => {
+                    (self.community_connectivity_callback)(&community_id, address, status);
+                }
                 FriendData::OwnRequestSent { address, req } => {
                     self.sent_requests.insert(address, req);
                 }
@@ -547,6 +600,7 @@ impl SocialClientHandler {
                 }
                 FriendData::Disconnected => {
                     self.is_initialized = false;
+                    self.blocks_ready = false;
                     self.friend_status.clear();
                 }
             }
@@ -564,6 +618,40 @@ fn social_url() -> String {
 }
 
 const PAGE_SIZE: i32 = 100;
+const BLOCK_SNAPSHOT_RETRY_DELAY: Duration = Duration::from_secs(5);
+const BLOCK_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
+
+async fn retry_block_snapshot(
+    dirty: &AtomicBool,
+    events: &UnboundedSender<FriendData>,
+    fetch: impl Future<Output = Result<Option<BlockSnapshot>, anyhow::Error>>,
+) -> Result<bool, anyhow::Error> {
+    dirty.store(false, Ordering::Relaxed);
+    let Some(snapshot) = fetch.await? else {
+        return Ok(false);
+    };
+    // The stream and retry futures are polled by the same connection task. A
+    // delta forwarded while this request was pending can postdate the snapshot.
+    if dirty.load(Ordering::Relaxed) {
+        return Ok(false);
+    }
+    events.send(FriendData::BlockSnapshot(snapshot))?;
+    Ok(true)
+}
+
+fn forward_block_update(
+    dirty: &AtomicBool,
+    events: &UnboundedSender<FriendData>,
+    address: String,
+    is_blocked: bool,
+) -> Result<(), anyhow::Error> {
+    dirty.store(true, Ordering::Relaxed);
+    events.send(FriendData::BlockUpdate {
+        address,
+        is_blocked,
+    })?;
+    Ok(())
+}
 
 async fn social_socket_handler_inner(
     wallet: wallet::Wallet,
@@ -606,6 +694,17 @@ async fn social_socket_handler_inner(
     }
 }
 
+async fn social_auth_headers(
+    wallet: &wallet::Wallet,
+    connection_uri: &http::Uri,
+) -> Result<Vec<(String, String)>, anyhow::Error> {
+    // Social verifies the protocol root even when the connection uses a gateway prefix.
+    let mut parts = connection_uri.clone().into_parts();
+    parts.path_and_query = Some(http::uri::PathAndQuery::from_static("/"));
+    let signed_uri = http::Uri::from_parts(parts)?;
+    wallet::sign_request("get", &signed_uri, wallet, "{}".to_owned()).await
+}
+
 async fn run_one_connection(
     wallet: &wallet::Wallet,
     rx: &mut UnboundedReceiver<UpsertFriendshipRequest>,
@@ -624,9 +723,7 @@ async fn run_one_connection(
 
     // V2 auth: send signed headers as first WS message
     let uri: http::Uri = social_url().parse().map_err(dbgerr)?;
-    let signed_headers = wallet::sign_request("get", &uri, wallet, "{}".to_owned())
-        .await
-        .map_err(dbgerr)?;
+    let signed_headers = social_auth_headers(wallet, &uri).await.map_err(dbgerr)?;
     let headers_map: std::collections::HashMap<String, String> =
         signed_headers.into_iter().collect();
     let auth_json = serde_json::to_string(&headers_map)?;
@@ -754,25 +851,7 @@ async fn run_one_connection(
     }
     debug!("[social] Sent requests loaded: {}", sent_requests.len());
 
-    // Gather initial data: blocking status and own DM privacy. Both are tolerated failing: the
-    // DM gate then treats nobody as blocked and the local user as accepting DMs from everyone.
-    let (blocked, blocked_by): (HashSet<Address>, HashSet<Address>) =
-        match service_module.get_blocking_status().await {
-            Ok(resp) => (
-                resp.blocked_users
-                    .iter()
-                    .filter_map(|a| a.as_h160())
-                    .collect(),
-                resp.blocked_by_users
-                    .iter()
-                    .filter_map(|a| a.as_h160())
-                    .collect(),
-            ),
-            Err(e) => {
-                warn!("[social] get_blocking_status error: {e:?}");
-                Default::default()
-            }
-        };
+    // Preserve the DM fallback if the server does not return a privacy setting.
     let dm_privacy = match service_module.get_social_settings().await {
         Ok(resp) => match resp.response {
             Some(get_social_settings_response::Response::Ok(ok)) => ok
@@ -790,23 +869,6 @@ async fn run_one_connection(
             Default::default()
         }
     };
-
-    debug!(
-        "[social] Init complete — friends: {}, received_requests: {}, sent_requests: {}, blocked: {}, blocked by: {}, dm privacy: {dm_privacy:?}",
-        friends.len(),
-        received_requests.len(),
-        sent_requests.len(),
-        blocked.len(),
-        blocked_by.len(),
-    );
-    response_sx.send(FriendData::Init {
-        sent_requests,
-        received_requests,
-        friends,
-        blocked,
-        blocked_by,
-        dm_privacy,
-    })?;
 
     // Subscribe to friendship updates
     debug!("[social] Subscribing to friendship updates...");
@@ -832,12 +894,96 @@ async fn run_one_connection(
         .map_err(dbgerr)?;
     debug!("[social] Subscribed to block updates");
 
+    // Subscribe before fetching the snapshot so updates during startup are buffered.
+    let load_blocks = |service: std::sync::Arc<SocialServiceClient<_>>| async move {
+        // Restart the connection on a hung request so its outstanding RPC listener is discarded.
+        let result =
+            async_std::future::timeout(BLOCK_SNAPSHOT_TIMEOUT, service.get_blocking_status())
+                .await
+                .map_err(|_| anyhow!("[social] get_blocking_status timed out"))?;
+        Ok::<_, anyhow::Error>(match result {
+            Ok(resp) => {
+                let blocked = resp.blocked_users.iter().map(|a| a.as_h160()).collect();
+                let blocked_by = resp.blocked_by_users.iter().map(|a| a.as_h160()).collect();
+                match (blocked, blocked_by) {
+                    (Some(blocked), Some(blocked_by)) => Some(BlockSnapshot {
+                        blocked,
+                        blocked_by,
+                    }),
+                    _ => {
+                        warn!("[social] get_blocking_status returned an invalid address");
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("[social] get_blocking_status error: {e:?}");
+                None
+            }
+        })
+    };
+
+    // Subscribe to community member connectivity updates. Unlike the subscriptions above, a
+    // refusal is not fatal: a server without them costs community presence, not friends, DMs or
+    // blocks.
+    debug!("[social] Subscribing to community member connectivity updates...");
+    let community_connectivity_updates = match service_module
+        .subscribe_to_community_member_connectivity_updates()
+        .await
+    {
+        Ok(updates) => {
+            debug!("[social] Subscribed to community member connectivity updates");
+            Some(updates)
+        }
+        Err(e) => {
+            warn!("[social] no community member connectivity updates until the next connection: {e:?}");
+            None
+        }
+    };
+
+    let blocks = load_blocks(service_module.clone()).await?;
+    let mut block_retry = blocks
+        .is_none()
+        .then(|| Box::pin(async_std::task::sleep(BLOCK_SNAPSHOT_RETRY_DELAY)));
+    debug!(
+        "[social] Init complete — friends: {}, received_requests: {}, sent_requests: {}, blocks ready: {}, dm privacy: {dm_privacy:?}",
+        friends.len(),
+        received_requests.len(),
+        sent_requests.len(),
+        blocks.is_some(),
+    );
+    response_sx.send(FriendData::Init {
+        sent_requests,
+        received_requests,
+        friends,
+        blocks,
+        dm_privacy,
+    })?;
+
+    let block_snapshot_dirty = &AtomicBool::new(false);
     // Outbound: send friendship actions + handle queries
     let response_sx_write = response_sx.clone();
     let f_service_write = async move {
         let response_sx = response_sx_write;
         loop {
             tokio::select! {
+                _ = async {
+                    match block_retry.as_mut() {
+                        Some(delay) => delay.await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    // Serialize retries with local block/unblock writes.
+                    if retry_block_snapshot(
+                        block_snapshot_dirty,
+                        &response_sx,
+                        load_blocks(service_module.clone()),
+                    ).await? {
+                        block_retry = None;
+                    } else {
+                        block_retry = Some(Box::pin(async_std::task::sleep(BLOCK_SNAPSHOT_RETRY_DELAY)));
+                    }
+                }
                 req = rx.recv() => {
                     let Some((req, reply)) = req else { return Result::<(), anyhow::Error>::Ok(()); };
                     debug!("[social] upsert_friendship request: {req:?}");
@@ -1195,17 +1341,58 @@ async fn run_one_connection(
     }
     .fuse();
 
+    // Inbound: receive community member connectivity updates. `Away` is not a presence change
+    // for community chat. A server-closed stream ends the connection, so every subscription is
+    // made again on reconnect.
+    let sx_community = response_sx.clone();
+    let f_community_connectivity_read = async move {
+        let Some(mut community_connectivity_updates) = community_connectivity_updates else {
+            return std::future::pending::<Result<(), anyhow::Error>>().await;
+        };
+        while let Some(update) = community_connectivity_updates.next().await {
+            debug!("[social] Received community connectivity update: {update:?}");
+            if let Some(closed) = &update.stream_closed {
+                return Err(anyhow!(
+                    "[social] community connectivity stream closed by the server: {closed:?}"
+                ));
+            }
+            let status = match update.status {
+                0 => ConnectivityStatus::Online,
+                1 => ConnectivityStatus::Offline,
+                _ => continue,
+            };
+            let Some(address) = update
+                .member
+                .as_ref()
+                .and_then(|member| member.address.as_h160())
+            else {
+                continue;
+            };
+            sx_community
+                .send(FriendData::CommunityConnectivityEvent {
+                    community_id: update.community_id,
+                    address,
+                    status,
+                })
+                .map_err(dbgerr)?;
+        }
+        Err(anyhow!(
+            "[social] community connectivity update stream ended"
+        ))
+    }
+    .fuse();
+
     // Inbound: receive block updates (someone blocked / unblocked the local user)
     let sx_block = response_sx.clone();
     let f_block_read = async move {
         while let Some(update) = block_updates.next().await {
             debug!("[social] Received block update: {update:?}");
-            sx_block
-                .send(FriendData::BlockUpdate {
-                    address: update.address,
-                    is_blocked: update.is_blocked,
-                })
-                .map_err(dbgerr)?;
+            forward_block_update(
+                block_snapshot_dirty,
+                &sx_block,
+                update.address,
+                update.is_blocked,
+            )?;
         }
         Err(anyhow!("[social] block update stream ended"))
     }
@@ -1265,6 +1452,7 @@ async fn run_one_connection(
         f_service_read,
         f_service_write,
         f_connectivity_read,
+        f_community_connectivity_read,
         f_block_read,
         f_keepalive,
         f_ws_closed
@@ -1273,6 +1461,7 @@ async fn run_one_connection(
         r = f_service_read => r,
         r = f_service_write => r,
         r = f_connectivity_read => r,
+        r = f_community_connectivity_read => r,
         r = f_block_read => r,
         r = f_keepalive => r,
         r = f_ws_closed => r,
@@ -1280,3 +1469,177 @@ async fn run_one_connection(
 }
 
 pub type FriendshipEventBody = friendship_update::Update;
+
+#[cfg(test)]
+mod block_snapshot_tests {
+    use super::*;
+    use crate::{update_social_client, SocialClient, SocialStateChanged};
+    use bevy::prelude::*;
+    use common::access_status::AccessStatus;
+
+    #[test]
+    fn failed_initial_snapshot_can_recover_but_disconnect_invalidates_voice() {
+        let mut wallet = wallet::Wallet::default();
+        wallet.finalize_as_guest_with_seed([12; 32]);
+        let owner = wallet.address().unwrap();
+        let peer = Address::from([3; 20]);
+        let (events, friendship_receiver) = mpsc::unbounded_channel();
+        let mut app = App::new();
+        app.insert_resource(wallet)
+            .insert_resource(SocialClient(Some(SocialClientHandler {
+                sender: mpsc::unbounded_channel().0,
+                query_sender: mpsc::unbounded_channel().0,
+                friendship_receiver,
+                owner,
+                blocks_ready: false,
+                is_initialized: false,
+                sent_requests: Default::default(),
+                received_requests: Default::default(),
+                friends: Default::default(),
+                friend_status: Default::default(),
+                blocked: Default::default(),
+                blocked_by: Default::default(),
+                dm_privacy: Default::default(),
+                unread_messages: Default::default(),
+                friend_event_callback: Box::new(|_| {}),
+                connectivity_callback: Box::new(|_, _| {}),
+                block_update_callback: Box::new(|_, _| {}),
+                community_connectivity_callback: Box::new(|_, _, _| {}),
+                chat_event_callback: Box::new(|_| {}),
+            })))
+            .init_resource::<AccessStatus>()
+            .add_event::<SocialStateChanged>()
+            .add_systems(PostUpdate, update_social_client);
+
+        fn allows_voice(app: &App, owner: Address, peer: Address) -> bool {
+            app.world()
+                .resource::<AccessStatus>()
+                .allows_voice_from(Some(owner), peer)
+        }
+
+        let init = |blocks| FriendData::Init {
+            sent_requests: Default::default(),
+            received_requests: Default::default(),
+            friends: Default::default(),
+            blocks,
+            dm_privacy: Default::default(),
+        };
+        events.send(init(None)).unwrap();
+        app.update();
+        app.update();
+        assert!(
+            app.world()
+                .resource::<SocialClient>()
+                .0
+                .as_ref()
+                .unwrap()
+                .is_initialized
+        );
+        assert!(!allows_voice(&app, owner, peer));
+
+        let empty_snapshot = || BlockSnapshot {
+            blocked: HashSet::new(),
+            blocked_by: HashSet::new(),
+        };
+        let dirty = AtomicBool::new(false);
+        let retried = async_std::task::block_on(async {
+            let (request_started, started) = tokio::sync::oneshot::channel();
+            let (snapshot_reply, reply) = tokio::sync::oneshot::channel();
+            let fetch_snapshot = async {
+                request_started.send(()).unwrap();
+                Ok(Some(reply.await.unwrap()))
+            };
+            let receive_block = async {
+                started.await.unwrap();
+                forward_block_update(&dirty, &events, format!("{peer:#x}"), true).unwrap();
+                assert!(snapshot_reply.send(empty_snapshot()).is_ok());
+            };
+            let (retried, ()) = futures_util::join!(
+                retry_block_snapshot(&dirty, &events, fetch_snapshot),
+                receive_block,
+            );
+            retried.unwrap()
+        });
+        app.update();
+        assert!(!allows_voice(&app, owner, peer));
+        assert!(!retried, "the block update raced the snapshot reply");
+
+        let blocked_snapshot = BlockSnapshot {
+            blocked: HashSet::new(),
+            blocked_by: [peer].into_iter().collect(),
+        };
+        assert!(
+            async_std::task::block_on(retry_block_snapshot(&dirty, &events, async {
+                Ok(Some(blocked_snapshot))
+            },))
+            .unwrap()
+        );
+        app.update();
+        assert!(app
+            .world()
+            .resource::<AccessStatus>()
+            .blocks_ready_for(Some(owner)));
+        assert!(!allows_voice(&app, owner, peer));
+
+        events
+            .send(FriendData::BlockUpdate {
+                address: format!("{peer:#x}"),
+                is_blocked: false,
+            })
+            .unwrap();
+        app.update();
+        assert!(allows_voice(&app, owner, peer));
+
+        events.send(FriendData::Disconnected).unwrap();
+        app.update();
+        assert!(!allows_voice(&app, owner, peer));
+
+        events.send(init(Some(empty_snapshot()))).unwrap();
+        app.update();
+        assert!(allows_voice(&app, owner, peer));
+
+        drop(events);
+        app.update();
+        assert!(!allows_voice(&app, owner, peer));
+    }
+}
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+
+    #[test]
+    fn social_signature_uses_source_root_for_mounted_and_standalone_connections() {
+        async_std::task::block_on(async {
+            let mut wallet = wallet::Wallet::default();
+            wallet.finalize_as_guest();
+            for url in [
+                "wss://social.example/",
+                "wss://social.example/social-rpc",
+                "wss://social.example/edge/social-rpc?region=test",
+            ] {
+                let connection: http::Uri = url.parse().unwrap();
+                let original = connection.clone();
+                let headers: std::collections::HashMap<_, _> =
+                    social_auth_headers(&wallet, &connection)
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .collect();
+                assert_eq!(connection, original, "connection URI remains unchanged");
+                let entity: serde_json::Value =
+                    serde_json::from_str(&headers["x-identity-auth-chain-1"]).unwrap();
+                let expected = format!("get:/:{}:{{}}", headers["x-identity-timestamp"]);
+                assert_eq!(entity["payload"], expected);
+                let signature: alloy_core::primitives::Signature =
+                    entity["signature"].as_str().unwrap().parse().unwrap();
+                assert_eq!(
+                    signature
+                        .recover_address_from_msg(expected.as_bytes())
+                        .unwrap(),
+                    wallet.address().unwrap()
+                );
+            }
+        });
+    }
+}

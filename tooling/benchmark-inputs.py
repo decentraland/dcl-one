@@ -169,15 +169,15 @@ def resolve(event_name, event, repo, enabled='', runs=''):
             return skip(f"CI run {change['id']} built no web app: the PR changes no web input")
         return stop(result, f"CI run {change['id']} has no web app: it built none (the PR changes no web "
                             'input) or the artifact expired.')
-    # CI builds every web app with wasm-opt, on PRs as on main: an unoptimized build on either side
-    # would bias the comparison.
+    fleet = [(label, system) for label, system in FLEET if not enabled or label in enabled]
+    if not fleet:
+        return stop(result, 'BENCHMARK_ENABLED_RUNNERS enables no laptop of the fleet.')
+    # While the fleet is on, CI builds every web app with wasm-opt, on PRs as on main: an
+    # unoptimized build on either side would bias the comparison.
     if not optimized(repo, change_names[change_web]):
         return stop(result, f"The change web build (CI run {change['id']}) is not optimized; CI builds pull "
                             "requests' web apps with wasm-opt, so push again for a build it can compare.")
 
-    fleet = [(label, system) for label, system in FLEET if not enabled or label in enabled]
-    if not fleet:
-        return stop(result, 'BENCHMARK_ENABLED_RUNNERS enables no laptop of the fleet.')
     # The runner comes from the change run, so a PR that changes it is measured with its own;
     # otherwise from the base run that has it.
     platforms = sorted({PLATFORMS[system] for _, system in fleet} | {PLATFORMS['linux']})

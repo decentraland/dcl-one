@@ -42,13 +42,13 @@ Already placed items can be clicked and dragged to reposition them. See [Scene e
 
 > [!NOTE]
 > **💡 Tip**: Cover the entire scene with a ground item. Items of type **Ground** have a paint bucket icon on them. If you drag one of these into your scene, it covers all of your scene's ground with copies of this item.
-> 
+>
 > <img src="/docs/creator/images/editor/ground.webp" alt="Ground" data-size="original">
 
 
 ## Run a preview
 
-Click the **Preview** button on the top menu to load your scene inside Decentraland. You can now explore the scene as a Decentraland avatar.
+Click the **Play** button on the top menu to load your scene inside Decentraland. You can now explore the scene as a Decentraland avatar.
 
 ![](/docs/creator/images/editor/running-preview.webp)
 
@@ -324,7 +324,7 @@ On every frame, this rotates the avocado a little further. Multiplying by `dt` m
 
 Because `speed` is a constructor parameter, it also appears as a field on the Script component in the Creator Hub. Click the refresh icon on the top-right of the Script component to see it, then tweak the value without touching any code.
 
-<img src="/docs/.gitbook/assets/script-refresh-button.webp" alt="Refresh button" data-size="line" width="360">
+<img src="/docs/creator/.gitbook/assets/script-refresh-button.webp" alt="Refresh button" data-size="line" width="360">
 
 Each entity stores its own value for the **Speed** field, so several items can share the same script but behave differently. Try it out: copy the avocado with Ctrl + C and Ctrl + V, move the copy so the two don't overlap, and set a different speed on each. Each avocado now spins at its own rate.
 
@@ -373,7 +373,7 @@ Here `engine.getEntityOrNullByName()` fetches a reference to the entity named _Y
 
 Read [Coding scenes](/docs/creator/sdk7/getting-started/coding-scenes/) for a high-level understanding of how Decentraland scenes function.
 
-For examples built with SDK7, check out the [Examples page](https://studios.decentraland.org/resources?sdk_version=SDK7), which contains several small scenes.
+For examples built with SDK7, check out the [Examples page](/docs/creator/tutorials/examples/), which contains reusable scenes and repositories.
 
 See the **Development guide** section for more instructions about adding content to your scene.
 
