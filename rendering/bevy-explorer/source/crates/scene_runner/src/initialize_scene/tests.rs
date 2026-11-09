@@ -83,6 +83,46 @@ fn failed_current_scene_does_not_defer_other_scenes() {
 }
 
 #[test]
+fn live_scene_is_kept_through_the_unload_margin() {
+    let mut world = lifecycle_world();
+    // the neighbour (parcel 1,0: x from 16 to 32) is live
+    let neighbour = world
+        .spawn((
+            SceneHash("neighbour".to_owned()),
+            SceneLoading::SceneSpawned,
+        ))
+        .id();
+    world
+        .resource_mut::<LiveScenes>()
+        .scenes
+        .insert("neighbour".to_owned(), neighbour);
+    let mut users = world.query_filtered::<&mut GlobalTransform, With<PrimaryUser>>();
+
+    // 21 m from its nearest edge: past the 20 m load distance, inside the 10 m margin
+    *users.single_mut(&mut world).unwrap() =
+        GlobalTransform::from_translation(Vec3::new(-5.0, 0.0, -8.0));
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(
+        world.get_entity(neighbour).is_ok(),
+        "a live scene inside the unload margin is kept"
+    );
+    assert!(world
+        .resource::<LiveScenes>()
+        .scenes
+        .contains_key("neighbour"));
+
+    // 31 m: past the margin
+    *users.single_mut(&mut world).unwrap() =
+        GlobalTransform::from_translation(Vec3::new(-15.0, 0.0, -8.0));
+    world.run_system_once(process_scene_lifecycle).unwrap();
+    assert!(world.get_entity(neighbour).is_err());
+    assert!(!world
+        .resource::<LiveScenes>()
+        .scenes
+        .contains_key("neighbour"));
+}
+
+#[test]
 fn loading_current_scene_defers_other_scenes() {
     let mut world = lifecycle_world();
     spawn_current_scene(&mut world, SceneLoading::SceneEntity);
