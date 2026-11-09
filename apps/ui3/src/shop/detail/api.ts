@@ -6,22 +6,17 @@ import type { NftResult } from "@catalyst-api/market/NftResult";
 import type { Order } from "@catalyst-api/market/Order";
 import { fetchUnified, fetchShopListingsRaw, shopListingToItem, type Opts, type UnifiedListing } from "../discovery/api";
 import { toGender, type CatalogItem, type Gender, type RawCollectionItem } from "@shop/discovery/lib/catalogItem";
-import { type ShopClient } from "../api/shop";
 import { isResale } from "@shop/market/access-rule";
 
-function c(opts: Opts): ShopClient {
-  return opts.client;
-}
-
 function o(opts: Opts) {
-  return opts?.signal ? { signal: opts.signal } : undefined;
+  return opts.signal ? { signal: opts.signal } : undefined;
 }
 
 type DataTotal<T> = { data?: T[]; total?: number };
 
 export async function fetchItemDescription(contractAddress: string, itemId: string, opts: Opts): Promise<string> {
   try {
-    const json = await c(opts).catalog.v2<DataTotal<RawCollectionItem>>({ id: `${contractAddress.toLowerCase()}-${itemId}`, first: 1 }, o(opts));
+    const json = await opts.client.catalog.v2<DataTotal<RawCollectionItem>>({ id: `${contractAddress.toLowerCase()}-${itemId}`, first: 1 }, o(opts));
     const d = json.data?.[0]?.data;
     return (d?.wearable?.description ?? d?.emote?.description ?? "").trim();
   } catch {
@@ -82,7 +77,7 @@ export async function fetchSecondarySaleState(contractAddress: string, opts: Opt
 export type ClassicOrder = { tokenId: string; issuedId?: string; seller: string; contractAddress: string; priceWei: string; expiresAt: number | null };
 
 export async function fetchClassicItemOrders(contractAddress: string, itemId: string, opts: Opts): Promise<ClassicOrder[]> {
-  const json = await c(opts).market.orders<DataTotal<Order & { itemId?: string }>>(
+  const json = await opts.client.market.orders<DataTotal<Order & { itemId?: string }>>(
     { contractAddress, itemId, status: "open", sortBy: "cheapest", first: 100 },
     o(opts),
   );
@@ -150,14 +145,14 @@ function toOwnedToken(r: NftResult): OwnedToken {
 }
 
 export async function fetchTokenById(contractAddress: string, tokenId: string, opts: Opts): Promise<OwnedToken | null> {
-  const json = await c(opts).market.nfts<DataTotal<NftResult>>({ contractAddress, tokenId, first: 1 }, o(opts));
+  const json = await opts.client.market.nfts<DataTotal<NftResult>>({ contractAddress, tokenId, first: 1 }, o(opts));
   const r = json.data?.[0];
   return r && r.nft.tokenId === tokenId ? toOwnedToken(r) : null;
 }
 
 export async function fetchOwnedToken(owner: string, contractAddress: string, tokenId: string, opts: Opts): Promise<OwnedToken | null> {
   try {
-    const json = await c(opts).market.nfts<DataTotal<NftResult>>({ owner: owner.toLowerCase(), contractAddress, tokenId, first: 1 }, o(opts));
+    const json = await opts.client.market.nfts<DataTotal<NftResult>>({ owner: owner.toLowerCase(), contractAddress, tokenId, first: 1 }, o(opts));
     const r = json.data?.[0];
     return r && r.nft.tokenId === tokenId ? toOwnedToken(r) : null;
   } catch {
@@ -171,7 +166,7 @@ export async function fetchOwnsItem(owner: string, contractAddress: string, item
 
 export async function fetchOwnedItemCount(owner: string, contractAddress: string, itemId: string, opts: Opts): Promise<number> {
   try {
-    const json = await c(opts).market.nfts<DataTotal<NftResult>>({ owner: owner.toLowerCase(), contractAddress, itemId, first: 1 }, o(opts));
+    const json = await opts.client.market.nfts<DataTotal<NftResult>>({ owner: owner.toLowerCase(), contractAddress, itemId, first: 1 }, o(opts));
     return typeof json.total === "number" ? json.total : 0;
   } catch {
     return 0;
@@ -182,7 +177,7 @@ export type ResaleTokenInfo = { seller?: string; issuedId?: string };
 
 export async function fetchResaleTokenInfo(contractAddress: string, tokenId: string, opts: Opts): Promise<ResaleTokenInfo> {
   try {
-    const json = await c(opts).market.nfts<DataTotal<NftResult>>({ contractAddress, tokenId, first: 1 }, o(opts));
+    const json = await opts.client.market.nfts<DataTotal<NftResult>>({ contractAddress, tokenId, first: 1 }, o(opts));
     const row = json.data?.[0];
     if (!row?.nft || row.nft.tokenId !== tokenId) return {};
     return { seller: row.nft.owner ?? row.order?.owner, issuedId: row.nft.issuedId ?? undefined };
@@ -223,7 +218,7 @@ function toSupply(raw: string | number | undefined | null): number | null {
 }
 
 export async function fetchItemMeta(contractAddress: string, itemId: string, opts: Opts): Promise<ItemMeta | null> {
-  const json = await c(opts).market.items<
+  const json = await opts.client.market.items<
     DataTotal<{
       name?: string;
       thumbnail?: string;

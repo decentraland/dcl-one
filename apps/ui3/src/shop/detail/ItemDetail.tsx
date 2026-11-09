@@ -81,9 +81,9 @@ import BuyModal from "./components/BuyModal";
 import { takeBuyNowReturn, type BuyNowReturn } from "../credits/returns";
 import { listingTypeFor } from "@shop/market/access-rule";
 import { serviceBase } from "../../data/catalyst/client";
-import "./itemdetail.css";
 import { shopClient } from "../api/host";
 import { shopReads } from "../discovery/reads";
+import "./itemdetail.css";
 
 type RouteState = { item?: CatalogItem } | null;
 

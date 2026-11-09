@@ -36,7 +36,7 @@ export type RequestInput = {
 };
 
 export type ShopApiOptions = {
-  /** Where the API is, as the host resolved and normalized it (no trailing slash). */
+  /** Where the API is, as the host resolved it; one trailing slash is dropped. */
   base: string;
   mode: ShopApiMode;
   /** Who signs the non-public routes; none, and a signed route fails before the transport. */
@@ -81,7 +81,8 @@ function parseBody(text: string): unknown {
 }
 
 export function createShopApi(opts: ShopApiOptions): ShopApi {
-  const { mode, base, transport } = opts;
+  const { mode, transport } = opts;
+  const base = opts.base.replace(/\/$/, "");
   const resolveSigner = async () => (typeof opts.signer === "function" ? await opts.signer() : (opts.signer ?? null));
 
   const api: ShopApi = {
