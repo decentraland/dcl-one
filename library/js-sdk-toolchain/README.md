@@ -73,8 +73,9 @@ The packages publish as `@dcl-regenesislabs/*` for now (the `name` fields; the c
 npm install @dcl/sdk@npm:@dcl-regenesislabs/sdk@<version> @dcl/sdk-commands@npm:@dcl-regenesislabs/sdk-commands@<version>
 ```
 
-Every push to `main` that touches the SDK or the protocol publishes the six packages under the
-`next` dist-tag (`.github/workflows/sdk.yml`). The version is `<base>-<run>.commit-<sha>`, where
+Every push to `main` that touches the SDK or the protocol publishes `ecs`, `js-runtime`,
+`react-ecs`, `sdk-commands` and `sdk` under the `next` dist-tag (`playground-assets` is built and
+tested but not published) (`.github/workflows/sdk.yml`). The version is `<base>-<run>.commit-<sha>`, where
 oddish takes the base from the registry's `latest` of the manifest's name (the placeholder `7.0.0`
 until a release exists under the scope); the manifests' version is never bumped.
 
@@ -89,7 +90,7 @@ their placeholder version; the run stamps the one you give it.
 1. Run `SDK / Release` from `main` with the `version` to publish, following the
    [version guidelines](https://docs.decentraland.org/creator/releases/version-agreement/); a
    `-rc.1`-style suffix makes a prerelease. The run refuses an existing `sdk-v<version>` tag or a
-   version any of the six packages already has on npm under their current scope.
+   version any of the five packages already has on npm under their current scope.
 2. The run builds, tests, stamps the version into `@dcl/sdk` (`make prepare` copies it to the
    others), packs, publishes to npm in dependency order (dist-tag `latest`, or `rc` for a
    prerelease) and creates the `sdk-v<version>` release with the tarballs, the `library/protocol`

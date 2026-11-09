@@ -20,6 +20,8 @@ concurrency:
 env:
   # the SDK's make install downloads protoc 3.20.1 for the runner's arch
   CI: true
+  # playground-assets is built and tested with the rest but not published
+  SDK_PACKAGES: ecs js-runtime react-ecs sdk-commands sdk
 jobs:
   lint:
     name: Lint
@@ -111,7 +113,8 @@ jobs:
           rm -rf .packed && mkdir .packed
           for tgz in packages/@dcl/*/*.tgz; do mkdir -p ".packed/$(basename "$tgz" .tgz)" && tar -xzf "$tgz" -C ".packed/$(basename "$tgz" .tgz)"; done
           node scripts/check-no-local-packages.cjs .packed
-          rm -rf dist && mkdir dist && mv packages/@dcl/*/*.tgz dist/
+          rm -rf dist && mkdir dist
+          for name in $SDK_PACKAGES; do mv packages/@dcl/"$name"/*.tgz dist/; done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sdk-packages-${{ github.sha }}
@@ -153,7 +156,7 @@ jobs:
           # the packages' scope (@dcl, or @dcl-regenesislabs while the @dcl names cannot be published from here)
           first=$(manifest ./dist/*-js-runtime-[0-9]*.tgz)
           scope=${first%%/*}; version=${first##*@}
-          for name in ecs js-runtime react-ecs sdk-commands sdk playground-assets; do
+          for name in $SDK_PACKAGES; do
             # ./ keeps npm from reading dist/<file> as a GitHub owner/repo shorthand
             tgz=./dist/${scope#@}-$name-$version.tgz
             spec=$scope/$name@$version

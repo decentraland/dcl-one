@@ -25,9 +25,10 @@ from here ([SDK ADR](2026-10-26-sdk-in-dcl-one.md), follow-up 1).
   from a single run.
 - The SDK (`.github/workflows/sdk-release.yml`) takes the version as an input, as upstream takes
   it from the release tag, and stamps it into the manifests before packing (the tree keeps a
-  placeholder). It publishes the six packages in dependency order through npm trusted publishing
-  (dist-tag `latest`, `rc` for a prerelease version) and releases as `sdk-v<version>` with the
-  tarballs attached. The SDK embeds the protocol at its commit
+  placeholder). It publishes `ecs`, `js-runtime`, `react-ecs`, `sdk-commands` and `sdk` in
+  dependency order through npm trusted publishing (dist-tag `latest`, `rc` for a prerelease
+  version) and releases as `sdk-v<version>` with the tarballs attached; `playground-assets` is
+  built and tested but not published. The SDK embeds the protocol at its commit
   ([SDK ADR](2026-10-26-sdk-in-dcl-one.md)), so it needs no protocol release; the notes name the
   `library/protocol` commit it was generated from.
 
