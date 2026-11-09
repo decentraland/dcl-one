@@ -8,7 +8,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { foreignRequest, guardLoopback } from "./lib/guard.mts";
 import { SITES } from "./lib/paths.mts";
-import { NODE_MOUNTS as MOUNTS } from "./lib/services.mts";
+import { relaysToNode } from "./lib/services.mts";
 
 const arg = (name: string): string => {
   const i = process.argv.indexOf(name);
@@ -82,7 +82,7 @@ app.get("/__shop-parity/blocked", (_incoming: unknown, outgoing: any) => {
   void rendering.then(() => outgoing.json(blocked.splice(0)));
 });
 app.use((incoming: any, outgoing: any, next: () => void) => {
-  if (!MOUNTS.some((m) => incoming.path === `/${m}` || incoming.path.startsWith(`/${m}/`))) return next();
+  if (!relaysToNode(incoming.path)) return next();
   // From the path only: an absolute-form request line must not make the preview relay to another host.
   const target = new URL(incoming.originalUrl.startsWith("/") ? incoming.originalUrl : "/", upstream);
   // The replay answers no browser (lib/servers.mts fromBrowser): what names the page's site stays here.

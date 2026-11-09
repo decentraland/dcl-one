@@ -18,7 +18,6 @@ use crate::{
         ConnectionAvailability, LivekitTransport,
     },
     private_chat::PrivateChatRoom,
-    profile::ProfileMetaCache,
     SceneRoom, Transport, TransportType,
 };
 use bevy::ecs::relationship::Relationship;
@@ -92,7 +91,6 @@ pub(in crate::livekit) fn register(app: &mut App) {
             ("Players on LiveKit", "onLivekit"),
             ("Players off LiveKit", "offLivekit"),
             ("Participants without players", "unmatched"),
-            ("Cached remote profile endpoints", "metadata"),
         ],
         actions: &[],
         inputs: if indicators {
@@ -177,7 +175,6 @@ fn room_diagnostics(
         Option<&ConnectionQuality>,
     )>,
     players: Query<&ForeignPlayer>,
-    metadata: Res<ProfileMetaCache>,
     indicators: Option<Res<RoomIndicators>>,
     definitions: Option<Res<Assets<ipfs::EntityDefinition>>>,
 ) {
@@ -198,7 +195,7 @@ fn room_diagnostics(
             .collect();
         input.reply_ok(json!({"players": players.len(), "onLivekit": players.intersection(&members).count(),
             "offLivekit": players.difference(&members).count(), "unmatched": members.difference(&players).count(),
-            "metadata": metadata.0.len(), "indicators": indicators.map(|s| s.0)}).to_string());
+            "indicators": indicators.map(|s| s.0)}).to_string());
         return;
     }
 
@@ -463,7 +460,6 @@ mod tests {
             add_bevy_console: false,
         })
         .insert_resource(State::new(ConnectionAvailability::Available))
-        .init_resource::<ProfileMetaCache>()
         .add_console_command::<RoomDiagnostics, _>(room_diagnostics);
         app.update();
         let empty = island_diagnostics(&mut app);
