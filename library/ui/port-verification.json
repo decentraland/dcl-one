@@ -1,21 +1,21 @@
 {
   "schema": 1,
-  "lockHash": "0fc98aa92abb46ebe84ff765409daf9c0cead0c3f14b4a0991b7b3940d0079d8",
+  "lockHash": "0e24c7497f2cf58ad10f006ad585512c15f4494cd508255c39668245fb5482a5",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
-  "figmaTree": "aec1348627cbe8fda0b188855415f3530b70f93f",
+  "figmaTree": "48ae54bef9891e3dd6cbfdd3017870f84418488e",
   "checks": {
     "fetch-source": {
       "result": "pass",
-      "detail": "inherited main085 and public92eb: same verified 544-file cache and snapshot revision"
+      "detail": "inherited parent checks: same verified 544-file cache and snapshot revision"
     },
     "deviations": {
       "result": "pass",
-      "detail": "439 tooling pins and current main public foundation identities verified after merging both deviation tables"
+      "detail": "439 tooling pins and base public foundation identities verified after merging both deviation tables"
     },
     "diff": {
       "result": "pass",
-      "detail": "inherited main085: 0 added, changed or removed, no ledger issues, generation inputs preserved"
+      "detail": "inherited base generation check: 0 added, changed or removed, generator inputs unchanged by guard merge"
     },
     "check-mappings": {
       "result": "pass",
@@ -23,15 +23,15 @@
     },
     "review-manifest": {
       "result": "pass",
-      "detail": "inherited main085: catalog unchanged, no catalog or component generator changes in this merge"
+      "detail": "inherited parent checks: catalog unchanged, no catalog or component generator change in guard merge"
     },
     "navbar-bounds": {
       "result": "pass",
-      "detail": "inherited parent checks: 19 bounds pass, NavBar output unchanged, runtime gains upstream icon type guard"
+      "detail": "inherited parent checks: 19 bounds pass, NavBar output and icon runtime guard unchanged by this merge"
     },
     "install": {
       "result": "pass",
-      "detail": "inherited main085: 39 foundations reproduced and repeat unchanged, foundation files and install core preserved"
+      "detail": "inherited base check: 39 foundations reproduced and repeat unchanged, foundation files and install core preserved"
     }
   }
 }

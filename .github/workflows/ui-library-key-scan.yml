@@ -178,6 +178,10 @@ jobs:
       # The url allowlist comes from HEAD of trusted/, the default branch checkout (the scanned commits only
       # enter refs/key-scan/*), never from the scanned head or a pull request base (which can be another
       # branch), so a commit cannot allowlist a url it adds: the entry has to land on the default branch first.
+      # The guard that runs is the blob committed at HEAD of trusted/, written to a fresh file just before it
+      # runs, never the working tree copy, which an earlier step could have changed. key-guard.mjs imports only
+      # node: builtins, so the single file is the whole program. cat-file prints the raw blob, with no textconv,
+      # and --no-replace-objects keeps a refs/replace entry from swapping it.
       - name: Scan for the Figma file key
         id: scan
         if: steps.trigger.outputs.scan == 'true'
@@ -196,7 +200,8 @@ jobs:
           if [ "$ARTIFACT_REQUIRED" = true ]; then
             extra=(--tree "$HEAD_SHA:library/ui" --artifact "$RUNNER_TEMP/pr-artifact")
           fi
-          node trusted/library/ui/figma/key-guard.mjs --root trusted --no-worktree \
+          git -C trusted --no-replace-objects cat-file blob HEAD:library/ui/figma/key-guard.mjs > "$RUNNER_TEMP/key-guard.mjs"
+          node "$RUNNER_TEMP/key-guard.mjs" --root trusted --no-worktree \
             --range "$range" --allowlist-from HEAD "${extra[@]}" | tee "$RUNNER_TEMP/key-scan.txt"
           grep -qx 'check key: ran' "$RUNNER_TEMP/key-scan.txt"
 
