@@ -373,9 +373,10 @@ pub fn merge(
                 user.steps = 1;
             }
             // upstream compares against `progress.completedAt`, a key no
-            // writer sets, so the backfill's instant always wins
-            let stored = user.doc.get("completedAt").and_then(int);
-            if truthy(stored).is_none_or(|s| *completed_at < s) {
+            // writer sets; the stored completion counts too, so the earliest wins
+            let stored =
+                truthy(user.completed_at).or(truthy(user.doc.get("completedAt").and_then(int)));
+            if stored.is_none_or(|s| *completed_at < s) {
                 user.completed_at = Some(*completed_at);
                 user.doc.insert(
                     "completed_with".into(),
@@ -1162,6 +1163,41 @@ mod tests {
         let merged = merge(Kind::WearablesEquipment, &def, None, &equipment, NOW).unwrap();
         assert_eq!((merged.steps, merged.completed_at), (1, Some(90)));
         assert_eq!(merged.doc.get("completed_with"), Some(&json!(["urn:a"])));
+    }
+
+    #[test]
+    fn wearables_equipment_keeps_the_earliest_completion() {
+        let def = single(1);
+        let earlier = UserState {
+            steps: 1,
+            doc: Map::from_iter([("completed_with".into(), json!(["urn:old"]))]),
+            completed_at: Some(50),
+            ..UserState::default()
+        };
+        let later = input(
+            Kind::WearablesEquipment,
+            &def,
+            json!({ "completedAt": 90, "completedWith": ["urn:new"] }),
+        );
+        let kept = merge(
+            Kind::WearablesEquipment,
+            &def,
+            Some(earlier.clone()),
+            &later,
+            NOW,
+        )
+        .unwrap();
+        assert_eq!(kept.completed_at, Some(50));
+        assert_eq!(kept.doc.get("completed_with"), Some(&json!(["urn:old"])));
+
+        let sooner = input(
+            Kind::WearablesEquipment,
+            &def,
+            json!({ "completedAt": 20, "completedWith": ["urn:new"] }),
+        );
+        let moved = merge(Kind::WearablesEquipment, &def, Some(earlier), &sooner, NOW).unwrap();
+        assert_eq!(moved.completed_at, Some(20));
+        assert_eq!(moved.doc.get("completed_with"), Some(&json!(["urn:new"])));
     }
 
     #[test]
