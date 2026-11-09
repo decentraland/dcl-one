@@ -1,3 +1,4 @@
+import { expectConsoleOutput } from './console'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { Ctx } from '../../bridge-scene/src/bridge'
 import type { PageToScene, SceneToPage } from '../engine/protocol'
@@ -157,6 +158,7 @@ describe('communities list', () => {
 
 describe('member-of list', () => {
   it('sends nothing for an answer without a results list, and an empty list only for an empty one', async () => {
+    expectConsoleOutput('error', Array.from({ length: 3 }, () => ['[communities] member-of list failed', new Error('member-of answer has no results list')]))
     const { registerCommunities } = await import('../../bridge-scene/src/domains/communities')
     const { BevyApi } = await import('../../bridge-scene/src/bevy-api')
     const { ctx, req, sent } = fakeCtx()
