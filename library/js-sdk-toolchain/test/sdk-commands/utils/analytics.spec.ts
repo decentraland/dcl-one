@@ -4,7 +4,7 @@ import { createStderrCliLogger } from '../../../packages/@dcl/sdk-commands/src/c
 import { createRecordConfigComponent } from '../../../packages/@dcl/sdk-commands/node_modules/@well-known-components/env-config-provider'
 import { homedir } from 'os'
 import path from 'path'
-import { isCI } from '../../../packages/@dcl/sdk-commands/src/logic/config'
+import { getInstalledPackageVersion, isCI } from '../../../packages/@dcl/sdk-commands/src/logic/config'
 import { requireStringConfig } from '../../../packages/@dcl/sdk-commands/src/components/config'
 
 afterEach(() => {
@@ -66,6 +66,10 @@ describe('Analytics Component', () => {
     const analytics = await createAnalyticsComponent({ config, logger, fs })
     if (!('get' in analytics)) throw new Error('analytics.get is not defined')
 
+    // whatever @dcl/sdk resolves to from here: nothing under npm, the workspace package through the
+    // NODE_PATH that pnpm's bin shims set
+    const sdkVersion = await getInstalledPackageVersion({ fs }, '@dcl/sdk', process.cwd())
+
     const trackSpy = jest.spyOn(analytics.get(), 'track')
     analytics.track('Scene created', { projectType: '', url: '' })
     expect(trackSpy).toHaveBeenCalledWith({
@@ -84,7 +88,7 @@ describe('Analytics Component', () => {
         projectId: null,
         ecs: {
           ecsVersion: 'ecs7',
-          packageVersion: 'unknown'
+          packageVersion: sdkVersion
         }
       }
     })

@@ -68,40 +68,6 @@ export function patchJson(file: string, cwd: string, redux: (previous: any) => a
   return writeFileSync(path, JSON.stringify(redux(JSON.parse(readFileSync(path).toString())), null, 2))
 }
 
-export function itInstallsADependencyFromFolderAndCopiesTheVersion(
-  cwd: string,
-  depPath: string,
-  devDependency = false
-) {
-  const dependencies = devDependency ? 'devDependencies' : 'dependencies'
-
-  itExecutes(`npm install --silent ${depPath}`, cwd)
-
-  it(`update ${dependencies} version ${depPath} in ${cwd}`, () => {
-    const depPackageJson = readJson('package.json', depPath)
-    patchJson('package.json', cwd, ($) => {
-      return {
-        ...$,
-        [dependencies]: {
-          ...($[dependencies] || {}),
-          [depPackageJson.name]: depPackageJson.version
-        }
-      }
-    })
-    if (existsSync(resolve(cwd, 'package-lock.json'))) {
-      patchJson('package-lock.json', cwd, ($) => {
-        return {
-          ...$,
-          dependencies: {
-            ...($[dependencies] || {}),
-            [depPackageJson.name]: undefined
-          }
-        }
-      })
-    }
-  })
-}
-
 export function copyFile(from: string, to: string) {
   process.stdout.write(`> copying ${relative(process.cwd(), from)} to ${relative(process.cwd(), to)}\n`)
 

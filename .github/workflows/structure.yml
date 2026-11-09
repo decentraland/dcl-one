@@ -20,6 +20,9 @@ jobs:
         run: python3 tooling/proto-source-check.py
       - name: Validate backend module layers
         run: bash services/catalyst/scripts/check-module-dag.sh
+      - name: Check the workflows against the actions policy
+        if: success() || failure()
+        run: python3 -m unittest tooling.tests.test_dev_workflow -k policy_allowlist
       - name: Check UI standards
         if: success() || failure()
         env:

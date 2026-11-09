@@ -6,10 +6,7 @@ describe('build: simple scene compilation', () => {
   const cwd = resolve(__dirname, './fixtures/ecs7-scene')
 
   itDeletesFolder('./bin', cwd)
-  itDeletesFolder('./node_modules', cwd)
-
-  itExecutes('npm i --silent --no-progress', cwd)
-  itExecutes('npm run build --silent', cwd)
+  itExecutes('pnpm run --silent build', cwd)
 
   it('ensure files exist', () => {
     const binPath = ensureFileExists('bin/game.js', cwd)
@@ -33,10 +30,7 @@ describe('build: scene with etherum', () => {
   const cwd = resolve(__dirname, './fixtures/ecs7-ui-ethereum')
 
   itDeletesFolder('./bin', cwd)
-  itDeletesFolder('./node_modules', cwd)
-
-  itExecutes('npm i --silent --no-progress', cwd)
-  itExecutes('npm run build --silent', cwd)
+  itExecutes('pnpm run --silent build', cwd)
 
   it('ensure files exist', () => {
     const binPath = ensureFileExists('bin/game.js', cwd)

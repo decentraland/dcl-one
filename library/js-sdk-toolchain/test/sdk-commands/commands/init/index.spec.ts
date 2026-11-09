@@ -67,6 +67,19 @@ describe('init command', () => {
     expect(rmdirSpy).toHaveBeenCalled()
   })
 
+  it('main: removes the downloaded zip when the extraction fails', async () => {
+    const components = await initComponents()
+    jest.spyOn(fsUtils, 'download').mockImplementation()
+    jest.spyOn(fsUtils, 'extract').mockRejectedValue(new Error('corrupt'))
+    const removeSpy = jest.spyOn(components.fs, 'unlink').mockImplementation()
+
+    await expect(init.main({ args: { _: [], '--yes': true, '--skip-install': true }, components })).rejects.toThrow(
+      'corrupt'
+    )
+
+    expect(removeSpy).toHaveBeenCalled()
+  })
+
   it('main: should throw if something wrong happens', async () => {
     jest.spyOn(fsUtils, 'download').mockImplementation(() => {
       throw new Error()

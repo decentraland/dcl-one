@@ -12,7 +12,7 @@ import { buildScene } from '../build'
 
 interface Options {
   args: Result<typeof args>
-  components: Pick<CliComponents, 'fs' | 'logger' | 'analytics' | 'spawner'>
+  components: Pick<CliComponents, 'fs' | 'logger' | 'analytics' | 'spawner' | 'config'>
 }
 
 export const args = declareArgs({

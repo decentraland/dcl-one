@@ -32,7 +32,7 @@ import { getLanUrl } from './utils'
 
 interface Options {
   args: Result<typeof args>
-  components: Pick<CliComponents, 'fetch' | 'fs' | 'logger' | 'analytics' | 'spawner'>
+  components: Pick<CliComponents, 'fetch' | 'fs' | 'logger' | 'analytics' | 'spawner' | 'config'>
 }
 
 export const args = declareArgs({

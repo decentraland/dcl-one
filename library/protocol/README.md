@@ -21,7 +21,7 @@ scene preview's mini-comms addressing, proposed upstream as `feat/ws-peer-update
 Checks: `make install` (dependencies and the `google/` well-known types), `make buf-lint`,
 `make buf-build`, `make buf-breaking` (wire compatibility against this repository's `main`;
 `BUF_AGAINST` overrides the comparison input), `make test` (generates `out-ts`/`out-js`
-from `public/*.proto` and runs the room-recovery wire test). `npm run build` is the
+from `public/*.proto` and runs the room-recovery wire test). `pnpm run build` is the
 generation alone.
 
 A new SDK component is one `proto/decentraland/sdk/components/<snake_case>.proto` with
