@@ -277,8 +277,10 @@ describe('when the privileged scan reads the url allowlist', () => {
     return git('rev-parse', 'HEAD')
   }
   const allowlistFile = () => path.join(root, 'trusted/library/ui/figma/key-guard-allow.json')
-  // Runs the real scan step with main's real key guard and a synthetic key. RUNNER_TEMP is a real path, as on
-  // a runner: the guard only starts when the path node was given is the path of its own module.
+  // Runs the real scan step with main's real key guard and a synthetic key, pinned like the workflow pins it:
+  // TRUSTED_SHA is the event's default branch commit, here the checkout's HEAD when the run starts unless a
+  // case sets it. RUNNER_TEMP is a real path, as on a runner: the guard only starts when the path node was
+  // given is the path of its own module.
   const scan = (env: Record<string, string>) =>
     spawnSync(
       'bash',
@@ -290,6 +292,8 @@ describe('when the privileged scan reads the url allowlist', () => {
           ...defaults(),
           GIT_CONFIG_NOSYSTEM: '1',
           GIT_CONFIG_GLOBAL: '/dev/null',
+          GIT_NO_REPLACE_OBJECTS: '1',
+          TRUSTED_SHA: git('rev-parse', 'HEAD'),
           FIGMA_FILE_KEY: 'SyntheticKeyExample0',
           ARTIFACT_REQUIRED: 'false',
           RUNNER_TEMP: realpathSync(root),
@@ -319,7 +323,7 @@ describe('when the privileged scan reads the url allowlist', () => {
     const result = scan({ BASE: mainBase, HEAD_SHA: headSha })
     expect(result.status).not.toBe(0)
     expect(result.stdout).toContain(`figma-key-guard at ${mainBase}`)
-    expect(result.stdout).toContain('allowlisted public file ids in 0 paths from HEAD')
+    expect(result.stdout).toContain(`allowlisted public file ids in 0 paths from ${mainBase}`)
     expect(result.stdout).toContain(`FAIL url ${headSha.slice(0, 12)}:docs/link.md`)
     expect(result.stdout).not.toContain('SyntheticKeyExample0')
   })
@@ -330,7 +334,7 @@ describe('when the privileged scan reads the url allowlist', () => {
     const result = scan({ BASE: mainBase, HEAD_SHA: headSha })
     expect(result.status, result.stdout + result.stderr).toBe(0)
     expect(result.stdout).toContain(`figma-key-guard at ${landed}`)
-    expect(result.stdout).toContain('allowlisted public file ids in 1 paths from HEAD')
+    expect(result.stdout).toContain(`allowlisted public file ids in 1 paths from ${landed}`)
     expect(result.stdout).toContain('result: PASS')
   })
 
@@ -344,14 +348,31 @@ describe('when the privileged scan reads the url allowlist', () => {
 
   it('should run the committed key guard, never a working tree copy an earlier step replaced', async () => {
     await writeFile(allowlistFile(), entry)
-    commit()
+    const landed = commit()
     const committed = await readFile(path.join(root, 'trusted/library/ui/figma/key-guard.mjs'))
     await writeFile(path.join(root, 'trusted/library/ui/figma/key-guard.mjs'), tampered)
     const result = scan({ BASE: mainBase, HEAD_SHA: headSha })
     expect(result.status, result.stdout + result.stderr).toBe(0)
     expect(existsSync(path.join(root, 'leak'))).toBe(false)
-    expect(result.stdout).toContain('allowlisted public file ids in 1 paths from HEAD')
+    expect(result.stdout).toContain(`allowlisted public file ids in 1 paths from ${landed}`)
     expect(await readFile(path.join(root, 'key-guard.mjs'))).toEqual(committed)
+  })
+
+  it('should run the pinned guard when an earlier step commits a tampered one to the checkout HEAD', async () => {
+    await writeFile(allowlistFile(), entry)
+    const pinned = commit()
+    const committed = await readFile(path.join(root, 'trusted/library/ui/figma/key-guard.mjs'))
+    // The earlier step: a tampered guard, and an allowlist that would hide every url, committed onto HEAD.
+    await writeFile(path.join(root, 'trusted/library/ui/figma/key-guard.mjs'), tampered)
+    await writeFile(allowlistFile(), '[]')
+    const moved = commit()
+    expect(git('cat-file', 'blob', 'HEAD:library/ui/figma/key-guard.mjs')).toContain('leak')
+    const result = scan({ BASE: mainBase, HEAD_SHA: headSha, TRUSTED_SHA: pinned })
+    expect(result.status, result.stdout + result.stderr).toBe(0)
+    expect(existsSync(path.join(root, 'leak'))).toBe(false)
+    expect(await readFile(path.join(root, 'key-guard.mjs'))).toEqual(committed)
+    expect(result.stdout).toContain(`allowlisted public file ids in 1 paths from ${pinned}`)
+    expect(moved).not.toBe(pinned)
   })
 
   it('should ignore a replace ref an earlier step created for the committed key guard', async () => {
