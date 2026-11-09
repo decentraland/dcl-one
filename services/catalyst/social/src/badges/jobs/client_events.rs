@@ -34,6 +34,15 @@ const READ: IdSource = IdSource {
 const SESSION_GAP_MS: i64 = 2 * 3_600_000;
 /// The session moves read back for one traveler event at most.
 const SESSION_MOVES: i64 = 1_000;
+/// The steps one `walked-distance` event counts at most. The explorer
+/// reports on step thresholds, far below this; a larger count (a client
+/// asserting ten million steps) counts this much, a Walkabout Starter.
+pub(crate) const MAX_STEPS_PER_EVENT: f64 = 10_000.0;
+/// The highest `vertical-height-reached` height taken, in meters; above it
+/// the event is passed. Scene height grows with the parcel count (20 m
+/// times log2 of parcels + 1, about 330 m for a 90,000-parcel scene), so
+/// no scene reaches it.
+pub(crate) const MAX_HEIGHT: f64 = 5_000.0;
 
 #[derive(sqlx::FromRow)]
 struct Row {
@@ -129,8 +138,9 @@ pub(crate) async fn batch(pass: &Pass) -> Result<(u64, bool), sqlx::Error> {
                     continue;
                 };
                 if !skip(ev::WALKABOUT_WANDERER) {
+                    let count = count.min(MAX_STEPS_PER_EVENT) as i64;
                     award(&mut tx, &address, ev::WALKABOUT_WANDERER, notify, |p| {
-                        ev::walkabout_wanderer(p, count as i64)
+                        ev::walkabout_wanderer(p, count)
                     })
                     .await?;
                 }
@@ -145,22 +155,28 @@ pub(crate) async fn batch(pass: &Pass) -> Result<(u64, bool), sqlx::Error> {
                 }
             }
             "passport-opened" => {
-                let Some(receiver) = m["passport"]["receiver"].as_str() else {
-                    tracing::debug!(seq = row.seq, "passport-opened without a receiver: passed");
+                let Some(receiver) = m["passport"]["receiver"]
+                    .as_str()
+                    .and_then(|r| Address::parse(r).ok())
+                else {
+                    tracing::debug!(
+                        seq = row.seq,
+                        "passport-opened without a wallet receiver: passed"
+                    );
                     continue;
                 };
                 if !skip(ev::SOCIAL_BUTTERFLY) {
                     award(&mut tx, &address, ev::SOCIAL_BUTTERFLY, notify, |p| {
-                        ev::social_butterfly(p, address.as_str(), receiver)
+                        ev::social_butterfly(p, address.as_str(), receiver.as_str())
                     })
                     .await?;
                 }
             }
             "vertical-height-reached" => {
-                let Some(height) = number(&m["height"]) else {
+                let Some(height) = number(&m["height"]).filter(|h| *h <= MAX_HEIGHT) else {
                     tracing::debug!(
                         seq = row.seq,
-                        "vertical-height-reached without a height: passed"
+                        "vertical-height-reached without a plausible height: passed"
                     );
                     continue;
                 };

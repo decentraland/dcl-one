@@ -1295,7 +1295,12 @@ default, and social writes are), each a reader of tables other areas own, with o
 
 - `social.client_events` by `seq` (citizen, traveler, walkabout, moves
   master, social butterfly, vertical voyager), traveler resolving a parcel's
-  scene title through `content.active_pointers` and `content.deployments`;
+  scene title through `content.active_pointers` and `content.deployments`.
+  The values are the client's claim, as upstream took them, within bounds:
+  a `walked-distance` event counts at most 10,000 steps (the explorer
+  reports on thresholds far below it), a `vertical-height-reached` height
+  above 5,000 m is passed (no scene is that tall) and a `passport-opened`
+  receiver must be a wallet address;
 - `content.deployments` by `id` (rarity badges, profile pro, land architect,
   the store half of open for business), a wearable's rarity from its active
   entity or `shop.items`;

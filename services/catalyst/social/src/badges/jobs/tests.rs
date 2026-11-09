@@ -1093,3 +1093,49 @@ async fn a_sale_of_an_unmirrored_item_holds_until_the_item_or_a_later_pass() {
     assert_eq!(cursor(&pool, Log::Sale.source()).await, Some((103, 0)));
     assert_eq!(progress(&pool, b, "fashionista").await.unwrap().0, 1);
 }
+
+#[tokio::test]
+async fn client_event_values_are_capped_and_receivers_must_be_wallets() {
+    let Some(pool) = private_pool("badges_caps").await else {
+        return;
+    };
+    let p = pass(&pool);
+    client_events::batch(&p).await.unwrap();
+    let a = fresh_address();
+    let a = a.as_str();
+    let t = now();
+    for (sub_type, metadata) in [
+        ("walked-distance", json!({"stepCount": 10_000_000})),
+        ("walked-distance", json!({"stepCount": "2500"})),
+        ("vertical-height-reached", json!({"height": 1e9})),
+        (
+            "passport-opened",
+            json!({"passport": {"receiver": "not-a-wallet"}}),
+        ),
+        (
+            "passport-opened",
+            json!({"passport": {"receiver": format!("0x{}", "f".repeat(32 * 1024))}}),
+        ),
+    ] {
+        client_event(&pool, a, sub_type, None, t, metadata).await;
+    }
+    assert_eq!(drain_client_events(&p).await, 5);
+    assert_eq!(
+        progress(&pool, a, "walkabout_wanderer").await.unwrap().0,
+        client_events::MAX_STEPS_PER_EVENT as i32 + 2_500
+    );
+    assert_eq!(progress(&pool, a, "vertical_voyager").await, None);
+    assert_eq!(progress(&pool, a, "social_butterfly").await, None);
+
+    client_event(
+        &pool,
+        a,
+        "vertical-height-reached",
+        None,
+        t,
+        json!({"height": client_events::MAX_HEIGHT}),
+    )
+    .await;
+    drain_client_events(&p).await;
+    assert!(progress(&pool, a, "vertical_voyager").await.unwrap().2);
+}
