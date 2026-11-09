@@ -3,7 +3,7 @@
 // the wire shapes React sees live in the shared protocol. Only the methods the domains use
 // are declared — extend as needed.
 import type { ActionWire, Setting } from '../../src/engine/protocol'
-import type { SerializedProfile } from './domains/profile'
+import type { CompactProfile, SerializedProfile } from './domains/profile'
 import type {
   AnalyticsEvent,
   AvatarModifierState,
@@ -215,6 +215,10 @@ export type BevyApiInterface = {
    *  guests included), resolved through its profile cache and fetch cascade. Rejects once the
    *  engine has concluded the address can't be resolved. */
   getUserProfile: (address: string) => Promise<SerializedProfile>
+  /** The compact profiles (name, claimed-name flag, name colour, face) of a list of addresses in
+   *  one call, through the engine's profile cache: what a list row shows. In request order; an
+   *  address the engine can't resolve is left out. At most 200 addresses; more rejects. */
+  getCompactProfiles: (addresses: string[]) => Promise<CompactProfile[]>
   kernelFetch: (req: KernelFetchRequest) => Promise<KernelFetchResponse>
   /** Each service's base url by its web param, as the engine resolves it: the service's
    *  override, else its composition from the base domain. */

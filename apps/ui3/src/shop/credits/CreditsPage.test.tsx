@@ -7,6 +7,7 @@ import type { FakeHandlers } from "../checkout/fakes";
 import { BOOK } from "../payment/fixtures";
 import type { ShopWalletHost } from "../wallet/session";
 import CreditsPage from "./CreditsPage";
+import { ORDER_NOT_FOUND } from "./payments-stripe";
 import { RESUME_CART_KEY } from "../checkout/purchase/cart";
 import { bindBuyNowTopUp, bindTopUpReturn, stashBuyNowTopUp, stashTopUpReturn, takeTopUpReturn } from "./returns";
 
@@ -151,7 +152,7 @@ describe("the credits page", () => {
   it("an order nobody made ends on 'we couldn't find it', never on 'your payment went through'", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      renderCredits({ path: "/shop/credits?order=made-up", handlers: { packOrder: () => ({ status: 404, body: { ok: false, error: "order not found", message: "order not found" } }) } });
+      renderCredits({ path: "/shop/credits?order=made-up", handlers: { packOrder: () => ({ status: 404, body: { ok: false, error: ORDER_NOT_FOUND, message: ORDER_NOT_FOUND } }) } });
       // Past the grace a lagging replica needs, while the poll would still be waiting for a payment.
       await act(async () => {
         await vi.advanceTimersByTimeAsync(20_000);

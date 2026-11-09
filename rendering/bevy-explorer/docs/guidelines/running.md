@@ -106,8 +106,9 @@ header. It supports at most eight concurrent clients and disconnects a slow subs
 instead of delaying requests.
 
 Observed transports are content-budget downloads (including asset and catalog blobs),
-active-entity POSTs, font metadata, realm `/about` and `/scenes`, registry profiles,
-signed comms login and gatekeeper adapters. Each admitted retry has its own trace; the
+active-entity POSTs, font metadata, realm `/about` and `/scenes`, the catalyst's profile
+batches (`/lambdas/profiles` and `/lambdas/profiles/metadata`), signed comms login and gatekeeper
+adapters. Each admitted retry has its own trace; the
 existing scheduler permit remains held through the response body. A status-only response
 reports zero consumed body bytes. Redirects show the initial request and final response,
 without intermediate hops.

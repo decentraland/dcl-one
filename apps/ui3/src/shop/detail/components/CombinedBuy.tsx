@@ -53,7 +53,6 @@ type CombinedPhase =
 
 const FALLBACK = "We couldn't complete the purchase. Nothing was charged.";
 const REVERTED = "The purchase failed on-chain, so nothing was bought. The Credits it held come back on their own.";
-const REVERTED_RETURNED = "The purchase failed on-chain, so nothing was bought, and your Credits were returned.";
 
 // A split sent and not confirmed yet, per account and item, in this tab. The run writes it itself, so it is there however
 // the split was started (Buy now's dialog or the page's) and even when its screen is gone by then (an account switched
@@ -159,6 +158,15 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
   const lineId = cartLineId(line.asset, line.listing);
   const [sent, setSent] = useState(() => readSentSplit(wallet.account, lineId));
   useEffect(() => setSent(readSentSplit(wallet.account, lineId)), [wallet.account, lineId]);
+  // Drawn again the moment the hold runs out, so a record with nothing to read can then be let go by Check again.
+  const [, setExpiredTick] = useState(0);
+  useEffect(() => {
+    if (!sent) return;
+    const left = sent.at + SENT_HOLD_MS - Date.now();
+    if (left <= 0) return;
+    const t = setTimeout(() => setExpiredTick((n) => n + 1), left + 1);
+    return () => clearTimeout(t);
+  }, [sent]);
   const [checking, setChecking] = useState(false);
   const provider = wallet.session.kind === "web3" ? (wallet.host?.provider?.() ?? null) : null;
   const busy = phase.kind === "working";
@@ -276,7 +284,7 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
         isRejection(e) || isSignatureDeclined(e)
           ? "You cancelled the request in your wallet. Nothing was charged."
           : isRevertedTxError(e)
-            ? "The purchase failed on-chain. Nothing was bought and your Credits were returned."
+            ? REVERTED
             : friendlyError(e, FALLBACK, { sale: true });
       setPhase({ kind: "error", message });
     }
@@ -303,7 +311,8 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
       if (!busy) setPhase({ kind: "review" });
     },
     remembered: sent !== null,
-    checkable: !!sent?.txHash && sent.chainId !== null,
+    // A receipt to read, or a hold that has run out (Check again then lets the item go).
+    checkable: !!sent && ((!!sent.txHash && sent.chainId !== null) || !held(sent, Date.now())),
     checking,
     checkAgain: async () => {
       // Read even past the hold: a purchase that mined in the meantime is completed, never offered a second time.
@@ -324,9 +333,10 @@ export function useCombinedBuy({ line, offer, mixed, onDone }: { line: CartAddIn
           if (receipt) {
             release();
             if (receipt.status === "reverted") {
-              // The only purchase this credit went into reverted, so nothing consumed it: release it now.
-              const returned = record.creditId ? await cancelUsdIntents([record.creditId], services.client).then(() => true, () => false) : false;
-              setPhase({ kind: "error", message: returned ? REVERTED_RETURNED : REVERTED });
+              // The only purchase this credit went into reverted, so nothing consumed it: retire it now, as the live path
+              // does. Retired credits come back with the expiry sweep, not at once, which is what the copy says.
+              if (record.creditId) await cancelUsdIntents([record.creditId], services.client).catch(() => 0);
+              setPhase({ kind: "error", message: REVERTED });
             } else {
               setPhase({ kind: "success", txHash: record.txHash });
               onDone?.(record.txHash);

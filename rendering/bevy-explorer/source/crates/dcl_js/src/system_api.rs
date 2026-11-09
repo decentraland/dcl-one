@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use bevy::{log::debug, math::Vec4};
 use common::{
     inputs::{Action, BindingsData, HudPanel, InputIdentifier, SystemActionEvent},
-    profile::SerializedProfile,
+    profile::{CompactProfile, SerializedProfile},
     rpc::{RpcCall, RpcResultReceiver, RpcResultSender, RpcStreamReceiver, RpcStreamSender},
     structs::{
         MicState, PermissionLevel, PermissionStrings, PermissionType, PermissionUsed,
@@ -680,6 +680,48 @@ pub async fn op_get_user_profile(
     rx.await
         .map_err(|e| anyhow::anyhow!(e))?
         .map_err(|_| anyhow::anyhow!("Not found"))
+}
+
+/// The most addresses one `getCompactProfiles` call may ask about.
+pub const COMPACT_PROFILES_MAX: usize = 200;
+
+/// The compact profiles (name, claimed-name flag, name colour, face) of a list of addresses
+/// in one call, through the engine's profile cache: what a list row shows, without fetching
+/// whole profiles. In request order; an address that can't be resolved is left out.
+/// Only the system scene may call it (the web worker exposes every op to every scene), with at
+/// most `COMPACT_PROFILES_MAX` addresses: one call bypasses the per-tick RPC limit, and every
+/// address it names stays cached and fetched until the answer is complete.
+pub async fn op_get_compact_profiles(
+    state: Rc<RefCell<impl State>>,
+    addresses: Vec<String>,
+) -> Result<Vec<CompactProfile>, anyhow::Error> {
+    if !state.borrow().has::<SuperUserScene>() {
+        anyhow::bail!("getCompactProfiles is only available to the system scene");
+    }
+    if addresses.len() > COMPACT_PROFILES_MAX {
+        anyhow::bail!(
+            "getCompactProfiles takes at most {COMPACT_PROFILES_MAX} addresses, got {}",
+            addresses.len()
+        );
+    }
+
+    let (sx, rx) = RpcResultSender::channel();
+
+    let scene = state.borrow().borrow::<CrdtContext>().scene_id.0;
+    debug!(
+        "[{scene:?}] -> op_get_compact_profiles ({} addresses)",
+        addresses.len()
+    );
+
+    state
+        .borrow_mut()
+        .borrow_mut::<RpcCalls>()
+        .push(RpcCall::GetCompactProfiles {
+            addresses,
+            response: sx,
+        })?;
+
+    rx.await.map_err(|e| anyhow::anyhow!(e))
 }
 
 pub fn op_quit(state: Rc<RefCell<impl State>>) {
