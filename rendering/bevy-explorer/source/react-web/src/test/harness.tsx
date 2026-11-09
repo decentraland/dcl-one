@@ -6,13 +6,19 @@
 // domain test assert: (a) every action posts the exact wire message, and (b) every
 // inbound message kind updates the session state. No engine, no BroadcastChannel.
 
-import { renderHook, act, waitFor, type RenderHookResult } from '@testing-library/react'
+import { render, renderHook, act, waitFor, type RenderHookResult } from '@testing-library/react'
 import { expect, vi } from 'vitest'
 import type { LoginDriver, NewAccountPick } from '../engine/driver'
 import type { AuthIdentity } from '../features/auth/sso'
 import type { PageToScene, SceneToPage } from '../engine/protocol'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
 import { useEngineSession, type EngineSession, type ProfileState } from '../features/session/useEngineSession'
+
+export async function renderSettled(...args: Parameters<typeof render>): Promise<ReturnType<typeof render>> {
+  let view!: ReturnType<typeof render>
+  await act(async () => { view = render(...args) })
+  return view
+}
 
 export class FakeDriver implements LoginDriver {
   /** Every page→scene message posted via `send` (the API calls under test). */
