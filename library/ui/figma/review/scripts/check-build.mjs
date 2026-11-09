@@ -60,8 +60,15 @@ async function serve(dist, prefix, createServer) {
         record(404)
         return void response.writeHead(404).end()
       }
-      let file = path.join(dist, decodeURIComponent(url.pathname.slice(prefix.length)))
-      if (!file.startsWith(dist)) {
+      let file
+      try {
+        file = path.join(dist, decodeURIComponent(url.pathname.slice(prefix.length)))
+      } catch {
+        record(400)
+        return void response.writeHead(400).end()
+      }
+      const relative = path.relative(dist, file)
+      if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
         record(403)
         return void response.writeHead(403).end()
       }

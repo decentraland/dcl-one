@@ -66,7 +66,6 @@ async function report(output: Record<string, string>, extra: Record<string, stri
       ...defaults(),
       OUTCOME: 'skipped',
       SKIP_REASON: output.reason ?? '',
-      SKIP_CONCLUSION: output.conclusion ?? '',
       ...extra
     }
   })
