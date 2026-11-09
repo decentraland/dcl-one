@@ -28,10 +28,18 @@
 //! explicit clear routes delete). The scenes of a world never share a
 //! namespace, so a guest reaches storage only through this surface with the
 //! capability the delegation names, never SQL and never another scene's
-//! values or env values (the namespace is in every statement). Quotas still
-//! span the whole world (`store::size_info_sql`).
+//! values or env values (the namespace is in every statement). A world's
+//! quota, and the `/usage` numbers, span its active scenes and legacy scopes
+//! but exclude scenes retired by an undeploy or by a redeploy into a new
+//! place (inactive `explore.world_scene_place` identities); a shared realm's
+//! is per scene (`store::size_info_sql`). Retired rows are kept as a safety
+//! copy: no undeploy, redeploy, world deletion, sweep or mirror deletes them,
+//! and the clear routes reach only the resolved active scene.
 //! `GET /collaborator` ([`collaborator`]) lists the scenes a signer reaches
-//! through `logsPermissions`; it needs no scene context. `POST /exports`
+//! through `logsPermissions`; it needs no scene context and no deployment
+//! consumer feeds it: it is read from the active deployments'
+//! `metadata.logsPermissions` (`worlds.logs_permissions`) on every request,
+//! where upstream keeps a table fed by an SQS deployment queue. `POST /exports`
 //! ([`export`]) admits owners, deployers and collaborators only, and refuses
 //! the authoritative server even when it holds a grant.
 
@@ -81,18 +89,19 @@ pub const AUTHORITATIVE_EXPORT_MSG: &str =
 /// under the old names; [`Settings::resolve`] checks them.
 #[derive(Debug, Clone)]
 pub struct RawSettings {
-    /// `ENCRYPTION_KEY`: 64 hex characters; unset leaves the env routes
-    /// answering 503 and every other route serving.
+    /// `ENCRYPTION_KEY`: exactly 64 hex characters, required (unset refuses
+    /// to start, as upstream's `requireString`).
     pub encryption_key: Option<String>,
     /// `AUTHORITATIVE_SERVER_ADDRESS`: the signer always authorized, and the
     /// only wallet whose storage delegations are trusted (shared with comms).
     pub authoritative_server_address: Option<String>,
     /// `AUTHORIZED_ADDRESSES`: comma-separated wallets always authorized.
     pub authorized_addresses: String,
-    /// `STORAGE_CACHE_ENABLED` (unset disables the process-local cache),
-    /// `STORAGE_CACHE_TTL_SECONDS` (60), `STORAGE_CACHE_MAX` (8000),
+    /// `STORAGE_CACHE_ENABLED` (anything but exactly `false`, unset included,
+    /// enables the process-local cache, as upstream's),
+    /// `STORAGE_CACHE_TTL_SECONDS` (60), `STORAGE_CACHE_MAX` (8000, LRU),
     /// `STORAGE_CACHE_MAX_VALUE_BYTES` (32768).
-    pub storage_cache_enabled: Option<bool>,
+    pub storage_cache_enabled: Option<String>,
     pub storage_cache_ttl_seconds: u64,
     pub storage_cache_max: u64,
     pub storage_cache_max_value_bytes: u64,
@@ -107,12 +116,15 @@ pub struct RawSettings {
     pub player_max_total_size_bytes: i64,
     /// `EXPORT_MAX_CONCURRENT_PER_SCENE` (1), `EXPORT_MAX_CONCURRENT_PER_POD`
     /// (5, per process), `EXPORT_SCENE_COOLDOWN_SECONDS` (10),
-    /// `EXPORT_TIMEOUT_SECONDS` (120), `EXPORT_MAX_SIZE_BYTES` (524288000 raw).
+    /// `EXPORT_TIMEOUT_SECONDS` (120, from admission), `EXPORT_MAX_SIZE_BYTES`
+    /// (524288000 raw), `PG_COMPONENT_STREAM_QUERY_TIMEOUT` (120000 ms, each
+    /// export statement). Any value is accepted, as upstream's.
     pub export_max_concurrent_per_scene: u64,
     pub export_max_concurrent_per_pod: u64,
     pub export_scene_cooldown_seconds: u64,
     pub export_timeout_seconds: u64,
     pub export_max_size_bytes: u64,
+    pub export_stream_query_timeout_ms: u64,
 }
 
 impl Default for RawSettings {
@@ -143,13 +155,14 @@ impl RawSettings {
             export_scene_cooldown_seconds: 10,
             export_timeout_seconds: 120,
             export_max_size_bytes: 524_288_000,
+            export_stream_query_timeout_ms: 120_000,
         }
     }
 }
 
 #[derive(Clone)]
 pub struct Settings {
-    pub encryption_key: Option<[u8; 32]>,
+    pub encryption_key: [u8; 32],
     pub authoritative_server_address: Option<Address>,
     pub authorized_addresses: Vec<Address>,
     pub storage_cache: StorageCacheConfig,
@@ -162,7 +175,7 @@ pub struct Settings {
 impl std::fmt::Debug for Settings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Settings")
-            .field("encryption_key", &self.encryption_key.map(|_| "<set>"))
+            .field("encryption_key", &"<set>")
             .field(
                 "authoritative_server_address",
                 &self.authoritative_server_address,
@@ -177,13 +190,6 @@ impl std::fmt::Debug for Settings {
     }
 }
 
-fn at_least_one(name: &str, value: u64) -> anyhow::Result<u64> {
-    if value == 0 {
-        anyhow::bail!("{name} must be at least 1");
-    }
-    Ok(value)
-}
-
 fn positive(name: &str, value: i64) -> anyhow::Result<i64> {
     if value <= 0 {
         anyhow::bail!("{name} must be positive, got {value}");
@@ -192,25 +198,14 @@ fn positive(name: &str, value: i64) -> anyhow::Result<i64> {
 }
 
 impl Settings {
-    /// Checks the settings the way the old binary did at startup: a malformed
-    /// key, a non-wallet address or a non-positive limit refuses to start; an
-    /// unset key is a warning (the env routes answer 503).
+    /// Checks the settings the way the old binary did at startup: a missing
+    /// or malformed key, a non-wallet address or a non-positive limit refuses
+    /// to start. The export settings take any value, as upstream's.
     pub fn resolve(raw: RawSettings) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            (1..=export::MAX_TIMEOUT_SECONDS).contains(&raw.export_timeout_seconds),
-            "EXPORT_TIMEOUT_SECONDS must be between 1 and {}",
-            export::MAX_TIMEOUT_SECONDS
-        );
-        let encryption_key = raw
-            .encryption_key
-            .as_deref()
-            .map(parse_encryption_key)
-            .transpose()?;
-        if encryption_key.is_none() {
-            tracing::warn!(
-                "ENCRYPTION_KEY unset; the world-storage /env routes answer 503, /values and /players serve"
-            );
-        }
+        let encryption_key =
+            parse_encryption_key(raw.encryption_key.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("ENCRYPTION_KEY (or ENCRYPTION_KEY_FILE) is required")
+            })?)?;
         let authoritative_server_address = match raw
             .authoritative_server_address
             .as_deref()
@@ -239,18 +234,12 @@ impl Settings {
                 "AUTHORITATIVE_SERVER_ADDRESS unset; world-storage scoped delegations are refused (owners and deployers still write)"
             );
         }
-        let cache_enabled = raw.storage_cache_enabled.unwrap_or(false);
-        if cache_enabled {
-            tracing::warn!(
-                "STORAGE_CACHE_ENABLED=true requires a single storage-serving process; reads may be stale up to STORAGE_CACHE_TTL_SECONDS after another process's write"
-            );
-        }
         Ok(Self {
             encryption_key,
             authoritative_server_address,
             authorized_addresses,
             storage_cache: StorageCacheConfig {
-                enabled: cache_enabled,
+                enabled: raw.storage_cache_enabled.as_deref() != Some("false"),
                 ttl_seconds: raw.storage_cache_ttl_seconds,
                 max_entries: raw.storage_cache_max,
                 max_value_bytes: raw.storage_cache_max_value_bytes as usize,
@@ -286,28 +275,25 @@ impl Settings {
                 )?,
             },
             export: ExportSettings {
-                max_concurrent_per_scene: at_least_one(
-                    "EXPORT_MAX_CONCURRENT_PER_SCENE",
-                    raw.export_max_concurrent_per_scene,
-                )? as usize,
-                max_concurrent_per_pod: at_least_one(
-                    "EXPORT_MAX_CONCURRENT_PER_POD",
-                    raw.export_max_concurrent_per_pod,
-                )? as usize,
+                max_concurrent_per_scene: usize::try_from(raw.export_max_concurrent_per_scene)
+                    .unwrap_or(usize::MAX),
+                max_concurrent_per_pod: usize::try_from(raw.export_max_concurrent_per_pod)
+                    .unwrap_or(usize::MAX),
                 scene_cooldown: Duration::from_secs(raw.export_scene_cooldown_seconds),
-                timeout: Duration::from_secs(at_least_one(
-                    "EXPORT_TIMEOUT_SECONDS",
-                    raw.export_timeout_seconds,
-                )?),
-                max_size_bytes: at_least_one("EXPORT_MAX_SIZE_BYTES", raw.export_max_size_bytes)?,
+                timeout: Duration::from_secs(raw.export_timeout_seconds),
+                max_size_bytes: raw.export_max_size_bytes,
+                stream_query_timeout: Duration::from_millis(raw.export_stream_query_timeout_ms),
             },
         })
     }
 
     /// The defaults with a fixed key and the given authoritative signer.
     pub fn for_tests(authoritative_server_address: Option<Address>) -> Self {
-        let mut s = Self::resolve(RawSettings::defaults()).expect("the defaults resolve");
-        s.encryption_key = Some([7u8; 32]);
+        let mut s = Self::resolve(RawSettings {
+            encryption_key: Some("07".repeat(32)),
+            ..RawSettings::defaults()
+        })
+        .expect("the defaults resolve");
         s.authoritative_server_address = authoritative_server_address;
         s
     }
@@ -319,7 +305,7 @@ pub struct StorageState {
     pub policy: Arc<Policy>,
     pub store: Store,
     pub settings: Settings,
-    encryptor: Option<Encryptor>,
+    encryptor: Encryptor,
     /// Contract-wallet (EIP-1654) signature check for signed-fetch chains;
     /// `None` refuses such chains.
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
@@ -338,7 +324,7 @@ impl StorageState {
     ) -> Self {
         Self {
             store: Store::new(pool.clone(), settings.storage_cache),
-            encryptor: settings.encryption_key.as_ref().map(Encryptor::new),
+            encryptor: Encryptor::new(&settings.encryption_key),
             exports: ExportLimits::new(settings.export),
             pool,
             policy,
@@ -347,14 +333,9 @@ impl StorageState {
         }
     }
 
-    /// The env cipher, or the 503 the env routes answer without a key.
+    /// The env cipher (`ENCRYPTION_KEY` is required at startup).
     pub fn encryptor(&self) -> Result<&Encryptor, ApiError> {
-        self.encryptor
-            .as_ref()
-            .ok_or(AuthorityNotEstablished::CredentialNotConfigured {
-                environment_variable: "ENCRYPTION_KEY",
-            })
-            .map_err(ApiError::from)
+        Ok(&self.encryptor)
     }
 }
 
@@ -712,10 +693,35 @@ pub async fn resolve_authorized_upsert(
         uri,
         original,
         policy,
-        Some(max_value_size),
+        Some(&move |h: &HeaderMap| handlers::check_content_length(h, max_value_size)),
     )
     .await
 }
+
+/// [`resolve_authorized`] with a route's own body check in the same place.
+pub async fn resolve_authorized_checking_body(
+    state: &StorageState,
+    headers: &HeaderMap,
+    method: &str,
+    uri: &Uri,
+    original: Option<&Uri>,
+    policy: AuthPolicy,
+    body_check: &BodyCheck,
+) -> Result<SceneContext, ApiError> {
+    resolve_and_authorize(
+        state,
+        headers,
+        method,
+        uri,
+        original,
+        policy,
+        Some(body_check),
+    )
+    .await
+}
+
+/// A declared-length check run after the scene resolved, before authorization.
+pub type BodyCheck = dyn Fn(&HeaderMap) -> Result<(), ApiError> + Sync;
 
 async fn resolve_and_authorize(
     state: &StorageState,
@@ -724,7 +730,7 @@ async fn resolve_and_authorize(
     uri: &Uri,
     original: Option<&Uri>,
     policy: AuthPolicy,
-    max_value_size: Option<i64>,
+    body_check: Option<&BodyCheck>,
 ) -> Result<SceneContext, ApiError> {
     let paths = signed_paths(headers, uri, original);
     let verified = verify_request(headers, method, &paths, state.eip1654.as_deref())
@@ -749,8 +755,8 @@ async fn resolve_and_authorize(
     let deployment = resolved
         .deployment
         .ok_or_else(|| ApiError::internal("a parcel request resolved without a deployment"))?;
-    if let Some(max) = max_value_size {
-        handlers::check_content_length(headers, max)?;
+    if let Some(check) = body_check {
+        check(headers)?;
     }
 
     if policy.refuse_authoritative_server
@@ -1115,26 +1121,46 @@ mod scene_context_tests {
         );
     }
 
+    fn keyed() -> RawSettings {
+        RawSettings {
+            encryption_key: Some("ab".repeat(32)),
+            ..RawSettings::defaults()
+        }
+    }
+
     #[test]
-    fn export_timeout_is_bounded() {
-        for seconds in [0, export::MAX_TIMEOUT_SECONDS + 1, u64::MAX] {
-            let mut raw = RawSettings::defaults();
-            raw.export_timeout_seconds = seconds;
-            assert!(
-                Settings::resolve(raw)
-                    .unwrap_err()
-                    .to_string()
-                    .contains("EXPORT_TIMEOUT_SECONDS")
-            );
+    fn export_settings_take_any_value_as_upstream() {
+        for value in [0, 1, 3601, u64::MAX] {
+            let s = Settings::resolve(RawSettings {
+                export_max_concurrent_per_scene: value,
+                export_max_concurrent_per_pod: value,
+                export_scene_cooldown_seconds: value,
+                export_timeout_seconds: value,
+                export_max_size_bytes: value,
+                export_stream_query_timeout_ms: value,
+                ..keyed()
+            })
+            .unwrap();
+            assert_eq!(s.export.max_concurrent_per_pod as u64, value);
+            assert_eq!(s.export.timeout, Duration::from_secs(value));
+            assert_eq!(s.export.max_size_bytes, value);
+            assert_eq!(s.export.stream_query_timeout, Duration::from_millis(value));
         }
-        for seconds in [1, export::MAX_TIMEOUT_SECONDS] {
-            let mut raw = RawSettings::defaults();
-            raw.export_timeout_seconds = seconds;
-            assert_eq!(
-                Settings::resolve(raw).unwrap().export.timeout,
-                Duration::from_secs(seconds)
-            );
+    }
+
+    #[test]
+    fn encryption_key_is_required() {
+        for missing in [None, Some(String::new())] {
+            let raw = RawSettings {
+                encryption_key: missing.clone(),
+                ..RawSettings::defaults()
+            };
+            assert!(Settings::resolve(raw).is_err(), "{missing:?}");
         }
+        let err = Settings::resolve(RawSettings::defaults())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("ENCRYPTION_KEY"), "{err}");
     }
 
     #[test]
@@ -1155,16 +1181,12 @@ mod scene_context_tests {
 
     #[test]
     fn settings_resolve_the_old_defaults_and_refuse_garbage() {
-        let s = Settings::resolve(RawSettings::defaults()).unwrap();
-        assert!(
-            s.encryption_key.is_none()
-                && s.authoritative_server_address.is_none()
-                && s.authorized_addresses.is_empty()
-        );
+        let s = Settings::resolve(keyed()).unwrap();
+        assert!(s.authoritative_server_address.is_none() && s.authorized_addresses.is_empty());
         assert_eq!(
             s.storage_cache,
             StorageCacheConfig {
-                enabled: false,
+                enabled: true,
                 ttl_seconds: 60,
                 max_entries: 8_000,
                 max_value_bytes: 32_768
@@ -1191,14 +1213,14 @@ mod scene_context_tests {
                 max_total_size_bytes: 1_048_576
             }
         );
+        assert_eq!(s.export, ExportSettings::default());
 
-        let mut raw = RawSettings::defaults();
-        raw.encryption_key = Some("ab".repeat(32));
+        let mut raw = keyed();
         raw.authoritative_server_address =
             Some("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into());
         raw.authorized_addresses = " 0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB ,,0xcccccccccccccccccccccccccccccccccccccccc".into();
         let s = Settings::resolve(raw.clone()).unwrap();
-        assert_eq!(s.encryption_key, Some([0xabu8; 32]));
+        assert_eq!(s.encryption_key, [0xabu8; 32]);
         assert_eq!(
             s.authoritative_server_address.as_ref().unwrap().as_str(),
             "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -1208,27 +1230,29 @@ mod scene_context_tests {
 
         raw.encryption_key = Some("short".into());
         assert!(Settings::resolve(raw.clone()).is_err());
-        raw.encryption_key = None;
+        raw.encryption_key = Some(format!(" {}", "ab".repeat(32)));
+        assert!(Settings::resolve(raw.clone()).is_err(), "never trimmed");
+        raw.encryption_key = Some("ab".repeat(32));
         raw.authorized_addresses = "nope".into();
         assert!(Settings::resolve(raw.clone()).is_err());
         raw.authorized_addresses.clear();
         raw.world_max_total_size_bytes = 0;
         assert!(Settings::resolve(raw).is_err());
-        assert_eq!(
-            Settings::resolve(RawSettings::defaults()).unwrap().export,
-            ExportSettings::default()
-        );
-        let mut raw = RawSettings::defaults();
-        raw.export_max_concurrent_per_pod = 0;
-        assert!(Settings::resolve(raw).is_err());
     }
 
     #[test]
-    fn the_storage_cache_defaults_off_on_every_node_unless_set() {
-        for (explicit, expected) in [(None, false), (Some(true), true), (Some(false), false)] {
+    fn the_storage_cache_is_on_unless_exactly_false() {
+        for (explicit, expected) in [
+            (None, true),
+            (Some("true"), true),
+            (Some(""), true),
+            (Some("0"), true),
+            (Some("FALSE"), true),
+            (Some("false"), false),
+        ] {
             let raw = RawSettings {
-                storage_cache_enabled: explicit,
-                ..RawSettings::defaults()
+                storage_cache_enabled: explicit.map(str::to_string),
+                ..keyed()
             };
             let s = Settings::resolve(raw).unwrap();
             assert_eq!(s.storage_cache.enabled, expected, "{explicit:?}");

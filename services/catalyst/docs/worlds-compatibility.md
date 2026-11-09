@@ -447,3 +447,40 @@ difference not listed here is a gap, not a decision.
   any block of the stored owner), and `owner` is `null` for a world with no
   owner (bare names, mirrored worlds); `GET /wallet/contribute` answers the
   same `owner`.
+
+## World storage
+
+The `/world-storage` routes follow
+[`decentraland/world-storage-service`](https://github.com/decentraland/world-storage-service).
+
+### Quotas, export and configuration
+
+- **Quotas of retired scenes.** A world's world, player and env quotas
+  count its active scenes and legacy scopes but not scenes retired by an
+  undeploy or by a redeploy into a new place (an inactive
+  `explore.world_scene_place` identity); the `/usage` routes report the
+  same numbers. Upstream counts every stored row of the world forever.
+  The retired scenes' rows are kept as a safety copy: no undeploy,
+  redeploy, world deletion, sweep or mirror deletes them, and the clear
+  routes reach only the active scene the request resolves to.
+- **Collaborators.** No deployment consumer (upstream's SQS queue of
+  world and catalyst deployments) maintains a collaborator table:
+  `GET /collaborator` and the collaborator grant read the active
+  deployments' `metadata.logsPermissions` (`worlds.logs_permissions`) on
+  every request.
+- **Exports.** Both row streams read one read-only repeatable-read
+  snapshot through a pooled connection; upstream reads the world rows and
+  the player rows as separate statements. Statuses, cooldown, timer,
+  caps, logging and the gzip stream otherwise follow upstream.
+- **Metrics.** The worlds routes record `http_requests_total`,
+  `http_request_duration_seconds` and `http_request_size_bytes` by
+  `method`, `handler` and `code`, as upstream's defaults; `handler` is the
+  matched route as this node mounts it (for example
+  `/world-storage/values/{key}`, upstream `/values/:key`), shared with the
+  node's other routes. The logger and pg metric families are not exported.
+- **Cache staleness (shared with upstream).** The single-value LRU is per
+  process; with several storage-serving processes, a read may be up to
+  `STORAGE_CACHE_TTL_SECONDS` stale after another process's write.
+- **Encryption key.** `ENCRYPTION_KEY` is required, as upstream. This node
+  has no committed development key, so upstream's production refusal of
+  that key has no counterpart.
