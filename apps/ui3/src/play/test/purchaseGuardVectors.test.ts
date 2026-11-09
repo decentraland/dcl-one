@@ -19,10 +19,11 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { Hex } from 'viem'
 import { decodeAbiParameters, encodeAbiParameters, encodeFunctionData, getAbiItem, parseAbi } from 'viem'
 import { COLLECTION_STORE_ABI } from '@shop/checkout/chain/abi'
-import { BOOK, ITEM } from '@shop/payment/fixtures'
+import { BOOK, CREATOR_COUPON_ADDRESS, ITEM } from '@shop/payment/fixtures'
 import { metaTxTypedData } from '../../shop/checkout/chain/metatx'
-import { creatorTrade } from '../../shop/checkout/fakes'
-import { buildStoreUseCreditsArgs, buildUseCreditsArgs, encodeUseCredits, type EnvelopeOptions, type SpendableCredit, type StoreItemToBuy, type UseCreditsArgs } from '../../shop/checkout/purchase/encoding'
+import { creatorTrade, resaleTrade } from '../../shop/checkout/fakes'
+import { getCouponManagerForTrade } from '../../shop/checkout/lib/marketplace'
+import { buildStoreUseCreditsArgs, buildUseCreditsArgs, encodeUseCredits, type EnvelopeOptions, type ListingCoupon, type SpendableCredit, type StoreItemToBuy, type UseCreditsArgs } from '../../shop/checkout/purchase/encoding'
 import { checkMetaTransaction, checkTransaction, type PurchaseIntent, WalletRefusal } from '../shell/shop/walletGuard'
 
 const FILE = join(__dirname, '../../../../../services/catalyst/tests/fixtures/shop/purchase-guard-vectors.json')
@@ -49,7 +50,23 @@ function buildVectors(): Vector[] {
   const item: StoreItemToBuy = { collection: BOOK.collection, itemId: String(ITEM), priceWei: '2300000000000000000' }
   const other: StoreItemToBuy = { collection: OTHER, itemId: '8', priceWei: '1000000000000000000' }
   const storeArgs = (over: Partial<UseCreditsArgs> = {}, items = [item], buyer = BUYER): UseCreditsArgs => ({ ...buildStoreUseCreditsArgs(STORE, items, buyer, [credit], credit.amount, ENVELOPE), ...over })
-  const marketArgs = (trades = [creatorTrade()], venue = MARKETPLACE): UseCreditsArgs => buildUseCreditsArgs(venue, trades, BUYER, [credit], credit.amount, undefined, ENVELOPE)
+  const marketArgs = (trades = [creatorTrade()], venue = MARKETPLACE, buyer = BUYER, coupons?: ListingCoupon[]): UseCreditsArgs =>
+    buildUseCreditsArgs(venue, trades, buyer, [credit], credit.amount, coupons, ENVELOPE)
+  const coupon = {
+    id: 'sale-1',
+    signer: BOOK.creator,
+    couponManager: getCouponManagerForTrade(creatorTrade())!,
+    couponAddress: CREATOR_COUPON_ADDRESS,
+    checks: { uses: 10, expiration: NOW_S * 1000 + 86_400_000, effective: NOW_S * 1000 - 1_000, salt: '0x00', contractSignatureIndex: 0, signerSignatureIndex: 0, allowedRoot: '0x', externalChecks: [] },
+    discountType: 1,
+    discount: 100_000,
+    root: '0x' + '00'.repeat(32),
+    signature: '0x' + 'bb'.repeat(65),
+    proof: []
+  } as unknown as ListingCoupon
+  const accept = { sale: { venue: MARKETPLACE, call: 'accept' as const } }
+  const withCoupon = { sale: { venue: MARKETPLACE, call: 'acceptWithCoupon' as const } }
+  const expiring = (expiresAt: number) => typed(encodeUseCredits({ ...storeArgs(), externalCall: { ...storeArgs().externalCall, expiresAt: BigInt(expiresAt) } }))
   const intent = (over: Partial<IntentData> = {}): IntentData => ({
     buyer: BUYER,
     chainId: CHAIN,
@@ -82,6 +99,8 @@ function buildVectors(): Vector[] {
     signs('the confirmed creator listing through its marketplace', typed(encodeUseCredits(marketArgs())), { sale: { venue: MARKETPLACE, call: 'accept' } }),
     signs('a cart group: one mint per confirmed unit, in any order', typed(encodeUseCredits(storeArgs({}, [other, item, other]))), { units }),
     signs('a cart group: one trade per confirmed unit through the marketplace', typed(encodeUseCredits(marketArgs([creatorTrade(), creatorTrade()]))), { sale: { venue: MARKETPLACE, call: 'accept' }, units: [unit, unit] }),
+    signs('the confirmed creator listing with its coupon', typed(encodeUseCredits(marketArgs([creatorTrade()], MARKETPLACE, BUYER, [coupon]))), withCoupon),
+    signs('an external call that expires exactly at the guard’s policy', expiring(NOW_S + 2 * 86400)),
 
     refuses('another domain name', { ...t, domain: { ...t.domain, name: 'Decentraland MANA' } }),
     refuses('another domain version', { ...t, domain: { ...t.domain, version: '2' } }),
@@ -90,12 +109,13 @@ function buildVectors(): Vector[] {
     refuses('a chainId beside the salt', { ...t, domain: { ...t.domain, chainId: 1 } }),
     refuses('no declared types', { ...t, types: {} }),
     refuses('a changed MetaTransaction type', { ...t, types: { ...t.types, MetaTransaction: [{ name: 'nonce', type: 'uint256' }, { name: 'from', type: 'address' }] } }),
+    refuses('the MetaTransaction fields in another order', { ...t, types: { ...t.types, MetaTransaction: [{ name: 'from', type: 'address' }, { name: 'nonce', type: 'uint256' }, { name: 'functionData', type: 'bytes' }] } }),
     refuses('another primary type', { ...t, primaryType: 'Permit' }),
     refuses('an extra message field', { ...t, message: { ...t.message, value: '1' } }),
     refuses('a message from someone else', { ...t, message: { ...t.message, from: OTHER } }),
     refuses('a signature asked for another account', t, {}, OTHER),
 
-    refuses('a call other than useCredits', typed(encodeFunctionData({ abi: parseAbi(['function revokeCredits(bytes32[] hashes)']), functionName: 'revokeCredits', args: [[]] }))),
+    refuses('a call other than useCredits', typed(encodeFunctionData({ abi: parseAbi(['function getNonce(address _signer) view returns (uint256)']), functionName: 'getNonce', args: [BUYER as Hex] }))),
     refuses('two credits', typed(encodeUseCredits({ ...storeArgs(), credits: [...storeArgs().credits, ...storeArgs().credits], creditsSignatures: [credit.signature as Hex, credit.signature as Hex] }))),
     refuses('MANA from the wallet', typed(encodeUseCredits(storeArgs({ maxUncreditedValue: 1n })))),
     refuses('more than the credit holds', typed(encodeUseCredits(storeArgs({ maxCreditedValue: 4n * 10n ** 18n })))),
@@ -105,7 +125,8 @@ function buildVectors(): Vector[] {
     refuses('another collection', typed(encodeUseCredits(storeArgs({}, [{ ...item, collection: OTHER }])))),
     refuses('someone else as the beneficiary', typed(encodeUseCredits(storeArgs({}, [item], OTHER)))),
     refuses('two items for one confirmed', typed(encodeUseCredits(storeArgs({}, [item, item])))),
-    refuses('externalCall.expiresAt exceeds the guard’s policy', typed(encodeUseCredits({ ...storeArgs(), externalCall: { ...storeArgs().externalCall, expiresAt: BigInt(NOW_S + 365 * 86400) } }))),
+    refuses('externalCall.expiresAt exceeds the guard’s policy', expiring(NOW_S + 365 * 86400)),
+    refuses('externalCall.expiresAt one second past the guard’s policy', expiring(NOW_S + 2 * 86400 + 1)),
     refuses('calldata it can’t decode', typed('0xdeadbeef')),
     refuses('a listing when the confirmed sale was the store’s mint', typed(encodeUseCredits(marketArgs([creatorTrade()], STORE)))),
     refuses('an empty confirmation', t, { units: [] }),
@@ -116,6 +137,12 @@ function buildVectors(): Vector[] {
     refuses('a cart group with one of an item for two of another', typed(encodeUseCredits(storeArgs({}, [item, item, other]))), { units }),
     refuses('a cart group with a unit for someone else among the buyer’s', typed(encodeUseCredits(mixed)), { units: units.slice(0, 2) }),
     refuses('a cart group of one trade for two confirmed units', typed(encodeUseCredits(marketArgs([creatorTrade()]))), { sale: { venue: MARKETPLACE, call: 'accept' }, units: [unit, unit] }),
+
+    refuses('a listing that sends the item to someone else', typed(encodeUseCredits(marketArgs([creatorTrade()], MARKETPLACE, OTHER))), accept),
+    refuses('a listing that sends two assets', typed(encodeUseCredits(marketArgs([creatorTrade({ sent: [...creatorTrade().sent, ...creatorTrade().sent] })]))), accept),
+    refuses('a resale of a minted token instead of the confirmed item', typed(encodeUseCredits(marketArgs([resaleTrade()]))), accept),
+    refuses('a listing with a coupon when the confirmed sale had none', typed(encodeUseCredits(marketArgs([creatorTrade()], MARKETPLACE, BUYER, [coupon]))), accept),
+    refuses('a coupon listing that sends the item to someone else', typed(encodeUseCredits(marketArgs([creatorTrade()], MARKETPLACE, OTHER, [coupon]))), withCoupon),
 
     send('the same call sent directly: to the manager, from the buyer, no value, fee fields allowed', { from: BUYER, to: MANAGER, data, maxFeePerGas: '0x1' }, 'send'),
     send('a direct send from someone else', { from: OTHER, to: MANAGER, data }, 'refuse'),
