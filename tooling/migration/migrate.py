@@ -1030,7 +1030,7 @@ def cmd_blobs(args, sources):
     return 1 if counts['failed'] else 0
 
 
-# Every URL string in the imported badges' and tiers' `assets` documents (on the target).
+# Every string in the badges' and tiers' `assets` documents (on the target).
 BADGE_ART_URLS = """
 SELECT encode(convert_to(o, 'UTF8'), 'hex'), encode(convert_to(u, 'UTF8'), 'hex') FROM (
     SELECT DISTINCT o, v #>> '{}' AS u FROM (
@@ -1043,7 +1043,7 @@ SELECT encode(convert_to(o, 'UTF8'), 'hex'), encode(convert_to(u, 'UTF8'), 'hex'
 
 
 def badge_art_paths(target_url, base):
-    """{path: [owner, ...]} for every asset URL under `base`; URLs elsewhere (the seed's) are not ours."""
+    """{path: [owner, ...]} for every texture path the catalog names (relative, or under `base`)."""
     paths = {}
     blobs = load_blobs_module()
     for owner, url in hex_rows(psql(target_url, BADGE_ART_URLS + ';\n'), 2):
@@ -1063,7 +1063,7 @@ def cmd_badge_art(args):
     log = lambda line: print(line, flush=True)  # noqa: E731
     paths = badge_art_paths(database_url(args.target_env), blobs.BADGE_ART_BASE)
     if not paths:
-        raise MigrationError(f'no imported badge names art under {blobs.BADGE_ART_BASE}; run `run badges` first')
+        raise MigrationError('no badge names art to mirror; run `run badges` first')
     if args.verify:
         lacking = [p for p in paths if not art_dir.has(p)]
         for path in lacking:

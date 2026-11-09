@@ -36,11 +36,14 @@ tables, so every imported badge is served with no code change.
   `criteria_steps` (e.g. `open_for_business` 2), so the node serves
   upstream's target. Tiered badges keep their tiers (`ordinal = position - 1`,
   `criteria_steps = steps`) and have `criteria_steps` NULL.
-- `assets` are upstream's URLs, built as upstream builds them
-  (`common/src/utils/legacy-assets.ts`) under its production `CDN_HOST`
-  `https://assets-cdn.decentraland.org`: a single badge's at
-  `<badge>/2d/normal.png` and `<badge>/3d/{normal,hrm,basecolor}.png`, each
-  tier's at `<badge>/<tier slot>/...`. A tiered badge has no art of its own
+- `assets` holds upstream's texture paths relative to its `CDN_HOST`, laid
+  out as upstream builds them (`common/src/utils/legacy-assets.ts`): a
+  single badge's at `<badge>/2d/normal.png` and
+  `<badge>/3d/{normal,hrm,basecolor}.png`, each tier's at
+  `<badge>/<tier slot>/...`. The node resolves them against its public asset
+  base (by default upstream's production `CDN_HOST`,
+  `https://assets-cdn.decentraland.org`, so the URLs are upstream's). A
+  tiered badge has no art of its own
   (upstream's bucket holds none): its `assets` is `{}`, and the art served
   for it is its current tier's, or its first tier's when none is earned.
   `migrate.py blobs badges` mirrors every texture these URLs name into the

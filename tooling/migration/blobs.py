@@ -455,22 +455,23 @@ def copy_all(source, store, keys, workers, window=None, copy=copy_one):
 
 # ── badge art (upstream CDN_HOST → BADGES_ASSETS_DIR) ──────────────────────
 #
-# Badge art is addressed by path, not by hash: the catalog's `assets` documents name
-# `<CDN_HOST>/<badge>[/<tier slot>]/{2d,3d}/<texture>.png`, and the node serves
-# `BADGES_ASSETS_DIR/<same path>`. Each file is written through a staging file and a rename.
+# Badge art is addressed by path, not by hash: the catalog's `assets` documents hold
+# `<badge>[/<tier slot>]/{2d,3d}/<texture>.png`, relative to upstream's CDN_HOST, and the node
+# serves `BADGES_ASSETS_DIR/<same path>`. Each file is written through a staging file and a rename.
 
-# Upstream's production CDN_HOST: the base of every URL the catalog import writes.
+# Upstream's production CDN_HOST, the node's default asset base.
 BADGE_ART_BASE = 'https://assets-cdn.decentraland.org/'
 ART_PATH = re.compile(r'[a-z0-9_-]+(/[a-z0-9_-]+)*/(2d|3d)/[a-z0-9_-]+\.png')
 PNG_MAGIC = b'\x89PNG\r\n\x1a\n'
 HTTP_TIMEOUT = 30
 
 
-def art_path(url, base=BADGE_ART_BASE):
-    """The path under `base` that `url` names, when it is badge art; else None."""
-    if not isinstance(url, str) or not url.startswith(base):
+def art_path(value, base=BADGE_ART_BASE):
+    """The badge texture path an `assets` value names: a relative path, or a URL under `base`; else
+    None (an empty slot, or art hosted elsewhere, such as the node's embedded seed art)."""
+    if not isinstance(value, str):
         return None
-    path = url[len(base):]
+    path = value[len(base):] if value.startswith(base) else value
     return path if ART_PATH.fullmatch(path) else None
 
 

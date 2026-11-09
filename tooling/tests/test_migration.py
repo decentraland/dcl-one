@@ -564,13 +564,14 @@ class BadgeArt(unittest.TestCase):
             raise urllib.error.HTTPError(request.full_url, answer, 'x', {}, None)
         return FakeResponse(answer)
 
-    def test_when_a_url_is_under_the_cdn_base_it_should_give_its_path(self):
+    def test_when_a_value_is_a_texture_path_or_a_url_under_the_cdn_base_it_should_give_its_path(self):
+        self.assertEqual(blobs.art_path('traveler/starter/2d/normal.png'), 'traveler/starter/2d/normal.png')
         self.assertEqual(blobs.art_path('https://assets-cdn.decentraland.org/traveler/starter/2d/normal.png'),
                          'traveler/starter/2d/normal.png')
 
-    def test_when_a_url_is_elsewhere_or_escapes_the_directory_it_should_give_no_path(self):
+    def test_when_a_value_is_elsewhere_or_escapes_the_directory_it_should_give_no_path(self):
         for url in ('https://badges.decentraland.org/assets/walkabout/2d/normal.png',
-                    'https://assets-cdn.decentraland.org/../etc/2d/x.png',
+                    'https://assets-cdn.decentraland.org/../etc/2d/x.png', '../x/2d/normal.png', '/x/2d/normal.png',
                     'https://assets-cdn.decentraland.org/x/2d/normal.png?y', ''):
             self.assertIsNone(blobs.art_path(url), url)
 
@@ -1345,6 +1346,9 @@ class AgainstPostgres(unittest.TestCase):
         """))
         if target_schema:
             self.sql(tgt, self.BADGES_TARGET)
+        # Only the seed rows the import replaces or deletes, whichever catalog the schema seeds.
+        self.sql(tgt, "DELETE FROM social.badge_definitions WHERE id NOT IN ('dclcitizen', 'open_for_business', "
+                      "'emotionista', 'decentraland_citizen', 'walkabout');\n")
         env = {'BADGES_DATABASE_URL': self.url(src), 'TARGET_DATABASE_URL': self.url(tgt)}
         patcher = unittest.mock.patch.dict(os.environ, env)
         patcher.start()
@@ -1373,19 +1377,18 @@ class AgainstPostgres(unittest.TestCase):
             'halloweeks_2026\tf\t1\tt\t2026-11-08 12:00:00\t2026-01-01 00:00:00.004',
             'stay_fest\tf\t600\tf\t\t2026-01-01 00:00:00.005',
         ])
-        cdn = 'https://assets-cdn.decentraland.org'
         assets = self.sql(tgt, "SELECT id, assets FROM social.badge_definitions WHERE id IN "
                                "('dclcitizen', 'emotionista') ORDER BY id;\n").splitlines()
         self.assertEqual(json.loads(assets[0].split('\t')[1]), {
-            '2d': {'normal': f'{cdn}/dclcitizen/2d/normal.png'},
-            '3d': {'normal': f'{cdn}/dclcitizen/3d/normal.png', 'hrm': f'{cdn}/dclcitizen/3d/hrm.png',
-                   'basecolor': f'{cdn}/dclcitizen/3d/basecolor.png'}})
+            '2d': {'normal': 'dclcitizen/2d/normal.png'},
+            '3d': {'normal': 'dclcitizen/3d/normal.png', 'hrm': 'dclcitizen/3d/hrm.png',
+                   'basecolor': 'dclcitizen/3d/basecolor.png'}})
         self.assertEqual(assets[1], 'emotionista\t{}')
         tiers = self.sql(tgt, "SELECT tier_id, ordinal, criteria_steps, assets->'2d'->>'normal' FROM social.badge_tiers "
                               "WHERE badge_id = 'emotionista' ORDER BY ordinal;\n").splitlines()
-        self.assertEqual(tiers, [f'emotionista-starter\t0\t1\t{cdn}/emotionista/starter/2d/normal.png',
-                                 f'emotionista-bronze\t1\t5\t{cdn}/emotionista/bronze/2d/normal.png',
-                                 f'emotionista-silver\t2\t10\t{cdn}/emotionista/silver/2d/normal.png'])
+        self.assertEqual(tiers, ['emotionista-starter\t0\t1\temotionista/starter/2d/normal.png',
+                                 'emotionista-bronze\t1\t5\temotionista/bronze/2d/normal.png',
+                                 'emotionista-silver\t2\t10\temotionista/silver/2d/normal.png'])
         self.assertEqual(self.sql(tgt, "SELECT count(*) FROM social.badge_tiers WHERE badge_id IN "
                                        "('dclcitizen', 'open_for_business', 'halloweeks_2026');\n").strip(), '0')
         self.assertEqual(self.sql(tgt, "SELECT count(*) FROM social.badge_definitions WHERE id IN "
@@ -1399,10 +1402,12 @@ class AgainstPostgres(unittest.TestCase):
         code, out = self.migrate('run', 'badges', '--step', 'catalog', '--step', 'presence_badge',
                                  sources_dir=migrate.SOURCES)
         self.assertEqual(code, 0, out)
-        self.assertEqual(self.sql(tgt, 'SELECT badge_id, location_kind, parcel, world_name, window_start, window_end, '
-                                       'mode, required_seconds, created_at FROM social.presence_badges;\n').strip(),
-                         'stay_fest\tscene\t10,-20\t\t2026-11-01 00:00:00+00\t2026-11-02 00:00:00+00\tstay\t600\t'
-                         '2026-10-30 00:00:00+00')
+        # Epoch seconds: the same instants whether the node's columns carry a time zone or hold UTC.
+        self.assertEqual(self.sql(tgt, 'SELECT badge_id, location_kind, parcel, world_name, extract(epoch FROM '
+                                       'window_start)::bigint, extract(epoch FROM window_end)::bigint, mode, '
+                                       'required_seconds, extract(epoch FROM created_at)::bigint '
+                                       'FROM social.presence_badges;\n').strip(),
+                         'stay_fest\tscene\t10,-20\t\t1793491200\t1793577600\tstay\t600\t1793318400')
 
     def test_when_importing_progress_it_should_keep_the_document_partial_steps_and_archived_badges(self):
         src, tgt = self.badges_dbs()
@@ -1465,7 +1470,7 @@ class AgainstPostgres(unittest.TestCase):
         self.sql(tgt, 'ALTER TABLE social.badge_definitions DROP COLUMN archived_at;\n')
         code, out = self.migrate('run', 'badges', '--step', 'catalog', sources_dir=migrate.SOURCES)
         self.assertEqual(code, 1, out)
-        self.assertEqual(self.sql(tgt, "SELECT count(*) FROM social.badge_definitions WHERE id = 'dclcitizen';\n")
+        self.assertEqual(self.sql(tgt, "SELECT count(*) FROM social.badge_definitions WHERE id = 'stay_fest';\n")
                          .strip(), '0')
         self.sql(tgt, 'ALTER TABLE social.badge_definitions ADD COLUMN archived_at timestamp;\n'
                       'ALTER TABLE social.user_badge_progress DROP COLUMN progress;\n'

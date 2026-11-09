@@ -3,9 +3,10 @@
 -- Every badge is imported, published or not, archived or not, with its
 -- published_at, archived_at and created_at. A badge whose only tier sits in
 -- the `root` slot is a single badge: no tier rows on the node, its root
--- tier's steps in criteria_steps. Asset URLs are upstream's (CDN_HOST +
--- <badge>[/<tier slot>]/{2d,3d}/...); a tiered badge has none of its own,
--- as upstream. `migrate.py blobs badges` mirrors the art they name.
+-- tier's steps in criteria_steps. Assets are upstream's paths relative to
+-- its CDN_HOST (<badge>[/<tier slot>]/{2d,3d}/...), which the node resolves
+-- against its public asset base; a tiered badge has none of its own, as
+-- upstream. `migrate.py blobs badges` mirrors the art they name.
 --
 -- The publication columns and criteria_steps come with the badge catalog
 -- schema; on a schema without them a non-empty batch stops instead of
@@ -46,13 +47,12 @@ BEGIN
   -- in its own directory, a tiered badge's in one directory per tier slot.
   CREATE TEMP TABLE catalog_assets ON COMMIT DROP AS
   SELECT dir, jsonb_build_object(
-             '2d', jsonb_build_object('normal', base || '/2d/normal.png'),
-             '3d', jsonb_build_object('normal', base || '/3d/normal.png', 'hrm', base || '/3d/hrm.png',
-                                      'basecolor', base || '/3d/basecolor.png')) AS assets
-  FROM (SELECT dir, 'https://assets-cdn.decentraland.org/' || dir AS base
-        FROM (SELECT id AS dir FROM catalog_badge WHERE NOT is_tier
-              UNION
-              SELECT badge_id || '/' || asset_slot FROM catalog_tier) d) x;
+             '2d', jsonb_build_object('normal', dir || '/2d/normal.png'),
+             '3d', jsonb_build_object('normal', dir || '/3d/normal.png', 'hrm', dir || '/3d/hrm.png',
+                                      'basecolor', dir || '/3d/basecolor.png')) AS assets
+  FROM (SELECT id AS dir FROM catalog_badge WHERE NOT is_tier
+        UNION
+        SELECT badge_id || '/' || asset_slot FROM catalog_tier) d;
 
   INSERT INTO social.badge_definitions AS d
       (id, name, description, category, is_tier, assets, criteria_steps, published_at, archived_at, created_at)
