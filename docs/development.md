@@ -93,7 +93,7 @@ re-running a job does not pick up a new label).
 
 Linux jobs run on `ubuntu-26.04` unless they compile the explorer or uuav natively or
 test what they compiled: those run on `ubuntu-24.04`, the image the uuav binaries lock
-records and the glibc 2.39 floor of the shipped Linux desktop and uuav
+records and the glibc 2.39 floor of the shipped Linux desktop, headless and uuav
 binaries; the 16-core Linux runner exists only as `ubuntu-24.04-16core`. macOS jobs run
 on `macos-15` (the Development workflow on `macos-26`), Windows jobs on `windows-2025`; `xlarge` and `16core` where the
 explorer's test suite and headless packages need them.
@@ -114,10 +114,8 @@ benchmark legs keep their laptop labels from `tooling/benchmark-inputs.py`.
 
 | Variable | Hosted label | Jobs | Workflows |
 | --- | --- | ---: | --- |
-| `RUNNER_LINUX_X86_UBUNTU_22_04` | `ubuntu-22.04` | 1 | bevy-explorer-headless-build |
-| `RUNNER_LINUX_X86_UBUNTU_22_04_16CORE` | `ubuntu-22.04-16core` | 1 | bevy-explorer-ci |
-| `RUNNER_LINUX_X86_UBUNTU_24_04` | `ubuntu-24.04` | 5 | bevy-explorer-ci, bevy-explorer-desktop, bevy-explorer-scenes, uuav-native, uuav-verify |
-| `RUNNER_LINUX_X86_UBUNTU_24_04_16CORE` | `ubuntu-24.04-16core` | 2 | bevy-explorer-ci (2) |
+| `RUNNER_LINUX_X86_UBUNTU_24_04` | `ubuntu-24.04` | 6 | bevy-explorer-ci, bevy-explorer-desktop, bevy-explorer-headless-build, bevy-explorer-scenes, uuav-native, uuav-verify |
+| `RUNNER_LINUX_X86_UBUNTU_24_04_16CORE` | `ubuntu-24.04-16core` | 3 | bevy-explorer-ci (3) |
 | `RUNNER_LINUX_X86` | `ubuntu-26.04` | 54 | apis-sites-images (5), bevy-explorer-benchmark (6), bevy-explorer-ci (5), bevy-explorer-ci-status (3), bevy-explorer-desktop, bevy-explorer-e2e (3), bevy-explorer-headless (3), bevy-explorer-images (3), bevy-explorer-rollout, bevy-explorer-rollout-manual, bevy-explorer-scenes (2), bevy-explorer-upstream, closed-pr-cache, development (5), gateway-images (2), nixpkgs-update, pr-labeler, protocol, sdk (2), social-captures, social-voice-release, structure (2), uuav-native (2), uuav-verify |
 | `RUNNER_LINUX_ARM` | `ubuntu-26.04-arm` | 3 | apis-sites-images, bevy-explorer-images, gateway-images |
 | `RUNNER_WINDOWS` | `windows-2025` | 4 | bevy-explorer-desktop, bevy-explorer-e2e, uuav-native, uuav-verify |
@@ -127,7 +125,7 @@ benchmark legs keep their laptop labels from `tooling/benchmark-inputs.py`.
 | `RUNNER_MACOS_26` | `macos-26` | 2 | development (2) |
 
 ```bash
-for v in RUNNER_LINUX_X86_UBUNTU_22_04 RUNNER_LINUX_X86_UBUNTU_24_04 RUNNER_LINUX_X86; do
+for v in RUNNER_LINUX_X86_UBUNTU_24_04 RUNNER_LINUX_X86; do
   gh variable set "$v" --body my-linux-runner
 done
 ```

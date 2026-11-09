@@ -355,7 +355,7 @@ jobs:
   headless-smoke:
     if: needs.changes.outputs.headless == 'true'
     name: Headless Smoke
-    runs-on: ${{ vars.RUNNER_LINUX_X86_UBUNTU_22_04_16CORE || 'ubuntu-22.04-16core' }}
+    runs-on: ${{ vars.RUNNER_LINUX_X86_UBUNTU_24_04_16CORE || 'ubuntu-24.04-16core' }}
     concurrency:
       group: ${{ github.workflow }}-headless-${{ github.ref }}
       cancel-in-progress: true
