@@ -64,7 +64,7 @@ fn websocket_ops_reject_an_unknown_rid() {
         assert_refused(script, "Bad resource ID");
     }
     for op in ["op_ws_connect", "op_ws_next_event"] {
-        let (mut runtime, _) = create_runtime(false, false, "test-ws-rid", Default::default());
+        let (mut runtime, _) = create_runtime(false, false, Default::default());
         runtime.op_state().borrow_mut().put(context(false));
         let script = format!(
             r#"Deno.core.ops.{op}(9999).then(() => {{ globalThis.__ws = "settled"; }}, (e) => {{ globalThis.__ws = String(e); }})"#
@@ -292,7 +292,7 @@ fn shared_subtrees_cannot_multiply_a_struct_argument() {
 
 #[test]
 fn a_huge_stream_length_is_not_preallocated() {
-    let (mut runtime, _) = create_runtime(false, false, "test-size-hint", Default::default());
+    let (mut runtime, _) = create_runtime(false, false, Default::default());
     runtime.op_state().borrow_mut().put(context(false));
     runtime
         .execute_script(
@@ -319,7 +319,7 @@ fn a_huge_stream_length_is_not_preallocated() {
 #[test]
 fn every_override_replaces_an_op_of_the_same_shape() {
     for super_user in [false, true] {
-        let (mut runtime, _) = create_runtime(false, super_user, "test-overrides", Default::default());
+        let (mut runtime, _) = create_runtime(false, super_user, Default::default());
         let state = runtime.op_state();
         let state = state.borrow();
         let problems = &state.borrow::<OpOverrideProblems>().0;
@@ -370,7 +370,7 @@ fn streamed_upload_reaches_the_server() {
         body
     });
 
-    let (mut runtime, _) = create_runtime(false, false, "test-upload", Default::default());
+    let (mut runtime, _) = create_runtime(false, false, Default::default());
     let state = runtime.op_state();
     {
         let mut state = state.borrow_mut();
@@ -465,7 +465,7 @@ const SWEEP_SKIPPED: &[(&str, &str)] = &[(
 /// before it is made, which names the op when one aborts the test process.
 fn sweep_client_ops(super_user: bool) {
     let kill_flag = dcl_js::KillFlag::default();
-    let (mut runtime, _) = create_runtime(false, super_user, "op-sweep", kill_flag.clone());
+    let (mut runtime, _) = create_runtime(false, super_user, kill_flag.clone());
     let (scene_sx, _scene_rx) = dcl_types::scene_response_channel();
     // dropped so ops that wait on the renderer see a closed channel instead of waiting
     let (_, renderer_rx) = tokio::sync::mpsc::unbounded_channel();

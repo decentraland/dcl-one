@@ -10,7 +10,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerE
 
 import MapSurface, { GRID_PARCELS } from "../../explorer/components/MapSurface";
 import { landTokenId } from "../../data/catalyst/landListing";
-import { shortAddress } from "../model/address";
+import { shortAddress } from "@shop/model/address";
 import { landNetwork } from "./contracts";
 import { Mana } from "./format";
 import { coordsId, isTileInSelection, type Coord, type LandTile, type Tiles } from "./tiles";

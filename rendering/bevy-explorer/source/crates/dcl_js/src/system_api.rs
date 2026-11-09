@@ -18,9 +18,10 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
     FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo,
-    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, ProfileChangedEvent,
-    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetPermanentPermission,
-    SetSinglePermission, SystemApi, VoiceMessage, WelcomeState, WorldAccessEvent,
+    OutfitThumbnailData, OutfitsData, PermanentPermissionItem, PermissionRequestEvent,
+    PhotoModeState, ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi,
+    SetAvatarData, SetPermanentPermission, SetSinglePermission, SystemApi, VoiceMessage,
+    WelcomeState, WorldAccessEvent,
 };
 use tokio::sync::Notify;
 
@@ -245,6 +246,41 @@ pub async fn op_set_avatar(
         .send(SystemApi::SetAvatar(avatar, sx))?;
 
     rx.await?.map_err(|e| anyhow::anyhow!(e))
+}
+
+pub async fn op_deploy_outfits(
+    state: Rc<RefCell<impl State>>,
+    outfits: OutfitsData,
+) -> Result<(), anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::DeployOutfits(outfits, sx))?;
+    rx.await?.map_err(|e| anyhow::anyhow!(e))
+}
+
+pub async fn op_get_outfit_thumbnails(
+    state: Rc<RefCell<impl State>>,
+) -> Result<Vec<OutfitThumbnailData>, anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetOutfitThumbnails(sx))?;
+    rx.await.map_err(|e| anyhow::anyhow!(e))
+}
+
+pub fn op_set_outfit_thumbnail(
+    state: Rc<RefCell<impl State>>,
+    slot: u32,
+    thumbnail: Option<String>,
+) {
+    // a closed channel means the engine is shutting down
+    let _ = state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::SetOutfitThumbnail(slot, thumbnail));
 }
 
 pub async fn op_native_input(state: Rc<RefCell<impl State>>) -> String {

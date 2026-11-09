@@ -208,6 +208,8 @@ export type PageToScene =
   | GetCommunitiesRequest
   | GetCommunityRequest
   | CreateCommunityRequest
+  | UpdateCommunityRequest
+  | DeleteCommunityRequest
   | JoinCommunityRequest
   | LeaveCommunityRequest
   | RequestToJoinCommunityRequest
@@ -1094,6 +1096,8 @@ export interface Community {
   ownerName: string
   /** 'public' | 'private' — gates the join flow (public = join, private = request). */
   privacy?: string
+  /** 'all' (listed in browse and search) | 'unlisted' (members and invitees only). */
+  visibility?: string
   /** Id of the local user's pending request to join (private communities). */
   pendingRequestId?: string
 }
@@ -1139,6 +1143,54 @@ export interface CreateCommunityRequest {
   privacy: 'public' | 'private'
   /** Discoverable in the directory → visibility 'all', otherwise 'unlisted'. */
   discoverable: boolean
+  /** The picture as a data URL (PNG or JPEG, at most 500 KB and 512×512 px), sent as the form's
+   *  `thumbnail` file part. */
+  thumbnail?: string
+}
+
+/** Edit a community (page → scene → signed multipart PUT to the social-api). As unity-explorer,
+ *  only what changed is sent; a field left out keeps its value. */
+export interface UpdateCommunityRequest {
+  kind: 'updateCommunity'
+  id: string
+  name?: string
+  description?: string
+  privacy?: 'public' | 'private'
+  /** Listed in browse and search → visibility 'all', otherwise 'unlisted'. */
+  discoverable?: boolean
+  /** A new picture as a data URL (same limits as on create). */
+  thumbnail?: string
+}
+
+/** Delete a community the user owns (page → scene → signed DELETE to the social-api). */
+export interface DeleteCommunityRequest {
+  kind: 'deleteCommunity'
+  id: string
+}
+/** A community was deleted (scene → page): its card closes. */
+export interface CommunityDeletedMessage {
+  kind: 'communityDeleted'
+  id: string
+}
+
+/** The content check's findings per field: short tags, at most three each. */
+export interface CommunityModerationIssues {
+  name: string[]
+  description: string[]
+  image: string[]
+}
+
+/** How a community create or update ended (scene → page). Exactly one of `id`, `moderation`, `error`. */
+export interface CommunitySaveResultMessage {
+  kind: 'communitySaveResult'
+  mode: 'create' | 'update'
+  /** The community created or updated, on success. */
+  id?: string
+  /** The social-api refused it (HTTP 400): the content check's findings, which may be empty, or
+   *  `unavailable` when the check itself could not run. */
+  moderation?: { issues: CommunityModerationIssues; unavailable: boolean }
+  /** Any other failure. */
+  error?: string
 }
 
 export interface JoinCommunityRequest {
@@ -1163,7 +1215,7 @@ export interface CancelJoinRequestRequest {
   requestId: string
 }
 
-export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch'
+export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch' | 'delete'
 
 /** A community write, or the read of one community, the social-api rejected (scene → page), so the UI can say so. */
 export interface CommunityActionFailedMessage {
@@ -1523,9 +1575,8 @@ export interface RGBColor {
   b: number
 }
 
-/** A saved avatar look (backpack Outfits tab). The shape mirrors the catalyst `outfits` entity's
- *  per-slot outfit so a saved look can later be deployed unchanged (Phase 2); Phase 1 persists
- *  these locally (localStorage in the bridge scene). */
+/** A saved avatar look (backpack Outfits tab): one slot of the player's catalyst `outfits`
+ *  entity, which the bridge scene has the engine deploy (a guest's last for the session). */
 export interface Outfit {
   bodyShape: string
   eyes: { color: RGBColor }
@@ -1840,6 +1891,8 @@ export type SceneToPage =
   | CommunityMessage
   | VoiceActivityMessage
   | CommunityActionFailedMessage
+  | CommunitySaveResultMessage
+  | CommunityDeletedMessage
   | TravelResultMessage
   | AvatarSaveFailedMessage
   | RequestFailedMessage

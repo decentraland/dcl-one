@@ -11,7 +11,7 @@ export {
   type ShopApiMode,
   type ShopApiOptions,
 } from "./client";
-export { ENDPOINTS, SHOP_API_PREFIX, type Endpoint, type EndpointAuth, type EndpointName, type HttpMethod } from "./endpoints";
+export { ENDPOINTS, SHOP_API_PREFIX, type Endpoint, type EndpointAuth, type EndpointName, type HttpMethod } from "@shop/api/endpoints";
 export { createShopClient, setShopClient, shopClient, type ShopClient } from "./shop";
 export {
   bridgeSigner,
@@ -22,4 +22,4 @@ export {
   type ShopTransport,
   type TransportRequest,
 } from "./signer";
-export type * from "./types";
+export type * from "@shop/api/types";

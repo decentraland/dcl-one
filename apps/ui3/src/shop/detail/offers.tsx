@@ -6,9 +6,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { OfferFetcher } from "../cart/revalidate";
 import { purchaseOfferSource } from "../api/offers";
 import { useShopServices } from "../checkout/services";
-import { assetKey, type AssetId } from "../model/asset";
-import type { CartLine, CartListingRef, PurchaseOffer } from "../model/purchase";
-import type { Session } from "../model/settlement";
+import { assetKey, type AssetId } from "@shop/model/asset";
+import type { CartLine, CartListingRef, PurchaseOffer } from "@shop/model/purchase";
+import type { Session } from "@shop/model/settlement";
 import type { GuidanceRevalidation } from "../wallet/ManaGuidance";
 
 export type OfferQuery = {

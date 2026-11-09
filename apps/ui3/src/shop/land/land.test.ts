@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { landTokenId } from "../../data/catalyst/landListing";
-import { CHAIN } from "../model/chain";
+import { CHAIN } from "@shop/model/chain";
 import {
   DEFAULT_LAND_FILTERS,
   fetchLandNfts,

@@ -340,7 +340,7 @@ impl Harness {
     fn new(scene: Scene) -> Self {
         let super_user = matches!(scene, Scene::DesktopSystem | Scene::HostedSystem);
         let (mut runtime, _) =
-            create_runtime(false, super_user, "websocket-test", Default::default());
+            create_runtime(false, super_user, Default::default());
         let state = runtime.op_state();
         let mut system = None;
         {

@@ -21,6 +21,8 @@ import type {
   HoverAction,
   HoverEvent,
   HomeScene,
+  OutfitsData,
+  OutfitThumbnailData,
   LiveSceneInfo,
   PermanentPermissionItem,
   PermissionRequestEvent,
@@ -99,7 +101,7 @@ export type SystemActionEvent = { action: string; pressed: boolean }
 
 export type KernelFetchRequest = {
   url: string
-  init: { headers?: Record<string, string>; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; body?: string }
+  init: { headers?: Record<string, string>; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; body?: string | Uint8Array }
   meta: string
 }
 export type KernelFetchResponse = { ok: boolean; status: number; statusText?: string; body: string }
@@ -197,6 +199,13 @@ export type BevyApiInterface = {
    *  `/about`), null or undefined when it advertises none — only Genesis City realms do. */
   getSatelliteView: () => Promise<SatelliteView | null | undefined>
   setAvatar: (data: SetAvatarData) => Promise<unknown>
+  /** Signs and deploys the player's catalyst `outfits` entity; rejects for a guest or when the
+   *  catalyst refuses it. */
+  deployOutfits: (outfits: OutfitsData) => Promise<void>
+  /** The player's saved outfit pictures, kept by the engine on this device (none for a guest). */
+  getOutfitThumbnails: () => Promise<OutfitThumbnailData[]>
+  /** Keeps (a PNG data URL) or drops (null) one slot's picture. */
+  setOutfitThumbnail: (slot: number, thumbnail: string | null) => void
   /** Any user's full deployed profile as the engine holds it (own, nearby and remote players,
    *  guests included), resolved through its profile cache and fetch cascade. Rejects once the
    *  engine has concluded the address can't be resolved. */

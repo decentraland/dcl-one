@@ -5,7 +5,7 @@ import { queryOptions, useQuery } from '@tanstack/react-query'
 import { shopClient } from '../../../shop/api/shop'
 import { isShopApiError } from '../../../shop/api/client'
 import { fetchCatalogByIds, fetchShopItems, fetchTrendingItems } from '../../../shop/discovery/api'
-import { listingTypeFor } from '../../../shop/market/access-rule'
+import { listingTypeFor } from '@shop/market/access-rule'
 
 export const HOME_ROW_SIZE = 12
 

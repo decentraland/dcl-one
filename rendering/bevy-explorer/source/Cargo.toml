@@ -559,7 +559,6 @@ deno_net = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfix" }
 deno_url = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfix" }
 deno_webidl = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfix" }
 deno_web = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfix" }
-deno_webstorage = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfix" }
 
 # deno_console = { path = "../deno/ext/console" }
 # deno_fetch = { path = "../deno/ext/fetch" }
@@ -567,7 +566,6 @@ deno_webstorage = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfi
 # deno_url = { path = "../deno/ext/url" }
 # deno_webidl = { path = "../deno/ext/webidl" }
 # deno_web = { path = "../deno/ext/web" }
-# deno_webstorage = { path = "../deno/ext/webstorage" }
 
 # gltf 1.4.1 (latest release, 2024-05) predates gltf-rs/gltf#449 "allow empty accessors"
 # (robtfm, merged 2025-05): dense accessors with no bufferView (zero-filled per spec,
