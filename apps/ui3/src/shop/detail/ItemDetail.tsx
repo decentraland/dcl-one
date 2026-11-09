@@ -79,7 +79,7 @@ import { useShopServices } from "../checkout/services";
 import { readManaBalanceWei } from "../checkout/lib/mana";
 import { useBuysInPlace, usePurchaseLauncher } from "./purchase";
 import BuyModal from "./components/BuyModal";
-import { takeBuyNowReturn } from "./buyNowReturn";
+import { takeBuyNowReturn } from "../credits/returns";
 import { listingTypeFor } from "../market/access-rule";
 import { serviceBase } from "../../data/catalyst/client";
 import "./itemdetail.css";
@@ -469,18 +469,18 @@ export default function ItemDetail() {
   const [buyingOrder, setBuyingOrder] = useState<{ order: LegacyOrderRef; quoted: ManaWei | null } | null>(null);
   const [buyingMixed, setBuyingMixed] = useState<{ line: CartAddInput; offer: PurchaseOffer; mixed: MixedPayment } | null>(null);
   // Buy now's dialog (upstream's BuyModal); `resume` when the page is back from the credits top-up it started. The query
-  // alone opens nothing: only this tab's record of the purchase the buyer confirmed does (buyNowReturn.ts).
-  const [buyNow, setBuyNow] = useState<{ resume: { lineId: string; credits: number } | null } | null>(null);
+  // alone opens nothing: only this tab's record of the purchase this account confirmed does (credits/returns.ts).
+  const [buyNow, setBuyNow] = useState<{ resume: { account: string; lineId: string; credits: number } | null } | null>(null);
   useEffect(() => {
     const search = new URLSearchParams(location.search);
-    if (search.get("buy") !== "resume" || session.kind === "signedOut") return;
+    if (search.get("buy") !== "resume" || session.kind === "signedOut" || !account) return;
     search.delete("buy");
     const rest = search.toString();
     navigate({ pathname: location.pathname, search: rest ? `?${rest}` : "" }, { replace: true, state: location.state });
-    const handoff = takeBuyNowReturn(location.pathname);
-    if (handoff) setBuyNow({ resume: { lineId: handoff.lineId, credits: handoff.credits } });
+    const handoff = takeBuyNowReturn(location.pathname, account);
+    if (handoff) setBuyNow({ resume: { account: handoff.account, lineId: handoff.lineId, credits: handoff.credits } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.search, session.kind]);
+  }, [location.search, session.kind, account]);
   const viewed = useRef<string | null>(null);
   useEffect(() => {
     if (!current.name || viewed.current === current.id) return;

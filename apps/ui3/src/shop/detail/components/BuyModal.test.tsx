@@ -7,9 +7,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CartAddInput } from "../../cart/store";
 import { createDemo, DemoShell, type DemoScenario } from "../../checkout/demo";
 import { RESUME_CART_KEY } from "../../checkout/purchase/cart";
-import { takeTopUpReturn } from "../../credits/returns";
+import { takeBuyNowReturn, takeTopUpReturn } from "../../credits/returns";
 import { BOOK, storeMint } from "../../payment/fixtures";
-import { takeBuyNowReturn } from "../buyNowReturn";
 import BuyModal, { resetBuyNowCarts } from "./BuyModal";
 
 const PATH = "/shop/item/0x00000000000000000000000000000000000000c0/7";
@@ -23,7 +22,7 @@ afterEach(() => {
   resetBuyNowCarts();
 });
 
-type Opts = { resume?: { credits: number; lineId?: string }; strict?: boolean; tweak?: (demo: ReturnType<typeof createDemo>) => void };
+type Opts = { resume?: { credits: number; lineId?: string; account?: string }; strict?: boolean; tweak?: (demo: ReturnType<typeof createDemo>) => void };
 
 function renderBuy(s: Omit<DemoScenario, "lines">, opts: Opts = {}) {
   const demo = createDemo({ ...s, lines: [{ offer: (x) => storeMint(x), name: "Rainbow Hat", rarity: "epic", category: "wearable" }] });
@@ -35,7 +34,7 @@ function renderBuy(s: Omit<DemoScenario, "lines">, opts: Opts = {}) {
   const opened: string[] = [];
   demo.services.openExternal = (url) => void opened.push(url);
   let closed = 0;
-  const resume = opts.resume ? { lineId: opts.resume.lineId ?? first.id, credits: opts.resume.credits } : null;
+  const resume = opts.resume ? { account: opts.resume.account ?? BOOK.buyer.toLowerCase(), lineId: opts.resume.lineId ?? first.id, credits: opts.resume.credits } : null;
   const dialog = (
     <DemoShell demo={demo} path={PATH} routes={{ "/shop/my-items": <p>MY ITEMS</p> }}>
       <BuyModal line={line} returnPath={PATH} resume={resume} onClose={() => (closed += 1)} />
@@ -81,8 +80,15 @@ describe("Buy now's dialog", () => {
     // Back from Stripe the credits page sends the buyer to this item, where this tab's record of what they confirmed
     // (this line, 12 Credits) lets the dialog finish.
     expect(takeTopUpReturn()?.path).toBe(`${PATH}?buy=resume`);
-    expect(takeBuyNowReturn(PATH)).toMatchObject({ lineId, credits: 12 });
+    expect(takeBuyNowReturn(PATH, BOOK.buyer)).toMatchObject({ lineId, credits: 12 });
     expect(authorizations(demo)).toHaveLength(0);
+  });
+
+  it("under StrictMode the pack checkout still opens", async () => {
+    const { opened } = renderBuy({ session: "web2", balanceCents: 30 }, { strict: true });
+    const dialog = await settledDialog();
+    fireEvent.click(within(dialog).getByTestId("buy-modal-topup"));
+    await waitFor(() => expect(opened).toEqual(["https://checkout.stripe.com/c/pay/demo"]));
   });
 
   it("closed while the pack checkout is being created: it never leaves, and drops the hand-off", async () => {
@@ -96,7 +102,7 @@ describe("Buy now's dialog", () => {
     fireEvent.click(within(dialog).getByTestId("buy-modal-topup"));
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(closed()).toBe(1);
-    expect(takeBuyNowReturn(PATH)).toBeNull();
+    expect(takeBuyNowReturn(PATH, BOOK.buyer)).toBeNull();
     expect(takeTopUpReturn()).toBeNull();
     await act(async () => answer());
     expect(opened).toEqual([]);
@@ -138,7 +144,10 @@ describe("Buy now's dialog", () => {
     await waitFor(() => expect(within(screen.getByTestId("buy-modal-methods")).getByRole("radio", { name: /MANA/ })).toBeChecked());
     expect(demo.cart.getSnapshot().lines).toEqual([]);
     await pressBuy(dialog);
-    await waitFor(() => expect(screen.queryByTestId("authorize-step-action") ?? within(dialog).queryByTestId("buy-modal-complete")).toBeTruthy(), { timeout: 5000 });
+    // A self-custody wallet approves the MANA spend first, then the purchase settles in MANA.
+    const approve = await screen.findByTestId("authorize-step-action", undefined, { timeout: 5000 });
+    await act(async () => fireEvent.click(approve));
+    expect(await screen.findByTestId("buy-modal-complete", undefined, { timeout: 5000 })).toBeTruthy();
     expect(authorizations(demo)).toHaveLength(0);
   });
 
@@ -155,6 +164,19 @@ describe("Buy now's dialog", () => {
     await act(async () => new Promise((r) => setTimeout(r, 50)));
     expect(authorizations(demo)).toHaveLength(0);
     expect(within(dialog).getByTestId("buy-modal-buy")).toBeEnabled();
+  });
+
+  it("back from a top-up at a lower price, it finishes on its own", async () => {
+    const { demo } = renderBuy({ session: "web2" }, { resume: { credits: 20 } });
+    expect(await screen.findByTestId("buy-modal-complete", undefined, { timeout: 5000 })).toBeTruthy();
+    expect(authorizations(demo)).toHaveLength(1);
+  });
+
+  it("back from a top-up another account confirmed, it waits for a press", async () => {
+    const { demo } = renderBuy({ session: "web2" }, { resume: { credits: 12, account: "0x0000000000000000000000000000000000000002" } });
+    await settledDialog();
+    await act(async () => new Promise((r) => setTimeout(r, 50)));
+    expect(authorizations(demo)).toHaveLength(0);
   });
 
   it("back from a top-up for another line, it waits for a press", async () => {
@@ -197,7 +219,7 @@ describe("Buy now's dialog", () => {
     const dialog = await settledDialog();
     fireEvent.click(within(dialog).getByTestId("buy-modal-close"));
     fireEvent.keyDown(window, { key: "Escape" });
-    fireEvent.click(dialog.querySelector(".shop-ckm__scrim")!);
+    fireEvent.click(within(dialog).getByTestId("buy-modal-scrim"));
     expect(closed()).toBe(3);
   });
 });

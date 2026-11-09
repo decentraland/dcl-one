@@ -10,7 +10,7 @@
 //   - loading while the line is priced and the balance read;
 //   - "Buy Credits and Item" when the Credits do not cover it and no MANA can: the shortfall, the item, the packs that
 //     finish the purchase and the Stripe hand-off. Back from it with the record of what the buyer confirmed
-//     (../buyNowReturn.ts), the dialog finishes on its own, at that price or less;
+//     (credits/returns.ts), the dialog finishes on its own, for the same account, at that price or less;
 //   - "Buy Item" when the Credits cover it; a buyer holding MANA chooses how to pay first;
 //   - the approval a self-custody wallet grants, the progress, a purchase still being confirmed, "Purchase complete!"
 //     and the error.
@@ -28,7 +28,7 @@ import loaderLogo from "../../credits/assets/loader-logo.svg?url";
 import { useCreditPacks } from "../../credits/hooks";
 import { isIapMode } from "../../credits/iap";
 import { createPackCheckout, MAX_OFFER_PACKS, offerablePacks } from "../../credits/payments";
-import { clearTopUpHandoffs, stashTopUpReturn } from "../../credits/returns";
+import { dropBuyNowTopUp, stashBuyNowTopUp } from "../../credits/returns";
 import CategoryFlap from "../../discovery/components/CategoryFlap";
 import Icon from "../../discovery/components/Icon";
 import { useCreatorName } from "../../discovery/hooks";
@@ -39,11 +39,10 @@ import { creditsCeil } from "../../model/money";
 import type { CartLineDisplay } from "../../model/purchase";
 import { SHOP_BASE } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
-import { clearBuyNowReturn, stashBuyNowReturn } from "../buyNowReturn";
 import { backpackDeepLink, jumpUrl } from "../lib/jump";
 import buyErrorArt from "../../checkout/assets/buy-error.png?url";
 import packCoin from "../../checkout/assets/pack-coin.webp?url";
-import "../../checkout/components/checkoutmodal.css";
+import styles from "../../checkout/components/CheckoutModal.module.css";
 
 const TEXT = {
   titleBuy: "Buy Item",
@@ -94,6 +93,8 @@ function sessionStorageFor(namespace: string): () => CartStorage | null {
   };
 }
 
+// The dialogs' carts, one per account and item for this tab. A store of purchase state, not a cache of server state: the
+// same kind as the cart's own module-level store (cart/store.ts shopCart), which docs/web-app-standards.md allows.
 const stores = new Map<string, CartStore>();
 
 /**
@@ -113,7 +114,7 @@ function buyNowCart(account: string | null, line: CartAddInput): CartStore {
   const held = snap.lines.find((l) => l.id === id);
   const settling = !!snap.checkout?.groups.some((g) => g.status === "authorizing" || g.status === "submitted" || g.status === "pending");
   if (!held) cart.add({ ...line, quantity: 1 });
-  else if (!settling) cart.markSeen(id, line.seen ?? null);
+  else if (!settling && line.seen) cart.markSeen(id, line.seen);
   return cart;
 }
 
@@ -128,7 +129,7 @@ export type BuyModalProps = {
   /** The detail page to come back to from a credits top-up, which then finishes the purchase. */
   returnPath: string;
   /** Back from that top-up with its record: the line and the Credits price the buyer confirmed. */
-  resume?: { lineId: string; credits: number } | null;
+  resume?: { account: string; lineId: string; credits: number } | null;
   onClose(): void;
 };
 
@@ -205,13 +206,12 @@ function BuyDialog({ line, returnPath, resume = null, onClose }: BuyModalProps) 
 
   const busy = phase === "processing";
   // Closing drops this dialog's top-up hand-off: a top-up finished later must not come back and buy this item.
-  const stashed = useRef(false);
+  const attempt = useRef<string | null>(null);
   const close = () => {
     if (busy) return;
-    if (stashed.current) {
-      clearTopUpHandoffs();
-      clearBuyNowReturn();
-      stashed.current = false;
+    if (attempt.current) {
+      dropBuyNowTopUp(attempt.current);
+      attempt.current = null;
     }
     onClose();
   };
@@ -227,7 +227,11 @@ function BuyDialog({ line, returnPath, resume = null, onClose }: BuyModalProps) 
   // Leaving the page while the purchase is being sent would leave it unwatched: the browser asks first.
   useEffect(() => {
     if (!busy) return;
-    const hold = (e: BeforeUnloadEvent) => e.preventDefault();
+    const hold = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Older Chromium and some web views prompt only when this is set.
+      e.returnValue = "";
+    };
     window.addEventListener("beforeunload", hold);
     return () => window.removeEventListener("beforeunload", hold);
   }, [busy]);
@@ -240,7 +244,7 @@ function BuyDialog({ line, returnPath, resume = null, onClose }: BuyModalProps) 
   useEffect(() => {
     if (!resume || resumed.current || phase !== "ready" || !cartLine || !co.canConfirm) return;
     resumed.current = true;
-    if (cartLine.id !== resume.lineId || priceChanged || cartLine.method) return;
+    if (resume.account !== co.account?.toLowerCase() || cartLine.id !== resume.lineId || priceChanged || cartLine.method) return;
     void co.confirm();
   }, [resume, phase, cartLine, co, priceChanged]);
 
@@ -271,30 +275,30 @@ function BuyDialog({ line, returnPath, resume = null, onClose }: BuyModalProps) 
   const title = phase === "complete" ? TEXT.titleComplete : phase === "error" ? TEXT.titleError : phase === "nofunds" ? TEXT.titleNoFunds : TEXT.titleBuy;
   const balance = co.balanceError ? "—" : (co.balance?.credits ?? 0).toLocaleString("en-US");
   return (
-    <div className="shop-ckm" role="dialog" aria-modal="true" aria-label={`Buy ${display.name || TEXT.itemFallback}`} data-testid="buy-modal" ref={dialogRef} tabIndex={-1}>
-      <div className="shop-ckm__scrim" onClick={busy ? undefined : close} aria-hidden="true" />
-      <div className="shop-ckm__card" data-surface="dark" data-tall={phase === "processing" || phase === "loading" || undefined} data-phase={phase}>
-        <div className="shop-ckm__head">
-          <div className="shop-ckm__headrow">
-            <h2 className="shop-ckm__title">{title}</h2>
+    <div className={styles.root} role="dialog" aria-modal="true" aria-label={`Buy ${display.name || TEXT.itemFallback}`} data-testid="buy-modal" ref={dialogRef} tabIndex={-1}>
+      <div className={styles.scrim} onClick={busy ? undefined : close} aria-hidden="true" data-testid="buy-modal-scrim" />
+      <div className={styles.card} data-surface="dark" data-tall={phase === "processing" || phase === "loading" || undefined} data-phase={phase}>
+        <div className={styles.head}>
+          <div className={styles.headrow}>
+            <h2 className={styles.title}>{title}</h2>
             {!busy ? (
-              <button type="button" className="shop-ckm__x" onClick={close} aria-label={TEXT.close} data-testid="buy-modal-close">
+              <button type="button" className={styles.x} onClick={close} aria-label={TEXT.close} data-testid="buy-modal-close">
                 <svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">
                   <path d="M4 4l10 10M14 4L4 14" stroke="#161518" strokeWidth="1.8" strokeLinecap="round" />
                 </svg>
               </button>
             ) : null}
           </div>
-          <div className="shop-ckm__balance" data-testid="buy-modal-balance">
-            <span className="shop-ckm__balance-label">{TEXT.balance}</span>
-            <Icon name="credits" className="shop-ckm__balance-ico" />
-            <span className="shop-ckm__balance-value">{balance}</span>
+          <div className={styles.balance} data-testid="buy-modal-balance">
+            <span className={styles.balanceLabel}>{TEXT.balance}</span>
+            <Icon name="credits" className={styles.balanceIco} />
+            <span className={styles.balanceValue}>{balance}</span>
           </div>
         </div>
 
         {phase === "loading" ? (
-          <div className="shop-ckm__body" data-processing>
-            <span className="shop-ckm__spinner" aria-hidden="true" />
+          <div className={styles.body} data-processing>
+            <span className={styles.spinner} aria-hidden="true" />
           </div>
         ) : null}
 
@@ -315,14 +319,14 @@ function BuyDialog({ line, returnPath, resume = null, onClose }: BuyModalProps) 
             priceCredits={priceCredits}
             shortfall={Math.max(1, creditsShort ?? (co.topUp ? creditsCeil(co.topUp.shortCents) : priceCredits - (co.balance?.credits ?? 0)))}
             onLeave={() => {
-              stashTopUpReturn(`${returnPath}?buy=resume`);
-              if (cartLine) stashBuyNowReturn({ path: returnPath, lineId: cartLine.id, credits: priceCredits });
-              stashed.current = true;
+              if (!co.account || !cartLine) return null;
+              attempt.current = stashBuyNowTopUp({ path: returnPath, account: co.account, lineId: cartLine.id, credits: priceCredits });
+              return attempt.current;
             }}
-            onFailed={() => {
-              clearTopUpHandoffs();
-              clearBuyNowReturn();
-              stashed.current = false;
+            onFailed={(failed) => {
+              if (!failed) return;
+              dropBuyNowTopUp(failed);
+              if (attempt.current === failed) attempt.current = null;
             }}
             onCancel={close}
             onCheckout={(session) => (session.url ? services.openExternal(session.url) : navigate(`${SHOP_BASE}/credits?order=${encodeURIComponent(session.orderId)}`))}
@@ -330,11 +334,11 @@ function BuyDialog({ line, returnPath, resume = null, onClose }: BuyModalProps) 
         ) : null}
 
         {phase === "ready" ? (
-          <div className="shop-ckm__body">
+          <div className={styles.body}>
             {priceChanged ? (
-              <div className="shop-ckm__warning" role="status" data-testid="price-changed">
+              <div className={styles.warning} role="status" data-testid="price-changed">
                 <WarningIcon />
-                <p className="shop-ckm__warning-text">{TEXT.priceChanged}</p>
+                <p className={styles.warningText}>{TEXT.priceChanged}</p>
               </div>
             ) : null}
             {holdsMana && view && cartLine ? (
@@ -352,10 +356,10 @@ function BuyDialog({ line, returnPath, resume = null, onClose }: BuyModalProps) 
               </section>
             ) : null}
             <AssetRow display={display} priceCredits={priceCredits} />
-            <div className="shop-ckm__ctas">
+            <div className={styles.ctas}>
               <button
                 type="button"
-                className="shop-ckm__btn"
+                className={styles.btn}
                 data-variant="gradient"
                 data-full
                 onClick={pay}
@@ -369,26 +373,26 @@ function BuyDialog({ line, returnPath, resume = null, onClose }: BuyModalProps) 
         ) : null}
 
         {phase === "processing" ? (
-          <div className="shop-ckm__body" data-processing>
-            <img className="shop-ckm__logo" src={loaderLogo} alt="" width={61} height={61} />
-            <div className="shop-ckm__processing">{resume ? TEXT.completingResume : TEXT.completing}</div>
-            <div className="shop-ckm__progress" aria-hidden="true">
-              <span className="shop-ckm__progress-fill" />
+          <div className={styles.body} data-processing>
+            <img className={styles.logo} src={loaderLogo} alt="" width={61} height={61} />
+            <div className={styles.processing}>{resume ? TEXT.completingResume : TEXT.completing}</div>
+            <div className={styles.progress} aria-hidden="true">
+              <span className={styles.progressFill} />
             </div>
           </div>
         ) : null}
 
         {phase === "pending" ? (
-          <div className="shop-ckm__body" data-testid="buy-modal-pending">
-            <div className="shop-ckm__success">
-              <img className="shop-ckm__logo" src={loaderLogo} alt="" width={61} height={61} />
-              <p className="shop-ckm__processing">{TEXT.stillConfirming}</p>
+          <div className={styles.body} data-testid="buy-modal-pending">
+            <div className={styles.success}>
+              <img className={styles.logo} src={loaderLogo} alt="" width={61} height={61} />
+              <p className={styles.processing}>{TEXT.stillConfirming}</p>
             </div>
-            <div className="shop-ckm__ctas">
-              <button type="button" className="shop-ckm__btn" data-variant="outline" onClick={close}>
+            <div className={styles.ctas}>
+              <button type="button" className={styles.btn} data-variant="outline" onClick={close}>
                 {TEXT.close}
               </button>
-              <button type="button" className="shop-ckm__btn" data-variant="ruby" onClick={() => void co.resume()} disabled={co.running}>
+              <button type="button" className={styles.btn} data-variant="ruby" onClick={() => void co.resume()} disabled={co.running}>
                 {TEXT.checkAgain}
               </button>
             </div>
@@ -396,27 +400,27 @@ function BuyDialog({ line, returnPath, resume = null, onClose }: BuyModalProps) 
         ) : null}
 
         {phase === "complete" ? (
-          <div className="shop-ckm__body">
-            <Confetti className="shop-ckm__confetti" />
-            <div className="shop-ckm__success" data-testid="buy-modal-complete">
+          <div className={styles.body}>
+            <Confetti className={styles.confetti} />
+            <div className={styles.success} data-testid="buy-modal-complete">
               <svg viewBox="0 0 64 64" width="64" height="64" aria-hidden="true">
                 <circle cx="32" cy="32" r="32" fill="#34ce74" />
                 <path d="M20 33l8 8 16-18" fill="none" stroke="#fff" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-              <p className="shop-ckm__success-text">
+              <p className={styles.successText}>
                 <b>{TEXT.successTitle}</b> {TEXT.successBody}
               </p>
             </div>
-            <div className="shop-ckm__ctas" data-stack>
-              <button type="button" className="shop-ckm__btn" data-variant="outline" onClick={() => navigate(myItemsRouteFor([display.category]))}>
+            <div className={styles.ctas} data-stack>
+              <button type="button" className={styles.btn} data-variant="outline" onClick={() => navigate(myItemsRouteFor([display.category]))}>
                 {TEXT.myItems}
               </button>
               {isIapMode() ? (
-                <a className="shop-ckm__btn" data-variant="ruby" href={backpackDeepLink(purchased ?? [{ urn: display.urn }])} onClick={onClose}>
+                <a className={styles.btn} data-variant="ruby" href={backpackDeepLink(purchased ?? [{ urn: display.urn }])} onClick={onClose}>
                   {TEXT.goToBackpack}
                 </a>
               ) : (
-                <a className="shop-ckm__btn" data-variant="ruby" href={jumpUrl()} target="_blank" rel="noreferrer" onClick={onClose}>
+                <a className={styles.btn} data-variant="ruby" href={jumpUrl()} target="_blank" rel="noreferrer" onClick={onClose}>
                   {TEXT.tryInWorld}
                   <JumpInIcon />
                 </a>
@@ -434,20 +438,20 @@ function AssetRow({ display, priceCredits }: { display: CartLineDisplay; priceCr
   const creator = useCreatorName(display.creator);
   const tile: CSSProperties = { background: rarityCardPalette(display.rarity).background };
   return (
-    <div className="shop-ckm__asset" data-testid="buy-modal-asset">
-      <div className="shop-ckm__thumb" style={tile}>
+    <div className={styles.asset} data-testid="buy-modal-asset">
+      <div className={styles.thumb} style={tile}>
         <CategoryFlap item={{ category: display.category ?? "wearable", wearableCategory: display.wearableCategory, rarity: display.rarity ?? "" }} size="sm" testId="buy-modal-flap" />
         {display.thumbnail ? <img src={display.thumbnail} alt="" /> : null}
       </div>
-      <div className="shop-ckm__info">
+      <div className={styles.info}>
         <div>
-          <div className="shop-ckm__name" title={display.name}>
+          <div className={styles.name} title={display.name}>
             {display.name || TEXT.itemFallback}
           </div>
-          {display.creator ? <div className="shop-ckm__creator">{creator ? `By ${creator}` : " "}</div> : null}
+          {display.creator ? <div className={styles.creator}>{creator ? `By ${creator}` : " "}</div> : null}
         </div>
-        <div className="shop-ckm__price">
-          <Icon name="credits" className="shop-ckm__price-ico" />
+        <div className={styles.price}>
+          <Icon name="credits" className={styles.priceIco} />
           <span>{priceCredits.toLocaleString("en-US")}</span>
         </div>
       </div>
@@ -473,8 +477,9 @@ function NoFunds(props: {
   display: CartLineDisplay;
   priceCredits: number;
   shortfall: number;
-  onLeave(): void;
-  onFailed(): void;
+  /** Leaves the hand-off; returns its attempt, which a failure drops. */
+  onLeave(): string | null;
+  onFailed(attempt: string | null): void;
   onCancel(): void;
   onCheckout(session: { orderId: string; url?: string }): void;
 }) {
@@ -488,28 +493,29 @@ function NoFunds(props: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // Set here too: StrictMode runs this effect's cleanup and then the effect again.
+    mounted.current = true;
+    return () => {
       mounted.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
   const iap = isIapMode();
 
   async function buy() {
     if (!selectedId) return;
     setBusy(true);
     setError(null);
-    props.onLeave();
+    const leaving = props.onLeave();
     try {
       const session = await createPackCheckout(selectedId, client);
       if (!mounted.current) {
-        props.onFailed();
+        props.onFailed(leaving);
         return;
       }
       props.onCheckout(session);
     } catch (e) {
-      props.onFailed();
+      props.onFailed(leaving);
       if (!mounted.current) return;
       setError(friendlyError(e, "Couldn't start the Credits checkout — please try again."));
       setBusy(false);
@@ -517,15 +523,15 @@ function NoFunds(props: {
   }
 
   return (
-    <div className="shop-ckm__body">
-      <div className="shop-ckm__warning" data-testid="buy-modal-insufficient">
+    <div className={styles.body}>
+      <div className={styles.warning} data-testid="buy-modal-insufficient">
         <WarningIcon />
-        <p className="shop-ckm__warning-text">
+        <p className={styles.warningText}>
           <b>{TEXT.insufficient}</b> {TEXT.needToBuy} <b>{`${props.shortfall.toLocaleString("en-US")} Credits`}</b> {TEXT.toPurchase}
           {iap ? null : (
             <>
               {" "}
-              <a className="shop-ckm__warning-link" href={`${SHOP_BASE}/credits`} target="_blank" rel="noopener noreferrer">
+              <a className={styles.warningLink} href={`${SHOP_BASE}/credits`} target="_blank" rel="noopener noreferrer">
                 {TEXT.learnMore}
               </a>
             </>
@@ -535,44 +541,44 @@ function NoFunds(props: {
       <AssetRow display={props.display} priceCredits={props.priceCredits} />
       {iap ? null : (
         <>
-          <div className="shop-ckm__packs" data-testid="credit-packs">
+          <div className={styles.packs} data-testid="credit-packs">
             {offer.packs.map((p) => (
               <button
                 key={p.id}
                 type="button"
-                className="shop-ckm__pack"
+                className={styles.pack}
                 data-testid="credit-pack"
                 data-on={p.id === selectedId || undefined}
                 aria-pressed={p.id === selectedId}
                 aria-label={`${p.credits.toLocaleString("en-US")} Credits for $${p.usd.toFixed(2)}`}
                 onClick={() => setPicked(p.id)}
               >
-                <img className="shop-ckm__pack-ico" src={packCoin} alt="" />
-                <span className="shop-ckm__pack-amount">{p.credits.toLocaleString("en-US")}</span>
-                <span className="shop-ckm__pack-usd">(${p.usd.toFixed(2)})</span>
+                <img className={styles.packIco} src={packCoin} alt="" />
+                <span className={styles.packAmount}>{p.credits.toLocaleString("en-US")}</span>
+                <span className={styles.packUsd}>(${p.usd.toFixed(2)})</span>
               </button>
             ))}
           </div>
-          <div className="shop-ckm__total">
-            <div className="shop-ckm__total-credits">
-              <Icon name="credits" className="shop-ckm__total-ico" />
+          <div className={styles.total}>
+            <div className={styles.totalCredits}>
+              <Icon name="credits" className={styles.totalIco} />
               <span data-testid="topup-total-credits">{(selected?.credits ?? 0).toLocaleString("en-US")}</span>
             </div>
-            <span className="shop-ckm__total-usd">${(selected?.usd ?? 0).toFixed(2)}</span>
+            <span className={styles.totalUsd}>${(selected?.usd ?? 0).toFixed(2)}</span>
           </div>
         </>
       )}
       {error ? (
-        <p className="shop-ckm__warning-text" role="alert">
+        <p className={styles.warningText} role="alert">
           {error}
         </p>
       ) : null}
-      <div className="shop-ckm__ctas">
-        <button type="button" className="shop-ckm__btn" data-variant="outline" onClick={props.onCancel}>
+      <div className={styles.ctas}>
+        <button type="button" className={styles.btn} data-variant="outline" onClick={props.onCancel}>
           {TEXT.cancel}
         </button>
         {iap ? null : (
-          <button type="button" className="shop-ckm__btn" data-variant="gradient" onClick={() => void buy()} disabled={busy || !selectedId} data-testid="buy-modal-topup">
+          <button type="button" className={styles.btn} data-variant="gradient" onClick={() => void buy()} disabled={busy || !selectedId} data-testid="buy-modal-topup">
             {TEXT.buy}
           </button>
         )}
@@ -584,18 +590,18 @@ function NoFunds(props: {
 /** The cart's failure panel: the reason, that the Credits are safe, and a retry. */
 function ErrorBody({ message, onClose, onRetry }: { message: string | null; onClose(): void; onRetry(): void }) {
   return (
-    <div className="shop-ckm__body">
-      <div className="shop-ckm__error" data-testid="buy-error">
-        <img className="shop-ckm__error-art" src={buyErrorArt} alt="" width={64} height={80} />
-        <p className="shop-ckm__error-text">
+    <div className={styles.body}>
+      <div className={styles.error} data-testid="buy-error">
+        <img className={styles.errorArt} src={buyErrorArt} alt="" width={64} height={80} />
+        <p className={styles.errorText}>
           <b>{TEXT.errorHeadline}</b> {message ?? TEXT.errorBody}
         </p>
       </div>
-      <div className="shop-ckm__ctas">
-        <button type="button" className="shop-ckm__btn" data-variant="outline" onClick={onClose}>
+      <div className={styles.ctas}>
+        <button type="button" className={styles.btn} data-variant="outline" onClick={onClose}>
           {TEXT.cancel}
         </button>
-        <button type="button" className="shop-ckm__btn" data-variant="ruby" onClick={onRetry}>
+        <button type="button" className={styles.btn} data-variant="ruby" onClick={onRetry}>
           {TEXT.tryAgain}
         </button>
       </div>

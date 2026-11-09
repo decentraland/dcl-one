@@ -11,7 +11,7 @@ import { createShopClient, type ShopClient } from "../api";
 import { BOOK } from "../payment/fixtures";
 import { fixtureOfferSource, type OfferScenario } from "./fixtures";
 import { ItemDetailRoute } from "./ItemDetail";
-import { stashBuyNowReturn, takeBuyNowReturn } from "./buyNowReturn";
+import { stashBuyNowTopUp, takeBuyNowReturn } from "../credits/returns";
 import { Route, Routes } from "react-router";
 import { decodeFunctionData, type Hex } from "viem";
 import { ERC20_ABI, LEGACY_MARKETPLACE, LEGACY_MARKETPLACE_ABI, manaToken } from "../market/lib/contracts";
@@ -216,12 +216,26 @@ describe("the item route (a collection item, sold by its creator)", () => {
     expect(screen.queryByTestId("buy-modal")).toBeNull();
   });
 
-  it("?buy=resume with this tab's record of the purchase the buyer confirmed reopens Buy now's dialog, once", async () => {
+  it("?buy=resume with this tab's record of the purchase this account confirmed reopens Buy now's dialog, once", async () => {
     sessionStorage.clear();
-    stashBuyNowReturn({ path: `/shop/item/${COLLECTION}/${ITEM_ID}`, lineId: "the-line", credits: 12 });
+    const path = `/shop/item/${COLLECTION}/${ITEM_ID}`;
+    stashBuyNowTopUp({ path, account: BOOK.buyer, lineId: "the-line", credits: 12 });
     itemPage({ offers: { kind: "storeMint" }, search: "?buy=resume" });
-    expect(await screen.findByTestId("buy-modal")).toBeTruthy();
-    expect(takeBuyNowReturn(`/shop/item/${COLLECTION}/${ITEM_ID}`)).toBeNull();
+    const dialog = await screen.findByTestId("buy-modal");
+    // Taken: the record cannot reopen it again.
+    expect(takeBuyNowReturn(path, BOOK.buyer)).toBeNull();
+    fireEvent.click(within(dialog).getByTestId("buy-modal-close"));
+    await act(async () => {});
+    expect(screen.queryByTestId("buy-modal")).toBeNull();
+  });
+
+  it("?buy=resume with a record another account left opens nothing", async () => {
+    sessionStorage.clear();
+    stashBuyNowTopUp({ path: `/shop/item/${COLLECTION}/${ITEM_ID}`, account: "0x0000000000000000000000000000000000000002", lineId: "the-line", credits: 12 });
+    itemPage({ offers: { kind: "storeMint" }, search: "?buy=resume" });
+    expect(await screen.findByTestId("cta-buy-now")).toBeTruthy();
+    await act(async () => {});
+    expect(screen.queryByTestId("buy-modal")).toBeNull();
   });
 
   it("adding to the cart keeps the listing and the offer the buyer saw, and no chosen method", async () => {

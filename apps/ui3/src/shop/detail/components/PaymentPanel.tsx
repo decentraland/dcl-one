@@ -170,75 +170,75 @@ export default function PaymentPanel(props: PaymentPanelProps) {
 
       {inDialog ? null : (
         <>
-      {current.method === "mana" && mixed ? (
-        <label className="shop-pay__mixed" data-testid="mixed-payment">
-          <input type="checkbox" checked={useMixed} onChange={(e) => setUseMixed(e.target.checked)} data-testid="pay-mixed" />
-          {t("itemDetail.mixedOption", { credits: t("assetCard.credits", { count: mixed.credits }), mana: formatMana(mixed.manaWei, { group: true }) })}
-        </label>
-      ) : null}
-
-      {current.method === "mana" ? (
-        <p className="shop-pay__network" data-testid="mana-network">
-          {t("itemDetail.manaNetwork", { network: chainLabel(chainId) })}
-        </p>
-      ) : null}
-
-      {manaOnly && reasons.length > 0 ? (
-        <ul className="shop-pay__reasons" data-testid="mana-only-reasons">
-          {reasons.map((r) => (
-            <li key={r}>{reasonText(r)}</li>
-          ))}
-        </ul>
-      ) : null}
-
-      {outage ? (
-        <div className="shop-pay__outage" role="status" data-testid="payment-outage">
-          <p>{status === "routeMissing" ? t("itemDetail.quoteRouteMissing") : t("itemDetail.quoteFailed")}</p>
-          <Button variant="secondary" size="sm" onClick={props.onRetry}>
-            {t("itemDetail.retryPrice")}
-          </Button>
-        </div>
-      ) : current.state.kind === "unavailable" && !deferToSignIn ? (
-        <div className="shop-pay__outage" role="status" data-testid="payment-outage">
-          <p>{outageText(current.method, current.state.missing, current.state.withheld)}</p>
-          <Button variant="secondary" size="sm" onClick={props.onRetry}>
-            {t("itemDetail.retryPrice")}
-          </Button>
-        </div>
-      ) : current.state.kind !== "ready" && current.state.kind !== "walletRequired" && !(current.state.kind === "signInRequired" && wallet.onSignIn) && !deferToSignIn ? (
-        <p className="shop-pay__state" role="status" data-testid={`state-${current.state.kind}`}>
-          {optionStateText(current.method, current.state)}
-          {current.state.kind === "topUpRequired" ? ` ${t("itemDetail.topUpShort", { credits: t("assetCard.credits", { count: creditsCeil(current.state.short) }) })}` : ""}
-        </p>
-      ) : null}
-
-      {wallet.accountMismatch && current.method === "mana" ? (
-        <div className="shop-pay__mismatch" role="alert" data-testid="account-mismatch">
-          <p>{t("itemDetail.accountMismatch", { wallet: wallet.walletAccount ?? "", account: wallet.account ?? "" })}</p>
-          {wallet.onSwitchAccount ? (
-            <Button variant="secondary" size="sm" onClick={wallet.onSwitchAccount}>
-              {t("itemDetail.switchAccount")}
-            </Button>
+          {current.method === "mana" && mixed ? (
+            <label className="shop-pay__mixed" data-testid="mixed-payment">
+              <input type="checkbox" checked={useMixed} onChange={(e) => setUseMixed(e.target.checked)} data-testid="pay-mixed" />
+              {t("itemDetail.mixedOption", { credits: t("assetCard.credits", { count: mixed.credits }), mana: formatMana(mixed.manaWei, { group: true }) })}
+            </label>
           ) : null}
-        </div>
-      ) : null}
 
-      {guidance && current.method === "mana" ? (
-        <ManaGuidance
-          guidance={guidance}
-          required={requiredMana}
-          reasons={reasons}
-          item={item}
-          returnTo={item.href}
-          wallet={wallet.walletAccount ? { account: wallet.walletAccount, chainId: wallet.chainId, manaBalance: props.manaBalance ?? null, pendingChainId: wallet.pendingChainId } : undefined}
-          onSignIn={wallet.onSignIn}
-          onConnectWallet={wallet.onConnectWallet}
-          onSwitchAccount={wallet.onSwitchAccount}
-          onSwitchNetwork={wallet.onSwitchNetwork}
-          setupUrl={props.setupUrl}
-          revalidation={quoteFailed ? null : props.revalidation}
-        />
-      ) : null}
+          {current.method === "mana" ? (
+            <p className="shop-pay__network" data-testid="mana-network">
+              {t("itemDetail.manaNetwork", { network: chainLabel(chainId) })}
+            </p>
+          ) : null}
+
+          {manaOnly && reasons.length > 0 ? (
+            <ul className="shop-pay__reasons" data-testid="mana-only-reasons">
+              {reasons.map((r) => (
+                <li key={r}>{reasonText(r)}</li>
+              ))}
+            </ul>
+          ) : null}
+
+          {outage ? (
+            <div className="shop-pay__outage" role="status" data-testid="payment-outage">
+              <p>{status === "routeMissing" ? t("itemDetail.quoteRouteMissing") : t("itemDetail.quoteFailed")}</p>
+              <Button variant="secondary" size="sm" onClick={props.onRetry}>
+                {t("itemDetail.retryPrice")}
+              </Button>
+            </div>
+          ) : current.state.kind === "unavailable" && !deferToSignIn ? (
+            <div className="shop-pay__outage" role="status" data-testid="payment-outage">
+              <p>{outageText(current.method, current.state.missing, current.state.withheld)}</p>
+              <Button variant="secondary" size="sm" onClick={props.onRetry}>
+                {t("itemDetail.retryPrice")}
+              </Button>
+            </div>
+          ) : current.state.kind !== "ready" && current.state.kind !== "walletRequired" && !(current.state.kind === "signInRequired" && wallet.onSignIn) && !deferToSignIn ? (
+            <p className="shop-pay__state" role="status" data-testid={`state-${current.state.kind}`}>
+              {optionStateText(current.method, current.state)}
+              {current.state.kind === "topUpRequired" ? ` ${t("itemDetail.topUpShort", { credits: t("assetCard.credits", { count: creditsCeil(current.state.short) }) })}` : ""}
+            </p>
+          ) : null}
+
+          {wallet.accountMismatch && current.method === "mana" ? (
+            <div className="shop-pay__mismatch" role="alert" data-testid="account-mismatch">
+              <p>{t("itemDetail.accountMismatch", { wallet: wallet.walletAccount ?? "", account: wallet.account ?? "" })}</p>
+              {wallet.onSwitchAccount ? (
+                <Button variant="secondary" size="sm" onClick={wallet.onSwitchAccount}>
+                  {t("itemDetail.switchAccount")}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+
+          {guidance && current.method === "mana" ? (
+            <ManaGuidance
+              guidance={guidance}
+              required={requiredMana}
+              reasons={reasons}
+              item={item}
+              returnTo={item.href}
+              wallet={wallet.walletAccount ? { account: wallet.walletAccount, chainId: wallet.chainId, manaBalance: props.manaBalance ?? null, pendingChainId: wallet.pendingChainId } : undefined}
+              onSignIn={wallet.onSignIn}
+              onConnectWallet={wallet.onConnectWallet}
+              onSwitchAccount={wallet.onSwitchAccount}
+              onSwitchNetwork={wallet.onSwitchNetwork}
+              setupUrl={props.setupUrl}
+              revalidation={quoteFailed ? null : props.revalidation}
+            />
+          ) : null}
         </>
       )}
 
