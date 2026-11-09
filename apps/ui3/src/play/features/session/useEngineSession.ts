@@ -1204,6 +1204,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // Whose places the open form asked for ('' on create), or null with no form open: a late answer
   // for another form is dropped.
   const placeOptionsWanted = useRef<string | null>(null)
+  // The community whose card asked for its detail last: details for any other are dropped.
+  const detailWanted = useRef<string | null>(null)
   // A create or update is waiting for its answer. Cleared when the form closes, so an answer that
   // comes after that is dropped instead of driving the next form.
   const communitySaveInFlight = useRef(false)
@@ -1762,6 +1764,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           })
           break
         case 'communityDetail':
+          // only the card open now: a re-read for a card already closed must not replace its detail
+          if (msg.id !== detailWanted.current) break
           setCommunityDetail(msg)
           break
         case 'communityChannels': {
@@ -3111,6 +3115,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     driverRef.current?.send({ kind: 'leaveCommunity', id })
   }, [])
   const loadCommunityDetail = useCallback((id: string) => {
+    detailWanted.current = id
     setCommunityDetail(null) // clear stale detail while the new one loads
     driverRef.current?.send({ kind: 'getCommunityDetail', id })
   }, [])

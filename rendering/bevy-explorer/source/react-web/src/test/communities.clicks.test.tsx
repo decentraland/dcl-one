@@ -206,6 +206,7 @@ const noPlaces = (over: Partial<CommunityPlaceOptionsMessage> = {}): CommunityPl
   kind: 'communityPlaceOptions',
   owned: [],
   linked: [],
+  hiddenLinkedIds: [],
   linkedFailed: false,
   errors: [],
   ...over
@@ -500,6 +501,13 @@ describe('community edit', () => {
     await userEvent.click(screen.getByRole('button', { name: `Remove ${world.label}` }))
     await userEvent.click(screen.getByRole('button', { name: 'SAVE' }))
     expect(communities.update).toHaveBeenCalledWith({ id: 'c9', placeIds: ['land-1'] })
+  })
+
+  it('keeps the linked places it could not show when the places change', async () => {
+    const { communities } = renderEdit(owned, noPlaces({ communityId: 'c9', owned: [land, world], linked: [world, land], hiddenLinkedIds: ['pl-disabled'] }))
+    await userEvent.click(screen.getByRole('button', { name: `Remove ${world.label}` }))
+    await userEvent.click(screen.getByRole('button', { name: 'SAVE' }))
+    expect(communities.update).toHaveBeenCalledWith({ id: 'c9', placeIds: ['land-1', 'pl-disabled'] })
   })
 
   it('lets the owner unlink any place', () => {

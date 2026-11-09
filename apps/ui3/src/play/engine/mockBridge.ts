@@ -965,7 +965,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     if (msg.kind === 'getCommunityPlaceOptions') {
       // one LAND and one World the user owns, and what each community links
       const linked = msg.communityId != null ? (mockLinkedPlaces.get(msg.communityId) ?? []) : []
-      const options = { kind: 'communityPlaceOptions' as const, communityId: msg.communityId, owned: MOCK_OWNED_PLACES, linked: MOCK_OWNED_PLACES.filter((p) => linked.includes(p.id)), linkedFailed: false, errors: [] }
+      const options = { kind: 'communityPlaceOptions' as const, communityId: msg.communityId, owned: MOCK_OWNED_PLACES, linked: MOCK_OWNED_PLACES.filter((p) => linked.includes(p.id)), hiddenLinkedIds: [], linkedFailed: false, errors: [] }
       setTimeout(() => reply(options), 300)
       return
     }

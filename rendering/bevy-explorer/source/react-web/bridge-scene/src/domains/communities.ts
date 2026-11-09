@@ -245,9 +245,6 @@ async function detail(id: string): Promise<{ members: CommunityMember[]; posts: 
   return { members, posts, places, events, photos }
 }
 
-/** A refused create or update as the form shows it. As in unity-explorer, every HTTP 400 is the
- *  content check's answer: its per-field issues (possibly none), or `unavailable` when the check
- *  could not run. Anything else is a plain error. */
 // The form's places picker, as unity-explorer's CommunityCreationEditionController: the places
 // the user owns or operates (one destinations read by owner), and, when editing, the community's
 // linked places (their ids from the social service, their details from the places service by id).
@@ -280,51 +277,80 @@ function placeOptions(rows: DestinationRaw[], names: Map<string, string> | null)
   })
 }
 
+/** The places the user owns or operates, one read as unity-explorer's. Never without an owner: the
+ *  service reads an empty one as no filter at all, and every place would be offered as the user's.
+ *  (`signed` answers with the envelope's `data`: here the list itself.) */
+async function ownedPlaces(destinations: string, me: string): Promise<DestinationRaw[]> {
+  if (me === '') throw new Error('no signed-in user')
+  return (await signed<DestinationRaw[]>(`${destinations}?owner=${encodeURIComponent(me)}`)) ?? []
+}
+
+// The services' page cap, and how many pages of a community's places are read before giving up.
+const PAGE = 100
+const LINKED_PAGES = 10
+
+/** Every place id the community links, a page at a time. Throws when the list does not end within
+ *  the pages read, so the form never takes a partial list for the whole one. */
+async function linkedPlaceIds(communityId: string): Promise<string[]> {
+  const url = `${await base('v1')}/${encodeURIComponent(communityId)}/places`
+  const ids: string[] = []
+  for (let page = 0; page < LINKED_PAGES; page++) {
+    const res = await signed<{ results?: { id: string }[]; total?: number }>(`${url}?limit=${PAGE}&offset=${page * PAGE}`)
+    const rows = res?.results ?? []
+    ids.push(...rows.map((r) => r.id))
+    if (rows.length < PAGE || (res?.total != null && ids.length >= res.total)) return ids
+  }
+  throw new Error(`more than ${PAGE * LINKED_PAGES} linked places`)
+}
+
+/** The places' details by id, a page at a time. A place the service does not return (a disabled
+ *  one, say) is left out. */
+async function destinationsByIds(destinations: string, ids: string[]): Promise<DestinationRaw[]> {
+  const rows: DestinationRaw[] = []
+  for (let i = 0; i < ids.length; i += PAGE) rows.push(...((await signed<DestinationRaw[]>(destinations, 'POST', ids.slice(i, i + PAGE))) ?? []))
+  return rows
+}
+
 async function placeOptionsFor(communityId: string | undefined): Promise<CommunityPlaceOptionsMessage> {
   const errors: string[] = []
   const destinations = `${await serviceBase('places')}/api/destinations`
-  const me = getPlayer()?.userId ?? ''
   let owned: CommunityPlaceOption[] = []
-  // `signed` answers with the envelope's `data`: here the list itself. Never without an owner: the
-  // service reads an empty one as no filter at all, and every place would be offered as the user's.
-  const ownedRows = await (me === ''
-    ? Promise.reject(new Error('no signed-in user'))
-    : signed<DestinationRaw[]>(`${destinations}?owner=${encodeURIComponent(me)}`))
-    .then((rows) => rows ?? [])
-    .catch((e: unknown) => {
-      console.error('[communities] owned places failed', e)
-      errors.push(GET_PLACES_ERROR)
-      return null
-    })
-  if (ownedRows != null) {
-    const names = await ownerNames(ownedRows)
+  try {
+    const rows = await ownedPlaces(destinations, getPlayer()?.userId ?? '')
+    const names = await ownerNames(rows)
     if (names == null) errors.push(GET_OWNERS_NAMES_ERROR)
-    owned = placeOptions(ownedRows, names)
+    owned = placeOptions(rows, names)
+  } catch (e) {
+    console.error('[communities] owned places failed', e)
+    errors.push(GET_PLACES_ERROR)
   }
   let linked: CommunityPlaceOption[] = []
+  let hiddenLinkedIds: string[] = []
   let linkedFailed = false
   if (communityId != null) {
-    const linkedRows = await (async () => {
-      const res = await signed<{ results?: { id: string }[] }>(`${await base('v1')}/${encodeURIComponent(communityId)}/places`)
-      const ids = (res?.results ?? []).map((r) => r.id)
-      if (ids.length === 0) return []
-      return (await signed<DestinationRaw[]>(destinations, 'POST', ids)) ?? []
-    })().catch((e: unknown) => {
+    try {
+      const ids = await linkedPlaceIds(communityId)
+      const rows = ids.length > 0 ? await destinationsByIds(destinations, ids) : []
+      const shown = new Set(rows.map((r) => r.id))
+      // linked, but not returned by the places service: the form keeps them on every save
+      hiddenLinkedIds = ids.filter((id) => !shown.has(id))
+      if (rows.length > 0) {
+        const names = await ownerNames(rows)
+        if (names == null) errors.push(GET_OWNERS_NAMES_ERROR)
+        linked = placeOptions(rows, names)
+      }
+    } catch (e) {
       console.error('[communities] community places failed', e)
-      return null
-    })
-    if (linkedRows == null) {
       linkedFailed = true
       errors.push(GET_COMMUNITY_PLACES_ERROR)
-    } else if (linkedRows.length > 0) {
-      const names = await ownerNames(linkedRows)
-      if (names == null) errors.push(GET_OWNERS_NAMES_ERROR)
-      linked = placeOptions(linkedRows, names)
     }
   }
-  return { kind: 'communityPlaceOptions', communityId, owned, linked, linkedFailed, errors }
+  return { kind: 'communityPlaceOptions', communityId, owned, linked, hiddenLinkedIds, linkedFailed, errors }
 }
 
+/** A refused create or update as the form shows it. As in unity-explorer, every HTTP 400 is the
+ *  content check's answer: its per-field issues (possibly none), or `unavailable` when the check
+ *  could not run. Anything else is a plain error. */
 function saveFailure(e: unknown): Pick<CommunitySaveResultMessage, 'moderation' | 'error'> {
   if (e instanceof HttpError && e.status === 400) {
     let body: { data?: { issues?: Partial<Record<'name' | 'description' | 'image', unknown>> }; communityContentValidationUnavailable?: unknown } = {}
@@ -573,7 +599,7 @@ export function registerCommunities(ctx: Ctx): void {
       // the places service could not even be located: nothing could be read
       console.error('[communities] place options failed', e)
       const errors = [GET_PLACES_ERROR, ...(msg.communityId != null ? [GET_COMMUNITY_PLACES_ERROR] : [])]
-      return { kind: 'communityPlaceOptions', communityId: msg.communityId, owned: [], linked: [], linkedFailed: msg.communityId != null, errors }
+      return { kind: 'communityPlaceOptions', communityId: msg.communityId, owned: [], linked: [], hiddenLinkedIds: [], linkedFailed: msg.communityId != null, errors }
     })
     ctx.send(options)
   })

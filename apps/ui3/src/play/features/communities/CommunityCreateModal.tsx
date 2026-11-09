@@ -227,6 +227,9 @@ export function CommunityCreateModal({
   const submit = (): void => {
     if (!valid || saving || loadingPlaces) return
     const placeIds = placeIdsOf(places)
+    // what is sent: the places shown, and the linked ones the places service did not return
+    const hidden = (placeOptions?.hiddenLinkedIds ?? []).filter((id) => !placeIds.includes(id))
+    const sentIds = [...placeIds, ...hidden]
     if (isEdit) {
       // only what changed, as unity-explorer; with nothing changed the form just closes
       const changes: UpdateCommunityInput = { id: editing.id }
@@ -236,7 +239,7 @@ export function CommunityCreateModal({
       if (visibility !== initial.visibility) changes.discoverable = visibility === 'all'
       if (pfp != null) changes.thumbnail = pfp
       // the whole set, only when it changed (unity-explorer sends it on every save)
-      if (!linkedFailed && !sameIds(placeIds, initialPlaceIds.current)) changes.placeIds = placeIds
+      if (!linkedFailed && !sameIds(placeIds, initialPlaceIds.current)) changes.placeIds = sentIds
       if (Object.keys(changes).length === 1) saved.current(editing.id)
       else onUpdate(changes)
       return
@@ -247,7 +250,7 @@ export function CommunityCreateModal({
       privacy,
       discoverable: visibility === 'all',
       ...(pfp != null ? { thumbnail: pfp } : {}),
-      placeIds
+      placeIds: sentIds
     })
   }
 

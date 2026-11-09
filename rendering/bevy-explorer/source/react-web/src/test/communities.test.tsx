@@ -75,6 +75,18 @@ describe('communities domain', () => {
     expect(h.session().communities.save).toEqual({ status: 'done', result: { kind: 'communitySaveResult', mode: 'create', id: 'c-new' } })
   })
 
+  // A detail re-read for a card already closed (after a place delete, say) must not replace the open card's.
+  it('keeps only the detail of the card asked for last', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const detail = (id: string) => ({ kind: 'communityDetail' as const, id, members: [], posts: [], places: [], events: [], photos: [] })
+    act(() => h.session().communities.loadDetail('cB'))
+    act(() => h.driver.emit(detail('cA')))
+    expect(h.session().communities.detail).toBeNull()
+    act(() => h.driver.emit(detail('cB')))
+    expect(h.session().communities.detail?.id).toBe('cB')
+  })
+
   // The card's place delete: sent as asked, and a refusal is said on the card in unity-explorer's words.
   it('unlinks a place, and says so on the card when it fails', async () => {
     const h = renderSession()
@@ -92,12 +104,12 @@ describe('communities domain', () => {
     const place = { id: 'p1', isWorld: true, label: 'Mansion (me.dcl.eth)', ownerName: 'Me' }
     act(() => h.session().communities.loadPlaceOptions('c1'))
     expect(h.driver.sent).toContainEqual({ kind: 'getCommunityPlaceOptions', communityId: 'c1' })
-    act(() => h.driver.emit({ kind: 'communityPlaceOptions', owned: [place], linked: [], linkedFailed: false, errors: [] }))
+    act(() => h.driver.emit({ kind: 'communityPlaceOptions', owned: [place], linked: [], hiddenLinkedIds: [], linkedFailed: false, errors: [] }))
     expect(h.session().communities.placeOptions).toBeNull()
-    act(() => h.driver.emit({ kind: 'communityPlaceOptions', communityId: 'c1', owned: [place], linked: [place], linkedFailed: false, errors: [] }))
+    act(() => h.driver.emit({ kind: 'communityPlaceOptions', communityId: 'c1', owned: [place], linked: [place], hiddenLinkedIds: [], linkedFailed: false, errors: [] }))
     expect(h.session().communities.placeOptions?.linked).toEqual([place])
     act(() => h.session().communities.clearPlaceOptions())
-    act(() => h.driver.emit({ kind: 'communityPlaceOptions', communityId: 'c1', owned: [], linked: [], linkedFailed: false, errors: [] }))
+    act(() => h.driver.emit({ kind: 'communityPlaceOptions', communityId: 'c1', owned: [], linked: [], hiddenLinkedIds: [], linkedFailed: false, errors: [] }))
     expect(h.session().communities.placeOptions).toBeNull()
   })
 

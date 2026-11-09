@@ -1194,6 +1194,9 @@ export interface CommunityPlaceOptionsMessage {
   owned: CommunityPlaceOption[]
   /** The community's linked places (edit only). */
   linked: CommunityPlaceOption[]
+  /** Linked places the places service did not return (a disabled one, say): never shown, but kept
+   *  on every save so the form cannot unlink them. */
+  hiddenLinkedIds: string[]
   /** The linked places could not be read (edit only): the form must not replace them. */
   linkedFailed: boolean
   /** unity-explorer's messages for the reads that failed, each shown as a toast. */
