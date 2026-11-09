@@ -183,6 +183,11 @@ impl TracedJsonResponse {
     }
 
     pub async fn json<T: serde::de::DeserializeOwned>(self) -> anyhow::Result<T> {
+        Ok(serde_json::from_slice(&self.bytes().await?)?)
+    }
+
+    /// The whole body, for callers that parse it by status (an error envelope on failure).
+    pub async fn bytes(self) -> anyhow::Result<bytes::Bytes> {
         let bytes = self.response.bytes().await;
         if let Some(mut trace) = self.trace {
             match &bytes {
@@ -190,7 +195,7 @@ impl TracedJsonResponse {
                 Err(_) => trace.fail("Response body error"),
             }
         }
-        Ok(serde_json::from_slice(&bytes?)?)
+        Ok(bytes?)
     }
 }
 

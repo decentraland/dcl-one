@@ -63,6 +63,7 @@ type Item =
   | { kind: 'permissions'; icon: IconName; label: string }
   | { kind: 'gallery'; icon: IconName; label: string; hotkey?: string }
   | { kind: 'shop'; icon: IconName; label: string }
+  | { kind: 'camera'; icon: IconName; label: string; hotkey?: string }
   | { kind: 'create'; icon: IconName; label: string }
   | { kind: 'link'; icon: IconName; label: string; url: string | (() => string) }
   | { kind: 'divider' }
@@ -102,6 +103,7 @@ const TOP: Item[] = [
   { kind: 'communities', icon: 'communities', label: 'Communities', hotkey: 'Communities' },
   { kind: 'backpack', icon: 'backpack', label: 'Backpack', hotkey: 'Backpack' },
   { kind: 'shop', icon: 'marketplace', label: 'Shop' },
+  { kind: 'camera', icon: 'camera', label: 'Camera', hotkey: 'PhotoMode' },
   { kind: 'gallery', icon: 'gallery', label: 'Gallery', hotkey: 'Gallery' },
   { kind: 'settings', icon: 'settings', label: 'Settings', hotkey: 'Settings' },
   { kind: 'create', icon: 'create', label: 'Create' },
@@ -215,6 +217,10 @@ function renderItem(item: Item, i: number, session: EngineSession, snap: Binding
       <RailButton key="shop" icon={item.icon} label={item.label} active={session.shop.open} onClick={session.shop.toggle} />
     ) : (
       <RailButton key="shop" icon={item.icon} label={item.label} onClick={() => window.open(withUtm(siteUrl('/shop')), '_blank', 'noopener')} />
+    )
+  if (item.kind === 'camera')
+    return (
+      <RailButton key="camera" icon={item.icon} label={item.label} shortcut={shortcut} onClick={() => session.photoMode.set(true, 'button')} />
     )
   if (item.kind === 'gallery')
     return (

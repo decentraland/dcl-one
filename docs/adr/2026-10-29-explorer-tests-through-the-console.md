@@ -108,3 +108,15 @@ Not chosen:
 3. Sign-in on the web driver: actions on the auth pages, an injected EIP-1193 wallet provider, the
    email code from a mailbox, and the standalone's pairing opened in the driver's Chrome. Then
    camera-mode commands.
+
+## Amendment (2026-11-05): the sign-in through the HUD
+
+The engine's `/login_identity` signs the engine in under a HUD that keeps its start page, since
+the HUD derives its phase from its own sign-in flow and the engine holds the world until a realm
+change. On the web the suite therefore signs in with `/hud_login` (`react-web/src/lib/hudAutomation.ts`),
+a page command the HUD registers only while a test runner drives the browser
+(`window.__dclTrustedInput`): the HUD takes the identity as the page's stored sign-in, accepts the
+terms its welcome page asks for, and picks the destination from the lobby, which releases the
+held world. The standalone keeps `/login_identity` and waits as `enterWorld` does. So a sign-in
+is one console command on both shells, but not the same one, and the suite's `signIn` branches by
+transport: the one interface above is the console, not one command list.

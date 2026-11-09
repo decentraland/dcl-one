@@ -117,9 +117,11 @@ const isKeyWire = (input: InputIdentifierWire): boolean =>
 
 /** The label of an action's first KEY binding — the sidebar/menu "[M]"-style hint. Undefined
  *  when unbound or bound only to mouse/gamepad (no hint shown, matching the old hardcoded
- *  letters which were keyboard-only). */
-export function keyHintFor(snap: BindingsSnapshot, systemAction: string): string | undefined {
-  const key = bindingsForAction(snap, { System: systemAction }).find(isKeyWire)
+ *  letters which were keyboard-only). A bare name is a System action; a Scene action (the
+ *  `Ia*` inputs scenes see, movement among them) is passed as its wire. */
+export function keyHintFor(snap: BindingsSnapshot, action: string | ActionWire): string | undefined {
+  const wire: ActionWire = typeof action === 'string' ? { System: action } : action
+  const key = bindingsForAction(snap, wire).find(isKeyWire)
   return key != null ? labelForInput(snap, key) : undefined
 }
 
