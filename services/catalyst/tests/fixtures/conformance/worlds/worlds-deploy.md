@@ -560,11 +560,17 @@ dcl-one (`scenes.rs` `delete_scene`): world name parsed first, the strict signed
     - Upstream: no request rate limit on this route; its own JSON 413/429.
     - dcl-one: nginx `limit_req zone=deploy` (5 r/s, burst 4), 10 connections per address and
       `client_max_body_size 360m`, the body buffered before the app (listed under "Publish forms").
-      The worlds deploy location sends nginx's own 413 and 429 to named locations that answer
-      `{"error":"Payload Too Large","message":"The multipart request is too large."}` and
+      The worlds deploy location sends nginx's own refusals to named locations that answer
+      `Content-Type: application/json` (as the app's axum `Json`) with the gateway's security and CORS
+      headers: 413 `{"error":"Payload Too Large","message":"The multipart request is too large."}`;
+      429 `{"error":"Too Many Requests","message":"Too many deploy requests from this client, please retry shortly."}`
+      with `Retry-After: 1` over the request rate; 429
       `{"error":"Too Many Requests","message":"Too many uploads in progress from this client, please retry shortly."}`
-      with `Retry-After: 5`; the app's own errors pass through (`infra/gateway/gateway.py`). Pinned by
-      `infra/gateway/tests/test_config.py:107` `test_worlds_deploy_limits_answer_the_services_json`.
+      with `Retry-After: 5` over the connection cap. The app's own errors pass through
+      (`infra/gateway/gateway.py`). A body that stalls for 300 s (`client_body_timeout`, between two
+      reads) gets no response: nginx closes the connection and logs 408, so the app's 408 upload-timeout
+      JSON is not reached behind the gateway (open gap). Pinned by `infra/gateway/tests/test_config.py`
+      `test_worlds_deploy_limits_answer_the_services_json`.
     - Severity: none (closed).
 
 21. **WD-21 · `POST /entities` · validation texts of the scene checks.** Status: MATCH, no work.
