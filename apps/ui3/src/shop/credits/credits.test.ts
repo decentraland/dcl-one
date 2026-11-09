@@ -17,6 +17,8 @@ import { nextBalancePoll } from "./hooks";
 import { CREDIT_PACKS, createPackCheckout, offerablePacks, packBonus, fetchCreditPacks, creditsForUsd, usdForCredits } from "./payments";
 import { pollCreditGrantReal } from "./payments-stripe";
 import { parseSseChunk } from "./program";
+import { RESUME_CART_KEY } from "../checkout/purchase/cart";
+import { stashNameResume } from "../names/resume";
 import { bindBuyNowTopUp, clearTopUpHandoffs, dropBuyNowTopUp, stashBuyNowTopUp, stashTopUpReturn, takeBuyNowReturn, takeTopUpReturn } from "./returns";
 
 describe("the credits account", () => {
@@ -213,6 +215,15 @@ describe("hand-offs and the stream", () => {
       clearTopUpHandoffs();
       expect(takeTopUpReturn(T0, "order-1")).toBeNull();
       expect(takeBuyNowReturn(PATH, BUYER, "order-1", T0)).toBeNull();
+      leave();
+      stashNameResume("nacho");
+      expect(takeBuyNowReturn(PATH, BUYER, "order-1", T0)).toBeNull();
+    });
+
+    it("drops a cart top-up the buyer walked away from: the basket is never paid after Buy now's", () => {
+      sessionStorage.setItem(RESUME_CART_KEY, "1");
+      leave();
+      expect(sessionStorage.getItem(RESUME_CART_KEY)).toBeNull();
     });
   });
 

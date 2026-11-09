@@ -35,7 +35,9 @@ import { useCreatorName } from "../../discovery/hooks";
 import { rarityCardPalette } from "../../discovery/lib/rarity";
 import { myItemsRouteFor } from "../../discovery/lib/routes";
 import { Confetti, JumpInIcon } from "../../history/celebration";
-import { creditsCeil } from "../../model/money";
+import { creditsCeil, formatMana } from "../../model/money";
+import type { MixedPayment } from "../../payment/present";
+import { t } from "../../discovery/intl";
 import type { CartLineDisplay } from "../../model/purchase";
 import { SHOP_BASE } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
@@ -143,6 +145,11 @@ export type BuyModalProps = {
   returnPath: string;
   /** Back from that top-up with its record: the line and the Credits price the buyer confirmed. */
   resume?: { account: string; lineId: string; credits: number } | null;
+  /**
+   * The buyer's Credits first and MANA for the rest, in one transaction (CombinedBuy): the page's own flow, which the
+   * dialog hands the split to until upstream's payment-method step (Credits + MANA ticked together) is ported.
+   */
+  onBuyMixed?(mixed: MixedPayment): void;
   onClose(): void;
 };
 
@@ -172,7 +179,7 @@ export default function BuyModal(props: BuyModalProps) {
 
 type Phase = "loading" | "nofunds" | "ready" | "processing" | "pending" | "complete" | "error";
 
-function BuyDialog({ line, returnPath, resume = null, onClose }: BuyModalProps) {
+function BuyDialog({ line, returnPath, resume = null, onBuyMixed, onClose }: BuyModalProps) {
   const navigate = useNavigate();
   const services = useShopServices();
   const [purchased, setPurchased] = useState<PurchasedLine[] | null>(null);
@@ -287,7 +294,13 @@ function BuyDialog({ line, returnPath, resume = null, onClose }: BuyModalProps) 
   }, [resume, phase, cartLine, co, priceChanged]);
 
   const selected = cartLine?.method ?? view?.primary ?? "credits";
+  const [useMixed, setUseMixed] = useState(false);
+  const mixed = selected === "mana" && onBuyMixed ? (mana?.mixed ?? null) : null;
   const pay = () => {
+    if (mixed && useMixed) {
+      onBuyMixed!(mixed);
+      return;
+    }
     if (reviewRepriced) {
       // The new price is on screen now; this press agrees to it, and the next one pays.
       co.acceptChanges();
@@ -396,6 +409,12 @@ function BuyDialog({ line, returnPath, resume = null, onClose }: BuyModalProps) 
                   label={display.name}
                   mixedNote={false}
                 />
+                {mixed ? (
+                  <label className={styles.warningText} data-testid="buy-modal-mixed">
+                    <input type="checkbox" checked={useMixed} onChange={(e) => setUseMixed(e.target.checked)} />{" "}
+                    {t("itemDetail.mixedOption", { credits: t("assetCard.credits", { count: mixed.credits }), mana: formatMana(mixed.manaWei, { group: true }) })}
+                  </label>
+                ) : null}
               </section>
             ) : null}
             <AssetRow display={display} priceCredits={priceCredits} />
@@ -406,7 +425,7 @@ function BuyDialog({ line, returnPath, resume = null, onClose }: BuyModalProps) 
                 data-variant="gradient"
                 data-full
                 onClick={pay}
-                disabled={!co.canConfirm && !reviewRepriced}
+                disabled={!co.canConfirm && !reviewRepriced && !(mixed && useMixed)}
                 data-testid="buy-modal-buy"
               >
                 {TEXT.buy}

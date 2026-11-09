@@ -111,6 +111,8 @@ export function stashBuyNowTopUp(r: { path: string; account: string; lineId: str
   const attempt = `${now.toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   stashTopUpReturn(`${r.path}?buy=resume`, now, attempt);
   try {
+    // The one hand-off, in this direction too: a cart top-up left behind must not pay the basket later.
+    store()?.removeItem(RESUME_CART_KEY);
     const record: BuyNowReturn = { path: r.path.toLowerCase(), account: r.account.toLowerCase(), lineId: r.lineId, credits: r.credits, attempt, at: now };
     store()?.setItem(BUY_NOW_KEY, JSON.stringify(record));
   } catch {

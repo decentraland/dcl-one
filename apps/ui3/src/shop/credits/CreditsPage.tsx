@@ -232,6 +232,8 @@ function RecentOrders({ address }: { address: string }) {
   async function resume(order: CreditOrder) {
     setResuming(order.id);
     setNotice(null);
+    // An older order finishes nothing a later purchase left behind: only the top-up that left a hand-off may claim it.
+    clearTopUpHandoffs();
     const result = await resumeCreditOrder(order.id, client);
     setResuming(null);
     if (result.kind === "url" && /^https:\/\/([a-z0-9-]+\.)*stripe\.com\//i.test(result.url)) {

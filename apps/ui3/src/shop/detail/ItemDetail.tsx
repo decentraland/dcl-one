@@ -540,8 +540,9 @@ export default function ItemDetail() {
       }
     : null;
   const showCompareAt = saleActive && !!eligibility?.allowed.includes("credits") && current.compareAtCredits != null;
-  // Signed in on the web Shop, an item Credits can pay for is bought over the page, as upstream's; anything else (a
-  // MANA-only resale, a host with its own purchase flow) keeps the payment choice on the page.
+  // Signed in, an item Credits can pay for is bought over the page, as upstream's, in every host today (the Explorer's
+  // native shop included, as upstream's web view). A MANA-only resale keeps the payment choice on the page, and so would
+  // a host that installs its own purchase flow (ShopPurchaseProvider, none does yet).
   const inPlace = buysInPlace && session.kind !== "signedOut" && !!cartInput && !!eligibility?.allowed.includes("credits");
   const supply = isTokenRoute ? null : (current.available ?? null);
   const maxSupply = MAX_SUPPLY[rarity.toLowerCase()];
@@ -909,7 +910,17 @@ export default function ItemDetail() {
       {!isLand ? <PhotoReel contractAddress={contractAddress} itemId={pageItemId} /> : null}
 
       {buyNow && inPlace && cartInput ? (
-        <BuyModal line={{ ...cartInput, seen: offer ?? null }} returnPath={itemHref} resume={buyNow.resume} onClose={() => setBuyNow(null)} />
+        <BuyModal
+          line={{ ...cartInput, seen: offer ?? null }}
+          returnPath={itemHref}
+          resume={buyNow.resume}
+          onBuyMixed={(mixed) => {
+            if (!offer) return;
+            setBuyNow(null);
+            setBuyingMixed({ line: cartInput, offer, mixed });
+          }}
+          onClose={() => setBuyNow(null)}
+        />
       ) : null}
       {buyingMixed ? (
         <CombinedBuy
