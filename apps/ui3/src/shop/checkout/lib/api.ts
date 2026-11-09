@@ -13,7 +13,7 @@ import { type ShopClient } from "../../api/shop";
 import type { UnifiedListing } from "@catalyst-api/market/UnifiedListing";
 import { centsFromUsdWeiCeil } from "../../model/money";
 import type { SaleRecord } from "../../history/activity";
-import { ASSET_TYPE, type ListingCoupon, type SignedTrade } from "../purchase/encoding";
+import { ASSET_TYPE, type ListingCoupon, type SignedTrade } from "./trade";
 import { fetchPrimaryListingForItem } from "../../detail/api";
 
 /** Upstream `usdWeiToCents`: a USD-pegged amount (1e18 = $1) in cents, rounded UP; 0 when unparseable. */
