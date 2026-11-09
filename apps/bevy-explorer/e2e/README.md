@@ -148,9 +148,9 @@ What the driver does for every scenario, so a spec need not:
   wait out that window since the profile was last seen to change (`profileDeployWindow()`). A
   change and its restore would otherwise fail silently and leave the shared account changed.
 
-The in-world scenario in `specs/debug-panel.test.ts` uses the lower-right bug button in development builds and Sidebar settings → Debug panel in release builds. It reads the current realm, observes a live FPS-target change and verifies an avatar action against the engine. The same spec reads `/client_login_state` for an unsigned guest (a session the page signs in
-itself as a scene preview does, `?guest=1`; the HUD's Continue as guest makes a signed guest account
-instead) and checks that authenticated login delivery is inactive. The **Client login events** section is included in the registered-reading
+The in-world scenario in `specs/debug-panel.test.ts` uses the lower-right bug button in development builds and Sidebar settings → Debug panel in release builds. It reads the current realm, observes a live FPS-target change and verifies an avatar action against the engine. The same spec reads `/client_login_state` for an unsigned guest (a session the engine's `/login_guest`
+signs in, the guest a scene preview's `?guest=1` gets; the HUD's Continue as guest makes a signed
+guest account instead) and checks that authenticated login delivery is inactive. The **Client login events** section is included in the registered-reading
 check. `test/client-login-storage.test.ts` checks the browser queue's transaction acknowledgment,
 abort handling, concurrent-instance merging, shared capacity, acknowledgment replay and restart read. `test/client-login-browser.test.ts` runs the production storage adapter in two independent
 same-origin Chrome page contexts, recreates those contexts to check recovery, and aborts an actual
@@ -195,7 +195,7 @@ fails saying so otherwise.
 What the HUD would need for more Ports, found while porting: roles or labels on the minimap's
 name and coordinates, the chat message text, the communities titles and counts, the passport
 header and bio, the skybox slider and switch; `aria-selected` and `aria-pressed` readable through
-`/hud_read`; implicit roles for `nav`, `section` and `header` in `hudAutomation.ts`.
+`/hud_read`; implicit roles for `section` and `header` in `hudAutomation.ts`.
 
 ## Visual suite
 

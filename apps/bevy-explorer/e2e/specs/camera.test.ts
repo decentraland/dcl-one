@@ -60,7 +60,8 @@ scenario('Space in photo mode takes a photo', async ({ explorer, restore }) => {
     const { lastPhotoId } = await explorer.photoMode()
     if (lastPhotoId && lastPhotoId !== before.lastPhotoId) await explorer.deletePhoto(lastPhotoId)
   })
-  await explorer.hud.wait(SHOOT, { state: 'actionable', timeoutMs: PAGE_TIMEOUT_MS })
+  // the overlay is up; Space is a key, which goes to the engine under the camera's pointer lock
+  await explorer.hud.wait(SHOOT, { timeoutMs: PAGE_TIMEOUT_MS })
   await explorer.key('Space')
   const captured = await explorer.waitPhotoState((state) => state.captures > before.captures, 'the capture to start')
   assert.equal(captured.active, true, 'photo mode stays on after a photo')

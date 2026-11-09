@@ -197,7 +197,8 @@ State, in every build:
   client takes no input).
 - `/avatar_state [all|<address>]`: avatars as selected (body shape, wearables, emotes, forced
   slots), as rendered (built or not, wearables by category, hidden categories) and the emote
-  each plays, as a JSON array; the player's by default. The HUD's preview avatars are tagged
+  each plays (with `idle`: whether a triggered emote may take over, which a scene's non-idle
+  movement animation does not let it), as a JSON array; the player's by default. The HUD's preview avatars are tagged
   `preview`. Rendered URNs are normalised (lowercase, default wearables included); selected ones
   are as written. The HUD uses `/avatar_state --panel` for a single local-player report.
   It shows the completed model while a replacement loads and explains missing readings.

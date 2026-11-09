@@ -134,6 +134,8 @@ export function roleOf(el: Element): string | null {
       return 'option'
     case 'li':
       return 'listitem'
+    case 'nav':
+      return 'navigation'
     case 'progress':
       return 'progressbar'
     default:

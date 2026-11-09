@@ -138,12 +138,12 @@ describe('signIn', () => {
     assert.deepEqual(fake.sent('login_guest'), [])
   })
 
-  test('a web unsigned guest is signed in by the page (?guest=1): no sign-in command, only the wait for the world', async () => {
-    const fake = new FakeConsole({ hud_login: landed, login_guest: '', world_state: () => world() })
-    await signIn(new Explorer(fake), web, 'unsigned-guest')
+  test("a web unsigned guest is the engine's /login_guest, with no HUD sign-in and no wait for a world", async () => {
+    const fake = new FakeConsole({ hud_login: landed, login_guest: '', world_state: () => world({ inWorld: false, worldHeld: true }) })
+    const state = await signIn(new Explorer(fake), web, 'unsigned-guest')
     assert.deepEqual(fake.sent('hud_login'), [])
-    assert.deepEqual(fake.sent('login_guest'), [])
-    assert.deepEqual(fake.sent('world_state'), ['/world_state'])
+    assert.deepEqual(fake.sent('login_guest'), ['/login_guest'])
+    assert.equal(state.signedIn, true)
   })
 
   test('on the standalone an unsigned guest is the engine\'s /login_guest', async () => {

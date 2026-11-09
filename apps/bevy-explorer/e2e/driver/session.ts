@@ -18,8 +18,9 @@ import { REPORT_DIR } from './paths.ts'
 
 /** How a session signs in: the automation `account`; a `guest`, a fresh account the engine marks
  *  as one, as the HUD's Continue as guest makes it (it signs, and keeps a profile); an
- *  `unsigned-guest`, the session-only guest with no signed identity, as a scene preview's
- *  `?guest=1` boot signs in (natively `/login_guest`); or `none`. */
+ *  `unsigned-guest`, the session-only guest with no signed identity, which the engine's
+ *  `/login_guest` signs in (on the web under a HUD that stays on its start page, so with no world
+ *  of its own; a scene preview's `?guest=1` boot signs in the same guest); or `none`. */
 export type SignIn = 'account' | 'guest' | 'unsigned-guest' | 'none'
 
 export interface OpenOptions {
@@ -154,13 +155,6 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
     // with no session, holding the world; `/hud_login` then signs in through the HUD and goes to
     // the realm and the parcel from the lobby, as a link's destination would.
     page.searchParams.set('baseDomain', target.baseDomain)
-    if (options.signIn === 'unsigned-guest') {
-      // the HUD's own unsigned guest: `?guest=1` signs in the moment the engine is warm, with no
-      // start page, and launches straight at the url's destination, as a scene preview does
-      page.searchParams.set('guest', '1')
-      page.searchParams.set('realm', realm)
-      page.searchParams.set('position', position)
-    }
     url = page.toString()
     console_ = await WebConsole.launch({
       url,
@@ -173,7 +167,7 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
   const explorer = new Explorer(console_)
   try {
     await signIn(explorer, target, options.signIn ?? 'account', options.firstLogin, { realm, position })
-    if (target.transport === 'web') {
+    if (target.transport === 'web' && options.signIn !== 'unsigned-guest') {
       // the HUD's travel lands there; a realm that ignores the parcel (a world) is corrected by console
       await arrive(explorer, realm, position)
       // the engine is in the world before the HUD has put up its own (the rail, and the chat,
@@ -229,8 +223,10 @@ export async function signIn(
 ): Promise<WorldState> {
   const pick = { name: firstLogin.name ?? 'e2etester', look: firstLogin.look ?? 1 }
   if (target.transport === 'web' && mode === 'unsigned-guest') {
-    // signed in by the page itself (`?guest=1`), on its way to the url's destination
-    return explorer.waitInWorld(WORLD_TIMEOUT_MS)
+    // the engine's own guest: the HUD keeps its start page and the world stays held, which is all
+    // a reading of the engine's sign-in needs
+    await explorer.loginGuest()
+    return explorer.worldState()
   }
   if (target.transport === 'web' && mode !== 'none') {
     const identity = buildAuthIdentity(mode === 'account' ? accountKey(target) : newPrivateKey())

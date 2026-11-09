@@ -105,6 +105,9 @@ export interface EmoteState {
   repeat: boolean
   finished: boolean
   mask: 'fullBody' | 'upperBody'
+  /** An idle pose, which a triggered emote takes over: a scene's movement animation outranks one
+   *  only while it is not idle. Absent from builds before it was reported. */
+  idle?: boolean
 }
 
 export interface AvatarReport {

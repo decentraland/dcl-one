@@ -182,6 +182,13 @@ describe('describing a control', () => {
     expect(describeControl({ name: 'Close' })).toMatchObject({ busy: false })
   })
 
+  it('gives a nav its implicit navigation role', () => {
+    const root = render('<nav aria-label="Conversations"><button>Nearby</button></nav>')
+    place(root.querySelector('nav')!, 0, 0, 40, 200)
+    place(root.querySelector('button')!, 0, 0)
+    expect(describeControl({ name: 'Conversations', role: 'navigation' })).toMatchObject({ found: true, role: 'navigation' })
+  })
+
   it('reads values and checked state', () => {
     const root = render('<input type="checkbox" aria-label="Mute" checked><button aria-pressed="true">Mic</button>')
     for (const el of Array.from(root.children)) place(el, 0, 0)

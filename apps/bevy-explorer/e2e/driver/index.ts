@@ -13,5 +13,5 @@ export { PACKAGE_ROOT, REPO_ROOT, SCENES_DIR, REFERENCES_DIR, REPORT_DIR } from 
 export { decodePng, encodePng, type Image } from './png.ts'
 export { compareImages, comparePng, type Comparison } from './compare.ts'
 export { openSession, openExplorer, closeSessions, enterWorld, signIn } from './session.ts'
-export { scenario, spec, type ScenarioContext, type ScenarioOptions } from './harness.ts'
+export { scenario, spec, closeToRest, type ScenarioContext, type ScenarioOptions } from './harness.ts'
 export { ScenarioReport } from './report.ts'
