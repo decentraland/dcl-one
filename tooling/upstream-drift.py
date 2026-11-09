@@ -309,23 +309,33 @@ def affected(version, advisory):
     return True
 
 
+def advisory_files(tree):
+    """Advisory files per crate ({crate: [(file name, blob sha)]}) from the recursive git tree of
+    rustsec/advisory-db. The contents API lists at most 1000 entries of a directory and ignores
+    paging, so it cannot list crates/; the tree lists every path unless GitHub truncates it."""
+    if tree.get('truncated'):
+        raise RuntimeError('rustsec/advisory-db tree is truncated: advisories would be missed')
+    files = {}
+    for entry in tree['tree']:
+        parts = entry['path'].split('/')
+        if entry['type'] == 'blob' and len(parts) == 3 and parts[0] == 'crates' and parts[2].endswith('.md'):
+            files.setdefault(parts[1], []).append((parts[2], entry['sha']))
+    return files
+
+
 def collect_advisories(lock_pkgs):
-    listing = gh_pages('repos/rustsec/advisory-db/contents/crates', limit=12)
-    advised = {entry['name'] for entry in listing if entry['type'] == 'dir'}
+    files_by_crate = advisory_files(gh('repos/rustsec/advisory-db/git/trees/main?recursive=1'))
     by_name = {}
     for p in lock_pkgs:
         by_name.setdefault(p['name'], set()).add(p['version'])
-    hits = sorted(advised & set(by_name))
+    hits = sorted(set(files_by_crate) & set(by_name))
     findings = []
     for name in hits:
-        files = gh(f'repos/rustsec/advisory-db/contents/crates/{name}') or []
-        for f in files:
-            if not f['name'].endswith('.md'):
+        for _file, sha in sorted(files_by_crate[name]):
+            blob = gh(f'repos/rustsec/advisory-db/git/blobs/{sha}')
+            if not blob:
                 continue
-            content = gh(f'repos/rustsec/advisory-db/contents/crates/{name}/{f["name"]}')
-            if not content:
-                continue
-            advisory = parse_advisory(base64.b64decode(content['content']).decode('utf-8', 'replace'))
+            advisory = parse_advisory(base64.b64decode(blob['content']).decode('utf-8', 'replace'))
             if not advisory:
                 continue
             for version in sorted(by_name[name]):

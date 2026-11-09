@@ -56,6 +56,26 @@ class VersionLogicTests(unittest.TestCase):
         self.assertEqual(advisory['unaffected'], ['< 0.1.0'])
         self.assertIsNone(drift.parse_advisory('no toml here'))
 
+    def test_advisory_files_reads_every_crate_of_the_tree(self):
+        tree = {'truncated': False, 'tree': [
+            {'path': 'crates', 'type': 'tree', 'sha': 't0'},
+            {'path': 'crates/zvariant_derive', 'type': 'tree', 'sha': 't1'},
+            {'path': 'crates/zvariant_derive/RUSTSEC-2026-0002.md', 'type': 'blob', 'sha': 'b1'},
+            {'path': 'crates/rustls/RUSTSEC-2026-0003.md', 'type': 'blob', 'sha': 'b2'},
+            {'path': 'crates/rustls/RUSTSEC-2026-0004.md', 'type': 'blob', 'sha': 'b3'},
+            {'path': 'crates/rustls/notes.txt', 'type': 'blob', 'sha': 'b4'},
+            {'path': 'rust/std/RUSTSEC-2026-0005.md', 'type': 'blob', 'sha': 'b5'},
+            {'path': 'README.md', 'type': 'blob', 'sha': 'b6'},
+        ]}
+        self.assertEqual(drift.advisory_files(tree), {
+            'zvariant_derive': [('RUSTSEC-2026-0002.md', 'b1')],
+            'rustls': [('RUSTSEC-2026-0003.md', 'b2'), ('RUSTSEC-2026-0004.md', 'b3')],
+        })
+
+    def test_advisory_files_refuses_a_truncated_tree(self):
+        with self.assertRaises(RuntimeError):
+            drift.advisory_files({'truncated': True, 'tree': []})
+
     def test_tag_helpers(self):
         self.assertEqual(drift.version_key('v0.16.1'), (0, 16, 1, 0))
         self.assertGreater(drift.version_key('v1.46.3'), drift.version_key('v0.28.0'))
