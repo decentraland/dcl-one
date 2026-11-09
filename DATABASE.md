@@ -1231,3 +1231,34 @@ primary key); flagging it again keeps `flagged_at` and takes the new source,
 IP and links. Addresses are lower-cased and checked by the table; the handler
 normalises the body's. The bootstrap defines the table; an existing database
 gains it from the object pass, so no step exists.
+
+## Badges catalog and progress workload
+
+The catalog (`social.badge_definitions`, `badge_tiers`, `presence_badges`;
+`schemas/40_social.sql`) is reference data: upstream's 34 badges and 84 tiers,
+seeded by the bootstrap, a few dozen rows that change only with a release or
+the TS database import. Every read route shares one 300 s snapshot of the
+published rows in `created_at, id` order (`social/src/badges/store.rs`). Per
+wallet, `user_badge_progress` holds one row per badge touched (its
+`steps_done` plus upstream's `progress` document verbatim: the evaluators'
+dedup and resume state, a few KB at most) and `user_achieved_tiers` one row per
+earned tier; reads load both for one address in one statement.
+
+Writers of progress go through `badges::progress::apply_progress` in their own
+transaction: the badge row `FOR SHARE` only when published and not archived
+(upstream's awardable rule, `published_at IS NOT NULL AND archived_at IS
+NULL`), a transaction advisory lock per (address, badge) that also serializes
+the console revoke, then the document, the counter, the newly reached tiers,
+completion and, unless suppressed, one idempotent `badge_granted` notification
+per new tier. The console grant raises the steps to the requested tier's
+target through it.
+
+Invariants: `steps_done` equals the document's `steps`; earned tiers and
+completion are never taken back by a write (only the console revoke deletes
+them); a tiered badge completes at its last tier, a single badge at
+`criteria_steps`; an archived badge stays listed and kept by its earners and is
+never awarded; an unpublished one is invisible. A database stamped before step
+`0036_social_badges_catalog_parity` keeps its four placeholder rows: the step
+gives `open_for_business` and `emotionista` upstream's content and leaves
+`decentraland_citizen` and `walkabout` unpublished; the rest of upstream's
+catalog reaches it through the TS database import.

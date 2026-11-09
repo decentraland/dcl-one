@@ -11,7 +11,7 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 14] = [
+const PREPARED_PENDING_STEPS: [&str; 15] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -26,6 +26,7 @@ const PREPARED_PENDING_STEPS: [&str; 14] = [
     "0033_explore_recurrence_one_pass",
     "0034_shop_bid_invalidated",
     "0035_explore_mirror_adopted_at",
+    "0036_social_badges_catalog_parity",
 ];
 type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
 
@@ -179,6 +180,111 @@ async fn has_column(pool: &PgPool, table: &str, column: &str) -> bool {
         .fetch_one(pool)
         .await
         .unwrap()
+}
+
+/// The placeholder catalog a stamped database carries from the earlier seed,
+/// with a wallet holding two of its badges.
+const PLACEHOLDER_BADGES: &str = "
+INSERT INTO social.badge_definitions (id, name, description, category, is_tier) VALUES
+  ('open_for_business', 'Open for Business', 'Set up a store and publish a collection.', 'Builder', false),
+  ('decentraland_citizen', 'Decentraland Citizen', 'Log in to Decentraland for the first time.', 'Explorer', false),
+  ('walkabout', 'Walkabout', 'Walk a cumulative distance across Decentraland.', 'Explorer', true),
+  ('emotionista', 'Emotionista', 'Play emotes in-world.', 'Socializer', true);
+INSERT INTO social.badge_tiers (badge_id, tier_id, tier_name, description, criteria_steps, ordinal) VALUES
+  ('walkabout', 'walkabout-starter', 'Starter', 'Walk 1,000 meters.', 1000, 0),
+  ('emotionista', 'emotionista-bronze', 'Bronze', 'Play 10 emotes.', 10, 0),
+  ('emotionista', 'emotionista-silver', 'Silver', 'Play 100 emotes.', 100, 1),
+  ('emotionista', 'emotionista-gold', 'Gold', 'Play 1000 emotes.', 1000, 2);
+INSERT INTO social.user_badge_progress (address, badge_id, steps_done, completed_at, last_completed_tier_id) VALUES
+  ('0x' || repeat('c', 40), 'walkabout', 1000, NULL, 'walkabout-starter'),
+  ('0x' || repeat('c', 40), 'open_for_business', 1, '2026-01-01', NULL);
+INSERT INTO social.user_achieved_tiers (address, badge_id, tier_id) VALUES
+  ('0x' || repeat('c', 40), 'walkabout', 'walkabout-starter');
+";
+
+/// `0036_social_badges_catalog_parity`: no row is inserted or deleted; the
+/// ids upstream shares take its content, the two it names differently stay
+/// unpublished, and the wallet keeps every row.
+async fn assert_placeholder_badges_upgraded(pool: &PgPool) {
+    let defs: Vec<(
+        String,
+        Option<String>,
+        bool,
+        Option<i32>,
+        bool,
+        chrono::NaiveDateTime,
+    )> = sqlx::query_as(
+        "SELECT id, category, is_tier, criteria_steps, published_at IS NOT NULL, created_at \
+             FROM social.badge_definitions ORDER BY created_at, id",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let published: Vec<_> = defs
+        .iter()
+        .map(|d| (d.0.as_str(), d.1.as_deref(), d.2, d.3, d.4))
+        .collect();
+    assert_eq!(
+        published,
+        [
+            ("open_for_business", Some("Creator"), false, Some(2), true),
+            ("emotionista", Some("Collector"), true, None, true),
+            (
+                "decentraland_citizen",
+                Some("Explorer"),
+                false,
+                Some(1),
+                false
+            ),
+            ("walkabout", Some("Explorer"), true, None, false),
+        ],
+        "upstream's creation order first, then the unpublished placeholders"
+    );
+    let tiers: Vec<(String, i32, i32)> = sqlx::query_as(
+        "SELECT tier_id, criteria_steps, ordinal FROM social.badge_tiers \
+         WHERE badge_id = 'emotionista' ORDER BY ordinal",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        tiers,
+        [
+            ("emotionista-bronze".into(), 10, 1),
+            ("emotionista-silver".into(), 25, 2),
+            ("emotionista-gold".into(), 50, 3)
+        ]
+    );
+    let held: Vec<(String, i32, serde_json::Value)> = sqlx::query_as(
+        "SELECT badge_id, steps_done, progress FROM social.user_badge_progress \
+         WHERE address = '0x' || repeat('c', 40) ORDER BY badge_id",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        held,
+        [
+            ("open_for_business".into(), 1, serde_json::json!({})),
+            ("walkabout".into(), 1000, serde_json::json!({}))
+        ]
+    );
+    let presence: bool =
+        sqlx::query_scalar("SELECT to_regclass('social.presence_badges') IS NOT NULL")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert!(
+        presence,
+        "the object pass creates the presence configuration"
+    );
+    let refused = sqlx::query(
+        "INSERT INTO social.badge_tiers (badge_id, tier_id, tier_name, criteria_steps, ordinal) \
+         VALUES ('emotionista', 'emotionista-zero', 'Zero', 0, 9)",
+    )
+    .execute(pool)
+    .await;
+    assert!(refused.is_err(), "a tier target is positive");
 }
 
 #[tokio::test]
@@ -340,6 +446,10 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         private_indexes, 2,
         "both address access paths exist before migrate"
     );
+    sqlx::raw_sql(PLACEHOLDER_BADGES)
+        .execute(pool)
+        .await
+        .unwrap();
     let done =
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
             .await
@@ -382,6 +492,8 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         vec!["place_world_local_owner_idx", "place_world_owner_idx"],
         "the prepared owner access paths survive the v3 release"
     );
+
+    assert_placeholder_badges_upgraded(pool).await;
 
     let (permissions, granted): (serde_json::Value, bool) = sqlx::query_as(
         "SELECT permissions, permissions_granted FROM explore.event_profile_settings WHERE \"user\"='0xlegacy'"

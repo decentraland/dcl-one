@@ -810,8 +810,15 @@ CREATE TABLE social.notification_reader_seen (
 
 -- ── badges ─────────────────────────────────────────────────────────────────
 
--- Reference data (seeded by the badges module/agent; schema.sql carries no
--- data rows). assets is the { "2d": {...}, "3d": {...} } document.
+-- The catalog (the badges section at the end seeds upstream's). A badge is
+-- public once published_at is set; archived_at retires it: still listed and
+-- kept by its earners, never awarded again. Awardable = published and not
+-- archived (badges::progress checks it under FOR SHARE, so an archive waits
+-- for an in-flight award). created_at, then id, is the catalog order.
+-- criteria_steps is a single badge's target (a tiered badge's targets are its
+-- tiers'). category is upstream's enum. assets is the { "2d": {...}, "3d": {...} }
+-- document of paths relative to BADGES_PUBLIC_ASSET_BASE_URL; a tiered
+-- badge's art is its tiers'.
 CREATE TABLE social.badge_definitions (
     id text NOT NULL,
     name text NOT NULL,
@@ -819,21 +826,39 @@ CREATE TABLE social.badge_definitions (
     category text,
     is_tier boolean NOT NULL DEFAULT false,
     assets jsonb NOT NULL DEFAULT '{}'::jsonb,
-    CONSTRAINT badge_definitions_pkey PRIMARY KEY (id)
+    criteria_steps integer,
+    published_at timestamp without time zone,
+    archived_at timestamp without time zone,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT badge_definitions_pkey PRIMARY KEY (id),
+    CONSTRAINT badge_definitions_category_check
+        CHECK (category IN ('Explorer', 'Collector', 'Creator', 'Socializer', 'Builder')),
+    CONSTRAINT badge_definitions_criteria_steps_check CHECK (criteria_steps > 0),
+    CONSTRAINT badge_definitions_tier_steps_check CHECK (NOT is_tier OR criteria_steps IS NULL)
 );
 
+-- A tiered badge's goals; ordinal is upstream's position - 1. Earned tiers
+-- (user_achieved_tiers) name the tier id, not the row, so the ordinal is
+-- unique but deferred: a reorder swaps ordinals inside one transaction.
 CREATE TABLE social.badge_tiers (
     badge_id text NOT NULL REFERENCES social.badge_definitions (id) ON DELETE CASCADE,
     tier_id text NOT NULL,
     tier_name text NOT NULL,
     description text,
     assets jsonb NOT NULL DEFAULT '{}'::jsonb,
-    criteria_steps integer NOT NULL DEFAULT 0,
+    criteria_steps integer NOT NULL,
     ordinal integer NOT NULL DEFAULT 0,
-    CONSTRAINT badge_tiers_pkey PRIMARY KEY (badge_id, tier_id)
+    CONSTRAINT badge_tiers_pkey PRIMARY KEY (badge_id, tier_id),
+    CONSTRAINT badge_tiers_criteria_steps_check CHECK (criteria_steps > 0),
+    CONSTRAINT badge_tiers_ordinal_check CHECK (ordinal >= 0),
+    CONSTRAINT badge_tiers_badge_ordinal_key UNIQUE (badge_id, ordinal) DEFERRABLE INITIALLY DEFERRED
 );
 
 -- granted_by distinguishes a console grant from an event-consumer write.
+-- progress is upstream's per-badge document verbatim (`steps` plus each
+-- evaluator's dedup/resume state); steps_done is its `steps`, the counter
+-- the targets compare against, and the two change together
+-- (badges::progress::apply_progress).
 CREATE TABLE social.user_badge_progress (
     address text NOT NULL,
     badge_id text NOT NULL REFERENCES social.badge_definitions (id) ON DELETE CASCADE,
@@ -842,8 +867,10 @@ CREATE TABLE social.user_badge_progress (
     last_completed_tier_id text,
     granted_by text,
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    progress jsonb NOT NULL DEFAULT '{}'::jsonb,
     CONSTRAINT user_badge_progress_pkey PRIMARY KEY (address, badge_id),
-    CONSTRAINT user_badge_progress_steps_check CHECK (steps_done >= 0)
+    CONSTRAINT user_badge_progress_steps_check CHECK (steps_done >= 0),
+    CONSTRAINT user_badge_progress_progress_check CHECK (jsonb_typeof(progress) = 'object')
 );
 
 CREATE TABLE social.user_achieved_tiers (
@@ -867,6 +894,31 @@ CREATE TABLE social.badge_admin_audit (
     acted_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     CONSTRAINT badge_admin_audit_pkey PRIMARY KEY (id),
     CONSTRAINT badge_admin_audit_action_check CHECK (action IN ('grant', 'revoke'))
+);
+
+-- Presence badges (upstream presence_badges, same columns): where a catalog
+-- badge counts (a scene by its base parcel, or a world), inside which UTC
+-- window, and the rule: a visit, or a stay of required_seconds. The badge's
+-- criteria_steps is required_seconds for a stay and 1 for a visit. Config
+-- only; no ON DELETE: a configured badge is archived, not deleted.
+CREATE TABLE social.presence_badges (
+    badge_id text NOT NULL REFERENCES social.badge_definitions (id),
+    location_kind text NOT NULL,
+    parcel text,
+    world_name text,
+    window_start timestamp without time zone NOT NULL,
+    window_end timestamp without time zone NOT NULL,
+    mode text NOT NULL,
+    required_seconds integer NOT NULL DEFAULT 0,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT presence_badges_pkey PRIMARY KEY (badge_id),
+    CONSTRAINT presence_badges_location_check CHECK (
+        (location_kind = 'scene' AND parcel IS NOT NULL
+         AND parcel ~ '^(0|-?[1-9][0-9]{0,2}),(0|-?[1-9][0-9]{0,2})$' AND world_name IS NULL)
+        OR (location_kind = 'world' AND world_name IS NOT NULL AND parcel IS NULL)),
+    CONSTRAINT presence_badges_window_check CHECK (window_end > window_start),
+    CONSTRAINT presence_badges_mode_check CHECK (
+        (mode = 'visit' AND required_seconds = 0) OR (mode = 'stay' AND required_seconds > 0))
 );
 
 -- ── referral ───────────────────────────────────────────────────────────────
@@ -1344,30 +1396,129 @@ CREATE TRIGGER client_events_notify_trigger
 -- ==== end section: notifications ====
 
 -- ==== section: badges ====
--- Reference rows: the old crate's fixture
--- (catalyrst-badges/migrations/0002_seed_fixture.sql with the 0005 asset
--- fix-up applied), so `catalyst schema apply` is the one bootstrap. Asset URLs
--- keep the upstream host; the badges module rewrites it to
--- BADGES_PUBLIC_ASSET_BASE_URL at serve time and serves the embedded PNGs at
--- /badges/assets/{path}. Never per-user rows.
-INSERT INTO social.badge_definitions (id, name, description, category, is_tier, assets) VALUES
-  ('open_for_business', 'Open for Business', 'Set up a store and publish a collection.', 'Builder', false,
-   '{"2d":{"normal":"https://badges.decentraland.org/assets/open_for_business/2d/normal.png","hrm":"https://badges.decentraland.org/assets/open_for_business/2d/hrm.png","baseColor":"https://badges.decentraland.org/assets/open_for_business/2d/baseColor.png"},"3d":{"normal":"https://badges.decentraland.org/assets/open_for_business/3d/normal.png","hrm":"https://badges.decentraland.org/assets/open_for_business/3d/hrm.png","baseColor":"https://badges.decentraland.org/assets/open_for_business/3d/baseColor.png"}}'::jsonb),
-  ('decentraland_citizen', 'Decentraland Citizen', 'Log in to Decentraland for the first time.', 'Explorer', false,
-   '{"2d":{"normal":"https://badges.decentraland.org/assets/decentraland_citizen/2d/normal.png","hrm":"","baseColor":""},"3d":{"normal":"https://badges.decentraland.org/assets/decentraland_citizen/3d/normal.png","hrm":"https://badges.decentraland.org/assets/decentraland_citizen/3d/hrm.png","baseColor":"https://badges.decentraland.org/assets/decentraland_citizen/3d/baseColor.png"}}'::jsonb),
-  ('walkabout', 'Walkabout', 'Walk a cumulative distance across Decentraland.', 'Explorer', true,
-   '{"2d":{"normal":"https://badges.decentraland.org/assets/walkabout/2d/normal.png","hrm":"","baseColor":""},"3d":{"normal":"https://badges.decentraland.org/assets/walkabout/3d/normal.png","hrm":"https://badges.decentraland.org/assets/walkabout/3d/hrm.png","baseColor":"https://badges.decentraland.org/assets/walkabout/3d/baseColor.png"}}'::jsonb),
-  ('emotionista', 'Emotionista', 'Play emotes in-world.', 'Socializer', true,
-   '{"2d":{"normal":"https://badges.decentraland.org/assets/emotionista/2d/normal.png","hrm":"","baseColor":""},"3d":{"normal":"https://badges.decentraland.org/assets/emotionista/3d/normal.png","hrm":"https://badges.decentraland.org/assets/emotionista/3d/hrm.png","baseColor":"https://badges.decentraland.org/assets/emotionista/3d/baseColor.png"}}'::jsonb);
+-- Reference rows: upstream's catalog (decentraland/badges processor
+-- migration 1791331200000_badge_catalog and its frozen seed: 34 badges, 84
+-- tiers) with its ids, texts and creation order: published at upstream's
+-- instant, created one millisecond apart in seed order. A single badge (its
+-- one upstream tier in the `root` slot) keeps that tier's steps in
+-- criteria_steps and has no tier rows. Asset paths follow upstream's CDN
+-- layout (<badge>[/<tier slot>]/{2d,3d}/...), resolved against
+-- BADGES_PUBLIC_ASSET_BASE_URL at serve time. Never per-user rows.
+INSERT INTO social.badge_definitions
+    (id, name, description, category, is_tier, assets, criteria_steps, published_at, created_at)
+SELECT s.id, s.name, s.description, s.category, s.steps IS NULL,
+       CASE WHEN s.steps IS NULL THEN '{}'::jsonb ELSE jsonb_build_object(
+           '2d', jsonb_build_object('normal', s.id || '/2d/normal.png'),
+           '3d', jsonb_build_object('normal', s.id || '/3d/normal.png', 'hrm', s.id || '/3d/hrm.png',
+                                    'basecolor', s.id || '/3d/basecolor.png')) END,
+       s.steps, timestamp '2026-10-07 00:00:00',
+       timestamp '2026-10-07 00:00:00' + s.n * interval '1 millisecond'
+FROM (VALUES
+  (0, 'dclcitizen', 'Decentraland Citizen', 'Landed in Decentraland', 'Explorer', 1),
+  (1, 'epic_ensemble', 'Epic Ensemble', 'Equipped at least 3 Epic Wearables at the same time', 'Collector', 1),
+  (2, 'regally_rare', 'Regally Rare', 'Equipped at least 3 Rare Wearables at the same time', 'Collector', 1),
+  (3, 'legendary_look', 'Legendary Look', 'Equipped at least 3 Legendary Wearables at the same time', 'Collector', 1),
+  (4, 'mythic_model', 'Mythic Model', 'Equipped at least 3 Mythic Wearables at the same time', 'Collector', 1),
+  (5, 'unique_unicorn', 'Unique Unicorn', 'Equipped at least 3 Unique Wearables at the same time', 'Collector', 1),
+  (6, 'exotic_elegance', 'Exotic Elegance', 'Equipped at least 3 Exotic Wearables at the same time', 'Collector', 1),
+  (7, 'open_for_business', 'Open for Business', 'Complete Store Information and submit at least 1 collection', 'Creator', 2),
+  (8, 'traveler', 'Traveler', 'Starter: 1 Genesis City scene explored (for at least 1 min);Bronze: 50 Genesis City scenes explored (for at least 1 min);Silver: 250 Genesis City scenes explored (for at least 1 min);Gold: 1,000 Genesis City scenes explored (for at least 1 min);Platinum: 2,500 Genesis City scenes explored (for at least 1 min);Diamond: 10,000 Genesis City scenes explored (for at least 1 min)', 'Explorer', NULL),
+  (9, 'profile_pro', 'Profile Pro', 'Added information to Profile', 'Socializer', 1),
+  (10, 'emotionista', 'Emotionista', 'Starter: 1 Emote purchased;Bronze: 10 Emotes purchased;Silver: 25 Emotes purchased;Gold: 50 Emotes purchased;Platinum: 150 Emotes purchased;Diamond: 300  Emotes purchased', 'Collector', NULL),
+  (11, 'fashionista', 'Fashionista', 'Starter: 1 Wearable purchased;Bronze: 25 Wearables purchased;Silver: 75 Wearables purchased;Gold: 250 Wearables purchased;Platinum: 500 Wearables purchased;Diamond: 1,500 Wearables purchased', 'Collector', NULL),
+  (12, 'event_enthusiast', 'Event Enthusiast', 'Starter: 1 Events attended (for at least 5 min);Bronze: 50 Events attended (for at least 5 min);Silver: 100 Events attended (for at least 5 min);Gold: 500 Events attended (for at least 5 min);Platinum: 1000 Events attended (for at least 5 min);Diamond: 2000 Events attended (for at least 5 min)', 'Socializer', NULL),
+  (13, 'moves_master', 'Moves Master', 'Starter: Emoted 100 times (max 1/min);Bronze: Emoted 1,000 times (max 1/min);Silver: Emoted 5,000 times (max 1/min);Gold: Emoted 10,000 times (max 1/min);Platinum: Emoted 100,000 times (max 1/min);Diamond: Emoted 500,000 times (max 1/min)', 'Explorer', NULL),
+  (14, 'social_butterfly', 'Social Butterfly', 'Starter: 1 Profile viewed;Bronze: 50 Profiles viewed;Silver: 100 Profiles viewed;Gold: 250 Profiles viewed;Platinum: 500 Profiles viewed;Diamond: 1,000 Profiles viewed', 'Socializer', NULL),
+  (15, 'vertical_voyager', 'Vertical Voyager', 'Achieved a total elevation gain of at least 500m in one session', 'Explorer', 1),
+  (16, 'walkabout_wanderer', 'Walkabout Wanderer', 'Starter: 10k Steps walked in Decentraland;Bronze: 40k Steps walked in Decentraland;Silver: 150k Steps walked in Decentraland;Gold: 600k Steps walked in Decentraland;Platinum: 2.5M Steps walked in Decentraland;Diamond: 10M Steps walked in Decentraland', 'Explorer', NULL),
+  (17, 'land_architect', 'LAND Architect', 'Deployed a scene to Genesis City', 'Builder', 1),
+  (18, 'emote_creator', 'Emote Creator', 'Starter: 1 Emote published;Bronze: 5 Emotes published;Silver: 10 Emotes published;Gold: 20 Emotes published;Platinum: 50 Emotes published;Diamond: 100 Emotes published', 'Creator', NULL),
+  (19, 'wearable_designer', 'Wearable Designer', 'Starter: 1 Wearable published;Bronze: 5 Wearables published;Silver: 25 Wearables published;Gold: 50 Wearables published;Platinum: 175 Wearables published;Diamond: 350 Wearables published', 'Creator', NULL),
+  (20, 'referral', 'Community Recruiter', 'Starter: Welcomed 5 friends to Decentraland;Bronze: Welcomed 10 friends to Decentraland;Silver: Welcomed 25 friends to Decentraland;Gold: Welcomed 50 friends to Decentraland;Platinum: Welcomed 75 friends to Decentraland;Diamond: Welcomed 100 friends to Decentraland;', 'Socializer', NULL),
+  (21, 'music_festival_2024', 'Decentraland Music Festival 2024', 'Jumped in and attended Decentraland Music Festival 2024', 'Socializer', 1),
+  (22, 'fashion_week_2025', 'Metaverse Fashion Week 2025', 'Jumped in and attended Metaverse Fashion Week 2025', 'Socializer', 1),
+  (23, 'builder_talent_trail_2025', 'Builder Talent Trail 2025', 'Jumped in and attended Builder Talent Trail 2025', 'Socializer', 1),
+  (24, 'music_talent_trail_2025', 'Music Talent Trail 2025', 'Jumped in and attended Music Talent Trail 2025', 'Socializer', 1),
+  (25, 'game_night_2025', 'Game Night 2025', 'Jumped in and attended Game Night 2025', 'Socializer', 1),
+  (26, 'career_quest_2025', 'Career Quest 2025', 'Jumped in and attended Career Quest 2025', 'Socializer', 1),
+  (27, 'art_week_2025', 'Art Week 2025', 'Jumped in and attended Art Week 2025', 'Socializer', 1),
+  (28, 'fright_night_2025', 'Fright Night 2025', 'Jumped in and attended Fright Night 2025', 'Socializer', 1),
+  (29, 'music_festival_2025', 'Decentraland Music Festival 2025', 'Jumped in and attended Decentraland Music Festival 2025', 'Socializer', 1),
+  (30, 'festive_trail_2025', 'Festive Trail 2025', 'Jumped in to celebrate the holiday season 2025', 'Socializer', 1),
+  (31, 'welcome_guide', 'Welcome Guide', 'Welcomes newcomers and sparks first connections', 'Socializer', 1),
+  (32, 'buildathon_friendzone', 'Friendzone Buildathon', 'Awarded for being part of the 2026 Friendzone Buildathon', 'Builder', 1),
+  (33, 'halloweeks_2026', 'Halloweeks 2026', 'Jumped in for a spooky time', 'Socializer', 1)
+) AS s (n, id, name, description, category, steps);
 
-INSERT INTO social.badge_tiers (badge_id, tier_id, tier_name, description, assets, criteria_steps, ordinal) VALUES
-  ('walkabout', 'walkabout-starter', 'Starter', 'Walk 1,000 meters.', '{"2d":{"normal":"https://badges.decentraland.org/assets/walkabout/starter/2d/normal.png"}}'::jsonb, 1000, 0),
-  ('walkabout', 'walkabout-bronze', 'Bronze', 'Walk 10,000 meters.', '{"2d":{"normal":"https://badges.decentraland.org/assets/walkabout/bronze/2d/normal.png"}}'::jsonb, 10000, 1),
-  ('walkabout', 'walkabout-silver', 'Silver', 'Walk 100,000 meters.', '{"2d":{"normal":"https://badges.decentraland.org/assets/walkabout/silver/2d/normal.png"}}'::jsonb, 100000, 2),
-  ('walkabout', 'walkabout-gold', 'Gold', 'Walk 1,000,000 meters.', '{"2d":{"normal":"https://badges.decentraland.org/assets/walkabout/gold/2d/normal.png"}}'::jsonb, 1000000, 3),
-  ('emotionista', 'emotionista-bronze', 'Bronze', 'Play 10 emotes.', '{"2d":{"normal":"https://badges.decentraland.org/assets/emotionista/bronze/2d/normal.png"}}'::jsonb, 10, 0),
-  ('emotionista', 'emotionista-silver', 'Silver', 'Play 100 emotes.', '{"2d":{"normal":"https://badges.decentraland.org/assets/emotionista/silver/2d/normal.png"}}'::jsonb, 100, 1),
-  ('emotionista', 'emotionista-gold', 'Gold', 'Play 1000 emotes.', '{"2d":{"normal":"https://badges.decentraland.org/assets/emotionista/gold/2d/normal.png"}}'::jsonb, 1000, 2);
+INSERT INTO social.badge_tiers (badge_id, tier_id, tier_name, description, assets, criteria_steps, ordinal)
+SELECT t.badge_id, t.tier_id, t.tier_name, t.description,
+       jsonb_build_object(
+           '2d', jsonb_build_object('normal', (t.badge_id || '/' || t.slot) || '/2d/normal.png'),
+           '3d', jsonb_build_object('normal', (t.badge_id || '/' || t.slot) || '/3d/normal.png', 'hrm', (t.badge_id || '/' || t.slot) || '/3d/hrm.png',
+                                    'basecolor', (t.badge_id || '/' || t.slot) || '/3d/basecolor.png')),
+       t.steps, t.ordinal
+FROM (VALUES
+  ('traveler', 'traveler-starter', 'Starter', '1 Genesis City scene explored (for at least 1 min)', 'starter', 1, 0),
+  ('traveler', 'traveler-bronze', 'Bronze', '50 Genesis City scenes explored (for at least 1 min)', 'bronze', 50, 1),
+  ('traveler', 'traveler-silver', 'Silver', '250 Genesis City scenes explored (for at least 1 min)', 'silver', 250, 2),
+  ('traveler', 'traveler-gold', 'Gold', '1,000 Genesis City scenes explored (for at least 1 min)', 'gold', 1000, 3),
+  ('traveler', 'traveler-platinum', 'Platinum', '2,500 Genesis City scenes explored (for at least 1 min)', 'platinum', 2500, 4),
+  ('traveler', 'traveler-diamond', 'Diamond', '10,000 Genesis City scenes explored (for at least 1 min)', 'diamond', 10000, 5),
+  ('emotionista', 'emotionista-starter', 'Starter', '1 Emote purchased', 'starter', 1, 0),
+  ('emotionista', 'emotionista-bronze', 'Bronze', '10 Emotes purchased', 'bronze', 10, 1),
+  ('emotionista', 'emotionista-silver', 'Silver', '25 Emotes purchased', 'silver', 25, 2),
+  ('emotionista', 'emotionista-gold', 'Gold', '50 Emotes purchased', 'gold', 50, 3),
+  ('emotionista', 'emotionista-platinum', 'Platinum', '150 Emotes purchased', 'platinum', 150, 4),
+  ('emotionista', 'emotionista-diamond', 'Diamond', '300  Emotes purchased', 'diamond', 300, 5),
+  ('fashionista', 'fashionista-starter', 'Starter', '1 Wearable purchased', 'starter', 1, 0),
+  ('fashionista', 'fashionista-bronze', 'Bronze', '25 Wearables purchased', 'bronze', 25, 1),
+  ('fashionista', 'fashionista-silver', 'Silver', '75 Wearables purchased', 'silver', 75, 2),
+  ('fashionista', 'fashionista-gold', 'Gold', '250 Wearables purchased', 'gold', 250, 3),
+  ('fashionista', 'fashionista-platinum', 'Platinum', '500 Wearables purchased', 'platinum', 500, 4),
+  ('fashionista', 'fashionista-diamond', 'Diamond', '1,500 Wearables purchased', 'diamond', 1500, 5),
+  ('event_enthusiast', 'event-enthusiast-starter', 'Starter', '1 Events attended (for at least 5 min)', 'starter', 1, 0),
+  ('event_enthusiast', 'event-enthusiast-bronze', 'Bronze', '50 Events attended (for at least 5 min)', 'bronze', 50, 1),
+  ('event_enthusiast', 'event-enthusiast-silver', 'Silver', '100 Events attended (for at least 5 min)', 'silver', 100, 2),
+  ('event_enthusiast', 'event-enthusiast-gold', 'Gold', '500 Events attended (for at least 5 min)', 'gold', 500, 3),
+  ('event_enthusiast', 'event-enthusiast-platinum', 'Platinum', '1000 Events attended (for at least 5 min)', 'platinum', 1000, 4),
+  ('event_enthusiast', 'event-enthusiast-diamond', 'Diamond', '2000 Events attended (for at least 5 min)', 'diamond', 2000, 5),
+  ('moves_master', 'moves-master-starter', 'Starter', 'Emoted 100 times (max 1/min)', 'starter', 100, 0),
+  ('moves_master', 'moves-master-bronze', 'Bronze', 'Emoted 1,000 times (max 1/min)', 'bronze', 1000, 1),
+  ('moves_master', 'moves-master-silver', 'Silver', 'Emoted 5,000 times (max 1/min)', 'silver', 5000, 2),
+  ('moves_master', 'moves-master-gold', 'Gold', 'Emoted 10,000 times (max 1/min)', 'gold', 10000, 3),
+  ('moves_master', 'moves-master-platinum', 'Platinum', 'Emoted 100,000 times (max 1/min)', 'platinum', 100000, 4),
+  ('moves_master', 'moves-master-diamond', 'Diamond', 'Emoted 500,000 times (max 1/min)', 'diamond', 500000, 5),
+  ('social_butterfly', 'social-butterfly-starter', 'Starter', '1 Profile viewed', 'starter', 1, 0),
+  ('social_butterfly', 'social-butterfly-bronze', 'Bronze', '50 Profiles viewed', 'bronze', 50, 1),
+  ('social_butterfly', 'social-butterfly-silver', 'Silver', '100 Profiles viewed', 'silver', 100, 2),
+  ('social_butterfly', 'social-butterfly-gold', 'Gold', '250 Profiles viewed', 'gold', 250, 3),
+  ('social_butterfly', 'social-butterfly-platinum', 'Platinum', '500 Profiles viewed', 'platinum', 500, 4),
+  ('social_butterfly', 'social-butterfly-diamond', 'Diamond', '1,000 Profiles viewed', 'diamond', 1000, 5),
+  ('walkabout_wanderer', 'walkabout-wanderer-starter', 'Starter', '10k Steps walked in Decentraland', 'starter', 10000, 0),
+  ('walkabout_wanderer', 'walkabout-wanderer-bronze', 'Bronze', '40k Steps walked in Decentraland', 'bronze', 40000, 1),
+  ('walkabout_wanderer', 'walkabout-wanderer-silver', 'Silver', '150k Steps walked in Decentraland', 'silver', 150000, 2),
+  ('walkabout_wanderer', 'walkabout-wanderer-gold', 'Gold', '600k Steps walked in Decentraland', 'gold', 600000, 3),
+  ('walkabout_wanderer', 'walkabout-wanderer-platinum', 'Platinum', '2.5M Steps walked in Decentraland', 'platinum', 2500000, 4),
+  ('walkabout_wanderer', 'walkabout-wanderer-diamond', 'Diamond', '10M Steps walked in Decentraland', 'diamond', 10000000, 5),
+  ('emote_creator', 'emote-creator-starter', 'Starter', '1 Emote published', 'starter', 1, 0),
+  ('emote_creator', 'emote-creator-bronze', 'Bronze', '5 Emotes published', 'bronze', 5, 1),
+  ('emote_creator', 'emote-creator-silver', 'Silver', '10 Emotes published', 'silver', 10, 2),
+  ('emote_creator', 'emote-creator-gold', 'Gold', '20 Emotes published', 'gold', 20, 3),
+  ('emote_creator', 'emote-creator-platinum', 'Platinum', '50 Emotes published', 'platinum', 50, 4),
+  ('emote_creator', 'emote-creator-diamond', 'Diamond', '100 Emotes published', 'diamond', 100, 5),
+  ('wearable_designer', 'wearable-designer-starter', 'Starter', '1 Wearable published', 'starter', 1, 0),
+  ('wearable_designer', 'wearable-designer-bronze', 'Bronze', '5 Wearables published', 'bronze', 5, 1),
+  ('wearable_designer', 'wearable-designer-silver', 'Silver', '25 Wearables published', 'silver', 25, 2),
+  ('wearable_designer', 'wearable-designer-gold', 'Gold', '50 Wearables published', 'gold', 50, 3),
+  ('wearable_designer', 'wearable-designer-platinum', 'Platinum', '175 Wearables published', 'platinum', 175, 4),
+  ('wearable_designer', 'wearable-designer-diamond', 'Diamond', '350 Wearables published', 'diamond', 350, 5),
+  ('referral', 'referral-starter', 'Starter', 'Welcomed 5 friends to Decentraland', 'starter', 5, 0),
+  ('referral', 'referral-bronze', 'Bronze', 'Welcomed 10 friends to Decentraland', 'bronze', 10, 1),
+  ('referral', 'referral-silver', 'Silver', 'Welcomed 25 friends to Decentraland', 'silver', 25, 2),
+  ('referral', 'referral-gold', 'Gold', 'Welcomed 50 friends to Decentraland', 'gold', 50, 3),
+  ('referral', 'referral-platinum', 'Platinum', 'Welcomed 75 friends to Decentraland', 'platinum', 75, 4),
+  ('referral', 'referral-diamond', 'Diamond', 'Welcomed 100 friends to Decentraland', 'diamond', 100, 5)
+) AS t (badge_id, tier_id, tier_name, description, slot, steps, ordinal);
 -- ==== end section: badges ====
 
 CREATE INDEX scene_stream_access_reconcile_idx ON social.scene_stream_access (streaming_checked_at NULLS FIRST, id) WHERE active AND streaming;
