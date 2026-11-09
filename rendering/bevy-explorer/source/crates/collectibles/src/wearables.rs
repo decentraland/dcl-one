@@ -2,12 +2,11 @@ use std::str::FromStr;
 
 use crate::{
     urn::{CollectibleInstance, CollectibleUrn},
-    Collectible, CollectibleData, CollectibleType, Collectibles, CollectiblesTypePlugin,
+    Collectible, CollectibleData, CollectibleType, CollectiblesTypePlugin,
 };
 use anyhow::anyhow;
 use bevy::{
     asset::{io::AssetSourceId, AssetEvents, AssetLoader, AssetPath, RenderAssetTransferPriority},
-    diagnostic::FrameCount,
     gltf::{Gltf, GltfLoaderSettings},
     image::ImageLoaderSettings,
     platform::collections::{HashMap, HashSet},
@@ -28,7 +27,8 @@ impl Plugin for WearablePlugin {
             .init_resource::<WearableCollections>();
         app.register_asset_loader(WearableLoader);
         app.register_asset_loader(WearableMetaLoader);
-        app.add_systems(Update, (load_collections, retain_wearables));
+        app.add_systems(Update, load_collections);
+        app.add_systems(PostUpdate, crate::expire_idle_wearables);
         app.add_systems(PostUpdate, clean_images.before(AssetEvents));
     }
 }
@@ -503,25 +503,6 @@ impl AssetLoader for WearableLoader {
             representations,
         })
     }
-}
-
-#[derive(Component)]
-pub struct UsedWearables(pub HashSet<CollectibleUrn<Wearable>>);
-
-fn retain_wearables(
-    used: Query<&UsedWearables>,
-    mut collectibles: ResMut<Collectibles<Wearable>>,
-    frame: Res<FrameCount>,
-) {
-    let urns = used.iter().fold(
-        HashSet::<&CollectibleUrn<Wearable>>::default(),
-        |mut urns, used| {
-            urns.extend(used.0.iter());
-            urns
-        },
-    );
-
-    collectibles.retain(frame.0, |urn| urns.contains(urn));
 }
 
 struct WearableMetaLoader;

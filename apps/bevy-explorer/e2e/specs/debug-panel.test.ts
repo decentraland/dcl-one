@@ -5,6 +5,31 @@ const scenario = spec(import.meta.url)
 const panel = { role: 'dialog', name: 'Debug panel' } as const
 const button = (name: string) => ({ role: 'button', name } as const)
 
+scenario('memory reclamation exposes session simulation and cumulative cache counters', async ({ explorer, t }) => {
+  type State = { controlsAvailable: boolean; simulation: string; ramActive: boolean; gpuActive: boolean; budgetMs: number; caches: { name: string; released: number }[] }
+  const before = await explorer.json<State>('/memory_reclaim')
+  assert.ok(before.caches.length > 0)
+  if (!before.controlsAvailable) {
+    t.skip('Pressure simulation requires a preview session; rerun native with DCL_E2E_NATIVE_ARGS="--preview"')
+    return
+  }
+  try {
+    for (const simulation of ['ram', 'gpu', 'both']) {
+      await explorer.run('/memory_reclaim ' + simulation)
+      await until(() => explorer.json<State>('/memory_reclaim'), state =>
+        state.simulation === simulation && (simulation === 'gpu' || state.ramActive) &&
+        (simulation === 'ram' || state.gpuActive),
+      { timeoutMs: 5_000, what: 'memory reclamation simulation ' + simulation })
+    }
+    const after = await explorer.json<State>('/memory_reclaim')
+    for (const cache of before.caches) {
+      assert.ok(after.caches.find(row => row.name === cache.name)!.released >= cache.released)
+    }
+  } finally {
+    await explorer.run(`/memory_reclaim ${before.simulation} --budget-ms ${before.budgetMs}`)
+  }
+}, { session: { signIn: 'guest' } })
+
 scenario('every registered debug reading resolves or explains what it is waiting for', async ({ explorer }) => {
   const sections = await explorer.json<{ title: string; query: string; fields: [string, string][] }[]>('/debug_panel')
   assert.ok(sections.length > 0)

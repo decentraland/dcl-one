@@ -11,6 +11,7 @@ use common::{
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 
 pub(super) fn register(app: &mut App) {
+    crate::memory_reclaim_debug::register(app);
     app.add_console_command::<MemoryCommand, _>(debug_memory)
         .add_debug_section(DebugSection {
             title: "Memory and limits",

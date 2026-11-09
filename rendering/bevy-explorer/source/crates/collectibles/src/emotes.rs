@@ -464,6 +464,10 @@ impl CollectibleType for Emote {
     type Meta = EmoteMeta;
     type ExtraData = EmoteExtraData;
 
+    fn is_dynamic(urn: &EmoteUrn) -> bool {
+        urn.scene_emote().is_some()
+    }
+
     fn source_collections() -> &'static [&'static str] {
         &[
             "urn:decentraland:off-chain:base-emotes",

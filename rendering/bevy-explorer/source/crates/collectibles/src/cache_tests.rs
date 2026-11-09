@@ -1,0 +1,125 @@
+use super::*;
+
+#[derive(Asset, TypePath)]
+struct Item;
+
+fn turn() -> ReclaimTurn {
+    ReclaimTurn::bounded(10, 64)
+}
+
+#[test]
+fn touches_share_one_pin_and_one_recency_record_per_content_hash() {
+    let mut assets = Assets::<Item>::default();
+    let mut cache = IdleCache::default();
+    let first = cache
+        .get_or_insert_with("hash", 1, || assets.add(Item))
+        .clone();
+    for frame in 2..100 {
+        assert_eq!(
+            cache
+                .get_or_insert_with("hash", frame, || panic!("duplicate load"))
+                .id(),
+            first.id()
+        );
+    }
+    assert_eq!(cache.len(), 1);
+    assert_eq!(cache.order.len(), 1);
+    cache.reclaim(102, &mut turn(), |_| false);
+    assert_eq!(cache.len(), 1);
+    cache.reclaim(103, &mut turn(), |_| false);
+    assert_eq!(cache.len(), 0);
+    // The consumer still owns a strong handle; cleanup never forcibly removes an asset.
+    assert!(first.is_strong());
+    assert!(assets.get(&first).is_some());
+}
+
+#[test]
+fn pending_entries_do_not_starve_later_entries_and_failed_loads_can_leave() {
+    let mut assets = Assets::<Item>::default();
+    let mut cache = IdleCache::default();
+    let pending = cache
+        .get_or_insert_with("pending", 0, || assets.add(Item))
+        .id();
+    for n in 0..20 {
+        cache.get_or_insert_with(&n.to_string(), 0, || assets.add(Item));
+    }
+    let mut first = ReclaimTurn::bounded(10, 4);
+    cache.reclaim(4, &mut first, |id| id == pending);
+    assert_eq!(cache.len(), 18);
+    for _ in 0..5 {
+        cache.reclaim(4, &mut ReclaimTurn::bounded(10, 4), |id| id == pending);
+    }
+    assert_eq!(cache.len(), 1);
+    cache.reclaim(4, &mut turn(), |_| false);
+    assert_eq!(cache.len(), 0);
+}
+
+#[test]
+fn recency_storage_is_bounded_and_frame_wrap_keeps_the_grace() {
+    let mut assets = Assets::<Item>::default();
+    let mut cache = IdleCache::default();
+    cache.get_or_insert_with("hash", u32::MAX - 1, || assets.add(Item));
+    cache.reclaim(1, &mut turn(), |_| false);
+    assert_eq!(cache.len(), 1);
+    cache.reclaim(2, &mut turn(), |_| false);
+    assert_eq!(cache.len(), 0);
+    assert!(cache.order.is_empty());
+}
+
+#[test]
+fn releasing_a_pin_preserves_an_independently_created_strong_owner() {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+        .init_asset::<Item>();
+    app.finish();
+    app.cleanup();
+    let mut cache = IdleCache::default();
+    let handle = cache
+        .get_or_insert_with("hash", 0, || {
+            app.world_mut().resource_mut::<Assets<Item>>().add(Item)
+        })
+        .clone();
+    let id = handle.id();
+    let owner = app
+        .world_mut()
+        .resource_mut::<Assets<Item>>()
+        .get_strong_handle(id)
+        .unwrap();
+    drop(handle);
+    cache.reclaim(4, &mut turn(), |_| false);
+    for _ in 0..4 {
+        app.update();
+    }
+    assert!(app.world().resource::<Assets<Item>>().contains(id));
+    drop(owner);
+    for _ in 0..4 {
+        app.update();
+    }
+    assert!(!app.world().resource::<Assets<Item>>().contains(id));
+}
+
+#[test]
+fn hot_touches_cannot_strand_a_completed_idle_load_behind_the_scan_cursor() {
+    let mut assets = Assets::<Item>::default();
+    let mut cache = IdleCache::default();
+    let pending = cache
+        .get_or_insert_with("pending", 0, || assets.add(Item))
+        .id();
+    for n in 0..128 {
+        cache.get_or_insert_with(&n.to_string(), 4, || assets.add(Item));
+    }
+    cache.reclaim(4, &mut turn(), |id| id == pending);
+    // The first entry finishes loading and loses its requester. More than a
+    // turn's worth of hot pins continue moving to the back on every frame.
+    for frame in 5..15 {
+        for n in 0..128 {
+            cache.get_or_insert_with(&n.to_string(), frame, || {
+                panic!("hot pin unexpectedly expired")
+            });
+        }
+        cache.reclaim(frame, &mut turn(), |_| false);
+    }
+    assert!(!cache.entries.contains_key("pending"));
+    assert_eq!(cache.len(), 128);
+    assert_eq!(cache.order.len(), 128);
+}

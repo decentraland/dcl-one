@@ -7,6 +7,7 @@ pub mod gateway;
 pub mod gpu_time;
 pub mod inputs;
 pub mod memory;
+pub mod memory_reclaim;
 #[cfg(test)]
 mod memory_tests;
 pub mod partition;

@@ -337,6 +337,37 @@ of the contract.
   macOS; port 5000 is taken by AirPlay so override `HttpService__Port`; ENet needs
   `BindHost: "::"`.
 
+## Asset release under memory pressure
+
+`/memory_reclaim` reports the RAM/GPU pressure snapshot, active cleanup domains,
+per-cache pin counts and cumulative pressure-pass releases, and the last cleanup
+duration. The **Asset release** debug panel section shows the same state. In preview
+mode, `/memory_reclaim ram|gpu|both|off` simulates pressure for this reclaimer;
+`/memory_reclaim --budget-ms 1` sets its session allowance (0.1–16 ms). Simulation
+does not change platform readings and applies on the next frame.
+
+Each domain starts cleanup above 70% and continues until below 65%. Native GPU
+pools are evaluated independently; a healthy pool cannot offset an over-budget
+pool. Missing readings disable that domain. Browser/headless runs use RAM unless
+pressure is explicitly simulated. The default allowance is 1 ms, with at most 10
+releases and 64 candidate inspections per cache turn. A slow destructor can exceed
+the cooperative allowance; later Bevy/renderer destruction is outside this timing.
+Released pins are not a measurement of freed bytes.
+
+Cache plugins register ordinary Bevy systems in `build` using
+`common::memory_reclaim::AddMemoryReclaimer`. The coordinator sorts their
+`ReclaimSpec` priorities/names once in `finish` and chains them in `Last`.
+Call `ReclaimBudget::begin`, check `ReclaimTurn::inspect` before each candidate,
+record each released pin, then call `finish_turn`. Keep a bounded scan cursor in
+the owning cache; never collect every entity owner or sort the whole cache during
+a turn. Consumers retain strong asset handles on their entities. Cleanup drops
+cache handles and does not force-remove assets from `Assets`.
+
+Collectible pins share content-hash identity across aliases. Permanent engine
+builtins remain pinned; synthesized scene emotes use idle pins and graph-node
+ownership. Profiles have a five-second pressure grace and retain local, live-peer,
+and in-flight data. Entity routing contexts and scene limits are unaffected.
+
 ## Tests
 
 - `cargo test --all`, not `cargo test -p <crate>`. The full workspace unifies `serde_json` with

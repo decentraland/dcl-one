@@ -9,6 +9,7 @@ mod deep_link;
 mod ext;
 mod gpu_memory;
 mod memory;
+mod memory_reclaim_debug;
 #[cfg(test)]
 mod memory_tests;
 #[cfg(target_arch = "wasm32")]
@@ -635,6 +636,7 @@ impl DecentralandApp {
 
         // Plugins
         app.add_plugins((memory::MemoryStatusPlugin, gpu_memory::GpuMemoryPlugin))
+            .add_plugins(common::memory_reclaim::MemoryReclaimPlugin)
             .add_plugins(SceneRunnerPlugin)
             .add_plugins(AVPlayerPlugin)
             .add_plugins(RestrictedActionsPlugin)

@@ -19,7 +19,7 @@ use bevy::{
 use bevy_console::ConsoleCommand;
 use collectibles::{
     base_wearables,
-    wearables::{UsedWearables, Wearable, WearableCategory, WearableModel, WearableUrn},
+    wearables::{Wearable, WearableCategory, WearableModel, WearableUrn},
     CollectibleError, CollectibleManager, Emote, EmoteUrn,
 };
 use colliders::AvatarColliderPlugin;
@@ -804,9 +804,6 @@ fn update_render_avatar(
         // a fixed order, so an unchanged definition compares equal
         wearables.sort_by_key(|(_, wearable)| wearable.category);
 
-        let mut urns: HashSet<_> = wearables.iter().map(|(urn, _)| urn.clone()).collect();
-        urns.insert(body_urn.clone());
-
         debug!("avatar definition loaded: {wearables:?}");
         let definition = AvatarDefinition {
             render: AvatarRenderDefinition {
@@ -973,7 +970,6 @@ fn update_render_avatar(
                 Transform::from_rotation(Quat::from_rotation_y(PI)),
                 Visibility::default(),
                 definition,
-                UsedWearables(urns),
             ));
         });
 
@@ -1325,6 +1321,7 @@ fn process_avatar(
                 transitions,
                 clips,
                 AnimationGraphHandle(graph),
+                animate::EmoteGraphAssets::default(),
             ));
         }
 

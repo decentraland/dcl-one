@@ -1,6 +1,12 @@
 pub mod name_color;
 
-use std::{io::Read, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    io::Read,
+    ops::Bound::{Excluded, Unbounded},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use alloy_core::primitives::Address;
 use anyhow::anyhow;
@@ -28,6 +34,10 @@ use super::{
     TransportType,
 };
 use common::{
+    memory_reclaim::{
+        AddMemoryReclaimer, MemoryReclaimState, ReclaimBudget, ReclaimDomains, ReclaimSpec,
+        ReclaimTurn,
+    },
     profile::{
         AvatarColor, AvatarEmote, AvatarSnapshots, CompactProfile, LambdaProfiles,
         SerializedProfile,
@@ -101,7 +111,11 @@ impl Plugin for UserProfilePlugin {
             });
         app.insert_resource(CurrentUserProfile::default());
         app.init_resource::<ProfileCache>()
-            .add_event::<ProfileDeployedEvent>();
+            .add_event::<ProfileDeployedEvent>()
+            .add_memory_reclaimer(
+                ReclaimSpec::new("profiles", 30, ReclaimDomains::Ram),
+                reclaim_profiles,
+            );
     }
 }
 
@@ -117,6 +131,7 @@ const PROFILE_REQUEST_BATCH: usize = 100;
 /// it). Live foreign players touch their entry every frame, so this only reaps departed
 /// peers and addresses scenes/ui asked about once.
 const PROFILE_EVICT_AFTER: std::time::Duration = std::time::Duration::from_secs(300);
+const PROFILE_PRESSURE_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Where held profile data came from. Declared in ascending order of authority so the
 /// derived `Ord` ranks them: an equal-version answer only displaces held data when it
@@ -220,10 +235,14 @@ impl ProfileEntry {
 
     /// nobody has accessed it within `PROFILE_EVICT_AFTER`, and no fetch is in flight
     fn evictable(&self, now: web_time::Instant) -> bool {
+        self.evictable_after(now, PROFILE_EVICT_AFTER)
+    }
+
+    fn evictable_after(&self, now: web_time::Instant, grace: std::time::Duration) -> bool {
         self.fetching.is_none()
             && self
                 .last_access
-                .is_none_or(|at| now.saturating_duration_since(at) >= PROFILE_EVICT_AFTER)
+                .is_none_or(|at| now.saturating_duration_since(at) >= grace)
     }
 
     /// accept a newer version from anywhere, and an equal version only from a more
@@ -316,7 +335,9 @@ enum CompactFetchError {
 
 #[derive(Resource, Default)]
 pub struct ProfileCache {
-    entries: HashMap<Address, ProfileEntry>,
+    // Ordered keys let a bounded pressure pass resume without copying/scanning every address.
+    entries: BTreeMap<Address, ProfileEntry>,
+    reclaim_cursor: Option<Address>,
     requests: ProfileRequestCounts,
     batches: Vec<ProfileBatch>,
     compact_batches: Vec<CompactBatch>,
@@ -360,6 +381,26 @@ fn profile_requests(
 }
 
 impl ProfileCache {
+    fn reclaim(&mut self, now: web_time::Instant, local: Option<Address>, turn: &mut ReclaimTurn) {
+        while turn.inspect() {
+            let next = match self.reclaim_cursor {
+                Some(address) => self.entries.range((Excluded(address), Unbounded)).next(),
+                None => self.entries.iter().next(),
+            }
+            .map(|(address, entry)| (*address, entry.evictable_after(now, PROFILE_PRESSURE_GRACE)));
+            let Some((address, eligible)) = next else {
+                self.reclaim_cursor = None;
+                break;
+            };
+            self.reclaim_cursor = Some(address);
+            // Live peers are touched by request_missing_profiles every Update, before this Last pass.
+            if Some(address) != local && eligible {
+                self.entries.remove(&address);
+                turn.released();
+            }
+        }
+    }
+
     /// the entry for `address`, created if missing, marked as accessed now by a reader that
     /// needs `tier` of it
     fn touch(&mut self, address: Address, tier: ProfileTier) -> &mut ProfileEntry {
@@ -442,6 +483,17 @@ impl ProfileCache {
         (held.version == profile.version
             && profile.content.avatar.snapshots.as_ref() != Some(snapshots))
         .then(|| snapshots.clone())
+    }
+}
+
+fn reclaim_profiles(
+    mut cache: ResMut<ProfileCache>,
+    wallet: Res<Wallet>,
+    mut budget: ResMut<ReclaimBudget>,
+) {
+    if let Some(mut turn) = budget.begin("profiles", cache.entries.len()) {
+        cache.reclaim(web_time::Instant::now(), wallet.address(), &mut turn);
+        budget.finish_turn(turn, cache.entries.len());
     }
 }
 
@@ -907,7 +959,11 @@ impl CurrentUserProfile {
 /// lives here — the fetchers themselves are dumb HTTP. Entries nobody has asked about
 /// recently are dropped here too, so departed peers and one-off lookups (unknown addresses
 /// especially, which never satisfy) stop being re-fetched for the rest of the session.
-fn drive_profile_fetches(mut manager: ProfileManager, wallet: Res<Wallet>) {
+fn drive_profile_fetches(
+    mut manager: ProfileManager,
+    wallet: Res<Wallet>,
+    pressure: Option<Res<MemoryReclaimState>>,
+) {
     let ProfileManager { cache, ipfs } = &mut manager;
 
     // apply landed compact batches; a catalyst without the route turns every fetch full
@@ -980,7 +1036,12 @@ fn drive_profile_fetches(mut manager: ProfileManager, wallet: Res<Wallet>) {
     let mut full = Vec::new();
     let mut compact = Vec::new();
     cache.entries.retain(|address, entry| {
-        if entry.evictable(now) && Some(*address) != local {
+        if !pressure
+            .as_ref()
+            .is_some_and(|pressure| pressure.ram_active)
+            && entry.evictable(now)
+            && Some(*address) != local
+        {
             debug!("evicting stale profile entry for {address:#x}");
             return false;
         }
@@ -1921,6 +1982,34 @@ fn process_profile(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pressure_reclaims_only_inactive_profiles_with_bounded_progress() {
+        use common::memory_reclaim::ReclaimTurn;
+        let now = web_time::Instant::now();
+        let mut cache = ProfileCache::default();
+        let local = Address::from([1; 20]);
+        let live = Address::from([2; 20]);
+        let fetching = Address::from([3; 20]);
+        let recent = Address::from([4; 20]);
+        let stale = Address::from([5; 20]);
+        for address in [local, live, fetching, recent, stale] {
+            cache.touch(address, ProfileTier::Full).last_access =
+                Some(now - std::time::Duration::from_secs(6));
+        }
+        cache.touch(live, ProfileTier::Full);
+        cache.entries.get_mut(&fetching).unwrap().fetching = Some(ProfileTier::Full);
+        cache.entries.get_mut(&recent).unwrap().last_access =
+            Some(now - std::time::Duration::from_secs(4));
+        // One candidate per pass ensures protected entries cannot starve a later idle entry.
+        for _ in 0..5 {
+            cache.reclaim(now, Some(local), &mut ReclaimTurn::bounded(10, 1));
+        }
+        assert!(!cache.entries.contains_key(&stale));
+        for address in [local, live, fetching, recent] {
+            assert!(cache.entries.contains_key(&address));
+        }
+    }
 
     #[test]
     fn evicts_only_stale_idle_entries() {

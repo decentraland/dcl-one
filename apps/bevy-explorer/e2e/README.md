@@ -241,6 +241,13 @@ Kept from explorer-automation's guides:
 
 ## Keeping the suite true
 
+`specs/debug-panel.test.ts` checks every registered diagnostic field and the
+`/memory_reclaim` simulation modes and cumulative cache counters. Simulation is
+preview-only; the scenario restores the session settings after exercising it.
+It queries the engine's `controlsAvailable` capability and explicitly skips a
+non-preview session. Run mutations against a native preview client using
+`DCL_E2E_NATIVE_ARGS="--preview"` (plus the usual native transport/binary options).
+
 The suite and the console surface read the code they test (the repository's `AGENTS.md`). A
 change on the left updates what is on the right in the same change, then runs the check.
 
