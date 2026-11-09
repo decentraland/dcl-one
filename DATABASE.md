@@ -1283,7 +1283,11 @@ them); a tiered badge completes at its last tier, a single badge at
 never awarded; an unpublished one is invisible. A database stamped before step
 `0036_social_badges_catalog_parity` keeps its four placeholder rows: the step
 gives `open_for_business` and `emotionista` upstream's content and leaves
-`decentraland_citizen` and `walkabout` unpublished; the rest of upstream's
+`decentraland_citizen` and `walkabout` unpublished. It also fits the old
+progress rows to the new targets: a tiered row keeps completion only when the
+wallet holds the last tier and its steps stop at its highest held tier's
+target (no unearned tier on the next write), and a completed single badge
+reads its target as reached. The rest of upstream's
 catalog reaches it through the TS database import.
 
 ### Badge processor

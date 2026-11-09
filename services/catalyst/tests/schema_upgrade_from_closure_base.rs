@@ -184,7 +184,8 @@ async fn has_column(pool: &PgPool, table: &str, column: &str) -> bool {
 }
 
 /// The placeholder catalog a stamped database carries from the earlier seed,
-/// with a wallet holding two of its badges.
+/// with a wallet holding two of its badges and emotionista holders the old
+/// console grant completed (one tier row each, old targets as steps).
 const PLACEHOLDER_BADGES: &str = "
 INSERT INTO social.badge_definitions (id, name, description, category, is_tier) VALUES
   ('open_for_business', 'Open for Business', 'Set up a store and publish a collection.', 'Builder', false),
@@ -198,14 +199,22 @@ INSERT INTO social.badge_tiers (badge_id, tier_id, tier_name, description, crite
   ('emotionista', 'emotionista-gold', 'Gold', 'Play 1000 emotes.', 1000, 2);
 INSERT INTO social.user_badge_progress (address, badge_id, steps_done, completed_at, last_completed_tier_id) VALUES
   ('0x' || repeat('c', 40), 'walkabout', 1000, NULL, 'walkabout-starter'),
-  ('0x' || repeat('c', 40), 'open_for_business', 1, '2026-01-01', NULL);
+  ('0x' || repeat('c', 40), 'open_for_business', 1, '2026-01-01', NULL),
+  ('0x' || repeat('d', 40), 'emotionista', 10, '2026-01-01', 'emotionista-bronze'),
+  ('0x' || repeat('e', 40), 'emotionista', 100, '2026-01-01', 'emotionista-silver'),
+  ('0x' || repeat('f', 40), 'emotionista', 1000, '2026-01-01', 'emotionista-gold');
 INSERT INTO social.user_achieved_tiers (address, badge_id, tier_id) VALUES
-  ('0x' || repeat('c', 40), 'walkabout', 'walkabout-starter');
+  ('0x' || repeat('c', 40), 'walkabout', 'walkabout-starter'),
+  ('0x' || repeat('d', 40), 'emotionista', 'emotionista-bronze'),
+  ('0x' || repeat('e', 40), 'emotionista', 'emotionista-silver'),
+  ('0x' || repeat('f', 40), 'emotionista', 'emotionista-gold');
 ";
 
 /// `0036_social_badges_catalog_parity`: no row is inserted or deleted; the
 /// ids upstream shares take its content, the two it names differently stay
-/// unpublished, and the wallet keeps every row.
+/// unpublished, and the wallets keep every row: a completed single badge
+/// reads its new target, a tiered one stops at its held tier's new target
+/// and stays completed only at its last tier.
 async fn assert_placeholder_badges_upgraded(pool: &PgPool) {
     let defs: Vec<(
         String,
@@ -256,18 +265,28 @@ async fn assert_placeholder_badges_upgraded(pool: &PgPool) {
             ("emotionista-gold".into(), 50, 3)
         ]
     );
-    let held: Vec<(String, i32, serde_json::Value)> = sqlx::query_as(
-        "SELECT badge_id, steps_done, progress FROM social.user_badge_progress \
-         WHERE address = '0x' || repeat('c', 40) ORDER BY badge_id",
+    let held: Vec<(String, String, i32, bool, serde_json::Value)> = sqlx::query_as(
+        "SELECT substr(address, 3, 1), badge_id, steps_done, completed_at IS NOT NULL, progress \
+         FROM social.user_badge_progress ORDER BY address, badge_id",
     )
     .fetch_all(pool)
     .await
     .unwrap();
+    let empty = serde_json::json!({});
     assert_eq!(
         held,
         [
-            ("open_for_business".into(), 1, serde_json::json!({})),
-            ("walkabout".into(), 1000, serde_json::json!({}))
+            (
+                "c".into(),
+                "open_for_business".into(),
+                2,
+                true,
+                empty.clone()
+            ),
+            ("c".into(), "walkabout".into(), 1000, false, empty.clone()),
+            ("d".into(), "emotionista".into(), 10, false, empty.clone()),
+            ("e".into(), "emotionista".into(), 25, false, empty.clone()),
+            ("f".into(), "emotionista".into(), 50, true, empty)
         ]
     );
     let presence: bool =
