@@ -51,7 +51,6 @@ fn scene(world: &mut World, hash: &str, parcels: &[IVec2], tick: u32) -> Entity 
     let mut context = RendererSceneContext::new(
         SceneId(root),
         hash.to_owned(),
-        String::new(),
         false,
         0,
         hash.to_owned(),

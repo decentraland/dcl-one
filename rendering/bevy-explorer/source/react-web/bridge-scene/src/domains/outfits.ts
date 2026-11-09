@@ -1,9 +1,9 @@
 // Outfits: the player's saved avatar looks (backpack Outfits tab).
-//   load  ← localStorage cache first, else catalyst GET /lambdas/outfits/:address (unsigned)
-//   save/delete → localStorage (Phase 1; Phase 2 will deploy a signed `outfits` entity)
+//   load  ← this session's saves first, else catalyst GET /lambdas/outfits/:address (unsigned)
+//   save/delete → kept in memory for the session (Phase 1; Phase 2 will deploy a signed `outfits` entity)
 //   equip → the Backpack's look (body shape + colors + wearables; ./avatarDraft deploys it on close)
 //
-// Mirrors bevy-ui-scene's outfits flow (localStorage-first read, host-mediated equip). The saved
+// Mirrors bevy-ui-scene's outfits flow (local-first read, host-mediated equip). The saved
 // shape matches the deployed catalyst `outfits` entity so Phase 2 can deploy it unchanged.
 import { getPlayer } from '@dcl/sdk/players'
 import { catalystBase, getJson } from '../http'
@@ -14,12 +14,8 @@ import type { AvatarLook } from '../../../src/engine/avatarEquip'
 import type { Ctx } from '../bridge'
 import type { Outfit, OutfitsMetadata, RGBColor } from '../../../src/engine/protocol'
 
-// The Bevy engine injects a persistent localStorage into system scenes (same as bevy-ui-scene).
-declare const localStorage: {
-  getItem: (key: string) => string | null
-  setItem: (key: string, value: string) => void
-  removeItem: (key: string) => void
-}
+// Scenes get no persistent storage, so local saves last until the scene restarts.
+const saved = new Map<string, string>()
 
 const EMPTY: OutfitsMetadata = { outfits: [], namesForExtraSlots: [] }
 const GREY: RGBColor = { r: 0.5, g: 0.5, b: 0.5 }
@@ -36,7 +32,7 @@ function withThumbnails(address: string, metadata: OutfitsMetadata): OutfitsMeta
     outfits: metadata.outfits.map((o) => {
       let thumbnail: string | null = null
       try {
-        thumbnail = localStorage.getItem(thumbKey(address, o.slot))
+        thumbnail = saved.get(thumbKey(address, o.slot)) ?? null
       } catch {}
       return thumbnail != null ? { ...o, thumbnail } : o
     })
@@ -45,8 +41,8 @@ function withThumbnails(address: string, metadata: OutfitsMetadata): OutfitsMeta
 
 function writeThumbnail(address: string, slot: number, thumbnail: string | null): void {
   try {
-    if (thumbnail != null) localStorage.setItem(thumbKey(address, slot), thumbnail)
-    else localStorage.removeItem(thumbKey(address, slot))
+    if (thumbnail != null) saved.set(thumbKey(address, slot), thumbnail)
+    else saved.delete(thumbKey(address, slot))
   } catch (e) {
     console.error('[outfits] thumbnail write failed', e)
   }
@@ -54,7 +50,7 @@ function writeThumbnail(address: string, slot: number, thumbnail: string | null)
 
 function readLocal(address: string): OutfitsMetadata | null {
   try {
-    const raw = localStorage.getItem(storageKey(address))
+    const raw = saved.get(storageKey(address))
     return raw != null ? (JSON.parse(raw) as OutfitsMetadata) : null
   } catch {
     return null
@@ -63,13 +59,13 @@ function readLocal(address: string): OutfitsMetadata | null {
 
 function writeLocal(address: string, metadata: OutfitsMetadata): void {
   try {
-    localStorage.setItem(storageKey(address), JSON.stringify(metadata))
+    saved.set(storageKey(address), JSON.stringify(metadata))
   } catch (e) {
-    console.error('[outfits] localStorage write failed', e)
+    console.error('[outfits] local save failed', e)
   }
 }
 
-// localStorage-first (like bevy-ui-scene) so a local save survives reload; else the catalyst
+// Local-first (like bevy-ui-scene) so a save shows straight away; else the catalyst
 // lambdas endpoint, which returns { metadata: OutfitsMetadata } (missing → empty for new users).
 async function loadMetadata(address: string): Promise<OutfitsMetadata> {
   const local = readLocal(address)

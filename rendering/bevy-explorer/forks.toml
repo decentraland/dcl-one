@@ -177,7 +177,6 @@ crates = [
   "deno_web 0.199.0",
   "deno_webidl 0.168.0",
   "deno_websocket 0.173.0",
-  "deno_webstorage 0.163.0",
 ]
 
 [[source]]

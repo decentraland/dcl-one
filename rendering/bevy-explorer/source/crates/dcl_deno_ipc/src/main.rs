@@ -143,7 +143,6 @@ async fn scene_ipc_in(
                         scene_sx.clone(),
                     ),
                     global_sx.subscribe(),
-                    new_scene_info.storage_root,
                     new_scene_info.inspect,
                     new_scene_info.is_super.then(|| system_api_sx.clone()),
                     new_scene_info.scene_origin,

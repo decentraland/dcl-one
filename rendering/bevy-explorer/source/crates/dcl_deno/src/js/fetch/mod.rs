@@ -761,13 +761,7 @@ mod upload_tests {
 
     #[tokio::test]
     async fn rejected_upload_closes_its_resource_and_cancels_the_stream() {
-        let (mut runtime, _) = crate::js::create_runtime(
-            false,
-            false,
-            "test-rejected-upload",
-            false,
-            Default::default(),
-        );
+        let (mut runtime, _) = crate::js::create_runtime(false, false, false, Default::default());
         let state = runtime.op_state();
         {
             let mut state = state.borrow_mut();

@@ -397,15 +397,6 @@ pub(crate) fn load_scene_javascript(
             .and_then(|display| display.title)
             .unwrap_or("???".to_owned());
 
-        // portable PID, else realm + parcel
-        let storage_root = match &portable {
-            Some(portable) => portable.pid.clone(),
-            None => {
-                let about_url = ipfas.ipfs().about_url().unwrap_or_default();
-                format!("{about_url}:{}:{}", base.x, base.y)
-            }
-        };
-
         if let Some(fixed_time) = meta
             .skybox_config
             .and_then(|skybox_config| skybox_config.fixed_time)
@@ -415,12 +406,11 @@ pub(crate) fn load_scene_javascript(
                 .try_insert(SceneTime { time: fixed_time });
         }
 
-        info!("{root:?}: started scene (location: {base:?}, scene thread id: {scene_id:?}, is sdk7: {is_sdk7:?}), storage root: {storage_root}");
+        info!("{root:?}: started scene (location: {base:?}, scene thread id: {scene_id:?}, is sdk7: {is_sdk7:?})");
         let scene_bounds = SceneBounds::new(&bounds, storage_buffers.as_deref_mut());
         let mut renderer_context = RendererSceneContext::new(
             scene_id,
             definition.id.clone(),
-            storage_root,
             portable.is_some(),
             frame.0,
             title,
@@ -727,7 +717,6 @@ pub(crate) fn initialize_scene(
             crdt_component_interfaces,
             thread_sx,
             global_updates,
-            context.storage_root.clone(),
             inspected,
             super_user.map(|_| su_bridge.sender.clone()),
             scene_origin,
@@ -772,7 +761,6 @@ pub(crate) fn initialize_scene(
 #[derive(Resource, Default)]
 pub struct LiveScenes {
     pub scenes: HashMap<String, Entity>,
-    pub block_new_scenes: bool,
 }
 
 pub struct PortableSource {
@@ -1786,10 +1774,6 @@ pub fn process_scene_lifecycle(
     // publish for imposter loading: defer while the current scene is loading
     // (same condition the lifecycle uses above) or while the startup set is
     current_scene_loading_res.0 = defer_to_current_scene || startup_loading;
-
-    if live_scenes.block_new_scenes {
-        return;
-    }
 
     // spawn any newly required scenes
     for ((required_scene_hash, maybe_urn), super_user) in required_scene_ids

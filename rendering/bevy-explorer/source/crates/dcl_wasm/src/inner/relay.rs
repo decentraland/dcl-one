@@ -278,7 +278,6 @@ pub fn relay_init() -> u32 {
         crdt_component_interfaces,
         renderer_sender,
         global_update_receiver,
-        storage_root,
         scene_origin,
         super_user,
         kill_flag,
@@ -326,7 +325,6 @@ pub fn relay_init() -> u32 {
         scene_context,
         scene_js: scene_js.0.to_string(),
         crdt_component_interfaces,
-        storage_root,
         scene_origin,
         is_super,
     })));

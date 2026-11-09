@@ -340,21 +340,9 @@ web-sys = { version = "0.3", features = [
   "ResponseInit",
   "Headers",
   "Url",
-  # OPFS, for the scene-storage directory dcl_wasm holds open (crates/dcl_wasm/.../local_storage.rs).
-  # Enabled here rather than relied on via web-fs's own web-sys features: dcl_wasm no longer depends
-  # on web-fs, so that unification is not ours to count on.
-  "Blob",
-  "File",
-  "FileSystemDirectoryHandle",
-  "FileSystemFileHandle",
-  "FileSystemGetDirectoryOptions",
-  "FileSystemGetFileOptions",
-  "FileSystemWritableFileStream",
-  "StorageManager",
   "WorkerGlobalScope",
-  "WorkerNavigator",
-  "WritableStream",
   # WebTransport, the wasm Pulse driver's wire (crates/comms/src/pulse/wasm.rs).
+  "WritableStream",
   "ReadableStream",
   "ReadableStreamDefaultReader",
   "WritableStreamDefaultWriter",
@@ -558,7 +546,6 @@ deno_websocket = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfix
 # deno_websocket's pinned API exposes no set_max_message_size hook, so the fork default is
 # how scene websocket inbound message size is bounded.
 fastwebsockets = { git = "https://github.com/robtfm/fastwebsockets", branch = "0_8_hotfix" }
-deno_webstorage = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfix" }
 
 # deno_console = { path = "../deno/ext/console" }
 # deno_fetch = { path = "../deno/ext/fetch" }
@@ -567,7 +554,6 @@ deno_webstorage = { git = "https://github.com/robtfm/deno", branch = "1_46_hotfi
 # deno_webidl = { path = "../deno/ext/webidl" }
 # deno_web = { path = "../deno/ext/web" }
 # deno_websocket = { path = "../deno/ext/websocket" }
-# deno_webstorage = { path = "../deno/ext/webstorage" }
 
 # gltf 1.4.1 (latest release, 2024-05) predates gltf-rs/gltf#449 "allow empty accessors"
 # (robtfm, merged 2025-05): dense accessors with no bufferView (zero-filled per spec,
