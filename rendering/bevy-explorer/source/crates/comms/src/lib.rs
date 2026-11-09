@@ -10,6 +10,8 @@ pub mod movement_compressed;
 pub mod preview;
 #[cfg(feature = "livekit")]
 pub mod private_chat;
+#[cfg(feature = "livekit")]
+pub mod scene_bans;
 pub mod profile;
 pub mod pulse;
 pub mod signed_login;
@@ -112,7 +114,11 @@ impl Plugin for CommsPlugin {
         ));
 
         #[cfg(feature = "livekit")]
-        app.add_plugins((LivekitPlugin, private_chat::PrivateChatPlugin));
+        app.add_plugins((
+            LivekitPlugin,
+            private_chat::PrivateChatPlugin,
+            scene_bans::SceneBansPlugin,
+        ));
         app.init_resource::<MicState>()
             .init_resource::<global_crdt::NearbyPanning>();
 

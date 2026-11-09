@@ -364,6 +364,8 @@ fn append_chat_messages(
     mut chatbox: Query<&mut ChatBox>,
     users: Query<&UserProfile>,
     #[cfg(feature = "livekit")] social: Res<social::SocialClient>,
+    #[cfg(feature = "livekit")] scene_bans: Res<comms::scene_bans::SceneBans>,
+    #[cfg(feature = "livekit")] primary_player: Res<PrimaryPlayerRes>,
 ) {
     let Ok(mut chatbox) = chatbox.single_mut() else {
         return;
@@ -385,7 +387,12 @@ fn append_chat_messages(
         };
 
         #[cfg(feature = "livekit")]
-        if sender.is_some_and(|address| dm_state::blocked_either_way(&social, address)) {
+        if sender.is_some_and(|address| {
+            dm_state::blocked_either_way(&social, address)
+                || (ev.channel == "Nearby"
+                    && ev.sender != primary_player.0
+                    && scene_bans.is_banned(address))
+        }) {
             continue;
         }
 
@@ -732,6 +739,7 @@ fn pipe_chats_to_scene(
         comms::private_chat::CommunityChatReceived,
     >,
     #[cfg(feature = "livekit")] social: Res<social::SocialClient>,
+    #[cfg(feature = "livekit")] mut scene_bans: ResMut<comms::scene_bans::SceneBans>,
     mut requests: EventReader<SystemApi>,
     mut senders: Local<Vec<RpcStreamSender<ChatMessage>>>,
     players: Query<&ForeignPlayer>,
@@ -779,6 +787,16 @@ fn pipe_chats_to_scene(
             // nearby chat from anyone the local user blocked, or who blocked them, is dropped
             #[cfg(feature = "livekit")]
             if dm_state::blocked_either_way(&social, player_address) {
+                continue;
+            }
+
+            // nearby chat from anyone banned from the current scene is dropped; the local
+            // player always sees their own lines
+            #[cfg(feature = "livekit")]
+            if chat_event.channel == "Nearby"
+                && chat_event.sender != primary_player.0
+                && scene_bans.drops_chat_from(player_address)
+            {
                 continue;
             }
 

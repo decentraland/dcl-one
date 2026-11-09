@@ -26,6 +26,9 @@ pub enum RoomEvent {
     },
     ParticipantConnected(RemoteParticipant),
     ParticipantDisconnected(RemoteParticipant),
+    RoomMetadataChanged {
+        metadata: String,
+    },
     ParticipantMetadataChanged {
         participant: Participant,
         old_metadata: String,
@@ -261,6 +264,9 @@ impl RoomEvent {
                 registry.release(participant.id);
                 RoomEvent::ParticipantDisconnected(participant)
             }
+            Some("roomMetadataChanged") => RoomEvent::RoomMetadataChanged {
+                metadata: get_string(js_value, "metadata").unwrap_or_default(),
+            },
             Some("participantMetadataChanged") => {
                 let Some(participant) = get_participant(js_value, "participant", room, registry)
                 else {

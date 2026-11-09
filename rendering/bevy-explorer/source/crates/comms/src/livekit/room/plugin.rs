@@ -22,7 +22,7 @@ use crate::{
         participant::{
             ActiveSpeakersChanged, HostingParticipants, LivekitParticipant, ParticipantConnected,
             ParticipantConnectionQuality, ParticipantDisconnected, ParticipantMetadataChanged,
-            ParticipantPayload,
+            ParticipantPayload, RoomMetadataChanged,
         },
         room::{
             Connected, Connecting, ConnectingLivekitRoom, Disconnected, LivekitRoom, Reconnecting,
@@ -138,6 +138,12 @@ fn poll_connecting_rooms(
 
             match poll {
                 Ok((room, room_event_receiver)) => {
+                    // the change event does not cover the metadata the room had at join
+                    #[cfg(not(target_arch = "wasm32"))]
+                    commands.trigger(RoomMetadataChanged {
+                        room: entity,
+                        metadata: room.metadata(),
+                    });
                     commands
                         .entity(entity)
                         .try_insert(LivekitRoom {
@@ -278,6 +284,12 @@ fn process_room_events(
                     commands.trigger(ParticipantDisconnected {
                         participant: participant.into(),
                         room: entity,
+                    });
+                }
+                RoomEvent::RoomMetadataChanged { metadata, .. } => {
+                    commands.trigger(RoomMetadataChanged {
+                        room: entity,
+                        metadata,
                     });
                 }
                 RoomEvent::ParticipantMetadataChanged { participant, .. } => {

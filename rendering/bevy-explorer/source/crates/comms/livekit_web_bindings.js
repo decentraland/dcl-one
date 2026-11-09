@@ -130,6 +130,17 @@ function set_room_event_handler(room, handler) {
             type: 'connected',
             participants_with_tracks
         })
+        // the change event does not cover the metadata the room already had at join
+        handler({
+            type: 'roomMetadataChanged',
+            metadata: room.metadata ?? ''
+        })
+    });
+    room.on(LivekitClient.RoomEvent.RoomMetadataChanged, (metadata) => {
+        handler({
+            type: 'roomMetadataChanged',
+            metadata: metadata ?? ''
+        })
     });
     room.on(LivekitClient.RoomEvent.Disconnected, (disconnectReason) => {
         handler({
