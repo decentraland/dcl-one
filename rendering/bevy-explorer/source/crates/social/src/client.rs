@@ -1398,7 +1398,10 @@ async fn run_one_connection(
             return std::future::pending::<Result<(), anyhow::Error>>().await;
         };
         while let Some(update) = private_voice_updates.next().await {
-            debug!("[social] Received private voice update: {update:?}");
+            debug!(
+                "[social] Received private voice update: {}",
+                common::util::redact_access_token(&format!("{update:?}"))
+            );
             match voice::rpc::private_update(update) {
                 StreamMessage::Update(update) => sx_private_voice
                     .send(FriendData::Voice(VoiceEvent::Private(update)))

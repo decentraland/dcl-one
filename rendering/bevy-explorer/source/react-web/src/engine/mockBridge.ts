@@ -146,7 +146,7 @@ const MOCK_ME = '0x0000000000000000000000000000000000000001'
 function mockParticipant(address: string, name: string, picture: string | undefined, role: string, isSpeaker: boolean, extra: Partial<VoiceChatParticipant> = {}): VoiceChatParticipant {
   return { address, name, hasClaimedName: !/\d/.test(name), profilePictureUrl: picture ?? '', role, isSpeaker, isRequestingToSpeak: false, isMuted: false, isSpeaking: false, ...extra }
 }
-const idleVoice: VoiceChatState = { status: 'disconnected', kind: 'none', callId: null, communityId: null, peer: null, connection: 'none', participants: [], micEnabled: false, localSpeaker: false, localRole: 'none', localRequestingToSpeak: false, error: null }
+const idleVoice: VoiceChatState = { status: 'disconnected', kind: 'none', callId: null, communityId: null, peer: null, connection: 'none', participants: [], micEnabled: false, localSpeaker: false, localRole: 'none', localRequestingToSpeak: false, error: null, errorSeq: 0 }
 let voice: VoiceChatState = { ...idleVoice }
 let mockVoiceAction: ((action: VoiceChatActionWire) => void) | null = null
 const voiceTimers: ReturnType<typeof setTimeout>[] = []
@@ -630,7 +630,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
           const busy = MOCK_NEARBY[2].address.toLowerCase() === action.address.toLowerCase()
           pushVoice({ ...idleVoice, status: 'startingCall', kind: 'private', peer: action.address })
           voiceLater(600, () => {
-            if (busy) pushVoice({ ...idleVoice, status: 'busy', error: 'One of the users is busy calling someone else' })
+            if (busy) pushVoice({ ...idleVoice, status: 'busy', error: 'One of the users is busy calling someone else', errorSeq: voice.errorSeq + 1 })
             else pushVoice({ status: 'startedCall', callId: 'mock-call' })
           })
           if (!busy) {

@@ -68,12 +68,15 @@ export function registerVoiceChat(ctx: Ctx): void {
     api.action(msg.action)
   })
 
-  // The live streams: read on start, on sign-in, and again whenever one starts or ends. Reads can
-  // overlap: only the latest answer counts, and a failed read keeps the last list.
+  // The live streams: read on sign-in, and again whenever one starts or ends. Reads can overlap:
+  // only the latest answer counts, and a failed read keeps the last list. The read is signed, so
+  // none goes out while signed out.
   let active: ActiveCommunityVoiceChat[] = []
   let publishedHere = ''
   let reads = 0
+  let account: string | null = null
   const refreshActive = async (): Promise<void> => {
+    if (account == null) return
     const read = ++reads
     const chats = await fetchActiveChats()
     if (read !== reads || chats == null) return
@@ -82,7 +85,6 @@ export function registerVoiceChat(ctx: Ctx): void {
     publishedHere = ''
   }
   // The list is per account (`isMember`) and signed: none before sign-in, the next account's after.
-  let account: string | null = null
   const accountChanged = (userId: string | null): void => {
     if (userId === account) return
     account = userId
@@ -91,7 +93,7 @@ export function registerVoiceChat(ctx: Ctx): void {
     publishedHere = ''
     ctx.send({ kind: 'activeCommunityVoiceChats', chats: [], loaded: false })
     ctx.send({ kind: 'sceneVoiceChat', chat: null })
-    if (userId != null) void refreshActive()
+    void refreshActive()
   }
 
   // The social service broadcasts a stream's start and end to everyone but the user who started or

@@ -243,7 +243,9 @@ pub enum Reply {
     StartPrivate(Result<String, VoiceRefusal>),
     AcceptPrivate(Result<String, VoiceRefusal>),
     RejectPrivate(Result<(), VoiceRefusal>),
-    EndPrivate(Result<(), VoiceRefusal>),
+    /// With the call it ends: a hang-up returns at once, so an older call's end can answer
+    /// while a newer call is ending.
+    EndPrivate(String, Result<(), VoiceRefusal>),
     /// With the community and the attempt of the request it answers: a reply to an abandoned
     /// start / join must not move the state into that room.
     StartCommunity(String, u64, Result<String, VoiceRefusal>),
@@ -337,8 +339,11 @@ pub struct CallState {
     pub local_speaker: bool,
     pub local_role: Role,
     pub local_requesting_to_speak: bool,
-    /// Why the last action failed or the call could not happen; cleared by the next action.
+    /// Why the last action failed or the call could not happen; cleared by the next call or
+    /// stream. Set through [`Self::set_error`].
     pub error: Option<String>,
+    /// Bumped on every error (never reset), so the HUD tells a repeated message from a stale one.
+    error_seq: u32,
     pub participants: BTreeMap<Address, Participant>,
     /// Whether the user wants the call mic up: set on the first connect of a call (a private call
     /// or a speaker), then only by the user or a demotion, so a re-dial restores it.
@@ -390,12 +395,24 @@ impl CallState {
         let pending_end = self.pending_end.take();
         let rejected_on_reconnect = self.rejected_on_reconnect.take();
         let attempt = self.attempt;
+        let error_seq = self.error_seq;
         *self = Self::new(me);
         self.error = error;
         self.deferred = deferred;
         self.pending_end = pending_end;
         self.rejected_on_reconnect = rejected_on_reconnect;
         self.attempt = attempt;
+        self.error_seq = error_seq;
+    }
+
+    /// Records a failure; the same message again still counts as a new one.
+    pub fn set_error(&mut self, message: impl Into<String>) {
+        self.error = Some(message.into());
+        self.error_seq = self.error_seq.wrapping_add(1);
+    }
+
+    pub fn error_seq(&self) -> u32 {
+        self.error_seq
     }
 
     fn set_call_mic(&mut self, enabled: bool, effects: &mut Vec<Effect>) {
@@ -406,7 +423,7 @@ impl CallState {
     fn fail(&mut self, status: Status, message: impl Into<String>) {
         self.reset();
         self.status = status;
-        self.error = Some(message.into());
+        self.set_error(message);
     }
 
     /// Ends whatever is active without a server call: the room goes, the ring stops.
@@ -432,7 +449,7 @@ impl CallState {
         match input {
             Input::StartPrivate(callee) => {
                 if !self.status.is_not_connected() {
-                    self.error = Some("already in a call".to_owned());
+                    self.set_error("already in a call");
                     return effects;
                 }
                 self.deferred = None;
@@ -639,7 +656,7 @@ impl CallState {
                     };
                     self.drop_call(&mut effects);
                     self.status = Status::GenericError;
-                    self.error = Some("the social service disconnected".to_owned());
+                    self.set_error("the social service disconnected");
                 }
             }
             Input::SignedOut => {
@@ -684,7 +701,7 @@ impl CallState {
                 self.room_connected = false;
                 if terminal && self.status == Status::InCall {
                     self.drop_call(&mut effects);
-                    self.error = Some(reason);
+                    self.set_error(reason);
                 }
             }
             Input::ParticipantJoined { address, metadata } => {
@@ -812,6 +829,7 @@ impl CallState {
                     }
                     // hung up while the start was in flight: end the call the server just made
                     (Status::EndingCall, Ok(call_id)) => {
+                        self.call_id = Some(call_id.clone());
                         effects.push(Effect::Rpc(Rpc::EndPrivate { call_id }));
                     }
                     (Status::EndingCall, Err(_)) => {
@@ -838,15 +856,19 @@ impl CallState {
                 }
                 if self.status == Status::RejectingCall {
                     if let Err(e) = result {
-                        self.error = Some(e.message().to_owned());
+                        self.set_error(e.message());
                     }
                     self.reset();
                 }
             }
-            Reply::EndPrivate(result) => {
-                if self.status == Status::EndingCall {
+            Reply::EndPrivate(call_id, result) => {
+                // a call ended at once (its id known) leaves no state to answer; only the call
+                // hung up before its start reply waits here
+                if self.status == Status::EndingCall
+                    && self.call_id.as_deref() == Some(call_id.as_str())
+                {
                     if let Err(e) = result {
-                        self.error = Some(e.message().to_owned());
+                        self.set_error(e.message());
                     }
                     self.reset();
                 }
@@ -893,12 +915,12 @@ impl CallState {
                         self.drop_call(effects);
                         effects.push(Effect::Sound(Sound::EndStream));
                     }
-                    Err(e) => self.error = Some(e.message().to_owned()),
+                    Err(e) => self.set_error(e.message()),
                 }
             }
             Reply::Moderation(result) => {
                 if let Err(e) = result {
-                    self.error = Some(e.message().to_owned());
+                    self.set_error(e.message());
                 }
             }
         }
@@ -1079,7 +1101,10 @@ mod tests {
                 })
             ]
         );
-        s.apply(Input::Reply(Reply::EndPrivate(Ok(()))), 0.0);
+        s.apply(
+            Input::Reply(Reply::EndPrivate("call-1".to_owned(), Ok(()))),
+            0.0,
+        );
         assert_eq!(s.status, Status::Disconnected);
         assert_eq!(s.kind, Kind::None);
         assert!(s.participants.is_empty());
@@ -1208,7 +1233,59 @@ mod tests {
                 call_id: "late".to_owned()
             })]
         );
-        s.apply(Input::Reply(Reply::EndPrivate(Ok(()))), 0.0);
+        s.apply(
+            Input::Reply(Reply::EndPrivate("late".to_owned(), Ok(()))),
+            0.0,
+        );
+        assert_eq!(s.status, Status::Disconnected);
+    }
+
+    #[test]
+    fn the_same_refusal_twice_is_two_errors() {
+        let mut s = state();
+        let refused = || {
+            Input::Reply(Reply::Moderation(Err(VoiceRefusal::Forbidden(
+                "not a moderator".to_owned(),
+            ))))
+        };
+        s.apply(refused(), 0.0);
+        let first = s.error_seq();
+        s.apply(refused(), 0.0);
+        assert_eq!(s.error.as_deref(), Some("not a moderator"));
+        assert_ne!(s.error_seq(), first);
+    }
+
+    #[test]
+    fn an_older_calls_end_leaves_the_call_being_ended() {
+        let mut s = state();
+        ring(&mut s);
+        s.apply(Input::EndCall, 0.0);
+        s.apply(Input::StartPrivate(addr(3)), 0.0);
+        s.apply(Input::EndCall, 0.0);
+        assert_eq!(s.status, Status::EndingCall);
+
+        // call-1's end answers while the second call waits for its start reply
+        s.apply(
+            Input::Reply(Reply::EndPrivate("call-1".to_owned(), Ok(()))),
+            0.0,
+        );
+        assert_eq!(s.status, Status::EndingCall);
+        assert_eq!(s.kind, Kind::Private);
+
+        let effects = s.apply(
+            Input::Reply(Reply::StartPrivate(Ok("call-2".to_owned()))),
+            0.0,
+        );
+        assert_eq!(
+            effects,
+            vec![Effect::Rpc(Rpc::EndPrivate {
+                call_id: "call-2".to_owned()
+            })]
+        );
+        s.apply(
+            Input::Reply(Reply::EndPrivate("call-2".to_owned(), Ok(()))),
+            0.0,
+        );
         assert_eq!(s.status, Status::Disconnected);
     }
 
@@ -1487,7 +1564,10 @@ mod tests {
         assert!(effects.contains(&Effect::Rpc(Rpc::EndPrivate {
             call_id: "call-1".to_owned()
         })));
-        s.apply(Input::Reply(Reply::EndPrivate(Ok(()))), 10.1);
+        s.apply(
+            Input::Reply(Reply::EndPrivate("call-1".to_owned(), Ok(()))),
+            10.1,
+        );
         assert!(s.tick(10.5).is_empty());
         let effects = s.tick(11.0);
         assert_eq!(s.status, Status::StartingCall);
@@ -1555,7 +1635,10 @@ mod tests {
         let mut s = state();
         ring(&mut s);
         s.apply(Input::JoinCommunity("c1".to_owned()), 10.0);
-        s.apply(Input::Reply(Reply::EndPrivate(Ok(()))), 10.1);
+        s.apply(
+            Input::Reply(Reply::EndPrivate("call-1".to_owned(), Ok(()))),
+            10.1,
+        );
         s.apply(Input::StartPrivate(addr(4)), 10.2);
         s.apply(
             Input::Reply(Reply::StartPrivate(Err(VoiceRefusal::Conflict(
@@ -1569,7 +1652,10 @@ mod tests {
         let mut s = state();
         ring(&mut s);
         s.apply(Input::JoinCommunity("c1".to_owned()), 10.0);
-        s.apply(Input::Reply(Reply::EndPrivate(Ok(()))), 10.1);
+        s.apply(
+            Input::Reply(Reply::EndPrivate("call-1".to_owned(), Ok(()))),
+            10.1,
+        );
         ringing_for_me(&mut s);
         s.apply(Input::Reject, 10.3);
         s.apply(Input::Reply(Reply::RejectPrivate(Ok(()))), 10.4);

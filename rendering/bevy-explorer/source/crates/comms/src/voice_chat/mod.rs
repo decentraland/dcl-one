@@ -18,7 +18,12 @@ use bevy::{ecs::relationship::Relationship, prelude::*};
 use bevy_console::ConsoleCommand;
 #[cfg(target_arch = "wasm32")]
 use common::structs::AudioSettings;
-use common::{rpc::RpcStreamSender, sets::SceneSets, structs::SystemAudio, util::AsH160};
+use common::{
+    rpc::RpcStreamSender,
+    sets::SceneSets,
+    structs::SystemAudio,
+    util::{redact_access_token, AsH160},
+};
 use console::DoAddConsoleCommand;
 use social::{
     voice::{VoiceEvent, VoiceQuery, VoiceRefusal},
@@ -148,7 +153,7 @@ enum Pending {
     StartPrivate(oneshot::Receiver<Result<String, VoiceRefusal>>),
     AcceptPrivate(oneshot::Receiver<Result<String, VoiceRefusal>>),
     RejectPrivate(oneshot::Receiver<Result<(), VoiceRefusal>>),
-    EndPrivate(oneshot::Receiver<Result<(), VoiceRefusal>>),
+    EndPrivate(String, oneshot::Receiver<Result<(), VoiceRefusal>>),
     StartCommunity(String, u64, oneshot::Receiver<Result<String, VoiceRefusal>>),
     JoinCommunity(String, u64, oneshot::Receiver<Result<String, VoiceRefusal>>),
     EndCommunity(String, oneshot::Receiver<Result<(), VoiceRefusal>>),
@@ -174,7 +179,7 @@ impl Pending {
             Pending::StartPrivate(rx) => Reply::StartPrivate(take(rx)?),
             Pending::AcceptPrivate(rx) => Reply::AcceptPrivate(take(rx)?),
             Pending::RejectPrivate(rx) => Reply::RejectPrivate(take(rx)?),
-            Pending::EndPrivate(rx) => Reply::EndPrivate(take(rx)?),
+            Pending::EndPrivate(id, rx) => Reply::EndPrivate(id.clone(), take(rx)?),
             Pending::StartCommunity(id, attempt, rx) => {
                 Reply::StartCommunity(id.clone(), *attempt, take(rx)?)
             }
@@ -229,6 +234,7 @@ impl VoiceChat {
             local_role: state.local_role.name().to_owned(),
             local_requesting_to_speak: state.local_requesting_to_speak,
             error: state.error.clone(),
+            error_seq: state.error_seq(),
         }
     }
 }
@@ -346,7 +352,7 @@ fn drive_voice_chat(
     for input in console.0.drain(..) {
         match refusal {
             Some(reason) => {
-                voice.state.error = Some(reason.to_owned());
+                voice.state.set_error(reason.to_owned());
                 force_snapshot = true;
             }
             None => inputs.0.push_back(input),
@@ -366,13 +372,13 @@ fn drive_voice_chat(
             SystemApi::VoiceChatAction(action) => {
                 debug!(target: "comms::voice_chat", "action {action:?}");
                 if let Some(reason) = refusal {
-                    voice.state.error = Some(reason.to_owned());
+                    voice.state.set_error(reason.to_owned());
                     force_snapshot = true;
                 } else {
                     match action_input(action) {
                         Ok(input) => inputs.0.push_back(input),
                         Err(e) => {
-                            voice.state.error = Some(e);
+                            voice.state.set_error(e);
                             force_snapshot = true;
                         }
                     }
@@ -384,7 +390,7 @@ fn drive_voice_chat(
 
     // the social service
     for VoiceEventReceived(event) in social_events.read() {
-        debug!(target: "comms::voice_chat", "social event {event:?}");
+        debug!(target: "comms::voice_chat", "social event {}", redact_access_token(&format!("{event:?}")));
         match event {
             VoiceEvent::Connected => inputs.0.push_back(Input::SocialConnected),
             VoiceEvent::Disconnected => inputs.0.push_back(Input::SocialDisconnected),
@@ -417,7 +423,7 @@ fn drive_voice_chat(
     let mut pending = std::mem::take(&mut voice.pending);
     pending.retain_mut(|p| match p.poll() {
         Some(reply) => {
-            debug!(target: "comms::voice_chat", "reply {reply:?}");
+            debug!(target: "comms::voice_chat", "reply {}", redact_access_token(&format!("{reply:?}")));
             inputs.0.push_back(Input::Reply(reply));
             false
         }
@@ -505,7 +511,7 @@ fn drive_voice_chat(
     }
     let changed = !effects.is_empty();
     for effect in effects {
-        debug!(target: "comms::voice_chat", "effect {effect:?}");
+        debug!(target: "comms::voice_chat", "effect {}", redact_access_token(&format!("{effect:?}")));
         match effect {
             Effect::Rpc(rpc) => {
                 let client = social.0.as_ref();
@@ -542,7 +548,7 @@ fn drive_voice_chat(
                     }
                     Rpc::EndPrivate { call_id } => {
                         let (tx, rx) = oneshot::channel();
-                        voice.pending.push(Pending::EndPrivate(rx));
+                        voice.pending.push(Pending::EndPrivate(call_id.clone(), rx));
                         client.map(|c| {
                             c.voice(VoiceQuery::EndPrivate {
                                 call_id,
@@ -696,7 +702,7 @@ fn drive_voice_chat(
                     commands.entity(entity).despawn();
                 }
                 let Some(("livekit", address)) = url.split_once(':') else {
-                    warn!(target: "comms::voice_chat", "unsupported voice adapter `{url}`");
+                    warn!(target: "comms::voice_chat", "unsupported voice adapter `{}`", redact_access_token(&url));
                     inputs.0.push_back(Input::RoomDisconnected {
                         terminal: true,
                         reason: "unsupported voice adapter".to_owned(),

@@ -25,7 +25,8 @@ const idle: VoiceChatState = {
   localSpeaker: false,
   localRole: 'none',
   localRequestingToSpeak: false,
-  error: null
+  error: null,
+  errorSeq: 0
 }
 
 function participant(address: string, name: string, over: Partial<VoiceChatParticipant> = {}): VoiceChatParticipant {

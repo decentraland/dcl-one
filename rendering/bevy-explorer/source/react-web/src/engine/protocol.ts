@@ -391,6 +391,8 @@ export interface VoiceChatState {
   localRequestingToSpeak: boolean
   /** Why the last action failed, or why the call ended in busy / error. */
   error: string | null
+  /** Counts the errors set, so the same message twice in a row is two failures. */
+  errorSeq: number
 }
 
 export interface VoiceChatStateMessage {

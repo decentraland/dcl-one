@@ -63,7 +63,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   - Hanging up a private call whose id is known ends it here at once and sends
     `EndPrivateVoiceChat` behind it; Unity waits in `VoiceChatEndingCall` for the reply. With the
     social link down the request waits for the reconnect (up to 30 s of backoff), and waiting in
-    the ending state would keep the nearby mic off and refuse new calls all that time.
+    the ending state would keep the nearby mic off and refuse new calls all that time. That
+    request is not retried if it fails, nor is a call ended at sign-out while its start is still
+    in flight. The server ends both anyway: leaving the room makes the gatekeeper delete a
+    private room, and a closed social socket ends that user's pending call (`social-service-ea`
+    `logic/subscriptions/lifecycle.ts`, mirrored by the catalyst).
   - A call that rang while the social link dropped is rejected on reconnect, and the reconnect's
     own report of that call does not ring it again: the server tells only the caller about a
     reject, so a second ring would never be stopped.

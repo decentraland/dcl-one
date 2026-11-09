@@ -7,7 +7,9 @@ import type { VoiceChatState } from '../../engine/protocol'
 import { useSession } from '../session/SessionContext'
 import { onVoiceChatEvent } from '../session/useEngineSession'
 
-/** Mounted outside the chrome: a full-screen page must not unmount it. */
+/** Mounted at the top level, beside the notification toasts: loading screens, teleports, the
+ *  engine menu and full-screen pages must not unmount it, or the broadcasts in between are lost
+ *  and the last error is shown again on remount. */
 export function VoiceChatToasts(): null {
   useVoiceChatToasts(useSession().voiceChat.state)
   return null
@@ -18,6 +20,8 @@ export function useVoiceChatToasts(state: VoiceChatState | null): void {
   useEffect(
     () =>
       onVoiceChatEvent((e) => {
+        // a public stream is also broadcast to non-members, as the sidebar badge knows
+        if (!e.isMember) return
         if (e.status === 'started') {
           showToast(
             <>
@@ -34,14 +38,21 @@ export function useVoiceChatToasts(state: VoiceChatState | null): void {
       }),
     []
   )
-  // An error while the panel shows a Busy / Error view is that view's; any other is a toast.
-  const lastError = useRef<string | null>(null)
+  // An error while the panel shows a Busy / Error view is that view's; any other is a toast. Each
+  // error has its own `errorSeq`, so the same refusal twice is two toasts, and an error already
+  // shown is not shown again.
+  const lastSeq = useRef<number | null>(null)
   useEffect(() => {
-    const error = state?.error ?? null
-    if (error === lastError.current) return
-    lastError.current = error
-    if (error == null || state == null) return
+    if (state == null) return
+    if (lastSeq.current == null) {
+      // first snapshot after mount: whatever error it carries happened before
+      lastSeq.current = state.errorSeq
+      return
+    }
+    if (state.errorSeq === lastSeq.current) return
+    lastSeq.current = state.errorSeq
+    if (state.error == null) return
     if (state.status === 'busy' || state.status === 'genericError') return
-    showToast(error, { tone: 'error' })
+    showToast(state.error, { tone: 'error' })
   }, [state])
 }

@@ -72,10 +72,10 @@ describe('active community streams', () => {
 
   it('keeps the last list when a read fails, and only the latest of overlapping reads', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    player.current = null
+    player.current = { userId: '0xa' }
     const b = bridge()
     kernelFetch.mockResolvedValueOnce(chats('c1'))
-    b.on.get('hello')?.()
+    b.frame() // the sign-in read
     await settle()
     expect(lists(b.sent).at(-1)).toEqual(['c1'])
 
@@ -94,6 +94,16 @@ describe('active community streams', () => {
     older(chats('c1', 'c3'))
     await settle()
     expect(lists(b.sent).at(-1)).toEqual(['c2'])
+  })
+
+  it('reads nothing while signed out', async () => {
+    player.current = null
+    const b = bridge()
+    b.frame()
+    b.on.get('hello')?.()
+    await settle()
+    expect(kernelFetch).not.toHaveBeenCalled()
+    expect(lists(b.sent)).toEqual([])
   })
 
   it('reads the list on sign-in and clears it on logout', async () => {

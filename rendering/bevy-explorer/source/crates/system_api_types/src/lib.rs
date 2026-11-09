@@ -191,6 +191,8 @@ pub struct VoiceChatState {
     pub local_requesting_to_speak: bool,
     /// Why the last action failed, or why the call ended in busy / error.
     pub error: Option<String>,
+    /// Counts the errors set, so the same message twice in a row is two failures.
+    pub error_seq: u32,
 }
 
 /// A community voice chat started or ended (`GetCommunityVoiceUpdateStream`), as the social
