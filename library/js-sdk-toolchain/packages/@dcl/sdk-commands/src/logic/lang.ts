@@ -18,7 +18,7 @@ export function getLanguage(args: string[]): Language {
   }
 }
 
-export function initLanguage(language: Language) {
+export function initLanguage(language: Language): Promise<unknown> {
   return i18next.use(Backend).init({
     lng: language,
     fallbackLng: 'en',

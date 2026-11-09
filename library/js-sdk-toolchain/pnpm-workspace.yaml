@@ -20,7 +20,6 @@ allowBuilds:
   '@dcl/protocol': false
   '@dcl/sdk': false
   '@dcl/sdk-commands': false
-  '@dcl/ts-proto': false
   esbuild: false
   eslint-import-context: false
   eslint-import-resolver-typescript: false

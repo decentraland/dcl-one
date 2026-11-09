@@ -1,7 +1,6 @@
 {
   "compilerOptions": {
-    "allowJs": true,
-    "baseUrl": "."
+    "allowJs": true
   },
   "extends": "@dcl/sdk/types/tsconfig.ecs7.json",
   "compileOnSave": false

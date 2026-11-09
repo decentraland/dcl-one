@@ -1,3 +1,4 @@
+/// <reference types="@dcl/js-runtime" preserve="true" />
 import type { TransformType } from '@dcl/ecs'
 import type { logTestResult, plan, setCameraTransform } from '~system/Testing'
 

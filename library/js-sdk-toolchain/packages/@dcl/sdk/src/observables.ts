@@ -1,3 +1,4 @@
+/// <reference types="@dcl/js-runtime" preserve="true" />
 import { Observable } from './internal/Observable'
 import {
   AvatarBase,
