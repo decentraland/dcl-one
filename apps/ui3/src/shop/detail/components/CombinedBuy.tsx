@@ -131,14 +131,15 @@ type CombinedBuyRun = {
   remembered: boolean;
   /**
    * Check again has something to do: a transaction to read, or a hold that has run out (it then lets the item go). A split
-   * recorded with no hash (a MANA approval still confirming, or a relay or settlement that gave none yet) never has one to
-   * read, so it becomes checkable only once its hold runs out.
+   * recorded with no hash (a MANA approval still confirming, or a record in the first, timestamp-only format) never has
+   * one to read, so it becomes checkable only once its hold runs out. The purchase itself always records its hash: it is
+   * broadcast before anything can leave it pending.
    */
   checkable: boolean;
   checking: boolean;
   /**
    * Reads the sent split's receipt: confirmed completes it, reverted fails it (retiring its credit), and either releases
-   * the hold. With no receipt, or nothing to read, a hold that has run out is let go.
+   * the hold. With no receipt, or nothing to read, a hold that has run out is let go; a failed read keeps it held.
    */
   checkAgain(): Promise<void>;
 };
