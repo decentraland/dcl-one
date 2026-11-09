@@ -139,6 +139,9 @@ across workers:
 - `bevy_winit`: modifier transitions reported only via `ModifiersChanged` are synthesised as key
   events, so a modifier swallowed by an OS chord doesn't stick; `UpdateMode::Reactive` timing
   fix.
+- `WorldId::new` takes `try_update` behind `target_has_atomic = "ptr"` with the `fetch_update`
+  fallback (upstream #26020, **throwaway**); `try_update` needs Rust 1.95, so `bevy`, `bevy_ecs`
+  and `bevy_input_focus` declare `rust-version = "1.95.0"` (every build pins 1.99.1).
 
 ## UI
 
@@ -172,6 +175,9 @@ across workers:
   vendored root `Cargo.toml` allows `dead_code` (code our feature set leaves unused) and
   `mismatched_lifetime_syntaxes` (a lint newer than bevy 0.16); other warnings stay visible.
   Don't run Clippy inside bevy's own workspace: its code predates this toolchain's lints.
+  A warning the pinned toolchain raises in the tree is fixed at its site when the fix is
+  local (an import our edits left unused, a deprecated `core::f32` constant, a derived
+  `PartialEq` over a function pointer), so a build log only shows what is new.
 - Backport an upstream change: `git fetch https://github.com/bevyengine/bevy <sha>`, then
   `git format-patch -1 --stdout <sha> | git apply -3 --directory=rendering/bevy-explorer/bevy`.
   Name the upstream PR on this page, as the entries above do.

@@ -1,6 +1,4 @@
-use crate::{
-    CalculatedClip, ComputedNode, ComputedNodeTarget, ResolvedBorderRadius, UiScale, UiStack,
-};
+use crate::{CalculatedClip, ComputedNode, ComputedNodeTarget, ResolvedBorderRadius, UiStack};
 use bevy_ecs::{
     change_detection::DetectChangesMut,
     entity::{ContainsEntity, Entity},
@@ -158,7 +156,6 @@ pub fn set_camera_window_cursor_position(
     primary_window: Query<Entity, With<PrimaryWindow>>,
     windows: Query<&Window>,
     touches_input: Res<Touches>,
-    ui_scale: Res<UiScale>,
 ) {
     let primary_window = primary_window.iter().next();
     let primary_scale_factor = primary_window
