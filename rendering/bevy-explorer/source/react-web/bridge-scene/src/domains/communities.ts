@@ -13,7 +13,7 @@ import { fetchIdentities } from './profile'
 import type { ProfileIdentity } from './profile'
 import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'
-import type { Community, CommunityAction, CommunityChannel, CommunityEvent, CommunityMember, CommunityPhoto, CommunityPlace, CommunityPost, CommunitySaveResultMessage } from '../../../src/engine/protocol'
+import type { Community, CommunityAction, CommunityChannel, CommunityEvent, CommunityMember, CommunityPhoto, CommunityPlace, CommunityPlaceOption, CommunityPlaceOptionsMessage, CommunityPost, CommunitySaveResultMessage } from '../../../src/engine/protocol'
 
 // Community events live on the (public) events-api, filtered by community_id. Community photos
 // live on the camera-reel service (mirrors /api/users/{a}/images). Community thumbnails are NOT
@@ -219,6 +219,83 @@ async function detail(id: string): Promise<{ members: CommunityMember[]; posts: 
 /** A refused create or update as the form shows it. As in unity-explorer, every HTTP 400 is the
  *  content check's answer: its per-field issues (possibly none), or `unavailable` when the check
  *  could not run. Anything else is a plain error. */
+// The form's places picker, as unity-explorer's CommunityCreationEditionController: the places
+// the user owns or operates (one destinations read by owner), and, when editing, the community's
+// linked places (their ids from the social service, their details from the places service by id).
+// Each is labelled "title (world name)" or "title (x,y)" and carries its owner's name.
+type DestinationRaw = { id: string; title?: string; world_name?: string | null; base_position?: string; owner?: string | null }
+
+const GET_PLACES_ERROR = 'There was an error getting places. Please try again.'
+const GET_OWNERS_NAMES_ERROR = 'There was an error getting owners names. Please try again.'
+const GET_COMMUNITY_PLACES_ERROR = 'There was an error getting the community places. Please try again.'
+
+/** The owners' names by address (lowercased), or null when the profile read found none, which
+ *  unity-explorer reports as an error and shows the places without names. */
+async function ownerNames(rows: DestinationRaw[]): Promise<Map<string, string> | null> {
+  const owners = [...new Set(rows.map((r) => (r.owner ?? '').toLowerCase()).filter((a) => a !== ''))]
+  if (owners.length === 0) return new Map()
+  const found = await BevyApi.getCompactProfiles(owners).catch(() => [])
+  if (found.length === 0) return null
+  return new Map(found.map((p) => [p.pointer.toLowerCase(), p.name]))
+}
+
+function placeOptions(rows: DestinationRaw[], names: Map<string, string> | null): CommunityPlaceOption[] {
+  return rows.map((r) => {
+    const isWorld = (r.world_name ?? '') !== ''
+    return {
+      id: r.id,
+      isWorld,
+      label: `${r.title ?? ''} (${isWorld ? r.world_name : (r.base_position ?? '')})`,
+      ownerName: names?.get((r.owner ?? '').toLowerCase()) ?? ''
+    }
+  })
+}
+
+async function placeOptionsFor(communityId: string | undefined): Promise<CommunityPlaceOptionsMessage> {
+  const errors: string[] = []
+  const destinations = `${await serviceBase('places')}/api/destinations`
+  const me = getPlayer()?.userId ?? ''
+  let owned: CommunityPlaceOption[] = []
+  // `signed` answers with the envelope's `data`: here the list itself. Never without an owner: the
+  // service reads an empty one as no filter at all, and every place would be offered as the user's.
+  const ownedRows = await (me === ''
+    ? Promise.reject(new Error('no signed-in user'))
+    : signed<DestinationRaw[]>(`${destinations}?owner=${encodeURIComponent(me)}`))
+    .then((rows) => rows ?? [])
+    .catch((e: unknown) => {
+      console.error('[communities] owned places failed', e)
+      errors.push(GET_PLACES_ERROR)
+      return null
+    })
+  if (ownedRows != null) {
+    const names = await ownerNames(ownedRows)
+    if (names == null) errors.push(GET_OWNERS_NAMES_ERROR)
+    owned = placeOptions(ownedRows, names)
+  }
+  let linked: CommunityPlaceOption[] = []
+  let linkedFailed = false
+  if (communityId != null) {
+    const linkedRows = await (async () => {
+      const res = await signed<{ results?: { id: string }[] }>(`${await base('v1')}/${encodeURIComponent(communityId)}/places`)
+      const ids = (res?.results ?? []).map((r) => r.id)
+      if (ids.length === 0) return []
+      return (await signed<DestinationRaw[]>(destinations, 'POST', ids)) ?? []
+    })().catch((e: unknown) => {
+      console.error('[communities] community places failed', e)
+      return null
+    })
+    if (linkedRows == null) {
+      linkedFailed = true
+      errors.push(GET_COMMUNITY_PLACES_ERROR)
+    } else if (linkedRows.length > 0) {
+      const names = await ownerNames(linkedRows)
+      if (names == null) errors.push(GET_OWNERS_NAMES_ERROR)
+      linked = placeOptions(linkedRows, names)
+    }
+  }
+  return { kind: 'communityPlaceOptions', communityId, owned, linked, linkedFailed, errors }
+}
+
 function saveFailure(e: unknown): Pick<CommunitySaveResultMessage, 'moderation' | 'error'> {
   if (e instanceof HttpError && e.status === 400) {
     let body: { data?: { issues?: Partial<Record<'name' | 'description' | 'image', unknown>> }; communityContentValidationUnavailable?: unknown } = {}
@@ -326,7 +403,14 @@ export function registerCommunities(ctx: Ctx): void {
       msg.thumbnail != null
         ? [{ name: 'thumbnail', filename: 'thumbnail.png', contentType: 'image/png', bytes: dataUrlBytes(msg.thumbnail) }]
         : []
-    const fields = { name: msg.name, description: msg.description, privacy: msg.privacy, visibility: msg.discoverable ? 'all' : 'unlisted' }
+    const fields = {
+      name: msg.name,
+      description: msg.description,
+      privacy: msg.privacy,
+      visibility: msg.discoverable ? 'all' : 'unlisted',
+      // as unity-explorer, always sent on create, `[]` when no place is linked
+      placeIds: JSON.stringify(msg.placeIds)
+    }
     // the service url is resolved inside the chain, so a failure there is a reported error too
     const result = await base('v1')
       .then((b) => signedForm<{ id?: string }>(b, 'POST', fields, files))
@@ -346,6 +430,8 @@ export function registerCommunities(ctx: Ctx): void {
     if (msg.description != null) fields.description = msg.description
     if (msg.privacy != null) fields.privacy = msg.privacy
     if (msg.discoverable != null) fields.visibility = msg.discoverable ? 'all' : 'unlisted'
+    // the whole new set; the service keeps the current one when the field is absent
+    if (msg.placeIds != null) fields.placeIds = JSON.stringify(msg.placeIds)
     const files =
       msg.thumbnail != null
         ? [{ name: 'thumbnail', filename: 'thumbnail.png', contentType: 'image/png', bytes: dataUrlBytes(msg.thumbnail) }]
@@ -365,6 +451,14 @@ export function registerCommunities(ctx: Ctx): void {
     if (raw != null) {
       const [community] = await communities([raw])
       if (community != null) ctx.send({ kind: 'community', community })
+    }
+    // the card stays open behind the form: its Places tab shows the places just saved
+    if (msg.placeIds != null) {
+      const fresh = await detail(msg.id).catch((e: unknown) => {
+        console.error('[communities] detail after update failed', e)
+        return undefined
+      })
+      if (fresh != null) ctx.send({ kind: 'communityDetail', id: msg.id, ...fresh })
     }
     await refreshLists()
   })
@@ -427,6 +521,15 @@ export function registerCommunities(ctx: Ctx): void {
       if (me == null || me === '') throw new Error('Not signed in')
       return await signed(`${await base('v1')}/${encodeURIComponent(msg.id)}/members/${encodeURIComponent(me)}`, 'DELETE')
     })
+  })
+  ctx.on('getCommunityPlaceOptions', async (msg) => {
+    const options = await placeOptionsFor(msg.communityId).catch((e: unknown): CommunityPlaceOptionsMessage => {
+      // the places service could not even be located: nothing could be read
+      console.error('[communities] place options failed', e)
+      const errors = [GET_PLACES_ERROR, ...(msg.communityId != null ? [GET_COMMUNITY_PLACES_ERROR] : [])]
+      return { kind: 'communityPlaceOptions', communityId: msg.communityId, owned: [], linked: [], linkedFailed: msg.communityId != null, errors }
+    })
+    ctx.send(options)
   })
   ctx.on('getCommunityDetail', async (msg) => {
     const { members, posts, places, events, photos } = await detail(msg.id).catch(() => ({ members: [], posts: [], places: [], events: [], photos: [] }))

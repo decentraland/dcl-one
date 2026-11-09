@@ -119,6 +119,13 @@ const MOCK_NEARBY = [
   { address: '0xc0ffee254729296a45a3885639ac7e10f9d54979', name: '' }
 ]
 
+// The places the mock user can link to a community, and what each community links.
+const MOCK_OWNED_PLACES = [
+  { id: 'place-land-1', isWorld: false, label: 'Mock Plaza (12,-34)', ownerName: 'You' },
+  { id: 'place-world-1', isWorld: true, label: 'Mock Mansion (mock.dcl.eth)', ownerName: 'You' }
+]
+const mockLinkedPlaces = new Map<string, string[]>()
+
 const mockCommunities: Community[] = [
   { id: 'c1', name: 'Decentraland Foundation', description: 'The official Decentraland Foundation community. Stay up to date with events, releases and everything happening across the metaverse.', thumbnail: 'https://picsum.photos/seed/dcl/540/360', membersCount: 1242, role: 'member', ownerName: 'DCLOfficial', privacy: 'public' },
   { id: 'c2', name: 'Chiri Storytelling', description: "This space brings to life Chiri's adventures. Gathering cozy Social Gamers, Creators, Digi Fashion lovers, Virtual Citizens & more!", thumbnail: '', membersCount: 374, role: 'none', ownerName: 'Chiri', privacy: 'private' },
@@ -944,6 +951,13 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       reply({ kind: 'communityOnlineMembers', id: msg.id, members: msg.id === 'c1' ? onlineMembers() : onlineMembers().slice(0, 3) })
       return
     }
+    if (msg.kind === 'getCommunityPlaceOptions') {
+      // one LAND and one World the user owns, and what each community links
+      const linked = msg.communityId != null ? (mockLinkedPlaces.get(msg.communityId) ?? []) : []
+      const options = { kind: 'communityPlaceOptions' as const, communityId: msg.communityId, owned: MOCK_OWNED_PLACES, linked: MOCK_OWNED_PLACES.filter((p) => linked.includes(p.id)), linkedFailed: false, errors: [] }
+      setTimeout(() => reply(options), 300)
+      return
+    }
     if (msg.kind === 'createCommunity') {
       // A name with "flagged" or "unavailable" in it gets the content check's two refusals, so the
       // form's moderation views can be seen without a backend.
@@ -955,6 +969,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         return
       }
       const id = `new-${mockCommunities.length}`
+      mockLinkedPlaces.set(id, msg.placeIds)
       mockCommunities.unshift({
         id,
         name: msg.name,
@@ -996,6 +1011,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         if (msg.privacy != null) c.privacy = msg.privacy
         if (msg.discoverable != null) c.visibility = msg.discoverable ? 'all' : 'unlisted'
         if (msg.thumbnail != null) c.thumbnail = msg.thumbnail
+        if (msg.placeIds != null) mockLinkedPlaces.set(c.id, msg.placeIds)
       }
       setTimeout(() => {
         reply({ kind: 'communitySaveResult', mode: 'update', id: msg.id })

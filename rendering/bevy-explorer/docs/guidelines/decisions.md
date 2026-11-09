@@ -67,7 +67,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   message on the community card, like the card's other actions, instead of as a toast. A
   picture saved by an edit is kept by the HUD for the session, as unity-explorer's image cache
   does, since its URL does not change and the CDN (CloudFront on .org) ignores a version query.
-  The places picker is not ported yet.
+  The places picker links the LANDs and Worlds the user owns or operates, as unity-explorer's does.
+  An edit sends `placeIds` only when the linked places changed, and the service keeps them when the
+  field is absent; unity-explorer sends them on every save. When the community's linked places
+  could not be read, the picker and its remove buttons are disabled, so a save cannot replace them
+  with a partial list; unity-explorer leaves them editable.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.

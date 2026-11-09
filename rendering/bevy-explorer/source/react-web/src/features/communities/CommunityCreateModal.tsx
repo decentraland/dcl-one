@@ -1,14 +1,16 @@
 // Create-a-Community and Edit Community form, as unity-explorer's CommunityCreationEdition panel: a
-// NAME gate (create only), then profile picture, name*, membership, discoverability and
-// description*, in that order. Submits through the bridge (signed multipart POST or PUT, the
+// NAME gate (create only), then profile picture, name*, membership, discoverability, description*
+// and places, in that order. The form waits for the places (the user's own LANDs and Worlds, and
+// the community's linked ones when editing) before it can be filled, as unity-explorer's does. Submits through the bridge (signed multipart POST or PUT, the
 // picture as a file part) and waits for the answer: success opens the new community (create) or
 // closes the form (edit), a refusal from the content check shows its findings, and any other
 // failure is a toast with the form left as it was. An edit sends only what changed; only the owner
 // can change the name, membership and discoverability.
 
 import { useEffect, useRef, useState } from 'react'
-import { CharCounter, Select, Spinner, TextArea, openPopup, showConfirm, showToast } from '../../design'
-import type { Community } from '../../engine/protocol'
+import { CharCounter, MaskIcon, Select, Spinner, TextArea, openPopup, showConfirm, showToast } from '../../design'
+import type { Community, CommunityPlaceOption, CommunityPlaceOptionsMessage } from '../../engine/protocol'
+import closeIcon from '../../assets/backpack/icon-close.webp'
 import type { CommunitySave, CreateCommunityInput, UpdateCommunityInput } from '../session/useEngineSession'
 import { useSession } from '../session/SessionContext'
 import styles from './CommunityCreateModal.module.css'
@@ -39,6 +41,13 @@ const UPDATE_ERROR = 'There was an error updating community. Please try again.'
 const IMAGE_GENERAL_ERROR = 'Invalid image file selected. Please check file type and size.'
 const IMAGE_WEIGHT_ERROR = 'Selected image exceeds 500KB size limit.'
 const IMAGE_RESOLUTION_ERROR = 'Selected image exceeds 512x512 px size limit.'
+const PLACES_DROPDOWN_TITLE = 'Select LAND or World'
+
+/** The ids to send, as unity-explorer's form collects them: lands first, then worlds. */
+function placeIdsOf(places: CommunityPlaceOption[]): string[] {
+  return [...places.filter((p) => !p.isWorld), ...places.filter((p) => p.isWorld)].map((p) => p.id)
+}
+const sameIds = (a: string[], b: string[]): boolean => a.length === b.length && a.every((id) => b.includes(id))
 
 export type { CreateCommunityInput }
 
@@ -110,6 +119,7 @@ export function CommunityCreateModal({
   canCreate,
   editing,
   save,
+  placeOptions,
   onCreate,
   onUpdate,
   onClearSave,
@@ -123,6 +133,8 @@ export function CommunityCreateModal({
   editing?: Community
   /** The create or update in flight, or how it ended. */
   save: CommunitySave | null
+  /** The places for the picker and, when editing, the linked ones; null while they load. */
+  placeOptions: CommunityPlaceOptionsMessage | null
   onCreate: (input: CreateCommunityInput) => void
   onUpdate: (input: UpdateCommunityInput) => void
   /** Forget the outcome: back to the form. */
@@ -147,6 +159,19 @@ export function CommunityCreateModal({
   // a newly chosen picture (data URL); the current one shows until then
   const [pfp, setPfp] = useState<string | null>(null)
   const [focused, setFocused] = useState<'name' | 'description' | null>(null)
+  // the linked places (tags): the community's once its places arrive, none on create
+  const [places, setPlaces] = useState<CommunityPlaceOption[]>([])
+  const initialPlaceIds = useRef<string[]>([])
+  const loadingPlaces = placeOptions == null
+  const owned = placeOptions?.owned ?? []
+  const linkedFailed = placeOptions?.linkedFailed === true
+  useEffect(() => {
+    if (placeOptions == null) return
+    // unity-explorer's notice for each read that failed
+    placeOptions.errors.forEach((e) => showToast(e, { tone: 'error' }))
+    setPlaces(placeOptions.linked)
+    initialPlaceIds.current = placeOptions.linked.map((p) => p.id)
+  }, [placeOptions])
   const fileRef = useRef<HTMLInputElement>(null)
   const isEdit = editing != null
   // as unity-explorer: on edit only the owner may change the name, membership and discoverability
@@ -159,7 +184,8 @@ export function CommunityCreateModal({
     description.trim() !== initial.description.trim() ||
     pfp != null ||
     privacy !== initial.privacy ||
-    visibility !== initial.visibility
+    visibility !== initial.visibility ||
+    !sameIds(places.map((p) => p.id), initialPlaceIds.current)
   const dirtyCb = useRef(onDirtyChange)
   dirtyCb.current = onDirtyChange
   useEffect(() => {
@@ -188,8 +214,18 @@ export function CommunityCreateModal({
       else setPfp(picked.dataUrl)
     })
   }
+  // as unity-explorer: on create every tag can go; on edit the owner may unlink any place, a
+  // moderator only the places they own (which includes every place they just added)
+  const removable = (p: CommunityPlaceOption): boolean => !isEdit || editing.role === 'owner' || owned.some((o) => o.id === p.id)
+  const addPlace = (id: string): void => {
+    const place = owned.find((o) => o.id === id)
+    if (place != null && !places.some((p) => p.id === id)) setPlaces([...places, place])
+  }
+  const removePlace = (id: string): void => setPlaces(places.filter((p) => p.id !== id))
+
   const submit = (): void => {
-    if (!valid || saving) return
+    if (!valid || saving || loadingPlaces) return
+    const placeIds = placeIdsOf(places)
     if (isEdit) {
       // only what changed, as unity-explorer; with nothing changed the form just closes
       const changes: UpdateCommunityInput = { id: editing.id }
@@ -198,6 +234,8 @@ export function CommunityCreateModal({
       if (privacy !== initial.privacy) changes.privacy = privacy
       if (visibility !== initial.visibility) changes.discoverable = visibility === 'all'
       if (pfp != null) changes.thumbnail = pfp
+      // the whole set, only when it changed (unity-explorer sends it on every save)
+      if (!linkedFailed && !sameIds(placeIds, initialPlaceIds.current)) changes.placeIds = placeIds
       if (Object.keys(changes).length === 1) saved.current(editing.id)
       else onUpdate(changes)
       return
@@ -207,7 +245,8 @@ export function CommunityCreateModal({
       description: description.trim(),
       privacy,
       discoverable: visibility === 'all',
-      ...(pfp != null ? { thumbnail: pfp } : {})
+      ...(pfp != null ? { thumbnail: pfp } : {}),
+      placeIds
     })
   }
 
@@ -274,6 +313,11 @@ export function CommunityCreateModal({
     <div className={styles.modal} role="dialog" aria-modal="true" aria-label={title} aria-busy={saving} onClick={(e) => e.stopPropagation()}>
       <h2 className={styles.title}>{title}</h2>
 
+      {loadingPlaces ? (
+        <div className={styles.loading}>
+          <Spinner size={28} />
+        </div>
+      ) : (
       <div className={styles.scroll}>
         <div className={styles.group}>
           <span className={styles.label}>PROFILE PICTURE</span>
@@ -356,7 +400,48 @@ export function CommunityCreateModal({
             onBlur={() => setFocused(null)}
           />
         </div>
+
+        <div className={styles.group}>
+          <span className={styles.label}>PLACES</span>
+          <span className={styles.hint}>
+            Community owners and moderators may link Places they own to a Community. <b>Note:</b> Public photos taken at linked Places will
+            appear in your Community&apos;s profile.
+          </span>
+          <Select
+            aria-label="Add a place"
+            variant="light"
+            value=""
+            placeholder={PLACES_DROPDOWN_TITLE}
+            disabled={saving || linkedFailed}
+            options={owned.filter((o) => !places.some((p) => p.id === o.id)).map((o) => ({ value: o.id, label: o.label }))}
+            onChange={addPlace}
+          />
+          {places.length > 0 && (
+            <ul className={styles.placeTags} aria-label="Linked places">
+              {places.map((p) => (
+                <li key={p.id} className={styles.placeTag}>
+                  <span className={styles.placeText}>
+                    <span className={styles.placeName}>{p.label}</span>
+                    {p.ownerName !== '' && <span className={styles.placeOwner}>{p.ownerName}</span>}
+                  </span>
+                  {removable(p) && (
+                    <button
+                      type="button"
+                      className={styles.placeRemove}
+                      aria-label={`Remove ${p.label}`}
+                      disabled={saving || linkedFailed}
+                      onClick={() => removePlace(p.id)}
+                    >
+                      <MaskIcon src={closeIcon} size={10} />
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
+      )}
 
       {saving && (
         <div className={styles.checking} role="status">
@@ -367,7 +452,7 @@ export function CommunityCreateModal({
 
       <div className={styles.actions}>
         <button type="button" className={`${styles.ghost} ${styles.cancel}`} disabled={saving} onClick={onClose}>CANCEL</button>
-        <button type="button" className={`${styles.primary} ${styles.create}`} disabled={!valid || saving} onClick={submit}>{isEdit ? 'SAVE' : 'CREATE'}</button>
+        <button type="button" className={`${styles.primary} ${styles.create}`} disabled={!valid || saving || loadingPlaces} onClick={submit}>{isEdit ? 'SAVE' : 'CREATE'}</button>
       </div>
 
       <p className={styles.policy}>
@@ -393,14 +478,21 @@ function CommunityFormContainer({
   onDirtyChange: (dirty: boolean) => void
 }): React.JSX.Element {
   const { communities } = useSession()
-  const { clearSave } = communities
+  const { clearSave, loadPlaceOptions, clearPlaceOptions } = communities
   // a save's outcome belongs to this form only: forget it when the form goes away
   useEffect(() => clearSave, [clearSave])
+  // the places, read once as the form opens and forgotten when it closes
+  const editingId = editing?.id
+  useEffect(() => {
+    loadPlaceOptions(editingId)
+    return clearPlaceOptions
+  }, [editingId, loadPlaceOptions, clearPlaceOptions])
   return (
     <CommunityCreateModal
       canCreate={canCreate}
       editing={editing}
       save={communities.save}
+      placeOptions={communities.placeOptions}
       onCreate={communities.create}
       onUpdate={communities.update}
       onClearSave={clearSave}

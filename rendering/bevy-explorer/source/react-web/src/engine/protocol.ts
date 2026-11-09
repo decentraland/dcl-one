@@ -209,6 +209,7 @@ export type PageToScene =
   | GetCommunityRequest
   | CreateCommunityRequest
   | UpdateCommunityRequest
+  | GetCommunityPlaceOptionsRequest
   | DeleteCommunityRequest
   | JoinCommunityRequest
   | LeaveCommunityRequest
@@ -1146,6 +1147,8 @@ export interface CreateCommunityRequest {
   /** The picture as a data URL (PNG or JPEG, at most 500 KB and 512×512 px), sent as the form's
    *  `thumbnail` file part. */
   thumbnail?: string
+  /** The linked places (lands first, then worlds), sent as the form's `placeIds` JSON array. */
+  placeIds: string[]
 }
 
 /** Edit a community (page → scene → signed multipart PUT to the social-api). As unity-explorer,
@@ -1160,6 +1163,40 @@ export interface UpdateCommunityRequest {
   discoverable?: boolean
   /** A new picture as a data URL (same limits as on create). */
   thumbnail?: string
+  /** The whole new set of linked places (lands first, then worlds), when it changed; absent keeps
+   *  the current set. */
+  placeIds?: string[]
+}
+
+/** A LAND or World the form can link, or one already linked (unity-explorer's CommunityPlace). */
+export interface CommunityPlaceOption {
+  id: string
+  isWorld: boolean
+  /** "title (world name)" or "title (x,y)". */
+  label: string
+  /** The place owner's name, or empty when it could not be read. */
+  ownerName: string
+}
+
+/** The form opened (page → scene): read the places the user owns or operates, and, when editing,
+ *  the community's linked places. */
+export interface GetCommunityPlaceOptionsRequest {
+  kind: 'getCommunityPlaceOptions'
+  /** The community being edited; absent on create. */
+  communityId?: string
+}
+/** The places for the form (scene → page). */
+export interface CommunityPlaceOptionsMessage {
+  kind: 'communityPlaceOptions'
+  communityId?: string
+  /** The places the user owns or operates: the picker's options. */
+  owned: CommunityPlaceOption[]
+  /** The community's linked places (edit only). */
+  linked: CommunityPlaceOption[]
+  /** The linked places could not be read (edit only): the form must not replace them. */
+  linkedFailed: boolean
+  /** unity-explorer's messages for the reads that failed, each shown as a toast. */
+  errors: string[]
 }
 
 /** Delete a community the user owns (page → scene → signed DELETE to the social-api). */
@@ -1893,6 +1930,7 @@ export type SceneToPage =
   | VoiceActivityMessage
   | CommunityActionFailedMessage
   | CommunitySaveResultMessage
+  | CommunityPlaceOptionsMessage
   | CommunityDeletedMessage
   | TravelResultMessage
   | AvatarSaveFailedMessage

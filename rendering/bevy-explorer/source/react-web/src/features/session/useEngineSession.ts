@@ -89,6 +89,7 @@ import type {
   Profile,
   ProfileEdit,
   CommunitySaveResultMessage,
+  CommunityPlaceOptionsMessage,
   UpdateCommunityRequest,
   SceneLoadingState,
   Setting,
@@ -216,6 +217,8 @@ export interface CreateCommunityInput {
   discoverable: boolean
   /** The picture as a data URL, when one was chosen. */
   thumbnail?: string
+  /** The linked places, lands first, then worlds. */
+  placeIds: string[]
 }
 
 /** What the edit form sends: the community and only the fields that changed. */
@@ -241,6 +244,13 @@ export interface CommunitiesState {
   save: CommunitySave | null
   /** Forget the last outcome (the form closed or is being edited again). */
   clearSave: () => void
+  /** The form's places: the user's own (the picker) and, when editing, the community's linked
+   *  ones. Null until they arrive. */
+  placeOptions: CommunityPlaceOptionsMessage | null
+  /** Read the form's places; `communityId` when editing. */
+  loadPlaceOptions: (communityId?: string) => void
+  /** Forget them (the form closed). */
+  clearPlaceOptions: () => void
   join: (id: string) => void
   /** Ask to join a private community. */
   requestToJoin: (id: string) => void
@@ -1182,6 +1192,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [communityError, setCommunityError] = useState<{ id: string; message: string } | null>(null)
   const [communitySave, setCommunitySave] = useState<CommunitySave | null>(null)
   const [deletedCommunity, setDeletedCommunity] = useState<string | null>(null)
+  const [communityPlaceOptions, setCommunityPlaceOptions] = useState<CommunityPlaceOptionsMessage | null>(null)
+  // Whose places the open form asked for ('' on create), or null with no form open: a late answer
+  // for another form is dropped.
+  const placeOptionsWanted = useRef<string | null>(null)
   // A create or update is waiting for its answer. Cleared when the form closes, so an answer that
   // comes after that is dropped instead of driving the next form.
   const communitySaveInFlight = useRef(false)
@@ -1718,6 +1732,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'communityActionFailed':
           setCommunityError({ id: msg.id, message: COMMUNITY_ERROR[msg.action] })
+          break
+        case 'communityPlaceOptions':
+          if (placeOptionsWanted.current !== (msg.communityId ?? '')) break
+          setCommunityPlaceOptions(msg)
           break
         case 'communitySaveResult': {
           if (!communitySaveInFlight.current) break
@@ -3060,6 +3078,15 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     pendingCommunityPicture.current = null
     setCommunitySave(null)
   }, [])
+  const loadCommunityPlaceOptions = useCallback((communityId?: string) => {
+    placeOptionsWanted.current = communityId ?? ''
+    setCommunityPlaceOptions(null)
+    driverRef.current?.send({ kind: 'getCommunityPlaceOptions', ...(communityId != null ? { communityId } : {}) })
+  }, [])
+  const clearCommunityPlaceOptions = useCallback(() => {
+    placeOptionsWanted.current = null
+    setCommunityPlaceOptions(null)
+  }, [])
   const deleteCommunity = useCallback((id: string) => {
     setCommunityError(null)
     driverRef.current?.send({ kind: 'deleteCommunity', id })
@@ -3256,6 +3283,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setCommunities([])
     setCommunityCards({})
     clearCommunitySave()
+    clearCommunityPlaceOptions()
     setDeletedCommunity(null)
     savedCommunityPictures.current = {}
     setFriendPending(new Set())
@@ -4053,7 +4081,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       saveOutfit, deleteOutfit, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
-    communities: { list: communities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
+    communities: { list: communities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
     map: mapSlice,
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces },

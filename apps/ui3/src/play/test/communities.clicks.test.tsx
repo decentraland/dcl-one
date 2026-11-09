@@ -6,7 +6,7 @@ import { CommunityModal, openCommunityModal } from '../features/communities/Comm
 import { openCommunityCreateModal, openCommunityEditModal, readCommunityPicture } from '../features/communities/CommunityCreateModal'
 import { SessionProvider } from '../features/session/SessionContext'
 import { PopupHost, ToastHost, closeTopPopup, resetPopups } from '../design'
-import type { Community, CommunityDetailMessage } from '../engine/protocol'
+import type { Community, CommunityDetailMessage, CommunityPlaceOption, CommunityPlaceOptionsMessage } from '../engine/protocol'
 import type { CommunitiesState, CommunitySave } from '../features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from './harness'
 
@@ -124,12 +124,33 @@ describe('community modal clicks', () => {
 
 // The create form, as unity-explorer's: it holds typed details (the scrim refuses, the deliberate
 // closes ask), needs a name and a description, waits for the content check, and shows how it ended.
+/** The form's places as the session holds them once read: none owned, none linked. */
+const noPlaces = (over: Partial<CommunityPlaceOptionsMessage> = {}): CommunityPlaceOptionsMessage => ({
+  kind: 'communityPlaceOptions',
+  owned: [],
+  linked: [],
+  linkedFailed: false,
+  errors: [],
+  ...over
+})
+const land: CommunityPlaceOption = { id: 'land-1', isWorld: false, label: 'Plaza (12,-34)', ownerName: 'Me' }
+const world: CommunityPlaceOption = { id: 'world-1', isWorld: true, label: 'Mansion (me.dcl.eth)', ownerName: 'Me' }
+const othersLand: CommunityPlaceOption = { id: 'land-9', isWorld: false, label: 'Their Plaza (1,1)', ownerName: 'Owner' }
+
 describe('community create modal', () => {
-  function renderCreate(): { communities: CommunitiesState; setSave: (save: CommunitySave | null) => void; onCreated: ReturnType<typeof vi.fn> } {
+  function renderCreate(initialPlaces: CommunityPlaceOptionsMessage | null = noPlaces()): {
+    communities: CommunitiesState
+    setSave: (save: CommunitySave | null) => void
+    setPlaces: (places: CommunityPlaceOptionsMessage | null) => void
+    onCreated: ReturnType<typeof vi.fn>
+  } {
     const session = fakeSession()
     const onCreated = vi.fn()
+    let places = initialPlaces
+    let saved: CommunitySave | null = null
     const view = (save: CommunitySave | null): React.JSX.Element => {
-      session.communities = { ...session.communities, save }
+      saved = save
+      session.communities = { ...session.communities, save, placeOptions: places }
       return (
         <SessionProvider value={{ ...session }}>
           <PopupHost />
@@ -141,7 +162,15 @@ describe('community create modal', () => {
     act(() => {
       openCommunityCreateModal(true, onCreated)
     })
-    return { communities: session.communities, setSave: (save) => rerender(view(save)), onCreated }
+    return {
+      communities: session.communities,
+      setSave: (save) => rerender(view(save)),
+      setPlaces: (next) => {
+        places = next
+        rerender(view(saved))
+      },
+      onCreated
+    }
   }
   const fill = async (name = 'Builders', description = 'We build things'): Promise<void> => {
     await userEvent.type(screen.getByLabelText(/community name/i), name)
@@ -190,7 +219,8 @@ describe('community create modal', () => {
       name: 'Builders',
       description: 'We build things',
       privacy: 'private',
-      discoverable: false
+      discoverable: false,
+      placeIds: []
     })
   })
 
@@ -261,6 +291,43 @@ describe('community create modal', () => {
     expect(communities.create).toHaveBeenCalledWith(expect.objectContaining({ name: 'Builders', description: 'We build things' }))
   })
 
+  it('reads the places as it opens, and waits for them before it can be filled', () => {
+    const { communities, setPlaces } = renderCreate(null)
+    expect(communities.loadPlaceOptions).toHaveBeenCalledWith(undefined)
+    expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument()
+    expect(screen.queryByLabelText(/community name/i)).toBeNull()
+    expect(screen.getByRole('button', { name: 'CREATE' })).toBeDisabled()
+    act(() => setPlaces(noPlaces({ owned: [land] })))
+    expect(screen.getByLabelText(/community name/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Add a place' })).toHaveTextContent('Select LAND or World')
+  })
+
+  it("shows unity-explorer's message for each places read that failed", async () => {
+    renderCreate(noPlaces({ errors: ['There was an error getting places. Please try again.'] }))
+    expect(await screen.findByText('There was an error getting places. Please try again.')).toBeInTheDocument()
+  })
+
+  it('links places from the picker, hides the ones linked, and sends lands before worlds', async () => {
+    const { communities } = renderCreate(noPlaces({ owned: [world, land] }))
+    await fill()
+    await userEvent.click(screen.getByRole('button', { name: 'Add a place' }))
+    await userEvent.click(screen.getByRole('option', { name: world.label }))
+    await userEvent.click(screen.getByRole('button', { name: 'Add a place' }))
+    expect(screen.queryByRole('option', { name: world.label })).toBeNull()
+    await userEvent.click(screen.getByRole('option', { name: land.label }))
+    const tags = screen.getByRole('list', { name: 'Linked places' })
+    expect(tags).toHaveTextContent(world.label)
+    expect(tags).toHaveTextContent('Me')
+
+    // removing one offers it again
+    await userEvent.click(screen.getByRole('button', { name: `Remove ${land.label}` }))
+    await userEvent.click(screen.getByRole('button', { name: 'Add a place' }))
+    await userEvent.click(screen.getByRole('option', { name: land.label }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'CREATE' }))
+    expect(communities.create).toHaveBeenCalledWith(expect.objectContaining({ placeIds: ['land-1', 'world-1'] }))
+  })
+
   it('closes untouched, with nothing to lose', () => {
     renderCreate()
     act(() => closeTopPopup())
@@ -272,10 +339,13 @@ describe('community create modal', () => {
 // community, only the owner changes name, membership and discoverability, and only changes are sent.
 describe('community edit', () => {
   const owned = community({ id: 'c9', name: 'Builders', description: 'We build', role: 'owner', privacy: 'private', visibility: 'unlisted', thumbnail: 'https://cdn/c9.png' })
-  function renderEdit(c: Community): { communities: CommunitiesState; setSave: (save: CommunitySave | null) => void } {
+  function renderEdit(
+    c: Community,
+    places: CommunityPlaceOptionsMessage | null = noPlaces({ communityId: c.id })
+  ): { communities: CommunitiesState; setSave: (save: CommunitySave | null) => void } {
     const session = fakeSession()
     const view = (save: CommunitySave | null): React.JSX.Element => {
-      session.communities = { ...session.communities, save }
+      session.communities = { ...session.communities, save, placeOptions: places }
       return (
         <SessionProvider value={{ ...session }}>
           <PopupHost />
@@ -333,6 +403,48 @@ describe('community edit', () => {
     expect(communities.update).not.toHaveBeenCalled()
     expect(screen.queryByRole('dialog', { name: 'Edit Community' })).toBeNull()
     expect(screen.queryByText('Discard your changes?')).toBeNull()
+  })
+
+  it('reads the community\'s places as it opens, and shows the linked ones', () => {
+    const { communities } = renderEdit(owned, noPlaces({ communityId: 'c9', owned: [land], linked: [othersLand] }))
+    expect(communities.loadPlaceOptions).toHaveBeenCalledWith('c9')
+    expect(screen.getByRole('list', { name: 'Linked places' })).toHaveTextContent(othersLand.label)
+  })
+
+  it('sends the whole new set of places when it changed, and leaves it out otherwise', async () => {
+    const { communities } = renderEdit(owned, noPlaces({ communityId: 'c9', owned: [land, world], linked: [world] }))
+    await userEvent.type(screen.getByLabelText(/description/i), '!')
+    await userEvent.click(screen.getByRole('button', { name: 'SAVE' }))
+    expect(communities.update).toHaveBeenLastCalledWith({ id: 'c9', description: 'We build!' })
+  })
+
+  it('unlinks a place and saves the rest', async () => {
+    const { communities } = renderEdit(owned, noPlaces({ communityId: 'c9', owned: [land, world], linked: [world, land] }))
+    await userEvent.click(screen.getByRole('button', { name: `Remove ${world.label}` }))
+    await userEvent.click(screen.getByRole('button', { name: 'SAVE' }))
+    expect(communities.update).toHaveBeenCalledWith({ id: 'c9', placeIds: ['land-1'] })
+  })
+
+  it('lets the owner unlink any place', () => {
+    renderEdit(owned, noPlaces({ communityId: 'c9', owned: [land], linked: [land, othersLand] }))
+    expect(screen.getByRole('button', { name: `Remove ${land.label}` })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: `Remove ${othersLand.label}` })).toBeInTheDocument()
+  })
+
+  it('lets a moderator unlink only the places they own', () => {
+    renderEdit({ ...owned, role: 'moderator' }, noPlaces({ communityId: 'c9', owned: [land], linked: [land, othersLand] }))
+    expect(screen.getByRole('button', { name: `Remove ${land.label}` })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: `Remove ${othersLand.label}` })).toBeNull()
+    expect(screen.getByRole('list', { name: 'Linked places' })).toHaveTextContent(othersLand.label)
+  })
+
+  it('cannot change the places when the linked ones could not be read', async () => {
+    const { communities } = renderEdit(owned, noPlaces({ communityId: 'c9', owned: [land], linkedFailed: true, errors: ['There was an error getting the community places. Please try again.'] }))
+    expect(await screen.findByText('There was an error getting the community places. Please try again.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Add a place' })).toBeDisabled()
+    await userEvent.type(screen.getByLabelText(/description/i), '!')
+    await userEvent.click(screen.getByRole('button', { name: 'SAVE' }))
+    expect(communities.update).toHaveBeenCalledWith({ id: 'c9', description: 'We build!' })
   })
 
   it('closes once saved, and keeps the form with a toast when the update fails', async () => {

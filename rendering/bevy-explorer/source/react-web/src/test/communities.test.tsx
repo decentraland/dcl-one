@@ -60,7 +60,7 @@ describe('communities domain', () => {
   it('drops a save answer that arrives after the form closed', async () => {
     const h = renderSession()
     await enterAsGuest(h)
-    act(() => h.session().communities.create({ name: 'B', description: 'd', privacy: 'public', discoverable: true }))
+    act(() => h.session().communities.create({ name: 'B', description: 'd', privacy: 'public', discoverable: true, placeIds: [] }))
     expect(h.session().communities.save).toEqual({ status: 'saving' })
     act(() => h.session().communities.clearSave())
     act(() => h.driver.emit({ kind: 'communitySaveResult', mode: 'create', id: 'late' }))
@@ -70,9 +70,25 @@ describe('communities domain', () => {
   it('keeps the answer to the save in flight', async () => {
     const h = renderSession()
     await enterAsGuest(h)
-    act(() => h.session().communities.create({ name: 'B', description: 'd', privacy: 'public', discoverable: true }))
+    act(() => h.session().communities.create({ name: 'B', description: 'd', privacy: 'public', discoverable: true, placeIds: [] }))
     act(() => h.driver.emit({ kind: 'communitySaveResult', mode: 'create', id: 'c-new' }))
     expect(h.session().communities.save).toEqual({ status: 'done', result: { kind: 'communitySaveResult', mode: 'create', id: 'c-new' } })
+  })
+
+  // The form's places are read as it opens; an answer for another form, or after it closed, is dropped.
+  it('keeps the place options the open form asked for and drops any other', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const place = { id: 'p1', isWorld: true, label: 'Mansion (me.dcl.eth)', ownerName: 'Me' }
+    act(() => h.session().communities.loadPlaceOptions('c1'))
+    expect(h.driver.sent).toContainEqual({ kind: 'getCommunityPlaceOptions', communityId: 'c1' })
+    act(() => h.driver.emit({ kind: 'communityPlaceOptions', owned: [place], linked: [], linkedFailed: false, errors: [] }))
+    expect(h.session().communities.placeOptions).toBeNull()
+    act(() => h.driver.emit({ kind: 'communityPlaceOptions', communityId: 'c1', owned: [place], linked: [place], linkedFailed: false, errors: [] }))
+    expect(h.session().communities.placeOptions?.linked).toEqual([place])
+    act(() => h.session().communities.clearPlaceOptions())
+    act(() => h.driver.emit({ kind: 'communityPlaceOptions', communityId: 'c1', owned: [], linked: [], linkedFailed: false, errors: [] }))
+    expect(h.session().communities.placeOptions).toBeNull()
   })
 
   // The picture's URL does not change on update, so the saved picture is shown from then on.
