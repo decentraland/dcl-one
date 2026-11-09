@@ -186,6 +186,19 @@ describe('when the lock pins every tracked figma file', () => {
     }
   )
 
+  it('should accept a deviation code declared as an own key linked to a changes[] entry', async () => {
+    await annotate((lock) => {
+      const source = lock.sources[0]!
+      source.changes!.push('This file is hardened here.')
+      source.deviationCodes!['hardened'] = 1
+      source.files['library/ui/figma/a.ts']!.deviation = 'hardened'
+    })
+
+    expect(pinnedFiles(await lock()).problems).toEqual([])
+    expect(run()).toBe(0)
+    expect(out).not.toContain('unknown deviation code')
+  })
+
   it('should require a short plain note for the note code', async () => {
     await annotate((value) => {
       value.sources[0].files['library/ui/figma/a.ts'].deviation = 'note'

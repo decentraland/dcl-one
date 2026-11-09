@@ -62,7 +62,8 @@
         "The gallery discloses what it does not provide: the catalog records, per component, how many image fills its generated stylesheet replaced with the neutral placeholder (counted from the generated CSS; a missing stylesheet fails the manifest), the component page states that those image fills are not provided and that the gallery makes no claim of visual parity, and the navigation says Figma image fills are not provided. review-notes.json, the per-component visual review statuses and findings the gallery displayed, is removed with the visual review it reported. Affected components: PlaceCard, SearchBar, NavBar, ProfilePic, NavNotificationsButton, NavProfileButton, NavNotificationItem, SearchResultItem, WebTheme, ShopModals, NavProfileMenu, WebThemeDarkMode, NavBarExplorer.",
         "Owner decision: stored captures leave this tree, live Figma read access stays for local inspection. Restored from before the removal: the Figma REST client and token provider, the REST source and its mappers (their two helpers, download and svgProblem, now live in sources/rest-assets.ts because the live pull and chunk ingest stay removed), probe, `--source rest` for diff and the MCP read tools, figma_screenshot (the PNG is returned to the caller in memory, never written), and the env-only file-key readers (readFileKey, requireFileKey, redactFileKey), with error text redacting the key again. Shipped output comes from the pinned capture only: sync refuses the live source, figma_export_icons refuses to write live icons to disk, and no CI job runs live code or sets FIGMA_TOKEN. pull-live and the chunk ingest stay removed: they write captures. The verified-cache boundary: createApp requires snapshotLock unless a test opts out explicitly, sync and retire verify the cache before reading anything derived from it, and an unreadable marker or capture is an FdsCacheError; test fixtures carry their own lock and marker.",
         "A capture marker that is not a JSON object is an FdsCacheError; the Figma token comes from the environment only, with no .env file; retire refuses a config whose snapshotDir is not the figma/figma-snapshot it reads; retirement writing stays (figma-design-system is retired after the POC) and runs only on a staged copy of a cache that runSync or retire verified first, proven by retirement-verified.test.ts.",
-        "Build verification observes browser network requests, including worker and frame targets, and rejects origin or prefix escapes and loading failures. Deviation codes must be own properties of the declared code table, so inherited Object prototype names cannot validate a port."
+        "Build verification observes browser network requests, including worker and frame targets, and rejects origin or prefix escapes and loading failures. Deviation codes must be own properties of the declared code table, so inherited Object prototype names cannot validate a port.",
+        "Build verification also checks the document the page ends on after each navigation, redirect or history change against the served origin and prefix, and Chromium error pages fail as failed requests; regression tests cover a redirect to a second origin that answers 200 and a history move outside the prefix. A deviation code declared as an own key of the code table validates. Build-check teardown attempts every step: a session that fails to close still releases the server, and the first error, from the check or else from teardown, is kept."
       ],
       "snapshot": {
         "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
@@ -725,7 +726,7 @@
           ]
         },
         "library/ui/figma/lock-digests.test.ts": {
-          "sha256": "4a3ec0fe28f552ef84cd25f048aa3a2d9314fc00a19545257c65226e8977cbd0",
+          "sha256": "908f4041e69945cf8ac2927515dcea69f15251ae1dff4be43dfffac0c9cd5d7f",
           "fds": null,
           "deviation": [
             "dcl-one-only",
@@ -786,7 +787,7 @@
           "deviation": "dcl-one-only"
         },
         "library/ui/figma/review/scripts/check-build.mjs": {
-          "sha256": "866fb48c060b3637579cd15245375a9bdea1d54938f36514af71fc451dc5a511",
+          "sha256": "16514438809c6a9fe600f202f3ab4ec943d453c294b8607ffcee3f601cd4bb8c",
           "fds": null,
           "deviation": [
             "dcl-one-only",

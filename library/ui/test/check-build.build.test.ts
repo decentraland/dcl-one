@@ -166,6 +166,102 @@ describe('when checking a built gallery', () => {
         expect(requests).toContain(`/${file}`)
       }, 120_000)
     })
+
+    it('should name the second origin when the entry redirects there and it responds with HTTP 200', async () => {
+      copy = await brokenCopy('redirect-external', async (target) => {
+        const entry = path.join(target, 'index.html')
+        const html = await readFile(entry, 'utf8')
+        await writeFile(
+          entry,
+          html.replace(
+            '<head>',
+            `<head><script>location.replace(${JSON.stringify(`${origin}/landed.html`)})</script>`
+          )
+        )
+      })
+
+      // The entry can finish loading before the redirect commits, so either the request or the final document names it.
+      const escaped = `${origin}/landed.html`.replaceAll('.', '\\.')
+      await expect(checkBuild({ dist: copy, prefix: '/nested/prefix/' })).rejects.toThrow(
+        new RegExp(`(request|document) left the expected origin or prefix: ${escaped}$`)
+      )
+      expect(requests).toContain('/landed.html')
+    }, 120_000)
+  })
+
+  it('should fail when the page moves its document outside the prefix without a request', async () => {
+    const copy = await brokenCopy('history-outside', async (target) => {
+      const entry = path.join(target, 'index.html')
+      const html = await readFile(entry, 'utf8')
+      await writeFile(
+        entry,
+        html.replace(
+          '<head>',
+          `<head><script>addEventListener('load', () => history.replaceState(null, '', '/outside/landed.html'))</script>`
+        )
+      )
+    })
+
+    await expect(checkBuild({ dist: copy, prefix: '/nested/prefix/' })).rejects.toThrow(
+      /the document left the expected origin or prefix: http:\/\/127\.0\.0\.1:\d+\/outside\/landed\.html/
+    )
+  }, 120_000)
+
+  describe('and the browser session fails to close', () => {
+    let origin: string
+    // A stand-in session that records the served origin and answers each check the way a working gallery does.
+    const session = (evaluate: (expression: string) => unknown) => async () => ({
+      requests: [],
+      requestFailures: [],
+      runtimeErrors: [],
+      consoleErrors: [],
+      send: async (method: string, params: { url?: string }) => {
+        if (method === 'Page.navigate') origin ||= new URL(params.url!).origin
+        return {}
+      },
+      evaluate: async (expression: string) => evaluate(expression),
+      close: async () => {
+        throw new Error('browser would not close')
+      }
+    })
+
+    beforeEach(() => {
+      origin = ''
+    })
+
+    it('should keep the check failure and still close the server', async () => {
+      const open = session(() => {
+        throw new Error('page unreachable')
+      })
+
+      await expect(checkBuild({ dist, browser: 'unused', open })).rejects.toThrow(
+        'page unreachable'
+      )
+      expect(origin).not.toBe('')
+      await expect(fetch(origin)).rejects.toThrow()
+    })
+
+    it('should report the close failure after a passing check and still close the server', async () => {
+      const open = session((expression) => {
+        const page = `${origin}/?component=Button`
+        if (
+          expression === 'location.href' ||
+          expression.includes("readyState === 'complete' && location.href")
+        )
+          return page
+        if (expression.includes('component=')) return [{ href: page, name: 'Button' }]
+        if (expression.includes('main h1')) return true
+        if (expression.includes('select.dispatchEvent')) return { property: 'size', value: 'large' }
+        if (expression.includes("searchParams.get('variant')")) return '1'
+        if (expression.includes('#audit-render')) return { width: 10, height: 10 }
+        throw new Error(`unexpected expression: ${expression}`)
+      })
+
+      await expect(checkBuild({ dist, browser: 'unused', open })).rejects.toThrow(
+        'browser would not close'
+      )
+      await expect(fetch(origin)).rejects.toThrow()
+    })
   })
 
   it('should reject a prefix that is not an absolute path', async () => {
