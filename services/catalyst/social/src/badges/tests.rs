@@ -1562,3 +1562,55 @@ async fn catalog_writes_cap_tiers_asset_files_and_body_size() {
     assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
     assert!(catalog_audit(&pool, &id).await.is_empty());
 }
+
+#[tokio::test]
+async fn unpublishing_is_refused_with_only_a_progress_row() {
+    let Some(state) = admin_state().await else {
+        return;
+    };
+    let pool = state.badges.pool().clone();
+    let id = own_badge(&pool, 3).await;
+    let addr = fresh_address();
+    let opts = ApplyOptions {
+        at: chrono::Utc::now().naive_utc(),
+        notify: None,
+        granted_by: None,
+    };
+    let mut conn = pool.acquire().await.unwrap();
+    apply_progress(&mut conn, &addr, &id, &opts, |p| p.steps = 1)
+        .await
+        .unwrap();
+    drop(conn);
+    let tier_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM social.user_achieved_tiers WHERE badge_id = $1")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        tier_rows, 0,
+        "below the target: a progress row, no tier row"
+    );
+    assert_eq!(progress(&pool, &addr, &id).await.unwrap().0, 1);
+    let (status, _, resp) = send(
+        app(state.clone()),
+        admin_request(
+            "PATCH",
+            &format!("/badges/badges/{id}"),
+            Some("s3cret"),
+            Some(json!({"published": false})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{resp}");
+    let published: bool = sqlx::query_scalar(
+        "SELECT published_at IS NOT NULL FROM social.badge_definitions WHERE id = $1",
+    )
+    .bind(&id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(published, "a refused unpublish changes nothing");
+    assert!(catalog_audit(&pool, &id).await.is_empty());
+    drop_badge(&pool, &id).await;
+}
