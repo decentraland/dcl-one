@@ -1,17 +1,17 @@
 {
   "schema": 1,
-  "lockHash": "53095d35041e69f33da3344e9dcaeaed9c9634cdf670120720a8a35bbe084fae",
+  "lockHash": "41473337ca453786522890803d1261ec94216f817d09ab89566977b5482c933b",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
-  "figmaTree": "716cf7696295216fc2d6e1c7d1644cbb071b1ad1",
+  "figmaTree": "6b17ee8e970b434bf6d43dc775ef42038b711ebb",
   "checks": {
     "fetch-source": {
       "result": "pass",
-      "detail": "run on this tree: exit 0, 544 capture files fetched and match the pinned digest table"
+      "detail": "verified existing pinned cache - 544 files match its revision and digest table"
     },
     "deviations": {
       "result": "pass",
-      "detail": "run on this tree: 436 files match the lock, every difference names a code"
+      "detail": "run on this tree: 437 files match the lock, every difference names a code"
     },
     "diff": {
       "result": "pass",
@@ -31,7 +31,7 @@
     },
     "install": {
       "result": "pass",
-      "detail": "clean verified-cache install reproduces all 39 tracked files including provenance, second install changes nothing"
+      "detail": "run on this tree: clean private-stage install matches all 39 tracked files, a second install changes nothing"
     }
   }
 }

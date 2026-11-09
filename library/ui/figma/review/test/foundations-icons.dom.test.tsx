@@ -8,8 +8,11 @@ afterEach(() => cleanup())
 
 // Each icon tile names one source variant, so it draws that variant's art: an active=true tile shows the active
 // state, and an icon without an active state is never handed the prop.
+// Each rendered icon scopes its svg ids with its own useId, so two renders of the same art compare equal only once
+// that per-instance segment is masked.
+const withoutInstanceIds = (html: string) => html.replace(/(NavbarWallet-)\w+-/g, '$1<instance>-')
 const tile = (container: HTMLElement, nodeId: string) =>
-  container.querySelector(`[title="Figma node ${nodeId}"] svg`)!.outerHTML
+  withoutInstanceIds(container.querySelector(`[title="Figma node ${nodeId}"] svg`)!.outerHTML)
 const sourceVariant = (name: string, variant: string) =>
   data.foundations.icons.find((icon) => icon.name === name && icon.variant === variant)!
 
@@ -20,8 +23,10 @@ describe('the Foundations icon tiles', () => {
     const off = sourceVariant('navbar/wallet', 'active=false')
     const size = Math.min(Math.max(on.width, on.height), 64)
     const expected = (active: boolean) =>
-      render(<generatedIcons.NavbarWallet size={size} active={active} aria-hidden />).container
-        .firstElementChild!.outerHTML
+      withoutInstanceIds(
+        render(<generatedIcons.NavbarWallet size={size} active={active} aria-hidden />).container
+          .firstElementChild!.outerHTML
+      )
 
     expect(tile(container, on.nodeId)).not.toBe(tile(container, off.nodeId))
     expect(tile(container, on.nodeId)).toBe(expected(true))
