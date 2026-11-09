@@ -1,21 +1,21 @@
 {
   "schema": 1,
-  "lockHash": "14ec147136700e15853f5fd16bda5997b3a52bd704d1eaaac67d637b5783696d",
+  "lockHash": "53095d35041e69f33da3344e9dcaeaed9c9634cdf670120720a8a35bbe084fae",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
-  "figmaTree": "95c2786f520c150f5801ad6440e88e66296f83ff",
+  "figmaTree": "716cf7696295216fc2d6e1c7d1644cbb071b1ad1",
   "checks": {
     "fetch-source": {
       "result": "pass",
-      "detail": "verified existing pinned cache - 544 files match its revision and digest table"
+      "detail": "run on this tree: exit 0, 544 capture files fetched and match the pinned digest table"
     },
     "deviations": {
       "result": "pass",
-      "detail": "436 ported files and 39 public foundation files match pinned bytes and origins"
+      "detail": "run on this tree: 436 files match the lock, every difference names a code"
     },
     "diff": {
       "result": "pass",
-      "detail": "0 added, 0 changed, 0 removed, no ledger issues"
+      "detail": "run on this tree: 0 added, 0 changed, 0 removed, no ledger issues"
     },
     "check-mappings": {
       "result": "pass",
