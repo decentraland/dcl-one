@@ -50,6 +50,8 @@ struct Upstream {
     /// While set, /about for this world cancels `hold_token` and then waits on `hold`.
     hold_world: Option<String>,
     hold_token: Option<CancellationToken>,
+    /// While set, `/scenes` answers this status instead of the listing.
+    scenes_status: Option<StatusCode>,
 }
 
 type Shared = Arc<Mutex<Upstream>>;
@@ -147,9 +149,11 @@ async fn fake_about(
             .get(&name)
             .cloned()
             .unwrap_or_else(|| format!("{base}/contents/"));
+        // The newest scene only, as upstream's /about answers.
         let urns: Vec<String> = scenes
-            .iter()
+            .last()
             .map(|sc| format!("urn:decentraland:entity:{}?=&baseUrl={content_base}", sc.id))
+            .into_iter()
             .collect();
         let held = st.hold_world.as_deref() == Some(name.as_str());
         if held && let Some(token) = st.hold_token.take() {
@@ -166,6 +170,35 @@ async fn fake_about(
         "comms": {"adapter": "fixed-adapter:signed-login:https://x/comms"}
     }))
     .into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct Page {
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+/// Every scene of the world, oldest first and paged, as upstream's `/scenes` answers.
+async fn fake_scenes(
+    State((s, _)): State<(Shared, String)>,
+    Path(name): Path<String>,
+    axum::extract::Query(page): axum::extract::Query<Page>,
+) -> axum::response::Response {
+    let st = s.lock();
+    if let Some(status) = st.scenes_status {
+        return status.into_response();
+    }
+    let all = st.worlds.get(&name).map(Vec::as_slice).unwrap_or(&[]);
+    let scenes: Vec<Value> = all
+        .iter()
+        .skip(page.offset.unwrap_or(0))
+        .take(page.limit.unwrap_or(100))
+        .map(|sc| {
+            json!({"worldName": name, "entityId": sc.id, "entity": sc.entity,
+                   "deploymentAuthChain": [], "size": "0", "status": "DEPLOYED"})
+        })
+        .collect();
+    Json(json!({"scenes": scenes, "total": all.len()})).into_response()
 }
 
 async fn fake_contents(
@@ -186,6 +219,7 @@ async fn start_fake() -> Fake {
     let app = Router::new()
         .route("/index", get(fake_index))
         .route("/world/{name}/about", get(fake_about))
+        .route("/world/{name}/scenes", get(fake_scenes))
         .route("/contents/{hash}", get(fake_contents))
         .layer(axum::Extension(hold.clone()))
         .with_state((state.clone(), base.clone()));
@@ -995,6 +1029,73 @@ async fn a_catalogue_that_would_unlist_most_of_the_mirror_is_refused() {
         (58, 2, true)
     );
     assert_eq!(summary.scenes.retired_scenes, 2);
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_world_of_many_scenes_is_mirrored_whole_from_the_paged_listing() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "paged").await;
+    let world = "many.dcl.eth";
+    // More scenes than one page of the listing, while /about names the newest only.
+    let specs: Vec<(String, String, Vec<u8>)> = (0..25)
+        .map(|i| {
+            (
+                format!("S{i}"),
+                format!("{i},0"),
+                format!("s{i}").into_bytes(),
+            )
+        })
+        .collect();
+    let add = |st: &mut Upstream, specs: &[(String, String, Vec<u8>)]| {
+        let files: Vec<[(&str, &[u8]); 1]> =
+            specs.iter().map(|s| [("s.txt", s.2.as_slice())]).collect();
+        let scenes: Vec<SceneSpec> = specs
+            .iter()
+            .zip(&files)
+            .map(|(s, f)| (s.0.as_str(), s.1.as_str(), f.as_slice()))
+            .collect();
+        set_scenes(st, world, &scenes)
+    };
+    let ids = add(&mut fake.state.lock(), &specs);
+
+    let ctx = node.ctx().await;
+    let summary = node.pass(&ctx).await;
+    assert_eq!((summary.scenes.synced, summary.scenes.scenes), (1, 25));
+    let mut held: Vec<String> = node
+        .scene_rows(world)
+        .await
+        .into_iter()
+        .map(|r| r.0)
+        .collect();
+    let mut expected = ids.clone();
+    held.sort();
+    expected.sort();
+    assert_eq!(held, expected, "every scene, not only the one /about names");
+
+    // A listing that fails retires nothing: the world waits for the next pass.
+    let mut more = specs.clone();
+    more.push(("S25".into(), "25,0".into(), b"s25".to_vec()));
+    {
+        let mut st = fake.state.lock();
+        add(&mut st, &more);
+        st.scenes_status = Some(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.synced, 0);
+    assert_eq!(node.scene_rows(world).await.len(), 25);
+
+    fake.state.lock().scenes_status = None;
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.synced, 1);
+    assert_eq!(node.scene_rows(world).await.len(), 26);
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);

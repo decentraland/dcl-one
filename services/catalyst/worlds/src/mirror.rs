@@ -1,7 +1,9 @@
 //! The worlds mirror: one pass is the catalogue (`GET {source}/index`, one
 //! document listing every world and its scene ids) written to
 //! `worlds.remote_worlds`, then the scenes/files walk over the catalogue in
-//! name order: `GET {source}/world/{name}/about` for each world whose
+//! name order: `GET {source}/world/{name}/about` (the world's configuration and content
+//! `baseUrl`) and its paged `GET {source}/world/{name}/scenes` (every deployed scene: `/about`
+//! lists only the newest) for each world whose
 //! advertised scene set differs from what is held, the scene entities and
 //! every file they reference into the ONE blob store (hash-verified, so a
 //! lying upstream cannot plant bytes under a CID), and the `worlds.worlds` +
@@ -65,6 +67,11 @@ const MAX_BLOB_BYTES: usize = 256 * 1024 * 1024;
 const MAX_SCENE_ROW_BYTES: usize = 4 * 1024 * 1024;
 /// A deployment auth chain as JSON; a real one is a few links of a few hundred bytes.
 const MAX_CHAIN_BYTES: usize = 16 * 1024;
+/// Scenes per page of a world's `/scenes` listing, and the cap of one page's body.
+const SCENES_PAGE: usize = 20;
+const MAX_SCENES_PAGE_BYTES: usize = 64 * 1024 * 1024;
+/// A world listing more scenes than this is refused.
+const MAX_LISTED_SCENES: usize = 2_000;
 /// One `/world/{name}/permissions` answer: the owner and a few allow-lists of addresses.
 const MAX_PERMISSIONS_BYTES: usize = 256 * 1024;
 const SWEEP_FUSE_MIN_CANDIDATES: i64 = 50;
@@ -117,7 +124,10 @@ impl MirrorSettings {
     /// the read-through alone when `READ_THROUGH_ENABLED` and a `WORLDS_CONTENT_MIRROR_SOURCE`
     /// are set (worlds are mirrored one at a time as they are read, none crawled); `None`
     /// otherwise.
-    pub fn from_config(config: &crate::config::Config, own_urls: &[String]) -> Result<Option<Self>> {
+    pub fn from_config(
+        config: &crate::config::Config,
+        own_urls: &[String],
+    ) -> Result<Option<Self>> {
         let worlds = &config.worlds_content;
         let scheduled = worlds.worlds_content_mirror_enabled;
         if !scheduled
@@ -1286,10 +1296,19 @@ async fn mirror_world(
     }
     let about: Value = serde_json::from_slice(&read_body_capped(resp, MAX_ABOUT_BYTES).await?)
         .with_context(|| format!("parsing {url}"))?;
-    let refs = scene_refs(&about);
-    if refs.is_empty() {
+    let about_refs = scene_refs(&about);
+    let Some((_, base)) = about_refs.first().cloned() else {
         return Ok(Outcome::NothingUpstream("upstream world has no scenes"));
-    }
+    };
+    // `/about` lists the newest scene only; `/scenes` lists them all, under the same `baseUrl`.
+    // A source without the listing keeps `/about`'s set.
+    let refs: Vec<(String, String)> = match listed_scene_ids(client, source, name).await? {
+        Some(ids) if ids.is_empty() => {
+            return Ok(Outcome::NothingUpstream("upstream world has no scenes"));
+        }
+        Some(ids) => ids.into_iter().map(|id| (id, base.clone())).collect(),
+        None => about_refs,
+    };
 
     let skybox_time = about["configurations"]["skybox"]["fixedHour"]
         .as_f64()
@@ -1507,7 +1526,7 @@ async fn mirror_world(
     .await
     .with_context(|| format!("retire the scenes {name} no longer lists upstream"))?;
     let world = name.to_lowercase();
-    // /about lists newest first. Apply the overlap rule in deployment order:
+    // The scenes come newest first. Apply the overlap rule in deployment order:
     // a replacement must inherit its predecessor before a later scene takes
     // a parcel that predecessor vacated. CID breaks timestamp ties stably.
     let mut chronological: Vec<_> = records.iter().collect();
@@ -1532,6 +1551,63 @@ async fn mirror_world(
         scenes: records.len(),
         new_blobs,
     })
+}
+
+/// Every scene id `{source}/world/{name}/scenes` lists, newest first (it pages oldest first),
+/// or `None` when the source has no such route (404 or 405 on the first page).
+async fn listed_scene_ids(
+    client: &crate::http::Outbound,
+    source: &str,
+    name: &str,
+) -> Result<Option<Vec<String>>> {
+    let listing = url::Url::parse(&world_url(source, name, "scenes")?)?;
+    let mut ids: Vec<String> = Vec::new();
+    let mut offset = 0usize;
+    loop {
+        let mut url = listing.clone();
+        url.query_pairs_mut()
+            .append_pair("limit", &SCENES_PAGE.to_string())
+            .append_pair("offset", &offset.to_string());
+        let resp = client
+            .get(url.as_str())
+            .send()
+            .await
+            .with_context(|| format!("GET {url}"))?;
+        let status = resp.status();
+        // A source without the route; any other refusal stops the world's sync, since a
+        // shorter set would retire the scenes it leaves out.
+        if offset == 0 && matches!(status.as_u16(), 404 | 405) {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            bail!("GET {url} answered {status}");
+        }
+        let page: Value =
+            serde_json::from_slice(&read_body_capped(resp, MAX_SCENES_PAGE_BYTES).await?)
+                .with_context(|| format!("parsing {url}"))?;
+        let total = page["total"]
+            .as_u64()
+            .with_context(|| format!("{url} answered no total"))? as usize;
+        if total > MAX_LISTED_SCENES {
+            bail!("{name} lists {total} scenes, over {MAX_LISTED_SCENES}");
+        }
+        let rows = page["scenes"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+        for row in rows {
+            let id = row["entityId"]
+                .as_str()
+                .filter(|id| is_canonical_cid(id))
+                .with_context(|| format!("{url} lists a scene without a canonical entityId"))?;
+            if !ids.iter().any(|held| held == id) {
+                ids.push(id.to_string());
+            }
+        }
+        offset += rows.len();
+        if rows.is_empty() || offset >= total {
+            break;
+        }
+    }
+    ids.reverse();
+    Ok(Some(ids))
 }
 
 /// `(entity id, baseUrl)` per `scenesUrn` entry:

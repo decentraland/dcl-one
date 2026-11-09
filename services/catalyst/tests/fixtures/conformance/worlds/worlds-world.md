@@ -701,19 +701,16 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
     - Upstream (http-commons 2.0.0) passes it to Postgres, which answers 500; dcl-one saturates and answers an empty page (`core/http.rs:49-60`).
     - Severity: none (closed).
 
-39. **WW-39 · mirror · a multi-scene world keeps only its newest scene.** Status: open.
-    - Upstream `/about` lists the newest scene only (WW-01), and so does this node's.
-    - dcl-one: the mirror builds a world's scene set from the source's `/about` `scenesUrn`
-      (`worlds/src/mirror.rs:1276-1291`, `scene_refs` `:1537`) and deletes the mirrored scenes it does not list
-      (`:1500-1508`). Mirroring a multi-scene world from either source keeps one scene, and the pass's
-      `holds_every_scene` check against the `/index` catalogue never holds, so the world is fetched on every pass.
-      The read-through fill (`mirror_one`) has the same scene set. `tests/worlds_mirror.rs`'s fake upstream serves
-      every URN in `/about`, which hides this.
-    - Proposed fix: read the scene set from `{source}/world/{name}/scenes` (paged, as the Bevy explorer's
-      `ipfs/src/lib.rs` `update_scene_urns` does), keep `/about` for the world configuration and the content
-      `baseUrl`, and make the fakes in `tests/worlds_mirror.rs` and `tests/worlds_read_through.rs` answer `/about`
-      with the newest URN only.
-    - Severity: P1 (a mirrored multi-scene world loses its other scenes).
+39. **WW-39 · mirror · a multi-scene world's scene set.** Status: MATCH, no work.
+    - Upstream `/about` lists the newest scene only (WW-01); `GET /world/:n/scenes` lists every deployed
+      scene, paged oldest first (`scenes-handler.ts` `getScenesHandler`, `worlds-manager.ts` `getWorldScenes`).
+    - dcl-one: the mirror reads a world's scene ids from the source's paged `/world/{name}/scenes`
+      (`listed_scene_ids`, `worlds/src/mirror.rs:1558`) and keeps `/about` for the world configuration and the
+      content `baseUrl`. A source without the route (404 or 405) keeps `/about`'s set; any other refusal stops
+      that world's sync, so nothing is retired. The read-through fill takes the same path. Pinned by
+      `tests/worlds_mirror.rs:1039` `a_world_of_many_scenes_is_mirrored_whole_from_the_paged_listing`; the fakes
+      in `tests/worlds_mirror.rs` and `tests/worlds_read_through.rs` answer `/about` with the newest URN only.
+    - Severity: none (closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not
 
