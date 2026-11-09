@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, act, fireEvent } from '@testing-library/react'
+import { render, screen, act, fireEvent, cleanup } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { CommunitiesPage } from '../features/communities/CommunitiesPage'
 import { CommunityModal, openCommunityModal } from '../features/communities/CommunityModal'
@@ -119,6 +119,83 @@ describe('community modal clicks', () => {
     const s = renderModal(community({}))
     await userEvent.click(screen.getByRole('button', { name: 'Close' }))
     expect(s.onClose).toHaveBeenCalledTimes(1)
+  })
+})
+
+// The card's Places tab, as unity-explorer's: owners and moderators get an ADD PLACE tile that opens
+// the Edit Community form, and can delete, after a confirmation, the linked places they own.
+describe('community card places', () => {
+  const mine = { id: 'pl-mine', title: 'My Plaza', positions: '1,2', isMine: true }
+  const theirs = { id: 'pl-theirs', title: 'Their Plaza', positions: '3,4', isMine: false }
+  const withPlaces = (places: CommunityDetailMessage['places']): CommunityDetailMessage => ({
+    kind: 'communityDetail',
+    id: 'c1',
+    members: [],
+    posts: [],
+    places,
+    events: [],
+    photos: []
+  })
+  function renderCard(role: string, places: CommunityDetailMessage['places']) {
+    const spies = { onJoin: vi.fn(), onRequestToJoin: vi.fn(), onCancelRequest: vi.fn(), onLeave: vi.fn(), onAddFriend: vi.fn(), onOpenChat: vi.fn(), onClose: vi.fn(), onEdit: vi.fn(), onRemovePlace: vi.fn() }
+    render(
+      <>
+        <PopupHost />
+        <CommunityModal community={community({ id: 'c1', name: 'Builders', role })} detail={withPlaces(places)} {...spies} />
+      </>
+    )
+    return spies
+  }
+  const openPlaces = async (): Promise<void> => userEvent.click(screen.getByRole('tab', { name: 'PLACES' }))
+
+  it('puts ADD PLACE first for owners and moderators, opening the Edit Community form', async () => {
+    for (const role of ['owner', 'moderator']) {
+      const s = renderCard(role, [theirs])
+      await openPlaces()
+      const tiles = screen.getAllByRole('button', { name: /ADD PLACE|Delete/ })
+      expect(tiles[0]).toHaveTextContent('ADD PLACE')
+      await userEvent.click(screen.getByRole('button', { name: /ADD PLACE/ }))
+      expect(s.onEdit).toHaveBeenCalledTimes(1)
+      cleanup()
+    }
+  })
+
+  it('shows members no ADD PLACE and no delete', async () => {
+    renderCard('member', [mine])
+    await openPlaces()
+    expect(screen.queryByRole('button', { name: /ADD PLACE/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Delete My Plaza' })).toBeNull()
+  })
+
+  it('shows an owner of a community without places only the ADD PLACE tile, and a member the empty text', async () => {
+    renderCard('owner', [])
+    await openPlaces()
+    expect(screen.getByRole('button', { name: /ADD PLACE/ })).toBeInTheDocument()
+    expect(screen.queryByText('No places shared yet.')).toBeNull()
+    cleanup()
+    renderCard('member', [])
+    await openPlaces()
+    expect(screen.getByText('No places shared yet.')).toBeInTheDocument()
+  })
+
+  it('offers delete only on the places the user owns', async () => {
+    renderCard('owner', [mine, theirs])
+    await openPlaces()
+    expect(screen.getByRole('button', { name: 'Delete My Plaza' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Delete Their Plaza' })).toBeNull()
+  })
+
+  it("asks with unity-explorer's texts, and deletes only on DELETE", async () => {
+    const s = renderCard('moderator', [mine])
+    await openPlaces()
+    await userEvent.click(screen.getByRole('button', { name: 'Delete My Plaza' }))
+    expect(screen.getByText("Are you sure you want to delete [My Plaza] from [Builders]'s Places?")).toBeInTheDocument()
+    expect(screen.getByText("Photos and events associated with this Place won't appear on the Community's profile anymore.")).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'CANCEL' }))
+    expect(s.onRemovePlace).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: 'Delete My Plaza' }))
+    await userEvent.click(screen.getByRole('button', { name: 'DELETE' }))
+    expect(s.onRemovePlace).toHaveBeenCalledWith('c1', 'pl-mine')
   })
 })
 

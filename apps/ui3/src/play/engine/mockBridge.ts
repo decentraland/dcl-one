@@ -125,6 +125,8 @@ const MOCK_OWNED_PLACES = [
   { id: 'place-world-1', isWorld: true, label: 'Mock Mansion (mock.dcl.eth)', ownerName: 'You' }
 ]
 const mockLinkedPlaces = new Map<string, string[]>()
+// The card places unlinked per community.
+const mockRemovedPlaces = new Map<string, Set<string>>()
 
 const mockCommunities: Community[] = [
   { id: 'c1', name: 'Decentraland Foundation', description: 'The official Decentraland Foundation community. Stay up to date with events, releases and everything happening across the metaverse.', thumbnail: 'https://picsum.photos/seed/dcl/540/360', membersCount: 1242, role: 'member', ownerName: 'DCLOfficial', privacy: 'public' },
@@ -951,6 +953,15 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       reply({ kind: 'communityOnlineMembers', id: msg.id, members: msg.id === 'c1' ? onlineMembers() : onlineMembers().slice(0, 3) })
       return
     }
+    if (msg.kind === 'removeCommunityPlace') {
+      // unlinked from this community; the card reads its places again
+      const removed = mockRemovedPlaces.get(msg.id) ?? new Set<string>()
+      removed.add(msg.placeId)
+      mockRemovedPlaces.set(msg.id, removed)
+      const reread: Envelope = { to: 'scene', msg: { kind: 'getCommunityDetail', id: msg.id } }
+      setTimeout(() => void ch.onmessage?.(new MessageEvent('message', { data: reread })), 300)
+      return
+    }
     if (msg.kind === 'getCommunityPlaceOptions') {
       // one LAND and one World the user owns, and what each community links
       const linked = msg.communityId != null ? (mockLinkedPlaces.get(msg.communityId) ?? []) : []
@@ -1071,9 +1082,10 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
           { id: 'p2', author: 'Kimbo', authorAddress: addr(7), authorPicture: 'https://i.pravatar.cc/80?u=Kimbo', text: 'EPIC Launch Party happening now in the theatre!', timestamp: Date.now() - 16 * day, likes: 4 },
           { id: 'p3', author: 'Kimbo', authorAddress: addr(7), authorPicture: 'https://i.pravatar.cc/80?u=Kimbo', text: 'Hey everyone! Happy Epic and Mobile Launch Day!!! Please help us spread the word and get ready to celebrate together on April 2nd! It will be EPIC.', timestamp: Date.now() - 18 * day, likes: 1 }
         ],
+        // the mock user owns this one, so an owner or moderator can delete it from the card
         places: [
-          { id: 'pl1', title: 'Music Festival Main Stage', thumbnail: 'https://picsum.photos/seed/mfest/420/260', positions: '-66,56', likeRate: 1 }
-        ],
+          { id: 'pl1', title: 'Music Festival Main Stage', thumbnail: 'https://picsum.photos/seed/mfest/420/260', positions: '-66,56', likeRate: 1, isMine: true }
+        ].filter((pl) => !(mockRemovedPlaces.get(msg.id)?.has(pl.id) ?? false)),
         photos: Array.from({ length: 9 }, (_, i) => ({
           id: `ph${i}`,
           url: `https://picsum.photos/seed/dclph${i}/600/600`,

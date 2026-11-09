@@ -210,6 +210,7 @@ export type PageToScene =
   | CreateCommunityRequest
   | UpdateCommunityRequest
   | GetCommunityPlaceOptionsRequest
+  | RemoveCommunityPlaceRequest
   | DeleteCommunityRequest
   | JoinCommunityRequest
   | LeaveCommunityRequest
@@ -1252,7 +1253,7 @@ export interface CancelJoinRequestRequest {
   requestId: string
 }
 
-export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch' | 'delete'
+export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch' | 'delete' | 'removePlace'
 
 /** A community write, or the read of one community, the social-api rejected (scene → page), so the UI can say so. */
 export interface CommunityActionFailedMessage {
@@ -1279,10 +1280,19 @@ export interface CommunityPlace {
   id: string
   title: string
   thumbnail?: string
-  /** e.g. "-66,56" */
+  /** e.g. "-66,56", or the world's name for a World */
   positions?: string
   /** 0..1 like rate. */
   likeRate?: number
+  /** The signed-in user owns the place: an owner or moderator may unlink it from the card. */
+  isMine?: boolean
+}
+
+/** Unlink a place from a community (page → scene → signed DELETE to the social-api). */
+export interface RemoveCommunityPlaceRequest {
+  kind: 'removeCommunityPlace'
+  id: string
+  placeId: string
 }
 
 /** An announcement post (Announcements tab). */

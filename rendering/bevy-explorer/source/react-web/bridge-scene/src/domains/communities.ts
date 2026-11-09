@@ -38,7 +38,18 @@ type CommunityRaw = {
 // The v2 rows are FLAT and address-only: no name, face, or claimed-name flag on any of them.
 type MemberRaw = { memberAddress?: string; role?: string; friendshipStatus?: number }
 type PostRaw = { id: string; authorAddress?: string; content?: string; createdAt?: string; likesCount?: number }
-type PlaceRaw = { id: string; title?: string; name?: string; image?: string; base_position?: string; positions?: string[]; like_rate?: number; likeRate?: number }
+type PlaceRaw = {
+  id: string
+  title?: string
+  name?: string
+  image?: string
+  base_position?: string
+  positions?: string[]
+  world_name?: string | null
+  like_rate?: number
+  likeRate?: number
+  owner?: string | null
+}
 type EventRaw = { id: string; name?: string; image?: string; next_start_at?: string; start_at?: string }
 type PhotoRaw = { id: string; url?: string; thumbnailUrl?: string }
 
@@ -195,13 +206,31 @@ async function detail(id: string): Promise<{ members: CommunityMember[]; posts: 
       likes: p.likesCount ?? 0
     }
   })
-  const places: CommunityPlace[] = (placesRes?.results ?? []).map((pl) => ({
-    id: pl.id,
-    title: pl.title ?? pl.name ?? '',
-    thumbnail: pl.image,
-    positions: pl.base_position ?? pl.positions?.[0],
-    likeRate: pl.like_rate ?? pl.likeRate
-  }))
+  // As unity-explorer's card: the community's place ids, then each place from the places service
+  // (title, picture, owner). The social service's own row is the fallback when that read fails.
+  const placeRows = placesRes?.results ?? []
+  const destinations =
+    placeRows.length > 0
+      ? await serviceBase('places')
+          .then((b) => signed<PlaceRaw[]>(`${b}/api/destinations`, 'POST', placeRows.map((pl) => pl.id)))
+          .catch((e: unknown) => {
+            console.error('[communities] places details failed', e)
+            return undefined
+          })
+      : undefined
+  const byId = new Map((destinations ?? []).map((d) => [d.id, d]))
+  const me = (getPlayer()?.userId ?? '').toLowerCase()
+  const places: CommunityPlace[] = placeRows.map((row) => {
+    const pl = byId.get(row.id) ?? row
+    return {
+      id: pl.id,
+      title: pl.title ?? pl.name ?? '',
+      thumbnail: pl.image,
+      positions: (pl.world_name ?? '') !== '' ? (pl.world_name ?? undefined) : (pl.base_position ?? pl.positions?.[0]),
+      likeRate: pl.like_rate ?? pl.likeRate,
+      isMine: me !== '' && (pl.owner ?? '').toLowerCase() === me
+    }
+  })
   const events: CommunityEvent[] = (eventsRes?.data?.events ?? []).map((e) => ({
     id: e.id,
     name: e.name ?? '',
@@ -521,6 +550,23 @@ export function registerCommunities(ctx: Ctx): void {
       if (me == null || me === '') throw new Error('Not signed in')
       return await signed(`${await base('v1')}/${encodeURIComponent(msg.id)}/members/${encodeURIComponent(me)}`, 'DELETE')
     })
+  })
+  // The card's delete, as unity-explorer's: DELETE /v1/communities/{id}/places/{placeId}; then the
+  // card's places are read again. A failure is shown on the card.
+  ctx.on('removeCommunityPlace', async (msg) => {
+    const removed = await base('v1')
+      .then((b) => signed(`${b}/${encodeURIComponent(msg.id)}/places/${encodeURIComponent(msg.placeId)}`, 'DELETE'))
+      .then(
+        () => true,
+        (e: unknown) => {
+          console.error('[communities] remove place failed', e)
+          ctx.send({ kind: 'communityActionFailed', id: msg.id, action: 'removePlace', message: e instanceof Error ? e.message : String(e) })
+          return false
+        }
+      )
+    if (!removed) return
+    const fresh = await detail(msg.id).catch(() => undefined)
+    if (fresh != null) ctx.send({ kind: 'communityDetail', id: msg.id, ...fresh })
   })
   ctx.on('getCommunityPlaceOptions', async (msg) => {
     const options = await placeOptionsFor(msg.communityId).catch((e: unknown): CommunityPlaceOptionsMessage => {

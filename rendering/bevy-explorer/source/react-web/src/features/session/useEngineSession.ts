@@ -109,6 +109,7 @@ const COMMUNITY_ERROR: Record<CommunityAction, string> = {
   cancelJoinRequest: 'There was an error cancelling join request. Please try again.',
   leave: 'There was an error leaving the community. Please try again.',
   delete: 'There was an error deleting the community. Please try again.',
+  removePlace: 'There was an error deleting the community place. Please try again.',
   fetch: 'There was an error loading the community. Please try again.'
 }
 
@@ -251,6 +252,8 @@ export interface CommunitiesState {
   loadPlaceOptions: (communityId?: string) => void
   /** Forget them (the form closed). */
   clearPlaceOptions: () => void
+  /** Unlink a place from a community (the card's delete). A failure arrives in `error`. */
+  removePlace: (id: string, placeId: string) => void
   join: (id: string) => void
   /** Ask to join a private community. */
   requestToJoin: (id: string) => void
@@ -3091,6 +3094,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setCommunityError(null)
     driverRef.current?.send({ kind: 'deleteCommunity', id })
   }, [])
+  const removeCommunityPlace = useCallback((id: string, placeId: string) => {
+    setCommunityError(null)
+    driverRef.current?.send({ kind: 'removeCommunityPlace', id, placeId })
+  }, [])
   const joinCommunity = useCallback((id: string) => {
     setCommunityError(null)
     driverRef.current?.send({ kind: 'joinCommunity', id })
@@ -4081,7 +4088,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       saveOutfit, deleteOutfit, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
-    communities: { list: communities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
+    communities: { list: communities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
     map: mapSlice,
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces },

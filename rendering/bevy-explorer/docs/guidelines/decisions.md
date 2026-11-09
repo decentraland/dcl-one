@@ -72,6 +72,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   field is absent; unity-explorer sends them on every save. When the community's linked places
   could not be read, the picker and its remove buttons are disabled, so a save cannot replace them
   with a partial list; unity-explorer leaves them editable.
+  On the card's Places tab, owners and moderators get unity-explorer's ADD PLACE tile (it opens the
+  edit form) and delete on the places they own, asked first. A failed delete shows its message on
+  the card, like the card's other actions, instead of as a toast. unity-explorer's variant of the
+  PLACES tab button for owners and moderators is not ported.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.

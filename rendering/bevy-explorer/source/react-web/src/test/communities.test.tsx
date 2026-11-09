@@ -75,6 +75,16 @@ describe('communities domain', () => {
     expect(h.session().communities.save).toEqual({ status: 'done', result: { kind: 'communitySaveResult', mode: 'create', id: 'c-new' } })
   })
 
+  // The card's place delete: sent as asked, and a refusal is said on the card in unity-explorer's words.
+  it('unlinks a place, and says so on the card when it fails', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    act(() => h.session().communities.removePlace('c1', 'pl1'))
+    expect(h.driver.sent).toContainEqual({ kind: 'removeCommunityPlace', id: 'c1', placeId: 'pl1' })
+    act(() => h.driver.emit({ kind: 'communityActionFailed', id: 'c1', action: 'removePlace', message: 'HTTP 403' }))
+    expect(h.session().communities.error).toEqual({ id: 'c1', message: 'There was an error deleting the community place. Please try again.' })
+  })
+
   // The form's places are read as it opens; an answer for another form, or after it closed, is dropped.
   it('keeps the place options the open form asked for and drops any other', async () => {
     const h = renderSession()

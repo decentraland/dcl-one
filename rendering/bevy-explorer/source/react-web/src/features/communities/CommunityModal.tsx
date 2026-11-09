@@ -4,7 +4,7 @@
 // (members/posts/places/events) arrives via the bridge `communityDetail` relay.
 
 import { useEffect, useState } from 'react'
-import { Avatar, Button, Pencil, Tabs, openPopup, showConfirm, type TabItem } from '../../design'
+import { Avatar, Button, Pencil, Plus, Tabs, Trash, openPopup, showConfirm, type TabItem } from '../../design'
 import { nameColor } from '../../lib/identity'
 import { knownUserColor } from '../session/profileStore'
 import { isMemberRole, roleLabel } from './roles'
@@ -142,11 +142,16 @@ function MemberRow({ member, requested, onAdd }: { member: CommunityMember; requ
   )
 }
 
-function PlaceCard({ place }: { place: CommunityPlace }): React.JSX.Element {
+function PlaceCard({ place, onDelete }: { place: CommunityPlace; onDelete?: () => void }): React.JSX.Element {
   return (
     <div className={styles.place}>
       <div className={styles.placeCover} style={{ background: place.thumbnail ? undefined : nameColor(place.id) }}>
         {place.thumbnail && <img src={place.thumbnail} alt="" />}
+        {onDelete != null && (
+          <button type="button" className={styles.placeDelete} aria-label={`Delete ${place.title}`} onClick={onDelete}>
+            <Trash size={14} />
+          </button>
+        )}
       </div>
       <span className={styles.placeName} title={place.title}>{place.title}</span>
       <div className={styles.placeMeta}>
@@ -154,6 +159,17 @@ function PlaceCard({ place }: { place: CommunityPlace }): React.JSX.Element {
         {place.positions && <span className={styles.placePos}><PinIcon /> {place.positions}</span>}
       </div>
     </div>
+  )
+}
+
+/** unity-explorer's first tile in the card's Places grid for owners and moderators: opens the
+ *  Edit Community form, where places are linked. */
+function AddPlaceTile({ onClick }: { onClick: () => void }): React.JSX.Element {
+  return (
+    <button type="button" className={styles.addPlace} onClick={onClick}>
+      <Plus size={22} />
+      <span>ADD PLACE</span>
+    </button>
   )
 }
 
@@ -191,6 +207,7 @@ export function CommunityModal({
   onOpenChat,
   onEdit,
   onDelete,
+  onRemovePlace,
   onClose
 }: {
   community: Community
@@ -207,6 +224,8 @@ export function CommunityModal({
   onEdit?: () => void
   /** Delete the community (owner only; asked first). */
   onDelete?: (id: string) => void
+  /** Unlink a place the user owns (owners and moderators; asked first). */
+  onRemovePlace?: (id: string, placeId: string) => void
   onClose: () => void
 }): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('announcements')
@@ -232,6 +251,18 @@ export function CommunityModal({
       cancelLabel: 'CANCEL'
     }).then((yes) => {
       if (yes) onDelete?.(community.id)
+    })
+  }
+  // as unity-explorer: owners and moderators get the ADD PLACE tile, and delete on the places they own
+  const canModify = community.role === 'owner' || community.role === 'moderator'
+  const confirmRemovePlace = (place: CommunityPlace): void => {
+    void showConfirm({
+      title: `Are you sure you want to delete [${place.title}] from [${community.name}]'s Places?`,
+      body: "Photos and events associated with this Place won't appear on the Community's profile anymore.",
+      confirmLabel: 'DELETE',
+      cancelLabel: 'CANCEL'
+    }).then((yes) => {
+      if (yes) onRemovePlace?.(community.id, place.id)
     })
   }
   const copyLink = (): void => {
@@ -314,8 +345,17 @@ export function CommunityModal({
               <div className={styles.memberGrid}>{detail.members.map((m) => <MemberRow key={m.address} member={m} requested={requested.has(m.address)} onAdd={() => addFriend(m.address)} />)}</div>
             ) : <div className={styles.empty}>No members to show.</div>
           ) : tab === 'places' ? (
-            detail.places.length > 0 ? (
-              <div className={styles.placeGrid}>{detail.places.map((p) => <PlaceCard key={p.id} place={p} />)}</div>
+            detail.places.length > 0 || (canModify && onEdit != null) ? (
+              <div className={styles.placeGrid}>
+                {canModify && onEdit != null && <AddPlaceTile onClick={onEdit} />}
+                {detail.places.map((p) => (
+                  <PlaceCard
+                    key={p.id}
+                    place={p}
+                    onDelete={canModify && p.isMine === true && onRemovePlace != null ? () => confirmRemovePlace(p) : undefined}
+                  />
+                ))}
+              </div>
             ) : <div className={styles.empty}>No places shared yet.</div>
           ) : detail.photos.length > 0 ? (
             <div className={styles.photoGrid}>{detail.photos.map((ph) => <PhotoTile key={ph.id} photo={ph} />)}</div>
@@ -397,6 +437,7 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
       onAddFriend={(address) => friends.act('request', address)}
       onEdit={() => openCommunityEditModal(community)}
       onDelete={communities.remove}
+      onRemovePlace={communities.removePlace}
       onOpenChat={() => {
         onClose()
         chat.openCommunity({ id: community.id, name: community.name, thumbnail: community.thumbnail ?? '', role: community.role })
