@@ -35,6 +35,8 @@ import {
   runCommand
 } from './helpers'
 import { buildProtobuf, compileEcsComponents } from './protocol-buffer-generation'
+import { PROTO_COMPILER_PATH, TS_PROTO_PLUGIN_PATH } from './protocol-buffer-generation/protoConst'
+import { FileDescriptorStandardOption, runCommand as runProtoc } from './utils/shellCommand'
 import { compileProtoApi } from './rpc-api-generation'
 import { getSnippetsfile } from './utils/getFilePathsSync'
 
@@ -115,6 +117,31 @@ flow('build-all', () => {
   flow('@dcl/sdk-commands build', () => {
     itDeletesFolder('dist', SDK_COMMANDS_PATH)
     itExecutes(`npm i --silent`, SDK_COMMANDS_PATH)
+
+    // the protocol messages the CLI uses at runtime, generated as @dcl/protocol's out-ts is, so the
+    // package ships them instead of depending on a published protocol
+    it('generates the protocol modules', async () => {
+      const generatedPath = path.resolve(SDK_COMMANDS_PATH, 'src/generated')
+      removeSync(generatedPath)
+      mkdirSync(generatedPath, { recursive: true })
+      await runProtoc({
+        command: PROTO_COMPILER_PATH,
+        workingDir: process.cwd(),
+        args: [
+          `--plugin=${TS_PROTO_PLUGIN_PATH}`,
+          '--dcl_ts_proto_opt=esModuleInterop=true,returnObservable=false,outputServices=generic-definitions,fileSuffix=.gen,oneof=unions',
+          `--dcl_ts_proto_out=${generatedPath}`,
+          `--proto_path=${path.resolve('node_modules/@dcl/protocol/proto')}`,
+          'decentraland/sdk/development/local_development.proto',
+          'decentraland/realm/about.proto',
+          'decentraland/common/border_rect.proto',
+          'decentraland/common/vectors.proto'
+        ],
+        fdStandards: FileDescriptorStandardOption.ONLY_IF_THROW
+      })
+      ensureFileExists('src/generated/decentraland/sdk/development/local_development.gen.ts', SDK_COMMANDS_PATH)
+      ensureFileExists('src/generated/decentraland/realm/about.gen.ts', SDK_COMMANDS_PATH)
+    })
 
     // install required dependencies
     itExecutes('npm run build --silent', SDK_COMMANDS_PATH)

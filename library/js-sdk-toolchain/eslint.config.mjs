@@ -49,6 +49,7 @@ export default [
       '**/*.js',
       'packages/@dcl/ecs/dist/**',
       'packages/@dcl/ecs/src/components/generated',
+      'packages/@dcl/sdk-commands/src/generated',
       'packages/@dcl/js-runtime',
       'packages/@dcl/playground-assets/dist',
       'packages/@dcl/sdk/dist/**',
