@@ -1,3 +1,4 @@
+import { expectConsoleOutput } from './console'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { LaunchHostOptions } from '../engine/engineRpc'
@@ -146,6 +147,7 @@ describe('welcome page', () => {
 
   // A failed guest sign-in must not hand its name to the account signed in next on the page.
   it('shows the page to an account signed in after a failed guest sign-in', async () => {
+    expectConsoleOutput('error', [['[login] post-launch login failed:', new Error('guest wallet unavailable')]])
     class FailingGuestNative extends FakeDriver {
       async loginGuest(): Promise<void> {
         throw new Error('guest wallet unavailable')
