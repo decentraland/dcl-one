@@ -1264,6 +1264,11 @@ the TS database import. Every read route reads the published rows in
 `created_at, id` order per request, as upstream does: one statement of about
 0.3 ms and 30 KB, so an import or a catalog edit shows at once
 (`social/src/badges/store.rs`). Per
+seeded by the bootstrap, a few dozen rows that change through the admin catalog
+routes (below) or the TS database import. Every read route shares one 300 s
+snapshot of the published rows in `created_at, id` order
+(`social/src/badges/store.rs`); a catalog write drops the snapshot of the
+replica that served it, and other replicas pick it up within 300 s. Per
 wallet, `user_badge_progress` holds one row per badge touched (its
 `steps_done` plus upstream's `progress` document verbatim: the evaluators'
 dedup and resume state, a few KB at most) and `user_achieved_tiers` one row per
@@ -1446,3 +1451,44 @@ for that badge; overlapping connections count once; a stay completes at the
 instant the union reaches `required_seconds`. The sweeper reads this
 process's LiveKit occupancy observation (`comms::presence`) and only closes
 visits; no observation, or an empty one, changes nothing.
+### Adding a badge
+
+A running node takes a new badge through the bearer-gated catalog routes
+(`social/src/badges/catalog.rs`, bearer `CATALYRST_BADGES_ADMIN_TOKEN`, writes
+refused while `SOCIAL_WRITES_ENABLED` is off). A schema step cannot insert
+catalog rows, and the bootstrap seed reaches only new databases.
+
+1. `PUT /badges/badges/{id}` with the definition in the shape `GET
+   /badges/{id}` reads: `name`, `description`, `category` (upstream's enum),
+   and either `criteria: {steps}` (a single badge) or `tiers: [{tierId,
+   tierName, description, criteria: {steps}}]` in tier order (a tiered one,
+   steps strictly increasing). `assets` (`{"2d": {...}, "3d": {...}}`, paths
+   relative to `BADGES_PUBLIC_ASSET_BASE_URL`) defaults to upstream's CDN
+   layout: `<id>/{2d,3d}/...` for a single badge, `<id>/<slot>/{2d,3d}/...`
+   for a tier whose id is `<id with _ as ->-<slot>`; any other tier id names
+   its assets. Every problem is one 400. A new badge is created unpublished
+   and invisible (201); a repeated `PUT` replaces the content in place (200),
+   keeping publication, archive and `created_at`. A `PUT` that would remove a
+   tier a wallet holds, or switch a badge with player rows between single and
+   tiered, is a 409 and changes nothing; a removed tier nobody holds is
+   deleted from `badge_tiers`. Player rows are never written: a lowered
+   target awards on the wallet's next progress write, not retroactively, and
+   a tier added above a completed badge leaves it complete until that write.
+   A badge takes at most 32 tiers, each `2d` or `3d` at most 8 files, and
+   the badges routes refuse bodies over 1 MiB (413).
+2. Make the art reachable: upload it to the CDN that
+   `BADGES_PUBLIC_ASSET_BASE_URL` names (upstream's by default), or mirror it
+   into `BADGES_ASSETS_DIR` under the same relative paths when the base is
+   `<node>/badges/assets`.
+3. `PATCH /badges/badges/{id}` `{"published": true}`. The badge is listed and
+   awardable.
+4. Grant it per wallet with the console grant (`POST
+   /badges/users/{address}/badges/{id}`), the one caller of `apply_progress`.
+
+Retire a badge with `PATCH {"archived": true}`: it stays listed and kept by
+its earners, and `apply_progress` answers `NotAwardable`. `{"archived":
+false}` reopens it. `{"published": false}` hides a badge and is a 409 once
+any wallet has a row of it. Each upsert (with the definition it wrote) and
+each publication or archive transition appends a row to
+`social.badge_catalog_audit`; `badge_admin_audit` keeps per-wallet grants and
+revokes, whose `address` a catalog write does not have.

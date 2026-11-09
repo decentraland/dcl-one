@@ -931,6 +931,19 @@ CREATE TABLE social.badge_cursor_gaps (
     CONSTRAINT badge_cursor_gaps_range_check CHECK (lo <= hi),
     CONSTRAINT badge_cursor_gaps_source_fkey FOREIGN KEY (source)
         REFERENCES social.badge_cursors (source) ON DELETE CASCADE
+-- Append-only; one row per catalog write of the admin routes
+-- (badges::catalog): an upsert with the definition it wrote, or one
+-- publication or archive transition. No foreign key: it outlives the row.
+CREATE TABLE social.badge_catalog_audit (
+    id bigint GENERATED ALWAYS AS IDENTITY,
+    action text NOT NULL,
+    badge_id text NOT NULL,
+    definition jsonb,
+    actor text NOT NULL,
+    acted_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT badge_catalog_audit_pkey PRIMARY KEY (id),
+    CONSTRAINT badge_catalog_audit_action_check
+        CHECK (action IN ('upsert', 'publish', 'unpublish', 'archive', 'unarchive'))
 );
 
 -- Presence badges (upstream presence_badges, same columns): where a catalog

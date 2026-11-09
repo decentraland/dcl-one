@@ -18,6 +18,14 @@
 //! [`progress::apply_progress`]: the console grant and the presence flow
 //! ([`presence`], with its runtime tables `presence_events`, `presence_visits`
 //! and the applied, pending-leave and absence facts).
+//! admin read, grant and revoke (the last two with an audit row), the
+//! bearer-gated catalog writes ([`catalog`]: `PUT` and `PATCH
+//! /badges/{id}`), and badge art mirrored into `BADGES_ASSETS_DIR` at
+//! `/assets/{path}`. Tables: `social.badge_definitions`, `badge_tiers`
+//! (upstream's catalog, seeded by the schema), `user_badge_progress`,
+//! `user_achieved_tiers`, `badge_admin_audit`, `badge_catalog_audit`,
+//! `presence_badges`. Every progress write goes through
+//! [`progress::apply_progress`]; the console grant is its only caller here.
 //!
 //! Mounted by `serve` as `.nest("/badges", router(state))` (the old gateway
 //! stripped that prefix), so `<node>/badges` is the base URL of upstream's
@@ -29,6 +37,7 @@
 pub mod assets;
 pub mod backfill;
 pub mod evaluators;
+pub mod catalog;
 pub mod handlers;
 pub mod jobs;
 pub mod presence;
@@ -41,12 +50,17 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::routing::{get, post};
+use axum::extract::DefaultBodyLimit;
+use axum::routing::get;
 use sqlx::PgPool;
 
 use crate::notifications::admin::AdminSecretSource;
 
 pub use progress::{Applied, ApplyOptions, Progress, ProgressChange, apply_progress};
 pub use store::{BadgesStore, DEFAULT_ASSET_BASE_URL};
+
+/// Request bodies of every route; the catalog's are far below it.
+pub const MAX_BODY_BYTES: usize = 1024 * 1024;
 
 pub const ADMIN_TOKEN_ENV: &str = "CATALYRST_BADGES_ADMIN_TOKEN";
 
@@ -112,7 +126,12 @@ impl AdminSecretSource for SharedState {
 pub fn router(state: SharedState) -> Router {
     Router::new()
         .route("/badges", get(handlers::get_badges))
-        .route("/badges/{badge_id}", get(handlers::get_badge))
+        .route(
+            "/badges/{badge_id}",
+            get(handlers::get_badge)
+                .put(handlers::put_badge)
+                .patch(handlers::patch_badge),
+        )
         .route("/badges/{badge_id}/tiers", get(handlers::get_badge_tiers))
         .route(
             "/badges/{badge_id}/backfill",
@@ -129,6 +148,7 @@ pub fn router(state: SharedState) -> Router {
                 .delete(handlers::revoke_user_badge),
         )
         .route("/assets/{*path}", get(handlers::get_asset))
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(tower_http::cors::CorsLayer::permissive())
         .layer(axum::middleware::map_response(preflight_no_content))
         .with_state(state)
