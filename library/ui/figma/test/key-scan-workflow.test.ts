@@ -163,12 +163,14 @@ describe('when a trusted scan cannot run', () => {
     expect(status, stderr).toBe(0)
   })
   it('should reject a page whose only artifacts fail the filter', async () => {
-    const { status, ids } = await selectArtifacts([
+    const { status, stderr, ids } = await selectArtifacts([
       artifact(8, { expired: true }),
       artifact(10, { name: 'ui-review-other' })
     ])
     expect(ids).toEqual([])
     expect(status).not.toBe(0)
+    // The count check is the only failure: a missing jq, a filter error or a failed gh would print more.
+    expect(stderr.trim()).toBe('The run must provide exactly one Review artifact for its head')
   })
 })
 describe('when selecting the LFS inputs of the scan', () => {

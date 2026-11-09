@@ -106,7 +106,7 @@ const triggers = (workflow: Workflow) =>
       : Object.keys(workflow.on)
 const SECRET = 'secrets.FIGMA_FILE_KEY'
 // Context names ignore case, so every spelling of the secret counts.
-const KEY_REFERENCE = /\bsecrets\.figma_file_key\b/i
+const KEY_REFERENCE = /\bsecrets\s*\.\s*figma_file_key\b/i
 // The whole secrets context (toJSON(secrets), secrets['…'], secrets[…]) reaches the key without naming it.
 const expressions = (value: unknown) =>
   [...JSON.stringify(value ?? null).matchAll(/\$\{\{([\s\S]*?)\}\}/g)].map((match) => match[1]!)
@@ -165,6 +165,32 @@ const TRUSTED_REFS = ['${{ github.event.repository.default_branch }}', '${{ gith
 // Actions a key-holding job may use, each pinned by a full commit sha.
 const TRUSTED_ACTIONS =
   /^(actions\/checkout|actions\/setup-node|actions\/download-artifact|decentraland\/oddish-action)@[0-9a-f]{40}$/
+// The inputs each action may take in a key-holding job; anything else could change where code comes from.
+// oddish-action publishes the package and runs after the scan, so its inputs are not constrained here.
+const ACTION_INPUTS: Record<string, string[] | undefined> = {
+  'actions/checkout': [
+    'ref',
+    'repository',
+    'path',
+    'fetch-depth',
+    'lfs',
+    'persist-credentials',
+    'set-safe-directory',
+    'sparse-checkout',
+    'sparse-checkout-cone-mode'
+  ],
+  'actions/setup-node': ['node-version'],
+  'actions/download-artifact': ['name', 'path', 'run-id', 'github-token', 'repository'],
+  'decentraland/oddish-action': undefined
+}
+const THIS_REPOSITORY = '${{ github.repository }}'
+// A downloaded artifact lands under the runner's temporary directory, or in a workspace dot directory that
+// holds no code: never over a checkout, .github or .git.
+const DATA_PATH = /^(?:\$\{\{ runner\.temp \}\}\/|\.(?!git(?:hub)?(?:\/|$))[\w-]+(?:\/|$))/
+const PARENT_SEGMENT = /(?:^|[\s/"'=])\.\.(?:[/\s"']|$)/
+// Git commands that rewrite a working tree or the ref it is on, whatever ref they name.
+const REWRITES_CHECKOUT =
+  /\bgit\b[^\n;|&]*\s(?:checkout|switch|reset|restore|worktree|read-tree|checkout-index|update-index|pull|merge|rebase|cherry-pick|am|apply|stash|clean)\b|--update-head-ok/
 // Variables that make the shell or node load code a step did not name.
 const LOADER_VARIABLES =
   /^(NODE_OPTIONS|NODE_PATH|LD_PRELOAD|LD_LIBRARY_PATH|BASH_ENV|ENV|PATH|SHELLOPTS)$/i
@@ -189,6 +215,9 @@ function keyStepViolations(run: string): string[] {
   const problems: string[] = []
   if (/\$\(|`|<\(|>\(|&(?!&)|\/proc\b|environ/.test(run.replace(/&&/g, '')))
     problems.push('substitutes, backgrounds or reads the environment')
+  // An expression is expanded into the script before the shell parses it, so a branch name could inject code.
+  if (run.includes('${{')) problems.push('interpolates an expression')
+  if (PARENT_SEGMENT.test(run)) problems.push('uses a parent path')
   const commands = run
     .replace(/\\\n/g, ' ')
     .split(/\n|&&|\|\||[;|]/)
@@ -201,6 +230,8 @@ function keyStepViolations(run: string): string[] {
     .filter(Boolean)
   for (const command of commands) {
     let rest = command
+    const assigned = /^([A-Za-z_]\w*)=/.exec(rest)?.[1]
+    if (assigned && LOADER_VARIABLES.test(assigned)) problems.push(`sets ${assigned}`)
     for (const [redirect, target] of command.matchAll(
       /\d?>>?\s*("[^"]*"|\S+)|<\s*("[^"]*"|\S+)/g
     )) {
@@ -245,12 +276,27 @@ function keyReaderViolations(workflow: Workflow): string[] {
         if (LOADER_VARIABLES.test(name)) problems.push(`${id}: sets ${name}`)
       if (step.uses !== undefined) {
         if (!TRUSTED_ACTIONS.test(step.uses)) problems.push(`${id}: uses ${step.uses}`)
-        if (step.uses.startsWith('actions/checkout@')) {
+        if (referencesKey(env)) problems.push(`${id}: key in an action step`)
+        const action = step.uses.split('@')[0]!
+        const inputs = ACTION_INPUTS[action]
+        for (const input of Object.keys(step.with ?? {}))
+          if (inputs && !inputs.includes(input)) problems.push(`${id}: ${action} sets ${input}`)
+        const repository = step.with?.repository
+        if (repository !== undefined && repository !== THIS_REPOSITORY)
+          problems.push(`${id}: ${action} from ${String(repository)}`)
+        if (action === 'actions/checkout') {
           const ref = String(step.with?.ref ?? '')
           if (!TRUSTED_REFS.includes(ref))
             problems.push(`${id}: checkout of ${ref || 'the event ref'}`)
           if (step.with?.['persist-credentials'] !== false)
             problems.push(`${id}: checkout persists credentials`)
+          if (PARENT_SEGMENT.test(String(step.with?.path ?? '')))
+            problems.push(`${id}: checkout into a parent path`)
+        }
+        if (action === 'actions/download-artifact') {
+          const target = String(step.with?.path ?? '')
+          if (!DATA_PATH.test(target) || PARENT_SEGMENT.test(target))
+            problems.push(`${id}: downloads an artifact into ${target || 'the workspace'}`)
         }
       }
       const run = step.run ?? ''
@@ -278,8 +324,10 @@ function keyReaderViolations(workflow: Workflow): string[] {
         /\b(node|python[\d.]*)\s+(?:-\S+\s+)*["']?(\$\{?RUNNER_TEMP|(\.\/)?\.preview\b)/.test(run)
       )
         problems.push(`${id}: runs a downloaded file`)
-      if (/\bgit\b[^\n;|&]*\b(checkout|switch|worktree)\b[^\n;|&]*refs\/key-scan/.test(run))
-        problems.push(`${id}: checks out the scanned commits`)
+      if (REWRITES_CHECKOUT.test(run)) problems.push(`${id}: rewrites a checkout with git`)
+      // GITHUB_ENV and GITHUB_PATH reach every later step, around the loader variable rule.
+      if (/\bGITHUB_(?:ENV|PATH)\b/.test(run))
+        problems.push(`${id}: writes GITHUB_ENV or GITHUB_PATH`)
       if (
         /\$\{?!?FIGMA_FILE_KEY\b|\$\{!|\bprintenv\b|set -x|set -o xtrace/i.test(run) ||
         new RegExp(`${START}env\\s*(?:$|[;&|>])`, 'm').test(run)
@@ -439,6 +487,13 @@ jobs:
     [
       'the whole secrets context',
       { on: 'workflow_run', jobs: { a: { steps: [{ env: { ALL: '${{ toJSON(secrets) }}' } }] } } }
+    ],
+    [
+      'a spaced secret name',
+      {
+        on: 'workflow_run',
+        jobs: { a: { steps: [{ env: { K: '${{ secrets . FIGMA_FILE_KEY }}' } }] } }
+      }
     ],
     [
       'an indexed secret',
@@ -678,23 +733,168 @@ jobs:
     [
       'a checkout of the scanned head',
       otherStep('git -C trusted checkout refs/key-scan/head'),
-      'scan: checks out the scanned commits'
+      'scan: rewrites a checkout with git'
     ],
     [
       'a switch to the scanned head',
       otherStep('git -C trusted switch --detach refs/key-scan/head'),
-      'scan: checks out the scanned commits'
+      'scan: rewrites a checkout with git'
     ],
     [
       'a worktree of the scanned head',
       otherStep('git -C trusted worktree add ../x refs/key-scan/head'),
-      'scan: checks out the scanned commits'
+      'scan: rewrites a checkout with git'
     ],
     ['printenv', otherStep('printenv'), 'scan: prints the key'],
     ['a bare env', otherStep('env | sort'), 'scan: prints the key'],
     ['indirect expansion', otherStep('v=FIGMA_FILE_KEY; echo "${!v}"'), 'scan: prints the key'],
     ['xtrace', otherStep('set -o xtrace'), 'scan: prints the key'],
-    ['a lower-case key variable', otherStep('echo "$figma_file_key"'), 'scan: prints the key']
+    ['a lower-case key variable', otherStep('echo "$figma_file_key"'), 'scan: prints the key'],
+    [
+      'a reset to a fetched head',
+      otherStep(
+        'git -C trusted fetch origin "$HEAD_SHA" && git -C trusted reset --hard FETCH_HEAD'
+      ),
+      'scan: rewrites a checkout with git'
+    ],
+    [
+      'a checkout of a bare sha',
+      otherStep('git -C trusted checkout "$HEAD_SHA"'),
+      'scan: rewrites a checkout with git'
+    ],
+    [
+      'a read-tree into the checkout',
+      otherStep('git -C trusted read-tree -u --reset "$HEAD_SHA"'),
+      'scan: rewrites a checkout with git'
+    ],
+    [
+      'a fetch into the checked-out branch',
+      otherStep('git -C trusted fetch --update-head-ok origin "+$HEAD_SHA:main"'),
+      'scan: rewrites a checkout with git'
+    ],
+    [
+      'a checkout of another repository',
+      reader(
+        (job) =>
+          (job.steps[0]!.with!.repository =
+            '${{ github.event.workflow_run.head_repository.full_name }}')
+      ),
+      'scan: actions/checkout from ${{ github.event.workflow_run.head_repository.full_name }}'
+    ],
+    [
+      'a checkout with its own token',
+      reader((job) => (job.steps[0]!.with!.token = '${{ secrets.OTHER }}')),
+      'scan: actions/checkout sets token'
+    ],
+    [
+      'a checkout from another server',
+      reader((job) => (job.steps[0]!.with!['github-server-url'] = 'https://example.com')),
+      'scan: actions/checkout sets github-server-url'
+    ],
+    [
+      'a checkout into a parent path',
+      reader((job) => (job.steps[0]!.with!.path = '../trusted')),
+      'scan: checkout into a parent path'
+    ],
+    [
+      'setup-node with a cache',
+      reader((job) =>
+        job.steps.push({
+          uses: `actions/setup-node@${PINNED}`,
+          with: { 'node-version': 24, cache: 'npm' }
+        })
+      ),
+      'scan: actions/setup-node sets cache'
+    ],
+    [
+      'an artifact over the trusted checkout',
+      reader((job) =>
+        job.steps.push({
+          uses: `actions/download-artifact@${PINNED}`,
+          with: { name: 'x', path: 'trusted/library/ui/figma' }
+        })
+      ),
+      'scan: downloads an artifact into trusted/library/ui/figma'
+    ],
+    [
+      'an artifact into the workspace root',
+      reader((job) =>
+        job.steps.push({ uses: `actions/download-artifact@${PINNED}`, with: { name: 'x' } })
+      ),
+      'scan: downloads an artifact into the workspace'
+    ],
+    [
+      'an artifact into .github',
+      reader((job) =>
+        job.steps.push({
+          uses: `actions/download-artifact@${PINNED}`,
+          with: { name: 'x', path: '.github/actions' }
+        })
+      ),
+      'scan: downloads an artifact into .github/actions'
+    ],
+    [
+      'an artifact out of runner.temp',
+      reader((job) =>
+        job.steps.push({
+          uses: `actions/download-artifact@${PINNED}`,
+          with: { name: 'x', path: '${{ runner.temp }}/../work/trusted' }
+        })
+      ),
+      'scan: downloads an artifact into ${{ runner.temp }}/../work/trusted'
+    ],
+    [
+      'an artifact from another repository',
+      reader((job) =>
+        job.steps.push({
+          uses: `actions/download-artifact@${PINNED}`,
+          with: { name: 'x', path: '${{ runner.temp }}/x', repository: 'outside/fork' }
+        })
+      ),
+      'scan: actions/download-artifact from outside/fork'
+    ],
+    [
+      'an action step that maps the key',
+      reader((job) =>
+        job.steps.push({
+          uses: `decentraland/oddish-action@${PINNED}`,
+          env: { K: '${{ secrets.FIGMA_FILE_KEY }}' }
+        })
+      ),
+      'scan: key in an action step'
+    ],
+    [
+      'a key step that interpolates an expression',
+      keyStep(
+        'node trusted/library/ui/figma/key-guard.mjs --b ${{ github.event.workflow_run.head_branch }}'
+      ),
+      'scan: key step interpolates an expression'
+    ],
+    [
+      'a key step that tees into a parent path',
+      keyStep('node trusted/library/ui/figma/key-guard.mjs | tee "$RUNNER_TEMP/../work/x"'),
+      'scan: key step uses a parent path'
+    ],
+    [
+      'a key step that sets PATH',
+      keyStep('PATH="$RUNNER_TEMP/pr-artifact:$PATH"\nnode trusted/library/ui/figma/key-guard.mjs'),
+      'scan: key step sets PATH'
+    ],
+    [
+      'a write to GITHUB_ENV',
+      otherStep('echo "NODE_OPTIONS=--require ./x.js" >> "$GITHUB_ENV"'),
+      'scan: writes GITHUB_ENV or GITHUB_PATH'
+    ],
+    [
+      'a write to GITHUB_PATH',
+      otherStep('echo "$RUNNER_TEMP/pr-artifact" >> $GITHUB_PATH'),
+      'scan: writes GITHUB_ENV or GITHUB_PATH'
+    ],
+    [
+      'a spaced secret reference',
+      otherStep('echo ${{ secrets . FIGMA_FILE_KEY }}'),
+      'scan: key outside a step env'
+    ]
   ] as [string, Workflow, string][])('should reject %s', (_, workflow, problem) => {
     expect(keyReaderViolations(workflow)).toContain(problem)
   })
