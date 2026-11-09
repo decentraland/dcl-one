@@ -108,6 +108,41 @@ understand the change in one sitting.
   After changing a git dependency's revision, run `python3 tooling/upstream-forks.py` from the
   dcl-one root so they match; a daily workflow otherwise opens an `upstream/forks` PR.
 
+## Upgrading the scene runtime
+
+The native scene runtime is upstream deno_core, deno_web and deno_webidl, with our own fetch and
+WebSocket ([ADR](../../../../docs/adr/2026-11-09-native-scene-runtime-on-upstream-deno.md)).
+Bump the three together, in one PR, when the nightly V8-age issue says we are behind what
+deno_core accepts.
+
+1. **Versions.** Pick the newest deno_core, then the deno_web and deno_webidl releases that
+   require exactly that deno_core. Update `[workspace.dependencies]`.
+2. **Lock.** This is the one exception to editing `Cargo.lock` by hand: a deno_core bump moves
+   V8, serde_v8, deno_ops and hundreds of transitive lines. Let Cargo resolve once
+   (`cargo metadata`), then revert every line the bump doesn't explain (the known flips above),
+   and validate with `cargo metadata --locked`. Say in the PR that the lock was resolved and
+   reviewed.
+3. **Vendored scripts.** Follow `update_instructions` in
+   `crates/dcl_deno/src/js/vendor/upstream.lock.json`: copy the deno_web and deno_webidl scripts
+   from the locked releases unchanged, take deno_fetch from the release matching deno_web, and
+   re-apply the listed fetch changes.
+4. **Build and fix.** `cargo check -p dcl_deno --tests --features inspect` and
+   `cargo check -p dcl_deno_ipc` first: `inspect` is a default feature.
+5. **The tests that catch an upgrade:**
+   - `every_override_replaces_an_op_of_the_same_shape`: an op we override was renamed, removed or
+     changed async-ness. Re-check the replacement against the new upstream op.
+   - `every_*_op_survives_junk_arguments`: a new or changed op panics on scene input. Override it
+     (`hardened_ops.rs`) or disable it (`DISABLED_OPS`).
+   - `embedded_upstream_scripts_match_the_locked_crates` and `every_runtime_script_is_compiled_in`:
+     a vendored script is stale or missing.
+   - `runtime_surface_tests.rs`: Intl, console, clocks, per-scene Blob and BroadcastChannel,
+     the fetch contract.
+6. **New upstream surface.** Read deno_core's and deno_web's changelogs for new ops, builtins and
+   globals. Anything a scene can reach must not panic, exit, share state across scenes or touch
+   disk; prefer disabling it.
+7. **Measure.** Compare scene frame time against main with the [benchmark](benchmark.md) before
+   merging.
+
 ## Review
 
 - First response within one working day. If it hasn't come, ping the reviewer on Slack rather
