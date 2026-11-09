@@ -39,12 +39,16 @@ interface Entry {
   /** The version the engine last announced (`profileChanged`): the engine already holds it, so a reply
    *  below it was read before the announcement. Kept when the copy is forgotten. */
   announced: number | undefined
-  /** The local player's profile only: set when the engine announces a version below the last one it
-   *  announced, or, before any, below the copy held. It put an earlier profile back (an edit failed
-   *  to deploy), so a copy above it was read before that, and is not taken until the engine announces
-   *  a newer version. Another player's profile can reach the engine's cache before their avatar
-   *  announces an older version, which is no revert. */
+  /** The local player's profile only: set when the engine announces a version below `peak`. It put an
+   *  earlier profile back (an edit failed to deploy), so a copy above it was read before that, and is
+   *  not taken while the engine announces versions below the peak. Another player's profile can
+   *  reach the engine's cache before their avatar announces an older version, which is no revert. */
   revertedTo: number | undefined
+  /** The local player's profile only: the highest version the engine announced (or, before any, the
+   *  copy held). Edit versions are never reused in a session, so an announcement below it is a
+   *  profile put back, even one above an earlier revert: an older edit that landed after a newer one
+   *  failed. */
+  peak: number | undefined
   pending: boolean
   subscribers: number
   /** When the last subscriber left, or a list last vouched for the address: the eviction clock. */
@@ -78,6 +82,7 @@ const blank = (): Entry => ({
   missingAt: undefined,
   announced: undefined,
   revertedTo: undefined,
+  peak: undefined,
   pending: false,
   subscribers: 0,
   idleSince: Date.now()
@@ -242,12 +247,12 @@ export function profileChanged(address: string, version: number): void {
   const key = profileKey(address)
   const e = entries.get(key)
   if (e == null) return
-  const last = key === own ? (e.announced ?? (e.full ? e.profile?.version : undefined)) : undefined
-  if (last != null && version < last) e.revertedTo = version
-  else if (e.revertedTo != null && version > e.revertedTo) e.revertedTo = undefined
+  const last = key === own ? (e.peak ?? e.announced ?? (e.full ? e.profile?.version : undefined)) : undefined
+  e.revertedTo = last != null && version < last ? version : undefined
+  if (key === own) e.peak = Math.max(last ?? version, version)
   e.announced = version
   if (e.subscribers === 0) {
-    entries.set(key, { ...blank(), announced: e.announced, revertedTo: e.revertedTo })
+    entries.set(key, { ...blank(), announced: e.announced, revertedTo: e.revertedTo, peak: e.peak })
     listeners.delete(key)
     return
   }
@@ -266,6 +271,7 @@ export function setOwnProfile(address: string | null): void {
     if (e != null) {
       e.announced = undefined
       e.revertedTo = undefined
+      e.peak = undefined
     }
   }
   own = next

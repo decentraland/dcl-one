@@ -250,6 +250,29 @@ describe('profile store: your own edit rejected by the deploy', () => {
     expect(result.current).toMatchObject({ version: 5, equippedWearables: [cap] })
   })
 
+  it('stays reverted when an older edit lands after a newer one failed', () => {
+    const scarf: Wearable = { urn: 'urn:test:scarf', name: 'Scarf', rarity: 'base', category: 'hat', equipped: true }
+    const { result } = renderHook(() => useProfile('0xme'))
+    act(() => {
+      requestPassport('0xme')
+      receiveProfile('0xme', mine(5, hat))
+    })
+    // two edits deploy at once; the newer fails and the engine puts back the profile from before
+    // both, then the older lands and the engine takes it
+    act(() => {
+      profileChanged('0xme', 6)
+      receiveProfile('0xme', mine(6, cap))
+      profileChanged('0xme', 7)
+      profileChanged('0xme', 5)
+      receiveProfile('0xme', mine(5, hat))
+      profileChanged('0xme', 6)
+      receiveProfile('0xme', mine(6, cap))
+    })
+    // the passport's read of the failed edit is answered last
+    act(() => receiveProfile('0xme', mine(7, scarf)))
+    expect(result.current).toMatchObject({ version: 6, equippedWearables: [cap] })
+  })
+
   it('drops reads from before the retry once the retry is announced', () => {
     const { result } = renderHook(() => useProfile('0xme'))
     act(() => {

@@ -1219,9 +1219,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     const settleProfileSave = (ok: boolean, error?: string): void => {
       profileInFlightRef.current = false
       // A failed save must not leave the optimistic edit on screen claiming to be saved, so the
-      // pre-save profile goes back — see saveProfile. If the engine had applied the edit, it puts
-      // its pre-edit copy back too and announces it; the store re-reads that, and drops a read of
-      // the edit still on its way instead of showing the edit again.
+      // pre-save profile goes back — see saveProfile. When the failed edit is the one the engine
+      // shows, it puts the profile from before it back too and announces it; the store re-reads
+      // that, and drops a read of the edit still on its way instead of showing the edit again.
       const revert = profileRevertRef.current
       profileRevertRef.current = null
       if (!ok) {
