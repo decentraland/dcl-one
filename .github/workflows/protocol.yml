@@ -14,7 +14,7 @@ permissions:
 jobs:
   check:
     name: Lint, build, wire compatibility, generation
-    runs-on: ${{ vars.RUNNER_LINUX_X86_UBUNTU_24_04 || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.RUNNER_LINUX_X86 || 'ubuntu-26.04' }}
     timeout-minutes: 15
     defaults:
       run:
