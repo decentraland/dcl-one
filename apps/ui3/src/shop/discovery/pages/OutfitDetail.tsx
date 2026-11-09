@@ -31,7 +31,7 @@ import { useShopQuery } from "../query";
 import { classifyOutfitItem, fetchOutfit, isListingUnavailable, outfitItemKey, outfitRadialGradient, thumbnailUrl, type Outfit, type OutfitItemState } from "./outfits";
 import "./outfitdetail.css";
 import { listingTypeFor } from "../../market/access-rule";
-import { shopClient } from "../../api/host";
+import { shopReads } from "../reads";
 
 export { fetchOutfit, type Outfit } from "./outfits";
 
@@ -219,7 +219,7 @@ function OutfitContent({ outfit }: { outfit: Outfit }) {
   const marketplace = useMarketplace();
   const lines = useCart((s) => s.lines);
   const keys = useMemo(() => [...new Set(outfit.items.map(outfitItemKey))].sort(), [outfit]);
-  const itemsQ = useShopQuery(keys.length ? ["outfit-items", ...keys] : null, (signal) => fetchCatalogByIds(keys, { client: shopClient(), signal }), { staleMs: 60_000 });
+  const itemsQ = useShopQuery(keys.length ? ["outfit-items", ...keys] : null, (signal) => fetchCatalogByIds(keys, shopReads(signal)), { staleMs: 60_000 });
   const byKey = useMemo(() => new Map((itemsQ.data ?? []).map((item) => [item.id.toLowerCase(), item])), [itemsQ.data]);
   const loading = keys.length > 0 && itemsQ.isLoading && !itemsQ.data;
   const cartAssets = useMemo(() => new Set(lines.map((l) => assetKey(l.asset))), [lines]);
@@ -267,7 +267,7 @@ function OutfitContent({ outfit }: { outfit: Outfit }) {
     try {
       const live = await Promise.all(
         purchasable.map(async (item) => {
-          const page = await fetchShopItems({ contractAddress: item.contractAddress, itemId: item.itemId ?? "", first: 1, listingType: listingTypeFor(marketplace) }, { client: shopClient() });
+          const page = await fetchShopItems({ contractAddress: item.contractAddress, itemId: item.itemId ?? "", first: 1, listingType: listingTypeFor(marketplace) }, shopReads());
           const fresh = page.items[0];
           return fresh && !isListingUnavailable(fresh) ? fresh : null;
         }),

@@ -19,7 +19,7 @@ import AccountSidebar from "./account/AccountSidebar";
 import NftCard from "./account/NftCard";
 import { fetchAccountNfts, isWearableSection, parseSection, sortOptions, wearableCategoriesOf, type AccountNft, type AssetType, type Section } from "./account/api";
 import "./account/account.css";
-import { shopClient } from "../../api/host";
+import { shopReads } from "../../discovery/reads";
 
 const PAGE_SIZE = 24;
 
@@ -53,7 +53,7 @@ function useAccountBrowse(address: string, b: Browse) {
           rarities: b.rarities.length ? b.rarities : undefined,
           search: b.search || undefined,
           sortBy: b.sortBy,
-        }, { client: shopClient() });
+        }, shopReads());
         return { kind: "item", items: res.items, total: res.total };
       }
       const res = await fetchAccountNfts(address, {

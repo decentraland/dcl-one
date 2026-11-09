@@ -72,6 +72,7 @@ import { createLedger, type OperationRecord } from './ledger'
 import { createNamePurchase, nameBuild, namesModeFor, type NameStanding } from './namePurchase'
 import { assertWalletAccount, guardedProvider, WalletRefusal, type PurchaseIntent } from './walletGuard'
 import { hostApiOptions, identitySigner } from '../../../shop/api/host'
+import { shopFlags } from '../../../shop/discovery/flags'
 
 /** The buyer's wallet, as the page hosting the shell resolves it (Sites: its sign-in session). */
 export interface ShellShopWallet {
@@ -251,7 +252,8 @@ function defaultStorage(): Storage | null {
 
 const LIVE: ShellShopServices = {
   client: (signer) => createShopClient(hostApiOptions({ signer })),
-  fetchItem: (contract, itemId, client) => fetchShopListingForItem(contract, itemId, { client }),
+  // The creator-sales switch as this document holds it, asked when the listing is mapped, as the read did itself.
+  fetchItem: (contract, itemId, client) => fetchShopListingForItem(contract, itemId, { client, creatorSales: () => shopFlags().creatorSales }),
   offers: (client) => purchaseOfferSource(client),
   balance: (account, client) => getUsdBalance(account, client),
   resolvers: (client) => liveResolvers(client),

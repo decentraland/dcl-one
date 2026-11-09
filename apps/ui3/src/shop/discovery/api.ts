@@ -7,13 +7,17 @@
 import type { ShopCoupon } from "@catalyst-api/market/ShopCoupon";
 import type { SuggestionReason } from "@catalyst-api/market/SuggestionReason";
 import { type ShopClient } from "../api/shop";
-import { shopFlags } from "./flags";
 import { readFreshness, type IndexFreshness } from "./freshness";
 import { catalogCategoryParams } from "./lib/categories";
 import { toCatalogItem, type CatalogItem, type ListingAcquisition, type ListingSource, type RawCollectionItem } from "./lib/catalogItem";
 import type { QueryParams } from "../api/client";
 
-export type Opts = { client: ShopClient; signal?: AbortSignal };
+/**
+ * What a read is made with, all of it the host's: its client, whether creators' running sales show, and the caller's
+ * signal. `creatorSales` is the host's creator-sales switch, asked when the answer is mapped (as it was when the read
+ * asked the page itself): the switch may answer while a read is in flight. Off, a listing reads at its full price.
+ */
+export type Opts = { client: ShopClient; creatorSales: () => boolean; signal?: AbortSignal };
 export type PageMeta = { freshness: IndexFreshness | null };
 export type ItemsPage<T = CatalogItem> = { items: T[]; total: number; meta: PageMeta };
 
@@ -113,8 +117,8 @@ export function withoutSale(l: ShopListingRaw): ShopListingRaw {
   return { ...l, priceCredits: l.compareAtCredits, compareAtCredits: null, saleEndsAt: null, saleUnitsLeft: null, coupon: null };
 }
 
-export function shopListingToItem(raw: ShopListingRaw): CatalogItem {
-  const l = shopFlags().creatorSales ? raw : withoutSale(raw);
+export function shopListingToItem(raw: ShopListingRaw, creatorSales: boolean): CatalogItem {
+  const l = creatorSales ? raw : withoutSale(raw);
   return {
     id: listingRowId(l),
     tradeId: l.tradeId ?? undefined,
@@ -145,12 +149,12 @@ export function shopListingToItem(raw: ShopListingRaw): CatalogItem {
   };
 }
 
-export function unifiedListingToItem(l: UnifiedListingRaw): UnifiedListing {
-  return { ...shopListingToItem(l), source: l.source, acquisition: l.acquisition ?? "trade", manaWei: l.manaWei ?? null };
+export function unifiedListingToItem(l: UnifiedListingRaw, creatorSales: boolean): UnifiedListing {
+  return { ...shopListingToItem(l, creatorSales), source: l.source, acquisition: l.acquisition ?? "trade", manaWei: l.manaWei ?? null };
 }
 
-function shopItemToItem(l: ShopItemRaw): UnifiedListing {
-  return { ...unifiedListingToItem(l), listingCount: l.listingCount };
+function shopItemToItem(l: ShopItemRaw, creatorSales: boolean): UnifiedListing {
+  return { ...unifiedListingToItem(l, creatorSales), listingCount: l.listingCount };
 }
 
 function shopQuery(params: ShopListingFilters): QueryParams {
@@ -183,7 +187,7 @@ export async function fetchShopListingsRaw(
   opts: Opts,
 ): Promise<{ listings: ShopListingRaw[]; total: number; creatorSalesLive: boolean; meta: PageMeta }> {
   const json = await c(opts).catalog.shop<DataTotal<ShopListingRaw>>(shopQuery(params), o(opts));
-  return { listings: json.data ?? [], total: json.total ?? 0, creatorSalesLive: shopFlags().creatorSales, meta: { freshness: readFreshness(json) } };
+  return { listings: json.data ?? [], total: json.total ?? 0, creatorSalesLive: opts.creatorSales(), meta: { freshness: readFreshness(json) } };
 }
 
 type PeggedPrice = { priceCredits: number; tradeId?: string; compareAtCredits?: number; saleEndsAt?: number };
@@ -217,7 +221,7 @@ export function fetchCreatorPeggedPrimaryPrices(creator: string, opts: Opts): Pr
 
 export async function fetchListings({ first = 100, ...filters }: ShopListingFilters = {}, opts: Opts): Promise<ItemsPage> {
   const { listings, total, meta } = await fetchShopListingsRaw({ ...filters, first }, opts);
-  return { items: listings.map(shopListingToItem), total, meta };
+  return { items: listings.map((l) => shopListingToItem(l, opts.creatorSales())), total, meta };
 }
 
 function unifiedQuery(first: number, filters: ShopListingFilters, groupBy?: "item"): QueryParams {
@@ -227,13 +231,13 @@ function unifiedQuery(first: number, filters: ShopListingFilters, groupBy?: "ite
 export async function fetchUnified({ first = 100, ...filters }: ShopListingFilters = {}, opts: Opts): Promise<ItemsPage<UnifiedListing>> {
   const json = await c(opts).catalog.unified<DataTotal<UnifiedListingRaw>>(unifiedQuery(first, filters), o(opts));
   const data = json.data ?? [];
-  return { items: data.map(unifiedListingToItem), total: json.total ?? data.length, meta: { freshness: readFreshness(json) } };
+  return { items: data.map((l) => unifiedListingToItem(l, opts.creatorSales())), total: json.total ?? data.length, meta: { freshness: readFreshness(json) } };
 }
 
 export async function fetchShopItems({ first = 100, ...filters }: ShopListingFilters = {}, opts: Opts): Promise<ItemsPage<UnifiedListing>> {
   const json = await c(opts).catalog.unified<DataTotal<ShopItemRaw>>(unifiedQuery(first, filters, "item"), o(opts));
   const data = json.data ?? [];
-  return { items: data.map(shopItemToItem), total: json.total ?? data.length, meta: { freshness: readFreshness(json) } };
+  return { items: data.map((l) => shopItemToItem(l, opts.creatorSales())), total: json.total ?? data.length, meta: { freshness: readFreshness(json) } };
 }
 
 export async function fetchRelatedItems(
@@ -243,7 +247,7 @@ export async function fetchRelatedItems(
   opts: Opts,
 ): Promise<UnifiedListing[]> {
   const json = await c(opts).catalog.related<{ data?: ShopItemRaw[] }>({ contractAddress, itemId, first, listingType }, o(opts));
-  return (json.data ?? []).map(shopItemToItem);
+  return (json.data ?? []).map((l) => shopItemToItem(l, opts.creatorSales()));
 }
 
 export async function fetchTrendingItems(
@@ -251,7 +255,7 @@ export async function fetchTrendingItems(
   opts: Opts,
 ): Promise<UnifiedListing[]> {
   const json = await c(opts).catalog.trending<{ data?: ShopItemRaw[] }>({ first, includeSocialEmotes: "false", listingType }, o(opts));
-  return (json.data ?? []).map(shopItemToItem);
+  return (json.data ?? []).map((l) => shopItemToItem(l, opts.creatorSales()));
 }
 
 export type SuggestedItem = UnifiedListing & { reason: SuggestionReason; score: number };
@@ -293,7 +297,7 @@ export async function fetchSuggestedItems(
     algorithm?: string;
   }>(q, o(opts));
   return {
-    data: (json.data ?? []).map((row) => ({ ...shopItemToItem(row), reason: row.reason ?? { kind: "trending" }, score: row.score ?? 0 })),
+    data: (json.data ?? []).map((row) => ({ ...shopItemToItem(row, opts.creatorSales()), reason: row.reason ?? { kind: "trending" }, score: row.score ?? 0 })),
     personalized: json.personalized === true,
     algorithm: json.algorithm ?? "unknown",
   };

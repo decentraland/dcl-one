@@ -28,7 +28,7 @@ import { useListingsFreshness, useSeo } from "../hooks";
 import { t } from "../intl";
 import { useShopQuery } from "../query";
 import "./overview.css";
-import { shopClient } from "../../api/host";
+import { shopReads } from "../reads";
 
 const MIN_DEALS = 3;
 
@@ -85,13 +85,13 @@ export default function Overview() {
   // Trending lists resales too only for a visitor who sees the Marketplace (market/access.tsx).
   const listingType = listingTypeFor(useMarketplace());
 
-  const listings = useShopQuery(["overview-listings"], (signal) => fetchShopItems({ first: 12, sortBy: "newest", listingType: "primary" }, { client: shopClient(), signal }));
+  const listings = useShopQuery(["overview-listings"], (signal) => fetchShopItems({ first: 12, sortBy: "newest", listingType: "primary" }, shopReads(signal)));
   // Widening to resales (a web3 visitor whose access resolves after hydration) keeps the primed rail until it lands.
-  const trending = useShopQuery(["overview-trending", listingType ?? "all"], (signal) => fetchTrendingItems({ first: 12, listingType }, { client: shopClient(), signal }), {
+  const trending = useShopQuery(["overview-trending", listingType ?? "all"], (signal) => fetchTrendingItems({ first: 12, listingType }, shopReads(signal)), {
     keepPrevious: listingType === undefined,
   });
   const deals = useShopQuery(flags.creatorSales ? ["overview-deals"] : null, (signal) =>
-    fetchShopItems({ first: 12, discounted: true, sortBy: "discount", listingType: "primary" }, { client: shopClient(), signal }),
+    fetchShopItems({ first: 12, discounted: true, sortBy: "discount", listingType: "primary" }, shopReads(signal)),
   );
 
   const items = listings.data?.items ?? [];

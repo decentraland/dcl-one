@@ -70,7 +70,8 @@ export async function fetchUnifiedListingForItem(contractAddress: string, itemId
  * row naming a token is never taken: an item line buys a mint from its creator, never a resale in its place.
  */
 export async function fetchTradeForItem(contractAddress: string, itemId: string, client: ShopClient): Promise<SignedTrade | null> {
-  const listing = await fetchPrimaryListingForItem(contractAddress, itemId, { client });
+  // Only the listing's trade id is read here, which the creator-sales switch does not change.
+  const listing = await fetchPrimaryListingForItem(contractAddress, itemId, { client, creatorSales: () => false });
   return listing?.tradeId ? fetchTrade(listing.tradeId, client) : null;
 }
 

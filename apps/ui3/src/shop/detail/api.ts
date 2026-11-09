@@ -53,7 +53,7 @@ export async function fetchPrimaryListingForItem(contractAddress: string, itemId
 /** An item's creator listing, for buying the item itself (the in-world shell's BUY): primary sales only, never a resale. */
 export async function fetchShopListingForItem(contractAddress: string, itemId: string, opts: Opts): Promise<CatalogItem | null> {
   const { listings } = await fetchShopListingsRaw({ contractAddress, itemId, first: 1, listingType: "primary" }, opts);
-  const row = listings[0] ? shopListingToItem(listings[0]) : null;
+  const row = listings[0] ? shopListingToItem(listings[0], opts.creatorSales()) : null;
   return row && !isResale(row) ? row : null;
 }
 
