@@ -2459,6 +2459,7 @@ fn social_states(
             admin_token: non_empty(&config.social.catalyrst_badges_admin_token),
             public_asset_base_url: config.social.badges_public_asset_base_url.clone(),
             assets_dir: non_empty(&config.social.badges_assets_dir).map(std::path::PathBuf::from),
+            commit_hash: config.commit_hash(),
         },
     ));
 

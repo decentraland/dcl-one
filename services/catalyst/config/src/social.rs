@@ -639,19 +639,22 @@ pub struct SocialConfig {
     )]
     pub notification_delivery_max_age_secs: u64,
 
-    // social/badges: the old catalyrst-badges settings (the art is embedded).
-    /// Bearer of the badge grant/revoke routes; unset refuses them.
+    // social/badges.
+    /// Bearer of the badge admin routes (read, grant, revoke); unset refuses them.
     #[arg(long, env = "CATALYRST_BADGES_ADMIN_TOKEN", hide_env_values = true)]
     pub catalyrst_badges_admin_token: Option<String>,
 
+    /// The base every badge asset path resolves against: upstream's CDN, so
+    /// the URLs are upstream's. `<node>/badges/assets` serves BADGES_ASSETS_DIR.
     #[arg(
         long,
         env = "BADGES_PUBLIC_ASSET_BASE_URL",
-        default_value = "https://badges.decentraland.org"
+        default_value = "https://assets-cdn.decentraland.org"
     )]
     pub badges_public_asset_base_url: String,
 
-    /// Files here override the embedded badge art one by one.
+    /// Badge art mirrored from upstream's CDN (`<badge>[/<tier>]/{2d,3d}/...`),
+    /// served at /badges/assets.
     #[arg(long, env = "BADGES_ASSETS_DIR")]
     pub badges_assets_dir: Option<String>,
 
