@@ -745,3 +745,22 @@ pub async fn op_read_block_update_stream(
 ) -> Result<JsValue, WasmError> {
     serde_result!(dcl_js::system_api::op_read_block_update_stream(state.rc(), rid).await)
 }
+
+#[wasm_bindgen]
+pub async fn op_deploy_outfits(state: &WorkerContext, outfits: JsValue) -> Result<(), WasmError> {
+    let outfits = serde_wasm_bindgen::from_value(outfits)
+        .map_err(|e| WasmError::from(anyhow::anyhow!("deployOutfits: {e}")))?;
+    dcl_js::system_api::op_deploy_outfits(state.rc(), outfits)
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_outfit_thumbnails(state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_outfit_thumbnails(state.rc()).await)
+}
+
+#[wasm_bindgen]
+pub fn op_set_outfit_thumbnail(state: &WorkerContext, slot: u32, thumbnail: Option<String>) {
+    dcl_js::system_api::op_set_outfit_thumbnail(state.rc(), slot, thumbnail)
+}

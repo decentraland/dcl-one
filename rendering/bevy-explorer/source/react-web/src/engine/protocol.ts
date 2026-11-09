@@ -1523,9 +1523,8 @@ export interface RGBColor {
   b: number
 }
 
-/** A saved avatar look (backpack Outfits tab). The shape mirrors the catalyst `outfits` entity's
- *  per-slot outfit so a saved look can later be deployed unchanged (Phase 2); Phase 1 persists
- *  these for the session (in memory in the bridge scene). */
+/** A saved avatar look (backpack Outfits tab): one slot of the player's catalyst `outfits`
+ *  entity, which the bridge scene has the engine deploy (a guest's last for the session). */
 export interface Outfit {
   bodyShape: string
   eyes: { color: RGBColor }

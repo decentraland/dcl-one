@@ -449,3 +449,36 @@ pub async fn client_logins_write(json: String) -> Result<String, String> {
         .as_string()
         .ok_or_else(|| "invalid login queue receipt".into())
 }
+
+// Saved-outfit pictures, in IndexedDB; see web_outfit_thumbnails.js.
+mod web_outfit_thumbnails {
+    use wasm_bindgen::prelude::*;
+    #[wasm_bindgen(module = "/src/web_outfit_thumbnails.js")]
+    extern "C" {
+        #[wasm_bindgen(catch, js_name = outfitThumbnailsRead)]
+        pub async fn read(account: &str) -> Result<JsValue, JsValue>;
+        #[wasm_bindgen(catch, js_name = outfitThumbnailWrite)]
+        pub async fn write(
+            account: &str,
+            slot: u32,
+            thumbnail: Option<String>,
+        ) -> Result<(), JsValue>;
+    }
+}
+
+pub async fn outfit_thumbnails_read(account: &str) -> Result<Vec<crate::OutfitThumbnail>, String> {
+    let json = web_outfit_thumbnails::read(account)
+        .await
+        .map_err(|e| js_error_message(&e))?;
+    serde_json::from_str(&json.as_string().unwrap_or_default()).map_err(|e| e.to_string())
+}
+
+pub async fn outfit_thumbnail_write(
+    account: &str,
+    slot: u32,
+    thumbnail: Option<&str>,
+) -> Result<(), String> {
+    web_outfit_thumbnails::write(account, slot, thumbnail.map(str::to_owned))
+        .await
+        .map_err(|e| js_error_message(&e))
+}

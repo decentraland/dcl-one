@@ -121,6 +121,22 @@ module.exports.setAvatar = async function(avatar) {
     return await Deno.core.ops.op_set_avatar(avatar)
 }
 
+// signs and deploys the local player's catalyst `outfits` entity
+// outfits: { outfits: [{ slot, outfit: { bodyShape, eyes, hair, skin, wearables, forceRender } }], namesForExtraSlots }
+module.exports.deployOutfits = async function(outfits) {
+    return await Deno.core.ops.op_deploy_outfits(outfits)
+}
+
+// the local player's saved outfit pictures on this device => [{ slot, thumbnail }]
+module.exports.getOutfitThumbnails = async function() {
+    return await Deno.core.ops.op_get_outfit_thumbnails()
+}
+
+// stores (a PNG data URL) or removes (null) one slot's picture
+module.exports.setOutfitThumbnail = function(slot, thumbnail) {
+    Deno.core.ops.op_set_outfit_thumbnail(slot, thumbnail ?? null)
+}
+
 // any user's full profile (own, nearby or remote), resolved through the engine's profile cache
 // and fetch cascade. Rejects if the address can't be resolved.
 // address: string => SerializedProfile

@@ -40,5 +40,12 @@ pub struct DmHistoryReaction {
     pub remove: bool,
 }
 
+/// A saved outfit's picture (a data URL) on this device.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct OutfitThumbnail {
+    pub slot: u32,
+    pub thumbnail: String,
+}
+
 pub mod http;
 pub use http::{fetch, FetchError, FetchedResponse, TracedJsonResponse};
