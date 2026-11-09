@@ -24,6 +24,7 @@ Node 24 and pnpm (`corepack enable`). The Figma capture is not in this repositor
 
 ```sh
 cd library/ui
+git lfs pull --include "library/ui/foundations/typography/fonts/*.woff2"
 pnpm install --frozen-lockfile
 pnpm format:check && pnpm lint && pnpm typecheck && pnpm test
 node figma/lock-digests.mjs  # every file under figma/ matches the digest upstream.lock.json pins

@@ -8,6 +8,10 @@ import { NavbarCredits, iconComponents, iconMeta, theme } from '../index'
 import fontSource from '../foundations/typography/font-source.json'
 
 const foundationRoot = path.resolve(import.meta.dirname, '../foundations')
+const fontPackageRoot = path.resolve(
+  import.meta.dirname,
+  '../node_modules/@fontsource-variable/inter'
+)
 const layerOrder = '@layer dcl.reset, dcl.foundations, dcl.components;'
 
 describe('when a consumer loads shared foundations', () => {
@@ -80,10 +84,12 @@ describe('when a consumer loads shared foundations', () => {
     'and the bundled font is %s',
     (file, pinnedDigest) => {
       let payload: Buffer
+      let packagePayload: Buffer
       let indexedOid: string | undefined
 
       beforeEach(async () => {
         payload = await readFile(path.join(foundationRoot, 'typography/fonts', file))
+        packagePayload = await readFile(path.join(fontPackageRoot, 'files', file))
         indexedOid = execFileSync(
           'git',
           ['show', `:library/ui/foundations/typography/fonts/${file}`],
@@ -99,14 +105,24 @@ describe('when a consumer loads shared foundations', () => {
         expect(createHash('sha256').update(payload).digest('hex')).toBe(pinnedDigest)
         expect(indexedOid).toBe(pinnedDigest)
       })
+
+      it('should match the installed source package byte for byte', () => {
+        expect(payload.equals(packagePayload)).toBe(true)
+      })
     }
   )
 
   describe('and the bundled font origin is inspected', () => {
     let license: Buffer
+    let packageLicense: Buffer
+    let packageMetadata: { name: string; version: string; license: string }
 
     beforeEach(async () => {
       license = await readFile(path.join(foundationRoot, 'typography', fontSource.licenseFile))
+      packageLicense = await readFile(path.join(fontPackageRoot, 'LICENSE'))
+      packageMetadata = JSON.parse(
+        await readFile(path.join(fontPackageRoot, 'package.json'), 'utf8')
+      )
     })
 
     it('should identify the licensed npm source independently from the Figma capture', () => {
@@ -114,10 +130,15 @@ describe('when a consumer loads shared foundations', () => {
         package: fontSource.package,
         version: fontSource.version,
         license: fontSource.license
-      }).toEqual({ package: '@fontsource-variable/inter', version: '5.3.0', license: 'OFL-1.1' })
+      }).toEqual({
+        package: packageMetadata.name,
+        version: packageMetadata.version,
+        license: packageMetadata.license
+      })
     })
     it('should retain the complete pinned font license', () => {
       expect(createHash('sha256').update(license).digest('hex')).toBe(fontSource.licenseSha256)
+      expect(license.equals(packageLicense)).toBe(true)
     })
   })
 })
