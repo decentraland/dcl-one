@@ -17,11 +17,17 @@ LANES = ('clippy', 'test', 'headless', 'web')
 NATIVE_JOBS = {'Test Suite (ubuntu-24.04)', 'Test Suite (windows-2025)', 'Test Suite (macos-15)'}
 GATEWAY_HUD_INPUTS = ('apps/ui3/src/play/lib/baseDomain.ts',
                       'apps/ui3/src/play/engine/generated/serviceTable.ts')
+# Sources the web HUD compiles from library/: the ones tooling/play-artifact.py fingerprints with it.
+_ARTIFACT = importlib.util.spec_from_file_location('play_artifact', Path(__file__).with_name('play-artifact.py'))
+_artifact = importlib.util.module_from_spec(_ARTIFACT)
+_ARTIFACT.loader.exec_module(_artifact)
+HUD_SHARED = _artifact.HUD_SHARED
 # The flake's tool packages (bevy-tools: protoc, taplo and wasm-pack for the Linux lanes; bevy-ffmpeg
 # for the macOS Test Suite) and the action that delivers them; Windows, headless packaging and
 # scenes run install-protoc.py instead.
 TOOLS_INPUTS = ('flake.nix', 'flake.lock', 'infra/packages/default.nix', 'infra/packages/tools.nix', '.github/actions/bevy-explorer-tools')
 INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/bevy', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
+          *(path.rstrip('/') for path in HUD_SHARED),
           'infra/gateway', *GATEWAY_HUD_INPUTS, *TOOLS_INPUTS,
           'tooling/bevy-ci.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
           'tooling/tests/test_bevy_*.py', WORKFLOW, SCENES_WORKFLOW,
@@ -252,6 +258,9 @@ def select(base, head):
             # which read them (the sender the benchmark runner's receiver must accept, the guest's
             # root-key name its reset page keeps, the HUD commands the web driver gives real input).
             affected = ('web', 'test')
+        elif path.startswith(HUD_SHARED):
+            # The web HUD compiles them (react-web/vite.shared.ts); the engine never reads them.
+            affected = ('web',)
         elif path.startswith(('rendering/bevy-explorer/source/react-web/',
                               'rendering/bevy-explorer/source/deploy/web/')):
             # These are runtime web assets, not inputs to Cargo's native tests

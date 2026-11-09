@@ -57,5 +57,24 @@ class WebToolsTests(unittest.TestCase):
                 tools.install('wasm-bindgen', Path(temporary))
 
 
+    def wasm_opt_output(self, output):
+        data = self.archive('release/bin/wasm-opt')
+        pin = ('129', 'https://example.invalid/tool', hashlib.sha256(data).hexdigest(),
+               'release/bin/wasm-opt')
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.dict(tools.TOOLS, {'wasm-opt': pin}), \
+                patch.object(tools.protoc, 'download', return_value=data), \
+                patch.object(tools.subprocess, 'check_output', return_value=output):
+            tools.install('wasm-opt', Path(temporary))
+
+    def test_wasm_opt_accepts_binaryens_version_line(self):
+        # binaryen 129's own `wasm-opt --version` output.
+        self.wasm_opt_output('wasm-opt version 129 (version_129)\n')
+
+    def test_wasm_opt_rejects_another_release(self):
+        with self.assertRaisesRegex(ValueError, 'Unexpected wasm-opt version'):
+            self.wasm_opt_output('wasm-opt version 128 (version_128)\n')
+
+
 if __name__ == '__main__':
     unittest.main()
