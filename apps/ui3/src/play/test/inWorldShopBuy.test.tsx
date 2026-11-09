@@ -225,10 +225,10 @@ describe('buying in the in-world Shop', () => {
     }
   })
 
-  /** BUY on the card, with the shell's capabilities saying `codedErrors` or not, and its BUY failing with `error`. */
-  const buyFailing = async (error: Error, codedErrors: boolean): Promise<void> => {
+  /** BUY on the card, with the shell's capabilities saying `codedErrors` or not (or never answering), and its BUY failing with `error`. */
+  const buyFailing = async (error: Error, codedErrors: boolean, capabilities: 'answered' | 'never' = 'answered'): Promise<void> => {
     serveCatalogue()
-    answerShell('managed', false, codedErrors)
+    answerShell('managed', capabilities === 'never' ? 'reject' : false, codedErrors)
     const usual = shell.request.getMockImplementation()!
     shell.request.mockImplementation(async (method: string, params?: unknown) => {
       if (method === 'shop.buy') throw error
@@ -242,13 +242,16 @@ describe('buying in the in-world Shop', () => {
   }
 
   // Both shells this HUD may be hosted by: this one, busy by its code, and one from before codes, busy in the
-  // same words alone, whose page this HUD may outlive.
-  for (const [host, error, codedErrors] of [
-    ['the shell', shopBusy(), true],
-    ['a shell from before codes', new Error(LEGACY_SHOP_BUSY_MESSAGE), false]
+  // same words alone, whose page this HUD may outlive. A shell whose capabilities never answered may be either,
+  // so both forms of busy hold there too.
+  for (const [host, error, codedErrors, capabilities] of [
+    ['the shell', shopBusy(), true, 'answered'],
+    ['a shell from before codes', new Error(LEGACY_SHOP_BUSY_MESSAGE), false, 'answered'],
+    ['a shell whose capabilities never answered, by its code,', shopBusy(), true, 'never'],
+    ['a shell whose capabilities never answered, in the words alone,', new Error(LEGACY_SHOP_BUSY_MESSAGE), true, 'never']
   ] as const) {
     it(`sends nowhere when ${host} is busy with another purchase: that purchase’s dialog, open or opening, is what the buyer sees`, async () => {
-      await buyFailing(error, codedErrors)
+      await buyFailing(error, codedErrors, capabilities)
       await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
       expect(screen.queryByText('You will be redirected to the web Shop')).toBeNull()
     })

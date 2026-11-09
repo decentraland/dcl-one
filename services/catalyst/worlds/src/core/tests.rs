@@ -1111,6 +1111,36 @@ fn assert_newer_refusal(result: Result<(), super::http::ApiError>) {
     );
 }
 
+/// Upstream compares entity timestamps as JS numbers (doubles): an epoch-ms timestamp with three
+/// decimals is newer than one a thousandth below it, and an equal one falls to the entity-id
+/// tie-break.
+#[tokio::test]
+async fn fractional_timestamps_compare_as_numbers() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = (world_name(), Wallet::random().address);
+    let at = |timestamp: f64| {
+        json!({ "type": "scene", "timestamp": timestamp, "pointers": ["0,0"],
+                "metadata": { "scene": { "base": "0,0", "parcels": ["0,0"] } } })
+    };
+    let publish = |id: &'static str, timestamp: f64| {
+        let (f, world, owner, entity) = (&f, &world, &owner, at(timestamp));
+        async move { deploy(f, world, owner, id, &entity, &["0,0"], &Deploy::Owner).await }
+    };
+    const T: f64 = 1_731_100_000_000.123;
+    publish("bafyb", T).await.unwrap();
+    // Equal: the greater entity id wins.
+    assert_newer_refusal(publish("bafya", T).await);
+    publish("bafyc", T)
+        .await
+        .expect("an equal timestamp with a greater id");
+    // A thousandth older loses whatever its id; a thousandth newer wins.
+    assert_newer_refusal(publish("bafyz", 1_731_100_000_000.122).await);
+    publish("bafyd", 1_731_100_000_000.124)
+        .await
+        .expect("a thousandth newer");
+    assert_eq!(entity_ids(&f, &world).await, vec!["bafyd".to_string()]);
+}
+
 #[tokio::test]
 async fn an_older_entity_never_replaces_a_newer_overlapping_scene() {
     let Some(f) = fixture().await else { return };
@@ -6889,6 +6919,38 @@ async fn deploy_parts_are_spooled_to_disk_and_removed_after_success_and_failure(
     assert!(status.is_client_error(), "{status}");
     assert!(!f.storage.exist(&refused.entity_id).await.unwrap());
     wait_spool_empty(&f).await;
+}
+
+/// The upload-slot cap (`MAX_CONCURRENT_UPLOADS`, this tree's) refuses `POST /entities` with
+/// upstream's byte-budget 503 (`multipart/errors.ts`), as the in-flight bytes do (WD-11): with a
+/// cap of one and a slot held, the publish is shed.
+#[tokio::test]
+async fn a_publish_past_the_upload_slots_gets_the_byte_budget_503() {
+    let mut settings = test_settings();
+    settings.upload_limits.max_concurrent_uploads = 1;
+    // The slot counter is process-wide: other tests' uploads only make the shed more certain.
+    let _held = super::upload_limits::try_acquire_upload_slot(u64::MAX).expect("a slot");
+    let Some(f) = fixture_full(PersonalWorldsPolicy::disabled(), None, None, settings).await else {
+        return;
+    };
+    let world = world_name();
+    let owner = Wallet::random();
+    f.names.set(&owner.address, world.label());
+    let d = deployment(&owner, &world, "Shed", "0,0", &["0,0"]).await;
+    let body = expect(
+        &f.app,
+        Case::new("post", "/entities").body(d.body.clone(), &d.content_type),
+        503,
+    )
+    .await;
+    assert_eq!(
+        body,
+        json!({
+            "error": "Service Unavailable",
+            "message": super::upload_limits::BYTES_SHED_MESSAGE,
+        })
+    );
+    assert!(!f.storage.exist(&d.entity_id).await.unwrap());
 }
 
 #[tokio::test]

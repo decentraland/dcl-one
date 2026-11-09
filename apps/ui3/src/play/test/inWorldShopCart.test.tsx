@@ -24,7 +24,7 @@ import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop
 import { inWorldCart } from '../features/shop/cartStore'
 import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
 import { dispatchCancelLayer } from '../lib/cancelLayers'
-import { SHOP_EVENT, shopBusy } from '../lib/shopProtocol'
+import { LEGACY_SHOP_BUSY_MESSAGE, SHOP_EVENT, shopBusy } from '../lib/shopProtocol'
 import type { Wearable } from '../engine/protocol'
 import { fakeProfileState } from './harness'
 import { PopupHost, resetPopups, ToastHost } from '../design'
@@ -255,6 +255,7 @@ describe('the in-world Shop’s cart', () => {
   }
 
   // One test, busy first: a toast outlives its test (the toasts' store is the module's, and lets go on a timer).
+  // answerShell's capabilities don't say `codedErrors`: a shell from before codes, busy by a code or in its words alone.
   it('says nothing on CHECKOUT while the shell is busy with another purchase, and that it couldn’t open when the shell refuses', async () => {
     const COULD_NOT_OPEN = "The purchase couldn't open. Try again in a moment."
     const checkout = async (): Promise<void> => {
@@ -269,6 +270,10 @@ describe('the in-world Shop’s cart', () => {
     await addFromPanel()
     await checkout()
     // Its dialog is what the buyer sees.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(screen.queryByText(COULD_NOT_OPEN)).toBeNull()
+    failBuy(new Error(LEGACY_SHOP_BUSY_MESSAGE))
+    await checkout()
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
     expect(screen.queryByText(COULD_NOT_OPEN)).toBeNull()
     failBuy(new Error('refused'))
@@ -331,16 +336,21 @@ describe('the in-world Shop’s cart', () => {
     expect(open).toHaveBeenCalledWith(expect.stringContaining('/shop/items/outfits/o1'), '_blank', 'noopener')
   })
 
-  it('sends an outfit nowhere while the shell is busy with another purchase: its dialog is what the buyer sees', async () => {
-    serveCatalogue([{ id: 'o1', name: 'Neon Night', thumbnailHash: '', items: [{ contractAddress: CONTRACT, itemId: '1' }], gradientFrom: '#ff0000', gradientTo: '#0000ff' }])
-    failBuy(shopBusy())
-    renderShop()
-    await userEvent.click(await screen.findByRole('tab', { name: 'All' }))
-    await userEvent.click(await outfitBuy('Neon Night'))
-    await waitFor(() => expect(shell.request).toHaveBeenCalledWith('shop.buy', expect.anything()))
-    await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
-    expect(screen.queryByText('You will be redirected to the web Shop')).toBeNull()
-  })
+  for (const [busy, error] of [
+    ['by its code', shopBusy()],
+    ['in the words alone of a shell from before codes', new Error(LEGACY_SHOP_BUSY_MESSAGE)]
+  ] as const) {
+    it(`sends an outfit nowhere while the shell is busy with another purchase (${busy}): its dialog is what the buyer sees`, async () => {
+      serveCatalogue([{ id: 'o1', name: 'Neon Night', thumbnailHash: '', items: [{ contractAddress: CONTRACT, itemId: '1' }], gradientFrom: '#ff0000', gradientTo: '#0000ff' }])
+      failBuy(error)
+      renderShop()
+      await userEvent.click(await screen.findByRole('tab', { name: 'All' }))
+      await userEvent.click(await outfitBuy('Neon Night'))
+      await waitFor(() => expect(shell.request).toHaveBeenCalledWith('shop.buy', expect.anything()))
+      await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+      expect(screen.queryByText('You will be redirected to the web Shop')).toBeNull()
+    })
+  }
 
   it('offers no price or BUY on an outfit with no items', async () => {
     serveCatalogue([{ id: 'o0', name: 'Empty Look', thumbnailHash: '', items: [], gradientFrom: '#ff0000', gradientTo: '#0000ff' }])
