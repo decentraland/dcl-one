@@ -8,7 +8,7 @@
 import { encodeAbiParameters, encodeFunctionData, getAbiItem, pad, stringToHex, toFunctionSelector, toHex, type Hex } from "viem";
 
 import type { ShopCoupon } from "@catalyst-api/market/ShopCoupon";
-import { COLLECTION_STORE_ABI, CREDITS_MANAGER_ABI, MARKETPLACE_ABI } from "../chain/abi";
+import { COLLECTION_STORE_ABI, CREDITS_MANAGER_ABI, MARKETPLACE_ABI } from "@shop/checkout/chain/abi";
 
 export { amoyGasOverrides } from "../chain/wallet";
 

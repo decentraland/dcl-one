@@ -1,10 +1,10 @@
 // Where a catalogue item leads: the URN a try-on puts on the avatar and its page on the web Shop; an
 // outfit's page there; and a NAME's.
 
-import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
+import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
 import { itemUrn } from '../../../shop/detail/lib/urn'
 import { landNetwork } from '../../../shop/land/contracts'
-import { CHAIN } from '../../../shop/model/chain'
+import { CHAIN } from '@shop/model/chain'
 import { nameTokenIdOf } from '../../../shop/names/names'
 import { siteUrl } from '../../lib/baseDomain'
 import { withUtm } from '../../lib/utm'

@@ -9,7 +9,7 @@ import { Link, useParams } from "react-router";
 
 import Button from "../../../atoms/Button";
 import EmptyState from "../../../components/EmptyState";
-import { shortAddress } from "../../model/address";
+import { shortAddress } from "@shop/model/address";
 import { SHOP_BASE } from "../../routes";
 import { fetchCatalogItems, fetchCollection } from "../api";
 import AssetCard from "../components/AssetCard";
@@ -22,10 +22,10 @@ import LoadMore from "../components/LoadMore";
 import SkeletonCards from "../components/SkeletonCards";
 import { indexUnavailable, type IndexFreshness } from "../freshness";
 import { useProfile, useScrollTopOnChange, useSeo, useUrlFilters } from "../hooks";
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import { SUBCAT_MAP } from "../lib/categories";
-import type { CatalogItem } from "../lib/catalogItem";
-import { rarityLabel } from "../lib/rarity";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
+import { rarityLabel } from "@shop/discovery/lib/rarity";
 import { routeSegment } from "../lib/routes";
 import { EMOTE_FILTER_DEFAULTS, emoteFilterBindings } from "../lib/itemsGrid";
 import { useInfiniteShopQuery, useShopQuery } from "../query";
@@ -34,6 +34,7 @@ import CreatorCard from "./collection/CreatorCard";
 import defaultCover from "./collection/default-cover.jpeg";
 import "../components/browselayout.css";
 import "./collection/collection.css";
+import { shopClient } from "../../api/host";
 
 const PAGE_SIZE = 48;
 
@@ -68,9 +69,9 @@ export default function Collection() {
     ...emoteFilters.emote,
   };
   const grid = useInfiniteShopQuery<CatalogItem, { freshness: IndexFreshness | null }>(contractAddress ? ["collection-page", filters] : null, (skip, signal) =>
-    fetchCatalogItems({ ...filters, first: PAGE_SIZE, skip }, { signal }),
+    fetchCatalogItems({ ...filters, first: PAGE_SIZE, skip }, { client: shopClient(), signal }),
   );
-  const meta = useShopQuery(contractAddress ? ["collection-meta", contractAddress] : null, (signal) => fetchCollection(contractAddress!, { signal }), { staleMs: 5 * 60_000 });
+  const meta = useShopQuery(contractAddress ? ["collection-meta", contractAddress] : null, (signal) => fetchCollection(contractAddress!, { client: shopClient(), signal }), { staleMs: 5 * 60_000 });
   const title = meta.data?.name || t("collection.fallbackTitle");
   useSeo({ title: meta.data?.name });
   const creator = meta.data?.creator || grid.items[0]?.creator;

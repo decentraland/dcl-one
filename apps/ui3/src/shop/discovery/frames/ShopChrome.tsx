@@ -22,7 +22,7 @@ import SearchDropdown from "../components/SearchDropdown";
 import Icon from "../components/Icon";
 import { isIapMode } from "../flags";
 import { useCampaign } from "../hooks";
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import { localized, toContentfulLocale } from "../lib/contentful";
 import { MarketAnnouncementBar, MarketFooter } from "./MarketChrome";
 import { useMarketplace } from "../../market/access";

@@ -5,7 +5,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 
-import { identitySigner, type ShopSigner } from "../api/signer";
+import { type ShopSigner } from "../api/signer";
 import { useShopWallet } from "../wallet/context";
 import { fetchFavoriteStats } from "../market/lib/favorites";
 import { fetchPublishableItems } from "./lib/builder";
@@ -17,6 +17,7 @@ import { toSaleableCollections } from "./lib/saleableCollections";
 import { collectorsOf, daysSinceLastSale, deltaOf, deltaOfWei, topBuyers } from "./lib/storeMetrics";
 import { buildStoreStats, type StoreStats } from "./lib/storeStats";
 import { fetchStore } from "./lib/store";
+import { identitySigner } from "../api/host";
 
 /** The Shop signer for the signed-in account's own identity; null when signed out or expired. */
 export function useSellerSigner(): ShopSigner | null {

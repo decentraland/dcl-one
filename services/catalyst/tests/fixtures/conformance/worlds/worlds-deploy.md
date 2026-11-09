@@ -166,6 +166,7 @@ one transaction (`store.rs`).
 | Field over 32 KiB | 413 | `Field '<name>' is too large. The maximum allowed size per field is 32768 bytes.` | same | `middleware.ts:331-339`, test `:137-163` | `deploy_form.rs` | MATCH (WD-04) |
 | Too many files / parts | 413 | `The multipart request has too many files.` (10,001st file part, the entity included) / `…too many parts.` (busboy answers when the count reaches 10,032) | same | `middleware.ts:307-312`, busboy 1.6.0 `lib/types/multipart.js` | `deploy_form.rs` | MATCH (WD-04) |
 | File over 350 MiB / payload over 350 MiB | 413 | `An uploaded file exceeds the maximum allowed size.` / `The multipart request is too large.` | same | `middleware.ts:268-279,382-384` | `deploy_form.rs` `read_deploy_form`, `account_deploy_bytes` | MATCH |
+| Part name over 200 bytes | 400 | none: busboy 1.6.0 applies `fieldNameSize` to urlencoded names only (truncating them); a part's headers past 16 KiB answer `Malformed part header` | `Form field name longer than 200 bytes` | busboy 1.6.0 `lib/types/urlencoded.js`, `lib/types/multipart.js` (`MAX_HEADER_SIZE`) | `deploy_form.rs` `read_deploy_form` | intended (worlds-compatibility.md "Publish forms") |
 | Repeated form name | 400 | `Duplicate form field '<name>'` (a field once read, a file on its headers) | same | `middleware.ts:234-243` | `deploy_form.rs` | MATCH (WD-05) |
 | Not multipart / truncated body | 400 | `{"error":"Bad request","message":"Unsupported content type: application/json"}` / `"Unexpected end of form"` (also `Missing Content-Type`, `Malformed content type`, `Multipart: Boundary not found`) | same; a urlencoded body is refused (upstream parses it) and another unreadable body answers multer's text | test `multipart-error-handling.spec.ts:15-105`, busboy 1.6.0 `lib/index.js` | `deploy_form.rs` `content_type_error`, `read_failed` | MATCH (WD-09), intended rest (worlds-compatibility.md) |
 | Body not received in time | 408 | `{"error":"Request Timeout","message":"The upload did not finish within <s> s: received <n> of <m> (about <r> KiB/s). Retry on a faster connection or send smaller batches."}` | same, from the wire bytes counted | `multipart/errors.ts:32-50`, test `multipart-limiter.spec.ts:392-426` | `upload_limits.rs` `describe_upload_timeout` | MATCH (WD-10) |
@@ -409,7 +410,8 @@ dcl-one (`scenes.rs` `delete_scene`): world name parsed first, the strict signed
      after the window and the uploads with the missing files, on a batch the entity id before the
      window and the uploads after it. Blobs are stored under the CIDv1 of their bytes, which the
      checks make equal to the name. Pinned by `worlds/src/core/tests/partial_uploads.rs`
-     `a_part_not_named_by_its_hash_is_refused` and `worlds/src/core/tests.rs`
+     `a_part_not_named_by_its_hash_is_refused` and `a_part_not_named_by_a_cidv1_is_refused`, and
+     `worlds/src/core/tests.rs`
      `a_publish_answers_the_first_failed_check_in_the_old_words`.
    - Severity: none (closed).
 
@@ -481,6 +483,7 @@ dcl-one (`scenes.rs` `delete_scene`): world name parsed first, the strict signed
       40,000 files) listed under "Publish forms"; the slot cap answers upstream's byte-budget text
       (`deploy.rs` `deploy_entity`), the file budget upstream's file text and a spool failure upstream's storage
       text (`deploy_form.rs` `SPOOL_FAILED_MESSAGE`). The settings route keeps its own slot text.
+      Pinned by `worlds/src/core/tests.rs` `a_publish_past_the_upload_slots_gets_the_byte_budget_503`.
     - Severity: none (closed).
 
 12. **WD-12 · `POST /entities?partial=true` · the first batch's arrival.** Status: intended (worlds-compatibility.md).
@@ -489,7 +492,8 @@ dcl-one (`scenes.rs` `delete_scene`): world name parsed first, the strict signed
       test `partial-deploy.spec.ts:569-604`).
     - dcl-one: the arrival is stamped at handler entry (`deploy.rs` `deploy_entity`) and is the first batch's
       anchor (`partial.rs` `stage_batch`). The gateway buffers the body before proxying it, so the arrival the
-      app sees is the body's end at the gateway; listed under "Publish forms".
+      app sees is the body's end at the gateway; listed under "Publish forms". Pinned by
+      `worlds/src/core/tests/partial_uploads.rs` `a_first_batch_is_dated_when_it_arrives`.
     - Severity: none (closed).
 
 13. **WD-13 · `POST /entities` · world name family and personal worlds.** Status: intended (worlds-compatibility.md).

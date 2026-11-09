@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createShopClient } from "@ui/shop/api";
+import { createShopClient, fetchTransport } from "@ui/shop/api";
 import { REMOTE_FLAG, remoteFlagVariant } from "@ui/shop/discovery/lib/remoteFlags";
 
 import { serverShopApiMode } from "./mode";
@@ -22,7 +22,7 @@ function node(routes: Route[]) {
     if (!hit) return new Response(JSON.stringify({ error: "not found" }), { status: 404 });
     return new Response(JSON.stringify(hit.body), { status: hit.status ?? 200 });
   }) as typeof fetch;
-  return { asked, client: createShopClient({ base: "http://node.test", mode: "canonical", signer: null, fetchImpl }) };
+  return { asked, client: createShopClient({ base: "http://node.test", mode: "canonical", signer: null, transport: fetchTransport(fetchImpl) }) };
 }
 
 const request = (path: string) => new Request(`https://sites.test${path}`);
