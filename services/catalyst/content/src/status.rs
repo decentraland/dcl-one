@@ -9,11 +9,18 @@ use super::wire_types::{ChallengeResponse, ContentStatusResponse, Synchronizatio
 /// A heartbeat older than this means the sync worker is down.
 const HEARTBEAT_MAX_AGE_MS: i64 = 300_000;
 
+/// Always 200, as upstream at the pinned revision (no component reports a
+/// status check there). `lastSyncWithDAO` is the last sync heartbeat, this
+/// node's equivalent of upstream's last DAO-list refresh (both are refreshed
+/// while the node follows its peers, whether they come from `SYNC_SOURCE` or,
+/// with `SYNC_FROM_DAO`, from the DAO list), and 0 before the first one, as
+/// upstream's `timeOfLastSync` starts.
 pub async fn get_status(State(state): State<SharedState>) -> impl IntoResponse {
     let sync_state = state.sync.state_name().to_string();
     let now_ms = chrono::Utc::now().timestamp_millis();
+    let heartbeat = state.sync.heartbeat_ms();
 
-    let (last_heartbeat, up) = match state.sync.heartbeat_ms() {
+    let (last_heartbeat, up) = match heartbeat {
         Some(heartbeat) => (
             Some(heartbeat),
             Some(now_ms - heartbeat < HEARTBEAT_MAX_AGE_MS),
@@ -27,11 +34,11 @@ pub async fn get_status(State(state): State<SharedState>) -> impl IntoResponse {
             .settings
             .commit_hash
             .clone()
-            .unwrap_or_else(|| "unknown".to_string()),
+            .unwrap_or_else(|| "Unknown".to_string()),
         eth_network: state.settings.eth_network.clone(),
         synchronization_status: SynchronizationStatus {
-            last_sync_with_dao: now_ms,
-            synchronization_state: sync_state.clone(),
+            last_sync_with_dao: heartbeat.unwrap_or(0),
+            synchronization_state: sync_state,
             sync_frontier: state.sync.sync_frontier_ms(),
             last_heartbeat,
             up,
@@ -39,25 +46,18 @@ pub async fn get_status(State(state): State<SharedState>) -> impl IntoResponse {
         },
     };
 
-    let status = if sync_state == "Failed" {
-        StatusCode::SERVICE_UNAVAILABLE
-    } else {
-        StatusCode::OK
-    };
-
-    (status, Json(body))
+    (StatusCode::OK, Json(body))
 }
 
-/// A fresh challenge text (the old `UuidChallengeSupervisor`); the console's
-/// `challenge/refresh` answers one too.
+/// A new challenge text: a bare UUID v4, as upstream's `uuidv4()`.
 pub fn challenge_text() -> String {
-    format!("dcl-crypto-{}", uuid::Uuid::new_v4())
+    uuid::Uuid::new_v4().to_string()
 }
 
-/// A fresh challenge per call: the realm proves ownership of its content
-/// server by echoing it, and nothing is remembered between calls.
-pub async fn get_challenge() -> impl IntoResponse {
+/// The process's challenge: the realm proves ownership of its content server
+/// by echoing it, and it stays the same until the process restarts.
+pub async fn get_challenge(State(state): State<SharedState>) -> impl IntoResponse {
     Json(ChallengeResponse {
-        challenge_text: challenge_text(),
+        challenge_text: state.challenge(),
     })
 }

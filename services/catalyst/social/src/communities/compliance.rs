@@ -275,10 +275,10 @@ pub(crate) fn output_text(response: &Value) -> Result<String, String> {
                 .to_owned()
         })?;
         for content in contents {
-            if content["type"] == "output_text" {
-                if let Some(value) = content["text"].as_str() {
-                    text.push_str(value);
-                }
+            if content["type"] == "output_text"
+                && let Some(value) = content["text"].as_str()
+            {
+                text.push_str(value);
             }
         }
     }

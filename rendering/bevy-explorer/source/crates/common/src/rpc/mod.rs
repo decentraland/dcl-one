@@ -4,7 +4,7 @@ mod stream_sender;
 mod tests;
 
 use crate::{
-    profile::SerializedProfile,
+    profile::{CompactProfile, SerializedProfile},
     structs::{EmoteMask, PermissionType},
 };
 use alloy_core::primitives::Address;
@@ -267,6 +267,12 @@ pub enum RpcCall {
     GetUserData {
         user: Option<String>,
         response: RpcResultSender<Result<SerializedProfile, ()>>,
+    },
+    /// The compact profiles of a list of addresses, in request order; an address that can't
+    /// be resolved is left out.
+    GetCompactProfiles {
+        addresses: Vec<String>,
+        response: RpcResultSender<Vec<CompactProfile>>,
     },
     GetConnectedPlayers {
         response: RpcResultSender<Vec<String>>,

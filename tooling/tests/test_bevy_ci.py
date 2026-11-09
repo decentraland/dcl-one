@@ -24,6 +24,35 @@ def producers(outcome='success'):
 
 
 class WorkflowTest(unittest.TestCase):
+    def test_main_runs_are_not_cancelled_by_the_next_push(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
+        lines = workflow.split('\nconcurrency:\n', 1)[1].splitlines(True)
+        # The workflow-level block only: it ends at the next top-level key.
+        block = ''.join(lines[:next(i for i, line in enumerate(lines) if line[:1] not in (' ', '#'))])
+        self.assertIn("  group: bevy-explorer-ci-${{ github.event.pull_request.number && format('pr-{0}', "
+                      "github.event.pull_request.number) || github.ref }}\n", block)
+        self.assertIn("  cancel-in-progress: ${{ github.event_name == 'pull_request' || "
+                      "github.ref != 'refs/heads/main' }}\n", block)
+
+    def test_pr_web_builds_skip_wasm_opt_only_while_the_benchmark_is_off(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
+        job = workflow.split('\n  build-deploy-web:\n', 1)[1].split('\n  headless-packages:\n', 1)[0]
+        self.assertIn('          key=$(python3 tooling/play-artifact.py engine-cache-key)\n'
+                      '          echo "key=$key" >> "$GITHUB_OUTPUT"\n', job)
+        self.assertIn("      - name: Save tested compiled engine\n"
+                      "        if: steps.engine-cache.outputs.cache-matched-key == ''\n", job)
+        self.assertIn("      BEVY_WEB_OPT: ${{ github.event_name == 'pull_request' && "
+                      "vars.BENCHMARK_ENABLED_RUNNERS == 'none' && 'unoptimized' || 'optimized' }}\n", job)
+        self.assertIn('          key: bevy-engine-v1-${{ env.BEVY_WEB_OPT }}-${{ steps.engine-inputs.outputs.key }}\n'
+                      '          restore-keys: bevy-engine-v1-optimized-${{ steps.engine-inputs.outputs.key }}\n',
+                      job)
+        self.assertIn("verify-engine .cache/bevy-engine ${{ env.BEVY_WEB_OPT == 'optimized' && '--production' || '' }}\n",
+                      job)
+        self.assertIn("build-web.py --engine-cache ../../../.cache/bevy-engine "
+                      "${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }} --shared-build\n", job)
+        self.assertIn('          path: .cache/bevy-engine\n'
+                      '          key: ${{ steps.engine-cache.outputs.cache-primary-key }}\n', job)
+
     def test_gateway_route_step_requires_the_ignored_fixture_to_pass(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
         _, _, after = workflow.partition('      - name: Test Explorer routes against the gateway\n')
@@ -79,7 +108,7 @@ class SelectionTest(unittest.TestCase):
         for name in ('rendering/bevy-explorer/source/src/lib.rs',
                      'rendering/bevy-explorer/source/react-web/package-lock.json',
                      'apps/bevy-explorer/build-web.py', 'apps/bevy-explorer/Dockerfile.web',
-                     'tooling/bevy-ci.py', ci.WORKFLOW,
+                     'tooling/bevy-ci.py', 'tooling/ci_paths.py', ci.WORKFLOW,
                      '.github/workflows/bevy-explorer-images.yml'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
@@ -95,10 +124,6 @@ class SelectionTest(unittest.TestCase):
                      '.cargo/config.toml', 'rust-toolchain.toml', ci.WORKFLOW,
                      'library/vendor/rusty_enet/src/packet.rs',
                      'library/vendor/rusty_enet/checksums.sha256',
-                     'library/uuav/uuav-client/src/lib.rs',
-                     'library/uuav/uuav-ipc/src/lib.rs',
-                     'library/uuav/dist/linux-x86_64/uuav-helper',
-                     'tooling/uuav/stage-dist.py',
                      'tooling/dev-regressions.py', 'tooling/dev-regressions.json'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
@@ -170,6 +195,15 @@ class SelectionTest(unittest.TestCase):
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
                                   if selected[lane]}, {'web'})
 
+    def test_shared_hud_sources_validate_web_only(self):
+        for name in (ci.HUD_SHARED[0] + 'model/money.ts', ci.HUD_SHARED[1] + 'credits/BalanceOut.ts'):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write(name, 'changed')
+                selected = ci.select(before, self.commit())
+                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
+                                  if selected[lane]}, {'web'})
+
     def test_web_files_the_harness_tests_read_also_select_the_test_suite(self):
         for name in ('deploy/web/engine/perf_stream.js', 'react-web/src/features/auth/sso.ts',
                      'react-web/src/lib/hudAutomation.ts'):
@@ -181,27 +215,13 @@ class SelectionTest(unittest.TestCase):
                                   if selected[lane]}, {'web', 'test'})
 
     def test_the_end_to_end_suite_selects_no_engine_lane(self):
-        for name in ('specs/chat.test.ts', 'specs/pages.ts', 'README.md',
-                     'test/explorer.test.ts', 'references/core.png'):
+        for name in ('driver/explorer.ts', 'specs/chat.test.ts', 'scenes/core/scene.json', 'README.md'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write('apps/bevy-explorer/e2e/' + name, 'changed')
                 selected = ci.select(before, self.commit())
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
                                   if selected[lane]}, set())
-
-    def test_what_the_graphical_run_plays_from_the_end_to_end_suite_selects_scenes(self):
-        for name in ('e2e/driver/explorer.ts', 'e2e/scenes/video/src/index.ts',
-                     'e2e/scenes/video/assets/video/red_tone.mp4', 'e2e/scenes/core/scene.json',
-                     'e2e/scenes/dcl-workspace.json', 'e2e/specs/visual/video.test.ts',
-                     'e2e/specs/visual/visual.test.ts', 'e2e/specs/visual/realm.ts', 'e2e/specs/visual/scenes.ts',
-                     'e2e/scripts/e2e.ts', 'e2e/package-lock.json', '../dcl-scene-cli/src/main.rs'):
-            with self.subTest(path=name):
-                before = self.git('rev-parse', 'HEAD')
-                self.write('apps/bevy-explorer/' + name, 'changed')
-                selected = ci.select(before, self.commit())
-                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
-                                  if selected[lane]}, {'scenes'})
 
     def test_web_change_cannot_hide_a_native_or_shared_input_change(self):
         self.write('rendering/bevy-explorer/source/react-web/src/App.tsx', 'web edit')
@@ -360,8 +380,100 @@ class SelectionTest(unittest.TestCase):
         self.assertFalse(any(ci.select(self.base, head)[lane] for lane in ci.LANES))
 
     def test_docs_only_change_skips_image_consumer(self):
-        self.write('docs/example.md', 'changed')
-        self.assertFalse(ci.consumer_plan('pull_request', self.base, self.commit(), '')['images'])
+        for name in ('DATABASE.md', 'docs/example.md', 'services/catalyst/docs/events.md',
+                     'services/catalyst/docs/example.json', 'rendering/bevy-explorer/docs/example.json',
+                     'rendering/bevy-explorer/source/README.md',
+                     'apps/bevy-explorer/README.md', 'library/vendor/rusty_enet/README.md'):
+            self.write(name, 'changed')
+        head = self.commit()
+        self.assertFalse(ci.consumer_plan('pull_request', self.base, head, '')['images'])
+        self.assertFalse(ci.consumer_changed(self.base, head, 'images'))
+        result = ci.select(self.base, head)
+        self.assertFalse(any(result[lane] for lane in (*ci.LANES, 'native-matrix', 'scenes')))
+        self.write('services/catalyst/explore/src/lib.rs', 'source')
+        self.assertTrue(ci.consumer_plan('pull_request', self.base, self.commit(), '')['images'])
+
+    def test_docs_source_embedded_data_and_published_content_rebuild_images(self):
+        for name in ('apps/sites/src/features/docs/DocsPage.tsx',
+                     'apps/sites/src/data/lib/docs/render.ts',
+                     'library/dcl-scene-authoring/docs/composite-component-schemas.json',
+                     'library/dcl-scene-authoring/docs/composite-tojson-edge-cases.json',
+                     'apps/sites/content/docs/example.md', 'apps/sites/content/docs/page.mdx',
+                     'apps/sites/content/docs/manifest.json', 'apps/sites/content/docs/search-index.json',
+                     'apps/sites/content/docs/_media.json'):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write(name, 'changed')
+                head = self.commit()
+                self.assertTrue(ci.consumer_changed(before, head, 'images'))
+                self.assertTrue(ci.consumer_plan('pull_request', before, head, '')['images'])
+                with patch.object(ci, 'api', return_value={'workflow_runs': [{'head_sha': before, 'id': 1}]}), \
+                        patch.object(ci, 'trusted_run', return_value=True), \
+                        patch.object(ci, 'run_jobs', return_value=[]), \
+                        patch.object(ci, 'consumer_ready', return_value=True):
+                    result = ci.consumer_plan('push', before, head, 'example/project')
+                self.assertTrue(result['images'])
+                self.assertEqual(result['reason'], 'Image consumer inputs changed')
+
+    def test_source_renamed_to_documentation_still_selects_builds(self):
+        (self.root / 'rendering/bevy-explorer/source/src/lib.rs').rename(
+            self.root / 'rendering/bevy-explorer/source/source.md')
+        head = self.commit()
+        self.assertTrue(ci.consumer_changed(self.base, head, 'images'))
+        self.assertTrue(ci.select(self.base, head)['test'])
+
+    def test_markdown_golden_changes_select_tests_and_images(self):
+        self.write('rendering/bevy-explorer/source/local-harness/benchmark/tests/fixtures/report/ok.md',
+                   'broken report golden')
+        head = self.commit()
+        self.assertTrue(ci.select(self.base, head)['test'])
+        self.assertTrue(ci.consumer_changed(self.base, head, 'images'))
+
+    def test_unwatched_fixtures_do_not_select_images(self):
+        self.write('apps/creator-hub/tests/fixtures/example.md', 'fixture')
+        self.write('apps/creator-hub/tests/fixtures/example.json', '{}')
+        head = self.commit()
+        self.assertFalse(ci.consumer_changed(self.base, head, 'images'))
+        self.assertFalse(ci.consumer_plan('pull_request', self.base, head, '')['images'])
+
+    def test_deleted_prose_documentation_does_not_select_images(self):
+        for path in ('services/catalyst/docs/example.md', 'rendering/bevy-explorer/docs/example.md',
+                     'docs/example.md'):
+            with self.subTest(path=path):
+                self.write(path, 'prose')
+                before = self.commit()
+                (self.root / path).unlink()
+                head = self.commit()
+                self.assertFalse(ci.consumer_changed(before, head, 'images'))
+                self.assertFalse(ci.consumer_plan('pull_request', before, head, '')['images'])
+
+    def test_removed_or_renamed_embedded_markdown_selects_builds(self):
+        for path in ('rendering/bevy-explorer/bevy/crates/example/README.md',
+                     'rendering/bevy-explorer/bevy/crates/bevy_color/docs/conversion.md',
+                     'rendering/bevy-explorer/bevy/errors/B0001.md'):
+            for rename in (False, True):
+                with self.subTest(path=path, rename=rename):
+                    self.write(path, 'original')
+                    before = self.commit()
+                    self.write(path, 'edited rustdoc')
+                    edited = self.commit()
+                    self.assertFalse(ci.select(before, edited)['test'])
+                    self.assertFalse(ci.consumer_changed(before, edited, 'images'))
+                    source = self.root / path
+                    if rename:
+                        source.rename(source.with_name('renamed.md'))
+                    else:
+                        source.unlink()
+                    removed = self.commit()
+                    self.assertTrue(ci.select(edited, removed)['test'])
+                    self.assertTrue(ci.consumer_changed(edited, removed, 'images'))
+
+    def test_local_hook_changes_do_not_select_engine_or_images(self):
+        self.write('tooling/ci-local.py', 'unrelated local hook change')
+        head = self.commit()
+        result = ci.select(self.base, head)
+        self.assertFalse(any(result[lane] for lane in (*ci.LANES, 'native-matrix', 'scenes')))
+        self.assertFalse(ci.consumer_changed(self.base, head, 'images'))
 
     def test_wildcard_inputs_stay_in_their_directory(self):
         self.write('tooling/dev-regressions-x/y.json', '{}')
@@ -408,6 +520,7 @@ class SelectionTest(unittest.TestCase):
             '.github/workflows/bevy-explorer-images.yml': {'web', 'headless'},
             'apps/bevy-explorer/prepare-native-cache.py': {'clippy', 'test', 'headless', 'native-matrix', 'scenes'},
             'apps/bevy-explorer/install-linux-deps.py': {*ci.LANES, 'scenes'},
+            'apps/bevy-explorer/install-web-tools.py': {'web'},
             ci.SCENES_WORKFLOW: {'scenes'},
             ci.WORKFLOW: {*ci.LANES, 'native-matrix'},
             'apps/bevy-explorer/README.md': set(),
@@ -422,11 +535,37 @@ class SelectionTest(unittest.TestCase):
 
     def test_unknown_inputs_and_shared_protoc_changes_run_all_platforms_and_scenes(self):
         for path in ('apps/bevy-explorer/future-build-input', 'apps/bevy-explorer/install-protoc.py',
-                     'tooling/bevy-ci.py'):
+                     'tooling/bevy-ci.py', 'tooling/bevy-mtimes.py'):
             before = self.git('rev-parse', 'HEAD')
             self.write(path, 'changed')
             result = ci.select(before, self.commit())
             self.assertTrue(all(result[lane] for lane in (*ci.LANES, 'native-matrix', 'scenes')))
+
+    def test_flake_tool_changes_select_the_linux_lanes_and_the_native_matrix_without_scenes(self):
+        # The Linux lanes take protoc, taplo and wasm-pack from the flake's bevy-tools package and
+        # the macOS Test Suite its ffmpeg; the graphical scenes still run install-protoc.py.
+        for path in ('flake.lock', 'flake.nix', 'infra/packages/default.nix', 'infra/packages/tools.nix',
+                     '.github/actions/bevy-explorer-tools/action.yml', 'apps/bevy-explorer/install-tools.sh'):
+            with self.subTest(path=path):
+                before = self.git('rev-parse', 'HEAD')
+                self.write(path, 'changed')
+                result = ci.select(before, self.commit())
+                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes') if result[lane]}, {*ci.LANES, 'native-matrix'})
+        # The other package definitions feed the images, not the engine lanes.
+        before = self.git('rev-parse', 'HEAD')
+        self.write('infra/packages/play.nix', 'changed')
+        result = ci.select(before, self.commit())
+        self.assertFalse(any(result[lane] for lane in (*ci.LANES, 'native-matrix', 'scenes')))
+
+    def test_vendored_bevy_selects_every_lane_and_the_native_matrix(self):
+        # The Explorer builds Bevy from rendering/bevy-explorer/bevy, platform code included.
+        self.write('rendering/bevy-explorer/bevy/crates/bevy_scene/src/scene_spawner.rs', 'changed')
+        result = ci.select(self.base, self.commit())
+        self.assertTrue(all(result[lane] for lane in (*ci.LANES, 'native-matrix', 'scenes')))
+
+    def test_vendored_bevy_rebuilds_the_images(self):
+        self.write('rendering/bevy-explorer/bevy/crates/bevy_scene/src/scene_spawner.rs', 'changed')
+        self.assertTrue(ci.consumer_changed(self.base, self.commit(), 'images'))
 
     def test_newer_web_pass_cannot_hide_an_unvalidated_native_change_on_main(self):
         self.write('rendering/bevy-explorer/source/src/lib.rs', 'native change')

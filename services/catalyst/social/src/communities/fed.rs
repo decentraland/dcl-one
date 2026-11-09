@@ -2470,6 +2470,10 @@ mod tests {
             .await
             .unwrap();
 
+        let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *ban)
+            .await
+            .unwrap();
         let join = env(
             &joiner,
             CommunityJoin {
@@ -2481,7 +2485,10 @@ mod tests {
             let (app, joiner) = (app.clone(), joiner.clone());
             tokio::spawn(async move { send(&app, &joiner, "POST", &path, &join).await })
         };
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(crate::shared::test_wait::until(async || {
+            sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid)))")
+                .bind(blocker).fetch_one(&pool).await.unwrap()
+        }).await);
         assert!(
             !joining.is_finished(),
             "the join waits for the membership lock"

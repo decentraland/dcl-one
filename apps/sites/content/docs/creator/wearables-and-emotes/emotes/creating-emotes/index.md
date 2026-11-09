@@ -17,7 +17,7 @@ This documentation will cover the file specifications, the basics of animation i
 | Animations per File    | 1                          |
 | Export Format          | .glb                       |
 | Sampling Rate          | 1 by default (2 or 3 if needed)        |
-| Max File Size          | 1 MB                       |
+| Max File Size          | 3 MB                       |
 | Max Animation Distance | 1 meter (front/back, left/right) |
 | Max Animation Height   | 4 meter                    |
 
@@ -38,7 +38,7 @@ This documentation explains the set up for Rig 1.0, its controls, and features.
 
 ## **Frame Rate**
 
-Before getting started, it’s important to check the frame rate. Decentraland’s animations must have a frame rate of 30 fps. The rig file provided probably has that set up, but since Blender’s default value is 24 fps, it is best to double check before starting (a wrong frame rate will affect the speed of the animation). That option can be found in Output Properties (the printer icon) under Format, as shown below:
+Before getting started, it’s important to check the frame rate. Decentraland’s animations must have a frame rate of 30 fps. The rig file ships set to 24 fps, so change it to 30 before you animate (a wrong frame rate will affect the speed of the animation). That option can be found in Output Properties (the printer icon) under Format, as shown below:
 
 ![Make sure the framerate is set to 30 fps before starting.](/docs/_remote/53650a16525c3ac92e8eef4c.webp)
 
@@ -63,14 +63,14 @@ In the rig file, other than the two windows for the viewport (front and side vie
 With this workspace, you have everything needed to start animating!
 
 
-![](/docs/creator/images/emotes/workspace.webp) 
+![](/docs/creator/images/emotes/workspace.webp)
 
 These are the bottom windows. The top one is in the _**Graph Editor,**_ the middle one in the _**Dope Sheet,**_ and the bottom one is the _**Timeline.**_ The top red arrow shows the _**Only Show Selected**_ tool and the bottom one shows the _**Auto Keying**_.
 
 
 > [!NOTE]
 > **💡 Hint!**
-> 
+>
 > Since Blender is highly customizable, this is also a good time to set up the layout that best suits you, adding, adjusting, or removing windows. Each animator has their own preferences, so feel free to edit the layout however you want!
 
 
@@ -83,12 +83,14 @@ In the rig file provided, there’s already an action, the _**Starting_Pose**_. 
 
 > [!NOTE]
 > **💡 Hint!**
-> 
+>
 > If you want to do a loop animation, you don’t have to start the animation from the Starting Pose. Feel free to use the pose that makes more sense in your animation!\*\*
-> 
+>
 
 
-**Animation Area** 
+For a loop to run smoothly, the first and last keyframes must be identical. For example, a 4 second loop at 30 fps needs the same pose on frame 1 and on frame 121. If they differ at all, players see a visible pop every time the clip repeats.
+
+### Animation Area  {#ground-reference-and-animation-area}
 
 In the provided avatar file, you will find a collection called ***Animation_Area_Reference***. It consists of three objects that will visually help setting the animation limits: ***Animation_Area_Reference***, ***Ground_Reference*** and ***Root_Animation_Area***.
 
@@ -122,7 +124,7 @@ Here are some examples of emotes that are within the animation area boundaries.
 
 > [!NOTE]
 > **💡 Attention!**
-> 
+>
 > Watch out for these boundaries because crossing them might cause gameplay issues.
 
 
@@ -155,11 +157,11 @@ You can delete animations directly from Blender File under Display Mode in the o
 
 > [!NOTE]
 > **💡 Hint!**
-> 
+>
 > Do not always edit the same animation track. Before making major changes, just duplicate the animation. That way you have a back up version in case you regret deleting or changing something. This is also a nice way to keep track of the progress made so far!
 
 
-![](/docs/creator/images/emotes/duplicating_animation2.webp)
+![](/docs/creator/images/emotes/duplicating_animation.webp)
 
 Duplicating animation clips.
 
@@ -221,7 +223,7 @@ Usually, a **sampling rate of 2 or 3** will do the trick. Those numbers can opti
 
 > [!NOTE]
 > **💡 Hint!**
-> 
+>
 > If the number of frames of the animation can be divided by the sampling rate, that’s a good thing! It means that the final frame will be baked, preserving the transition from end to start of the animation.
 
 
@@ -238,6 +240,8 @@ Since we only want the armature and the animation to be exported, turn off the m
 ![](/docs/creator/images/emotes/mesh_visibility.webp)
 
 Turn off the mesh visibility before exporting!
+
+Your file must also contain only the one action you are exporting. The rig ships with a `Starting_Pose` action, so [delete it](#browsing-and-deleting-animations) along with any other leftover action, otherwise the exported `.glb` carries two clips instead of the [one animation per file](#number-of-animations) that Decentraland expects. Save an editable copy of your `.blend` before you strip anything out.
 
 To export, go to _File_ > _Export_ > _glTF2.0 (.glb, .gltf)_
 

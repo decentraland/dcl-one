@@ -3,11 +3,9 @@
 # run, from the run's job and artifact lists (the trusted Actions API; the run's own code reaches
 # this only as job names and artifact names, which render inside table cells).
 #
-# Environment: REPO (owner/name), RUN_ID, RUN_URL, HEAD_SHA (the commit the run built), JOBS_FILE
-# (the run's /jobs response), ARTIFACTS_FILE (its /artifacts response) and OUT_DIR (where build.md
-# and tests.md are written; the working directory by default). PREVIEW_VERSION, when set, is the
-# version of @dcl-regenesislabs/bevy-explorer-web this run published under the pull request's pr-<n>
-# tag; the web app row then links its CDN preview, on the zone services.
+# Environment: REPO (owner/name), PR_NUMBER, RUN_ID, RUN_URL, HEAD_SHA (the PR head), RUN_FILE
+# (the run attempt's metadata), JOBS_FILE (the run's /jobs response), ARTIFACTS_FILE (its
+# /artifacts response) and OUT_DIR (where build.md and tests.md are written).
 #
 # The build section covers the products: the web app (*Web engine, HUD and bridge scene*) and the
 # headless engine (*Headless Smoke*), with their artifacts' download links, and the `benchmark`
@@ -15,14 +13,16 @@
 # *Headless Smoke*. A job *Changes* did not select (`skipped`) is reported as not selected; a
 # section none of whose jobs ran says its inputs are unchanged.
 #
-# Usage: REPO=o/r RUN_ID=1 RUN_URL=... HEAD_SHA=... JOBS_FILE=jobs.json ARTIFACTS_FILE=artifacts.json \
-#          bash explorer-ci-sections.sh
+# Usage: REPO=o/r PR_NUMBER=10 RUN_ID=1 RUN_URL=... HEAD_SHA=... RUN_FILE=run.json \
+#          JOBS_FILE=jobs.json ARTIFACTS_FILE=artifacts.json bash explorer-ci-sections.sh
 set -euo pipefail
 
 : "${REPO:?REPO is required}"
+: "${PR_NUMBER:?PR_NUMBER is required}"
 : "${RUN_ID:?RUN_ID is required}"
 : "${RUN_URL:?RUN_URL is required}"
 : "${HEAD_SHA:?HEAD_SHA is required}"
+: "${RUN_FILE:?RUN_FILE is required}"
 : "${JOBS_FILE:?JOBS_FILE is required}"
 : "${ARTIFACTS_FILE:?ARTIFACTS_FILE is required}"
 OUT_DIR="${OUT_DIR:-.}"
@@ -97,8 +97,23 @@ artifact_link() {
 job_time() { if [[ "$1" =~ ^[0-9]+$ ]]; then fmt_secs "$1"; else printf '—'; fi; }
 job_cell() { if [ -n "$2" ]; then printf '[%s](%s)' "$1" "$2"; else printf '%s' "$1"; fi; }
 
-SHORT_SHA="${HEAD_SHA:0:7}"
-FOOTER="<sub>[Run summary]($RUN_URL) · commit \`$SHORT_SHA\`</sub>"
+npm_preview_field() {
+  local value
+  if value=$(npm view "@dcl-regenesislabs/bevy-explorer-web@$1" "$2" --prefer-online \
+      --registry=https://registry.npmjs.org --fetch-retries=0 --fetch-timeout=15000 2>/dev/null); then
+    printf '%s' "$value" | tr -d '\r'
+  fi
+}
+
+preview_matches_checkout() {
+  local version="$1" revision="$2"
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-$RUN_ID\.commit-([0-9a-f]{7,40})$ &&
+     "$revision" == "${BASH_REMATCH[1]}"* ]] &&
+    [ "$(npm_preview_field "$version" gitHead)" = "$revision" ]
+}
+
+FOOTER="[Run summary]($RUN_URL) · PR head \`${HEAD_SHA:0:7}\`"
+web_revision=""
 
 # --- build -----------------------------------------------------------------------------------
 state=none
@@ -106,10 +121,60 @@ rows=""
 IFS=$'\t' read -r conclusion url secs <<< "$(job_fields "$WEB_JOB")" || true
 if [ -n "${url:-}${conclusion:-}" ]; then
   state=$(fold_state "$state" "$conclusion")
-  downloads=$(artifact_link 'bevy-explorer-web-' 'web app')
-  if [ "$conclusion" = success ] && [[ "${PREVIEW_VERSION:-}" =~ ^[0-9A-Za-z.-]+$ ]]; then
-    preview="[preview](https://cdn.decentraland.org/@dcl-regenesislabs/bevy-explorer-web/$PREVIEW_VERSION/index.html?position=0%2C-2&baseDomain=decentraland.zone)"
-    downloads="${downloads:+$downloads · }$preview"
+  # GitHub records the exact SHA when it resolves a local reusable workflow in
+  # this run attempt. For a PR this is the test merge; head_sha is the branch tip.
+  # Only accept a single SHA from this repository's references to this PR merge.
+  IFS=$'\t' read -r event checkout_sha <<< "$(jq -r --arg head "$HEAD_SHA" \
+    --arg ref "refs/pull/$PR_NUMBER/merge" --arg prefix "$REPO/.github/workflows/" '
+    select(.head_sha == $head)
+    | [.event, (if .event == "pull_request" then
+        [.referenced_workflows[]?
+          | select(.ref == $ref and (.sha // "" | test("^[0-9a-f]{40}$")))
+          | .sha as $sha | select(.path | startswith($prefix) and endswith("@" + $sha)) | $sha]
+        | unique | if length == 1 then .[0] else "" end
+      else .head_sha end)] | @tsv' "$RUN_FILE" | tr -d '\r')"
+  downloads=""
+  if [ "$conclusion" != skipped ] && [[ "$checkout_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    web_id=$(jq -r --arg name "bevy-explorer-web-$checkout_sha" '
+      [.artifacts[] | select(.name == $name and .expired == false)]
+      | if length == 1 then .[0].id else empty end' "$ARTIFACTS_FILE" | tr -d '\r')
+    if [ -n "$web_id" ]; then
+      downloads="[web app](https://github.com/$REPO/actions/runs/$RUN_ID/artifacts/$web_id)"
+    fi
+    if [ "$conclusion" = success ] || [ -n "$downloads" ]; then
+      web_revision="$checkout_sha"
+    fi
+  fi
+  if [ "$conclusion" = success ] && [ -n "$web_revision" ] && [[ "$event" = pull_request || "$event" = workflow_dispatch ]]; then
+    version=""
+    if [ "$event" = pull_request ]; then
+      # Use Oddish's versioned tarball so moving the PR tag does not break the link.
+      # Try the three newest candidates to bound registry lookups after reruns.
+      candidates=$(jq -r --arg run "$RUN_ID" --arg sha "$web_revision" '
+        [.artifacts[]
+          | (.name | capture("^dcl-regenesislabs-bevy-explorer-web-(?<version>[0-9]+\\.[0-9]+\\.[0-9]+-"
+              + $run + "\\.commit-(?<short>[0-9a-f]{7,40}))\\.tgz$")) as $package
+          | select($sha | startswith($package.short)) | {version:$package.version, created_at}]
+        | sort_by(.created_at) | reverse | .[:3][] | .version' "$ARTIFACTS_FILE" | tr -d '\r')
+      while IFS= read -r candidate; do
+        if preview_matches_checkout "$candidate" "$web_revision"; then
+          version="$candidate"
+          break
+        fi
+      done <<< "$candidates"
+    fi
+    if [ -z "$version" ]; then
+      # A dispatch must target the PR tag. The tag also covers PR runs without
+      # a usable package artifact.
+      candidate=$(npm_preview_field "pr-$PR_NUMBER" version)
+      if preview_matches_checkout "$candidate" "$web_revision"; then
+        version="$candidate"
+      fi
+    fi
+    if [ -n "$version" ]; then
+      preview="[preview](https://cdn.decentraland.org/@dcl-regenesislabs/bevy-explorer-web/$version/index.html?position=0%2C-2&baseDomain=decentraland.zone)"
+      downloads="${downloads:+$downloads · }$preview"
+    fi
   fi
   rows="$rows| $(job_cell 'Web app' "$url") | $(result_cell "$conclusion" Built) | $(job_time "$secs") | ${downloads:-—} |"$'\n'
 fi
@@ -153,7 +218,11 @@ esac
     echo "<sub>Benchmark runner: $runners</sub>"
     echo
   fi
-  echo "$FOOTER"
+  if [ -n "$web_revision" ]; then
+    echo "<sub>$FOOTER · Web build \`${web_revision:0:7}\`</sub>"
+  else
+    echo "<sub>$FOOTER</sub>"
+  fi
 } > "$OUT_DIR/build.md"
 
 # --- tests -----------------------------------------------------------------------------------
@@ -197,5 +266,5 @@ esac
     printf '%s' "$rows"
   fi
   echo
-  echo "$FOOTER"
+  echo "<sub>$FOOTER</sub>"
 } > "$OUT_DIR/tests.md"

@@ -128,6 +128,21 @@ module.exports.getUserProfile = async function(address) {
     return await Deno.core.ops.op_get_user_profile(address);
 }
 
+// the compact profiles of a list of addresses in one call, through the engine's profile cache:
+// what a list row shows, without fetching whole profiles. In request order; an address that
+// can't be resolved is left out. At most 200 addresses a call; more rejects.
+// addresses: string[] => CompactProfile[]
+// type CompactProfile = {
+//   pointer: string,               // lowercase 0x address
+//   name: string,
+//   hasClaimedName: boolean,
+//   nameColor: Color3 | null,      // the claimed name's colour, if one is set
+//   thumbnailUrl: string,          // the face snapshot's url; empty when there is none
+// }
+module.exports.getCompactProfiles = async function(addresses) {
+    return await Deno.core.ops.op_get_compact_profiles(addresses);
+}
+
 // get the next key/button pressed by the user, identified as a string
 // -> string
 module.exports.getNativeInput = async function() {
@@ -524,6 +539,21 @@ module.exports.getProximityStream = async function() {
   return streamGenerator();
 }
 
+// photo mode (the camera reel's in-world camera) as a stream of its state; see PhotoModeState
+module.exports.getPhotoModeStream = async function() {
+  const rid = await Deno.core.ops.op_get_photo_mode_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_photo_mode_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
 // profile changes (any player the engine holds a profile for, including the local player) as a stream
 // type ProfileChangedEvent = {
 //   address: string,   // lowercase 0x address
@@ -714,13 +744,36 @@ module.exports.social = {
     return stream;
   },
 
-  // local DM history. Which conversations are shown is the HUD's own state.
-  // type DmHistoryEntryData = { from: string, message: string, timestamp: number, receivedAt: number }
+  // local DM history (a community channel, `community:<id>`, is stored the same way). Which
+  // conversations are shown is the HUD's own state.
+  // type DmHistoryEntryData = { from: string, message: string, receivedAt: number, messageId: string, reactions: DmReactionData[] }
   getDmHistory: async function(address) {
     return await Deno.core.ops.op_get_dm_history(address);
   },
   deleteDmHistory: function(address) {
     Deno.core.ops.op_delete_dm_history(address);
+  },
+
+  // community member presence as a stream: `away` is never sent. The local user's own updates
+  // say which communities they are in.
+  // type CommunityMemberConnectivityData = { communityId: string, address: string, status: "online" | "offline" }
+  getCommunityConnectivityStream: async function() {
+    const rid = await Deno.core.ops.op_get_community_connectivity_stream();
+
+    async function* streamGenerator() {
+      while (true) {
+        const next = await Deno.core.ops.op_read_community_connectivity_stream(rid);
+        if (next === null) break;
+        yield next;
+      }
+    }
+
+    return streamGenerator();
+  },
+
+  // the community channels the local user listens to (community ids); replaces the previous set
+  setCommunityChannels: function(ids) {
+    Deno.core.ops.op_set_community_channels(ids);
   }
 }
 

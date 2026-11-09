@@ -36,6 +36,9 @@ is identified by its producer commit in `/play/sites-play.json` (no npm engine p
 - The native CEF HUD and its SDK bridge receive gateway service URLs from the desktop engine.
   CEF routes eligible snapshot images when displaying profiles and notifications. Sites uses its
   web service configuration and the snapshot URLs returned by its backend.
+- The Shop's query cache: `react-web` wraps its Shop page in `features/shop/ShopQueries.tsx` (one
+  client per account, remounted and emptied when another account or a sign-out replaces it); `/play`
+  keeps the app-wide `QueryClientProvider` its in-world Shop uses until that Shop moves to `react-web`.
 - Tests that import bridge-scene sources or `deploy/web` were not moved; the rest run with `pnpm test`
   in `apps/ui3` under `tsconfig.play.json`. `?native=1` is not built.
 - The benchmark's unattended run is not carried: the `autopilot` boot mode (`lib/bootMode.ts`) and
@@ -61,10 +64,11 @@ serve; guest sessions work.
 
 `tooling/upstream-forks.py` writes `forks.toml` (git sources, locked revisions, crates; ahead/behind
 with `--check-upstream`) and `cargo-patches.toml` (`[patch.crates-io]` pins for
-`cargo --config rendering/bevy-explorer/cargo-patches.toml …`; Bevy stays lock-pinned) from
-`source/Cargo.lock`; `--check` fails on drift, `--verify` resolves a lock copy. The daily
+`cargo --config rendering/bevy-explorer/cargo-patches.toml …`) from `source/Cargo.lock`;
+`--check` fails on drift, `--verify` resolves a lock copy. The daily
 `bevy-explorer-upstream.yml` runs it, opens the `upstream/forks` PR and uploads the drift page
-(`tooling/upstream-drift.py`, `tooling/upstream-drift-site.py`).
+(`tooling/upstream-drift.py`, `tooling/upstream-drift-site.py`). Bevy is not among these forks:
+it is vendored at `bevy/` and changed in place ([the bevy fork](docs/guidelines/bevy-fork.md)).
 
 ## Native builds and HUD updates
 

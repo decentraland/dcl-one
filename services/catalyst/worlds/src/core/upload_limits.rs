@@ -29,12 +29,76 @@ pub const PAYLOAD_TOO_LARGE_MESSAGE: &str = "The multipart request is too large.
 pub const INVALID_CONTENT_LENGTH_MESSAGE: &str = "Invalid Content-Length header.";
 pub const TOO_MANY_FIELDS_MESSAGE: &str = "The multipart request has too many fields.";
 pub const TOO_MANY_PARTS_MESSAGE: &str = "The multipart request has too many parts.";
+pub const TOO_MANY_FILES_MESSAGE: &str = "The multipart request has too many files.";
+pub const FILE_TOO_LARGE_MESSAGE: &str = "An uploaded file exceeds the maximum allowed size.";
+
+/// Upstream's `fieldsLimit` text (`src/controllers/multipart/middleware.ts`), naming the
+/// route's field cap.
+pub fn too_many_fields_message(max_fields: usize) -> String {
+    format!("{TOO_MANY_FIELDS_MESSAGE} The maximum allowed is {max_fields}.")
+}
+
+/// Upstream's text for a field value past the route's `fieldSize`.
+pub fn field_too_large_message(name: &str, max_field_bytes: usize) -> String {
+    format!(
+        "Field '{name}' is too large. The maximum allowed size per field is {max_field_bytes} bytes."
+    )
+}
 
 pub const MAX_MULTIPART_FIELD_VALUE_BYTES: usize = 1024 * 1024;
 
 pub const MAX_MULTIPART_FIELDS: usize = 100;
 
 pub const MAX_MULTIPART_PARTS: usize = 10_100;
+
+/// Upstream's `formatBytes` (`src/logic/utils.ts`).
+pub(super) fn format_bytes(bytes: u64) -> String {
+    let b = bytes as f64;
+    const K: f64 = 1024.0;
+    if b < K {
+        format!("{bytes} bytes")
+    } else if b < K * K {
+        format!("{:.1} KiB", b / K)
+    } else if b < K * K * K {
+        format!("{:.1} MiB", b / (K * K))
+    } else {
+        format!("{:.1} GiB", b / (K * K * K))
+    }
+}
+
+/// JavaScript's `Number` text of `ms / 1000`.
+pub(super) fn js_seconds(ms: u64) -> String {
+    (ms as f64 / 1000.0).to_string()
+}
+
+/// Upstream's `describeUploadTimeout`: what arrived on the wire before the upload timeout.
+pub(super) fn describe_upload_timeout(
+    timeout_ms: u64,
+    received_bytes: u64,
+    declared_bytes: Option<u64>,
+) -> String {
+    let received = match declared_bytes {
+        None => format_bytes(received_bytes),
+        Some(declared) => format!(
+            "{} of {}",
+            format_bytes(received_bytes),
+            format_bytes(declared)
+        ),
+    };
+    let rate = received_bytes as f64 / 1024.0 / (timeout_ms as f64 / 1000.0);
+    format!(
+        "The upload did not finish within {} s: received {received} (about {rate:.1} KiB/s). Retry on a faster connection or send smaller batches.",
+        js_seconds(timeout_ms)
+    )
+}
+
+/// Upstream's `DeploymentProcessingTimeoutError` text.
+pub(super) fn processing_timeout_message(timeout_ms: u64) -> String {
+    format!(
+        "The server could not finish processing the deployment within {} s after receiving it. Retry the deployment; if it keeps timing out, report it.",
+        js_seconds(timeout_ms)
+    )
+}
 
 static IN_FLIGHT_UPLOAD_BYTES: AtomicU64 = AtomicU64::new(0);
 static IN_FLIGHT_UPLOAD_FILES: AtomicU64 = AtomicU64::new(0);
@@ -394,6 +458,12 @@ pub fn source_limit_response() -> axum::response::Response {
 // `ApiError` renders them too.
 pub use crate::comms::worlds_envelope::{DeployRejection, shed_response, timeout_response};
 
+/// 413 `{"error":"Payload Too Large","message":…}`, as upstream's multipart
+/// parser answers a size or count limit (`upload-error-handler.ts`).
+pub fn too_large(message: impl Into<String>) -> crate::comms::worlds_envelope::ApiError {
+    crate::comms::worlds_envelope::ApiError::http(413, message)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -452,6 +522,56 @@ mod tests {
             TOO_MANY_PARTS_MESSAGE,
             "The multipart request has too many parts."
         );
+    }
+
+    /// The 413 texts of upstream's one multipart parser (`src/controllers/multipart/middleware.ts`),
+    /// with `POST /entities`' `DEPLOYMENT_FIELD_LIMITS` (32 fields, 32 KiB per field).
+    #[test]
+    fn multipart_limit_texts_are_upstreams() {
+        assert_eq!(
+            too_many_fields_message(32),
+            "The multipart request has too many fields. The maximum allowed is 32."
+        );
+        assert_eq!(
+            field_too_large_message("entityId", 32 * 1024),
+            "Field 'entityId' is too large. The maximum allowed size per field is 32768 bytes."
+        );
+        assert_eq!(
+            TOO_MANY_FILES_MESSAGE,
+            "The multipart request has too many files."
+        );
+        assert_eq!(
+            TOO_MANY_PARTS_MESSAGE,
+            "The multipart request has too many parts."
+        );
+        assert_eq!(
+            FILE_TOO_LARGE_MESSAGE,
+            "An uploaded file exceeds the maximum allowed size."
+        );
+        assert_eq!(
+            PAYLOAD_TOO_LARGE_MESSAGE,
+            "The multipart request is too large."
+        );
+    }
+
+    /// Upstream `test/integration/multipart-limiter.spec.ts` pins these texts by pattern.
+    #[test]
+    fn timeout_texts_are_upstreams() {
+        assert_eq!(
+            describe_upload_timeout(300_000, 3 * 1024 * 1024, Some(10 * 1024 * 1024)),
+            "The upload did not finish within 300 s: received 3.0 MiB of 10.0 MiB (about 10.2 KiB/s). Retry on a faster connection or send smaller batches."
+        );
+        assert_eq!(
+            describe_upload_timeout(500, 100, None),
+            "The upload did not finish within 0.5 s: received 100 bytes (about 0.2 KiB/s). Retry on a faster connection or send smaller batches."
+        );
+        assert_eq!(
+            processing_timeout_message(300_000),
+            "The server could not finish processing the deployment within 300 s after receiving it. Retry the deployment; if it keeps timing out, report it."
+        );
+        assert_eq!(format_bytes(1023), "1023 bytes");
+        assert_eq!(format_bytes(1536), "1.5 KiB");
+        assert_eq!(format_bytes(5 * 1024 * 1024 * 1024), "5.0 GiB");
     }
 
     #[test]
@@ -600,6 +720,34 @@ mod tests {
             err.to_string(),
             "MAX_CONCURRENT_UPLOADS must be a positive integer, got 0"
         );
+    }
+
+    /// `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE` is shared with content's
+    /// deploys: the config refuses what this check would refuse at startup.
+    #[test]
+    fn the_shared_per_source_byte_floor_is_one_world_deploy() {
+        let max_upload = super::super::deploy::MAX_UPLOAD_SIZE_BYTES as u64;
+        let parse = |bytes: u64| {
+            crate::config::Config::parse_for_tests(&[
+                "x",
+                "--database-url",
+                "postgres:///c",
+                "--max-in-flight-upload-bytes-per-source",
+                &bytes.to_string(),
+            ])
+        };
+        assert!(parse(max_upload - 1).is_err());
+        let set = parse(max_upload)
+            .unwrap()
+            .content
+            .max_in_flight_upload_bytes_per_source
+            .unwrap();
+        let limits = UploadLimits {
+            max_in_flight_upload_bytes_per_source: set,
+            ..UploadLimits::default()
+        };
+        assert!(limits.validate(max_upload).is_ok());
+        assert!(DEFAULT_MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE >= max_upload);
     }
 
     #[test]

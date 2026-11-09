@@ -1096,14 +1096,14 @@ export interface components {
             lastUpdated: string;
         };
         IndexSceneSummary: {
-            description?: string | null;
+            description: string;
             id: string;
             pointers: string[];
             runtimeVersion?: unknown;
-            thumbnail?: string | null;
+            thumbnail?: string;
             /** Format: int64 */
-            timestamp?: number | null;
-            title?: string | null;
+            timestamp: number;
+            title: string;
         };
         /**
          * @description The payload of `/live-data`.

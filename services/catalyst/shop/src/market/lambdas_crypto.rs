@@ -156,16 +156,6 @@ fn validator_error(status: StatusCode, message: &str, data: Option<Vec<Value>>) 
     (status, Json(body)).into_response()
 }
 
-/// `application/json`, with or without parameters (`LP-27-text-plain.json`,
-/// `LP-27-no-content-type.json`).
-fn is_json_content_type(headers: &HeaderMap) -> bool {
-    headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(';').next())
-        .is_some_and(|essence| essence.trim().eq_ignore_ascii_case("application/json"))
-}
-
 /// V8's `JSON.parse` message for the shapes the captures pin: an empty body
 /// (`LP-27-empty-body.json`) and an object whose first token is neither a
 /// key nor `}` (`LP-27-not-json.json`); serde's text for the rest.
@@ -295,7 +285,11 @@ pub async fn validate_signature(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if !is_json_content_type(&headers) {
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok());
+    // `LP-27-text-plain.json`, `LP-27-no-content-type.json`.
+    if !crate::content::validation::is_json_content_type(content_type) {
         return validator_error(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "Content-Type must be application/json",

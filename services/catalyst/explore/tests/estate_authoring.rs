@@ -36,7 +36,11 @@ async fn request(app: &axum::Router, method: &str, path: &str, body: Value) -> V
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(status, StatusCode::OK, "{body}");
+    // The old framework answered 201 on these writes (`created_status`).
+    assert!(
+        matches!(status, StatusCode::OK | StatusCode::CREATED),
+        "{status}: {body}"
+    );
     body
 }
 
@@ -69,6 +73,23 @@ async fn public_create_patch_and_admin_create_use_native_estate_membership() {
             None,
         )));
     let app = router(state.clone());
+    // The old user path answered 404 without a Catalyst profile for the signer
+    // (`withAuthProfile`); the deployers store a profile's metadata under `v`.
+    let signer = catalyst_shared::signed_fetch::test_support::address().to_ascii_lowercase();
+    let entity_id = format!("bafyprofile{}", uuid::Uuid::new_v4().simple());
+    sqlx::query("INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) VALUES ($1, 'v3', 'profile', $2, $3::json, timezone('UTC', now()), ARRAY[$1], timezone('UTC', now()), '[]')")
+        .bind(&signer)
+        .bind(&entity_id)
+        .bind(json!({"v": {"avatars": [{"name": "Native author", "userId": &signer}]}}))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO content.active_pointers (pointer, entity_id, entity_type) VALUES ($1, $2, 'profile') ON CONFLICT (pointer) DO UPDATE SET entity_id = EXCLUDED.entity_id")
+        .bind(&signer)
+        .bind(&entity_id)
+        .execute(&pool)
+        .await
+        .unwrap();
     let body = json!({"name":"Native estate", "start_at":"2099-06-01T18:00:00Z", "duration":3600000, "x":17, "y":18});
     let created = request(&app, "POST", "/api/events", body.clone()).await;
     assert_eq!(created["data"]["estate_id"], "500");

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Select Explorer jobs from their inputs and validate image-producing runs."""
 import argparse
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -16,21 +17,24 @@ LANES = ('clippy', 'test', 'headless', 'web')
 NATIVE_JOBS = {'Test Suite (ubuntu-24.04)', 'Test Suite (windows-2025)', 'Test Suite (macos-15)'}
 GATEWAY_HUD_INPUTS = ('apps/ui3/src/play/lib/baseDomain.ts',
                       'apps/ui3/src/play/engine/generated/serviceTable.ts')
-INPUTS = ('rendering/bevy-explorer/source', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
-          'library/uuav/uuav-client', 'library/uuav/uuav-ipc', 'library/uuav/dist', 'tooling/uuav',
-          'apps/dcl-scene-cli', 'infra/gateway', *GATEWAY_HUD_INPUTS,
-          'tooling/bevy-ci.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
+# Sources the web HUD compiles from library/: the ones tooling/play-artifact.py fingerprints with it.
+_ARTIFACT = importlib.util.spec_from_file_location('play_artifact', Path(__file__).with_name('play-artifact.py'))
+_artifact = importlib.util.module_from_spec(_ARTIFACT)
+_ARTIFACT.loader.exec_module(_artifact)
+HUD_SHARED = _artifact.HUD_SHARED
+# The flake's tool packages (bevy-tools: protoc, taplo and wasm-pack for the Linux lanes; bevy-ffmpeg
+# for the macOS Test Suite) and the action that delivers them; Windows, headless packaging and
+# scenes run install-protoc.py instead.
+TOOLS_INPUTS = ('flake.nix', 'flake.lock', 'infra/packages/default.nix', 'infra/packages/tools.nix', '.github/actions/bevy-explorer-tools')
+INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/bevy', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
+          *(path.rstrip('/') for path in HUD_SHARED),
+          'infra/gateway', *GATEWAY_HUD_INPUTS, *TOOLS_INPUTS,
+          'tooling/bevy-ci.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
           'tooling/tests/test_bevy_*.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
           '.github/workflows/bevy-explorer-headless.yml',
           '.github/workflows/bevy-explorer-headless-build.yml',
           'tooling/ci-publication.py', '.cargo', 'rust-toolchain*')
-# Paths of the end-to-end suite that select the scenes lane: the inputs of the video playback
-# steps in bevy-explorer-scenes.yml. The run loads every visual spec before it filters, so the
-# whole folder is an input.
-SCENES_E2E_INPUTS = ('apps/bevy-explorer/e2e/scenes/', 'apps/bevy-explorer/e2e/driver/',
-                     'apps/bevy-explorer/e2e/scripts/', 'apps/bevy-explorer/e2e/specs/visual/',
-                     'apps/bevy-explorer/e2e/package.json', 'apps/bevy-explorer/e2e/package-lock.json')
 # Web files that the Test Suite's harness tests read: the benchmark runner's
 # (rendering/bevy-explorer/source/local-harness/benchmark/tests) and the web driver's
 # (local-harness/web-driver), which loads the HUD's test commands into Chrome. A change to one is
@@ -41,10 +45,12 @@ HARNESS_WEB_READS = ('rendering/bevy-explorer/source/deploy/web/engine/perf_stre
 IMAGES_INPUTS = (
     'flake.*',
     'rendering/bevy-explorer/source/**',
+    'rendering/bevy-explorer/bevy/**',
     'rendering/bevy-explorer/upstream.lock.json',
     'apps/bevy-explorer/build-web.py',
-    'apps/bevy-explorer/install-*.py',
+    'apps/bevy-explorer/install-*',
     '.github/workflows/bevy-explorer-ci.yml',
+    '.github/actions/bevy-explorer-tools/**',
     'tooling/fetch-play.py',
     'tooling/bevy-ci.py',
     'tooling/play-artifact.py',
@@ -60,6 +66,7 @@ IMAGES_INPUTS = (
     'apps/ui3/**',
     'tooling/image-*',
     'tooling/ci-publication.py',
+    'tooling/ci_paths.py',
     'tooling/tests/test_ci_publication.py',
     'tooling/tests/test_image_publish.py',
     '.github/workflows/apis-sites-images.yml',
@@ -81,8 +88,10 @@ APP_INPUTS = {
     'Makefile': ('web', 'headless'),
     # Each producer has its own build script; web edits must not rebuild headless.
     'build-web.py': ('web',),
+    'install-web-tools.py': ('web',),
     'build-headless.py': ('headless',),
     'install-linux-deps.py': (*LANES, 'scenes'),
+    'install-tools.sh': (*LANES, 'native-matrix'),
     'prepare-native-cache.py': ('clippy', 'test', 'headless', 'native-matrix', 'scenes'),
 }
 
@@ -205,11 +214,21 @@ def locked_packages(rev):
         return None
 
 
+def changed_inputs(base, head, inputs):
+    spec = importlib.util.spec_from_file_location('ci_paths', Path(__file__).with_name('ci_paths.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    changed = git('diff', '--name-only', '--no-renames', '-z', base, head, '--', *inputs).split('\0')
+    removed = git('diff', '--name-only', '--no-renames', '--diff-filter=D', '-z',
+                  base, head, '--', *inputs).split('\0')
+    removed = module.matching_paths(removed, ('**/*.md', *('!' + path for path in module.PROSE_TREES)))
+    return set(module.non_documentation(filter(None, changed))) | set(removed)
+
+
 def select(base, head):
     ensure_commit(base)
     ensure_commit(head)
-    paths = set(filter(None, git('diff', '--name-only', '--no-renames', '-z', base, head,
-                                 '--', *INPUTS).split('\0')))
+    paths = changed_inputs(base, head, INPUTS)
     selected = dict.fromkeys((*LANES, 'native-matrix', 'scenes'), False)
     for path in paths:
         if path == SCENES_WORKFLOW:
@@ -223,6 +242,11 @@ def select(base, head):
             affected = ('web', 'headless')
         elif path == 'tooling/play-artifact.py':
             affected = ('web',)
+        elif path in TOOLS_INPUTS or path.startswith('.github/actions/bevy-explorer-tools/'):
+            # The Linux lanes compile with the flake's protoc and build the web engine with its
+            # wasm-pack; the macOS Test Suite, in the native matrix, links the flake's ffmpeg; scenes
+            # install protoc with install-protoc.py.
+            affected = (*LANES, 'native-matrix')
         elif path.startswith(('tooling/tests/test_bevy_', 'tooling/tests/test_play_')):
             # The always-run source job executes these tests; they aren't build inputs.
             affected = ()
@@ -234,6 +258,9 @@ def select(base, head):
             # which read them (the sender the benchmark runner's receiver must accept, the guest's
             # root-key name its reset page keeps, the HUD commands the web driver gives real input).
             affected = ('web', 'test')
+        elif path.startswith(HUD_SHARED):
+            # The web HUD compiles them (react-web/vite.shared.ts); the engine never reads them.
+            affected = ('web',)
         elif path.startswith(('rendering/bevy-explorer/source/react-web/',
                               'rendering/bevy-explorer/source/deploy/web/')):
             # These are runtime web assets, not inputs to Cargo's native tests
@@ -243,13 +270,9 @@ def select(base, head):
             # Launcher/package assembly cannot affect web or graphical/native tests.
             # Keep the headless build/smoke; main also packages all four platforms.
             affected = ('headless',)
-        elif path.startswith(SCENES_E2E_INPUTS) or path.startswith('apps/dcl-scene-cli/'):
-            # The scenes, the driver, the runner scripts, the visual specs, the package files and
-            # the CLI that builds the scenes select the scenes lane.
-            affected = ('scenes',)
         elif path.startswith('apps/bevy-explorer/e2e/'):
-            # The rest of the end-to-end suite drives a built client; its own workflow
-            # (bevy-explorer-e2e.yml) checks it and runs it against the web app this workflow built.
+            # The end-to-end suite drives a built client; its own workflow (bevy-explorer-e2e.yml)
+            # checks it and runs it against the web app this workflow built.
             affected = ()
         elif path.startswith('apps/bevy-explorer/') and path.removeprefix('apps/bevy-explorer/') in APP_INPUTS:
             affected = APP_INPUTS[path.removeprefix('apps/bevy-explorer/')]
@@ -336,7 +359,7 @@ def consumer_changed(base, head, consumer):
         raise ValueError('Unknown publication consumer')
     ensure_commit(base)
     ensure_commit(head)
-    return bool(git('diff', '--name-only', '--no-renames', base, head, '--', *IMAGES_INPUTS))
+    return bool(changed_inputs(base, head, IMAGES_INPUTS))
 
 
 def consumer_plan(event, base, head, repo):
@@ -358,7 +381,7 @@ def consumer_plan(event, base, head, repo):
             raise ValueError('Unknown image selection event')
         ensure_commit(base)
         ensure_commit(head)
-        changed = git('diff', '--name-only', '--no-renames', base, head, '--', *IMAGES_INPUTS)
+        changed = changed_inputs(base, head, IMAGES_INPUTS)
         return {'images': bool(changed), 'reason': 'Image consumer inputs changed' if changed else 'Image consumer inputs unchanged'}
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         print(f'Conservative image build: {exc}')

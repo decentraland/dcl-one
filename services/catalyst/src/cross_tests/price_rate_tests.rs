@@ -110,8 +110,9 @@ async fn a_snapshot_past_the_freshness_budget_is_the_envelope_not_a_quote() {
     assert_eq!(
         crate::shop::market::items::mana_usd_rate(&market)
             .await
-            .unwrap(),
-        FRESH
+            .unwrap()
+            .decimal_text(),
+        "0.08888888"
     );
     cleanup().await;
 }

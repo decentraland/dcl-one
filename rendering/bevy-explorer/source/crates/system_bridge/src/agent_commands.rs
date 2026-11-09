@@ -120,7 +120,7 @@ struct LoginIdentityCommand {
     #[arg(long)]
     look: Option<u32>,
     /// the lambdas endpoint to fetch the account's profile from (the catalyst the sign-in
-    /// deployed it to), else the realm's
+    /// deployed it to), else the centralized catalyst's
     #[arg(long)]
     profiles: Option<String>,
 }

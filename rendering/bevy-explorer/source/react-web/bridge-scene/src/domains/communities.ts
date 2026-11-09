@@ -1,13 +1,19 @@
-// Communities: browse list, joining, and per-community detail (members/posts/places).
+// Communities: browse list, joining, per-community detail (members/posts/places), and the chat
+// channels: the communities the user is a member of, who is online in one, and presence.
 //   from: social-api communities service via BevyApi.kernelFetch (signed GETs / POST join)
 //       + the engine's profile cache (profile.ts) for the names and faces those reads no
-//         longer carry — the v2 endpoints answer with addresses only.
+//         longer carry — the v2 endpoints answer with addresses only
+//       + the engine's community connectivity stream (the social service's
+//         SubscribeToCommunityMemberConnectivityUpdates) for presence; the local user's own
+//         updates add and remove channels.
 import { getPlayer } from '@dcl/sdk/players'
-import { getJson, serviceBase, signed, signedForm } from '../http'
+import { BevyApi } from '../bevy-api'
+import { dataUrlBytes, getJson, HttpError, serviceBase, signed, signedForm } from '../http'
 import { fetchIdentities } from './profile'
 import type { ProfileIdentity } from './profile'
+import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'
-import type { Community, CommunityAction, CommunityEvent, CommunityMember, CommunityPhoto, CommunityPlace, CommunityPost } from '../../../src/engine/protocol'
+import type { Community, CommunityAction, CommunityChannel, CommunityEvent, CommunityMember, CommunityPhoto, CommunityPlace, CommunityPost, CommunitySaveResultMessage } from '../../../src/engine/protocol'
 
 // Community events live on the (public) events-api, filtered by community_id. Community photos
 // live on the camera-reel service (mirrors /api/users/{a}/images). Community thumbnails are NOT
@@ -23,6 +29,7 @@ type CommunityRaw = {
   role: string
   ownerAddress?: string
   privacy?: string
+  visibility?: string
   pendingActionType?: string
   pendingInviteOrRequestId?: string
   thumbnailUrl?: string
@@ -44,22 +51,98 @@ async function base(version: 'v1' | 'v2'): Promise<string> {
   return `${await serviceBase('socialApi')}/${version}/communities`
 }
 
-async function list(): Promise<Community[]> {
-  const cdn = await serviceBase('assetsCdn')
-  const res = await signed<{ results?: CommunityRaw[] }>(`${await base('v2')}?limit=50`)
-  const raw = res?.results ?? []
+async function thumbnail(c: CommunityRaw): Promise<string> {
+  return c.thumbnailUrl || `${await serviceBase('assetsCdn')}/social/communities/${encodeURIComponent(c.id)}/raw-thumbnail.png`
+}
+
+async function communities(raw: CommunityRaw[]): Promise<Community[]> {
   const identity = await fetchIdentities(raw.map((c) => c.ownerAddress ?? ''))
-  return raw.map((c) => ({
+  const thumbs = await Promise.all(raw.map(thumbnail))
+  return raw.map((c, i) => ({
     id: c.id,
     name: c.name,
     description: c.description,
-    thumbnail: c.thumbnailUrl || `${cdn}/social/communities/${c.id}/raw-thumbnail.png`,
+    thumbnail: thumbs[i],
     membersCount: c.membersCount,
     role: c.role,
     ownerName: identity(c.ownerAddress ?? '').name,
     privacy: c.privacy,
+    visibility: c.visibility,
     pendingRequestId: c.pendingActionType === 'request_to_join' ? c.pendingInviteOrRequestId : undefined
   }))
+}
+
+// The page's list: the first 50 of the browse order, then the user's own communities it left out,
+// so My Communities holds every one the user is a member of, however far down the browse order it
+// is. A failed member-of read leaves the browse list as it is.
+async function list(): Promise<Community[]> {
+  const [browse, member] = await Promise.all([
+    signed<{ results?: CommunityRaw[] }>(`${await base('v2')}?limit=50`),
+    memberOfRaw().catch((): CommunityRaw[] => [])
+  ])
+  const raw = browse?.results ?? []
+  const listed = new Set(raw.map((c) => c.id))
+  return await communities([...raw, ...member.filter((c) => !listed.has(c.id))])
+}
+
+async function rawOne(id: string): Promise<CommunityRaw | undefined> {
+  const res = await signed<{ data?: CommunityRaw } | CommunityRaw>(`${await base('v2')}/${encodeURIComponent(id)}`)
+  const raw = res != null && 'data' in res && res.data != null ? res.data : (res as CommunityRaw | undefined)
+  return raw?.id != null ? raw : undefined
+}
+
+// The names of the communities seen, for the chat bubbles' community line: a message names its
+// community by id only.
+const names = new Map<string, string>()
+export function communityName(id: string): string | undefined {
+  return names.get(id.toLowerCase())
+}
+
+function remember(c: { id: string; name: string }): void {
+  names.set(c.id.toLowerCase(), c.name)
+}
+
+async function channel(c: CommunityRaw): Promise<CommunityChannel> {
+  remember(c)
+  return { id: c.id, name: c.name, thumbnail: await thumbnail(c), role: c.role }
+}
+
+// The communities the user is a member of, 100 a call. The page count is capped so a server that
+// ignores `offset` cannot keep this going. An answer without a results list is a failed read, not
+// an empty page: the caller drops a community missing from the list, so an empty one from a
+// malformed answer would delete its history.
+const MEMBER_OF_PAGE = 100
+const MEMBER_OF_PAGES = 10
+async function memberOf(): Promise<CommunityChannel[]> {
+  return await Promise.all((await memberOfRaw()).map(channel))
+}
+
+async function memberOfRaw(): Promise<CommunityRaw[]> {
+  const b = await base('v2')
+  const raw: CommunityRaw[] = []
+  for (let page = 0; page < MEMBER_OF_PAGES; page++) {
+    const offset = page * MEMBER_OF_PAGE
+    const res = await signed<{ results?: CommunityRaw[]; total?: number }>(`${b}?onlyMemberOf=true&limit=${MEMBER_OF_PAGE}&offset=${offset}`)
+    const rows = res?.results
+    if (!Array.isArray(rows)) throw new Error('member-of answer has no results list')
+    raw.push(...rows)
+    if (rows.length < MEMBER_OF_PAGE || (res?.total != null && raw.length >= res.total)) break
+  }
+  return raw
+}
+
+async function one(id: string): Promise<CommunityChannel | undefined> {
+  const raw = await rawOne(id)
+  return raw != null ? await channel(raw) : undefined
+}
+
+// Who is online in a community now: the members list filtered server-side, with identities.
+async function onlineMembers(id: string): Promise<CommunityMember[]> {
+  const b = await base('v2')
+  const res = await signed<{ results?: MemberRaw[] }>(`${b}/${encodeURIComponent(id)}/members?offset=0&limit=1000&onlyOnline=true`)
+  const rows = res?.results ?? []
+  const identity = await fetchIdentities(rows.map((m) => m.memberAddress ?? ''))
+  return rows.map((m) => mapMember(m, identity))
 }
 
 function mapMember(m: MemberRaw, identity: (address: string) => ProfileIdentity): CommunityMember {
@@ -133,21 +216,157 @@ async function detail(id: string): Promise<{ members: CommunityMember[]; posts: 
   return { members, posts, places, events, photos }
 }
 
+/** A refused create or update as the form shows it. As in unity-explorer, every HTTP 400 is the
+ *  content check's answer: its per-field issues (possibly none), or `unavailable` when the check
+ *  could not run. Anything else is a plain error. */
+function saveFailure(e: unknown): Pick<CommunitySaveResultMessage, 'moderation' | 'error'> {
+  if (e instanceof HttpError && e.status === 400) {
+    let body: { data?: { issues?: Partial<Record<'name' | 'description' | 'image', unknown>> }; communityContentValidationUnavailable?: unknown } = {}
+    try {
+      body = JSON.parse(e.body) as typeof body
+    } catch {
+      // not JSON: a refusal with no findings
+    }
+    const tags = (v: unknown): string[] => (Array.isArray(v) ? v.filter((t): t is string => typeof t === 'string') : [])
+    const issues = body.data?.issues
+    return {
+      moderation: {
+        issues: { name: tags(issues?.name), description: tags(issues?.description), image: tags(issues?.image) },
+        unavailable: body.communityContentValidationUnavailable === true
+      }
+    }
+  }
+  return { error: e instanceof Error ? e.message : String(e) }
+}
+
 export function registerCommunities(ctx: Ctx): void {
   ctx.on('getCommunities', async () => {
-    ctx.send({ kind: 'communities', communities: await list() })
+    const communities = await list()
+    communities.forEach(remember)
+    ctx.send({ kind: 'communities', communities })
+  })
+  ctx.on('getCommunity', async (msg) => {
+    const raw = await rawOne(msg.id).catch((e: unknown) => {
+      console.error('[communities] community fetch failed', e)
+      ctx.send({ kind: 'communityActionFailed', id: msg.id, action: 'fetch', message: e instanceof Error ? e.message : String(e) })
+      return undefined
+    })
+    if (raw == null) return
+    remember(raw)
+    const [community] = await communities([raw])
+    if (community != null) ctx.send({ kind: 'community', community })
+  })
+  // The member-of list is authoritative when it arrives: an empty one closes every community
+  // chat. So a failed read sends nothing, and the page keeps the list it has (the next join, leave
+  // or login reads it again), rather than emptying it for a passing error.
+  const sendChannels = async (): Promise<void> => {
+    const communities = await memberOf().catch((e: unknown) => {
+      console.error('[communities] member-of list failed', e)
+      return undefined
+    })
+    if (communities != null) ctx.send({ kind: 'communityChannels', communities })
+  }
+  ctx.on('getCommunityChannels', sendChannels)
+  // After a create, update or delete: the list and the chat channels, each on its own, so a failed
+  // list read never skips the channels.
+  const refreshLists = async (): Promise<void> => {
+    await list().then(
+      (communities) => ctx.send({ kind: 'communities', communities }),
+      (e: unknown) => console.error('[communities] list failed', e)
+    )
+    await sendChannels()
+  }
+  ctx.on('setCommunityChannels', (msg) => {
+    BevyApi.social.setCommunityChannels(msg.ids)
+  })
+  // The community whose members the page last asked for: the one shown, whose list its presence
+  // updates keep current.
+  let shown: string | null = null
+  ctx.on('getCommunityOnlineMembers', async (msg) => {
+    shown = msg.id
+    const members = await onlineMembers(msg.id).catch((e: unknown) => {
+      console.error('[communities] online members failed', e)
+      return []
+    })
+    ctx.send({ kind: 'communityOnlineMembers', id: msg.id, members })
+  })
+  // Presence: the stream carries every community the user is in. The local user's own ONLINE for
+  // a community means they joined (or were added), OFFLINE that they left or were removed: the
+  // page adds or drops the tab. Another member's update only matters for the community shown
+  // (the page keeps no other list), so the rest are dropped before their identity is resolved.
+  // The stream never carries `away`.
+  relay('communityPresence', async () => await BevyApi.social.getCommunityConnectivityStream(), (u) => {
+    const me = getPlayer()?.userId?.toLowerCase()
+    const address = u.address.toLowerCase()
+    const online = u.status === 'online'
+    if (me != null && address === me) {
+      if (online) {
+        void one(u.communityId)
+          .then((community) => {
+            if (community != null) ctx.send({ kind: 'communityChannelAdded', community })
+          })
+          .catch((e: unknown) => console.error('[communities] community fetch failed', e))
+      } else {
+        ctx.send({ kind: 'communityChannelRemoved', id: u.communityId })
+      }
+      return
+    }
+    if (u.communityId !== shown) return
+    // the update names the member only; the page keeps the role it listed for them, if any
+    void fetchIdentities([address])
+      .then((identity) => {
+        ctx.send({ kind: 'communityPresence', communityId: u.communityId, member: mapMember({ memberAddress: address }, identity), online })
+      })
+      .catch((e: unknown) => console.error('[communities] presence identity failed', e))
   })
   ctx.on('createCommunity', async (msg) => {
-    // Text-only multipart (no thumbnail — see signedForm). Matches Unity's create payload.
-    await signedForm(await base('v1'), 'POST', {
-      name: msg.name,
-      description: msg.description,
-      privacy: msg.privacy,
-      visibility: msg.discoverable ? 'all' : 'unlisted'
-    }).catch((e: unknown) => {
-      console.error('[communities] create failed', e)
-    })
-    ctx.send({ kind: 'communities', communities: await list() })
+    // unity-explorer's create payload: text fields, and the picture as a `thumbnail.png` file part
+    // (always labelled image/png; the service reads the real type from the bytes).
+    const files =
+      msg.thumbnail != null
+        ? [{ name: 'thumbnail', filename: 'thumbnail.png', contentType: 'image/png', bytes: dataUrlBytes(msg.thumbnail) }]
+        : []
+    const fields = { name: msg.name, description: msg.description, privacy: msg.privacy, visibility: msg.discoverable ? 'all' : 'unlisted' }
+    // the service url is resolved inside the chain, so a failure there is a reported error too
+    const result = await base('v1')
+      .then((b) => signedForm<{ id?: string }>(b, 'POST', fields, files))
+      .then((created): CommunitySaveResultMessage => ({ kind: 'communitySaveResult', mode: 'create', id: created?.id ?? '' }))
+      .catch((e: unknown): CommunitySaveResultMessage => {
+        console.error('[communities] create failed', e)
+        return { kind: 'communitySaveResult', mode: 'create', ...saveFailure(e) }
+      })
+    ctx.send(result)
+    await refreshLists()
+  })
+  ctx.on('updateCommunity', async (msg) => {
+    // unity-explorer's update: a multipart PUT with only the fields that changed, and the picture
+    // as a `thumbnail.png` file part when a new one was chosen.
+    const fields: Record<string, string> = {}
+    if (msg.name != null) fields.name = msg.name
+    if (msg.description != null) fields.description = msg.description
+    if (msg.privacy != null) fields.privacy = msg.privacy
+    if (msg.discoverable != null) fields.visibility = msg.discoverable ? 'all' : 'unlisted'
+    const files =
+      msg.thumbnail != null
+        ? [{ name: 'thumbnail', filename: 'thumbnail.png', contentType: 'image/png', bytes: dataUrlBytes(msg.thumbnail) }]
+        : []
+    const id = encodeURIComponent(msg.id)
+    const result = await base('v1')
+      .then((b) => signedForm(`${b}/${id}`, 'PUT', fields, files))
+      .then((): CommunitySaveResultMessage => ({ kind: 'communitySaveResult', mode: 'update', id: msg.id }))
+      .catch((e: unknown): CommunitySaveResultMessage => {
+        console.error('[communities] update failed', e)
+        return { kind: 'communitySaveResult', mode: 'update', ...saveFailure(e) }
+      })
+    ctx.send(result)
+    if (result.id == null) return
+    // the card, the browse list and My Communities all show the saved values
+    const raw = await rawOne(msg.id).catch(() => undefined)
+    if (raw != null) {
+      const [community] = await communities([raw])
+      if (community != null) ctx.send({ kind: 'community', community })
+    }
+    await refreshLists()
   })
   // Every write reports a rejection to the page (the modal shows it) and then re-reads the list,
   // so the buttons always reflect the server.
@@ -156,8 +375,37 @@ export function registerCommunities(ctx: Ctx): void {
       console.error(`[communities] ${action} failed`, e)
       ctx.send({ kind: 'communityActionFailed', id, action, message: e instanceof Error ? e.message : String(e) })
     })
-    ctx.send({ kind: 'communities', communities: await list() })
+    const listed = await list()
+    ctx.send({ kind: 'communities', communities: listed })
+    // a card for a community past the list's first page shows the community fetched by id, so
+    // that copy is refreshed too (its role and buttons follow the write)
+    if (!listed.some((c) => c.id === id)) {
+      const raw = await rawOne(id).catch((e: unknown) => {
+        console.error('[communities] community fetch failed', e)
+        return undefined
+      })
+      const [community] = raw != null ? await communities([raw]) : []
+      if (community != null) ctx.send({ kind: 'community', community })
+    }
+    // joining or leaving changes the chat channels too
+    await sendChannels()
   }
+  ctx.on('deleteCommunity', async (msg) => {
+    // unity-explorer's delete: DELETE /v1/communities/{id}; on success the card closes. Not through
+    // `write`, which re-reads the community it acted on, and this one is gone.
+    const deleted = await base('v1')
+      .then((b) => signed(`${b}/${encodeURIComponent(msg.id)}`, 'DELETE'))
+      .then(
+      () => true,
+      (e: unknown) => {
+        console.error('[communities] delete failed', e)
+        ctx.send({ kind: 'communityActionFailed', id: msg.id, action: 'delete', message: e instanceof Error ? e.message : String(e) })
+        return false
+      }
+    )
+    if (deleted) ctx.send({ kind: 'communityDeleted', id: msg.id })
+    await refreshLists()
+  })
   ctx.on('joinCommunity', async (msg) => {
     await write(msg.id, 'join', async () => await signed(`${await base('v1')}/${encodeURIComponent(msg.id)}/members`, 'POST'))
   })

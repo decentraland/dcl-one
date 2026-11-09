@@ -66,7 +66,8 @@ export interface RpcRequest {
   params?: Record<string, string>
 }
 
-/** Send a chat message (page → engine via the scene's BevyApi.sendChat). */
+/** Send a chat message (page → engine via the scene's BevyApi.sendChat). The channel is 'Nearby',
+ *  the DM partner's wallet, or a community's `community:<id>`. */
 export interface SendChatRequest {
   kind: 'sendChat'
   message: string
@@ -77,7 +78,7 @@ export interface SendChatRequest {
  *  BevyApi.sendChatReaction). The engine echoes it back as a ChatReactionMessage. */
 export interface SendChatReactionRequest {
   kind: 'sendChatReaction'
-  /** 'Nearby' or the DM partner's wallet. */
+  /** 'Nearby', the DM partner's wallet, or `community:<id>`. */
   channel: string
   messageId: string
   emoji: string
@@ -190,6 +191,10 @@ export type PageToScene =
   | RevertAvatarRequest
   | PreviewAvatarRequest
   | PreviewFocusRequest
+  | PreviewStageRequest
+  | PreviewEmoteRequest
+  | PreviewRotateRequest
+  | PreviewZoomRequest
   | GetOutfitsRequest
   | SaveOutfitRequest
   | DeleteOutfitRequest
@@ -201,12 +206,19 @@ export type PageToScene =
   | SetAvatarColorRequest
   | SetForceRenderRequest
   | GetCommunitiesRequest
+  | GetCommunityRequest
   | CreateCommunityRequest
+  | UpdateCommunityRequest
+  | DeleteCommunityRequest
   | JoinCommunityRequest
   | LeaveCommunityRequest
   | RequestToJoinCommunityRequest
   | CancelJoinRequestRequest
   | GetCommunityDetailRequest
+  | GetCommunityChannelsRequest
+  | SetCommunityChannelsRequest
+  | GetCommunityOnlineMembersRequest
+  | PlayUiSoundRequest
   | GetMapRequest
   | GetHomeSceneRequest
   | GetWelcomeRequest
@@ -227,6 +239,8 @@ export type PageToScene =
   | EngineViewportRequest
   | InteractableAreaMessage
   | GetGalleryRequest
+  | SetPhotoModeRequest
+  | TakePhotoRequest
   | GetGalleryPhotoRequest
   | DeleteGalleryPhotoRequest
   | SmartWearableAuthAnswerRequest
@@ -283,7 +297,7 @@ export interface ChatMessage {
 
 /** A reaction added to or removed from a chat message, the local user's included. */
 export interface ChatReaction {
-  /** 'Nearby' or the DM partner's wallet. */
+  /** 'Nearby', the DM partner's wallet, or `community:<id>`. */
   channel: string
   messageId: string
   emoji: string
@@ -391,6 +405,8 @@ export interface FriendsMessage {
   /** Blocked addresses (names/avatars not resolved here). */
   blocked: string[]
   blockedUsers?: BlockedUser[]
+  /** Lowercased addresses of users who have blocked the local user (absent from older bridges). */
+  blockedBy?: string[]
   /** Signed in but the social service hasn't initialised yet (vs a guest, who never gets it). */
   loading?: boolean
 }
@@ -439,7 +455,9 @@ export interface FriendActionFailedMessage {
   error: string
 }
 
-/** Whether the local user can DM someone, and why not. Mirrors the engine's DmUserStateData. */
+/** Whether the local user can DM someone, and why not. Mirrors the engine's DmUserStateData. For
+ *  a community channel (`community:<id>`): whether a community message can go anywhere
+ *  (`notConnected`: not in the private chat room; `noRouter`: no message router in it). */
 export type DmUserState =
   | 'notConnected'
   | 'connected'
@@ -448,9 +466,11 @@ export type DmUserState =
   | 'privateMessagesBlocked'
   | 'disconnected'
   | 'otherClient'
+  | 'noRouter'
 
-/** Start or stop following a partner's DM state (page → scene). The scene holds one engine
- *  stream per watched address; the page watches each open DM tab. */
+/** Start or stop following a partner's DM state, or community chat's for a community channel
+ *  (page → scene). The scene holds one engine stream per watched address; the page watches each
+ *  open DM tab and the shown community tab. */
 export interface DmWatchRequest {
   kind: 'dmWatch'
   address: string
@@ -469,6 +489,7 @@ export interface DmUserStateMessage {
 /** The stored DMs with a partner (page → scene), answered by DmHistoryMessage. */
 export interface DmHistoryRequest {
   kind: 'dmHistory'
+  /** The partner's wallet, or a community's `community:<id>`. */
   address: string
 }
 
@@ -501,6 +522,7 @@ export interface DmHistoryMessage {
 /** Delete the stored DMs with a partner (page → scene). */
 export interface DmDeleteRequest {
   kind: 'dmDelete'
+  /** The partner's wallet, or a community's `community:<id>`. */
   address: string
 }
 
@@ -630,6 +652,9 @@ export interface SaveProfileRequest {
   description?: string
   links?: { title: string; url: string }[]
   info?: ProfileInfo
+  /** A claimed name's colour, sRGB channels 0–1. The engine applies it only while the name is
+   *  claimed; an unclaimed name keeps its derived colour. */
+  nameColor?: { r: number; g: number; b: number }
 }
 
 /** The outcome of a `saveProfile` — the engine acks the profile deploy, so a failed save is
@@ -664,6 +689,12 @@ export interface AppNotification {
 
 export interface NotificationsMessage {
   kind: 'notifications'
+  notifications: AppNotification[]
+}
+
+/** Unread notifications newer than any seen before, from the scene's poll (newest first). */
+export interface NotificationsNewMessage {
+  kind: 'notificationsNew'
   notifications: AppNotification[]
 }
 
@@ -1088,6 +1119,8 @@ export interface Community {
   ownerName: string
   /** 'public' | 'private' — gates the join flow (public = join, private = request). */
   privacy?: string
+  /** 'all' (listed in browse and search) | 'unlisted' (members and invitees only). */
+  visibility?: string
   /** Id of the local user's pending request to join (private communities). */
   pendingRequestId?: string
 }
@@ -1114,6 +1147,17 @@ export interface GetCommunitiesRequest {
   kind: 'getCommunities'
 }
 
+/** One community by id (page → scene → social-api GET /v2/communities/{id}), for a card opened
+ *  outside the browse list, e.g. from its chat. Answered by CommunityMessage. */
+export interface GetCommunityRequest {
+  kind: 'getCommunity'
+  id: string
+}
+export interface CommunityMessage {
+  kind: 'community'
+  community: Community
+}
+
 /** Create a community (page → scene → signed multipart POST to the social-api). */
 export interface CreateCommunityRequest {
   kind: 'createCommunity'
@@ -1122,6 +1166,54 @@ export interface CreateCommunityRequest {
   privacy: 'public' | 'private'
   /** Discoverable in the directory → visibility 'all', otherwise 'unlisted'. */
   discoverable: boolean
+  /** The picture as a data URL (PNG or JPEG, at most 500 KB and 512×512 px), sent as the form's
+   *  `thumbnail` file part. */
+  thumbnail?: string
+}
+
+/** Edit a community (page → scene → signed multipart PUT to the social-api). As unity-explorer,
+ *  only what changed is sent; a field left out keeps its value. */
+export interface UpdateCommunityRequest {
+  kind: 'updateCommunity'
+  id: string
+  name?: string
+  description?: string
+  privacy?: 'public' | 'private'
+  /** Listed in browse and search → visibility 'all', otherwise 'unlisted'. */
+  discoverable?: boolean
+  /** A new picture as a data URL (same limits as on create). */
+  thumbnail?: string
+}
+
+/** Delete a community the user owns (page → scene → signed DELETE to the social-api). */
+export interface DeleteCommunityRequest {
+  kind: 'deleteCommunity'
+  id: string
+}
+/** A community was deleted (scene → page): its card closes. */
+export interface CommunityDeletedMessage {
+  kind: 'communityDeleted'
+  id: string
+}
+
+/** The content check's findings per field: short tags, at most three each. */
+export interface CommunityModerationIssues {
+  name: string[]
+  description: string[]
+  image: string[]
+}
+
+/** How a community create or update ended (scene → page). Exactly one of `id`, `moderation`, `error`. */
+export interface CommunitySaveResultMessage {
+  kind: 'communitySaveResult'
+  mode: 'create' | 'update'
+  /** The community created or updated, on success. */
+  id?: string
+  /** The social-api refused it (HTTP 400): the content check's findings, which may be empty, or
+   *  `unavailable` when the check itself could not run. */
+  moderation?: { issues: CommunityModerationIssues; unavailable: boolean }
+  /** Any other failure. */
+  error?: string
 }
 
 export interface JoinCommunityRequest {
@@ -1146,9 +1238,9 @@ export interface CancelJoinRequestRequest {
   requestId: string
 }
 
-export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave'
+export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch' | 'delete'
 
-/** A community write the social-api rejected (scene → page), so the UI can say so. */
+/** A community write, or the read of one community, the social-api rejected (scene → page), so the UI can say so. */
 export interface CommunityActionFailedMessage {
   kind: 'communityActionFailed'
   id: string
@@ -1218,6 +1310,70 @@ export interface CommunityDetailMessage {
   places: CommunityPlace[]
   events: CommunityEvent[]
   photos: CommunityPhoto[]
+}
+
+// ---- community chat --------------------------------------------------------
+
+/** A community the local user is a member of, as a chat channel. */
+export interface CommunityChannel {
+  id: string
+  name: string
+  /** The community's thumbnail URL (may 404: the UI falls back to the initial). */
+  thumbnail: string
+  /** 'owner' | 'moderator' | 'member' */
+  role: string
+}
+
+/** The communities the local user is a member of (page → scene → social-api onlyMemberOf). */
+export interface GetCommunityChannelsRequest {
+  kind: 'getCommunityChannels'
+}
+export interface CommunityChannelsMessage {
+  kind: 'communityChannels'
+  communities: CommunityChannel[]
+}
+/** The local user joined (or was told they are in) a community (scene → page). */
+export interface CommunityChannelAddedMessage {
+  kind: 'communityChannelAdded'
+  community: CommunityChannel
+}
+/** The local user left, was removed from, or lost a community (scene → page). */
+export interface CommunityChannelRemovedMessage {
+  kind: 'communityChannelRemoved'
+  id: string
+}
+
+/** The community channels the HUD listens to: member of, chat not closed (page → scene → engine).
+ *  The engine drops messages on any other community channel before storing them. */
+export interface SetCommunityChannelsRequest {
+  kind: 'setCommunityChannels'
+  ids: string[]
+}
+
+/** The members of a community who are online now (page → scene → social-api onlyOnline). */
+export interface GetCommunityOnlineMembersRequest {
+  kind: 'getCommunityOnlineMembers'
+  id: string
+}
+export interface CommunityOnlineMembersMessage {
+  kind: 'communityOnlineMembers'
+  id: string
+  members: CommunityMember[]
+}
+
+/** A member of one of the local user's communities came online or went offline (scene → page). */
+export interface CommunityPresenceMessage {
+  kind: 'communityPresence'
+  communityId: string
+  member: CommunityMember
+  online: boolean
+}
+
+/** Play a UI sound (page → scene → engine): a chat line landing, or one that mentions the user. */
+export type UiSound = 'chatMessage' | 'chatMention'
+export interface PlayUiSoundRequest {
+  kind: 'playUiSound'
+  sound: UiSound
 }
 
 // ---- gallery (camera reel) -------------------------------------------------
@@ -1399,6 +1555,41 @@ export interface PreviewFocusRequest {
   kind: 'previewFocus'
   focus: PreviewFocus
 }
+
+/** The Shop's stage around the preview avatar: where the page draws its stage image on screen, in CSS
+ *  pixels like engineViewport's rect. The scene draws the same image (its images/shop-stage.jpg, the HUD's
+ *  assets/shop/stage.jpg) there behind the avatar, so the avatar's window shows no seam, and drops the
+ *  Backpack's podium: the stage's floor is in the image. `null` gives the preview its own backdrop back. */
+export interface PreviewStageRequest {
+  kind: 'previewStage'
+  rect: { x: number; y: number; width: number; height: number } | null
+}
+
+/** Play an emote on the preview avatar once (the Shop trying one on); asked again, it plays again.
+ *  `null` stops it. */
+export interface PreviewEmoteRequest {
+  kind: 'previewEmote'
+  urn: string | null
+}
+
+/** Turn the preview avatar about its vertical axis by `degrees` (the page's drag over it: the engine's
+ *  drag-lock doesn't reach the preview in every host, so the page drives the turn itself). */
+export interface PreviewRotateRequest {
+  kind: 'previewRotate'
+  degrees: number
+}
+
+/** Zoom the preview avatar's camera: `zoom` × the framing in use (1 is the framing as it is, up to
+ *  PREVIEW_MAX_ZOOM), keeping what is at `anchor` where it is: a height in the camera's view, 0 its top and 1
+ *  its bottom (the pointer's, as the page's wheel over the avatar asks). The view stays inside the framing. */
+export interface PreviewZoomRequest {
+  kind: 'previewZoom'
+  zoom: number
+  anchor: number
+}
+
+/** The furthest the preview avatar's camera zooms in: the head framing is 2.5× the whole body. */
+export const PREVIEW_MAX_ZOOM = 2.5
 
 /** RGB color, components 0..1 (matches PBAvatarBase / the deployed avatar entity). */
 export interface RGBColor {
@@ -1631,6 +1822,44 @@ export interface ProximityMessage {
   tips: ProximityTip[]
 }
 
+// ---- photo mode (camera reel capture) --------------------------------------
+
+/** Photo mode as the engine reports it (the `PhotoModeState` stream): whether the in-world camera
+ *  is open, what the last photo is doing, the player's storage, and a one-shot `event` stamped
+ *  with `eventSeq` (a capture carries its preview JPEG, a failed upload its message). */
+export interface PhotoModeSnapshot {
+  active: boolean
+  hudHidden: boolean
+  cursorLocked: boolean
+  phase: 'idle' | 'capturing' | 'encoding' | 'uploading' | string
+  storageCurrent: number
+  storageMax: number
+  storageLoaded: boolean
+  event: 'none' | 'captured' | 'uploaded' | 'uploadFailed' | string
+  eventSeq: number
+  previewJpegBase64: string
+  message: string
+}
+
+export interface PhotoModeMessage {
+  kind: 'photoMode'
+  state: PhotoModeSnapshot
+}
+
+/** Open or close photo mode (the engine's `/photo_mode`); `source` names what asked, for analytics. */
+export interface SetPhotoModeRequest {
+  kind: 'setPhotoMode'
+  enable: boolean
+  source: PhotoModeSource
+}
+
+export type PhotoModeSource = 'button' | 'shortcut'
+
+/** Take a photo in photo mode (the engine's `/take_photo`). */
+export interface TakePhotoRequest {
+  kind: 'takePhoto'
+}
+
 /** A nearby avatar was clicked in the world → open their profile card. Only the address travels;
  *  React resolves the display name (nearby roster) and anchors the card at the live DOM cursor. */
 export interface AvatarClickMessage {
@@ -1646,6 +1875,7 @@ export type SceneToPage =
   | CursorLockMessage
   | SystemActionMessage
   | ProximityMessage
+  | PhotoModeMessage
   | AvatarClickMessage
   | PlayerReadyEvent
   | AnalyticsEventMessage
@@ -1674,6 +1904,7 @@ export type SceneToPage =
   | ProfileSavedMessage
   | OwnedNamesMessage
   | NotificationsMessage
+  | NotificationsNewMessage
   | EmotesMessage
   | MicMessage
   | WearablesMessage
@@ -1681,12 +1912,20 @@ export type SceneToPage =
   | OutfitsMessage
   | OutfitHistoryMessage
   | CommunitiesMessage
+  | CommunityMessage
   | VoiceActivityMessage
   | CommunityActionFailedMessage
+  | CommunitySaveResultMessage
+  | CommunityDeletedMessage
   | TravelResultMessage
   | AvatarSaveFailedMessage
   | RequestFailedMessage
   | CommunityDetailMessage
+  | CommunityChannelsMessage
+  | CommunityChannelAddedMessage
+  | CommunityChannelRemovedMessage
+  | CommunityOnlineMembersMessage
+  | CommunityPresenceMessage
   | MapMessage
   | HomeSceneMessage
   | WelcomeMessage

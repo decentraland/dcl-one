@@ -495,7 +495,7 @@ export const store = configureStore({
 
 > [!CAUTION]
 > **Don't do these:**
-> 
+>
 > 1. Store non-serializable objects (providers, signers) in Redux
 > 2. Duplicate data in both slices and RTK Query
 > 3. Dispatch actions during render

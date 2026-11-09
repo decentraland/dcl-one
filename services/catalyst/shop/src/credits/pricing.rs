@@ -144,6 +144,15 @@ pub trait Market: Send + Sync {
 
     async fn trade(&self, trade_id: &str) -> Result<TradeLookup, ApiError>;
 
+    /// The creator's coupon a primary trade's purchase offer carries, chosen
+    /// by the server's rule (`mana::facts::primary_trade_coupon`), never the
+    /// client's. `None` for anything but an item order.
+    async fn trade_coupon(
+        &self,
+        trade: &crate::types::SignedTrade,
+        trade_type: &str,
+    ) -> Result<Option<crate::types::TradeCoupon>, ApiError>;
+
     /// The MANA/USD spot as a decimal string, refused when older than the staleness budget.
     async fn mana_usd(&self) -> Result<String, ApiError>;
 }
@@ -290,7 +299,29 @@ impl Market for LocalMarket {
         )?))
     }
 
+    async fn trade_coupon(
+        &self,
+        trade: &crate::types::SignedTrade,
+        trade_type: &str,
+    ) -> Result<Option<crate::types::TradeCoupon>, ApiError> {
+        crate::mana::facts::primary_trade_coupon(&self.pool, trade, trade_type)
+            .await
+            .map_err(|e| ApiError::Internal(format!("coupon read failed: {e}")))
+    }
+
     async fn mana_usd(&self) -> Result<String, ApiError> {
+        // The marketplace's feed where it is wired: the rate the contract converts
+        // with. It sizes credit charges (authorize, cart, top-up, reprice), so its
+        // round keeps the spot's bound, `MANA_PRICE_MAX_STALENESS_SECS`, on the
+        // slot's monotonic clock (`mana::feed_rate::current_for_charge`); the
+        // catalog may still show an older one. Why a read failed is logged by the
+        // refresher; the client gets the generic reason only.
+        let max_round_age = u64::try_from(self.max_staleness_secs).unwrap_or(0);
+        if let Some(feed) = crate::mana::feed_rate::current_for_charge(max_round_age) {
+            return feed
+                .map(|shop| shop.usd_per_mana())
+                .map_err(|unavailable| ApiError::service_unavailable(unavailable.to_string()));
+        }
         let Some(price) = self.price.as_ref() else {
             return Err(ApiError::service_unavailable(
                 "the MANA price is not configured on this node (PRICE_POLL_ENABLED)",
@@ -374,10 +405,25 @@ impl Pricing {
         self.market.items(pairs).await
     }
 
+    /// The rate every credit price here converts at. The spot is memoized
+    /// [`MANA_USD_MEMO_TTL`]; the marketplace's feed is already one slot the
+    /// refresher keeps current, and memoizing it again would serve a rate the
+    /// other Shop paths have since dropped.
     pub async fn fetch_mana_usd(&self) -> Result<String, ApiError> {
+        if crate::mana::feed_rate::installed() {
+            return self.market.mana_usd().await;
+        }
         self.mana_usd
             .get_or_fetch((), || self.market.mana_usd())
             .await
+    }
+
+    pub async fn fetch_trade_coupon(
+        &self,
+        trade: &crate::types::SignedTrade,
+        trade_type: &str,
+    ) -> Result<Option<crate::types::TradeCoupon>, ApiError> {
+        self.market.trade_coupon(trade, trade_type).await
     }
 
     pub async fn fetch_trade(&self, trade_id: &str) -> Result<TradeLookup, ApiError> {

@@ -18,7 +18,8 @@ pub struct NotificationItem {
     pub id: Uuid,
     #[serde(rename = "type")]
     pub kind: String,
-    pub address: String,
+    /// `null` for a broadcast, as upstream answered it.
+    pub address: Option<String>,
     /// Epoch ms, as a string (the explorer parses it with `Number`).
     #[serde(with = "i64_str")]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
@@ -71,16 +72,7 @@ pub struct MarkReadResponse {
     pub updated: u64,
 }
 
-#[derive(Debug, Serialize)]
-#[cfg_attr(
-    feature = "ts",
-    derive(ts_rs::TS),
-    ts(export, export_to = "notifications/")
-)]
-pub struct OptOutResponse {
-    pub ok: bool,
-}
-
+/// The opt-out read, and the `POST /subscription/opt-outs` 201 answer.
 #[derive(Debug, Serialize)]
 #[cfg_attr(
     feature = "ts",
@@ -145,6 +137,7 @@ pub const NOTIFICATION_TYPES: &[&str] = &[
     "governance_tender_passed",
     "governance_whale_vote",
     "governance_voted_on_behalf",
+    "item_discounted",
     "item_sold",
     "item_published",
     "rental_ended",
@@ -202,62 +195,68 @@ pub fn is_known_type(kind: &str) -> bool {
     NOTIFICATION_TYPES.contains(&kind)
 }
 
-pub fn validate_subscription_details(body: &Json) -> Result<(), String> {
-    let obj = body
-        .as_object()
-        .ok_or_else(|| "must be an object".to_string())?;
-
-    for key in obj.keys() {
-        if key != "ignore_all_email" && key != "ignore_all_in_app" && key != "message_type" {
-            return Err(format!("unexpected property {}", key));
-        }
-    }
-
+/// The stored document of a `PUT /subscription` body, or the refusal in the
+/// words of upstream's `userFriendlyErrorMessage` over `@dcl/schemas`
+/// `SubscriptionDetails` (ajv, all errors). Unlike upstream, a `message_type`
+/// may omit types (the store keeps their stored value) so a client built
+/// against an older type list is not refused; unknown types still are.
+/// Unknown top-level keys and channel keys are dropped, not stored.
+pub fn subscription_update(body: &Json) -> Result<Json, String> {
+    let Some(obj) = body.as_object() else {
+        // ajv's instancePath of the root is "", hence the double space.
+        return Err("Invalid subscription.  must be object".to_string());
+    };
+    let mut missing: Vec<&str> = ["ignore_all_email", "ignore_all_in_app", "message_type"]
+        .into_iter()
+        .filter(|f| !obj.contains_key(*f))
+        .collect();
+    let mut errors = Vec::new();
     for field in ["ignore_all_email", "ignore_all_in_app"] {
-        match obj.get(field) {
-            Some(Json::Bool(_)) => {}
-            Some(_) => return Err(format!("{} must be a boolean", field)),
-            None => return Err(format!("{} is required", field)),
+        if obj.get(field).is_some_and(|v| !v.is_boolean()) {
+            errors.push(format!("{field} must be boolean"));
         }
     }
-
-    let mt = obj
-        .get("message_type")
-        .ok_or_else(|| "message_type is required".to_string())?
-        .as_object()
-        .ok_or_else(|| "message_type must be an object".to_string())?;
-
-    for key in mt.keys() {
-        if !NOTIFICATION_TYPES.contains(&key.as_str()) {
-            return Err(format!("unexpected message_type property {}", key));
-        }
-    }
-
-    for ty in NOTIFICATION_TYPES {
-        let Some(entry) = mt.get(*ty) else {
-            if *ty == "friend_first_wear" || *ty == "land_transfer_received" {
-                continue;
+    let mut message_type = serde_json::Map::new();
+    match obj.get("message_type") {
+        None => {}
+        Some(Json::Object(mt)) => {
+            if mt.keys().any(|k| !is_known_type(k)) {
+                errors.push("message_type must NOT have additional properties".to_string());
             }
-            return Err(format!("message_type.{} is required", ty));
-        };
-        let channel = entry
-            .as_object()
-            .ok_or_else(|| format!("message_type.{} must be an object", ty))?;
-        for chan_field in ["email", "in_app"] {
-            match channel.get(chan_field) {
-                Some(Json::Bool(_)) => {}
-                Some(_) => {
-                    return Err(format!(
-                        "message_type.{}.{} must be a boolean",
-                        ty, chan_field
-                    ));
+            for (ty, entry) in mt.iter().filter(|(k, _)| is_known_type(k)) {
+                let Some(channel) = entry.as_object() else {
+                    errors.push(format!("message_type/{ty} must be object"));
+                    continue;
+                };
+                for chan in ["email", "in_app"] {
+                    match channel.get(chan) {
+                        None => missing.push(chan),
+                        Some(Json::Bool(_)) => {}
+                        Some(_) => errors.push(format!("message_type/{ty}/{chan} must be boolean")),
+                    }
                 }
-                None => return Err(format!("message_type.{}.{} is required", ty, chan_field)),
+                message_type.insert(
+                    ty.clone(),
+                    serde_json::json!({ "email": channel.get("email"), "in_app": channel.get("in_app") }),
+                );
             }
         }
+        Some(_) => errors.push("message_type must be object".to_string()),
     }
-
-    Ok(())
+    if !missing.is_empty() {
+        return Err(format!(
+            "Invalid subscription. Missing required fields: {}",
+            missing.join(", ")
+        ));
+    }
+    if !errors.is_empty() {
+        return Err(format!("Invalid subscription. {}", errors.join(", ")));
+    }
+    Ok(serde_json::json!({
+        "ignore_all_email": obj["ignore_all_email"],
+        "ignore_all_in_app": obj["ignore_all_in_app"],
+        "message_type": message_type,
+    }))
 }
 
 pub fn default_message_type() -> Json {
@@ -329,6 +328,9 @@ impl Default for SubscriptionDetails {
 )]
 pub struct Subscription {
     pub address: String,
+    /// Absent until confirmed, as upstream's `undefined`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub email: Option<String>,
     #[serde(rename = "unconfirmedEmail")]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -348,55 +350,43 @@ mod tests {
     }
 
     #[test]
-    fn details_validation_requires_every_type_but_the_two_optional_ones() {
-        assert!(validate_subscription_details(&full_details()).is_ok());
-        let mut partial = full_details();
-        partial["message_type"]
-            .as_object_mut()
-            .unwrap()
-            .remove("friend_first_wear");
-        partial["message_type"]
-            .as_object_mut()
-            .unwrap()
-            .remove("land_transfer_received");
-        assert!(validate_subscription_details(&partial).is_ok());
-        partial["message_type"]
-            .as_object_mut()
-            .unwrap()
-            .remove("bid_received");
+    fn a_subscription_update_may_omit_types_but_not_misspell_them() {
         assert_eq!(
-            validate_subscription_details(&partial).unwrap_err(),
-            "message_type.bid_received is required"
+            subscription_update(&full_details()).unwrap(),
+            full_details()
+        );
+        let partial = json!({ "ignore_all_email": true, "ignore_all_in_app": false, "extra": 1,
+            "message_type": { "bid_received": { "email": false, "in_app": true, "x": 1 } } });
+        assert_eq!(
+            subscription_update(&partial).unwrap(),
+            json!({ "ignore_all_email": true, "ignore_all_in_app": false,
+                "message_type": { "bid_received": { "email": false, "in_app": true } } })
         );
 
-        let mut extra = full_details();
-        extra["extra"] = json!(1);
-        assert_eq!(
-            validate_subscription_details(&extra).unwrap_err(),
-            "unexpected property extra"
-        );
-        let mut bad_flag = full_details();
-        bad_flag["ignore_all_email"] = json!("no");
-        assert_eq!(
-            validate_subscription_details(&bad_flag).unwrap_err(),
-            "ignore_all_email must be a boolean"
-        );
-        let mut unknown = full_details();
-        unknown["message_type"]["made_up"] = json!({"email": true, "in_app": true});
-        assert_eq!(
-            validate_subscription_details(&unknown).unwrap_err(),
-            "unexpected message_type property made_up"
-        );
-        let mut chan = full_details();
-        chan["message_type"]["bid_received"] = json!({"email": true});
-        assert_eq!(
-            validate_subscription_details(&chan).unwrap_err(),
-            "message_type.bid_received.in_app is required"
-        );
-        assert_eq!(
-            validate_subscription_details(&json!([])).unwrap_err(),
-            "must be an object"
-        );
+        let cases = [
+            (json!([]), "Invalid subscription.  must be object"),
+            (
+                json!({ "ignore_all_email": false }),
+                "Invalid subscription. Missing required fields: ignore_all_in_app, message_type",
+            ),
+            (
+                json!({ "ignore_all_email": "no", "ignore_all_in_app": false, "message_type": {} }),
+                "Invalid subscription. ignore_all_email must be boolean",
+            ),
+            (
+                json!({ "ignore_all_email": false, "ignore_all_in_app": false,
+                    "message_type": { "made_up": {}, "bid_received": { "email": 1, "in_app": true } } }),
+                "Invalid subscription. message_type must NOT have additional properties, message_type/bid_received/email must be boolean",
+            ),
+            (
+                json!({ "ignore_all_email": false, "ignore_all_in_app": false,
+                    "message_type": { "bid_received": { "email": true } } }),
+                "Invalid subscription. Missing required fields: in_app",
+            ),
+        ];
+        for (body, message) in cases {
+            assert_eq!(subscription_update(&body).unwrap_err(), message, "{body}");
+        }
     }
 
     #[test]
@@ -432,7 +422,7 @@ mod tests {
         let item = NotificationItem {
             id: Uuid::nil(),
             kind: "bid_received".into(),
-            address: "0xa".into(),
+            address: Some("0xa".into()),
             timestamp: 1700000000123,
             read: false,
             created_at: "x".into(),

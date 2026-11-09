@@ -13,19 +13,19 @@ To edit the code in a scene created with the Web Editor, you must export the sce
 
 > [!WARNING]
 > **📔 Note**: If you don't have the Creator Hub installed, follow the steps in the following page before your start.
-> 
+>
 > [Install Creator Hub](/docs/creator/scene-editor/get-started/editor-installation/)
 
 
 1. Click the **Download icon** on the top menu of the Web Editor while editing the scene.
 
-![](/docs/creator/images/editor/export.webp)
+![](/docs/creator/images/editor/export.webp)
 
 2. This will download a _.zip_ file, extract it.
 3. Open the **Creator Hub**, go into the **Scenes** section.
 4. Click the **Import Scene** button and select the path to your exported project folder.
 
-![](/docs/creator/images/editor/import-scene.webp)
+![](/docs/creator/images/editor/import-scene.webp)
 
 Once you're done, you can keep working on your project inside the Creator Hub, with a visual interface that looks a lot like the Web Editor, but much more polished.
 
@@ -38,13 +38,13 @@ You can import any code-only project into the Creator Hub. To do this,
 1. Open the Creator Hub, go into the **Scenes** section.
 2. Click the **Import Scene** button and select the path to your exported project folder.
 
-![](/docs/creator/images/editor/import-scene.webp)
+![](/docs/creator/images/editor/import-scene.webp)
 
 Once done, you can start working on your project inside the Creator Hub, this doesn't prevent you from still using your favorite code editor to edit the code of your scene, or use the command line to run or deploy your scene.
 
 After importing your project, any content that is created via code will not be visible or editable on the Creator Hub canvas, which can make it challenging to place and align new items. You will initially see your scene as an empty grid.
 
-![](/docs/creator/images/editor/empty-project.webp)
+![](/docs/creator/images/editor/empty-project.webp)
 
 Instead of manually adding your content to the canvas from scratch, you can run a command to automatically add it for you. To do this, make sure you have the latest version of the SDK installed and run the following command in your terminal:
 
@@ -55,7 +55,7 @@ npx sdk-commands code-to-composite
 
 > [!CAUTION]
 > **❗Warning**: Make sure you have a backup of your project before running this command.
-> 
+>
 > This command will overwrite the `main.composite` file with the new snapshot. It will also comment out all the code in the `.ts` files in the `src` folder. You will need to uncomment the code to make it run again.
 
 

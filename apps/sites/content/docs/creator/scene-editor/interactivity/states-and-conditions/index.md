@@ -15,14 +15,14 @@ Add conditions on a trigger, so that the action only occurs if those conditions 
 
 To add a condition, click the three dots icon next to **Trigger event** and select **Add Trigger Condition**.
 
-![](/docs/creator/images/editor/condition.webp)
+![](/docs/creator/images/editor/condition.webp)
 
 A single trigger can include multiple conditions. Click the **+** icon to add more conditions. When more than one condition exist, you can select one of these options:
 
 * **All Conditions should be met (AND)**: The trigger only happens if every one of the conditions is true.
 * **Any Condition can be met (OR)** The trigger happens if at least one of the conditions is true.
 
-![](/docs/creator/images/editor/multiple-conditions.webp)
+![](/docs/creator/images/editor/multiple-conditions.webp)
 
 ### States
 
@@ -32,21 +32,21 @@ You can do the following things with states:
 
 1. Use a condition on a trigger to check the state of an entity. In that way the action is only carried out if a specific state is active.
 
-![](/docs/creator/images/editor/condition.webp)
+![](/docs/creator/images/editor/condition.webp)
 
 2. Change a state via the **Set State** action.
 
-![](/docs/creator/images/editor/set-state.webp)
+![](/docs/creator/images/editor/set-state.webp)
 
 3. React to changes in state via the **On State Change** trigger event.
 
 To toggle between two actions, define two triggers, each with a condition that checks a state. For example, doors have one trigger that activates the Open action, with a condition that first checks that the door's state is _Closed_, and another trigger that activates the Close action, with a condition that checks that the door's state is _Open_. Only one of the two is activated each time the player clicks on the door.
 
-![](/docs/creator/images/editor/door_conditions.webp)
+![](/docs/creator/images/editor/door_conditions.webp)
 
 You can add as many states as you want to a smart item. Just click the **Add New State** button to add another one to the list.
 
-![](/docs/creator/images/editor/new_state.webp)
+![](/docs/creator/images/editor/new_state.webp)
 
 One of the states is selected as the default, the item will always start in this state when the scene runs. You can assign a different state to be the default by clicking the three dots next to another one of the states and selecting **Set as Default**.
 
@@ -67,7 +67,7 @@ When an entity has a Counter component, you can run the following actions on it:
 
 Use the **On Counter Change** trigger to perform an action every time the counter's value changes. Add a condition to this trigger so that it only activates after passing a certain threshold.
 
-![](/docs/creator/images/editor/on_counter_change.webp)
+![](/docs/creator/images/editor/on_counter_change.webp)
 
 On a condition, you can check if the value of the counter is
 
@@ -78,7 +78,7 @@ On a condition, you can check if the value of the counter is
 
 > [!NOTE]
 > **💡 Tip**: To check for greater or equal, you can add two conditions to the trigger event, using the AND option.
-> 
+>
 > To make an action occur only once when passing a threshold, and not repeat on every increment after that, combine the counter with a **State** component. Set the State to "Done" whenever you reach the desired value, and add a condition to check this state on the trigger event.
 
 

@@ -3,7 +3,7 @@
 // the wire shapes React sees live in the shared protocol. Only the methods the domains use
 // are declared — extend as needed.
 import type { ActionWire, Setting } from '../../src/engine/protocol'
-import type { SerializedProfile } from './domains/profile'
+import type { CompactProfile, SerializedProfile } from './domains/profile'
 import type {
   AnalyticsEvent,
   AvatarModifierState,
@@ -11,6 +11,7 @@ import type {
   BlockingStatusData,
   ChatMessage,
   ChatReactionData,
+  CommunityMemberConnectivityData,
   DmHistoryEntryData,
   DmUserStateData,
   VoiceMessage,
@@ -23,6 +24,7 @@ import type {
   LiveSceneInfo,
   PermanentPermissionItem,
   PermissionRequestEvent,
+  PhotoModeState,
   ProfileChangedEvent,
   ProximityEvent,
   SatelliteView,
@@ -65,8 +67,14 @@ export type SocialApi = {
   unblockUser: (address: string) => Promise<void>
   /** One stream per address; `close()` ends it. */
   getDmUserStateStream: (address: string) => AsyncIterable<DmUserStateData> & { close: () => void }
+  /** The stored lines of a conversation: a partner's wallet or `community:<id>`. */
   getDmHistory: (address: string) => Promise<DmHistoryEntryData[]>
   deleteDmHistory: (address: string) => void
+  /** Community members coming online or going offline (never away); the local user's own
+   *  updates say which communities they are in. */
+  getCommunityConnectivityStream: () => Promise<AsyncIterable<CommunityMemberConnectivityData>>
+  /** The community channels the local user listens to, as community ids; replaces the set. */
+  setCommunityChannels: (ids: string[]) => void
 }
 
 export type ChatStreamMessage = ChatMessage
@@ -84,6 +92,7 @@ export type SystemHoverEvent = HoverEvent
 // projects it to screen each frame so React can anchor a tooltip on it.
 export type Vec3 = Vector3
 export type SystemProximityEvent = ProximityEvent
+export type { PhotoModeState }
 
 // Global engine input actions. `action` is the SystemAction variant name (e.g. 'Cancel' = Escape,
 // 'Map', 'Chat'); `pressed` is press vs release. Emitted authoritatively by the engine even while it
@@ -92,7 +101,7 @@ export type SystemActionEvent = { action: string; pressed: boolean }
 
 export type KernelFetchRequest = {
   url: string
-  init: { headers?: Record<string, string>; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; body?: string }
+  init: { headers?: Record<string, string>; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; body?: string | Uint8Array }
   meta: string
 }
 export type KernelFetchResponse = { ok: boolean; status: number; statusText?: string; body: string }
@@ -160,6 +169,9 @@ export type BevyApiInterface = {
   getAnalyticsEventStream: () => Promise<AsyncIterable<AnalyticsEvent>>
   getHoverStream: () => Promise<AsyncIterable<SystemHoverEvent>>
   getProximityStream: () => Promise<AsyncIterable<SystemProximityEvent>>
+  /** Photo mode (the camera reel's in-world camera): its state whenever it changes. Optional:
+   *  absent on runtimes whose SystemApi predates it. */
+  getPhotoModeStream?: () => Promise<AsyncIterable<PhotoModeState>>
   /** Every profile the engine takes a new version of — a nearby player's, or the local player's own. */
   getProfileChangedStream: () => Promise<AsyncIterable<ProfileChangedEvent>>
   /** Run an engine console command (no leading slash) and await its reply; rejects with the failure
@@ -198,6 +210,10 @@ export type BevyApiInterface = {
    *  guests included), resolved through its profile cache and fetch cascade. Rejects once the
    *  engine has concluded the address can't be resolved. */
   getUserProfile: (address: string) => Promise<SerializedProfile>
+  /** The compact profiles (name, claimed-name flag, name colour, face) of a list of addresses in
+   *  one call, through the engine's profile cache: what a list row shows. In request order; an
+   *  address the engine can't resolve is left out. At most 200 addresses; more rejects. */
+  getCompactProfiles: (addresses: string[]) => Promise<CompactProfile[]>
   kernelFetch: (req: KernelFetchRequest) => Promise<KernelFetchResponse>
   /** Each service's base url by its web param, as the engine resolves it: the service's
    *  override, else its composition from the base domain. */

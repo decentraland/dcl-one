@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { publicTelemetryUrl } from "@/core/lib/telemetry/public-url";
 import {
   isRouteErrorResponse,
   Links,
@@ -35,11 +34,10 @@ export async function loader({ request }: Route.LoaderArgs) {
     (typeof process !== "undefined" && process.env.THIRDWEB_CLIENT_ID) || "";
   const walletConnectProjectId = process.env.WALLETCONNECT_PROJECT_ID || "";
   const magicApiKey = process.env.MAGIC_API_KEY || "";
-  const telemetryUrl = publicTelemetryUrl(
-    (typeof process !== "undefined" &&
-      (process.env.VITE_TELEMETRY_URL || process.env.TELEMETRY_URL)) ||
-    undefined,
-  );
+  // The public Segment write key and the optional first-party proxy host
+  // (core/lib/telemetry/track.ts); unset, the client's track() is a no-op.
+  const segmentWriteKey = process.env.SEGMENT_WRITE_KEY || process.env.VITE_SEGMENT_WRITE_KEY || "";
+  const segmentApiHost = process.env.SEGMENT_API_HOST || process.env.VITE_SEGMENT_API_HOST || "";
   const docsBase = (typeof process !== "undefined" && process.env.DOCS_BASE) || "";
   const catalystBase = browserCatalystBase();
   const shopApiMode = serverShopApiMode();
@@ -51,7 +49,8 @@ export async function loader({ request }: Route.LoaderArgs) {
     thirdwebClientId,
     walletConnectProjectId,
     magicApiKey,
-    telemetryUrl,
+    segmentWriteKey,
+    segmentApiHost,
     docsBase,
     catalystBase,
     shopApiMode,
@@ -88,13 +87,14 @@ export function meta(_args: Route.MetaArgs) {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData("root") as
-    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; telemetryUrl?: string; docsBase?: string; catalystBase?: string; shopApiMode?: string }
+    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; segmentWriteKey?: string; segmentApiHost?: string; docsBase?: string; catalystBase?: string; shopApiMode?: string }
     | undefined;
   const publicEnv = JSON.stringify({
     thirdwebClientId: data?.thirdwebClientId ?? "",
     walletConnectProjectId: data?.walletConnectProjectId ?? "",
     magicApiKey: data?.magicApiKey ?? "",
-    TELEMETRY_URL: data?.telemetryUrl ?? "",
+    SEGMENT_WRITE_KEY: data?.segmentWriteKey ?? "",
+    SEGMENT_API_HOST: data?.segmentApiHost ?? "",
     docsBase: data?.docsBase ?? "",
   }).replace(/</g, "\\u003c");
   const catalystBase = data?.catalystBase

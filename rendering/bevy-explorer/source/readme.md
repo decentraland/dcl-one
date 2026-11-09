@@ -42,17 +42,9 @@ Common to every target:
 
 Platform libraries (needed by the native and headless builds):
 
-- **linux**: `sudo apt-get install --no-install-recommends libasound2-dev libudev-dev ninja-build clang cmake pkg-config libssl-dev libx11-dev libgl1-mesa-dev libxext-dev`
-- **macos**: `brew install pkg-config ninja`
-- **windows**: install [clang/LLVM](https://github.com/llvm/llvm-project/releases/) and set `LIBCLANG_PATH` (ninja and cmake ship with visual studio)
-
-Scene video and audio streams play through the UUAV player (`library/uuav`): a sandboxed
-`uuav-helper` process with its own FFmpeg, decoding in hardware where the platform has it. The
-native binary spawns the helper from its own directory, so the committed runtime set has to sit
-next to it: `git lfs pull --include 'library/uuav/dist/**'` once, then
-`python3 ../../../tooling/uuav/stage-dist.py host target/release` (the `just native-*` recipes
-do this; `just stage-uuav-tests` stages it for `cargo test`). Windows builds play the audio of a
-video but do not show its frames yet (`crates/media/src/uuav/platform_windows.rs`).
+- **linux**: `sudo apt-get install --no-install-recommends libasound2-dev libudev-dev ninja-build clang cmake pkg-config libssl-dev libx11-dev libgl1-mesa-dev libxext-dev` plus ffmpeg dev packages (`libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev`)
+- **macos**: `brew install ffmpeg@6 pkg-config ninja` and `export PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@6/lib/pkgconfig`
+- **windows**: install [clang/LLVM](https://github.com/llvm/llvm-project/releases/) and set `LIBCLANG_PATH`; unzip [ffmpeg 6.0 shared](https://github.com/GyanD/codexffmpeg/releases/download/6.0/ffmpeg-6.0-full_build-shared.7z), set `FFMPEG_DIR` to its root and add `ffmpeg\bin` to `PATH` (ninja and cmake ship with visual studio)
 
 ## Web client
 
@@ -86,6 +78,8 @@ just setup-cef                 # once per machine: exports the CEF distribution 
 export CEF_PATH=$HOME/.local/share/cef
 # linux only, to run from the target dir:
 export LD_LIBRARY_PATH=$CEF_PATH:$LD_LIBRARY_PATH
+# nixos only, when running without just: lets CEF's bundled vulkan loader find the drivers
+export XDG_DATA_DIRS=/run/opengl-driver/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}
 
 just native-release            # bundles the HUD if stale, then builds + runs everything
 ```
@@ -123,7 +117,7 @@ cargo run --release
 To build without CEF at all (the engine's own bevy-ui HUD instead of React):
 
 ```bash
-cargo run --release --no-default-features --features "livekit,uuav,inspect,social"
+cargo run --release --no-default-features --features "livekit,ffmpeg,inspect,social"
 ```
 
 ## Headless server
@@ -210,9 +204,18 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
 (loopback), with no marker in the text. Arguments split on whitespace.
 
 - State: `/world_state` (`inWorld`, `arrivals`, which grows on every return to the world, so a wait
-  after a teleport reads it first), `/avatar_state [all|<address>]`, `/chat_history [count]`,
-  `/voice_state`, `/entity_screen_position <entity> [--bounds]`, plus the older `/player_position`,
+  after a teleport reads it first; `keyboardClaimed`, true while a text field holds the keys),
+  `/avatar_state [all|<address>]`, `/chat_history [count]`
+  (Nearby only), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
+  stored lines), `/community_state` (community chat's router, channels and counters),
+  `/voice_state`, `/entity_screen_position <entity> [--bounds]`, `/photo_mode [on|off]` (the camera
+  reel's in-world camera: its state, or open or close it) and `/take_photo` (a photo, captured
+  and uploaded; the reply is the state, a refusal names why), plus the older `/player_position`,
   `/get_user_data`, `/connected_players`, `/time` and the scene commands.
+- Chat: `/chat <channel> <word>`, `/dm <address> <message>`, `/community_chat <id> <message>`
+  and `/react <channel> <message id> <emoji>` send as the HUD does; `/community_channels [add
+  <id>|remove <id>|clear]` lists or edits the community channels the engine listens to, which
+  the HUD sets from the user's communities (the engine drops community messages on any other).
 - In development builds the lower-right bug button toggles the debug panel. In all builds,
   open **Sidebar settings (•••) → Debug panel** or type `/debug` in chat. Search by
   section or control, or enter `/debug Performance` directly. Expanded sections refresh
@@ -225,8 +228,16 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   frame-rate target and session override independently of the panel.
 - The HUD, by role and accessible name (`react-web/src/lib/hudAutomation.ts`): `/hud_list [role]`,
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
-  `hidden`, `enabled`, `actionable`; `"timeout"` ms). A selector is the name or JSON
-  `{"name", "role", "index", "exact"}`; several matches need an `index`.
+  `hidden`, `enabled`, `actionable`, `ready`; `"timeout"` ms). A selector is the name or JSON
+  `{"name", "role", "index", "exact"}`; several matches need an `index`. A control still moving
+  (a CSS animation or transition), or under a pointer lock that takes every click, is not
+  `actionable`; one inside an `aria-busy` region reads
+  `"busy"`, and `ready` waits it out.
+- Signing in through the HUD (web, under a test runner driving the browser): `/hud_login
+  <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>]
+  [--position <x,y>]`, with an AuthIdentity encoded as `/login_identity` takes it, lands in the
+  lobby or on the way to the destination; `/login_identity` alone signs the engine in under a HUD
+  that keeps its start page.
 - Input: `/press_key <code> [--state down|up]` (`KeyboardEvent.code` names) and
   `/click_at <x> <y> [--button left|right|middle]`. Natively these and the HUD commands go through
   CEF and the window's own input, always real. On the web the page needs a DevTools client to make

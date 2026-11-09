@@ -54,15 +54,15 @@ To create a new Linked Wearable follow these steps:
 
 1.  In the Collection's section, click on the **Create Collection** button.
 
-    ![](/docs/creator/images/media/collections-page.webp)
+    ![](/docs/creator/images/media/collections-page.webp)
 
 2.  Select the Linked Wearable Collection option by click on the **Create Collection** button under the Linked Collections section.
 
-    ![](/docs/creator/images/media/collection-creation-selector-modal.webp)
+    ![](/docs/creator/images/media/collection-creation-selector-modal.webp)
 
 3.  Choose a name for the collection and link the collection to your NFT collection by setting its contract address and the network it is in. **The contract will be validated to be sure it complies with the NFT contracts standards.**
 
-    ![](/docs/creator/images/media/linked-wearables/linkedw-collection-creation.webp)
+    ![](/docs/creator/images/media/linked-wearables/linkedw-collection-creation.webp)
 
 4.  Click on the **Create** button to create the collection.
 
@@ -74,15 +74,15 @@ To do so, follow these steps:
 
 1.  Click on the **New items** button.
 
-    ![](/docs/creator/images/media/linked-wearables/linkedw-empty-collection.webp)
+    ![](/docs/creator/images/media/linked-wearables/linkedw-empty-collection.webp)
 
 2.  Select the **Singe items** option.
 
-    ![](/docs/creator/images/media/linked-wearables/multiple-items-upload.webp)
+    ![](/docs/creator/images/media/linked-wearables/multiple-items-upload.webp)
 
 3.  Follow the steps to upload and configure your wearable as it is described in the [creating wearables guidelines](/docs/creator/wearables-and-emotes/wearables/creating-wearables/) and configure how it will be linked to your NFTs. Check the "[How do Linked Wearables represent NFTs?](/docs/creator/wearables-and-emotes/wearables/linked-wearables/#how-do-linked-wearables-represent-nfts)" section for more information on how to configure it.
 
-    ![](/docs/creator/images/media/linked-wearables/linkedw-mapping.webp)
+    ![](/docs/creator/images/media/linked-wearables/linkedw-mapping.webp)
 
 ## Adding Wearables to the Linked Wearables Collection - In Bulk
 
@@ -255,11 +255,11 @@ You can retrieve the ID (or URN) from the collection page by following the next 
 
 1. Going into the collection view you want to copy the URN from and clicking the Edit URN option in the options menu:
 
-![](/docs/creator/images/media/linked-wearables/collection-options-menu.webp)
+![](/docs/creator/images/media/linked-wearables/collection-options-menu.webp)
 
 2. Copying the identifier that's below the the text field:
 
-![](/docs/creator/images/media/linked-wearables/edit-collection-urn-modal.webp)
+![](/docs/creator/images/media/linked-wearables/edit-collection-urn-modal.webp)
 
 For example, if the URN or ID retrieved from the UI for the collection is `urn:decentraland:matic:collections-thirdparty:my-third-party:my-collection` and you're identifying your wearables numerically, the URN for the example would be `urn:decentraland:matic:collections-thirdparty:my-third-party:my-collection:1`, being `1` the number of the wearable.
 
@@ -269,39 +269,39 @@ Once all the files are ready, to upload the wearables in bulk, follow these step
 
 1.  Click on the **New items** button.
 
-    ![](/docs/creator/images/media/linked-wearables/linkedw-empty-collection.webp)
+    ![](/docs/creator/images/media/linked-wearables/linkedw-empty-collection.webp)
 
 2.  Select the **Multiple items** option.
 
-    ![](/docs/creator/images/media/linked-wearables/multiple-items-upload.webp)
+    ![](/docs/creator/images/media/linked-wearables/multiple-items-upload.webp)
 
 3.  Click on the **Browse yor computer** link to open your file manager and select all the zips containing your wearables.
 
-    ![](/docs/creator/images/media/linked-wearables/multiple-files-select-in-bulk.webp)
+    ![](/docs/creator/images/media/linked-wearables/multiple-files-select-in-bulk.webp)
 
 4.  Review if all the files are correct or if they need to be fixed. In this case, the model of the wearable isn't set or the `wearable.json` file has an incorrectly set representation.
 
-    ![](/docs/creator/images/media/linked-wearables/multiple-files-with-errors.webp)
+    ![](/docs/creator/images/media/linked-wearables/multiple-files-with-errors.webp)
 
 5.  Fix any errors by clicking the **Add more** button and re-uploading the failed files with the same name or by dismissing the errors using the trash icon on the top right section of the modal.
 
-    ![](/docs/creator/images/media/linked-wearables/multiple-files-upload-correct-file.webp)
+    ![](/docs/creator/images/media/linked-wearables/multiple-files-upload-correct-file.webp)
 
 6.  Upload all wearables by clicking **Upload items**.
 
-    ![](/docs/creator/images/media/linked-wearables/multiple-files-without-errors.webp)
+    ![](/docs/creator/images/media/linked-wearables/multiple-files-without-errors.webp)
 
 7.  Be patient, this might take a while!
 
-    ![](/docs/creator/images/media/linked-wearables/multiple-files-uploading.webp)
+    ![](/docs/creator/images/media/linked-wearables/multiple-files-uploading.webp)
 
 8.  Success! Your items are now available in your collection.
 
-    ![](/docs/creator/images/media/linked-wearables/multiple-files-upload-success.webp)
+    ![](/docs/creator/images/media/linked-wearables/multiple-files-upload-success.webp)
 
-9.  Select if your collection is a programmatic or a standard one. Check the [NFT Collections & Linked Wearables Collections](/docs/creator/wearables-and-emotes/wearables/linked-wearables/#nft-collections--linked-wearables-collections) section to correctly set which collection type you're building items for.
+9.  Select if your collection is a programmatic or a standard one. Check the [NFT Collections & Linked Wearables Collections](/docs/creator/wearables-and-emotes/wearables/linked-wearables/#types-of-linked-wearables-collections) section to correctly set which collection type you're building items for.
 
-    ![](/docs/creator/images/media/linked-wearables/collection-type-selector.webp)
+    ![](/docs/creator/images/media/linked-wearables/collection-type-selector.webp)
 
 ### Common errors when uploading batched items
 
@@ -321,11 +321,11 @@ To be able to see a wearable in world, follow these steps:
 
 1.  Click on the meatballs menu (three horizontal dots) on the right of the item that you want to see in world. A dropdown will appear. Select **See in Decentraland**.
 
-    ![](/docs/creator/images/media/linked-wearables/see-in-world-button.webp)
+    ![](/docs/creator/images/media/linked-wearables/see-in-world-button.webp)
 
 2.  The Decentraland World will open. Navigate to your backpack to see the wearable.
 
-    ![](/docs/creator/images/media/linked-wearables/see-in-world-item.webp)
+    ![](/docs/creator/images/media/linked-wearables/see-in-world-item.webp)
 
 
 > [!WARNING]
@@ -342,11 +342,11 @@ To edit the name of a Linked Wearable Collection follow these steps:
 
 1.  Click on the collection name.
 
-    ![](/docs/creator/images/media/linked-wearables/edit-collection-name.webp)
+    ![](/docs/creator/images/media/linked-wearables/edit-collection-name.webp)
 
 2.  Choose a new name for the collection and click on the save button.
 
-    ![](/docs/creator/images/media/linked-wearables/edit-collection-name-modal.webp)
+    ![](/docs/creator/images/media/linked-wearables/edit-collection-name-modal.webp)
 
 ## Deleting the collection
 
@@ -356,11 +356,11 @@ To delete Linked Wearable Collection follow these steps:
 
 1.  Click on the meatballs menu (three horizontal dots) on the far right of the set of buttons. A dropdown will appear. Select **Delete**.
 
-    ![](/docs/creator/images/media/linked-wearables/collection-options-menu.webp)
+    ![](/docs/creator/images/media/linked-wearables/collection-options-menu.webp)
 
 2.  A Confirmation modal will appear, if you wish to proceed, click **Ok**, otherwise click on **Cancel**.
 
-    ![](/docs/creator/images/media/linked-wearables/delete-collection-confirmation-modal.webp)
+    ![](/docs/creator/images/media/linked-wearables/delete-collection-confirmation-modal.webp)
 
 ## Editing a single wearable
 
@@ -370,7 +370,7 @@ To edit a single wearable, follow these steps:
 
 1.  Click on the meatballs menu (three horizontal dots) on the right of the item that you want to see in world. A dropdown will appear. Select **Open in editor**.
 
-    ![](/docs/creator/images/media/linked-wearables/edit-single-wearable.webp)
+    ![](/docs/creator/images/media/linked-wearables/edit-single-wearable.webp)
 
 2.  Edit the wearable as standard wearables are edited. Follow the **Editing items** section in [creating wearables guidelines](/docs/creator/wearables-and-emotes/wearables/creating-wearables/) on how to create a custom thumbnail.
 
@@ -378,19 +378,19 @@ To edit a single wearable, follow these steps:
 
 The linking of the wearables with the NFT collection is on of the most important properties of a Linked Wearable. To edit how they're linked to the NFTs, you can quickly change the linking value from the collection view, without the need to navigate to other page.
 
-![](/docs/creator/images/media/linked-wearables/edit-wearable-mapping.webp)
+![](/docs/creator/images/media/linked-wearables/edit-wearable-mapping.webp)
 
 Check the "[How do Linked Wearables represent NFTs?](/docs/creator/wearables-and-emotes/wearables/linked-wearables/#how-do-linked-wearables-represent-nfts)" section for more information on how to link your wearables.
 
 ## Editing wearables in bulk
 
-Following the same idea previously seen in the [Creating wearables in bulk](/docs/creator/wearables-and-emotes/wearables/linked-wearables/#creating-linked-wearables-in-bulk) section, third party managers can make changes to the wearables in bulk.
+Following the same idea previously seen in the [Creating wearables in bulk](/docs/creator/wearables-and-emotes/wearables/linked-wearables/#adding-wearables-to-the-linked-wearables-collection-in-bulk) section, third party managers can make changes to the wearables in bulk.
 
 To make changes in bulk to wearables, it is necessary to create a ZIP file for each of the wearables that will be changed.
 
-These ZIP files must be created following the format described in [Creating wearables in bulk](/docs/creator/wearables-and-emotes/wearables/linked-wearables/#creating-linked-wearables-in-bulk) with one exception, in the `wearable.json` file, the `id` property **MUST** be set to the `id` or URN of the wearable that will be changed. This is mandatory as it's the only way to identify the wearable to be changed. If you created your wearables in bulk by providing an id in the `wearable.json` file, you can re-use their `wearable.json` files to update them.
+These ZIP files must be created following the format described in [Creating wearables in bulk](/docs/creator/wearables-and-emotes/wearables/linked-wearables/#adding-wearables-to-the-linked-wearables-collection-in-bulk) with one exception, in the `wearable.json` file, the `id` property **MUST** be set to the `id` or URN of the wearable that will be changed. This is mandatory as it's the only way to identify the wearable to be changed. If you created your wearables in bulk by providing an id in the `wearable.json` file, you can re-use their `wearable.json` files to update them.
 
-Taking into consideration the example in the [Creating wearables in bulk](/docs/creator/wearables-and-emotes/wearables/linked-wearables/#creating-linked-wearables-in-bulk) section, if we would like to change some of the properties of a wearable, for example, the name where we forgot to add a number to it, we should include a `wearable.json` file in the zip as the next example:
+Taking into consideration the example in the [Creating wearables in bulk](/docs/creator/wearables-and-emotes/wearables/linked-wearables/#adding-wearables-to-the-linked-wearables-collection-in-bulk) section, if we would like to change some of the properties of a wearable, for example, the name where we forgot to add a number to it, we should include a `wearable.json` file in the zip as the next example:
 
 ```json
 {
@@ -432,35 +432,35 @@ Once the ZIP files are ready, follow these steps to edit the items in bulk:
 
 1.  Click on the meatballs menu (three horizontal dots) on the far right of the set of buttons. A dropdown will appear. Select **Edit in bulk**.
 
-    ![](/docs/creator/images/media/linked-wearables/edit-multiple-files-bulk-button.webp)
+    ![](/docs/creator/images/media/linked-wearables/edit-multiple-files-bulk-button.webp)
 
 2.  A modal similar to de one in the **Uploading models in bulk** will appear. Click on the **Browse your computer** link to open your file manager.
 
-    ![](/docs/creator/images/media/linked-wearables/edit-multiple-files-modal.webp)
+    ![](/docs/creator/images/media/linked-wearables/edit-multiple-files-modal.webp)
 
 3.  Select all the ZIP files of the items that will be edited.
 
-    ![](/docs/creator/images/media/linked-wearables/multiple-files-select-in-bulk.webp)
+    ![](/docs/creator/images/media/linked-wearables/multiple-files-select-in-bulk.webp)
 
 4.  Review if all the files are correct or if they need to be fixed. In this case, the model of the wearable isn't set or the `wearable.json` file has an incorrectly set representation.
 
-    ![](/docs/creator/images/media/linked-wearables/edit-multiple-files-with-errors.webp)
+    ![](/docs/creator/images/media/linked-wearables/edit-multiple-files-with-errors.webp)
 
 5.  Fix any errors by clicking the **Add more** button and re-uploading the failed files with the same name or by dismissing the errors using the trash icon on the top right section of the modal.
 
-    ![](/docs/creator/images/media/linked-wearables/multiple-files-upload-correct-file.webp)
+    ![](/docs/creator/images/media/linked-wearables/multiple-files-upload-correct-file.webp)
 
 6.  Upload all wearables by clicking **Upload items**.
 
-    ![](/docs/creator/images/media/linked-wearables/edit-multiple-files-without-errors.webp)
+    ![](/docs/creator/images/media/linked-wearables/edit-multiple-files-without-errors.webp)
 
 7.  Be patient, this might take a while!
 
-    ![](/docs/creator/images/media/linked-wearables/edit-multiple-files-uploading.webp)
+    ![](/docs/creator/images/media/linked-wearables/edit-multiple-files-uploading.webp)
 
 8.  Success! Your items are now available in your collection. Check the forum post for any updates from the curator.
 
-    ![](/docs/creator/images/media/linked-wearables/edit-multiple-files-success.webp)
+    ![](/docs/creator/images/media/linked-wearables/edit-multiple-files-success.webp)
 
 ## Publishing your Linked Wearables
 
@@ -475,7 +475,7 @@ Creating Linked Wearables has a cost depending on the type of Linked Wearable Co
 1. **Standard**: each published wearable costs the same as a regular wearable: USD 100 payable in MANA.
 2. **Programmatic**: a fixed fee, payed once for all the wearables you'll be publishing. This fee equals publishing 20 regular wearables: 2000 USD payable in MANA.
 
-For more information about the type of collection you're creating, check the [NFT Collections & Linked Wearables Collections](/docs/creator/wearables-and-emotes/wearables/linked-wearables/#nft-collections--linked-wearables-collections) section.
+For more information about the type of collection you're creating, check the [NFT Collections & Linked Wearables Collections](/docs/creator/wearables-and-emotes/wearables/linked-wearables/#types-of-linked-wearables-collections) section.
 
 ## Publishing wearables for review
 
@@ -485,39 +485,39 @@ To publish your wearables, you need to:
 
 1.  Select the items to be published by clicking on the checkbox next to them. Click the **Publish** button when you're ready with your selection.
 
-    ![](/docs/creator/images/media/linked-wearables/selecting-to-publish.webp)
+    ![](/docs/creator/images/media/linked-wearables/selecting-to-publish.webp)
 
 2.  Confirm your collection name. Once you published your items, changing the collection name is not possible, so be sure to check it thoroughly.
 
-    ![](/docs/creator/images/media/linked-wearables/selecting-to-publish.webp)
+    ![](/docs/creator/images/media/linked-wearables/selecting-to-publish.webp)
 
 3.  Give it a check to the item's your publishing. Click the **Confirm items** button when you're ready.
 
-    ![](/docs/creator/images/media/linked-wearables/check-items-to-publish.webp)
+    ![](/docs/creator/images/media/linked-wearables/check-items-to-publish.webp)
 
 4.  Sign the confirmation of publishing your items in your wallet.
 
-    ![](/docs/creator/images/media/linked-wearables/sign-items-confirmation.webp)
+    ![](/docs/creator/images/media/linked-wearables/sign-items-confirmation.webp)
 
 5.  Read and check the Terms and Conditions.
 
-    ![](/docs/creator/images/media/linked-wearables/terms-and-conditions.webp)
+    ![](/docs/creator/images/media/linked-wearables/terms-and-conditions.webp)
 
 6.  Check your publishing fees. The fees required for published the wearables are described in the [Costs section](/docs/creator/wearables-and-emotes/wearables/linked-wearables/#costs).
 
-    ![](/docs/creator/images/media/linked-wearables/publishing-payment.webp)
+    ![](/docs/creator/images/media/linked-wearables/publishing-payment.webp)
 
 7.  If it's your first time publishing Linked Wearables, you'll need to authorize the Linked Wearables smart contract to operate MANA on your behalf. This step is needed to deduct the MANA used to pay the publication fees from your wallet.
 
-    ![](/docs/creator/images/media/linked-wearables/first-time-publishing.webp)
+    ![](/docs/creator/images/media/linked-wearables/first-time-publishing.webp)
 
 8.  Pay the publication fee and complete the publishing by performing the transaction. Depending on the congestion of the network, this might take a while.
 
-    ![](/docs/creator/images/media/linked-wearables/complete-publishing.webp)
+    ![](/docs/creator/images/media/linked-wearables/complete-publishing.webp)
 
 9.  Success! You have published your items. Your items will go through the curation process a regular collections do. You can communicate with the curator via the forum post.
 
-    ![](/docs/creator/images/media/linked-wearables/publication-success.webp)
+    ![](/docs/creator/images/media/linked-wearables/publication-success.webp)
 
 ## Pushing changes for review
 
@@ -527,15 +527,15 @@ To push changes to get them curated, you need to:
 
 1.  Select the items with changes by clicking on the checkbox next to them. Click the **Push changes** button when you're ready with your selection.
 
-    ![](/docs/creator/images/media/linked-wearables/select-push-changes-items.webp)
+    ![](/docs/creator/images/media/linked-wearables/select-push-changes-items.webp)
 
 2.  Proceed with the push changes process. As the modal says, these changes will need to go through the curation phase once again.
 
-    ![](/docs/creator/images/media/linked-wearables/confirm-push-changes.webp)
+    ![](/docs/creator/images/media/linked-wearables/confirm-push-changes.webp)
 
 3.  Read and check the Terms and Conditions. Upon accepting them, the items will be ready to be curated again.
 
-    ![](/docs/creator/images/media/linked-wearables/accept-push-changes-terms-and-conditions.webp)
+    ![](/docs/creator/images/media/linked-wearables/accept-push-changes-terms-and-conditions.webp)
 
 ## Curation
 

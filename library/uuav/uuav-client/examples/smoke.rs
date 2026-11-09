@@ -10,6 +10,7 @@
 
 use std::ffi::CStr;
 use std::os::raw::c_char;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use uuav::{AudioOptionsRaw, ResultFFI, UUAVState};
 
@@ -20,12 +21,30 @@ const AUDIO: AudioOptionsRaw = AudioOptionsRaw {
     channels: 2,
 };
 
+const FRAME_INTERVAL: Duration = Duration::from_millis(16);
+
 extern "C" fn on_error(line: *const c_char) {
-    eprintln!("[error] {}", to_str(line));
+    let message = to_str(line);
+    if message.starts_with("uuav helper terminated (") {
+        RECOVERY_STARTED.fetch_add(1, Ordering::AcqRel);
+    }
+    eprintln!("[error] {message}");
 }
 
 extern "C" fn on_warning(line: *const c_char) {
-    eprintln!("[warn ] {}", to_str(line));
+    let message = to_str(line);
+    if message == "uuav helper restarted; players restored" {
+        RECOVERY_FINISHED.store(RECOVERY_STARTED.load(Ordering::Acquire), Ordering::Release);
+    }
+    eprintln!("[warn ] {message}");
+}
+
+static RECOVERY_STARTED: AtomicU64 = AtomicU64::new(0);
+static RECOVERY_FINISHED: AtomicU64 = AtomicU64::new(0);
+
+fn recovered_since(previous: u64) -> bool {
+    let started = RECOVERY_STARTED.load(Ordering::Acquire);
+    started > previous && RECOVERY_FINISHED.load(Ordering::Acquire) >= started
 }
 
 extern "C" fn on_log(line: *const c_char) {
@@ -133,6 +152,43 @@ fn with_probe<T>(init: impl FnOnce(*const std::ffi::c_void) -> T) -> T {
     init(probe.as_raw().cast_const())
 }
 
+fn wait_until<T>(timeout: Duration, mut check: impl FnMut() -> Option<T>) -> Option<T> {
+    let deadline = Instant::now() + timeout;
+    let mut delay = Duration::from_millis(1);
+    loop {
+        if let Some(value) = check() {
+            return Some(value);
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return None;
+        }
+        std::thread::sleep(delay.min(remaining));
+        delay = (delay * 2).min(FRAME_INTERVAL);
+    }
+}
+
+fn media_time(player: uuav::PlayerId) -> Option<f64> {
+    let mut time = 0.0;
+    let result = unsafe { uuav::uuav_player_current_time(player, &mut time) };
+    if result.error_message.is_null() {
+        Some(time)
+    } else {
+        unsafe { uuav::uuav_string_free(result.error_message.cast_mut()) };
+        None
+    }
+}
+
+fn advancing(player: uuav::PlayerId, first: &mut Option<(f64, u64)>) -> Option<(f64, f64)> {
+    if !matches!(uuav::uuav_player_state(player), UUAVState::UUAV_PLAYING) {
+        return None;
+    }
+    let (time, frames) = uuav::uuav_player_progress(player)?;
+    let (first_time, first_frames) = *first.get_or_insert((time, frames));
+    (time >= first_time + 0.25 && frames.saturating_sub(first_frames) >= 8)
+        .then_some((first_time, time))
+}
+
 fn main() {
     let url = std::env::args()
         .nth(1)
@@ -169,44 +225,31 @@ fn main() {
     });
     check("play", uuav::uuav_player_play(player));
 
-    let started = Instant::now();
     let mut last_state = UUAVState::UUAV_UNKNOWN as i32;
-    let mut reached_playing = false;
-    while started.elapsed() < Duration::from_secs(20) {
+    let mut first_time = None;
+    let render = uuav::uuav_get_render_callback();
+    wait_until(Duration::from_secs(20), || {
+        render(player as i32);
         let state = uuav::uuav_player_state(player);
         if state as i32 != last_state {
             last_state = state as i32;
-            let mut time = 0.0_f64;
-            let has_time =
-                unsafe { uuav::uuav_player_current_time(player, &mut time) }.error_message;
-            if !has_time.is_null() {
-                unsafe { uuav::uuav_string_free(has_time.cast_mut()) };
-            }
-            println!("state -> {state:?} (t = {time:.2}s)");
-        }
-        if matches!(state, UUAVState::UUAV_PLAYING) {
-            reached_playing = true;
-            let mut t0 = 0.0_f64;
-            let mut t1 = 0.0_f64;
-            let r0 = unsafe { uuav::uuav_player_current_time(player, &mut t0) };
-            std::thread::sleep(Duration::from_millis(500));
-            let r1 = unsafe { uuav::uuav_player_current_time(player, &mut t1) };
-            if r0.error_message.is_null() && r1.error_message.is_null() {
-                println!("time advanced {t0:.3}s -> {t1:.3}s over 500ms");
-                assert!(t1 > t0, "media time did not advance");
-                break;
+            if let Some(time) = media_time(player) {
+                println!("state -> {state:?} (t = {time:.3}s)");
+            } else {
+                println!("state -> {state:?} (media time unavailable)");
             }
         }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    assert!(reached_playing, "player never reached PLAYING");
+        if let Some((first, time)) = advancing(player, &mut first_time) {
+            println!("time advanced {first:.3}s -> {time:.3}s");
+            return Some(());
+        }
+        None
+    })
+    .expect("player never reached PLAYING with advancing media time");
 
     // video: drive the render callback like the host's render thread would and
     // expect the shared-texture pipeline to surface presentation textures
-    let render = uuav::uuav_get_render_callback();
-    let mut planes: Option<(*const std::ffi::c_void, *const std::ffi::c_void)> = None;
-    let video_deadline = Instant::now();
-    while video_deadline.elapsed() < Duration::from_secs(10) {
+    let (y, uv) = wait_until(Duration::from_secs(10), || {
         render(player as i32);
         let mut y: *const std::ffi::c_void = std::ptr::null();
         let mut uv: *const std::ffi::c_void = std::ptr::null();
@@ -218,12 +261,12 @@ fn main() {
             }
         }
         if !y.is_null() && !uv.is_null() {
-            planes = Some((y, uv));
-            break;
+            Some((y, uv))
+        } else {
+            None
         }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    let (y, uv) = planes.expect("video planes never became available");
+    })
+    .expect("video planes never became available");
     #[cfg(target_os = "macos")]
     assert_ne!(y, uv, "Y and UV planes must be distinct textures");
     // one NV12 texture covers both planes on D3D11
@@ -243,7 +286,12 @@ fn main() {
     );
 
     // pointer stability: the presentation planes must not churn per frame
-    std::thread::sleep(Duration::from_millis(300));
+    let mut presented_at = None;
+    wait_until(Duration::from_secs(10), || {
+        render(player as i32);
+        advancing(player, &mut presented_at)
+    })
+    .expect("media did not advance before checking plane stability");
     render(player as i32);
     let mut y_again: *const std::ffi::c_void = std::ptr::null();
     let again = unsafe { uuav::uuav_player_get_video_texture(player, 0, &mut y_again) };
@@ -257,22 +305,23 @@ fn main() {
     // format negotiated at init) and expect real, non-silent samples
     let frames_per_pull = AUDIO.sample_rate / 100;
     let mut buffer = vec![0.0f32; (frames_per_pull * AUDIO.channels) as usize];
-    let mut heard_signal = false;
-    let audio_deadline = Instant::now();
-    while audio_deadline.elapsed() < Duration::from_secs(10) {
+    let heard_signal = wait_until(Duration::from_secs(10), || {
         let frames =
             unsafe { uuav::uuav_player_read_audio(player, buffer.as_mut_ptr(), frames_per_pull) };
         if frames > 0 && buffer.iter().any(|s| s.abs() > 1e-4) {
-            heard_signal = true;
             println!(
                 "audio flowing: {frames} frames, peak {:.4}",
                 buffer.iter().fold(0.0f32, |a, s| a.max(s.abs()))
             );
-            break;
+            Some(())
+        } else {
+            None
         }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    assert!(heard_signal, "no audible samples arrived within 10s");
+    });
+    assert!(
+        heard_signal.is_some(),
+        "no audible samples arrived within 10s"
+    );
 
     let status = uuav::uuav_status();
     println!(
@@ -283,45 +332,29 @@ fn main() {
     // resurrection: kill the helper out from under the client and expect
     // playback to self-heal with zero API help — the recovery worker
     // respawns the helper and rebuilds the player from its desired state
+    let previous_recovery = RECOVERY_STARTED.load(Ordering::Acquire);
+    let t_before_kill = media_time(player).expect("media time unavailable before helper kill");
     kill_helper();
     println!("helper killed; waiting for automatic recovery");
-    let t_before_kill = {
-        let mut t = 0.0_f64;
-        let r = unsafe { uuav::uuav_player_current_time(player, &mut t) };
-        if !r.error_message.is_null() {
-            unsafe { uuav::uuav_string_free(r.error_message.cast_mut()) };
+    let mut first_time = None;
+    wait_until(Duration::from_secs(30), || {
+        if !recovered_since(previous_recovery) {
+            return None;
         }
-        t
-    };
-    let recovery_deadline = Instant::now();
-    let mut recovered = false;
-    while recovery_deadline.elapsed() < Duration::from_secs(30) {
         render(player as i32);
-        let state = uuav::uuav_player_state(player);
-        if matches!(state, UUAVState::UUAV_PLAYING) {
-            let mut t0 = 0.0_f64;
-            let mut t1 = 0.0_f64;
-            let r0 = unsafe { uuav::uuav_player_current_time(player, &mut t0) };
-            std::thread::sleep(Duration::from_millis(500));
-            let r1 = unsafe { uuav::uuav_player_current_time(player, &mut t1) };
-            if r0.error_message.is_null() && r1.error_message.is_null() && t1 > t0 {
-                println!(
-                    "recovered: PLAYING again, time advancing {t0:.3}s -> {t1:.3}s (was at {t_before_kill:.3}s when killed)"
-                );
-                assert!(
-                    t0 > t_before_kill - 2.0,
-                    "playback restarted far behind the resume point"
-                );
-                recovered = true;
-                break;
-            }
+        if let Some((first, time)) = advancing(player, &mut first_time) {
+            println!(
+                "recovered: PLAYING again, time advancing {first:.3}s -> {time:.3}s (was at {t_before_kill:.3}s when killed)"
+            );
+            assert!(
+                first > t_before_kill - 2.0,
+                "playback restarted far behind the resume point"
+            );
+            return Some(());
         }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    assert!(
-        recovered,
-        "player never self-recovered after the helper was killed"
-    );
+        None
+    })
+    .expect("player never self-recovered after the helper was killed");
 
     // the presentation texture must have survived the outage (same pointer)
     let mut y_recovered: *const std::ffi::c_void = std::ptr::null();
@@ -351,4 +384,17 @@ fn kill_helper() {
         status.expect("kill command failed to run").success(),
         "no uuav-helper process was there to kill"
     );
+}
+
+#[test]
+fn an_old_completion_cannot_complete_the_next_recovery() {
+    on_error(c"uuav helper terminated (previous); recovering".as_ptr());
+    let previous = RECOVERY_STARTED.load(Ordering::Acquire);
+    assert!(!recovered_since(previous));
+    on_warning(c"uuav helper restarted; players restored".as_ptr());
+    assert!(!recovered_since(previous));
+    on_error(c"uuav helper terminated (current); recovering".as_ptr());
+    assert!(!recovered_since(previous));
+    on_warning(c"uuav helper restarted; players restored".as_ptr());
+    assert!(recovered_since(previous));
 }

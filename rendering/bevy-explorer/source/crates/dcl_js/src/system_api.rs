@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use bevy::{log::debug, math::Vec4};
 use common::{
     inputs::{Action, BindingsData, HudPanel, InputIdentifier, SystemActionEvent},
-    profile::SerializedProfile,
+    profile::{CompactProfile, SerializedProfile},
     rpc::{RpcCall, RpcResultReceiver, RpcResultSender, RpcStreamReceiver, RpcStreamSender},
     structs::{
         MicState, PermissionLevel, PermissionStrings, PermissionType, PermissionUsed,
@@ -15,12 +15,12 @@ use std::{cell::RefCell, collections::HashMap, marker::PhantomData, rc::Rc, sync
 use strum::IntoEnumIterator;
 use system_bridge::{
     settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
-    BlockingStatusData, ChatMessage, ChatReactionData, DmHistoryEntryData, DmUserStateData,
-    FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
-    PermissionRequestEvent, ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi,
-    SetAvatarData, SetPermanentPermission, SetSinglePermission, SmartWearableAuthRequest,
-    SmartWearableStateInfo, SystemApi, VoiceMessage, WelcomeState, WorldAccessEvent,
+    BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
+    DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
+    FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, ProfileChangedEvent,
+    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetPermanentPermission,
+    SetSinglePermission, SmartWearableAuthRequest, SmartWearableStateInfo, SystemApi, VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 use tokio::sync::Notify;
 
@@ -681,6 +681,48 @@ pub async fn op_get_user_profile(
         .map_err(|_| anyhow::anyhow!("Not found"))
 }
 
+/// The most addresses one `getCompactProfiles` call may ask about.
+pub const COMPACT_PROFILES_MAX: usize = 200;
+
+/// The compact profiles (name, claimed-name flag, name colour, face) of a list of addresses
+/// in one call, through the engine's profile cache: what a list row shows, without fetching
+/// whole profiles. In request order; an address that can't be resolved is left out.
+/// Only the system scene may call it (the web worker exposes every op to every scene), with at
+/// most `COMPACT_PROFILES_MAX` addresses: one call bypasses the per-tick RPC limit, and every
+/// address it names stays cached and fetched until the answer is complete.
+pub async fn op_get_compact_profiles(
+    state: Rc<RefCell<impl State>>,
+    addresses: Vec<String>,
+) -> Result<Vec<CompactProfile>, anyhow::Error> {
+    if !state.borrow().has::<SuperUserScene>() {
+        anyhow::bail!("getCompactProfiles is only available to the system scene");
+    }
+    if addresses.len() > COMPACT_PROFILES_MAX {
+        anyhow::bail!(
+            "getCompactProfiles takes at most {COMPACT_PROFILES_MAX} addresses, got {}",
+            addresses.len()
+        );
+    }
+
+    let (sx, rx) = RpcResultSender::channel();
+
+    let scene = state.borrow().borrow::<CrdtContext>().scene_id.0;
+    debug!(
+        "[{scene:?}] -> op_get_compact_profiles ({} addresses)",
+        addresses.len()
+    );
+
+    state
+        .borrow_mut()
+        .borrow_mut::<RpcCalls>()
+        .push(RpcCall::GetCompactProfiles {
+            addresses,
+            response: sx,
+        })?;
+
+    rx.await.map_err(|e| anyhow::anyhow!(e))
+}
+
 pub fn op_quit(state: Rc<RefCell<impl State>>) {
     state
         .borrow_mut()
@@ -976,6 +1018,26 @@ pub async fn op_read_proximity_stream(
     state: Rc<RefCell<impl State>>,
     rid: u32,
 ) -> Result<Option<ProximityEvent>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub async fn op_get_photo_mode_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetPhotoModeStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_photo_mode_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<PhotoModeState>, anyhow::Error> {
     Ok(read_stream(state, rid).await)
 }
 
@@ -1359,6 +1421,34 @@ pub fn op_delete_dm_history(state: Rc<RefCell<impl State>>, address: String) {
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
         .send(SystemApi::DeleteDmHistory(address))
+        .unwrap();
+}
+
+pub async fn op_get_community_connectivity_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), rx);
+
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetCommunityConnectivityStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_community_connectivity_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<CommunityMemberConnectivityData>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_set_community_channels(state: Rc<RefCell<impl State>>, ids: Vec<String>) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::SetCommunityChannels(ids))
         .unwrap();
 }
 

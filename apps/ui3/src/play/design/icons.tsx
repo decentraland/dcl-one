@@ -53,6 +53,7 @@ export type IconName =
   | 'permissions'
   | 'dice'
   | 'smart-wearables'
+  | 'camera'
 
 const MASK_ART: Partial<Record<IconName, string>> = {
   backpack: backpackPng,
@@ -92,6 +93,9 @@ const PATHS: Partial<Record<IconName, string>> = {
   // sparkles: a wearable that runs code (a smart wearable)
   'smart-wearables':
     'M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z',
+  // a camera: photo mode
+  camera:
+    'M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4zM9 2 7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z',
   // a die: pick another at random
   dice:
     'M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7.5 18a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm0-9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm4.5 4.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm4.5 4.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm0-9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z'

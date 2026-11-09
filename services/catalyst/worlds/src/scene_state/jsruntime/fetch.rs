@@ -119,6 +119,11 @@ pub(super) fn sanitize_scene_headers(headers: Vec<(String, String)>) -> Vec<(Str
                         | "content-length"
                         | "cookie"
                         | "authorization"
+                        | "forwarded"
+                        | "x-forwarded-for"
+                        | "x-real-ip"
+                        | "cf-connecting-ip"
+                        | "true-client-ip"
                 ))
         })
         .collect()
@@ -366,6 +371,11 @@ mod tests {
             ("content-length".into(), "999".into()),
             ("Cookie".into(), "a=b".into()),
             ("authorization".into(), "Bearer x".into()),
+            ("Forwarded".into(), "for=198.51.100.7".into()),
+            ("X-Forwarded-For".into(), "198.51.100.7".into()),
+            ("X-Real-IP".into(), "198.51.100.7".into()),
+            ("CF-Connecting-IP".into(), "198.51.100.7".into()),
+            ("True-Client-IP".into(), "198.51.100.7".into()),
             ("X-Custom".into(), "yes".into()),
             ("content-type".into(), "application/json".into()),
         ]);

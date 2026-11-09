@@ -72,7 +72,8 @@ pub use mirror::MirrorSettings;
 /// What the read routes need from [`Config`], resolved once.
 #[derive(Clone, Debug)]
 pub struct Settings {
-    /// This node's root URL: `scenesUrn` base and every `/contents/` link.
+    /// This node's root URL: the comms mint `/about` advertises; the content
+    /// links use [`Settings::content_server_url`].
     pub public_url: String,
     /// The catalyst content/lambdas a world's visitors use for profiles and
     /// wearables; on a combined node these are this node's own.
@@ -137,10 +138,16 @@ impl Settings {
             .unwrap_or_else(|| format!("http://{}", config.node.bind_addr()))
             .trim_end_matches('/')
             .to_string();
+        // Upstream answers `new URL(CONTENT_URL).toString()`: a set URL as
+        // configured, and this node's own without a trailing slash.
+        let own = |set: &Option<String>, url: String| match crate::config::Config::non_empty(set) {
+            Some(_) => url,
+            None => url.trim_end_matches('/').to_string(),
+        };
         Self {
+            content_public_url: own(&config.node.content_url, content.content_public_url),
+            lambdas_public_url: own(&config.node.lambdas_url, content.lambdas_public_url),
             public_url,
-            content_public_url: content.content_public_url,
-            lambdas_public_url: content.lambdas_public_url,
             network_id: network_id_for(&config.node.eth_network),
             global_scenes_urn: Vec::new(),
             realm_name_strip_ens: true,
@@ -160,6 +167,20 @@ impl Settings {
             personal_worlds_max: config.worlds.worlds_personal_worlds_max,
             personal_world_max_size_bytes: config.worlds.worlds_personal_world_max_size_bytes,
             content_readiness: about::ContentReadiness::default(),
+        }
+    }
+
+    /// The worlds content server's own base, `<public_url>/worlds-content-server`
+    /// (the `worlds-content-server.<domain>` vhost maps onto that prefix): the
+    /// `scenesUrn` base and every `/contents/` link of `/about` and `/index`, so
+    /// they reach the worlds `/contents` route, as upstream links its own host. A
+    /// `public_url` that already names the prefix is used as it is.
+    pub fn content_server_url(&self) -> String {
+        const PREFIX: &str = "/worlds-content-server";
+        if self.public_url.ends_with(PREFIX) {
+            self.public_url.clone()
+        } else {
+            format!("{}{PREFIX}", self.public_url)
         }
     }
 
@@ -391,7 +412,9 @@ pub fn app_router(
     s: &Stage5,
 ) -> Router {
     let guard = |r: Router| writes::guard(r, s.writes_enabled);
-    let content_server = router(worlds.clone())
+    // The prefix-only reads, behind the same CORS/NUL guards as `router`: a
+    // layer reaches only the routes added before it.
+    let prefix_reads = Router::new()
         .route(
             "/status",
             get(status::get_status).with_state(worlds.clone()),
@@ -405,10 +428,7 @@ pub fn app_router(
         // The deploy clients' pre-upload check, over the same blob store.
         .route(
             "/available-content",
-            get(available_content::get)
-                .with_state(blobs.clone())
-                .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
-                .layer(axum::middleware::from_fn(cors::cors_middleware)),
+            get(available_content::get).with_state(blobs.clone()),
         )
         .route(
             "/ipfs/{hashId}",
@@ -421,10 +441,11 @@ pub fn app_router(
             get(|| async { crate::shared::openapi::document(crate::shared::openapi::WORLDS) }),
         )
         // WCS's status checks, under its prefix only (the root `/health/*` are the node's).
-        .merge(
-            crate::shared::health::status_checks_router()
-                .layer(axum::middleware::from_fn(cors::cors_middleware)),
-        )
+        .merge(crate::shared::health::status_checks_router())
+        .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
+        .layer(axum::middleware::from_fn(cors::cors_middleware));
+    let content_server = router(worlds.clone())
+        .merge(prefix_reads)
         .merge(guard(core::router(s.core.clone())));
     let mut app = Router::new()
         .merge(router(worlds))
@@ -458,8 +479,8 @@ mod tests {
         .unwrap();
         let s = Settings::from_config(&config).with_global_scenes_urn(Some(" urn:a  urn:b "));
         assert_eq!(s.public_url, "https://worlds.example.org");
-        assert_eq!(s.content_public_url, "https://worlds.example.org/content/");
-        assert_eq!(s.lambdas_public_url, "https://worlds.example.org/lambdas/");
+        assert_eq!(s.content_public_url, "https://worlds.example.org/content");
+        assert_eq!(s.lambdas_public_url, "https://worlds.example.org/lambdas");
         assert_eq!(s.network_id, 11_155_111);
         assert_eq!(s.global_scenes_urn, vec!["urn:a", "urn:b"]);
         assert!(s.realm_name_strip_ens);

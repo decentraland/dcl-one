@@ -3,9 +3,11 @@
 // host): the shell (`/`, `index.html`) is not isolated, or it refuses to start rather than take
 // the app into its process; the app frame (`app.html`, and the scene server's
 // `engine/headless.html`) isolates itself with Document-Isolation-Policy; everything else
-// carries the opener and embedder policies. `GET` and `HEAD` only, loopback peers only.
+// carries the opener and embedder policies. The bundled bridge scene's realm document is served
+// with this origin's absolute content url, as Sites serves it. `GET` and `HEAD` only, loopback
+// peers only.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import { stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import path from 'node:path'
 import { pipeline } from 'node:stream'
@@ -62,7 +64,6 @@ const CONTENT_TYPES: Record<string, string> = {
   '.ttf': 'font/ttf',
   '.glb': 'model/gltf-binary',
   '.gltf': 'model/gltf+json',
-  '.mp4': 'video/mp4',
   '.bin': 'application/octet-stream',
   '.txt': 'text/plain; charset=utf-8',
   '.wat': 'text/plain; charset=utf-8',
@@ -88,13 +89,43 @@ export function resolveFile(root: string, requestPath: string): string | undefin
   return file.startsWith(rootWithSep) ? file : undefined
 }
 
+/** The bundled bridge scene's realm document. The web build exports it with a root-relative
+ *  content url (`apps/bevy-explorer/build-web.py`: `baseUrl=/bridge-scene/static/`), which the
+ *  engine takes verbatim and cannot parse ("relative URL without a base": the bridge scene never
+ *  loads, and the HUD reports it unreachable). Sites serves the document with the deployment's
+ *  absolute address (`apps/sites/src/routes/routes/play_.bridge.about.ts`); so does this server. */
+export const BRIDGE_ABOUT_PATH = '/bridge-scene/static/BevyExplorerUI/about'
+const BRIDGE_CONTENT_PATH = '/bridge-scene/static/'
+// the entity's hash as a base32 CIDv1 (`baf…`), what the scene build writes and what Sites'
+// `play_.bridge.about.ts` accepts, kept in step with it
+const RELATIVE_BRIDGE_URN = /^urn:decentraland:entity:(baf[a-z2-7]+)\?=&baseUrl=\/bridge-scene\/static\/$/
+
+/** The realm document with its scene's root-relative content url made absolute under `origin`.
+ *  A document whose url is absolute already is left as it is (a build exported with
+ *  `SCENE_BASE_URL`); one with a root-relative url the build is not known to write is refused,
+ *  since served as it is it would fail in the engine as "relative URL without a base" with
+ *  nothing in the suite's own logs. A document without one scene urn is not the bridge's. */
+export function bridgeAbout(about: string, origin: string): string {
+  const realm = JSON.parse(about) as { configurations?: { scenesUrn?: unknown } }
+  const urns = realm.configurations?.scenesUrn
+  if (!Array.isArray(urns) || urns.length !== 1 || typeof urns[0] !== 'string') return about
+  const match = RELATIVE_BRIDGE_URN.exec(urns[0])
+  if (!match) {
+    // root-relative, not protocol-relative (`//host/…`), which the engine takes as it is
+    if (/[?&]baseUrl=\/(?!\/)/.test(urns[0])) throw new Error(`the bridge scene's realm names a root-relative content url this server does not know how to serve: ${urns[0]}`)
+    return about
+  }
+  const content = new URL(BRIDGE_CONTENT_PATH, origin).href
+  return JSON.stringify({ ...realm, configurations: { ...realm.configurations, scenesUrn: [`urn:decentraland:entity:${match[1]}?=&baseUrl=${content}`] } })
+}
+
 export interface StaticServer {
   readonly url: string
   readonly port: number
   close(): Promise<void>
 }
 
-async function serveFile(root: string, request: IncomingMessage, response: ServerResponse): Promise<void> {
+async function serveFile(root: string, origin: () => string, request: IncomingMessage, response: ServerResponse): Promise<void> {
   for (const [name, value] of Object.entries(headersFor(request.url ?? '/'))) response.setHeader(name, value)
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     response.writeHead(405, { allow: 'GET, HEAD' }).end()
@@ -116,6 +147,21 @@ async function serveFile(root: string, request: IncomingMessage, response: Serve
     response.writeHead(404).end()
     return
   }
+  // the file the request resolved to, as `resolveFile` decodes and normalises the path
+  if (file === path.join(root, ...BRIDGE_ABOUT_PATH.split('/').filter(Boolean))) {
+    let body: string
+    try {
+      body = bridgeAbout(await readFile(file, 'utf8'), origin())
+    } catch (error) {
+      // said here, where the boot log is, not left to the engine's "relative URL without a base"
+      console.error(`[e2e] ${BRIDGE_ABOUT_PATH}: ${error instanceof Error ? error.message : String(error)}`)
+      response.writeHead(503).end()
+      return
+    }
+    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'accept-ranges': 'none' })
+    response.end(request.method === 'HEAD' ? undefined : body)
+    return
+  }
   response.writeHead(200, { 'content-type': contentType(file), 'content-length': info.size, 'accept-ranges': 'none' })
   if (request.method === 'HEAD') {
     response.end()
@@ -127,15 +173,19 @@ async function serveFile(root: string, request: IncomingMessage, response: Serve
 }
 
 /** Serve `root` on `http://127.0.0.1:<port>/` (port 0 picks a free one). */
-export function serveWebApp(root: string, port: number): Promise<StaticServer> {
+export async function serveWebApp(root: string, port: number): Promise<StaticServer> {
   const absoluteRoot = path.resolve(root)
+  // the origin the realm document names: known once the server listens, before any request comes
+  let origin = ''
   const server: Server = createServer((request, response) => {
-    serveFile(absoluteRoot, request, response).catch(() => {
+    serveFile(absoluteRoot, () => origin, request, response).catch(() => {
       if (!response.headersSent) response.writeHead(500)
       response.end()
     })
   })
-  return listen(server, port)
+  const listening = await listen(server, port)
+  origin = listening.url.replace(/\/$/, '')
+  return listening
 }
 
 export function listen(server: Server, port: number): Promise<StaticServer> {

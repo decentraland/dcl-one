@@ -1,0 +1,25 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://peer.decentraland.zone",
+  "request": {
+    "method": "POST",
+    "path": "/content/entities/versions",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "pointers": [
+        "0,0"
+      ]
+    }
+  },
+  "response": {
+    "status": 405,
+    "headers": {
+      "content-length": "0",
+      "allow": "HEAD, GET"
+    },
+    "body": ""
+  },
+  "note": "Answered by the application (it carries the application trace header)."
+}
