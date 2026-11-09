@@ -34,12 +34,14 @@ impl Gateway {
     }
 
     // API vhosts use their service host label. Direct origins expose the peer at
-    // the root, preview on the main gatekeeper, and community thumbnails through social.
+    // the root, preview on the main gatekeeper, community thumbnails through social, and the
+    // asset-bundle generator's files through the one bundle cache.
     fn segment(&self, service: Service) -> Option<&'static str> {
         match service {
             Service::Catalyst if !self.virtual_host => Some(""),
             Service::PreviewGatekeeper if !self.virtual_host => Some("comms-gatekeeper"),
             Service::AssetsCdn if !self.virtual_host => Some("social-api"),
+            Service::AbgenCdn if !self.virtual_host => Some("ab-cdn"),
             // Site links and storage delegations use their own public destinations.
             Service::AuthPage | Service::Reels | Service::Storage => None,
             service if service.value() == ServiceValue::Http => Some(service.composition().1),
@@ -313,6 +315,7 @@ mod gateway_tests {
             (Service::CommsGatekeeper, "comms-gatekeeper"),
             (Service::PreviewGatekeeper, "comms-gatekeeper-local"),
             (Service::AuthApi, "auth-api"),
+            (Service::AbgenCdn, "abgen-cdn"),
             (Service::SocialApi, "social-api"),
             (Service::MapApi, "api"),
             (Service::Opensea, "opensea"),
@@ -328,6 +331,7 @@ mod gateway_tests {
                 Service::Catalyst => String::new(),
                 Service::PreviewGatekeeper => "/comms-gatekeeper".to_owned(),
                 Service::AssetsCdn => "/social-api".to_owned(),
+                Service::AbgenCdn => "/ab-cdn".to_owned(),
                 _ => format!("/{alias}"),
             };
             assert_eq!(

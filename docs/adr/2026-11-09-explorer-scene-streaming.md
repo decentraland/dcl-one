@@ -51,8 +51,19 @@ and loads are admitted in waves.
 - **Download tier.** LOD files download in a tier of their own after the live scenes', so a
   stand-in never delays the scene it stands in for.
 
-The ladder's near and far LODs land in follow-up changes on this decision; this change lands the
-hysteresis fix, the removal of the walls and the waves.
+- **The near LOD's files are the scene's.** The descriptor
+  (`abgen-cdn.<base>/LOD/lods-unity/manifests/{sceneId}_InitialSceneState.json`, the same host
+  unity-explorer reads it from, resolved like every other service from the base domain or its
+  override) names each model by content hash; the stand-in finds the file in the scene's
+  content map, registers the map as the scene's collection and loads
+  `$content_file/{scene}/{file}` with the scene's loader settings, so the live scene's
+  containers get the same handles. Its meshes are uploaded, its root nodes turned, its collider
+  nodes hidden and its materials bound to the scene's bounds the way the live scene's are, so
+  nothing moves at the hand-over; lights and animations stay off. A scene wholly behind the
+  camera starts no stand-in. The realm's active-entities response, which already carries every
+  scene's content map, is kept for this instead of fetching each definition again.
+
+The far LOD lands in a follow-up change on this decision.
 
 ## Rejected
 
@@ -61,8 +72,9 @@ hysteresis fix, the removal of the walls and the waves.
 - **A wave as a fixed batch that waits for the whole batch.** Six slots that refill one at a time
   keep the pipeline full; a batch that waits for its slowest member idles the others.
 - **Lifting the player's-scene-first deferral.** With waves it could go, but the player's scene
-  has no stand-in while the player is in it, and it is the one scene that must come up before
-  anything else competes for the frame. It stays.
+  is the one scene that must come up before anything else competes for the frame. It stays.
+- **A catalyst copy of the LOD files.** The client reads them from the generator's CDN as
+  unity-explorer does; a deployment that mirrors or converts them serves that host itself.
 - **unity-explorer's 32/48 m live radius now.** The live radius and the unload margin are
   settings; raising the defaults is a measurement, after waves and the near LOD exist.
 - **Time-based reveal of a ready scene.** The scene is raised in one frame as before; a
@@ -73,7 +85,10 @@ hysteresis fix, the removal of the walls and the waves.
 - A live scene no longer flips at the load edge; the "Scene Unload Distance" setting works.
 - Entering a dense area spawns six scenes, nearest and in front first, then one more as each
   comes up, instead of every scene in range in one frame.
-- Until the LODs land, a loading scene shows its imposter tile where one is baked and nothing
-  where none is; the walls are gone.
+- A loading scene within 80 m shows its own models as soon as they have all loaded, where the
+  pipeline has a descriptor for it; elsewhere its imposter tile where one is baked, and nothing
+  where none is. The walls are gone.
+- The stand-in's models are the live scene's first downloads done early: when the scene comes
+  up, its containers find them loaded.
 - A scene stalled in loading holds a wave slot for 20 s, then the wave moves on with it still
   loading.
