@@ -10,7 +10,7 @@ import { type ShopClient } from "../api/shop";
 import { shopFlags } from "./flags";
 import { readFreshness, type IndexFreshness } from "./freshness";
 import { catalogCategoryParams } from "./lib/categories";
-import { toCatalogItem, type CatalogItem, type ListingAcquisition, type ListingSource, type RawCollectionItem } from "./lib/catalogItem";
+import { toCatalogItem, type CatalogItem, type ListingAcquisition, type ListingSource, type RawCollectionItem } from "@shop/discovery/lib/catalogItem";
 import type { QueryParams } from "../api/client";
 
 export type Opts = { client: ShopClient; signal?: AbortSignal };

@@ -13,7 +13,7 @@ import type { FavoriteList } from "@catalyst-api/market/FavoriteList";
 import type { ListPickItem } from "@catalyst-api/market/ListPickItem";
 import { isShopApiError } from "../../api/client";
 import { type ShopClient } from "../../api/shop";
-import { sameAddress } from "../../model/address";
+import { sameAddress } from "@shop/model/address";
 import { shopClient } from "../../api/host";
 
 /** The global default "Favorites" list (seeded in the marketplace-server DB; same id everywhere). */

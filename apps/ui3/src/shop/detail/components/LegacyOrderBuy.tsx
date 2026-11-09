@@ -14,8 +14,8 @@ import type { Hex } from "viem";
 
 import Button from "../../../atoms/Button";
 import Modal from "../../../components/Modal";
-import { chainLabel, type ChainId } from "../../model/chain";
-import { formatMana, type ManaWei } from "../../model/money";
+import { chainLabel, type ChainId } from "@shop/model/chain";
+import { formatMana, type ManaWei } from "@shop/model/money";
 import { declined, isTxPending, isTxReverted, type WaitOptions } from "../../market/lib/tx";
 import { executeLegacyOrder, type OrderPhase } from "../../market/purchase/executeOrder";
 import { useShopWallet } from "../../wallet/context";

@@ -38,7 +38,7 @@ import type { TopCreatorsResponseBody } from "@catalyst-api/market/TopCreatorsRe
 import type { TrendingResponseBody } from "@catalyst-api/market/TrendingResponseBody";
 import type { UnifiedListing } from "@catalyst-api/market/UnifiedListing";
 import { createShopApi, type QueryParams, type RequestInput, type ShopApi, type ShopApiOptions } from "./client";
-import { ENDPOINTS as E } from "./endpoints";
+import { ENDPOINTS as E } from "@shop/api/endpoints";
 import type {
   CancelCreditsRequest,
   CancelCreditsResult,
@@ -51,7 +51,7 @@ import type {
   PackOrderCreated,
   PackOrderRequest,
   PackOrderStatus,
-} from "./types";
+} from "@shop/api/types";
 
 type Opts = Pick<RequestInput, "signal" | "headers">;
 type Q = QueryParams;

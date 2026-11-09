@@ -884,14 +884,27 @@ async fn a_world_is_published_hosted_joined_voiced_revoked_persisted_and_pulsed(
     });
     let entity_bytes = serde_json::to_vec(&entity).unwrap();
     let entity_id = hash_bytes_v1(&entity_bytes);
-    let chain = serde_json::to_string(&owner.chain(&entity_id).await).unwrap();
-    let (body, content_type) = multipart(&[
-        ("entityId", None, entity_id.as_bytes()),
-        ("authChain", None, chain.as_bytes()),
-        ("entity.json", Some("entity.json"), &entity_bytes),
-        ("bin/game.js", Some("game.js"), GAME_JS.as_bytes()),
-        ("thumb.png", Some("thumb.png"), PNG_1X1),
-    ]);
+    // Upstream's form: the indexed chain fields and each file named by its hash.
+    let chain = serde_json::to_value(owner.chain(&entity_id).await).unwrap();
+    let chain: Vec<(String, String)> = chain
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .flat_map(|(i, link)| {
+            ["type", "payload", "signature"].map(|k| {
+                let v = link[k].as_str().unwrap_or_default().to_string();
+                (format!("authChain[{i}][{k}]"), v)
+            })
+        })
+        .collect();
+    let mut parts: Vec<(&str, Option<&str>, &[u8])> =
+        vec![("entityId", None, entity_id.as_bytes())];
+    parts.extend(chain.iter().map(|(k, v)| (k.as_str(), None, v.as_bytes())));
+    parts.push((&entity_id, Some(&entity_id), &entity_bytes));
+    parts.push((&game_hash, Some(&game_hash), GAME_JS.as_bytes()));
+    parts.push((&thumb_hash, Some(&thumb_hash), PNG_1X1));
+    let (body, content_type) = multipart(&parts);
     let (status, published) = http
         .send(
             "post",

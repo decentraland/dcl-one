@@ -27,13 +27,13 @@ import { canBeClaimed, fetchRentalListings, hasRentalEnded, isOwnedBy, isRentalE
 import { fetchBidsByAsset } from "../../market/lib/api";
 import type { Bid, Sale } from "../../market/lib/api";
 import { fetchTiles, type Tiles } from "../../land/tiles";
-import { sameAddress, shortAddress } from "../../model/address";
-import { parseManaWei, type ManaWei } from "../../model/money";
+import { sameAddress, shortAddress } from "@shop/model/address";
+import { parseManaWei, type ManaWei } from "@shop/model/money";
 import { SHOP_BASE, shopPath } from "../../routes";
 import { useProfile, useSeo } from "../../discovery/hooks";
 import { useShopQuery } from "../../discovery/query";
 import { useManaRate } from "../../credits/hooks";
-import { manaWeiToUsdCents } from "../../checkout/lib/currency";
+import { manaWeiToUsdCents } from "@shop/checkout/lib/currency";
 import { useShopWallet } from "../../wallet/context";
 import LegacyOrderBuy from "./LegacyOrderBuy";
 import LandAtlas from "./LandAtlas";

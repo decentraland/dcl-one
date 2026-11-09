@@ -8,7 +8,8 @@
 
 use axum::Json;
 use axum::extract::{OriginalUri, Path, State};
-use axum::http::{HeaderMap, Uri};
+use axum::http::{HeaderMap, Uri, header};
+use axum::response::IntoResponse;
 use serde_json::{Value, json};
 
 use crate::comms::world_identity::{Parcel, ParcelSet, WorldName};
@@ -101,14 +102,15 @@ pub async fn delete_scene(
     })))
 }
 
-/// DELETE /entities/{world_name}
+/// DELETE /entities/{world_name}. The 200 is the string `{}` as `text/plain`, as upstream's
+/// handler answers it (`body: '{}'`).
 pub async fn undeploy_world(
     State(state): State<SharedState>,
     Path(world_name): Path<String>,
     OriginalUri(original): OriginalUri,
     uri: Uri,
     headers: HeaderMap,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<impl IntoResponse, ApiError> {
     let world = parse_world(&world_name)?;
     let auth = require_verified(
         &headers,
@@ -139,5 +141,5 @@ pub async fn undeploy_world(
     let removed = store::undeploy_world(&state.pool, &world).await?;
     recheck_owner_quota(&state, &world);
     tracing::info!(world = %world, signer = %auth.signer.as_str(), removed, "world undeployed");
-    Ok(Json(json!({})))
+    Ok(([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], "{}"))
 }

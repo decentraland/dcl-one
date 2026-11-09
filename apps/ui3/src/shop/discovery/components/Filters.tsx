@@ -3,10 +3,10 @@
 
 import { useEffect, useId, useState, type ReactNode } from "react";
 
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import { CATEGORIES, type Sub, type Top } from "../lib/categories";
-import { PRICE_SLIDER_MAX, PRICE_SLIDER_STEPS, priceToSliderPct, priceToSliderPos, sliderPosToPrice } from "../lib/price-slider";
-import { RARITIES, rarityColor, rarityLabel } from "../lib/rarity";
+import { PRICE_SLIDER_MAX, PRICE_SLIDER_STEPS, priceToSliderPct, priceToSliderPos, sliderPosToPrice } from "@shop/discovery/lib/price-slider";
+import { RARITIES, rarityColor, rarityLabel } from "@shop/discovery/lib/rarity";
 import { CollectionFilter, CreatorFilter, useCollectionName, useCreatorNames } from "./PickerFilters";
 import Icon from "./Icon";
 import "./filters.css";

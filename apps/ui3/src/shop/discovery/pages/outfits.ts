@@ -1,9 +1,9 @@
 // from: shop@2d3bf62:app/src/lib/outfits.ts, app/src/lib/ownership.ts (isOwnListing)
 
 import { isShopApiError } from "../../api/client";
-import { ENDPOINTS } from "../../api/endpoints";
+import { ENDPOINTS } from "@shop/api/endpoints";
 import type { AuthIdentity } from "../../../data/auth/identity";
-import type { CatalogItem } from "../lib/catalogItem";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { slotOf } from "../lib/outfit";
 import { identitySigner, shopClient } from "../../api/host";
 

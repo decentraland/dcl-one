@@ -6,10 +6,10 @@
 
 import { useEffect, useId, useState, type KeyboardEvent } from "react";
 
-import { shortAddress } from "../../model/address";
+import { shortAddress } from "@shop/model/address";
 import { fetchCollection, searchCollections, searchCreators } from "../api";
 import { useProfiles } from "../hooks";
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import { useShopQuery } from "../query";
 import { loadTopCreators } from "./TopCreators";
 import Icon from "./Icon";

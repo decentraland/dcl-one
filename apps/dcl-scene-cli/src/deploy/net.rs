@@ -1580,8 +1580,11 @@ fn parse_available(body: &str) -> Vec<String> {
 }
 
 /// The files that travel, and the split: a file whose hash the server
-/// holds is left out of the request. Borrowed when nothing stays, so the
-/// common case copies no bytes.
+/// holds is left out of the request, and each remaining hash travels once —
+/// the server refuses a form that names a part twice, and byte-identical
+/// paths share one hash. The entity still lists every path; the tally counts
+/// paths. Borrowed when nothing is left out, so the common case copies no
+/// bytes.
 pub(crate) fn split_stored<'a>(
     files: &'a Files,
     have: &HashSet<String>,
@@ -1591,13 +1594,19 @@ pub(crate) fn split_stored<'a>(
             .iter()
             .map(|(_, h, b)| (have.contains(h), b.len() as u64)),
     );
-    if reuse.reused_files == 0 {
+    let mut seen = HashSet::new();
+    let travels: Vec<bool> = files
+        .iter()
+        .map(|(_, hash, _)| !have.contains(hash) && seen.insert(hash.as_str()))
+        .collect();
+    if travels.iter().all(|t| *t) {
         return (Cow::Borrowed(files), reuse);
     }
     let send: Vec<(String, String, Vec<u8>)> = files
         .iter()
-        .filter(|(_, hash, _)| !have.contains(hash))
-        .cloned()
+        .zip(&travels)
+        .filter(|(_, t)| **t)
+        .map(|(f, _)| f.clone())
         .collect();
     (Cow::Owned(send), reuse)
 }
@@ -2428,6 +2437,59 @@ mod tests {
         let progress = UploadProgress::default();
         progress.begin(2, &send, reuse);
         assert_eq!(progress.snapshot().reuse, None, "nothing stayed home");
+    }
+
+    /// Byte-identical paths share a hash: the form carries it once, while
+    /// the entity still maps both paths to it.
+    #[test]
+    fn identical_files_travel_once_and_the_entity_keeps_both_paths() {
+        let bytes = b"same texture".to_vec();
+        let hash = dcl_auth::hash_bytes_v1(&bytes);
+        let other = b"other".to_vec();
+        let other_hash = dcl_auth::hash_bytes_v1(&other);
+        let files: Vec<(String, String, Vec<u8>)> = vec![
+            ("a.png".into(), hash.clone(), bytes.clone()),
+            ("copy/a.png".into(), hash.clone(), bytes.clone()),
+            ("b.bin".into(), other_hash.clone(), other.clone()),
+        ];
+        for have in [HashSet::new(), HashSet::from([other_hash.clone()])] {
+            let (send, _) = split_stored(&files, &have);
+            let sent: Vec<&str> = send.iter().map(|(_, h, _)| h.as_str()).collect();
+            let mut unique = sent.clone();
+            unique.sort_unstable();
+            unique.dedup();
+            assert_eq!(sent.len(), unique.len(), "{sent:?}");
+            assert_eq!(sent.iter().filter(|h| **h == hash).count(), 1);
+            let (_, wire) = signed_parts(&send);
+            let text = String::from_utf8_lossy(&wire);
+            let part = format!("name=\"{hash}\"; filename=\"{hash}\"");
+            assert_eq!(
+                text.matches(&part).count(),
+                1,
+                "the shared hash travels once"
+            );
+        }
+        let prepared = crate::deploy::Prepared {
+            files: files.clone(),
+            pointers: vec!["0,0".into()],
+            metadata: dcl_scene_authoring::jsjson::JsValue::Object(vec![]),
+        };
+        let (_, entity) = crate::deploy::build_entity(&prepared, 1).unwrap();
+        let entity: Value = serde_json::from_slice(&entity).unwrap();
+        let content: Vec<(&str, &str)> = entity["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| (c["file"].as_str().unwrap(), c["hash"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            content,
+            vec![
+                ("a.png", hash.as_str()),
+                ("copy/a.png", hash.as_str()),
+                ("b.bin", other_hash.as_str()),
+            ]
+        );
     }
 
     #[test]

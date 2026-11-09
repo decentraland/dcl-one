@@ -7,7 +7,7 @@ import { Link } from "react-router";
 import { fetchCommunityProfiles } from "../../../data/hooks/useCommunityProfiles";
 import { SHOP_BASE } from "../../routes";
 import { fetchShopTopCreators } from "../api";
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import { railGeometry, railPageFromGeometry, scrollRailToPage } from "../lib/pagedRail";
 import { avatarBackgroundColor, selectTopCreators, type CreatorProfile, type TopCreator } from "../lib/topCreators";
 import { useShopQuery } from "../query";

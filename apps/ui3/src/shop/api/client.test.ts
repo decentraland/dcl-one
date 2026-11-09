@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { generateEphemeralKey, type AuthIdentity } from "../../data/auth/identity";
 import { createShopApi, creditsDisabled, insufficientCredits, ShopApiError, tooManyLiveCredits } from "./client";
-import { ENDPOINTS } from "./endpoints";
+import { ENDPOINTS } from "@shop/api/endpoints";
 import { setupServer } from "msw/node";
 
 import { FIXTURE_BUYER, fixtureTransport, wireHandlers } from "./fixtures";

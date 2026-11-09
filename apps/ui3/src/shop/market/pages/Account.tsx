@@ -10,8 +10,8 @@ import { useParams, useSearchParams } from "react-router";
 
 import { fetchCatalogItems } from "../../discovery/api";
 import AssetCard from "../../discovery/components/AssetCard";
-import type { CatalogItem } from "../../discovery/lib/catalogItem";
-import { parseEvmAddress, sameAddress } from "../../model/address";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
+import { parseEvmAddress, sameAddress } from "@shop/model/address";
 import { useShopWallet } from "../../wallet/context";
 import { EnsureQueryClient, LoadFailure } from "../components/kit";
 import AccountBanner from "./account/AccountBanner";
