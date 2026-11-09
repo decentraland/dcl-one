@@ -3371,6 +3371,58 @@ async fn refuses_a_scene_signer_in_every_spelling() {
     }
 }
 
+/// Metadata parses as `JSON.parse` does: a lone surrogate, an overflowing
+/// number and nesting past 128 verify under both payload shapes and serve
+/// the scene, and the scene gate echoes them as `JSON.stringify` writes them.
+#[tokio::test]
+async fn metadata_accepts_what_json_parse_accepts() {
+    let deep = format!("{}0{}", "[".repeat(1000), "]".repeat(1000));
+    let extras = format!(r#""note":"\ud800","big":1e400,"deep":{deep}"#);
+    let metadata =
+        format!(r#"{{"signer":"dcl:authoritative-server","realmName":"some.dcl.eth",{extras}}}"#);
+    for shape in [Shape::Legacy, Shape::V6] {
+        let signer = verify(&signed_as(KEY, shape, METHOD, PATH, &metadata, &metadata).await)
+            .await
+            .unwrap_or_else(|e| panic!("{shape:?} must verify: {e:?}"));
+        assert_eq!(signer.as_str(), address_of(KEY));
+    }
+
+    let refused = r#"{"signer":"decentraland-kernel-scene","x":"\ud800","n":1e400}"#;
+    let err = verify(&signed_as(KEY, Shape::V6, METHOD, PATH, refused, refused).await)
+        .await
+        .expect_err("a scene-signed request must be refused");
+    assert_eq!(
+        err.raw_message(),
+        r#"Invalid metadata content: {"signer":"decentraland-kernel-scene","x":"\ud800","n":null}"#
+    );
+
+    let Some(pool) = scratch().await else { return };
+    let world = world_name();
+    let owner_key = random_key();
+    let owner = Address::parse(&address_of(&owner_key)).unwrap();
+    seed_world(&pool, &world, Some(&owner)).await;
+    seed_scene(&pool, &world, SCENE_ID, &["0,0"], Some("0,0"), false).await;
+    let app = router(state(&pool, None));
+    let meta = format!(
+        r#"{{"realm":{{"serverName":"{}"}},"parcel":"0,0","sceneId":"{SCENE_ID}",{extras}}}"#,
+        world.display()
+    );
+    let (status, body) = send(
+        &app,
+        signed_request(
+            "put",
+            "/values/k",
+            &owner_key,
+            &meta,
+            None,
+            Some(r#"{"value":1}"#),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!((status, body), (StatusCode::OK, json!({ "value": 1 })));
+}
+
 /// The gate answers before signature verification, so a refused request pays
 /// no catalyst round-trip for an EIP-1654 chain.
 #[tokio::test]

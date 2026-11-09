@@ -13,6 +13,8 @@ use std::fmt::Write as _;
 use serde::Serialize;
 use serde_json::{Value, json};
 
+use super::js::{JsString, JsValue};
+
 /// One parsed value; containers hold arena indices.
 enum Item {
     Null,
@@ -59,13 +61,19 @@ pub fn parse(source: &[u16]) -> Result<Doc, String> {
     .run()
 }
 
+/// One open container. A body can open one per byte, so an array frame
+/// stays two words and the object state is boxed.
 enum Frame {
     Arr(usize),
-    Obj {
-        idx: usize,
-        key: Vec<u16>,
-        seen: HashMap<Vec<u16>, usize>,
-    },
+    Obj(Box<ObjFrame>),
+}
+
+struct ObjFrame {
+    idx: usize,
+    /// The property whose value is being parsed.
+    key: Vec<u16>,
+    /// Each key's entry position, for a repeated key.
+    seen: HashMap<Vec<u16>, usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -385,11 +393,11 @@ impl Parser<'_> {
                         }
                         Some(0x22) => {
                             let key = self.property_name()?;
-                            stack.push(Frame::Obj {
+                            stack.push(Frame::Obj(Box::new(ObjFrame {
                                 idx,
                                 key,
                                 seen: HashMap::new(),
-                            });
+                            })));
                             continue 'value;
                         }
                         _ => return Err(self.at(Msg::ExpectedPropNameOrRBrace, self.pos)),
@@ -426,7 +434,8 @@ impl Parser<'_> {
                             _ => return Err(self.at(Msg::ExpectedCommaOrRBrack, self.pos)),
                         }
                     }
-                    Some(Frame::Obj { idx, key, seen }) => {
+                    Some(Frame::Obj(frame)) => {
+                        let ObjFrame { idx, key, seen } = &mut **frame;
                         let o = *idx;
                         let key = std::mem::take(key);
                         if let Item::Obj(entries) = &mut self.items[o] {
@@ -449,8 +458,8 @@ impl Parser<'_> {
                                     );
                                 }
                                 let next = self.property_name()?;
-                                if let Some(Frame::Obj { key, .. }) = stack.last_mut() {
-                                    *key = next;
+                                if let Some(Frame::Obj(frame)) = stack.last_mut() {
+                                    frame.key = next;
                                 }
                                 continue 'value;
                             }
@@ -497,7 +506,7 @@ pub fn js_number(f: f64) -> String {
 
 /// `JSON.stringify` of a string given as UTF-16 units: a lone surrogate is
 /// written as a lowercase `\uXXXX` escape.
-fn write_js_string(out: &mut String, units: &[u16]) {
+pub(super) fn write_js_string(out: &mut String, units: &[u16]) {
     out.push('"');
     for unit in char::decode_utf16(units.iter().copied()) {
         match unit {
@@ -579,6 +588,35 @@ impl Doc {
                 _ => unreachable!("only containers are stacked"),
             });
         }
+    }
+
+    /// The document as a [`JsValue`] tree, built bottom-up: children always
+    /// follow their container in the arena.
+    pub fn into_js_value(self) -> JsValue {
+        let mut built: Vec<Option<JsValue>> = Vec::with_capacity(self.items.len());
+        built.resize_with(self.items.len(), || None);
+        fn take(built: &mut [Option<JsValue>], i: usize) -> JsValue {
+            built[i].take().expect("each child has one container")
+        }
+        for (i, item) in self.items.into_iter().enumerate().rev() {
+            let value = match item {
+                Item::Null => JsValue::Null,
+                Item::Bool(b) => JsValue::Bool(b),
+                Item::Num(n) => JsValue::Number(n),
+                Item::Str(s) => JsValue::String(JsString::from_units(s)),
+                Item::Arr(children) => {
+                    JsValue::array(children.into_iter().map(|c| take(&mut built, c)).collect())
+                }
+                Item::Obj(entries) => JsValue::object(
+                    entries
+                        .into_iter()
+                        .map(|(k, c)| (JsString::from_units(k), take(&mut built, c)))
+                        .collect(),
+                ),
+            };
+            built[i] = Some(value);
+        }
+        take(&mut built, 0)
     }
 
     /// A string item as the UTF-8 text Node encodes it (a lone surrogate
@@ -954,6 +992,25 @@ mod tests {
         assert_eq!(doc.stringify(0), text);
         let text = format!("{}1{}", "{\"a\":".repeat(depth), "}".repeat(depth));
         assert_eq!(parse_str(&text).unwrap().stringify(0), text);
+    }
+
+    /// A body may open one container per byte: an open array costs a
+    /// two-word frame, and a maximum-size world upsert (512 KiB value plus
+    /// the envelope slack) parses whether it closes or not.
+    #[test]
+    fn a_maximum_size_nested_body_is_bounded() {
+        assert!(std::mem::size_of::<Frame>() <= 16);
+        let max_body = 524_288 + 1024;
+        assert_eq!(
+            parse_str(&"[".repeat(max_body)).err().as_deref(),
+            Some(EOS_MESSAGE)
+        );
+        let depth = (max_body - "{\"value\":12}".len()) / 2;
+        let text = format!("{{\"value\":{}12{}}}", "[".repeat(depth), "]".repeat(depth));
+        assert_eq!(text.len(), max_body);
+        let doc = parse_str(&text).unwrap();
+        let value = doc.validate_storage_body().unwrap();
+        assert_eq!(doc.stringify(value).len(), 2 * depth + 2);
     }
 
     fn storage_errors(body: &str) -> Value {

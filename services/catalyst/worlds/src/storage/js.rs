@@ -4,25 +4,92 @@
 //! `Buffer.from(_, 'base64')`. Local time is read as UTC, as the upstream
 //! service runs.
 
-use std::fmt;
+use std::borrow::Cow;
+use std::ops::Deref;
 
-use serde::de::{Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
+use super::js_json::{self, write_js_string};
 
 /// A `JSON.parse` result: numbers are doubles and an object keeps its own
 /// keys in JavaScript order (array-index keys ascending, then insertion
 /// order; a repeated key keeps its first position and its last value).
+/// Containers clone and drop iteratively, so any parsed depth is safe.
 #[derive(Debug, Clone, PartialEq)]
 pub enum JsValue {
     Null,
     Bool(bool),
     Number(f64),
-    String(String),
-    Array(Vec<JsValue>),
+    String(JsString),
+    Array(JsArray),
     Object(JsObject),
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct JsObject(Vec<(String, JsValue)>);
+/// A JavaScript string. It reads as the UTF-8 text Node writes (a lone
+/// surrogate as U+FFFD); the UTF-16 units are kept when they hold a lone
+/// surrogate, so the string stays distinct and `JSON.stringify` escapes it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct JsString {
+    text: String,
+    ill_formed: Option<Box<[u16]>>,
+}
+
+impl JsString {
+    pub fn from_units(units: Vec<u16>) -> Self {
+        match String::from_utf16(&units) {
+            Ok(text) => Self {
+                text,
+                ill_formed: None,
+            },
+            Err(_) => Self {
+                text: String::from_utf16_lossy(&units),
+                ill_formed: Some(units.into_boxed_slice()),
+            },
+        }
+    }
+
+    fn units(&self) -> Cow<'_, [u16]> {
+        match &self.ill_formed {
+            Some(units) => Cow::Borrowed(units),
+            None => Cow::Owned(self.text.encode_utf16().collect()),
+        }
+    }
+}
+
+impl Deref for JsString {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.text
+    }
+}
+
+impl From<&str> for JsString {
+    fn from(text: &str) -> Self {
+        Self {
+            text: text.to_string(),
+            ill_formed: None,
+        }
+    }
+}
+
+impl PartialEq<str> for JsString {
+    fn eq(&self, other: &str) -> bool {
+        self.ill_formed.is_none() && self.text == other
+    }
+}
+
+#[derive(Debug, PartialEq, Default)]
+pub struct JsArray(Vec<JsValue>);
+
+impl Deref for JsArray {
+    type Target = [JsValue];
+
+    fn deref(&self) -> &[JsValue] {
+        &self.0
+    }
+}
+
+#[derive(Debug, PartialEq, Default)]
+pub struct JsObject(Vec<(JsString, JsValue)>);
 
 impl JsObject {
     pub fn get(&self, key: &str) -> Option<&JsValue> {
@@ -30,99 +97,111 @@ impl JsObject {
     }
 
     pub fn keys(&self) -> impl Iterator<Item = &str> {
-        self.0.iter().map(|(k, _)| k.as_str())
-    }
-
-    pub fn entries(&self) -> impl Iterator<Item = (&str, &JsValue)> {
-        self.0.iter().map(|(k, v)| (k.as_str(), v))
+        self.0.iter().map(|(k, _)| &**k)
     }
 }
 
-/// A canonical array index (`"0"`, `"17"`, below 2^32 - 1) sorts first.
-fn array_index(key: &str) -> Option<u32> {
-    if key.is_empty() || (key.len() > 1 && key.starts_with('0')) {
-        return None;
+impl Clone for JsArray {
+    fn clone(&self) -> Self {
+        Self(clone_values(
+            self.0.iter().rev().map(CloneTask::Visit).collect(),
+        ))
     }
-    if !key.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    key.parse::<u32>().ok().filter(|&i| i != u32::MAX)
 }
 
-impl<'de> Deserialize<'de> for JsValue {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct JsVisitor;
+impl Clone for JsObject {
+    fn clone(&self) -> Self {
+        let values = clone_values(
+            self.0
+                .iter()
+                .rev()
+                .map(|(_, v)| CloneTask::Visit(v))
+                .collect(),
+        );
+        Self(self.0.iter().map(|(k, _)| k.clone()).zip(values).collect())
+    }
+}
 
-        impl<'de> Visitor<'de> for JsVisitor {
-            type Value = JsValue;
+enum CloneTask<'a> {
+    Visit(&'a JsValue),
+    Array(usize),
+    Object(&'a JsObject),
+}
 
-            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("JSON")
+/// Clones the values the stacked tasks visit, in visiting order.
+fn clone_values(mut tasks: Vec<CloneTask<'_>>) -> Vec<JsValue> {
+    let mut out = Vec::new();
+    while let Some(task) = tasks.pop() {
+        match task {
+            CloneTask::Visit(JsValue::Array(a)) => {
+                tasks.push(CloneTask::Array(a.len()));
+                tasks.extend(a.iter().rev().map(CloneTask::Visit));
             }
-            fn visit_bool<E>(self, v: bool) -> Result<JsValue, E> {
-                Ok(JsValue::Bool(v))
+            CloneTask::Visit(JsValue::Object(o)) => {
+                tasks.push(CloneTask::Object(o));
+                tasks.extend(o.0.iter().rev().map(|(_, v)| CloneTask::Visit(v)));
             }
-            fn visit_i64<E>(self, v: i64) -> Result<JsValue, E> {
-                Ok(JsValue::Number(v as f64))
+            CloneTask::Visit(JsValue::Null) => out.push(JsValue::Null),
+            CloneTask::Visit(JsValue::Bool(b)) => out.push(JsValue::Bool(*b)),
+            CloneTask::Visit(JsValue::Number(n)) => out.push(JsValue::Number(*n)),
+            CloneTask::Visit(JsValue::String(s)) => out.push(JsValue::String(s.clone())),
+            CloneTask::Array(len) => {
+                let items = out.split_off(out.len() - len);
+                out.push(JsValue::Array(JsArray(items)));
             }
-            fn visit_u64<E>(self, v: u64) -> Result<JsValue, E> {
-                Ok(JsValue::Number(v as f64))
-            }
-            fn visit_f64<E>(self, v: f64) -> Result<JsValue, E> {
-                Ok(JsValue::Number(v))
-            }
-            fn visit_str<E>(self, v: &str) -> Result<JsValue, E> {
-                Ok(JsValue::String(v.to_string()))
-            }
-            fn visit_string<E>(self, v: String) -> Result<JsValue, E> {
-                Ok(JsValue::String(v))
-            }
-            fn visit_unit<E>(self) -> Result<JsValue, E> {
-                Ok(JsValue::Null)
-            }
-            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<JsValue, A::Error> {
-                let mut out = Vec::new();
-                while let Some(v) = seq.next_element()? {
-                    out.push(v);
-                }
-                Ok(JsValue::Array(out))
-            }
-            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<JsValue, A::Error> {
-                let mut entries: Vec<(String, JsValue)> = Vec::new();
-                while let Some((k, v)) = map.next_entry::<String, JsValue>()? {
-                    match entries.iter_mut().find(|(existing, _)| *existing == k) {
-                        Some(slot) => slot.1 = v,
-                        None => entries.push((k, v)),
-                    }
-                }
-                entries.sort_by_key(|(k, _)| match array_index(k) {
-                    Some(i) => (0, i),
-                    None => (1, 0),
-                });
-                Ok(JsValue::Object(JsObject(entries)))
+            CloneTask::Object(o) => {
+                let values = out.split_off(out.len() - o.0.len());
+                let entries = o.0.iter().map(|(k, _)| k.clone()).zip(values).collect();
+                out.push(JsValue::Object(JsObject(entries)));
             }
         }
+    }
+    out
+}
 
-        deserializer.deserialize_any(JsVisitor)
+/// Empties every nested container before it drops, so dropping is shallow.
+fn drop_values(mut pending: Vec<JsValue>) {
+    while let Some(mut value) = pending.pop() {
+        match &mut value {
+            JsValue::Array(a) => pending.append(&mut a.0),
+            JsValue::Object(o) => pending.extend(o.0.drain(..).map(|(_, v)| v)),
+            _ => {}
+        }
+    }
+}
+
+impl Drop for JsArray {
+    fn drop(&mut self) {
+        drop_values(std::mem::take(&mut self.0));
+    }
+}
+
+impl Drop for JsObject {
+    fn drop(&mut self) {
+        drop_values(self.0.drain(..).map(|(_, v)| v).collect());
     }
 }
 
 impl JsValue {
-    /// `JSON.parse`.
+    /// `JSON.parse`, over the string's UTF-16 units.
     pub fn parse(raw: &str) -> Option<Self> {
-        serde_json::from_str(raw).ok()
+        let source: Vec<u16> = raw.encode_utf16().collect();
+        js_json::parse(&source)
+            .ok()
+            .map(js_json::Doc::into_js_value)
+    }
+
+    pub(super) fn array(items: Vec<JsValue>) -> Self {
+        Self::Array(JsArray(items))
+    }
+
+    pub(super) fn object(entries: Vec<(JsString, JsValue)>) -> Self {
+        Self::Object(JsObject(entries))
     }
 
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Self::String(s) => Some(s),
-            _ => None,
-        }
-    }
-
-    pub fn as_object(&self) -> Option<&JsObject> {
-        match self {
-            Self::Object(o) => Some(o),
             _ => None,
         }
     }
@@ -137,61 +216,87 @@ impl JsValue {
         }
     }
 
-    /// `String(value)`.
+    /// `String(value)`; an array joins its items with `,`, `null` as empty.
     pub fn to_js_string(&self) -> String {
-        match self {
-            Self::Null => "null".to_string(),
-            Self::Bool(b) => b.to_string(),
-            Self::Number(n) => number_to_string(*n),
-            Self::String(s) => s.clone(),
-            Self::Array(items) => items
-                .iter()
-                .map(|v| match v {
-                    Self::Null => String::new(),
-                    other => other.to_js_string(),
-                })
-                .collect::<Vec<_>>()
-                .join(","),
-            Self::Object(_) => "[object Object]".to_string(),
+        let items = match self {
+            Self::Null => return "null".to_string(),
+            Self::Bool(b) => return b.to_string(),
+            Self::Number(n) => return number_to_string(*n),
+            Self::String(s) => return s.to_string(),
+            Self::Object(_) => return "[object Object]".to_string(),
+            Self::Array(items) => items,
+        };
+        let mut out = String::new();
+        let mut stack = vec![(items.iter(), false)];
+        while let Some((iter, joined)) = stack.last_mut() {
+            let Some(item) = iter.next() else {
+                stack.pop();
+                continue;
+            };
+            if std::mem::replace(joined, true) {
+                out.push(',');
+            }
+            match item {
+                Self::Null => {}
+                Self::Array(inner) => stack.push((inner.iter(), false)),
+                scalar => out.push_str(&scalar.to_js_string()),
+            }
         }
+        out
     }
 
     /// `JSON.stringify(value)`.
     pub fn stringify(&self) -> String {
+        enum Open<'a> {
+            Array(std::slice::Iter<'a, JsValue>),
+            Object(std::slice::Iter<'a, (JsString, JsValue)>),
+        }
         let mut out = String::new();
-        self.write_json(&mut out);
-        out
-    }
-
-    fn write_json(&self, out: &mut String) {
-        match self {
-            Self::Null => out.push_str("null"),
-            Self::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
-            Self::Number(n) if n.is_finite() => out.push_str(&number_to_string(*n)),
-            Self::Number(_) => out.push_str("null"),
-            Self::String(s) => out.push_str(&serde_json::to_string(s).unwrap_or_default()),
-            Self::Array(items) => {
-                out.push('[');
-                for (i, v) in items.iter().enumerate() {
-                    if i > 0 {
-                        out.push(',');
-                    }
-                    v.write_json(out);
+        let mut stack: Vec<(Open<'_>, bool)> = Vec::new();
+        let mut next = Some(self);
+        loop {
+            match next.take() {
+                Some(Self::Null) => out.push_str("null"),
+                Some(Self::Bool(b)) => out.push_str(if *b { "true" } else { "false" }),
+                Some(Self::Number(n)) => out.push_str(&js_json::js_number(*n)),
+                Some(Self::String(s)) => write_js_string(&mut out, &s.units()),
+                Some(Self::Array(a)) => {
+                    out.push('[');
+                    stack.push((Open::Array(a.iter()), false));
                 }
-                out.push(']');
-            }
-            Self::Object(o) => {
-                out.push('{');
-                for (i, (k, v)) in o.entries().enumerate() {
-                    if i > 0 {
-                        out.push(',');
-                    }
-                    out.push_str(&serde_json::to_string(k).unwrap_or_default());
-                    out.push(':');
-                    v.write_json(out);
+                Some(Self::Object(o)) => {
+                    out.push('{');
+                    stack.push((Open::Object(o.0.iter()), false));
                 }
-                out.push('}');
+                None => {}
             }
+            let Some((open, written)) = stack.last_mut() else {
+                return out;
+            };
+            let (key, value) = match open {
+                Open::Array(iter) => (None, iter.next()),
+                Open::Object(iter) => match iter.next() {
+                    Some((k, v)) => (Some(k), Some(v)),
+                    None => (None, None),
+                },
+            };
+            let Some(value) = value else {
+                out.push(if matches!(open, Open::Array(_)) {
+                    ']'
+                } else {
+                    '}'
+                });
+                stack.pop();
+                continue;
+            };
+            if std::mem::replace(written, true) {
+                out.push(',');
+            }
+            if let Some(key) = key {
+                write_js_string(&mut out, &key.units());
+                out.push(':');
+            }
+            next = Some(value);
         }
     }
 }
@@ -702,6 +807,44 @@ mod tests {
         assert_eq!(v.stringify(), r#"{"2":4,"10":3,"b":5,"a":2,"01":6}"#);
         let v = JsValue::parse(r#"[1.0,1e21,1.5e-7,-0,"é\n",null,true]"#).unwrap();
         assert_eq!(v.stringify(), r#"[1,1e+21,1.5e-7,0,"é\n",null,true]"#);
+    }
+
+    /// What `JSON.parse` accepts and `serde_json` refuses: lone surrogates,
+    /// overflowing numbers and nesting past 128.
+    #[test]
+    fn json_parse_accepts_what_v8_does() {
+        let v = JsValue::parse(r#"{"a":"x\ud800","\udc00":1,"\udc01":2}"#).unwrap();
+        assert_eq!(v.stringify(), r#"{"a":"x\ud800","\udc00":1,"\udc01":2}"#);
+        let JsValue::Object(o) = &v else {
+            panic!("an object")
+        };
+        assert_eq!(o.get("a").and_then(JsValue::as_str), Some("x\u{fffd}"));
+        assert_ne!(o.get("a"), Some(&JsValue::String("x\u{fffd}".into())));
+        assert_eq!(
+            o.keys().count(),
+            3,
+            "distinct lone surrogates stay distinct"
+        );
+        assert_eq!(o.get("\u{fffd}"), None);
+
+        let v = JsValue::parse("[1e400,-1e400]").unwrap();
+        assert_eq!(v.stringify(), "[null,null]");
+        assert_eq!(v.to_js_string(), "Infinity,-Infinity");
+
+        let depth = 200_000;
+        let text = format!("{}null{}", "[{\"a\":".repeat(depth), "}]".repeat(depth));
+        let v = JsValue::parse(&text).unwrap();
+        let copy = v.clone();
+        assert_eq!(copy.stringify(), text);
+        drop(copy);
+        let v = JsValue::parse(&format!("{}2{}", "[".repeat(depth), "]".repeat(depth))).unwrap();
+        assert_eq!(v.to_js_string(), "2");
+        assert_eq!(
+            JsValue::parse("[1,null,[2,[3]],{}]")
+                .unwrap()
+                .to_js_string(),
+            "1,,2,3,[object Object]"
+        );
     }
 
     #[test]
