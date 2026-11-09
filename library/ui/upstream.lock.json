@@ -743,7 +743,7 @@
             "dcl-one-only",
             "request-scope-hardening",
             "bot-review-279-b",
-            "ui-provenance"
+            "public-foundations-integrity"
           ]
         },
         "library/ui/figma/lock-digests.test.ts": {
@@ -775,7 +775,7 @@
           "fds": null,
           "sha256": "d1a2de701273b4cbde03573a8d5c0ced73f1ea0861435d11b78f14cd015b8661",
           "deviation": [
-            "ui-provenance"
+            "public-foundations-integrity"
           ]
         },
         "library/ui/figma/review/dcl-ui-review/index.html": {
@@ -3315,7 +3315,7 @@
           "fds": null,
           "sha256": "6375d4ee72902c6598b163ae69bde3c1873225327deeaaeffd1f4d94d53f5316",
           "deviation": [
-            "ui-provenance"
+            "public-foundations-integrity"
           ]
         },
         "library/ui/figma/src/retirement-selection.test.ts": {
@@ -3934,7 +3934,7 @@
         "review-followup-2": 47,
         "bot-review-279-b": 48,
         "bot-review-279-c": 49,
-        "ui-provenance": 50
+        "public-foundations-integrity": 50
       }
     }
   ],

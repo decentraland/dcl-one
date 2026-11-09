@@ -322,7 +322,7 @@
     },
     {
       "id": "ui-provenance",
-      "description": "Provenance of the shared UI library: the port lock, the port verification record and the checks that enforce them; a change needs an approving code-owner review",
+      "description": "Provenance of the shared UI library: source and public pins, font origins, port verification and their checks; a change needs an approving code-owner review",
       "owners": [
         "@decentraland/web-applications"
       ],
@@ -330,7 +330,13 @@
         "/library/ui/upstream.lock.json",
         "/library/ui/port-verification.json",
         "/library/ui/figma/lock-digests.mjs",
-        "/library/ui/figma/port-verification.mjs"
+        "/library/ui/figma/port-verification.mjs",
+        "/library/ui/figma/public-foundations.mjs",
+        "/library/ui/figma/src/public-foundations.test.ts",
+        "/library/ui/test/foundations-source.test.ts",
+        "/library/ui/test/foundations.test.tsx",
+        "/library/ui/foundations/source.json",
+        "/library/ui/foundations/typography/font-source.json"
       ]
     },
     {
