@@ -12,9 +12,9 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
     FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo,
-    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, ProfileChangedEvent,
-    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, VoiceMessage, WelcomeState,
-    WorldAccessEvent,
+    OutfitThumbnailData, OutfitsData, PermanentPermissionItem, PermissionRequestEvent,
+    PhotoModeState, ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi,
+    SetAvatarData, VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 
 // list of op declarations
@@ -35,6 +35,9 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_set_setting(),
             op_kernel_fetch_headers(),
             op_set_avatar(),
+            op_deploy_outfits(),
+            op_get_outfit_thumbnails(),
+            op_set_outfit_thumbnail(),
             op_native_input(),
             op_get_bindings(),
             op_set_bindings(),
@@ -845,4 +848,29 @@ pub async fn op_read_block_update_stream(
     #[smi] rid: u32,
 ) -> Result<Option<BlockUpdateData>, anyhow::Error> {
     dcl_js::system_api::op_read_block_update_stream(state, rid).await
+}
+
+#[op2(async)]
+pub async fn op_deploy_outfits(
+    state: Rc<RefCell<OpState>>,
+    #[serde] outfits: OutfitsData,
+) -> Result<(), anyhow::Error> {
+    dcl_js::system_api::op_deploy_outfits(state, outfits).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_get_outfit_thumbnails(
+    state: Rc<RefCell<OpState>>,
+) -> Result<Vec<OutfitThumbnailData>, anyhow::Error> {
+    dcl_js::system_api::op_get_outfit_thumbnails(state).await
+}
+
+#[op2]
+pub fn op_set_outfit_thumbnail(
+    state: Rc<RefCell<OpState>>,
+    #[smi] slot: u32,
+    #[string] thumbnail: Option<String>,
+) {
+    dcl_js::system_api::op_set_outfit_thumbnail(state, slot, thumbnail)
 }

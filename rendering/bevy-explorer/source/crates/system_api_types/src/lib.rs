@@ -588,3 +588,57 @@ pub struct SettingInfo {
     pub value: f32,
     pub default: f32,
 }
+
+/// A color as the catalyst `outfits` entity stores it.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, ts_rs::TS)]
+#[ts(export)]
+pub struct OutfitColor {
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, ts_rs::TS)]
+#[ts(export)]
+pub struct OutfitColored {
+    pub color: OutfitColor,
+}
+
+/// One saved look, as the catalyst `outfits` entity stores it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct OutfitData {
+    pub body_shape: String,
+    pub eyes: OutfitColored,
+    pub hair: OutfitColored,
+    pub skin: OutfitColored,
+    pub wearables: Vec<String>,
+    #[serde(default)]
+    pub force_render: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
+#[ts(export)]
+pub struct OutfitSlotData {
+    pub slot: u32,
+    pub outfit: OutfitData,
+}
+
+/// The local player's saved outfits: the metadata of their catalyst `outfits` entity. Fields
+/// other explorers add are dropped on the next deploy.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct OutfitsData {
+    pub outfits: Vec<OutfitSlotData>,
+    pub names_for_extra_slots: Vec<String>,
+}
+
+/// A saved outfit's picture (PNG data URL), kept by the engine on this device.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ts_rs::TS)]
+#[ts(export)]
+pub struct OutfitThumbnailData {
+    pub slot: u32,
+    pub thumbnail: String,
+}

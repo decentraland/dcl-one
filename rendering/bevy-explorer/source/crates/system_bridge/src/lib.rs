@@ -115,6 +115,12 @@ pub enum SystemApi {
         response: RpcResultSender<Result<Vec<(String, String)>, String>>,
     },
     SetAvatar(SetAvatarData, RpcResultSender<Result<u32, String>>),
+    /// Signs and deploys the local player's `outfits` entity.
+    DeployOutfits(OutfitsData, RpcResultSender<Result<(), String>>),
+    /// The local player's saved outfit pictures on this device.
+    GetOutfitThumbnails(RpcResultSender<Vec<OutfitThumbnailData>>),
+    /// Stores (Some) or removes (None) the picture of one of the local player's outfit slots.
+    SetOutfitThumbnail(u32, Option<String>),
     GetNativeInput(RpcResultSender<InputIdentifier>),
     GetBindings(RpcResultSender<BindingsData>),
     SetBindings(BindingsData, RpcResultSender<()>),
