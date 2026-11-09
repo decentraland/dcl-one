@@ -5,7 +5,7 @@
 //
 // | Unity test                    | Here                                                    | Class   |
 // | TestToggleCameraWithShortcut  | C opens photo mode, C again closes it                   | Port    |
-// | TestOpenCameraFromSidebar     | the rail's Camera button opens it; its Close closes it  | Port    |
+// | TestOpenCameraFromSidebar     | the rail's Camera button opens it; its Close closes it, once the right button frees the cursor | Port    |
 // | TestTakePhoto                 | Space captures and uploads; the counters, the photo id  | Port    |
 import assert from 'node:assert/strict'
 import { spec } from '../driver/index.ts'
@@ -13,6 +13,7 @@ import { spec } from '../driver/index.ts'
 const scenario = spec(import.meta.url)
 
 const SHOOT = { name: 'Shoot', role: 'button' } as const
+const CLOSE_CAMERA = { name: 'Close camera', role: 'button' } as const
 const PAGE_TIMEOUT_MS = 10_000
 
 // Every scenario restores photo mode off: while it is on the HUD declares focus, which reserves
@@ -34,9 +35,15 @@ scenario('the rail opens photo mode', async ({ explorer, restore }) => {
     await explorer.photoMode('off')
   })
   await explorer.hud.click({ name: 'Camera', role: 'button' })
-  await explorer.waitPhotoMode(true)
-  await explorer.hud.wait(SHOOT, { timeoutMs: PAGE_TIMEOUT_MS })
-  await explorer.hud.click({ name: 'Close camera', role: 'button' })
+  const opened = await explorer.waitPhotoMode(true)
+  const shoot = await explorer.hud.wait(SHOOT, { timeoutMs: PAGE_TIMEOUT_MS })
+  // photo mode takes the pointer for the camera, and every click goes to the camera until the
+  // right button frees the cursor, as a user frees it to reach the overlay's buttons
+  if (opened.cursorLocked && shoot.found) {
+    await explorer.clickAt(shoot.x + shoot.width / 2, shoot.y / 2, 'right')
+    await explorer.waitPhotoState((state) => state.cursorLocked === false, 'the right button to free the cursor')
+  }
+  await explorer.hud.click(CLOSE_CAMERA)
   await explorer.waitPhotoMode(false)
 })
 

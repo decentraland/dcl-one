@@ -195,7 +195,8 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
   `hidden`, `enabled`, `actionable`, `ready`; `"timeout"` ms). A selector is the name or JSON
   `{"name", "role", "index", "exact"}`; several matches need an `index`. A control still moving
-  (a CSS animation or transition) is not `actionable`; one inside an `aria-busy` region reads
+  (a CSS animation or transition), or under a pointer lock that takes every click, is not
+  `actionable`; one inside an `aria-busy` region reads
   `"busy"`, and `ready` waits it out.
 - Signing in through the HUD (web, under a test runner driving the browser): `/hud_login
   <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>]

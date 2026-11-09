@@ -236,9 +236,10 @@ The HUD and input:
   and accessible name. The selector is JSON `{"name", "role", "index", "exact"}` or just the name;
   `/hud_fill` adds `"text"`, and `/hud_wait` adds `"state"` (`visible`, `hidden`, `enabled`,
   `actionable`, `ready`) and `"timeout"` in ms (10000 by default). A click needs the control
-  `actionable`: visible, enabled, not covered and no longer moving (a running CSS animation or
-  transition on it or a box around it; `"reason"` says `still moving`), and several matches need an
-  `index`. `"busy"` is true inside a region that says it is still loading (`aria-busy`), such as
+  `actionable`: visible, enabled, not covered, no longer moving (a running CSS animation or
+  transition on it or a box around it; `"reason"` says `still moving`) and no pointer lock taking
+  the click (photo mode's camera holds the pointer until the right button frees it), and several
+  matches need an `index`. `"busy"` is true inside a region that says it is still loading (`aria-busy`), such as
   the Backpack's `Catalog` grid or `Places results` while a query is in flight; `ready` waits for a
   control out of every such region. `/hud_fill` answers with the field
   as the typing left it. The page's side is `react-web/src/lib/hudAutomation.ts`.

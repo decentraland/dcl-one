@@ -82,7 +82,8 @@ console command, its reply or error and its time; `/login_identity` and `/hud_lo
 redacted) and
 `final.png` (the engine's frame as the scenario left it). A failed scenario adds `page.jpg`, the
 page as it looked, the HUD included (on the web the engine's frame has none), and `console.txt`,
-the page's last 200 console lines. What the report keeps of the page's console, here and for a
+the page's last 200 console lines; a failed restore adds the same as `restore-page.jpg` and
+`restore-console.txt`. What the report keeps of the page's console, here and for a
 boot, has its credentials replaced as the engine's own benchmark log does
 (`crates/perf_output/src/scrub.rs`: an `access_token`, a named key or signature, an identity),
 and a `Bearer` token. A failed visual scenario adds `frame.png`, `reference.png` and
@@ -125,7 +126,9 @@ What the driver does for every scenario, so a spec need not:
 - **Clicks that land.** `hud.click`, `hud.fill` and `hud.hover` wait for the HUD to call the
   control actionable: visible, enabled, uncovered and no longer moving. The HUD reports a control
   inside a running CSS animation or transition as `still moving` (pages slide and fade in, a
-  card's button grows in), since a click aimed at it there lands where it no longer is.
+  card's button grows in), since a click aimed at it there lands where it no longer is, and one
+  under the browser's pointer lock as locked to another element (photo mode's camera holds the
+  pointer until the right button frees it), since every click then goes to that element.
 - **The keyboard where the scenario expects it.** The HUD relays a text field's focus to the
   engine through the bridge scene, a few frames late, and `/world_state` says which side has the
   keys (`keyboardClaimed`). A real `hud.fill` returns once the field has them, so the next key is

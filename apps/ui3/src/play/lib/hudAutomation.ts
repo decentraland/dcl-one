@@ -47,7 +47,8 @@ export interface Control {
   disabled: boolean
   /** always true: a control is found only while it is visible */
   visible: boolean
-  /** a user could click it: visible, enabled, inside the viewport, not covered and not moving */
+  /** a user could click it: visible, enabled, inside the viewport, not covered, not moving, and no
+   *  pointer lock sending the click elsewhere */
   actionable: boolean
   reason?: string
   /** inside a region that says it is still loading (`aria-busy="true"`): what it shows is not
@@ -274,8 +275,12 @@ function describe(el: Element): Control {
   }
   const cx = box.left + box.width / 2
   const cy = box.top + box.height / 2
+  // while the browser's pointer lock holds another element (the camera's canvas), every click goes
+  // to it, wherever it is aimed
+  const locked = document.pointerLockElement
   if (disabled) control.reason = 'disabled'
   else if (cx < 0 || cy < 0 || cx >= window.innerWidth || cy >= window.innerHeight) control.reason = 'outside the viewport'
+  else if (locked != null && locked !== el && !el.contains(locked)) control.reason = `the pointer is locked to <${locked.tagName.toLowerCase()}>`
   else {
     const hit = document.elementFromPoint(cx, cy)
     if (hit == null || (hit !== el && !el.contains(hit))) control.reason = hit ? `covered by <${hit.tagName.toLowerCase()}>` : 'covered'
@@ -867,7 +872,7 @@ export const PAGE_COMMANDS: Record<string, PageCommand> = {
   },
   '/hud_read': {
     args: [SELECTOR_ARG],
-    help: 'Describe the HUD control a selector names, as JSON ({"found": false} when none does): "actionable" once a click would land on it (visible, enabled, uncovered and no longer moving, else "reason" says why), "busy" inside a region still loading (aria-busy). The selector is the control\'s accessible name, or JSON {"name", "role", "index", "exact"}',
+    help: 'Describe the HUD control a selector names, as JSON ({"found": false} when none does): "actionable" once a click would land on it (visible, enabled, uncovered, no longer moving and no pointer lock taking the click, else "reason" says why), "busy" inside a region still loading (aria-busy). The selector is the control\'s accessible name, or JSON {"name", "role", "index", "exact"}',
     run: (rest) => JSON.stringify(describeControl(parseSelector(rest)))
   },
   '/hud_wait': {
@@ -877,7 +882,7 @@ export const PAGE_COMMANDS: Record<string, PageCommand> = {
   },
   '/hud_click': {
     args: [SELECTOR_ARG],
-    help: 'Click the HUD control a selector names, at its centre, if it is actionable: visible, enabled, not covered and no longer moving. The selector is as /hud_read takes it. The reply\'s "input" is "trusted" for a real click, delivered by the test runner driving the browser, and "synthetic" for DOM events',
+    help: 'Click the HUD control a selector names, at its centre, if it is actionable: visible, enabled, not covered, no longer moving and no pointer lock taking the click. The selector is as /hud_read takes it. The reply\'s "input" is "trusted" for a real click, delivered by the test runner driving the browser, and "synthetic" for DOM events',
     run: async (rest) => JSON.stringify(await clickControl(parseSelector(rest)))
   },
   '/hud_fill': {

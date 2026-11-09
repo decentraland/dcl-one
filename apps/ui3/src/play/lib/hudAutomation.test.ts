@@ -155,6 +155,23 @@ describe('describing a control', () => {
     expect(describeControl({ name: 'Emotes' })).toMatchObject({ actionable: true })
   })
 
+  it('is not actionable while the pointer is locked to another element, which every click goes to', () => {
+    const root = render('<canvas></canvas><button>Close camera</button>')
+    place(root.querySelector('button')!, 0, 0)
+    const canvas = root.querySelector('canvas')!
+    const lockTo = (el: Element | null): void => {
+      Object.defineProperty(document, 'pointerLockElement', { value: el, configurable: true })
+    }
+    try {
+      lockTo(canvas)
+      expect(describeControl({ name: 'Close camera' })).toMatchObject({ actionable: false, reason: 'the pointer is locked to <canvas>' })
+      lockTo(null)
+      expect(describeControl({ name: 'Close camera' })).toMatchObject({ actionable: true })
+    } finally {
+      lockTo(null)
+    }
+  })
+
   it('says a control is busy inside a region that is still loading', () => {
     const root = render('<div role="region" aria-label="Catalog" aria-busy="true"><button>Hat</button></div><button>Close</button>')
     place(root.querySelector('[role="region"]')!, 0, 0, 500, 500)

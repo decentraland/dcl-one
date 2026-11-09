@@ -234,11 +234,20 @@ export function scenario(file: string, name: string, body: (ctx: ScenarioContext
         files['page.txt'] = `no page evidence: ${message(error)}`
       }
     }
+    const bodyFailures = failures.length
     for (const undo of undos.reverse()) {
       try {
         await withinBudget(undo(), timeoutMs, `the restore after "${name}" to finish`)
       } catch (error) {
         failures.push(error)
+      }
+    }
+    if (failures.length > bodyFailures) {
+      // the page as the failed restore left it, beside the body's own
+      try {
+        for (const [file, content] of Object.entries(await failureEvidence(explorer.console))) files[`restore-${file}`] = content
+      } catch (error) {
+        files['restore-page.txt'] = `no page evidence: ${message(error)}`
       }
     }
     stop()
