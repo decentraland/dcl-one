@@ -249,10 +249,12 @@ jobs:
             uuav-windows-x86_64.gate-b.txt
           if-no-files-found: error
 
+  # built on the oldest glibc the Linux packages support (2.35): the shipped set
+  # takes on the build host's symbol versions
   linux:
     name: Build linux-x86_64
     needs: gate
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -327,6 +329,9 @@ jobs:
 
       - name: Gate A - the same runner must build the same bytes twice
         run: bash tooling/uuav/repro-gate.sh linux-x86_64
+
+      - name: Check the glibc floor
+        run: python3 tooling/uuav/glibc-floor.py library/uuav/dist/linux-x86_64
 
       - name: Gate B - reproduce the committed binaries, toolchain permitting
         run: python3 tooling/native-lock/reproduces-lock.py --lock "$LOCK" linux-x86_64 --toolchain toolchain-linux.txt

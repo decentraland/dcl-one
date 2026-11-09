@@ -194,11 +194,26 @@ fn present_uuav_frames(
         render_device.wgpu_device().poll(wgpu::Maintain::Poll);
     }
 
+    // a copy whose fence wait timed out is not followed by another until it lands; its frames
+    // are then presented without a new copy
+    #[cfg(windows)]
+    let earlier_copy = decode_device
+        .as_mut()
+        .and_then(platform::DecodeDevice::earlier_copy_landed);
+    #[cfg(windows)]
+    if earlier_copy == Some(false) {
+        return;
+    }
+    #[cfg(windows)]
+    let copy = earlier_copy.is_none();
+    #[cfg(not(windows))]
+    let copy = true;
+
     // every player's copy goes first, so one fence wait covers them all
     let mut frames = Vec::new();
     let mut failed = Vec::new();
     for (&id, player) in players.iter_mut() {
-        match take_presented(id, player, max_dimension) {
+        match take_presented(id, player, max_dimension, copy) {
             Ok(Some(presented)) => {
                 if player.size != Some((presented.width, presented.height)) {
                     player.size = Some((presented.width, presented.height));
@@ -224,7 +239,7 @@ fn present_uuav_frames(
 
     // whether the copies above have landed, waited for once and only when a frame needs it
     #[cfg(windows)]
-    let mut copies_landed = None;
+    let mut copies_landed = earlier_copy;
     for (id, presented) in frames {
         let Some(player) = players.get_mut(&id) else {
             continue;
@@ -330,29 +345,38 @@ fn present_uuav_frames(
     }
 }
 
-/// The frame the player's planes hold after the copy; `Ok(None)` when there is none, `Err` when
-/// its size cannot be presented.
+/// The frame the player's planes hold, after a copy when `copy`; `Ok(None)` when there is none,
+/// `Err` when its size cannot be presented.
 fn take_presented(
     id: PlayerId,
     player: &RenderPlayer,
     max_dimension: u32,
+    copy: bool,
 ) -> Result<Option<ffi::Presented>, String> {
-    let Some(presented) = copy_frame(id, player.source.as_ref()) else {
+    let Some(presented) = copy_frame(id, player.source.as_ref(), copy) else {
         return Ok(None);
     };
     check_size(presented.width, presented.height, max_dimension)?;
     Ok(Some(presented))
 }
 
-/// Moves the helper's latest published frame into the player's presentation planes and returns
-/// what they hold; `None` while [`GATE_COPY_ON_READ`] holds the copy back.
-fn copy_frame(id: PlayerId, source: Option<&ConversionSource>) -> Option<ffi::Presented> {
-    let event_id = i32::try_from(id).ok()?;
-    if GATE_COPY_ON_READ && source.is_some_and(|source| !source.read_done.load(Ordering::Acquire)) {
-        // the renderer may still be reading the planes the copy would overwrite
-        return None;
+/// When `copy`, moves the helper's latest published frame into the player's presentation planes;
+/// returns what they hold. `None` while [`GATE_COPY_ON_READ`] holds the copy back.
+fn copy_frame(
+    id: PlayerId,
+    source: Option<&ConversionSource>,
+    copy: bool,
+) -> Option<ffi::Presented> {
+    if copy {
+        let event_id = i32::try_from(id).ok()?;
+        if GATE_COPY_ON_READ
+            && source.is_some_and(|source| !source.read_done.load(Ordering::Acquire))
+        {
+            // the renderer may still be reading the planes the copy would overwrite
+            return None;
+        }
+        uuav::uuav_get_render_callback()(event_id);
     }
-    uuav::uuav_get_render_callback()(event_id);
     ffi::presented(id)
 }
 

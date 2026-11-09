@@ -110,7 +110,7 @@ playback, seek back to where the clock was. During the outage players read
 on the last presented frame (the presentation planes are client-owned and
 never die), and audio pads silence. Public player ids stay stable across
 helper generations. After three failed respawns the runtime parks
-(`UUAV_ERROR`) until the next open/play re-arms it. Every death still
+(`UUAV_ERROR`) until the next new player, open or play re-arms it. Every death still
 reports once through the error callback.
 
 The helper never outlives the host: it watches the parent pid and exits
@@ -235,8 +235,9 @@ ninja-build libxml2-dev libdrm-dev zlib1g-dev patchelf libclang-dev`.
 ```
 
 Everything shipped carries a `$ORIGIN` RUNPATH; the remaining shared
-dependencies are glibc, zlib, libxml2 and libdrm, present on every desktop
-distribution. libva is built from source and shipped so the package does not
+dependencies are glibc 2.35 or newer (Ubuntu 22.04, Debian 12), zlib,
+libxml2 and libdrm. `uuav-native.yml` builds the set on Ubuntu 22.04, and
+`tooling/uuav/glibc-floor.py` fails a set that names a newer glibc. libva is built from source and shipped so the package does not
 depend on the distribution's; the hardware driver (`iHD`, `i965`,
 `radeonsi`, ...) is the distribution's, dlopened from its DRI directory. On
 a machine without a usable driver (CI runners, containers) the core logs a

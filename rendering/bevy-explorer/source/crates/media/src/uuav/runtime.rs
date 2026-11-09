@@ -25,7 +25,8 @@ const LOG_LEVEL: i32 = 24;
 /// Frames to retry a busy render device before giving up on the player runtime.
 const INIT_ATTEMPTS: u32 = 600;
 /// Waits before the runtime is started again after a failed start, by failure count; the last
-/// one repeats. A source arriving after the wait starts it.
+/// one repeats. A source arriving after the wait starts it. Sources keep waiting through the
+/// failures before the last wait is reached.
 const INIT_RETRY_DELAYS: [Duration; 4] = [
     Duration::from_secs(1),
     Duration::from_secs(3),
@@ -170,7 +171,8 @@ impl HelperRuntime {
     }
 
     /// Whether a source can open now. A failed runtime whose retry wait has passed starts again
-    /// when a renderer is there.
+    /// when a renderer is there; until the failures reach the last retry wait, the source waits
+    /// for the next start.
     pub fn admit(&mut self, has_renderer: bool, url: &str) -> Admission {
         if has_renderer
             && matches!(&self.state, State::Failed { retry_at } if Instant::now() >= *retry_at)
@@ -181,6 +183,11 @@ impl HelperRuntime {
         match self.state {
             State::Ready => Admission::Open,
             State::Pending { .. } | State::Starting { .. } if has_renderer => Admission::Wait,
+            State::Failed { .. }
+                if has_renderer && (self.init_failures as usize) < INIT_RETRY_DELAYS.len() =>
+            {
+                Admission::Wait
+            }
             _ => Admission::Refuse,
         }
     }
@@ -268,4 +275,38 @@ extern "C" fn on_warning(text: *const c_char) {
 
 extern "C" fn on_log(text: *const c_char) {
     debug!(target: "uuav", "{}", message(text));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn failed(init_failures: u32) -> HelperRuntime {
+        HelperRuntime {
+            state: State::Failed {
+                retry_at: Instant::now() + Duration::from_secs(60),
+            },
+            init_failures,
+            sample_rate: None,
+        }
+    }
+
+    #[test]
+    fn a_source_waits_through_the_early_failed_starts() {
+        assert!(matches!(failed(1).admit(true, "u"), Admission::Wait));
+    }
+
+    #[test]
+    fn a_source_is_refused_once_the_failed_starts_reach_the_last_retry_wait() {
+        let failures = INIT_RETRY_DELAYS.len() as u32;
+        assert!(matches!(
+            failed(failures).admit(true, "u"),
+            Admission::Refuse
+        ));
+    }
+
+    #[test]
+    fn a_failed_runtime_without_a_renderer_refuses() {
+        assert!(matches!(failed(1).admit(false, "u"), Admission::Refuse));
+    }
 }

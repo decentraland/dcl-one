@@ -539,7 +539,8 @@ fn spawn_mach_receiver(
 /// Watches the helper process; on unexpected death, drives the automatic
 /// resurrection: retire the connection, freeze the mirrors, respawn with
 /// backoff, rebuild every player from its intended playback. Parks in `Failed`
-/// after the attempts cap; an open/play re-arms it through `Client::rearm`.
+/// after the attempts cap; a new player, open or play re-arms it through
+/// `Client::rearm`.
 fn spawn_recovery_worker(client: &Arc<Client>, rearm: crossbeam_channel::Receiver<()>) {
     let weak = Arc::downgrade(client);
     _ = std::thread::Builder::new()
@@ -1026,7 +1027,12 @@ pub extern "C" fn uuav_player_new() -> NewPlayerResult {
         }
         // bound by the recovery worker (or lazily on the first command)
         Lifecycle::Recovering => ok,
-        Lifecycle::Failed | Lifecycle::ShutDown => {
+        // a new player re-arms the parked recovery worker, which binds it
+        Lifecycle::Failed => {
+            _ = client.rearm.send(());
+            ok
+        }
+        Lifecycle::ShutDown => {
             client.registry.remove(public);
             NewPlayerResult {
                 player_id: 0,

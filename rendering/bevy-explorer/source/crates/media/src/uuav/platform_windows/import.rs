@@ -68,12 +68,6 @@ fn import(
     width: u32,
     height: u32,
 ) -> Result<wgpu::Texture, InteropError> {
-    if !device
-        .features()
-        .contains(wgpu::Features::TEXTURE_FORMAT_NV12)
-    {
-        return Err("the render device has no NV12 texture support".into());
-    }
     let raw = ptr.cast_mut();
     // SAFETY: the client hands out a live `ID3D11Texture2D` it keeps alive until one poll after
     // it replaces it; `from_raw_borrowed` adds no reference and the cast below takes its own

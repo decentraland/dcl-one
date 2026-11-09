@@ -45,6 +45,8 @@ name: Bevy Explorer / E2E
       - 'apps/bevy-explorer/**'
       - 'rendering/bevy-explorer/**'
       - 'library/protocol/**'
+      - 'library/uuav/**'
+      - 'tooling/uuav/**'
       - '.cargo/**'
       - 'rust-toolchain*'
       - '.github/workflows/bevy-explorer-e2e.yml'

@@ -62,6 +62,8 @@ pub struct DecodeDevice {
     event: OwnedHandle,
     /// The last value signalled on the fence.
     value: u64,
+    /// The value a wait gave up on; the client copies nothing new until the fence passes it.
+    pending: Option<u64>,
     pub(super) renderer: Renderer,
 }
 
@@ -80,7 +82,7 @@ pub struct Probe {
 impl Probe {
     /// Creates the decode device on the renderer's adapter, the fence between them, and the
     /// probe the client captures the device from. `Err` when the renderer is on neither DX12 nor
-    /// Vulkan, or the adapter cannot be matched.
+    /// Vulkan, lacks a feature the import needs, or the adapter cannot be matched.
     pub fn new(
         device: &RenderDevice,
         adapter: &RenderAdapter,
@@ -133,6 +135,7 @@ impl Probe {
             fence,
             event,
             value: 0,
+            pending: None,
             renderer,
         };
         Ok((Self { texture }, decode_device))
@@ -200,6 +203,10 @@ fn renderer_and_luid(
             .wgpu_device()
             .as_hal::<wgpu::hal::api::Dx12, _, _>(|hal| hal.map(|hal| hal.raw_device().clone()))
     };
+    let features = device.features();
+    if !features.contains(wgpu::Features::TEXTURE_FORMAT_NV12) {
+        return Err("the render device has no NV12 texture support".into());
+    }
     if let Some(d3d12) = dx12 {
         let luid = unsafe {
             adapter.as_hal::<wgpu::hal::api::Dx12, _, _>(|hal| {
@@ -218,6 +225,9 @@ fn renderer_and_luid(
     let vulkan =
         unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan, _, _>(|hal| hal.map(vulkan_luid)) };
     match vulkan {
+        Some(Ok(_)) if !features.contains(wgpu::Features::VULKAN_EXTERNAL_MEMORY_WIN32) => {
+            Err("the Vulkan renderer has no VK_KHR_external_memory_win32".into())
+        }
         Some(Ok(luid)) => Ok((Renderer::Vulkan, luid)),
         Some(Err(e)) => Err(e),
         None => Err("the renderer is on neither DX12 nor Vulkan".into()),
@@ -279,7 +289,8 @@ fn adapter_with_luid(luid: u64) -> Result<IDXGIAdapter1, InteropError> {
 impl DecodeDevice {
     /// Orders the client's copy into the presentation texture before the renderer reads it:
     /// signals the fence behind the copy and waits up to [`COPY_WAIT_MS`] for it. `true` only
-    /// when the fence has passed the copy.
+    /// when the fence has passed the copy; otherwise the value stays pending for
+    /// [`earlier_copy_landed`](Self::earlier_copy_landed).
     ///
     /// The wait is on the CPU because wgpu 24 offers no way to make the renderer's queue wait on
     /// this fence; a GPU-side wait (`ID3D12CommandQueue::Wait` on DX12) would replace it (#438).
@@ -293,35 +304,56 @@ impl DecodeDevice {
                 return false;
             }
             self.context.Flush();
-            let event = HANDLE(self.event.as_raw_handle());
-            let mut registered = false;
-            loop {
-                match self.completed() {
-                    Some(completed) if completed >= value => return true,
-                    Some(_) => {}
-                    None => return false,
-                }
-                let left = deadline.saturating_duration_since(Instant::now());
-                if left.is_zero() {
+        }
+        let landed = self.wait_for(value, deadline);
+        if !landed {
+            self.pending = Some(value);
+        }
+        landed
+    }
+
+    /// Whether the copy a timed-out wait left pending has landed since; `None` when nothing is
+    /// pending. Never blocks.
+    pub fn earlier_copy_landed(&mut self) -> Option<bool> {
+        let value = self.pending?;
+        let landed = self.completed().is_some_and(|completed| completed >= value);
+        if landed {
+            self.pending = None;
+        }
+        Some(landed)
+    }
+
+    /// Waits until the fence reaches `value` or `deadline` passes; `true` once it has reached
+    /// it.
+    fn wait_for(&self, value: u64, deadline: Instant) -> bool {
+        let event = HANDLE(self.event.as_raw_handle());
+        let mut registered = false;
+        loop {
+            match self.completed() {
+                Some(completed) if completed >= value => return true,
+                Some(_) => {}
+                None => return false,
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return false;
+            }
+            if !registered {
+                if let Err(e) = unsafe { self.fence.SetEventOnCompletion(value, event) } {
+                    warn!("uuav: fence wait failed: {e}");
                     return false;
                 }
-                if !registered {
-                    if let Err(e) = self.fence.SetEventOnCompletion(value, event) {
-                        warn!("uuav: fence wait failed: {e}");
-                        return false;
-                    }
-                    registered = true;
-                }
-                // the event may be left set by an earlier value whose wait timed out, so a
-                // wake-up only means the fence is read again
-                let left_ms = left.as_micros().div_ceil(1000) as u32;
-                if WaitForSingleObject(event, left_ms) == WAIT_FAILED {
-                    warn!(
-                        "uuav: fence wait failed: {}",
-                        windows::core::Error::from_win32()
-                    );
-                    return false;
-                }
+                registered = true;
+            }
+            // the event may be left set by an earlier value whose wait timed out, so a wake-up
+            // only means the fence is read again
+            let left_ms = left.as_micros().div_ceil(1000) as u32;
+            if unsafe { WaitForSingleObject(event, left_ms) } == WAIT_FAILED {
+                warn!(
+                    "uuav: fence wait failed: {}",
+                    windows::core::Error::from_win32()
+                );
+                return false;
             }
         }
     }
