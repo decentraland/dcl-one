@@ -81,6 +81,7 @@ pub mod load_timing;
 pub mod permissions;
 pub mod primary_entities;
 pub mod renderer_context;
+pub mod scene_fade;
 pub mod scene_lod;
 pub mod scene_partition;
 mod scene_traffic;

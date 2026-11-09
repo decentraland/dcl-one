@@ -61,6 +61,52 @@ pub fn unrevealed_mesh_tag(tag: u32) -> u32 {
     tag & !SCENE_MATERIAL_REVEAL_MESH_TAG_MASK
 }
 
+/// a scene's stand-in and what replaces it dithering across each other (scene_runner's
+/// `scene_fade`): the coverage in the tag's second byte, 0 for no fade and 1..=255 from none to
+/// all, and a bit that flips the dither threshold for the one on its way out, so the two
+/// patterns interlock (bound_material_effect.wgsl, which takes the encoding from
+/// `fade_shader_defs`)
+pub const SCENE_MATERIAL_FADE_MESH_TAG_MASK: u32 = 0x0000FF00;
+const SCENE_MATERIAL_FADE_MESH_TAG_SHIFT: u32 = 8;
+pub const SCENE_MATERIAL_FADE_OUT_MESH_TAG: u32 = 0x00010000;
+/// the steps from the first fade value to the last
+const SCENE_MATERIAL_FADE_STEPS: f32 =
+    ((SCENE_MATERIAL_FADE_MESH_TAG_MASK >> SCENE_MATERIAL_FADE_MESH_TAG_SHIFT) - 1) as f32;
+
+/// `tag` fading at `coverage` (0 shows nothing, 1 everything), on its way out when `out`
+pub fn fade_mesh_tag(tag: u32, coverage: f32, out: bool) -> u32 {
+    let step = 1 + (coverage.clamp(0.0, 1.0) * SCENE_MATERIAL_FADE_STEPS).round() as u32;
+    let out = if out {
+        SCENE_MATERIAL_FADE_OUT_MESH_TAG
+    } else {
+        0
+    };
+    unfaded_mesh_tag(tag) | (step << SCENE_MATERIAL_FADE_MESH_TAG_SHIFT) | out
+}
+
+/// `tag` with no fade
+pub fn unfaded_mesh_tag(tag: u32) -> u32 {
+    tag & !(SCENE_MATERIAL_FADE_MESH_TAG_MASK | SCENE_MATERIAL_FADE_OUT_MESH_TAG)
+}
+
+/// the fade encoding, for the pipeline of every shader that imports `fade_discard`
+pub fn fade_shader_defs() -> [ShaderDefVal; 3] {
+    [
+        ShaderDefVal::UInt(
+            "FADE_MESH_TAG_MASK".to_owned(),
+            SCENE_MATERIAL_FADE_MESH_TAG_MASK,
+        ),
+        ShaderDefVal::UInt(
+            "FADE_MESH_TAG_SHIFT".to_owned(),
+            SCENE_MATERIAL_FADE_MESH_TAG_SHIFT,
+        ),
+        ShaderDefVal::UInt(
+            "FADE_OUT_MESH_TAG".to_owned(),
+            SCENE_MATERIAL_FADE_OUT_MESH_TAG,
+        ),
+    ]
+}
+
 /// the reveal encoding, for the pipeline of every shader that imports `reveal_discard`
 pub fn reveal_shader_defs() -> [ShaderDefVal; 3] {
     [
@@ -478,6 +524,7 @@ impl MaterialExtension for SceneBound {
                 SCENE_MATERIAL_OUTLINE_BLUE_MESH_TAG,
             ));
             fragment.shader_defs.extend(reveal_shader_defs());
+            fragment.shader_defs.extend(fade_shader_defs());
 
             if data.inverted_scale {
                 fragment.shader_defs.push("INVERTED_SCALE".into());

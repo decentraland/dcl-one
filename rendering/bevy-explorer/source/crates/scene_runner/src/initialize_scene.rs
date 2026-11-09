@@ -48,7 +48,8 @@ use crate::{
         RendererSceneContext, SceneState, FROZEN_BLOCK, SCENE_FIRST_UPDATE_TICK,
         SCENE_JS_SPAWN_TICK,
     },
-    scene_lod::{SceneDefinition, SceneDefinitions},
+    scene_fade::SceneFade,
+    scene_lod::{LodState, SceneDefinition, SceneDefinitions, SceneLod},
     update_world::{visibility::VisibilityComponent, ComponentTracker},
     vec3_to_parcel, ContainerEntity, DeletedSceneEntities, MobileUiEmulation, OutOfWorld,
     SceneEntity, SceneThreadHandle,
@@ -1893,11 +1894,28 @@ pub fn process_scene_lifecycle(
 )]
 pub struct SceneHash(pub String);
 
-/// Raises a scene from its parking spot below the world once it is ready, and in preview mode
-/// lays the grid plane under each of its parcels. A loading scene shows nothing of its own: the
-/// imposter tile of its parcels (where one is baked) stands in until the scene is raised.
+/// When a ready scene with a stand-in on screen was first ready: it waits for its whole content
+/// behind the stand-in, up to [`STAND_IN_HOLD`] seconds.
+#[derive(Component)]
+pub struct ReadyAt(pub f32);
+
+/// How long a ready scene waits for its whole content behind its stand-in before it is raised
+/// regardless, so a file that never arrives cannot keep it under the world.
+pub const STAND_IN_HOLD: f32 = 5.0;
+
+/// Raises a scene from its parking spot below the world once it is ready, dithering it in, and
+/// in preview mode lays the grid plane under each of its parcels. A loading scene shows nothing
+/// of its own: its stand-in (a near LOD, an imposter tile) covers its parcels until it is
+/// raised. Behind a shown near LOD it waits for its whole content, so the swap shows the scene
+/// complete, as the stand-in already was.
+#[allow(clippy::too_many_arguments)]
 fn animate_ready_scene(
-    mut q: Query<(Entity, &mut Transform, Ref<RendererSceneContext>)>,
+    mut q: Query<(
+        Entity,
+        &mut Transform,
+        Ref<RendererSceneContext>,
+        Option<&ReadyAt>,
+    )>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -1905,7 +1923,14 @@ fn animate_ready_scene(
     mut handles: Local<Option<(Handle<Mesh>, Handle<StandardMaterial>)>>,
     asset_server: Res<AssetServer>,
     current_imposter_scene: Res<CurrentImposterScene>,
+    lods: Query<&SceneLod>,
+    time: Res<Time>,
 ) {
+    let stood_in: HashSet<&str> = lods
+        .iter()
+        .filter(|lod| matches!(lod.state, LodState::Shown(_)))
+        .map(|lod| lod.hash.as_str())
+        .collect();
     if handles.is_none() {
         *handles = Some((
             meshes.add(
@@ -1921,7 +1946,7 @@ fn animate_ready_scene(
         ));
     }
 
-    for (root, mut transform, ctx) in q.iter_mut() {
+    for (root, mut transform, ctx, ready_at) in q.iter_mut() {
         // skip animating imposters
         if current_imposter_scene
             .0
@@ -1935,9 +1960,22 @@ fn animate_ready_scene(
         // A scene parked below the world (y = -1000) is raised once it's ready: past tick 5, broken,
         // or paused by the inspector. Without the frozen case, a scene frozen before tick 5 has its
         // (already-spawned) main.crdt content stuck underground and looks empty until unfrozen.
-        let frozen = ctx.blocked.contains(FROZEN_BLOCK);
-        if transform.translation.y < 0.0 && (ctx.tick_number >= 5 || ctx.broken() || frozen) {
-            transform.translation.y = 0.0;
+        if transform.translation.y < 0.0 && crate::load_timing::scene_is_ready(&ctx) {
+            let now = time.elapsed_secs();
+            let ready_since = match ready_at {
+                Some(ready_at) => ready_at.0,
+                None => {
+                    commands.entity(root).try_insert(ReadyAt(now));
+                    now
+                }
+            };
+            let held = stood_in.contains(&*ctx.hash)
+                && !ctx.content_shown()
+                && now - ready_since < STAND_IN_HOLD;
+            if !held {
+                transform.translation.y = 0.0;
+                commands.entity(root).try_insert(SceneFade::fade_in());
+            }
         }
 
         if ctx.is_added() && preview.is_preview {

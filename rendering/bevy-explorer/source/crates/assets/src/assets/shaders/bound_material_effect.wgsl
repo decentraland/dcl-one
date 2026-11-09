@@ -25,6 +25,26 @@ fn reveal_discard(mesh_tag: u32, world_y: f32, instance_index: u32) -> bool {
 }
 #endif
 
+// a scene's stand-in and what replaces it dithering across each other (scene_runner/src/
+// scene_fade.rs): the tag's fade byte is the coverage, 0 for no fade and 1..=255 from none to
+// all, and the fade-out bit flips the threshold so the two patterns interlock and every pixel
+// shows exactly one of them. the encoding comes from scene_material::fade_shader_defs
+#ifdef FADE_MESH_TAG_MASK
+fn fade_discard(mesh_tag: u32, pixel: vec2<f32>) -> bool {
+    let step = (mesh_tag & #{FADE_MESH_TAG_MASK}) >> #{FADE_MESH_TAG_SHIFT}u;
+    if step == 0u {
+        return false;
+    }
+    let steps = (#{FADE_MESH_TAG_MASK} >> #{FADE_MESH_TAG_SHIFT}u) - 1u;
+    let coverage = f32(step - 1u) / f32(steps);
+    var threshold = dither_threshold(pixel);
+    if (mesh_tag & #{FADE_OUT_MESH_TAG}) != 0u {
+        threshold = 1.0 - threshold;
+    }
+    return coverage < threshold;
+}
+#endif
+
 #ifdef DEPTH_PREPASS
 fn get_depth(pos: vec4<f32>, si: u32) -> f32 {
     return view.clip_from_view[3][2] / prepass_depth(pos, si); 

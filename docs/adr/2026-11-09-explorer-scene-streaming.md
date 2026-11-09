@@ -50,6 +50,15 @@ and loads are admitted in waves.
   stand-in are excluded from the imposters, so imposters draw only beyond the LOD range.
 - **Download tier.** LOD files download in a tier of their own after the live scenes', so a
   stand-in never delays the scene it stands in for.
+- **The swap is a dithered cross-fade, carried in the mesh tag.** A scene raised over its near
+  LOD, and a near LOD shown over its far one, dither in over 0.4 s while the stand-in dithers
+  out with the complementary pattern, so every pixel shows exactly one of the two and nothing
+  behind both; the fade rides in each mesh's `MeshTag` (a coverage byte and an out bit the scene
+  material's shaders read), the way the avatar's ghost reveal does, so it costs no material and
+  no draw. Behind a shown near LOD a ready scene waits for its whole content before it is
+  raised, for at most five seconds, so the swap shows the scene complete as the stand-in
+  already was. An imposter tile cannot dither (its material is boimp's), so a stand-in or a
+  scene coming up over an imposter shows at once, as before.
 
 - **The near LOD's files are the scene's.** The descriptor
   (`abgen-cdn.<base>/LOD/lods-unity/manifests/{sceneId}_InitialSceneState.json`, the same host
@@ -83,8 +92,13 @@ and loads are admitted in waves.
   unity-explorer does; a deployment that mirrors or converts them serves that host itself.
 - **unity-explorer's 32/48 m live radius now.** The live radius and the unload margin are
   settings; raising the defaults is a measurement, after waves and the near LOD exist.
-- **Time-based reveal of a ready scene.** The scene is raised in one frame as before; a
-  cross-fade between a stand-in and the scene is its own change on the stand-ins.
+- **Bevy's `VisibilityRange` cross-fade for the swap.** It fades by distance from each mesh's
+  origin, not by time or readiness, so a scene's meshes would not fade together or with the
+  stand-in; animating its ranges rebuilds the whole range table every frame; and neither the
+  scene material's shaders nor boimp's apply its dither. The tag-driven fade uses the dither
+  the scene material already has.
+- **A per-material fade uniform.** A material is shared by every mesh using it, so a fade in it
+  would need a material clone per scene and break batching; the per-instance tag is free.
 
 ## Consequences
 
@@ -100,5 +114,8 @@ and loads are admitted in waves.
   textures on every load. Compressing them is a change to the processor's cache targets.
 - The stand-in's models are the live scene's first downloads done early: when the scene comes
   up, its containers find them loaded.
+- A scene comes up over its near LOD, and a near LOD over its far one, as a 0.4 s dither
+  rather than a pop; over an imposter tile, and an imposter tile over nothing, the swap is as
+  before.
 - A scene stalled in loading holds a wave slot for 20 s, then the wave moves on with it still
   loading.

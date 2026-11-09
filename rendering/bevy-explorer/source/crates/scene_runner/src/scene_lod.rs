@@ -44,6 +44,7 @@ use crate::{
         PARCEL_SIZE,
     },
     renderer_context::RendererSceneContext,
+    scene_fade::{animate_scene_fades, FadedOut, SceneFade},
     scene_partition::Partition,
     update_world::gltf_container::scene_gltf_loader_settings,
     PrimaryUser,
@@ -71,7 +72,12 @@ impl Plugin for SceneLodPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (update_scene_lods, start_scene_lods, build_scene_lods)
+            (
+                update_scene_lods,
+                start_scene_lods,
+                build_scene_lods,
+                animate_scene_fades,
+            )
                 .chain()
                 .after(process_scene_lifecycle)
                 .in_set(SceneSets::Init),
@@ -208,8 +214,9 @@ fn release_lod_hash(world: DeferredWorld, context: HookContext) {
 /// on screen gets a near LOD while a parcel of it is within the near range, and a far LOD while
 /// one is within the far range, started beyond the near range and kept inside it until the near
 /// LOD shows. A stand-in goes when its scene's content is shown, when the scene leaves its
-/// range, or when the realm's pointers no longer name it.
-#[allow(clippy::too_many_arguments)]
+/// range, or when the realm's pointers no longer name it; a shown one that what replaces it has
+/// covered dithers out first.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_scene_lods(
     mut commands: Commands,
     preview: Res<PreviewMode>,
@@ -219,7 +226,7 @@ fn update_scene_lods(
     definitions: Res<SceneDefinitions>,
     live_scenes: Res<LiveScenes>,
     contexts: Query<&RendererSceneContext>,
-    lods: Query<(Entity, &SceneLod)>,
+    lods: Query<(Entity, &SceneLod, Has<SceneFade>, Has<FadedOut>)>,
     mut scene_spawner: ResMut<SceneSpawner>,
 ) {
     let Ok(focus) = focus.single() else {
@@ -248,20 +255,31 @@ fn update_scene_lods(
     };
     let near_shown: HashSet<&str> = lods
         .iter()
-        .filter(|(_, lod)| lod.level == LodLevel::Near && matches!(lod.state, LodState::Shown(_)))
-        .map(|(_, lod)| lod.hash.as_str())
+        .filter(|(_, lod, ..)| {
+            lod.level == LodLevel::Near && matches!(lod.state, LodState::Shown(_))
+        })
+        .map(|(_, lod, ..)| lod.hash.as_str())
         .collect();
 
     let mut existing: HashSet<(&str, LodLevel)> = HashSet::new();
-    for (entity, lod) in &lods {
+    for (entity, lod, fading, faded_out) in &lods {
         let distance = nearest.get(lod.hash.as_str()).copied();
-        let keep = !shown(&lod.hash)
-            && match lod.level {
-                LodLevel::Near => distance.is_some_and(|distance| distance < near_range),
-                LodLevel::Far => distance.is_some() && !near_shown.contains(lod.hash.as_str()),
-            };
-        if keep {
+        let in_range = match lod.level {
+            LodLevel::Near => distance.is_some_and(|distance| distance < near_range),
+            LodLevel::Far => distance.is_some(),
+        };
+        // what replaces it is on screen: the live scene, or the near LOD over the far one
+        let replaced = shown(&lod.hash)
+            || (lod.level == LodLevel::Far && near_shown.contains(lod.hash.as_str()));
+        if in_range && !replaced {
             existing.insert((lod.hash.as_str(), lod.level));
+            continue;
+        }
+        if in_range && matches!(lod.state, LodState::Shown(_)) && !faded_out {
+            // a shown stand-in dithers out across what replaced it, then goes
+            if !fading {
+                commands.entity(entity).insert(SceneFade::fade_out());
+            }
             continue;
         }
         // the root takes the models with it; the spawner only needs to forget the instances
@@ -500,6 +518,14 @@ fn build_scene_lods(
         Has<SkinnedMesh>,
     )>,
 ) {
+    // a near LOD coming up over a shown far one dithers in as the far one dithers out; over an
+    // imposter, which cannot fade, it shows at once
+    let far_shown: HashSet<String> = lods
+        .iter()
+        .filter(|(_, lod)| lod.level == LodLevel::Far && matches!(lod.state, LodState::Shown(_)))
+        .map(|(_, lod)| lod.hash.clone())
+        .collect();
+
     for (root, lod) in lods.iter_mut() {
         let lod = lod.into_inner();
         let LodState::Loading(models) = &mut lod.state else {
@@ -602,8 +628,13 @@ fn build_scene_lods(
             }
         }
 
+        let fade_in = lod.level == LodLevel::Near && far_shown.contains(&lod.hash);
         lod.state = LodState::Shown(instances);
-        commands.entity(root).insert(Visibility::Inherited);
+        let mut root = commands.entity(root);
+        root.insert(Visibility::Inherited);
+        if fade_in {
+            root.insert(SceneFade::fade_in());
+        }
     }
 }
 
