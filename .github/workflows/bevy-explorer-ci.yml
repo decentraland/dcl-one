@@ -718,8 +718,10 @@ jobs:
         run: |
           d=$(rustc -vV | sed -n 's/^commit-date: //p')
           find "$(rustc --print sysroot)/lib/rustlib/src" -type f -exec touch -t "${d//-/}0000" {} +
+      # Main saves optimised builds (codegen-units 1). An unoptimised PR build compiles at 16
+      # units, which changes every crate's hash, so that cache would serve it nothing.
       - name: Restore wasm target cache
-        if: steps.engine-cache.outputs.cache-matched-key == ''
+        if: steps.engine-cache.outputs.cache-matched-key == '' && env.BEVY_WEB_OPT != 'unoptimized'
         id: wasm-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -732,7 +734,7 @@ jobs:
             'rendering/bevy-explorer/source/.cargo/config.toml', 'rendering/bevy-explorer/bevy/**') }}
           restore-keys: bevy-explorer-web-
       - name: Restore the vendored Bevy's cached file times
-        if: steps.engine-cache.outputs.cache-matched-key == ''
+        if: steps.engine-cache.outputs.cache-matched-key == '' && env.BEVY_WEB_OPT != 'unoptimized'
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install the web build tools from the flake
         if: steps.engine-cache.outputs.cache-matched-key == ''
@@ -745,7 +747,7 @@ jobs:
       - name: Build and test the local web app
         run: python3 ../../../apps/bevy-explorer/build-web.py --engine-cache ../../../.cache/bevy-engine ${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }} --shared-build
       - name: Record the vendored Bevy's file times for the cache
-        if: steps.engine-cache.outputs.cache-matched-key == ''
+        if: steps.engine-cache.outputs.cache-matched-key == '' && env.BEVY_WEB_OPT != 'unoptimized'
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Save wasm target cache
         if: github.ref == 'refs/heads/main' && steps.engine-cache.outputs.cache-matched-key == '' && steps.wasm-cache.outputs.cache-hit != 'true'
