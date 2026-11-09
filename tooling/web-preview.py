@@ -9,6 +9,7 @@ from html.parser import HTMLParser
 import json
 import os
 from pathlib import Path
+import posixpath
 import re
 import shutil
 import subprocess
@@ -16,7 +17,7 @@ import sys
 import time
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
-from urllib.parse import urljoin
+from urllib.parse import unquote, urljoin, urlsplit
 
 WORKFLOW = '.github/workflows/web-previews.yml'
 PIPELINE_INPUTS = {
@@ -476,7 +477,7 @@ def prior_preview_url(body, revision, run_id, attempt):
         url = cdn_url(version)
     except ValueError:
         return ''
-    if link != url + REVIEWER_ENTRY:
+    if link != url + REVIEWER_ENTRY or version.split('-', 1)[0] != f'0.1.{run_id}':
         return ''
     try:
         source = read_cdn_source(url)
@@ -488,14 +489,45 @@ def prior_preview_url(body, revision, run_id, attempt):
     return link if matches_source(source, revision, run_id, attempt) else ''
 
 
+def scoped_asset_url(prefix, entry, source):
+    if '\\' in source or any(ord(char) <= 32 or ord(char) == 127 for char in source):
+        raise ValueError('Reviewer asset URL contains unsafe characters')
+    asset = urljoin(entry, source)
+    target, scope = urlsplit(asset), urlsplit(prefix)
+    if (
+        target.scheme != scope.scheme
+        or target.hostname != scope.hostname
+        or target.port not in (None, 443)
+        or target.username is not None
+        or target.password is not None
+        or target.query
+        or target.fragment
+    ):
+        raise ValueError('Reviewer asset escapes the versioned CDN origin or path')
+    if re.search(r'%(?![0-9a-f]{2})|%2f|%5c', target.path, re.I):
+        raise ValueError('Reviewer asset URL has ambiguous encoding')
+    try:
+        decoded = unquote(target.path, errors='strict')
+    except UnicodeDecodeError as error:
+        raise ValueError('Reviewer asset URL has invalid UTF-8 encoding') from error
+    if (
+        '\\' in decoded
+        or any(ord(char) < 32 or ord(char) == 127 for char in decoded)
+        or re.search(r'%[0-9a-f]{2}', decoded, re.I)
+    ):
+        raise ValueError('Reviewer asset URL has unsafe or nested encoding')
+    scope_path = posixpath.normpath(unquote(scope.path, errors='strict')).rstrip('/') + '/'
+    if not posixpath.normpath(decoded).startswith(scope_path):
+        raise ValueError('Reviewer asset escapes the versioned CDN prefix')
+    return asset
+
+
 def verify_reviewer_resources(url, entry, html):
     parser = ReviewerAssets()
     parser.feed(html)
     if not parser.assets:
         raise CdnResourceNotReady('Reviewer entry has no hashed JavaScript or CSS asset')
-    asset = urljoin(entry, parser.assets[0])
-    if not asset.startswith(url + '/'):
-        raise ValueError('Reviewer asset escapes the versioned CDN prefix')
+    asset = scoped_asset_url(url, entry, parser.assets[0])
     with cdn_open(asset) as response:
         content_type = response.headers.get('Content-Type', '')
         expected = 'text/css' if asset.endswith('.css') else 'javascript'
@@ -565,13 +597,13 @@ def report(repository, run_id, reviewer_url, publication_result, *, expected_att
     run, pr = resolve(repository, run_id, expected_attempt=expected_attempt, eligible=reportable)
     if pr is None:
         print('No current same-repository pull request to report into')
-        return
+        return False
     jobs = api(f'repos/{repository}/actions/runs/{run_id}/jobs?per_page=100')['jobs']
     rows = []
     selection = selection_job(jobs)
     if selection and selection.get('conclusion') == 'skipped':
         print('Preview selection was skipped; keep the existing preview status')
-        return
+        return False
     comments = api(f'repos/{repository}/issues/{pr["number"]}/comments?per_page=100', paginate=True)
     current = next(
         (
@@ -636,19 +668,20 @@ def report(repository, run_id, reviewer_url, publication_result, *, expected_att
     )
     if no_products and current is None:
         print('No selected web products to report')
-        return
+        return False
     # Recheck after the API reads so an outdated source cannot replace the current preview.
     _, live = resolve(repository, run_id, expected_attempt=expected_attempt, eligible=reportable)
     if live is None or not same_pull_request(live, pr):
-        return
+        return False
     if not newest_run_for_pr(repository, run_id, run, live):
-        return
+        return False
     path = (
         f'repos/{repository}/issues/comments/{current["id"]}'
         if current
         else f'repos/{repository}/issues/{pr["number"]}/comments'
     )
     api(path, method='PATCH' if current else 'POST', body={'body': body})
+    return True
 
 
 def run_cli():
@@ -698,13 +731,16 @@ def run_cli():
     run_id = int(os.environ['SOURCE_RUN_ID'])
     expected_attempt = os.environ.get('SOURCE_RUN_ATTEMPT') or None
     if args.command == 'report':
-        report(
+        publication_result = os.environ.get('PUBLICATION_RESULT', 'not published')
+        updated = report(
             repository,
             run_id,
             '',
-            os.environ.get('PUBLICATION_RESULT', 'not published'),
+            publication_result,
             expected_attempt=expected_attempt,
         )
+        if publication_result == 'waiting for human approval' and not updated:
+            raise ValueError('Pending approval status was not updated; publication remains blocked')
         return
     run, pr = resolve(repository, run_id, expected_attempt=expected_attempt)
     if args.command == 'resolve':

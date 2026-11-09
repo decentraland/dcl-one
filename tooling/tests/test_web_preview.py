@@ -59,7 +59,7 @@ def cdn_event():
             'task': 'upload-to-cdn',
             'payload': {
                 'packageName': preview.PACKAGE,
-                'packageVersion': '0.1.0-123.commit-abcdef0',
+                'packageVersion': '0.1.123-123.commit-abcdef0',
             },
         },
         'deployment_status': {'state': 'success'},
@@ -124,6 +124,179 @@ class PreviewGitHub:
 
 
 class WebPreviewTests(unittest.TestCase):
+    def test_cdn_rejects_effective_asset_path_escapes_before_fetching(self):
+        version = '0.1.123-123.commit-abcdef0'
+        prefix = preview.cdn_url(version)
+        for source in (
+            './assets/%2e%2e/%2e%2e/%2e%2e/assets/main-Abc123.js',
+            './assets/%2E%2E%2f%2E%2E%2fmain-Abc123.js',
+            './assets/main%252e-Abc123.js',
+            './assets/folder%5cmain-Abc123.js',
+            './assets/folder\\main-Abc123.js',
+            './assets/main%00-Abc123.js',
+            './assets/main%0a-Abc123.js',
+            './assets/main\n-Abc123.js',
+            './assets/main%zz-Abc123.js',
+            'https://evil.example/assets/main-Abc123.js',
+            'https://cdn.decentraland.org@evil.example/assets/main-Abc123.js',
+            prefix + '-other/assets/main-Abc123.js',
+            prefix + '/index.html#/assets/main-Abc123.js',
+            prefix + '/index.html?resource=/assets/main-Abc123.js',
+        ):
+            responses = cdn_responses()
+            responses[1] = io.BytesIO(f'<script src="{source}"></script>'.encode())
+            responses[1].status = 200
+            responses[1].headers = {'Content-Type': 'text/html'}
+            with (
+                self.subTest(source=source),
+                patch.object(preview, 'urlopen', side_effect=responses) as request,
+                patch.object(preview.time, 'sleep') as sleep,
+            ):
+                with self.assertRaisesRegex(ValueError, 'asset'):
+                    preview.verify_cdn(version, 'a' * 40, 123, timeout=0, attempt=1)
+            self.assertEqual(request.call_count, 2)
+            self.assertTrue(
+                all(
+                    call.args[0].full_url.startswith(prefix + '/')
+                    for call in request.call_args_list
+                )
+            )
+            sleep.assert_not_called()
+
+    def test_cdn_preserves_legitimate_encoded_asset_filenames_inside_the_version(self):
+        version = '0.1.123-123.commit-abcdef0'
+        for name in (
+            'UI%20bundle-Abc123.js',
+            'caf%C3%A9-Abc123.js',
+            'percent%25-Abc123.js',
+            'hash%23name-Abc123.js',
+            'query%3Fname-Abc123.js',
+            'file%2ename-Abc123.js',
+        ):
+            responses = cdn_responses()
+            responses[1] = io.BytesIO(f'<script src="./assets/{name}"></script>'.encode())
+            responses[1].status = 200
+            responses[1].headers = {'Content-Type': 'text/html'}
+            with (
+                self.subTest(name=name),
+                patch.object(preview, 'urlopen', side_effect=responses) as request,
+            ):
+                self.assertTrue(
+                    preview.verify_cdn(version, 'a' * 40, 123, timeout=0, attempt=1).endswith(
+                        '/index.html'
+                    )
+                )
+            self.assertEqual(
+                request.call_args.args[0].full_url,
+                preview.cdn_url(version) + '/dcl-ui-review/assets/' + name,
+            )
+
+    def test_old_source_run_preview_is_cleared_without_a_cdn_request(self):
+        github = PreviewGitHub()
+        old = preview.cdn_url('0.1.122-123.commit-abcdef0') + '/dcl-ui-review/index.html'
+        github.comments = [published_comment(old)]
+        with (
+            patch.object(preview, 'api', side_effect=github.request),
+            patch.object(preview, 'urlopen') as request,
+        ):
+            self.assertTrue(
+                preview.report(
+                    'example/one', 123, '', 'waiting for human approval', expected_attempt=2
+                )
+            )
+        request.assert_not_called()
+        self.assertNotIn('[Preview](', github.writes[0])
+        self.assertIn('waiting for human approval', github.writes[0])
+
+    def test_pending_approval_cli_fails_if_no_current_status_can_be_written(self):
+        for condition in (
+            'closed',
+            'head',
+            'attempt',
+            'attempt_during_report',
+            'newest',
+            'no_products',
+            'metadata',
+        ):
+            github = PreviewGitHub()
+            if condition == 'closed':
+                github.pr['state'] = 'closed'
+            elif condition == 'head':
+                github.pr['head']['sha'] = 'b' * 40
+            elif condition == 'attempt':
+                github.run['run_attempt'] = 3
+            elif condition == 'attempt_during_report':
+                github.supersede_on_read = 2
+            elif condition == 'no_products':
+                github.jobs = []
+            elif condition == 'metadata':
+                github.jobs = [{'name': 'changes', 'conclusion': 'skipped'}]
+
+            def request(path, **kwargs):
+                if condition == 'newest' and '/actions/workflows/web-previews.yml/runs?' in path:
+                    return [{'id': 123}, {'id': 124, 'pull_requests': [github.pr]}]
+                if condition == 'newest' and '/actions/runs/124/jobs?' in path:
+                    return {'jobs': []}
+                return github.request(path, **kwargs)
+
+            with (
+                self.subTest(condition=condition),
+                patch.object(preview, 'api', side_effect=request),
+                patch.object(preview.sys, 'argv', ['web-preview.py', 'report']),
+                patch.dict(
+                    os.environ,
+                    {
+                        'GITHUB_REPOSITORY': 'example/one',
+                        'SOURCE_RUN_ID': '123',
+                        'SOURCE_RUN_ATTEMPT': '2',
+                        'PUBLICATION_RESULT': 'waiting for human approval',
+                    },
+                ),
+            ):
+                with self.assertRaisesRegex(ValueError, 'Pending approval status was not updated'):
+                    preview.main()
+            self.assertEqual(github.writes, [])
+
+    def test_pending_approval_cli_succeeds_only_after_posting_the_current_status(self):
+        github = PreviewGitHub()
+        with (
+            patch.object(preview, 'api', side_effect=github.request),
+            patch.object(preview.sys, 'argv', ['web-preview.py', 'report']),
+            patch.dict(
+                os.environ,
+                {
+                    'GITHUB_REPOSITORY': 'example/one',
+                    'SOURCE_RUN_ID': '123',
+                    'SOURCE_RUN_ATTEMPT': '2',
+                    'PUBLICATION_RESULT': 'waiting for human approval',
+                },
+            ),
+        ):
+            preview.main()
+        self.assertEqual(len(github.writes), 1)
+        self.assertIn('Publication: waiting for human approval', github.writes[0])
+
+    def test_ordinary_report_cli_keeps_no_product_and_metadata_skips_successful(self):
+        for jobs in ([], [{'name': 'changes', 'conclusion': 'skipped'}]):
+            github = PreviewGitHub()
+            github.jobs = jobs
+            with (
+                self.subTest(jobs=jobs),
+                patch.object(preview, 'api', side_effect=github.request),
+                patch.object(preview.sys, 'argv', ['web-preview.py', 'report']),
+                patch.dict(
+                    os.environ,
+                    {
+                        'GITHUB_REPOSITORY': 'example/one',
+                        'SOURCE_RUN_ID': '123',
+                        'SOURCE_RUN_ATTEMPT': '2',
+                        'PUBLICATION_RESULT': 'not eligible for publication',
+                    },
+                ),
+            ):
+                preview.main()
+            self.assertEqual(github.writes, [])
+
     def test_late_progress_rebuilds_a_receipt_verified_url_without_forged_extras(self):
         github = PreviewGitHub()
         url = cdn_preview_url()
@@ -145,7 +318,7 @@ class WebPreviewTests(unittest.TestCase):
         for url in (
             'https://evil.example/review',
             valid.replace(preview.PACKAGE, '@other/package'),
-            valid.replace('0.1.0-123.commit-abcdef0', 'latest'),
+            valid.replace(cdn_event()['deployment']['payload']['packageVersion'], 'latest'),
             valid + '?external=1',
             valid + '#extra',
             valid.replace('https://', 'http://'),
