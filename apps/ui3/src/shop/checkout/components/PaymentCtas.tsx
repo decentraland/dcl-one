@@ -7,8 +7,8 @@
 import { useId } from "react";
 
 import ManaMark from "../../../atoms/ManaMark";
-import { isEthereum } from "../../model/chain";
-import { formatMana, type ManaWei } from "../../model/money";
+import { isEthereum } from "@shop/model/chain";
+import { formatMana, type ManaWei } from "@shop/model/money";
 import type { CartRail } from "../lib/cart-rails";
 import styles from "./PaymentCtas.module.css";
 

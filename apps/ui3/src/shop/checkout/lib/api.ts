@@ -11,7 +11,7 @@
 import { isShopApiError } from "../../api/client";
 import { shopClient, type ShopClient } from "../../api/shop";
 import type { UnifiedListing } from "@catalyst-api/market/UnifiedListing";
-import { centsFromUsdWeiCeil } from "../../model/money";
+import { centsFromUsdWeiCeil } from "@shop/model/money";
 import type { SaleRecord } from "../../history/activity";
 import { ASSET_TYPE, type ListingCoupon, type SignedTrade } from "../purchase/encoding";
 import { fetchPrimaryListingForItem } from "../../detail/api";

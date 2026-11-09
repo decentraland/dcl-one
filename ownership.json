@@ -218,12 +218,13 @@
     },
     {
       "id": "shop-ui",
-      "description": "Shop product UI",
+      "description": "Shop product UI and its portable core",
       "owners": [
         "@decentraland/web-applications"
       ],
       "paths": [
         "/apps/ui3/src/shop/",
+        "/library/shop/",
         "/apps/sites/src/routes/shop/",
         "/tooling/shop-parity/",
         "/tooling/shop-trade-journey/"

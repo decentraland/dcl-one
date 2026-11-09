@@ -3,10 +3,10 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vitest";
 
-import { CHAIN } from "../../model/chain";
-import { BOOK } from "../../payment/fixtures";
+import { CHAIN } from "@shop/model/chain";
+import { BOOK } from "@shop/payment/fixtures";
 import { MANA, sale } from "../../market/fixtures";
-import { COLLECTION_V2_ABI, ERC721_ABI, latestOffChainMarketplace, MARKETPLACE_ABI, COUPON_MANAGER_ABI, COUPON_MANAGERS } from "../../market/lib/contracts";
+import { COLLECTION_V2_ABI, ERC721_ABI, latestOffChainMarketplace, MARKETPLACE_ABI, COUPON_MANAGER_ABI, COUPON_MANAGERS } from "@shop/market/lib/contracts";
 import { fakeChain, fakeWallet, type FakeRoute } from "../../market/testing";
 import { mountShop, StoryShell } from "../../market/testHarness";
 import { CreatorSaleForm, salePrice } from "../components/CreatorSales";

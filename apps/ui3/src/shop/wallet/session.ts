@@ -1,7 +1,7 @@
 import type { AuthIdentity } from "../../data/auth/identity";
 import type { Eip1193Provider } from "../../data/auth/wallet";
-import { parseEvmAddress } from "../model/address";
-import { SIGNED_OUT, type Session } from "../model/settlement";
+import { parseEvmAddress } from "@shop/model/address";
+import { SIGNED_OUT, type Session } from "@shop/model/settlement";
 
 export type WalletKind = "web3" | "managed";
 

@@ -3,9 +3,9 @@
 import { decodeFunctionResult, encodeFunctionData, maxUint256, type Hex } from "viem";
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
-import type { ChainId } from "../../model/chain";
+import type { ChainId } from "@shop/model/chain";
 import type { WalletKind } from "../../wallet/session";
-import { COLLECTION_MINTER_ABI, ERC20_ABI, ERC721_ABI } from "../chain/abi";
+import { COLLECTION_MINTER_ABI, ERC20_ABI, ERC721_ABI } from "@shop/checkout/chain/abi";
 import { gaslessEnabled, rpcUrl } from "../chain/config";
 import { COLLECTION_V2_DOMAIN, requireContracts } from "../chain/contracts";
 import { isSignatureDeclined, relayMetaTransaction, type MetaTxTarget } from "../chain/metatx";

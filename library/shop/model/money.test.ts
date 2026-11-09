@@ -32,7 +32,7 @@ import { U256_MAX } from "./decimal";
 type Vectors = Record<string, { cases: unknown[]; refused?: unknown[] }>;
 
 const vectors = JSON.parse(
-  readFileSync(join(__dirname, "../../../../../services/catalyst/tests/fixtures/shop/rounding-vectors.json"), "utf8"),
+  readFileSync(join(__dirname, "../../../services/catalyst/tests/fixtures/shop/rounding-vectors.json"), "utf8"),
 ) as Vectors;
 
 function pairs(name: string): [number, number][] {

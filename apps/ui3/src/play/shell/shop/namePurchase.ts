@@ -15,8 +15,8 @@
 
 import type { ShopClient } from '../../../shop/api/shop'
 import type { UsdBalance } from '../../../shop/credits/credits'
-import { CHAIN } from '../../../shop/model/chain'
-import { creditsCeil, type UsdCents } from '../../../shop/model/money'
+import { CHAIN } from '@shop/model/chain'
+import { creditsCeil, type UsdCents } from '@shop/model/money'
 import {
   parseBuyNameRequest,
   SHOP_BUSY,

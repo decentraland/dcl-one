@@ -3,9 +3,9 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import type { ShopSort } from "../api";
-import { RARITIES } from "../lib/rarity";
+import { RARITIES } from "@shop/discovery/lib/rarity";
 import Icon from "./Icon";
 import "./filterbar.css";
 

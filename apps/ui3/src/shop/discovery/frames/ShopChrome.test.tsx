@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { createShopClient, type ShopClient } from "../../api/shop";
 import { shopCartDrawer } from "../../cart/drawer";
 import { shopCart } from "../../cart/store";
-import { itemAsset } from "../../model/asset";
-import { evmAddress } from "../../model/address";
+import { itemAsset } from "@shop/model/asset";
+import { evmAddress } from "@shop/model/address";
 import { marketplaceOn } from "../../market/testing-flags";
 import { catalogTransport, ShopHarness, type SessionKind } from "../fixtures";
 import ShopChrome, { shopTabs } from "./ShopChrome";

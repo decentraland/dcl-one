@@ -8,8 +8,8 @@
 
 import { isShopApiError, type ShopApiError } from "../api/client";
 import { shopClient, type ShopClient } from "../api/shop";
-import type { CreditAuthorization, CreditBatchAuthorization, CreditLineRequest } from "../api/types";
-import { creditsFloor, parseUsdCents, ZERO_CENTS, type UsdCents } from "../model/money";
+import type { CreditAuthorization, CreditBatchAuthorization, CreditLineRequest } from "@shop/api/types";
+import { creditsFloor, parseUsdCents, ZERO_CENTS, type UsdCents } from "@shop/model/money";
 
 /** A season/program credit as credits-server lists it (legacy MANA-denominated credits). */
 export type ServerCredit = {
