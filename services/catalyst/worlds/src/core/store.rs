@@ -715,7 +715,7 @@ pub async fn deploy_scene_with(
         world,
         &parcels,
         entity_id,
-        entity_timestamp(entity)?,
+        entity_timestamp_value(entity)?,
     )
     .await?;
     if newer_deployed {
@@ -930,13 +930,14 @@ pub async fn deploy_scene_with(
 
 /// Whether a scene of `world` overlapping `parcels` is newer than this entity: a stored
 /// timestamp counts no later than its row's write (a future-dated entity cannot lock the
-/// parcels), ties break by byte-wise greater entity id, a non-numeric one never blocks.
+/// parcels), ties break by byte-wise greater entity id, a non-numeric one never blocks. Both
+/// timestamps are compared as the numbers they are, fractions included.
 pub async fn newer_scene_deployed(
     conn: &mut sqlx::PgConnection,
     world: &WorldName,
     parcels: &[String],
     entity_id: &str,
-    timestamp: i64,
+    timestamp: f64,
 ) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
         r#"WITH stored AS (
@@ -948,7 +949,8 @@ pub async fn newer_scene_deployed(
              FROM worlds.world_scenes
              WHERE world_name = $1 AND parcels && $2::text[] AND entity_id <> $3)
            SELECT EXISTS (SELECT 1 FROM stored
-             WHERE ts > $4::bigint OR (ts = $4::bigint AND entity_id COLLATE "C" > $3))"#,
+             WHERE ts > $4::float8::numeric
+                OR (ts = $4::float8::numeric AND entity_id COLLATE "C" > $3))"#,
     )
     .bind(world.key())
     .bind(parcels)
@@ -975,19 +977,34 @@ pub async fn is_world_disabled(pool: &PgPool, world: &WorldName) -> Result<bool,
     .await?)
 }
 
-/// The entity's integer `timestamp`; the deploy route already required it.
-/// The entity's `timestamp` in ms. Any finite JSON number counts, as upstream compares the
-/// number itself; a fractional one is taken down to its whole millisecond.
-pub(super) fn entity_timestamp(entity: &Value) -> Result<i64, ApiError> {
+/// The entity's `timestamp` as the number it is: any finite JSON number, as upstream reads it.
+pub fn entity_timestamp_number(entity: &Value) -> Option<f64> {
+    entity
+        .get("timestamp")
+        .and_then(Value::as_f64)
+        .filter(|ts| ts.is_finite())
+}
+
+/// The entity's `timestamp` in whole milliseconds: an integer as it is, a fractional one taken
+/// down to its millisecond.
+pub fn entity_timestamp_ms(entity: &Value) -> Option<i64> {
     let value = entity.get("timestamp");
-    value
-        .and_then(Value::as_i64)
-        .or_else(|| {
-            value
-                .and_then(Value::as_f64)
-                .filter(|ts| ts.is_finite() && ts.abs() < i64::MAX as f64)
-                .map(|ts| ts.floor() as i64)
-        })
+    value.and_then(Value::as_i64).or_else(|| {
+        entity_timestamp_number(entity)
+            .filter(|ts| ts.abs() < i64::MAX as f64)
+            .map(|ts| ts.floor() as i64)
+    })
+}
+
+/// [`entity_timestamp_ms`], refused as upstream's schema would when missing.
+pub(super) fn entity_timestamp(entity: &Value) -> Result<i64, ApiError> {
+    entity_timestamp_ms(entity)
+        .ok_or_else(|| ApiError::bad_request("The entity is missing a valid timestamp"))
+}
+
+/// [`entity_timestamp_number`], refused as upstream's schema would when missing.
+pub(super) fn entity_timestamp_value(entity: &Value) -> Result<f64, ApiError> {
+    entity_timestamp_number(entity)
         .ok_or_else(|| ApiError::bad_request("The entity is missing a valid timestamp"))
 }
 

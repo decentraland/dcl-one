@@ -263,8 +263,7 @@ fn pins(state: &CoreState) -> catalyst_storage::gc::Pins<'_> {
 }
 
 fn db_error(error: impl std::fmt::Display) -> Response {
-    tracing::error!(%error, "partial upload: database error");
-    internal("Failed to stage the deployment").into_response()
+    internal(format!("Failed to stage the deployment: {error}")).into_response()
 }
 
 /// 429 for a staging budget other uploads or traffic filled; `reason` is the metric label.
@@ -626,8 +625,11 @@ async fn stage_batch(
 
     for file in &to_store {
         if let Err(e) = state.storage.store_file(&file.hash, &file.path).await {
-            tracing::error!(error = %e, hash = %file.hash, "partial upload: could not store blob");
-            return Err(internal("Failed to persist deployment content").into_response());
+            return Err(internal(format!(
+                "Failed to persist deployment content {}: {e}",
+                file.hash
+            ))
+            .into_response());
         }
     }
     let hashes: Vec<String> = to_store.iter().map(|f| f.hash.clone()).collect();

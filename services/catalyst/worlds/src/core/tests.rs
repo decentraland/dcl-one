@@ -1111,6 +1111,53 @@ fn assert_newer_refusal(result: Result<(), super::http::ApiError>) {
     );
 }
 
+/// Upstream compares entity timestamps as the numbers they are: a fractional one is newer than
+/// a stored one a fraction below it, and an equal one falls to the entity-id tie-break.
+#[tokio::test]
+async fn fractional_timestamps_compare_as_numbers() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = (world_name(), Wallet::random().address);
+    let at = |timestamp: f64| {
+        json!({ "type": "scene", "timestamp": timestamp, "pointers": ["0,0"],
+                "metadata": { "scene": { "base": "0,0", "parcels": ["0,0"] } } })
+    };
+    deploy(
+        &f,
+        &world,
+        &owner,
+        "bafyb",
+        &at(1000.5),
+        &["0,0"],
+        &Deploy::Owner,
+    )
+    .await
+    .unwrap();
+    assert_newer_refusal(
+        deploy(
+            &f,
+            &world,
+            &owner,
+            "bafya",
+            &at(1000.5),
+            &["0,0"],
+            &Deploy::Owner,
+        )
+        .await,
+    );
+    deploy(
+        &f,
+        &world,
+        &owner,
+        "bafyc",
+        &at(1000.7),
+        &["0,0"],
+        &Deploy::Owner,
+    )
+    .await
+    .expect("1000.7 is newer than 1000.5");
+    assert_eq!(entity_ids(&f, &world).await, vec!["bafyc".to_string()]);
+}
+
 #[tokio::test]
 async fn an_older_entity_never_replaces_a_newer_overlapping_scene() {
     let Some(f) = fixture().await else { return };
@@ -6889,6 +6936,35 @@ async fn deploy_parts_are_spooled_to_disk_and_removed_after_success_and_failure(
     assert!(status.is_client_error(), "{status}");
     assert!(!f.storage.exist(&refused.entity_id).await.unwrap());
     wait_spool_empty(&f).await;
+}
+
+/// The upload-slot cap (`MAX_CONCURRENT_UPLOADS`, this tree's) refuses `POST /entities` with
+/// upstream's byte-budget 503 (`multipart/errors.ts`), as the in-flight bytes do (WD-11).
+#[tokio::test]
+async fn a_publish_past_the_upload_slots_gets_the_byte_budget_503() {
+    let mut settings = test_settings();
+    settings.upload_limits.max_concurrent_uploads = 0;
+    let Some(f) = fixture_full(PersonalWorldsPolicy::disabled(), None, None, settings).await else {
+        return;
+    };
+    let world = world_name();
+    let owner = Wallet::random();
+    f.names.set(&owner.address, world.label());
+    let d = deployment(&owner, &world, "Shed", "0,0", &["0,0"]).await;
+    let body = expect(
+        &f.app,
+        Case::new("post", "/entities").body(d.body.clone(), &d.content_type),
+        503,
+    )
+    .await;
+    assert_eq!(
+        body,
+        json!({
+            "error": "Service Unavailable",
+            "message": super::upload_limits::BYTES_SHED_MESSAGE,
+        })
+    );
+    assert!(!f.storage.exist(&d.entity_id).await.unwrap());
 }
 
 #[tokio::test]

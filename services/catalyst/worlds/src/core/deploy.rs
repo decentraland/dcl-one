@@ -87,11 +87,12 @@ fn declared_length_exceeds_limit(declared_len: u64) -> bool {
 
 /// The old service's `{error, message}` answer of a refused deploy; a 500 is
 /// `@dcl/http-commons`' bare `{"error":"Internal Server Error"}`, so its message goes to the
-/// log instead of the client.
+/// log instead of the client. This is the one log line of a 500: callers put their context in
+/// the message.
 pub(super) fn rejection(status: StatusCode, message: impl Into<String>) -> Response {
     if status == StatusCode::INTERNAL_SERVER_ERROR {
         let message: String = message.into();
-        tracing::error!(%message, "POST /entities: internal error");
+        tracing::error!(%message, "deploy: internal error");
         return (status, Json(json!({ "error": "Internal Server Error" }))).into_response();
     }
     let error = match status {
@@ -157,7 +158,7 @@ pub(super) async fn refuse_if_newer_scene(
     entity_id: &str,
     entity: &Value,
 ) -> Result<(), Response> {
-    let timestamp = store::entity_timestamp(entity).map_err(IntoResponse::into_response)?;
+    let timestamp = store::entity_timestamp_value(entity).map_err(IntoResponse::into_response)?;
     let newer = match state.pool.acquire().await {
         Ok(mut conn) => {
             store::newer_scene_deployed(&mut conn, world, parcels, entity_id, timestamp).await
@@ -761,10 +762,11 @@ pub(super) async fn validate(
         return Err(failed(e));
     }
     let parcels = ParcelSet::parse(&pointers).map_err(|e| failed(e.to_string()))?;
-    let limits = state.policy.world_limits(&world).await.map_err(|e| {
-        tracing::error!(error = %e, world = %world, "deploy failed: world limits");
-        internal("Failed to read the world limits")
-    })?;
+    let limits = state
+        .policy
+        .world_limits(&world)
+        .await
+        .map_err(|e| internal(format!("Failed to read the world limits of {world}: {e}")))?;
     if pointers.len() > limits.max_parcels as usize {
         return Err(failed(format!(
             "Max allowed scene dimensions is {} parcels.",
@@ -809,8 +811,9 @@ pub(super) async fn validate(
         Ok(false) => {}
         Ok(true) => return Err(forbidden(store::world_disabled(&world).public_message())),
         Err(e) => {
-            tracing::error!(error = ?e, world = %world, "deploy failed: disabled check");
-            return Err(internal("Failed to persist deployment"));
+            return Err(internal(format!(
+                "Failed to read whether {world} is disabled: {e:?}"
+            )));
         }
     }
     // Every publish refreshes worlds.owner to the live NAME holder.
@@ -981,8 +984,10 @@ pub(super) async fn publish(
                     err_one(reason)
                 });
             }
-            tracing::error!(error = ?e, world = %world, entity_id = %entity_id, "deploy failed: DB tx error");
-            return Err(internal("Failed to persist deployment").into_response());
+            return Err(internal(format!(
+                "Failed to persist deployment {entity_id} to {world}: {e:?}"
+            ))
+            .into_response());
         }
     };
     // A new holder's publish moved worlds.owner: re-decide the previous one now.
@@ -1102,8 +1107,11 @@ async fn deploy_entity_inner(
     // Every upload is referenced and named by its own hash, as validation checked.
     for blob in uploads.by_name.values() {
         if let Err(e) = state.storage.store_file(&blob.hash, &blob.path).await {
-            tracing::error!(error = %e, hash = %blob.hash, "deploy failed: could not store blob");
-            return internal("Failed to persist deployment content").into_response();
+            return internal(format!(
+                "Failed to persist deployment content {}: {e}",
+                blob.hash
+            ))
+            .into_response();
         }
     }
 
@@ -1145,8 +1153,7 @@ pub(super) async fn read_entity_file(file: &SpooledFile) -> Result<Value, Respon
         return Err(err_one(entity_file_too_large_error()));
     }
     let bytes = file.read().await.map_err(|e| {
-        tracing::error!(error = %e, "deploy failed: could not read the spooled entity file");
-        internal("Failed to read the uploaded entity file").into_response()
+        internal(format!("Failed to read the uploaded entity file: {e}")).into_response()
     })?;
     parse_entity(&bytes)
 }

@@ -402,6 +402,81 @@ async fn publishing_the_same_entity_twice_keeps_its_publication_time() {
     assert_eq!(replay["creationTimestamp"], first["creationTimestamp"]);
 }
 
+/// Upstream `validateUploadedFiles`: a part named by anything but a CIDv1 (here a CIDv0) is
+/// refused with `Only CIDv1 are allowed for content files` (WD-06).
+#[tokio::test]
+async fn a_part_not_named_by_a_cidv1_is_refused() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let mut u = upload(&world, 1);
+    let cidv0 = "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG".to_string();
+    u.files[0].0 = cidv0.clone();
+    let regular = Batch {
+        partial_field: false,
+        ..Batch::of(&owner, true, &[0])
+    };
+    let body = expect_batch(&f.app, &u, regular, 400).await;
+    let message = body["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains(&format!(
+            "Only CIDv1 are allowed for content files: {cidv0}"
+        )),
+        "{body}"
+    );
+    assert!(!f.storage.exist(&u.entity_id).await.unwrap());
+}
+
+/// Upstream dates a partial upload when its first batch arrives (WD-12): the pending row's
+/// time is the request's arrival, not when its body finished.
+#[tokio::test]
+async fn a_first_batch_is_dated_when_it_arrives() {
+    use futures::StreamExt;
+    const STALL_MS: i64 = 500;
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 2);
+    let chain = chain_fields(&owner.chain(&u.entity_id).await);
+    let mut parts: Vec<(&str, Option<&str>, &[u8])> =
+        vec![("entityId", None, u.entity_id.as_bytes())];
+    parts.extend(chain.iter().map(|(k, v)| (k.as_str(), None, v.as_bytes())));
+    parts.push(("partial", None, b"true"));
+    parts.push((&u.entity_id, Some("entity.json"), &u.entity_bytes));
+    let (body, content_type) = multipart_body(&parts);
+    let (head, tail) = body.split_at(body.len() / 2);
+    let (head, tail) = (
+        bytes::Bytes::copy_from_slice(head),
+        bytes::Bytes::copy_from_slice(tail),
+    );
+    // Half the body, a stall, then the rest.
+    let stream = futures::stream::iter([Ok::<_, std::io::Error>(head)]).chain(
+        futures::stream::once(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(STALL_MS as u64)).await;
+            Ok(tail)
+        }),
+    );
+    let sent_ms = chrono::Utc::now().timestamp_millis();
+    let request = Request::builder()
+        .method("POST")
+        .uri("/entities")
+        .header(header::CONTENT_TYPE, content_type)
+        .body(Body::from_stream(stream))
+        .unwrap();
+    let response = f.app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let dated_ms: i64 = sqlx::query_scalar(
+        "SELECT (extract(epoch FROM created_at) * 1000)::bigint FROM worlds.pending_scenes WHERE entity_id = $1",
+    )
+    .bind(&u.entity_id)
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert!(
+        dated_ms >= sent_ms - 5 && dated_ms < sent_ms + STALL_MS,
+        "dated {} ms after the request was sent",
+        dated_ms - sent_ms
+    );
+}
+
 /// Upstream `validateUploadedFiles` and `validateEntityId`: a part is named by the CIDv1 of its
 /// bytes (test `partial-deploy.spec.ts` "a file that doesn't match its hash").
 #[tokio::test]
