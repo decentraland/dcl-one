@@ -169,7 +169,7 @@ export default function AssetCard({ item, mode = "shop", source = "grid", positi
   // way, with Add to cart's hover) and the compact card shows a dark round arrow for the + button. As upstream's
   // ViewCtaLink and ViewRoundLink, both are links to the detail page above the card's overlay link, hidden from
   // assistive tech and out of the tab order: the overlay link is the one announced navigation.
-  const viewable = !buyable && !!detailPath;
+  const viewPath = buyable ? null : detailPath;
   const genderIco = genderIcon(item.gender);
   const palette = rarityCardPalette(item.rarity);
   const unitsLeft = showSale ? saleUnitsHint(item.saleUnitsLeft) : null;
@@ -262,7 +262,7 @@ export default function AssetCard({ item, mode = "shop", source = "grid", positi
         </div>
         <div className="shop-card__action">
           {/* The cart button, or VIEW on a card with nothing to buy, takes this row's place on hover and keyboard focus. */}
-          <div className="shop-card__rest" data-chips={buyable || viewable || undefined}>
+          <div className="shop-card__rest" data-chips={buyable || !!viewPath || undefined}>
             <div className="shop-card__chips">
               <span className="shop-card__chip" data-variant="rarity" data-testid="chip-rarity" style={{ background: palette.labelBg, color: palette.label }} title={rarityDescription(item.rarity)}>
                 {rarityLabel(item.rarity)}
@@ -312,12 +312,12 @@ export default function AssetCard({ item, mode = "shop", source = "grid", positi
                 <span>{cartFull ? t("itemDetail.inCart") : t("itemDetail.addToCart")}</span>
               </button>
             </>
-          ) : viewable && detailPath ? (
+          ) : viewPath ? (
             <>
-              <Link className="shop-card__addround" data-variant="view" data-testid="card-view-round" to={detailPath} state={{ item }} aria-hidden tabIndex={-1}>
+              <Link className="shop-card__addround" data-variant="view" data-testid="card-view-round" to={viewPath} state={{ item }} aria-hidden tabIndex={-1}>
                 <Icon name="arrow-right" size={18} />
               </Link>
-              <Link className="shop-card__cart" data-variant="view" data-testid="card-view" to={detailPath} state={{ item }} aria-hidden tabIndex={-1}>
+              <Link className="shop-card__cart" data-variant="view" data-testid="card-view" to={viewPath} state={{ item }} aria-hidden tabIndex={-1}>
                 <Icon name="eye" size={20} />
                 <span>{t("assetCard.view")}</span>
               </Link>

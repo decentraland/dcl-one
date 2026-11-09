@@ -182,10 +182,18 @@ describe("the card's price row", () => {
     expectViewLinks();
   });
 
+  it("a store mint with no copies left shows VIEW over its price row, never an Add to cart", async () => {
+    card(item({ acquisition: "store", available: 0 }));
+    await settle();
+    expect(screen.getByTestId("card-nfs")).toHaveTextContent("Not for Sale");
+    expect(screen.queryByTestId("card-cart")).toBeNull();
+    expect(screen.queryByTestId("card-add-round")).toBeNull();
+    expectViewLinks();
+  });
+
   it("a priced item with no listing to buy keeps its price and shows VIEW, never an Add to cart it could not honour", async () => {
     const unlisted = item({ priceCredits: 14, available: 5 });
     delete unlisted.tradeId;
-    delete unlisted.acquisition;
     card(unlisted);
     await settle();
     expect(screen.getByTestId("card-price")).toHaveTextContent("14");
