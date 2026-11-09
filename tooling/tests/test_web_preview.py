@@ -382,8 +382,6 @@ class WebPreviewTests(unittest.TestCase):
             OSError('network unavailable'),
             preview.HTTPError(cdn_preview_url(), 503, 'unavailable', {}, None),
             preview.HTTPError(cdn_preview_url(), 429, 'limited', {}, None),
-            json.JSONDecodeError('invalid JSON', '', 0),
-            UnicodeDecodeError('utf8', b'\xff', 0, 1, 'invalid'),
         ):
             github = PreviewGitHub()
             old = published_comment(cdn_preview_url())
@@ -397,6 +395,47 @@ class WebPreviewTests(unittest.TestCase):
                     preview.report('example/one', 123, '', 'uploading', expected_attempt=2)
             self.assertEqual(github.writes, [])
             self.assertEqual(github.comments, [old])
+
+    def test_malformed_prior_receipt_bytes_clear_the_obsolete_url_and_allow_current_status(self):
+        for payload in (b'<html>not json</html>', b'{', b'\xff', b'"\xc3("'):
+            for state in ('uploading', 'waiting for human approval'):
+                github = PreviewGitHub()
+                github.comments = [
+                    published_comment(cdn_preview_url(), '[Other](https://evil.example/)')
+                ]
+                with (
+                    self.subTest(payload=payload, state=state),
+                    patch.object(preview, 'api', side_effect=github.request),
+                    patch.object(preview, 'urlopen', return_value=io.BytesIO(payload)),
+                ):
+                    self.assertTrue(
+                        preview.report('example/one', 123, '', state, expected_attempt=2)
+                    )
+                self.assertEqual(len(github.writes), 1)
+                self.assertNotIn('[Preview](', github.writes[0])
+                self.assertNotIn('evil.example', github.writes[0])
+
+    def test_prior_comment_api_failure_leaves_the_comment_unchanged(self):
+        github = PreviewGitHub()
+        old = published_comment(cdn_preview_url())
+        github.comments = [old]
+
+        def request(path, **kwargs):
+            if '/issues/9/comments?' in path:
+                raise subprocess.CalledProcessError(1, ['gh'])
+            return github.request(path, **kwargs)
+
+        with (
+            patch.object(preview, 'api', side_effect=request),
+            patch.object(preview, 'urlopen') as fetch,
+        ):
+            with self.assertRaises(subprocess.CalledProcessError):
+                preview.report(
+                    'example/one', 123, '', 'waiting for human approval', expected_attempt=2
+                )
+        fetch.assert_not_called()
+        self.assertEqual(github.writes, [])
+        self.assertEqual(github.comments, [old])
 
     def test_new_completion_overwrites_forged_links_without_reusing_the_old_comment(self):
         github = PreviewGitHub()
@@ -1126,7 +1165,10 @@ class WebPreviewTests(unittest.TestCase):
                     ),
                     'needs': SimpleNamespace(
                         source=SimpleNamespace(
-                            result=source, outputs=SimpleNamespace(publish=eligible)
+                            result=source,
+                            outputs=SimpleNamespace(
+                                publish=eligible, publication_environment='success'
+                            ),
                         ),
                         pending=SimpleNamespace(result=pending),
                         reviewer=SimpleNamespace(result=reviewer),
@@ -1157,6 +1199,58 @@ class WebPreviewTests(unittest.TestCase):
                     self.assertIn(
                         '/actions/workflows/web-previews-publish.yml', github.comments[0]['body']
                     )
+
+    def test_environment_preflight_failure_has_distinct_publication_diagnostics(self):
+        root = Path(__file__).parents[2] / '.github/workflows/web-previews-publish.yml'
+        jobs = workflow_jobs(root.read_text())
+        self.assertIn('publication_environment: ${{ steps.protections.outcome }}', jobs['source'])
+        self.assertIn(
+            '      - name: Validate publication protections before approval\n        id: protections\n',
+            jobs['source'],
+        )
+        result = re.search(
+            r'^          PUBLICATION_RESULT: \$\{\{ (.+) \}\}$', jobs['report'], re.M
+        ).group(1)
+        for outcome, enabled, expected in (
+            ('failure', 'true', 'publication environment verification failed'),
+            ('failure', 'false', 'disabled pending CDN base verification'),
+            ('skipped', 'true', 'source validation failed'),
+            ('', 'true', 'source validation failed'),
+            ('success', 'true', 'source validation failed'),
+        ):
+            context = {
+                'vars': SimpleNamespace(WEB_PREVIEW_REVIEWER_ENABLED=enabled),
+                'needs': SimpleNamespace(
+                    source=SimpleNamespace(
+                        result='failure', outputs=SimpleNamespace(publication_environment=outcome)
+                    )
+                ),
+            }
+            with self.subTest(outcome=outcome, enabled=enabled):
+                actual = eval(
+                    result.replace('&&', 'and').replace('||', 'or'), {'__builtins__': {}}, context
+                )
+                self.assertEqual(actual, expected)
+        github = PreviewGitHub()
+        github.comments = [published_comment(cdn_preview_url())]
+        with (
+            patch.object(preview, 'api', side_effect=github.request),
+            patch.object(preview, 'urlopen') as fetch,
+        ):
+            preview.report(
+                'example/one',
+                123,
+                '',
+                'publication environment verification failed',
+                expected_attempt=2,
+            )
+        fetch.assert_not_called()
+        self.assertNotIn('[Preview](', github.writes[0])
+        self.assertIn('publication environment verification failed', github.writes[0])
+        self.assertIn(
+            'https://github.com/example/one/actions/workflows/web-previews-publish.yml',
+            github.writes[0],
+        )
 
     def test_publication_and_completion_use_the_workflow_commit_instead_of_a_moving_ref(self):
         root = Path(__file__).parents[2] / '.github/workflows'
@@ -1390,6 +1484,63 @@ class WebPreviewTests(unittest.TestCase):
             ):
                 preview.main()
                 complete.assert_called_once_with('example/one', event)
+
+    def test_completion_rejects_versions_not_bound_to_the_canonical_receipt_run(self):
+        for version in (
+            '0.1.122-123.commit-abcdef0',
+            '0.1.0123-123.commit-abcdef0',
+            '1.1.123-123.commit-abcdef0',
+            '',
+            'latest',
+        ):
+            event = cdn_event()
+            event['deployment']['payload']['packageVersion'] = version
+            github = PreviewGitHub()
+            old = published_comment(cdn_preview_url())
+            github.comments = [old]
+            with (
+                self.subTest(version=version),
+                patch.object(preview, 'urlopen', return_value=cdn_responses(2)[0]),
+                patch.object(preview, 'api', side_effect=github.request) as api,
+                patch.object(preview, 'verify_cdn') as verify,
+            ):
+                with self.assertRaises(ValueError):
+                    preview.complete_cdn('example/one', event)
+            verify.assert_not_called()
+            api.assert_not_called()
+            self.assertEqual(github.writes, [])
+            self.assertEqual(github.comments, [old])
+
+    def test_completion_run_version_binding_preserves_valid_integer_boundaries(self):
+        for run_id in (1, preview.MAX_RUN_ID, 0, -1, preview.MAX_RUN_ID + 1, True, '123', None):
+            event = cdn_event()
+            version = f'0.1.{run_id}-123.commit-abcdef0'
+            event['deployment']['payload']['packageVersion'] = version
+            receipt = {'revision': 'a' * 40, 'run': run_id, 'attempt': 1}
+            pr = review_pr()
+            with (
+                self.subTest(run_id=run_id),
+                patch.object(
+                    preview, 'urlopen', return_value=io.BytesIO(json.dumps(receipt).encode())
+                ),
+                patch.object(preview, 'resolve', return_value=(build_run(pr), pr)) as resolve,
+                patch.object(preview, 'verify_cdn', return_value='verified') as verify,
+                patch.object(preview, 'report') as report,
+            ):
+                if type(run_id) is int and 1 <= run_id <= preview.MAX_RUN_ID:
+                    preview.complete_cdn('example/one', event)
+                    verify.assert_called_once_with(
+                        version, 'a' * 40, run_id, timeout=unittest.mock.ANY, attempt=1
+                    )
+                    report.assert_called_once_with(
+                        'example/one', run_id, 'verified', 'success', expected_attempt=1
+                    )
+                else:
+                    with self.assertRaises(ValueError):
+                        preview.complete_cdn('example/one', event)
+                    resolve.assert_not_called()
+                    verify.assert_not_called()
+                    report.assert_not_called()
 
     def test_all_cdn_requests_send_the_preview_user_agent(self):
         with patch.object(preview, 'urlopen', side_effect=cdn_responses()) as fetch:

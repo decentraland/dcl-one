@@ -127,12 +127,17 @@ def require_reviewer(repository, run_id):
     return reviewer_ready(jobs, artifacts)
 
 
+def source_version(run_id):
+    if type(run_id) is not int or not 1 <= run_id <= MAX_RUN_ID:
+        raise ValueError('Invalid preview source identity')
+    return f'0.1.{run_id}'
+
+
 def source_identity(revision, run_id, attempt):
+    source_version(run_id)
     if (
         not isinstance(revision, str)
         or not re.fullmatch(r'[0-9a-f]{40}', revision)
-        or type(run_id) is not int
-        or not 1 <= run_id <= MAX_RUN_ID
         or type(attempt) is not int
         or attempt < 1
     ):
@@ -181,7 +186,7 @@ def package_reviewer(source, target, revision, run_id, attempt):
         json.dumps(
             {
                 'name': PACKAGE,
-                'version': f'0.1.{run_id}',
+                'version': source_version(run_id),
                 'license': 'Apache-2.0',
                 'description': 'Static UI reviewer preview for dcl-one',
                 'repository': {
@@ -478,10 +483,12 @@ def prior_preview_url(body, revision, run_id, attempt):
         url = cdn_url(version)
     except ValueError:
         return ''
-    if link != url + REVIEWER_ENTRY or version.split('-', 1)[0] != f'0.1.{run_id}':
+    if link != url + REVIEWER_ENTRY or version.split('-', 1)[0] != source_version(run_id):
         return ''
     try:
         source = read_cdn_source(url)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return ''
     except HTTPError as error:
         error.close()
         if error.code in (404, 410):
@@ -577,6 +584,8 @@ def complete_cdn(repository, event):
         raise ValueError('Invalid CDN source receipt') from error
     if source != identity:
         raise ValueError('Invalid CDN source receipt')
+    if version.split('-', 1)[0] != source_version(source['run']):
+        raise ValueError('CDN version does not belong to the receipt source run')
     run, pr = resolve(repository, source['run'], expected_attempt=source['attempt'])
     if pr is None:
         print('CDN upload no longer matches a current open PR build')
@@ -601,6 +610,10 @@ def report(repository, run_id, reviewer_url, publication_result, *, expected_att
         return False
     jobs = api(f'repos/{repository}/actions/runs/{run_id}/jobs?per_page=100')['jobs']
     rows = []
+    publisher_url = f'https://github.com/{repository}/actions/workflows/web-previews-publish.yml'
+    publication_message = f'Publication: {publication_result}'
+    if publication_result == 'publication environment verification failed':
+        publication_message += f'. [Publication configuration logs]({publisher_url})'
     selection = selection_job(jobs)
     if selection and selection.get('conclusion') == 'skipped':
         print('Preview selection was skipped; keep the existing preview status')
@@ -641,10 +654,9 @@ def report(repository, run_id, reviewer_url, publication_result, *, expected_att
                 if reviewer_url
                 else (
                     'Upload in progress (usually 6-10 minutes). If no preview link appears, '
-                    f'check [Web previews / Publish in Actions](https://github.com/{repository}'
-                    '/actions/workflows/web-previews-publish.yml)'
+                    f'check [Web previews / Publish in Actions]({publisher_url})'
                     if publication_result == 'uploading'
-                    else f'Publication: {publication_result}'
+                    else publication_message
                 )
             )
         else:

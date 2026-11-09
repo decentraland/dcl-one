@@ -19,6 +19,7 @@ jobs:
       pr: ${{ steps.source.outputs.pr }}
       publish: ${{ steps.source.outputs.publish }}
       reviewer: ${{ steps.source.outputs.reviewer }}
+      publication_environment: ${{ steps.protections.outcome }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -32,6 +33,7 @@ jobs:
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
         run: python3 tooling/web-preview.py resolve >> "$GITHUB_OUTPUT"
       - name: Validate publication protections before approval
+        id: protections
         if: vars.WEB_PREVIEW_REVIEWER_ENABLED == 'true' && steps.source.outputs.publish == 'true' && steps.source.outputs.reviewer == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -172,5 +174,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
-          PUBLICATION_RESULT: ${{ vars.WEB_PREVIEW_REVIEWER_ENABLED != 'true' && 'disabled pending CDN base verification' || needs.source.result != 'success' && 'source validation failed' || needs.source.outputs.publish != 'true' && 'not eligible for publication' || needs.pending.result == 'failure' && 'pending status update failed' || needs.pending.result == 'cancelled' && 'pending status update cancelled' || needs.reviewer.result == 'skipped' && 'not eligible for publication' || needs.reviewer.result == 'success' && 'uploading' || needs.reviewer.result }}
+          PUBLICATION_RESULT: ${{ vars.WEB_PREVIEW_REVIEWER_ENABLED != 'true' && 'disabled pending CDN base verification' || needs.source.outputs.publication_environment == 'failure' && 'publication environment verification failed' || needs.source.result != 'success' && 'source validation failed' || needs.source.outputs.publish != 'true' && 'not eligible for publication' || needs.pending.result == 'failure' && 'pending status update failed' || needs.pending.result == 'cancelled' && 'pending status update cancelled' || needs.reviewer.result == 'skipped' && 'not eligible for publication' || needs.reviewer.result == 'success' && 'uploading' || needs.reviewer.result }}
         run: python3 tooling/web-preview.py report
