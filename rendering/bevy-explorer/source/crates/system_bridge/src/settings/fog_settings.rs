@@ -5,14 +5,13 @@ use super::{AppSetting, EnumAppSetting};
 
 impl EnumAppSetting for FogSetting {
     fn variants() -> Vec<Self> {
-        vec![Self::Off, Self::Basic, Self::Atmospheric]
+        vec![Self::Off, Self::On]
     }
 
     fn name(&self) -> String {
         match self {
             FogSetting::Off => "Off",
-            FogSetting::Basic => "Basic",
-            FogSetting::Atmospheric => "Atmospheric",
+            FogSetting::On => "On",
         }
         .to_owned()
     }
@@ -28,9 +27,8 @@ impl AppSetting for FogSetting {
     fn description(&self) -> String {
         format!("Rendering of distant objects. No performance impact, just an aesthetic preference.\n\n{}", 
         match self {
-            FogSetting::Off => "Off: No fog adjustment.",
-            FogSetting::Basic => "Basic: Distant objects fade into the fog.",
-            FogSetting::Atmospheric => "Atmospheric: Distant objects fade into the fog, and distant objects looking towards the sun take the sun color.",
+            FogSetting::Off => "Off: No fog.",
+            FogSetting::On => "On: Distant objects fade into an exponential fog whose colour follows the time of day, as in Unity.",
         })
     }
 

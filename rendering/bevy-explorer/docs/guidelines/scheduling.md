@@ -128,9 +128,10 @@ Other named sets: `RealmLifecycle` for systems that react to a realm change, `Te
 ## Render world
 
 The render app is bevy's. We add a few `RenderSet::Prepare*` systems for custom materials and
-uniforms, and one extra render-graph node: the stars pass, between `DepthOfField` and
-`Tonemapping` in `Core3d` (`crates/visuals/src/stars.rs`). Render-world ordering follows bevy's
-conventions, not ours.
+uniforms, and two stars passes in `Core3d` (`crates/visuals/src/stars.rs`), of which a view draws
+one: the early pass between `MainTransmissivePass` and `MainTransparentPass` for views without
+depth of field (every MSAA view), and the pass between `DepthOfField` and `Tonemapping` for views
+with it. Render-world ordering follows bevy's conventions, not ours.
 
 ## Headless
 

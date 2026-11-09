@@ -22,6 +22,9 @@ use dcl_component::proto_components::{
     },
     social_service::v2::PrivateMessagePrivacySetting,
 };
+pub use platform::{
+    unity_bloom, unity_color_grading, BLOOM_SCATTER, GRADING_MIDTONES_RANGE, GRADING_SHADOWS_WEIGHT,
+};
 use serde::{Deserialize, Serialize};
 use system_api_types::SatelliteView;
 pub use system_api_types::{PermissionLevel, PermissionType, PermissionValue, PointerTargetType};
@@ -890,6 +893,9 @@ pub struct GraphicsSettings {
     pub render_scale: f32,
 }
 
+/// The ambient brightness setting at which the Trilight ambient is Unity's (visuals::sky_envmap).
+pub const AMBIENT_BRIGHTNESS_UNITY: i32 = 50;
+
 impl Default for GraphicsSettings {
     fn default() -> Self {
         Self {
@@ -903,13 +909,13 @@ impl Default for GraphicsSettings {
             shadow_caster_count: 0,
             window: WindowSetting::Windowed,
             // fullscreen_res: FullscreenResSetting(UVec2::new(1280,720)),
-            fog: FogSetting::Atmospheric,
+            fog: FogSetting::On,
             bloom: BloomSetting::Low,
             dof: DofSetting::High,
             ssao: SsaoSetting::Off,
             sky_reflections: SkyReflectionSetting::High,
             oob: 2.0,
-            ambient_brightness: 50,
+            ambient_brightness: AMBIENT_BRIGHTNESS_UNITY,
             cel_shading: true,
             avatar_outline: true,
             avatar_ghosts: true,
@@ -1026,8 +1032,8 @@ pub struct FullscreenResSetting(pub UVec2);
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FogSetting {
     Off,
-    Basic,
-    Atmospheric,
+    #[serde(alias = "Basic", alias = "Atmospheric")]
+    On,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1568,8 +1574,8 @@ pub struct SceneGlobalLight {
     /// setting below the horizon at night while the light follows the moon
     pub sun_illuminance: f32,
     pub sun_direction: Vec3,
-    /// the ambient light the sky env map is levelled towards: white at the ambient brightness
-    /// setting unless a scene overrides it, as a tint and a multiplier
+    /// a tint and a multiplier on the Trilight ambient and on the floor the sky reflections are
+    /// levelled towards (visuals::sky_envmap): white at 1 unless a scene overrides it
     pub ambient_color: Color,
     pub ambient_brightness: f32,
     pub layers: RenderLayers,
@@ -1922,6 +1928,59 @@ pub struct PointAtMarkerVisibilityChanged;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fog_reads_the_old_variants_as_on() {
+        for old in ["\"Basic\"", "\"Atmospheric\"", "\"On\""] {
+            assert_eq!(
+                serde_json::from_str::<FogSetting>(old).unwrap(),
+                FogSetting::On
+            );
+        }
+    }
+
+    #[test]
+    fn grading_brightens_shadows_and_keeps_gamma_neutral() {
+        let g = unity_color_grading();
+        // urp: ColorUtils.PrepareShadowsMidtonesHighlights adds 4w to the (1, 1, 1) multiplier
+        assert_eq!(g.shadows.gain, 1.0 + 4.0 * GRADING_SHADOWS_WEIGHT);
+        assert_eq!(g.shadows.lift, 0.0);
+        assert_eq!(
+            (g.shadows.gamma, g.midtones.gamma, g.highlights.gamma),
+            (1.0, 1.0, 1.0)
+        );
+        assert_eq!(g.global.midtones_range, GRADING_MIDTONES_RANGE);
+    }
+
+    /// bevy_core_pipeline's `compute_blend_factor` (bloom/mod.rs): the blend constant of the
+    /// upsample pass that adds mip `mip` of `max_mip` into the finer one; mip 0 is the composite.
+    fn bevy_bloom_blend(b: &bevy::core_pipeline::bloom::Bloom, mip: f32, max_mip: f32) -> f32 {
+        let lf_boost = (1.0
+            - (1.0 - mip / max_mip).powf(1.0 / (1.0 - b.low_frequency_boost_curvature)))
+            * b.low_frequency_boost;
+        b.intensity + lf_boost
+    }
+
+    #[test]
+    fn bloom_weighs_mips_like_urp_scatter() {
+        let b = unity_bloom();
+        assert_eq!(b.prefilter.threshold, 1.0);
+        // urp: thresholdKnee = threshold * 0.5; bevy: knee = threshold * softness
+        assert_eq!(b.prefilter.threshold_softness, 0.5);
+        assert_eq!(b.high_pass_frequency, 1.0);
+        // urp folds lerp(fine, coarse, s) over the chain and adds the result once: mip i weighs
+        // (1 - s) s^i. bevy adds mip i with weight blend(0) * blend(1) * .. * blend(i).
+        let max_mip = 7.0;
+        let mut weight = 1.0;
+        for mip in 0..=7 {
+            weight *= bevy_bloom_blend(&b, mip as f32, max_mip);
+            let urp = (1.0 - BLOOM_SCATTER) * BLOOM_SCATTER.powi(mip);
+            assert!(
+                (weight - urp).abs() < 0.002,
+                "mip {mip}: bevy {weight} vs urp {urp}"
+            );
+        }
+    }
 
     #[test]
     fn migrate_inputs_updates_old_tables() {

@@ -13639,6 +13639,7 @@ dependencies = [
  "console 0.1.0",
  "dcl_component",
  "dcl_types",
+ "half",
  "ipfs",
  "noise",
  "scene_runner",

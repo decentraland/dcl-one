@@ -6,6 +6,7 @@ mod nishita_cloud;
 mod props;
 pub mod shell_texturing;
 mod sky_envmap;
+pub use common::sky_preset;
 mod solids;
 mod stars;
 pub mod terrain;
@@ -32,7 +33,8 @@ use common::{
     sets::SetupSets,
     structs::{
         AppConfig, DofConfig, FogSetting, PrimaryCamera, PrimaryCameraRes, PrimaryUser,
-        SceneGlobalLight, SceneLoadDistance, ShadowSetting, TimeOfDay, PRIMARY_AVATAR_LIGHT_LAYER,
+        SceneGlobalLight, ShadowSetting, TimeOfDay, AMBIENT_BRIGHTNESS_UNITY,
+        PRIMARY_AVATAR_LIGHT_LAYER,
     },
 };
 use console::DoAddConsoleCommand;
@@ -40,10 +42,11 @@ use scene_runner::update_world::lights::{moon_direction, SUN_COLOR_NOON};
 
 use crate::{
     coast::CoastPlugin,
-    day_night::DayNightPlugin,
+    day_night::{day_fraction, DayNightPlugin},
     props::PropsPlugin,
     shell_texturing::ShellTexturingPlugin,
-    sky_envmap::{SkyEnvmapPlugin, SkyEnvmapSettings},
+    sky_envmap::{SkyAmbient, SkyEnvmapPlugin, SkyEnvmapSettings},
+    sky_preset::{ambient_trilight, fog_color, FOG_DENSITY_PER_METRE},
     solids::SolidsPlugin,
     terrain::TerrainPlugin,
     trees::TreesPlugin,
@@ -149,10 +152,12 @@ fn setup(
     info!("visuals::setup");
 
     commands.entity(camera.0).try_insert(DistanceFog {
-        color: Color::srgb(0.3, 0.2, 0.1),
-        directional_light_color: Color::srgb(1.0, 1.0, 0.7),
-        directional_light_exponent: 10.0,
-        falloff: FogFalloff::ExponentialSquared { density: 0.01 },
+        color: fog_color(0.5),
+        directional_light_color: Color::NONE,
+        directional_light_exponent: 0.0,
+        falloff: FogFalloff::Exponential {
+            density: FOG_DENSITY_PER_METRE,
+        },
     });
 
     {
@@ -183,14 +188,14 @@ fn apply_global_light(
     )>,
     mut ambient: ResMut<AmbientLight>,
     time: Res<Time>,
-    mut cameras: Query<(Option<&PrimaryCamera>, Option<&mut DistanceFog>), With<Camera3d>>,
-    scene_distance: Res<SceneLoadDistance>,
+    mut fogs: Query<Option<&mut DistanceFog>, With<Camera3d>>,
     scene_global_light: Res<SceneGlobalLight>,
     time_of_day: Res<TimeOfDay>,
     envmap_settings: Res<SkyEnvmapSettings>,
+    mut sky_ambient: ResMut<SkyAmbient>,
     mut prev: Local<(f32, SceneGlobalLight)>,
     mut cloud_dt: Local<f32>,
-    mut last_primary_distance: Local<f32>,
+    mut last_day_fraction: Local<f32>,
 ) {
     // the transition has settled once the previous output exactly matches the target
     let settled = prev.0 >= TRANSITION_TIME && prev.1 == *scene_global_light;
@@ -274,26 +279,23 @@ fn apply_global_light(
     atmosphere.cloud_sharp_mid = cloud.sharp_mid;
 
     // skip the light/fog/ambient writes (which trigger change detection and re-extraction)
-    // when the light has settled and nothing else affecting them has changed
-    let primary_distance = cameras
-        .iter()
-        .find_map(|(maybe_primary, _)| maybe_primary.map(|camera| camera.distance))
-        .unwrap_or(0.0);
+    // when the light has settled and nothing else affecting them has changed: the fog colour and
+    // the ambient follow the clock
     // a (re)inserted DistanceFog fires `is_added` and must be written even when the light has
     // settled. reading the tick through the existing `&mut` access avoids the query conflict an
-    // `Added<DistanceFog>` filter would have with `cameras`; `is_added` (not `is_changed`) is used
+    // `Added<DistanceFog>` filter would have with `fogs`; `is_added` (not `is_changed`) is used
     // because our own per-frame fog writes set `changed`, which would otherwise never let the gate
     // re-engage.
-    let fog_added = cameras
+    let fog_added = fogs
         .iter_mut()
-        .any(|(_, fog)| fog.is_some_and(|fog| fog.is_added()));
+        .any(|fog| fog.is_some_and(|fog| fog.is_added()));
+    let clock_fraction = day_fraction(time_of_day.elapsed_secs() / 3600.0);
     let skip_writes = settled
         && !setting.is_changed()
         && !envmap_settings.is_changed()
-        && !scene_distance.is_changed()
         && !fog_added
-        && *last_primary_distance == primary_distance;
-    *last_primary_distance = primary_distance;
+        && *last_day_fraction == clock_fraction;
+    *last_day_fraction = clock_fraction;
 
     if skip_writes {
         prev.0 += time.delta_secs();
@@ -374,54 +376,21 @@ fn apply_global_light(
         ));
     }
 
-    for (maybe_primary, maybe_fog) in cameras.iter_mut() {
-        let dir_light_lightness = Lcha::from(next_light.dir_color).lightness;
-        // floor keeps night fog tinted instead of going black
-        let skybox_brightness =
-            (next_light.sun_illuminance.sqrt() * 40.0 * dir_light_lightness).clamp(400.0, 2000.0);
-
-        if let Some(mut fog) = maybe_fog {
-            let distance = (scene_distance.load + scene_distance.unload)
-                .max(scene_distance.load_imposter * 0.333)
-                + maybe_primary.map_or(0.0, |camera| camera.distance * 5.0);
-
-            // fog hue follows the (scene-overridable) sunlight, so a scene's global
-            // light tints the fog too, with a stronger fill when the sun is low
-            // (midnight ≈ 2.1x) so the night doesn't go black. Overall brightness
-            // tracks the sky; an extra dir-intensity pull drops night fog toward
-            // the dark horizon colour (the authored night fog is darker than a
-            // plain tint).
-            let sun_energy = ((-next_light.sun_direction.y + 0.05) / 0.35).clamp(0.0, 1.0);
-            let sun_energy = sun_energy * sun_energy * (3.0 - 2.0 * sun_energy);
-            let fill = 0.8 * (1.0 + (1.0 - sun_energy) * 1.1);
-            let night_pull = (next_light.sun_illuminance / 7000.0).clamp(0.35, 1.0);
-            let base_color = next_light.dir_color.to_srgba() * fill * 0.5 * skybox_brightness
-                / 2000.0
-                * night_pull;
-            let base_color = Color::from(base_color).with_alpha(1.0);
-
-            fog.color = base_color;
-            match setting.graphics.fog {
-                FogSetting::Off => {
-                    fog.falloff = FogFalloff::from_visibility_squared(distance * 200.0);
-                    fog.directional_light_color = base_color;
-                }
-                FogSetting::Basic => {
-                    fog.falloff = FogFalloff::from_visibility_squared(distance * 2.0);
-                    fog.directional_light_color = base_color;
-                }
-                FogSetting::Atmospheric => {
-                    fog.falloff = FogFalloff::from_visibility_squared(distance * 2.0);
-                    fog.directional_light_color = next_light.dir_color;
-                }
-            }
-        }
+    for mut fog in fogs.iter_mut().flatten() {
+        fog.color = fog_color(clock_fraction);
+        fog.directional_light_color = Color::NONE;
+        fog.falloff = FogFalloff::Exponential {
+            density: match setting.graphics.fog {
+                FogSetting::Off => 0.0,
+                FogSetting::On => FOG_DENSITY_PER_METRE,
+            },
+        };
     }
 
-    // the sky envmap is the only ambient light. the pbr shaders zero the flat ambient where an
-    // envmap is bound and level the envmap towards it instead: the setting's brightness, scaled
-    // and tinted by a scene's ambient override, the envmap already following the time of day.
-    // the compression rides in the alpha, negated (see sky_envmap_lookup.wgsl); the uniform
+    // the flat ambient light is only the target the pbr shaders level the sky reflections
+    // towards (they zero it as a light where the sky envmap is bound): the setting's brightness,
+    // scaled and tinted by a scene's ambient override, the envmap already following the time
+    // of day. the compression rides in the alpha, negated (see sky_envmap_lookup.wgsl); the uniform
     // holds alpha * brightness. the brightness is kept above zero so the compression survives a
     // zero setting, levelling the envmap to ~nothing
     const MIN_AMBIENT_BRIGHTNESS: f32 = 0.01;
@@ -433,6 +402,17 @@ fn apply_global_light(
     ambient.color = next_light
         .ambient_color
         .with_alpha(-envmap_settings.compression / ambient.brightness);
+
+    // the diffuse ambient light is the Trilight ambient map (sky_envmap.rs): unity's three
+    // colours at the phase, tinted and scaled by a scene's ambient override, and by the setting
+    // relative to the default where the ambient is unity's
+    let ambient_tint = next_light.ambient_color.to_linear().to_vec3()
+        * next_light.ambient_brightness
+        * (setting.graphics.ambient_brightness as f32 / AMBIENT_BRIGHTNESS_UNITY as f32);
+    let bands = ambient_trilight(clock_fraction).map(|band| band * ambient_tint);
+    if sky_ambient.bands != bands {
+        sky_ambient.bands = bands;
+    }
 
     if prev.1.source == scene_global_light.source {
         prev.0 += time.delta_secs()
@@ -482,7 +462,7 @@ fn fog_console_command(
         let activate = command.on.unwrap_or(true);
 
         config.graphics.fog = if activate {
-            FogSetting::Atmospheric
+            FogSetting::On
         } else {
             FogSetting::Off
         };
@@ -804,7 +784,7 @@ fn gamma_console_command(
     }
 }
 
-/// set saturation per tonal range (scene default 1.3); 0 = grayscale.
+/// set saturation per tonal range (default 1.0); 0 = grayscale.
 /// `/saturation <shadows> [midtones] [highlights]`
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/saturation")]
@@ -834,7 +814,7 @@ fn saturation_console_command(
     }
 }
 
-/// set bloom intensity (default 0.15; 0 = off)
+/// set bloom intensity (0 = off); the bloom setting sets it again when it changes
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/bloom")]
 struct BloomConsoleCommand {

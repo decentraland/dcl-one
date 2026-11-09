@@ -12,6 +12,10 @@ use bevy::{
 use common::{
     dynamics::PLAYER_COLLIDER_RADIUS,
     sets::SceneSets,
+    sky_preset::{
+        day_fraction, sample_keys, sample_ramp, time_to_phase, DIRECTIONAL_COLOR_RAMP,
+        LIGHT_INTENSITY_BY_TIME,
+    },
     structs::{AppConfig, PrimaryUser, SceneGlobalLight, TimeOfDay, PRIMARY_AVATAR_LIGHT_LAYER},
     util::TryPushChildrenEx,
 };
@@ -205,6 +209,25 @@ impl From<PbGlobalLight> for GlobalLight {
     }
 }
 
+/// unity: one directional light unit lights a facing white surface to 1 (URP's Lambert has no
+/// 1 / pi). bevy divides illuminance by pi and multiplies by the view exposure, so the lux that
+/// land at 1 are `pi / exposure`; the explorer leaves every camera on bevy's default exposure
+/// (`Exposure::BLENDER`, ev100 9.7: `1 / exposure = 1.2 * 2^9.7`).
+pub const UNITY_LIGHT_LUX: f32 = PI * 1.2 * 831.7465;
+/// The sun at noon, lux: the light intensity curve (`common::sky_preset`) peaks at 1.2 there.
+pub const NOON_ILLUMINANCE: f32 = 1.2 * UNITY_LIGHT_LUX;
+/// The sky's own sun at noon, in the atmosphere's units (`dir_light_intensity`).
+const SKY_SUN_ILLUMINANCE: f32 = 7000.0;
+
+/// unity: `LightSourceSettings.PointLightIntensityScale` and `SpotLightIntensityScale`: a scene
+/// light's intensity times this is its `Light.intensity`, in Unity's unit.
+const LIGHT_SOURCE_INTENSITY_SCALE: f32 = 0.0005;
+
+/// A scene point or spot light's bevy intensity (lumens) from its `PbLightSource` intensity.
+pub fn light_source_lumens(intensity: f32) -> f32 {
+    intensity * LIGHT_SOURCE_INTENSITY_SCALE * UNITY_LIGHT_LUX * 4.0 * PI
+}
+
 /// Unity's sunrise and sunset (hours): the sun is overhead halfway between, at 12:37.
 const SUNRISE: f32 = 6.422;
 const SUNSET: f32 = 18.828;
@@ -247,35 +270,34 @@ pub fn moon_direction(hours: f32) -> Vec3 {
     celestial_direction(hours, MOONRISE, MOONSET, MOON_TILT_DEGREES)
 }
 
-/// The sunlight's colour (sRGB) at `elevation`, the sine of the sun's elevation: a cubic per
-/// channel from a red horizon through a warm 12 degrees to white at noon, flat there.
-fn sun_color(elevation: f32) -> Vec3 {
-    const HORIZON: Vec3 = Vec3::new(1.0, 0.38, 0.40);
-    const E1: Vec3 = Vec3::new(0.0, 0.8804, 1.0065);
-    const E2: Vec3 = Vec3::new(0.0, -0.1079, -0.5370);
-    const E3: Vec3 = Vec3::new(0.0, -0.2216, 0.0225);
-    let e = elevation.max(0.0);
-    HORIZON + E1 * e + E2 * e * e + E3 * e * e * e
-}
+/// unity: `DirectionalColorRamp` at phase 0.5, the ramp's noon key (sRGB).
+pub const SUN_COLOR_NOON: Vec3 = Vec3::new(1.0, 0.98, 0.94);
 
-/// The sunlight's colour at noon, where [`sun_color`] peaks (sRGB).
-pub const SUN_COLOR_NOON: Vec3 = Vec3::new(1.0, 0.931, 0.892);
+/// unity: `celestialSwapDuration`, the fraction of a day over which the light swings from the
+/// sun's arc to the moon's before moonrise, and back after moonset.
+const MOON_SWAP_DURATION: f32 = 0.042;
+/// unity: `CELESTIAL_SWAP_INTENSITY_DIP`, how far the light dims mid-swing to hide the move.
+const SWAP_INTENSITY_DIP: f32 = 0.99;
 
-/// The moonlight's colour (sRGB): a violet tint, so the scene stays directional after dark.
-const MOON_COLOR: Vec3 = Vec3::new(0.514, 0.388, 1.0);
-
-/// Sines of the sun and moon discs' angular radii, as the sky draws them (`nishita_cloud.wgsl`:
-/// the sun disc out to a cosine of 0.997, the moon's to 0.99914).
-const SUN_DISC_SIN: f32 = 0.0774;
-const MOON_DISC_SIN: f32 = 0.0415;
-
-/// How much of the directional light is left while both discs are below the horizon.
-const SET_ILLUMINANCE: f32 = 0.01;
-
-/// 0 while a body's disc is entirely below the horizon, 1 once entirely above, ramping across
-/// the crossing. `elevation` is the sine of the body's elevation, `disc_sin` of its radius.
-fn disc_above_horizon(elevation: f32, disc_sin: f32) -> f32 {
-    ((elevation + disc_sin) / (2.0 * disc_sin)).clamp(0.0, 1.0)
+/// unity: `SkyboxCelestialMath.EvaluateSwap`. At `day_fraction`: how far the light has swung
+/// onto the moon's arc (0 sun, 1 moon) and the dip hiding the swing (1 at its middle).
+pub fn celestial_swap(day_fraction: f32) -> (f32, f32) {
+    let (moonrise, moonset) = (MOONRISE / 24.0, MOONSET / 24.0);
+    let evening = (day_fraction - (moonrise - MOON_SWAP_DURATION).rem_euclid(1.0)).rem_euclid(1.0)
+        / MOON_SWAP_DURATION;
+    let morning = (day_fraction - moonset).rem_euclid(1.0) / MOON_SWAP_DURATION;
+    let swing = |progress: f32| smoothstep(0.3, 0.7, progress);
+    let dip =
+        |progress: f32| smoothstep(0.0, 0.25, progress) * (1.0 - smoothstep(0.75, 1.0, progress));
+    if evening < 1.0 {
+        (swing(evening), dip(evening))
+    } else if morning < 1.0 {
+        (1.0 - swing(morning), dip(morning))
+    } else {
+        let moon_up =
+            (day_fraction - moonrise).rem_euclid(1.0) < (moonset - moonrise).rem_euclid(1.0);
+        (if moon_up { 1.0 } else { 0.0 }, 0.0)
+    }
 }
 
 fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
@@ -294,33 +316,33 @@ pub fn update_directional_light(
     player: Query<Entity, With<PrimaryUser>>,
     time: Res<TimeOfDay>,
 ) {
-    // colour and energy driven by the sun's elevation
+    // unity: SkyboxRenderController.UpdateDirectionalLight on its computed celestial path: the
+    // colour from the ramp at the phase, the intensity from the curve at the time, the light on
+    // the sun's arc by day and the moon's by night, swung between them under a dip
     let hours = time.elapsed_secs() / 3600.0;
+    let day_fraction = day_fraction(hours);
     let sun_direction = sun_direction(hours);
+    let moon_direction = moon_direction(hours);
+    let (moon_weight, dip) = celestial_swap(day_fraction);
+    let dir_direction = Quat::IDENTITY.slerp(
+        Quat::from_rotation_arc(sun_direction, moon_direction),
+        moon_weight,
+    ) * sun_direction;
+    let dir = sample_ramp(&DIRECTIONAL_COLOR_RAMP, time_to_phase(day_fraction));
+    let dir_illuminance = sample_keys(&LIGHT_INTENSITY_BY_TIME, day_fraction)
+        * UNITY_LIGHT_LUX
+        * (1.0 - dip * SWAP_INTENSITY_DIP);
+
+    // the sky's own sun: its energy follows the elevation, a floor keeping the night sky lit
     let elevation = -sun_direction.y;
     let energy = smoothstep(-0.05, 0.3, elevation);
-    let dir = MOON_COLOR.lerp(sun_color(elevation), smoothstep(-0.05, 0.05, elevation));
-
-    // the sun lights while it is up and the moon once it has set; the moon's 1500 lux dims to
-    // 1% while both discs are below the horizon, ramping as either disc crosses it
-    let moon_direction = moon_direction(hours);
-    let disc_above = disc_above_horizon(elevation, SUN_DISC_SIN)
-        .max(disc_above_horizon(-moon_direction.y, MOON_DISC_SIN));
-    let dir_illuminance =
-        (1500.0 + smoothstep(0.0, 0.3, elevation) * 5500.0) * SET_ILLUMINANCE.lerp(1.0, disc_above);
-    let dir_direction = if elevation > 0.0 {
-        sun_direction
-    } else {
-        moon_direction
-    };
 
     *global_light = SceneGlobalLight {
         source: None,
         dir_color: Color::srgb(dir.x, dir.y, dir.z),
         dir_illuminance,
         dir_direction,
-        // sun energy peaks at ~0.7 * full scale; the floor keeps the night sky lit
-        sun_illuminance: (energy * 0.7 * 10_000.0).max(1500.0),
+        sun_illuminance: (energy * SKY_SUN_ILLUMINANCE).max(1500.0),
         sun_direction,
         ambient_color: Color::WHITE,
         ambient_brightness: 1.0,
@@ -343,8 +365,10 @@ pub fn update_directional_light(
                 } else {
                     Some(0.0)
                 } {
-                    global_light.dir_illuminance = ill;
-                    global_light.sun_illuminance = ill;
+                    // unity: a directional light source keeps its intensity as Unity's unit
+                    // (scale 1); the sky's sun follows at its noon ratio
+                    global_light.dir_illuminance = ill * UNITY_LIGHT_LUX;
+                    global_light.sun_illuminance = ill / 1.2 * SKY_SUN_ILLUMINANCE;
                 }
             }
 
@@ -495,7 +519,7 @@ fn update_point_lights(
             None
         };
 
-        let lumens = light.intensity.unwrap_or(16000.0) * 4.0 * PI;
+        let lumens = light_source_lumens(light.intensity.unwrap_or(16000.0));
         match light.spotlight_angles {
             Some(angles) => {
                 light_cmds.try_insert(SpotLight {
@@ -691,5 +715,59 @@ mod tests {
             let hours = step as f32 / 100.0;
             assert!(angle(moon_direction(hours), moon_direction(hours + 0.01)) < 0.3);
         }
+    }
+
+    #[test]
+    fn scene_lamps_use_unitys_intensity_scale() {
+        // the default 16000 lamp is Light.intensity 8 in unity
+        let unity_units = light_source_lumens(16000.0) / (4.0 * PI) / UNITY_LIGHT_LUX;
+        assert!((unity_units - 8.0).abs() < 1e-3, "{unity_units}");
+    }
+
+    #[test]
+    fn unity_light_unit_lands_at_one_under_the_default_exposure() {
+        let exposure = bevy::render::camera::Exposure::default().exposure();
+        assert!((UNITY_LIGHT_LUX / PI * exposure - 1.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn light_follows_unitys_intensity_curve() {
+        let lux = |hours: f32| {
+            sample_keys(&LIGHT_INTENSITY_BY_TIME, day_fraction(hours)) * UNITY_LIGHT_LUX
+        };
+        assert!((lux(12.0) - NOON_ILLUMINANCE).abs() < 1e-2);
+        // (0.91667, 1): the moon at full from 22:00
+        assert!((lux(22.0) - UNITY_LIGHT_LUX).abs() < 1.0);
+        // (0.85417, 0.01) .. (0.875, 0.01): dark between 20:30 and 21:00
+        assert!((lux(20.75) - 0.01 * UNITY_LIGHT_LUX).abs() < 1e-1);
+        // 19:47 is seven tenths of the way down from (0.75, 1) to (0.85417, 0.01)
+        let late = lux(19.78) / UNITY_LIGHT_LUX;
+        assert!(late > 0.28 && late < 0.32, "{late}");
+    }
+
+    #[test]
+    fn light_swings_to_the_moon_under_a_dip() {
+        // unity: moonrise 0.896 with the swap before it, moonset 0.167 with the swap after it
+        assert_eq!(celestial_swap(day_fraction(20.0)), (0.0, 0.0));
+        assert_eq!(celestial_swap(day_fraction(22.0)), (1.0, 0.0));
+        assert_eq!(celestial_swap(day_fraction(3.0)), (1.0, 0.0));
+        assert_eq!(celestial_swap(day_fraction(6.0)), (0.0, 0.0));
+        let half_swap_hours = MOON_SWAP_DURATION * 12.0;
+        let (weight, dip) = celestial_swap((MOONRISE - half_swap_hours) / 24.0);
+        assert!((weight - 0.5).abs() < 1e-3 && dip == 1.0, "{weight} {dip}");
+        let (weight, dip) = celestial_swap((MOONSET + half_swap_hours) / 24.0);
+        assert!((weight - 0.5).abs() < 1e-3 && dip == 1.0, "{weight} {dip}");
+        let (weight, dip) = celestial_swap((MOONRISE - 2.0 * half_swap_hours + 0.001) / 24.0);
+        assert!(weight < 1e-3 && dip < 0.01, "{weight} {dip}");
+    }
+
+    #[test]
+    fn light_colour_follows_unitys_ramp() {
+        let colour =
+            |hours: f32| sample_ramp(&DIRECTIONAL_COLOR_RAMP, time_to_phase(day_fraction(hours)));
+        assert_eq!(colour(12.0), SUN_COLOR_NOON);
+        // night: a blue-violet moon
+        let night = colour(0.0);
+        assert!(night.z > night.x && night.x < 0.5);
     }
 }
