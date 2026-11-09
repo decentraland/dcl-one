@@ -15,7 +15,7 @@ import {
 } from "./credits";
 import { nextBalancePoll } from "./hooks";
 import { CREDIT_PACKS, createPackCheckout, offerablePacks, packBonus, fetchCreditPacks, creditsForUsd, pollCreditGrant, usdForCredits } from "./payments";
-import { pollCreditGrantReal } from "./payments-stripe";
+import { ORDER_NOT_FOUND, pollCreditGrantReal } from "./payments-stripe";
 import { parseSseChunk } from "./program";
 import { RESUME_CART_KEY } from "../checkout/purchase/cart";
 import { stashNameResume } from "../names/resume";
@@ -24,7 +24,7 @@ import { bindBuyNowTopUp, bindTopUpReturn, clearTopUpHandoffs, dropBuyNowTopUp, 
 afterEach(() => vi.unstubAllGlobals());
 
 /** The node's answer for an order it has no record of for this signer (credits/errors.rs envelope). */
-const ORDER_NOT_FOUND = { status: 404, body: { ok: false, error: "order not found", message: "order not found" } };
+const NODE_NOT_FOUND = { status: 404, body: { ok: false, error: ORDER_NOT_FOUND, message: ORDER_NOT_FOUND } };
 
 describe("the credits account", () => {
   it("a balance is whole credits, floored: 107 cents is 10 credits", async () => {
@@ -140,7 +140,7 @@ describe("packs", () => {
     const lagging = createFakeShop({
       packOrder: () => {
         calls += 1;
-        return calls < 3 ? ORDER_NOT_FOUND : { status: "credited", creditsGranted: 100, newBalance: 100 };
+        return calls < 3 ? NODE_NOT_FOUND : { status: "credited", creditsGranted: 100, newBalance: 100 };
       },
     });
     expect(await pollCreditGrantReal("o", { intervalMs: 1 }, lagging.client)).toMatchObject({ status: "credited", creditsGranted: 100 });
@@ -154,7 +154,7 @@ describe("packs", () => {
   });
 
   it("a mock order id is granted only with mock payments on; otherwise the server is asked, so a link shows no Credits never bought", async () => {
-    const shop = createFakeShop({ packOrder: () => ORDER_NOT_FOUND });
+    const shop = createFakeShop({ packOrder: () => NODE_NOT_FOUND });
     let t = 0;
     const now = () => (t += 1000);
     // The server does not know it: past the grace it is no order at all.
@@ -170,7 +170,7 @@ describe("packs", () => {
   it("an order the server never finds is missing past the grace a lagging replica needs; one it saw stays pending at the deadline", async () => {
     let t = 0;
     const now = () => (t += 1000);
-    const unknown = createFakeShop({ packOrder: () => ORDER_NOT_FOUND });
+    const unknown = createFakeShop({ packOrder: () => NODE_NOT_FOUND });
     expect(await pollCreditGrantReal("o", { intervalMs: 1, missingGraceMs: 5000, now }, unknown.client)).toEqual({ status: "missing" });
     expect(unknown.log.filter((r) => r.name === "packOrder").length).toBeLessThan(8);
     // A deadline shorter than the grace still never says "on the way" for an order never found.
@@ -183,14 +183,15 @@ describe("packs", () => {
     // A gateway's 404 in between is not the node's word: it neither shows the order exists nor turns "missing" off.
     t = 0;
     let hops = 0;
-    const mixed = createFakeShop({ packOrder: () => (++hops === 1 ? { status: 404, body: "Not Found" } : ORDER_NOT_FOUND) });
+    const mixed = createFakeShop({ packOrder: () => (++hops === 1 ? { status: 404, body: "Not Found" } : NODE_NOT_FOUND) });
     expect(await pollCreditGrantReal("o", { intervalMs: 1, timeoutMs: 20_000, missingGraceMs: 5000, now }, mixed.client)).toEqual({ status: "missing" });
     // Nor is an empty answer after the node's "not found": still missing.
     t = 0;
     let empties = 0;
-    const blank = createFakeShop({ packOrder: () => (++empties === 2 ? null : ORDER_NOT_FOUND) });
+    const blank = createFakeShop({ packOrder: () => (++empties === 2 ? null : NODE_NOT_FOUND) });
     expect(await pollCreditGrantReal("o", { intervalMs: 1, timeoutMs: 20_000, missingGraceMs: 5000, now }, blank.client)).toEqual({ status: "missing" });
-    // A status from the node, then only a gateway's 404s: the order exists, and a payment may still land.
+    // A status from the node, then 404s: once the node has given a status, the order exists and a payment may still land,
+    // so nothing after it makes the order missing.
     t = 0;
     let after = 0;
     const known = createFakeShop({ packOrder: () => (++after === 1 ? { status: "processing" } : { status: 404, body: "Not Found" }) });
@@ -198,7 +199,7 @@ describe("packs", () => {
     // Seen once (money in), then a 404 at the deadline: not "missing", the payment may still land.
     t = 0;
     let calls = 0;
-    const flaky = createFakeShop({ packOrder: () => (++calls === 1 ? { status: "processing" } : ORDER_NOT_FOUND) });
+    const flaky = createFakeShop({ packOrder: () => (++calls === 1 ? { status: "processing" } : NODE_NOT_FOUND) });
     expect(await pollCreditGrantReal("o", { intervalMs: 1, timeoutMs: 20_000, missingGraceMs: 5000, now }, flaky.client)).toEqual({ status: "pending" });
   });
 });
