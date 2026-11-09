@@ -618,14 +618,19 @@ impl DecentralandApp {
         );
         if decentraland_app_config.arguments.client.autopilot {
             let arguments = &decentraland_app_config.arguments;
-            app.insert_resource(common::autopilot::Autopilot {
-                measure: arguments.csv.is_some()
-                    || (arguments.perf_stream.is_some() && arguments.perf_csv),
-            })
-            .init_resource::<common::autopilot::AutopilotPhase>()
-            .add_plugins(autopilot::AutopilotPlugin);
-            if let Some(to) = arguments.autopilot_walk_to {
-                app.insert_resource(autopilot::walk::AutopilotWalk { to });
+            let measure =
+                arguments.csv.is_some() || (arguments.perf_stream.is_some() && arguments.perf_csv);
+            app.insert_resource(common::autopilot::Autopilot { measure })
+                .init_resource::<common::autopilot::AutopilotPhase>()
+                .add_plugins(autopilot::AutopilotPlugin);
+            match arguments.autopilot_walk_to {
+                Some(to) if measure => {
+                    app.insert_resource(autopilot::walk::AutopilotWalk { to });
+                }
+                Some(_) => warn!(
+                    "--autopilot-walk-to has no effect without --csv: the run ends once it arrives"
+                ),
+                None => (),
             }
             // the autopilot's CSV (perf_output follows its phase): `--csv`, or on the web the
             // page's `csv` stream, which `perfCsv` asks for
@@ -637,8 +642,17 @@ impl DecentralandApp {
             if let Some(destination) = destination {
                 app.add_plugins(CsvPlugin { destination });
             }
-        } else if decentraland_app_config.arguments.csv.is_some() {
-            warn!("--csv has no effect without --autopilot: no CSV is written");
+        } else {
+            if decentraland_app_config.arguments.csv.is_some() {
+                warn!("--csv has no effect without --autopilot: no CSV is written");
+            }
+            if decentraland_app_config
+                .arguments
+                .autopilot_walk_to
+                .is_some()
+            {
+                warn!("--autopilot-walk-to has no effect without --autopilot: nothing walks");
+            }
         }
 
         // add AppConfig as a resource
