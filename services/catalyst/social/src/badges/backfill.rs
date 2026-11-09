@@ -23,7 +23,7 @@
 //! wallet listed twice is merged twice in order. The gateway caps request
 //! bodies at 1 MB, so callers send their registries in batches.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use axum::Json;
 use axum::body::Bytes;
@@ -634,7 +634,14 @@ pub fn merge(
 /// Upstream's `validateUserProgress`: the errors of a merged row.
 pub fn validate(user: &UserState, def: &Def) -> Vec<String> {
     let mut errors = Vec::new();
-    if def.is_tier && user.completed_at.is_some() && user.tiers.len() != def.tiers.len() {
+    // distinct, so a repeated tier cannot stand in for a missing one
+    let achieved = user
+        .tiers
+        .iter()
+        .map(|(id, _)| id)
+        .collect::<HashSet<_>>()
+        .len();
+    if def.is_tier && user.completed_at.is_some() && achieved != def.tiers.len() {
         errors.push("mismatch between badge tiers and achieved tiers".to_string());
     }
     if !def.is_tier && user.completed_at.is_some() && user.steps != def.target {
@@ -1182,6 +1189,24 @@ mod tests {
         assert_eq!(
             validate(&merged, &def),
             vec!["mismatch between badge criteria and progress steps"]
+        );
+    }
+
+    #[test]
+    fn moves_master_repeated_tiers_do_not_complete_the_badge() {
+        let def = tiered(&[100, 500, 1000]);
+        let data = input(
+            Kind::MovesMaster,
+            &def,
+            json!({ "usedEmotesCount": 600, "lastEmoteTriggeredAt": 99,
+                    "achievedTiers": [{ "steps": 100, "completedAt": 10 },
+                                      { "steps": 100, "completedAt": 10 },
+                                      { "steps": 500, "completedAt": 20 }] }),
+        );
+        let merged = merge(Kind::MovesMaster, &def, None, &data, NOW).unwrap();
+        assert_eq!(
+            validate(&merged, &def),
+            vec!["mismatch between badge tiers and achieved tiers"]
         );
     }
 
