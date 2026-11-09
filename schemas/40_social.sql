@@ -921,6 +921,101 @@ CREATE TABLE social.presence_badges (
         (mode = 'visit' AND required_seconds = 0) OR (mode = 'stay' AND required_seconds > 0))
 );
 
+-- The presence flow's runtime state (upstream #246's tables, social/src/
+-- badges/presence). Every instant that meets a LiveKit event time or the
+-- progress document's `intervals` is epoch milliseconds (bigint), as
+-- upstream's; only the local arrival time is a timestamp.
+--
+-- presence_events: the gatekeeper's verified wallet joins and leaves of
+-- scene and world rooms, queued by the webhook and deleted by the
+-- `badges-presence` job in the transaction that applies each one (the queue
+-- is its own cursor: a row a slower writer commits behind a later seq is
+-- still there on the next pass). event_id is LiveKit's webhook id, so a
+-- redelivered webhook is one row; seq is the apply order. Rows exist only
+-- between a webhook and the next pass.
+CREATE TABLE social.presence_events (
+    seq bigint GENERATED ALWAYS AS IDENTITY,
+    event_id text NOT NULL,
+    kind text NOT NULL,
+    room_type text NOT NULL,
+    realm_name text NOT NULL,
+    scene_id text,
+    wallet text NOT NULL,
+    session_id text NOT NULL,
+    event_time_ms bigint NOT NULL,
+    received_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT presence_events_pkey PRIMARY KEY (event_id),
+    CONSTRAINT presence_events_kind_check CHECK (kind IN ('join', 'leave')),
+    CONSTRAINT presence_events_room_type_check CHECK (room_type IN ('scene', 'world')),
+    CONSTRAINT presence_events_session_check CHECK (session_id <> '')
+);
+-- the job's ORDER BY seq LIMIT n
+CREATE UNIQUE INDEX presence_events_seq_idx ON social.presence_events (seq);
+
+-- An open visit: a wallet's connections to one room, counted for one badge.
+-- joins and sessions are parallel (a wallet can hold several connections to
+-- a room; a leave ends only its own session's); opened_at is the earliest
+-- join. absences are the instants an occupancy observation first missed the
+-- wallet (absent_since the current one); a leave after one proves nothing
+-- past it. Dropping a badge's configuration drops its visits.
+CREATE TABLE social.presence_visits (
+    badge_id text NOT NULL REFERENCES social.presence_badges (badge_id) ON DELETE CASCADE,
+    wallet text NOT NULL,
+    room text NOT NULL,
+    opened_at bigint NOT NULL,
+    joins bigint[] NOT NULL,
+    sessions text[] NOT NULL,
+    realm_name text NOT NULL,
+    parcel text,
+    is_world boolean NOT NULL,
+    last_checked_at bigint,
+    absent_since bigint,
+    absences bigint[] NOT NULL DEFAULT '{}',
+    CONSTRAINT presence_visits_pkey PRIMARY KEY (badge_id, wallet, room),
+    CONSTRAINT presence_visits_connections_check
+        CHECK (cardinality(joins) = cardinality(sessions) AND cardinality(joins) > 0)
+);
+-- a leave's open visits of the wallet in its realm
+CREATE INDEX presence_visits_wallet_realm_idx ON social.presence_visits (wallet, realm_name);
+-- the sweeper's due visits, oldest first
+CREATE INDEX presence_visits_opened_at_idx ON social.presence_visits (opened_at);
+CREATE INDEX presence_visits_last_checked_at_opened_at_idx
+    ON social.presence_visits (last_checked_at, opened_at);
+
+-- Applied event keys and terminal-session markers (`ended|badge|wallet|room|
+-- session`, `pending-leave|...`), so a redelivery applies once and an ended
+-- session never reopens; pruned after the redelivery window.
+CREATE TABLE social.presence_applied_events (
+    event_id text NOT NULL,
+    applied_at bigint NOT NULL,
+    CONSTRAINT presence_applied_events_pkey PRIMARY KEY (event_id)
+);
+CREATE INDEX presence_applied_events_applied_at_idx ON social.presence_applied_events (applied_at);
+
+-- A leave as a fact of its session (room is `world:<name>` for any room of a
+-- world), kept for every badge of the place so a join of that session that
+-- arrives later pairs with it; pruned after the redelivery window.
+CREATE TABLE social.presence_pending_leaves (
+    wallet text NOT NULL,
+    room text NOT NULL,
+    session_id text NOT NULL,
+    left_at bigint NOT NULL,
+    recorded_at bigint NOT NULL,
+    CONSTRAINT presence_pending_leaves_pkey PRIMARY KEY (wallet, room, session_id)
+);
+CREATE INDEX presence_pending_leaves_recorded_at_idx ON social.presence_pending_leaves (recorded_at);
+
+-- Each instant an observation first missed the wallet in a room, kept apart
+-- from the visit row so a late join older than it is still capped by it.
+CREATE TABLE social.presence_absence_facts (
+    wallet text NOT NULL,
+    room text NOT NULL,
+    absence_at bigint NOT NULL,
+    recorded_at bigint NOT NULL,
+    CONSTRAINT presence_absence_facts_pkey PRIMARY KEY (wallet, room, absence_at)
+);
+CREATE INDEX presence_absence_facts_recorded_at_idx ON social.presence_absence_facts (recorded_at);
+
 -- ── referral ───────────────────────────────────────────────────────────────
 
 -- One row per invited wallet; first referrer wins (ON CONFLICT DO NOTHING).

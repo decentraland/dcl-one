@@ -658,6 +658,12 @@ pub struct SocialConfig {
     #[arg(long, env = "BADGES_ASSETS_DIR")]
     pub badges_assets_dir: Option<String>,
 
+    /// Count the gatekeeper's room joins and leaves toward the presence
+    /// badges (social.presence_badges): every process stores the events,
+    /// the leased badges-presence jobs apply them and close lost visits.
+    #[arg(long, env = "BADGES_PRESENCE_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub badges_presence_enabled: bool,
+
     // social/media: the autotranslate route (an external engine over the network).
     /// disabled | mock | http | llm; empty = http when TRANSLATE_BACKEND_URL
     /// is set, llm when TRANSLATE_LLM_BASE_URL is, else disabled (503).

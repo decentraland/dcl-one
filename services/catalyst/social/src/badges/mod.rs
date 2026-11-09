@@ -6,13 +6,16 @@
 //! `social.badge_definitions`, `badge_tiers` (upstream's catalog, seeded by
 //! the schema), `user_badge_progress`, `user_achieved_tiers`,
 //! `badge_admin_audit`, `presence_badges`. Every progress write goes through
-//! [`progress::apply_progress`]; the console grant is its only caller here.
+//! [`progress::apply_progress`]: the console grant and the presence flow
+//! ([`presence`], with its runtime tables `presence_events`, `presence_visits`
+//! and the applied, pending-leave and absence facts).
 //!
 //! Mounted by `serve` as `.nest("/badges", router(state))` (the old gateway
 //! stripped that prefix).
 
 pub mod assets;
 pub mod handlers;
+pub mod presence;
 pub mod progress;
 pub mod store;
 pub mod types;

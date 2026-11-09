@@ -272,6 +272,48 @@ impl Presence {
             .find(|(w, _)| w == &world.to_lowercase())
             .map_or(0, |(_, n)| n)
     }
+    /// The lowercased player identities of the last complete observation in
+    /// a world's rooms (`scene` `None`: any of its rooms) or in one Genesis
+    /// scene's rooms, with the latest instant one of those rooms was read.
+    /// `None` when that observation is stale or a room this node refused
+    /// could hold them: no answer, never an empty one.
+    pub fn room_occupants(
+        &self,
+        realm: &str,
+        scene: Option<&str>,
+    ) -> Option<(chrono::DateTime<chrono::Utc>, HashSet<String>)> {
+        let view = self.visible();
+        view.observed.as_ref()?;
+        let realm = realm.to_lowercase();
+        if scene.is_none()
+            && view
+                .refused
+                .iter()
+                .any(|r| Scope::Lobby(realm.clone()).may_hold(r))
+        {
+            return None;
+        }
+        let rooms: Vec<_> = view
+            .rooms
+            .iter()
+            .filter(|r| match scene {
+                None => r.is_world && r.realm == realm,
+                Some(scene) => !r.is_world && r.realm == realm && r.scene.as_deref() == Some(scene),
+            })
+            .collect();
+        let read_at = rooms
+            .iter()
+            .map(|r| r.observed.utc)
+            .max()
+            .or(view.observed.as_ref().map(|o| o.utc))?;
+        let wallets = rooms
+            .iter()
+            .flat_map(|r| &r.participants)
+            .filter(|p| counts_as_player(&p.identity))
+            .map(|p| p.identity.to_lowercase())
+            .collect();
+        Some((read_at, wallets))
+    }
     fn admission_count(&self, scope: &Scope) -> Option<i64> {
         let state = self.state.lock();
         if let Some(sample) = state.admission.get(scope).filter(|sample| {
@@ -451,4 +493,42 @@ pub async fn live_data(State(presence): State<Arc<Presence>>) -> Json<LiveDataRe
         },
         last_updated,
     })
+}
+
+#[cfg(test)]
+mod occupants_tests {
+    use super::Presence;
+
+    #[test]
+    fn room_occupants_answer_a_world_from_the_complete_observation_only() {
+        let presence = Presence::new();
+        assert_eq!(
+            presence.room_occupants("party.dcl.eth", None),
+            None,
+            "nothing observed yet"
+        );
+        presence.complete_empty_fixture();
+        presence.peer_joined("0xAB", "party.dcl.eth", "world-party.dcl.eth", false);
+        presence.peer_joined(
+            "0xCD",
+            "party.dcl.eth",
+            "world-scene-room-party.dcl.eth-x",
+            true,
+        );
+        presence.peer_joined(
+            "authoritative-server",
+            "party.dcl.eth",
+            "world-party.dcl.eth",
+            false,
+        );
+        presence.peer_joined("0xEF", "other.dcl.eth", "world-other.dcl.eth", false);
+        let (_, wallets) = presence.room_occupants("Party.dcl.eth", None).unwrap();
+        let mut wallets: Vec<_> = wallets.into_iter().collect();
+        wallets.sort();
+        assert_eq!(wallets, ["0xab", "0xcd"]);
+        let (_, none) = presence
+            .room_occupants("party.dcl.eth", Some("bafyscene"))
+            .unwrap();
+        assert!(none.is_empty(), "no Genesis scene room of that realm");
+    }
 }

@@ -278,6 +278,30 @@ async fn assert_placeholder_badges_upgraded(pool: &PgPool) {
         presence,
         "the object pass creates the presence configuration"
     );
+    // The presence flow's runtime tables are new, so they need no step either.
+    for relation in [
+        "social.presence_events",
+        "social.presence_events_seq_idx",
+        "social.presence_visits",
+        "social.presence_visits_wallet_realm_idx",
+        "social.presence_visits_opened_at_idx",
+        "social.presence_visits_last_checked_at_opened_at_idx",
+        "social.presence_applied_events",
+        "social.presence_applied_events_applied_at_idx",
+        "social.presence_pending_leaves",
+        "social.presence_pending_leaves_recorded_at_idx",
+        "social.presence_absence_facts",
+        "social.presence_absence_facts_recorded_at_idx",
+    ] {
+        assert!(has_relation(pool, relation).await, "{relation}");
+    }
+    let open_visit = sqlx::query(
+        "INSERT INTO social.presence_visits (badge_id, wallet, room, opened_at, joins, sessions, \
+           realm_name, is_world) VALUES ('no_such_badge', '0x', 'r', 1, '{1}', '{s}', 'main', false)",
+    )
+    .execute(pool)
+    .await;
+    assert!(open_visit.is_err(), "a visit counts for a configured badge");
     let refused = sqlx::query(
         "INSERT INTO social.badge_tiers (badge_id, tier_id, tier_name, criteria_steps, ordinal) \
          VALUES ('emotionista', 'emotionista-zero', 'Zero', 0, 9)",
