@@ -9,14 +9,16 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 
 - **Toon MASK wearables.** MASK alpha is binary, as glTF specifies. Thin masked lines can
   look thick or dark after the cutoff; blending the surviving pixels changes the material
-  semantics and is not an accepted fix.
+  semantics and is not an accepted fix. Unity Explorer blends after the cutoff, so content
+  checked there can render differently here.
 - **Day and night (#1467).** An explicit, stopped HUD time beats scene time; restarting the
   clock hands control back to the scene. No HUD lock while a scene controls the sky.
   `transitionMode` in scene.json is ignored. HUD and `/time` skips take the nearest
   direction; SDK `SkyboxTime` keeps its own mode. `/time` reports the effective time.
 - **Emissive strength.** The engine honors `KHR_materials_emissive_strength`. High authored
   values can glow strongly (the Nekko cat at 65x). Dropping the extension is not the fix; the
-  long-term answer is still open.
+  long-term answer is still open. Unity Explorer does not parse this extension, which explains
+  why content authored and checked there can glow more strongly here.
 - **Scene and download priority without distance buckets.** The aging scheduler measures
   raw squared distance from the player to the nearest point of a scene's
   nearest parcel (not its corner); a scene behind the rendering camera counts four times
@@ -109,8 +111,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   a feature flag.
 - **A photo's `screenRect` is sent and dropped.** Each visible person carries the rectangle they
   cover in the saved image. The catalyst's camera-reel service parses the metadata into a
-  struct without that field, so it is not stored. The client still sends it to preserve the
-  camera-reel metadata contract with deployed consumers.
+  struct without that field, so it is not stored. The client still sends it so its metadata
+  matches what Unity Explorer sends.
 - **The photo camera stops at scene geometry instead of sliding.** A move is swept and
   refused whole when the camera's sphere would cross a scene collider. A collider the camera
   starts inside (the player

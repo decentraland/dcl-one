@@ -183,8 +183,8 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
 - **A camera sampling tolerance** (re-measure only after the camera moves 0.1 m or turns 3°).
   Tens of scenes times their parcels, plus tens of avatars, is a few thousand operations a
   frame. The evaluated tolerance amortizes a global partition-and-sort pipeline; this engine
-  updates per-entity partition values without a full-world re-sort, so it recomputes them every
-  frame.
+  updates per-entity partition values without that global pipeline, so it recomputes them every
+  frame. The tick scheduler still sorts the due-scene queue each frame.
 - **Facing without a rendering camera.** Neither the headless stand-in `PrimaryCamera`, which
   never turns, nor the player's own forward stands for a viewer: a behind flag from either would
   count a server's scenes on one side (south, for the stand-in) four times farther in the tick
@@ -201,9 +201,9 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   gate's keys inside `IpfsIo` are the one exception, because `ipfs` cannot depend on
   `scene_runner`, and the hooks keep them in step with the components.
 - **Loading waves, budgets, LOD and the unload margin in this change.** Loading waves (six
-  scenes a wave) and the unload margin belong to card W1; frame-time,
-  loading-slot and memory budgets to card E2, which builds on the memory status provider
-  (W6.provider); scene LOD and the visual-state resolver to W4.
+  scenes a wave) and the unload margin are separate scene-loading work. Frame-time,
+  loading-slot and memory budgets build on the memory status provider; scene LOD and the
+  visual-state resolver are separate rendering work.
 
 ## Consequences
 

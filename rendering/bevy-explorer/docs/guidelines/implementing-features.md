@@ -50,7 +50,7 @@ tracked documentation depend on a sibling checkout.
 | Graphics settings | A `GraphicsSettings` field in `crates/common/src/structs.rs`, a default and an `EnumAppSetting` registered in `crates/system_bridge/src/settings/mod.rs`; the HUD lists it |
 | Launch options | A `LaunchOptions` field for a native switch; a page parameter for a web-only switch ([recipe](recipes.md#a-new-engine-parameter)) |
 | Profile presentation | `comms::profile::UserProfile::name_color()` for name color; `ProfileManager::get_compact` for list data and `get_data` for the full profile |
-| Profile publication | `comms::profile::CurrentUserProfile::revert_to` restores confirmed data; `peer_profile()` exposes the version peers may hear after deployment |
+| Profile publication | The `revert_to` field of `comms::profile::CurrentUserProfile` holds the confirmed snapshot that `deploy_finished()` restores when the current edit fails; `peer_profile()` exposes the version peers may hear while deployment is pending |
 | Player-only avatar behavior | `Or<(With<ForeignPlayer>, With<PrimaryUser>)>` excludes scene `AvatarShape` NPCs and photo-booth previews |
 | Avatar attachment and nametags | `AttachPoints` and `crates/avatar/src/dynamic_nametag.rs` |
 | Tests | Plain state-machine tests, headless asset tests and explicitly ignored GPU tests where a renderer is required |
