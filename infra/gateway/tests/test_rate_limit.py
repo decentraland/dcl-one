@@ -167,18 +167,37 @@ class StorageKeyEncodingTest(unittest.TestCase):
         self.assertEqual(answer[1], "413")
         self.assertEqual(json.loads(answer[2]), {
             "error": "Payload Too Large",
-            "message": f"Request body exceeds the maximum allowed size ({gateway.STORAGE_BODY_CAP_BYTES} bytes)"})
+            "message": "Request body exceeds the maximum allowed size"})
 
-    def test_the_storage_cap_covers_the_services_default_value_caps(self):
-        root = Path(__file__).parents[3] / "services/catalyst/worlds/src/storage"
-        defaults = (root / "mod.rs").read_text()
-        caps = [int(v.replace("_", "")) for v in
-                re.findall(r"(?:world|player|env)_max_value_size_bytes: ([\d_]+),", defaults)]
+    def test_storage_uploads_are_capped_per_address(self):
+        self.assertIn("limit_conn_zone $storage_write_key zone=storage_uploads:10m;", self.text)
+        for key in ["= /world-storage", "^~ /world-storage/", "= /__gateway_storage_raw"]:
+            with self.subTest(key=key):
+                self.assertIn(f"limit_conn storage_uploads {gateway.STORAGE_UPLOADS_PER_ADDRESS};",
+                              location(self.text, key))
+
+    def test_the_storage_cap_is_the_largest_default_route_maximum_plus_headroom(self):
+        root = Path(__file__).parents[3] / "services/catalyst"
+        config = (root / "config/src/worlds.rs").read_text()
+        caps = [int(v.replace("_", "")) for v in re.findall(
+            r'env = "(?:WORLD|PLAYER|ENV)_STORAGE_MAX_VALUE_SIZE_BYTES",\s*default_value_t = ([\d_]+)', config)]
         self.assertEqual(len(caps), 3)
+        storage = root / "worlds/src/storage"
         slack = int(re.search(r"BODY_ENVELOPE_SLACK_BYTES: i64 = ([\d_]+);",
-                              (root / "handlers.rs").read_text())[1].replace("_", ""))
-        self.assertGreater(gateway.STORAGE_BODY_CAP_BYTES, max(caps) + slack)
+                              (storage / "handlers.rs").read_text())[1].replace("_", ""))
+        export = re.search(r"pub const MAX_BODY_BYTES: u64 = ([\d_ *+]+);",
+                           (storage / "export.rs").read_text())[1]
+        export_cap = sum(eval_product(term) for term in export.split("+"))
+        largest = max(max(caps) + slack, export_cap)
+        self.assertEqual(gateway.STORAGE_BODY_CAP_BYTES, largest + gateway.STORAGE_BODY_HEADROOM_BYTES)
+        self.assertLessEqual(gateway.STORAGE_BODY_HEADROOM_BYTES, 8 * 1024)
 
+
+def eval_product(term):
+    product = 1
+    for factor in term.split("*"):
+        product *= int(factor.strip().replace("_", ""))
+    return product
 
 if __name__ == "__main__":
     unittest.main()

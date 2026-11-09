@@ -16,14 +16,21 @@ WORLDS_SETTINGS_CAP = "12m"
 # count (`max_deployment_body_bytes`: 200 MiB of files and fields plus
 # multipart framing), rounded up, so its own 413 is the one a client meets.
 CONTENT_DEPLOY_CAP = "248m"
-# World storage bodies: above the largest default value cap (worlds storage
-# `WORLD_STORAGE_MAX_VALUE_SIZE_BYTES`, 512 KiB, plus its 1 KiB envelope slack)
-# with room for a raised one, so the service's own 413 is the one a client
-# meets; a gateway test pins it against the defaults. Its own 413 answers the
-# service's body.
-STORAGE_BODY_CAP_BYTES = 4 * 1024 * 1024
+# World storage bodies: the largest storage route maximum at the deployed
+# defaults (config/src/worlds.rs: WORLD_STORAGE_MAX_VALUE_SIZE_BYTES, 512 KiB,
+# plus the 1 KiB envelope slack; the export body's 256 KiB + 1 KiB is below
+# it) and a little headroom, so the service's own 413 is the one a client
+# meets and nginx buffers no more than that. Raising a value cap means raising
+# this; a gateway test pins it against the defaults. The gateway's own 413 has
+# the service's shape without a byte count, which differs per route.
+STORAGE_BODY_HEADROOM_BYTES = 4 * 1024
+STORAGE_BODY_CAP_BYTES = 512 * 1024 + 1024 + STORAGE_BODY_HEADROOM_BYTES
 STORAGE_TOO_LARGE = {"error": "Payload Too Large",
-                     "message": f"Request body exceeds the maximum allowed size ({STORAGE_BODY_CAP_BYTES} bytes)"}
+                     "message": "Request body exceeds the maximum allowed size"}
+# Storage writes one untrusted address may have in flight, keyed like the write
+# budget (reads and trusted callers are not counted): each body is buffered in
+# the gateway's temp space before the service answers.
+STORAGE_UPLOADS_PER_ADDRESS = 10
 # Uploads one address may have in flight on a deploy route: nginx buffers each
 # body before proxying it, and the app's limits only answer after that. Above
 # upstream catalyst's 4 per source, so it stays a coarse guard.
@@ -259,7 +266,8 @@ def render(table, cfg, mime):
     # Matched after host rewrites, so every storage host form shares this budget.
     storage_limits = ("limit_req zone=storage burst=400 nodelay; "
                       "limit_req zone=storage_write burst=60 nodelay; "
-                      "limit_req zone=storage_trusted burst=1000 nodelay;\n"
+                      "limit_req zone=storage_trusted burst=1000 nodelay; "
+                      f"limit_conn storage_uploads {STORAGE_UPLOADS_PER_ADDRESS};\n"
                       f"client_max_body_size {STORAGE_BODY_CAP_BYTES}; "
                       "error_page 413 = @storage_too_large;")
     locations += location("= /world-storage", proxy("apis", storage_limits))
@@ -408,6 +416,7 @@ http {{
     limit_req_zone $binary_remote_addr zone=deploy:10m rate=5r/s;
     limit_req_status 429;
     limit_conn_zone $binary_remote_addr zone=deploy_uploads:10m;
+    limit_conn_zone $storage_write_key zone=storage_uploads:10m;
     limit_conn_status 429;
     proxy_http_version 1.1;
     proxy_read_timeout 600s;
