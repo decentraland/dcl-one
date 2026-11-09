@@ -10,7 +10,15 @@ mod events;
 mod platform_ban;
 
 use alloy_core::primitives::Address;
-use bevy::{ecs::system::SystemParam, platform::collections::HashSet, prelude::*};
+use bevy::{
+    app::{App, Plugin, PostUpdate},
+    ecs::{
+        query::Has,
+        schedule::IntoScheduleConfigs,
+        system::{Query, Res, SystemParam},
+    },
+    platform::collections::HashSet,
+};
 use serde::Serialize;
 use social::SocialClient;
 

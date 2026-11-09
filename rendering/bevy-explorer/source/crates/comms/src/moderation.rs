@@ -2,7 +2,10 @@
 //! current scene's room, and the room's banned and admin lists.
 
 use alloy_core::primitives::Address;
-use bevy::{platform::collections::HashSet, prelude::*};
+use bevy::{
+    ecs::{component::Component, resource::Resource},
+    platform::collections::HashSet,
+};
 use common::util::AsH160;
 use serde::Serialize;
 
