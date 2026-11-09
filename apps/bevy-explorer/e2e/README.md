@@ -117,8 +117,9 @@ and unblocks a second configured account through `/block_user` and `/unblock_use
 "Bans and blocks" debug section is registered. With one account key the blocking scenario is a todo.
 `specs/platform-ban.test.ts` reads the platform-ban check against zone, then, on the standalone only,
 boots a second client with `--comms-gatekeeper` pointed at `driver/gatekeeper-stub.ts` (a loopback
-gatekeeper answering as scripted, `DCL_E2E_GATEKEEPER_PORT`, 18745 by default) to see a banned
-answer and a failed check; a scenario's `session.nativeArgs` is what starts that client. On the web
+gatekeeper answering as scripted, `DCL_E2E_GATEKEEPER_PORT`, 18745 by default, one shared by
+every spec and closed with the sessions) to see a banned answer and a failed check; a scenario's
+`session.nativeArgs` is what starts that client, on an automation port of its own. On the web
 a service override stops the boot at the launch gate, so those scenarios are todos there.
 `specs/scene-ban.test.ts` reads the scene room's admission and moderation lists at Genesis Plaza and
 their absence on an empty parcel, and, on the standalone against the same stub, a refused scene

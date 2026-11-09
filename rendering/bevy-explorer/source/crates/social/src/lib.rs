@@ -520,7 +520,12 @@ fn init_social_client(
         // Drop the old handler (and its event channels) before opening a new
         // connection so the old async task observes its channels closed and tears
         // down its WS, rather than overlapping with the new one.
-        social.0 = None;
+        // the same account's blocks stand until the new connection's snapshot replaces them
+        let carried = social
+            .0
+            .take()
+            .filter(|_| !wallet.is_changed())
+            .map(|old| (old.blocked, old.blocked_by, old.has_snapshot));
         *friends = None;
         *connectivity = None;
         *block_updates = None;
@@ -562,6 +567,13 @@ fn init_social_client(
             },
         );
         social.0 = client;
+        if let (Some(client), Some((blocked, blocked_by, has_snapshot))) =
+            (social.0.as_mut(), carried)
+        {
+            client.blocked = blocked;
+            client.blocked_by = blocked_by;
+            client.has_snapshot = has_snapshot;
+        }
         *friends = Some(f_rx);
         *connectivity = Some(conn_rx);
         *block_updates = Some(block_rx);
@@ -612,6 +624,11 @@ fn init_social_client(
 
     let reconnect_signal = wallet.is_changed() || social.0.is_none();
     if reconnect_signal && consumer_requested.0 && wallet.address().is_some() {
+        let carried = social
+            .0
+            .take()
+            .filter(|_| !wallet.is_changed())
+            .map(|old| (old.blocked, old.blocked_by, old.has_snapshot));
         let (f_sx, f_rx) = unbounded_channel();
         let (conn_sx, conn_rx) = unbounded_channel();
         let (block_sx, block_rx) = unbounded_channel();
@@ -646,6 +663,13 @@ fn init_social_client(
             },
         );
         social.0 = client;
+        if let (Some(client), Some((blocked, blocked_by, has_snapshot))) =
+            (social.0.as_mut(), carried)
+        {
+            client.blocked = blocked;
+            client.blocked_by = blocked_by;
+            client.has_snapshot = has_snapshot;
+        }
         *friends = Some(f_rx);
         *connectivity = Some(conn_rx);
         *block_updates = Some(block_rx);

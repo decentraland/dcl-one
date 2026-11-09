@@ -173,8 +173,8 @@ async fn connect_to_room(
     Room::connect(&address, &token, options).await
 }
 
-/// Parses the scene room's metadata into its moderation lists; unreadable metadata keeps the
-/// lists it had.
+/// Parses the scene room's metadata into its moderation lists. Unreadable metadata keeps the
+/// lists the room had, or gives it empty ones.
 fn apply_scene_room_metadata(commands: &mut Commands, entity: Entity, metadata: &str) {
     match crate::SceneRoomModeration::from_metadata(metadata) {
         Ok(moderation) => {
@@ -185,7 +185,12 @@ fn apply_scene_room_metadata(commands: &mut Commands, entity: Entity, metadata: 
             );
             commands.entity(entity).try_insert(moderation);
         }
-        Err(err) => warn!("scene room metadata unreadable ({err:?}): {metadata}"),
+        Err(err) => {
+            warn!("scene room metadata unreadable ({err:?}): {metadata}");
+            commands
+                .entity(entity)
+                .try_insert_if_new(crate::SceneRoomModeration::default());
+        }
     }
 }
 

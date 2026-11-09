@@ -60,6 +60,35 @@ function send(response: ServerResponse, reply: StubReply): void {
   response.end(text)
 }
 
+const shared = new Map<number, Promise<GatekeeperStub>>()
+
+/** The one stub on `port`, started on first use; every spec file shares it, since the runner keeps
+ *  them in one process. */
+export function sharedGatekeeperStub(port: number): Promise<GatekeeperStub> {
+  let stub = shared.get(port)
+  if (!stub) {
+    stub = serveGatekeeperStub(port).catch((error: unknown) => {
+      shared.delete(port)
+      throw error
+    })
+    shared.set(port, stub)
+  }
+  return stub
+}
+
+/** Close every shared stub. */
+export async function closeGatekeeperStubs(): Promise<void> {
+  const open = [...shared.values()]
+  shared.clear()
+  for (const stub of open) {
+    try {
+      await (await stub).close()
+    } catch {
+      // a stub that never came up
+    }
+  }
+}
+
 /** Serve the stub on `port` (0 picks a free one), answering not banned and a 503 adapter until told otherwise. */
 export async function serveGatekeeperStub(port: number): Promise<GatekeeperStub> {
   let banStatus: StubReply = NOT_BANNED

@@ -13,8 +13,8 @@
 // standalone pointed at a loopback gatekeeper stub (`--comms-gatekeeper`). On the web a service
 // override stops the boot at the launch gate before the console is up: those two are todos there.
 import assert from 'node:assert/strict'
-import { after, before } from 'node:test'
-import { bannedReply, readTarget, refusal, serveGatekeeperStub, spec, until, type GatekeeperStub } from '../driver/index.ts'
+import { before } from 'node:test'
+import { bannedReply, readTarget, refusal, sharedGatekeeperStub, spec, until, type GatekeeperStub } from '../driver/index.ts'
 
 const scenario = spec(import.meta.url)
 
@@ -24,12 +24,10 @@ const native = readTarget().transport === 'native'
 const webOnly = { todo: 'web: a loopback service override stops at the launch gate' }
 const stubSession = { session: { nativeArgs: ['--comms-gatekeeper', `http://127.0.0.1:${STUB_PORT}`] } }
 
+// The stub is shared with scene-ban.test.ts (one process for every spec) and closed by the harness.
 let stub: GatekeeperStub | undefined
 before(async () => {
-  if (native) stub = await serveGatekeeperStub(STUB_PORT)
-})
-after(async () => {
-  await stub?.close()
+  if (native) stub = await sharedGatekeeperStub(STUB_PORT)
 })
 
 scenario('the platform ban is checked after sign-in', async ({ explorer }) => {
@@ -38,14 +36,20 @@ scenario('the platform ban is checked after sign-in', async ({ explorer }) => {
     what: 'the platform ban to be checked'
   })
   assert.equal(state.platformBan.isBanned, false)
-  assert.equal(state.platformBan.source, 'ban_status_endpoint')
+  // the source names where a ban came from; a clean check has none
+  assert.equal(state.platformBan.source, null)
   assert.ok(state.platformBan.checkedAgoSecs !== null && state.platformBan.checkedAgoSecs < CHECK_TIMEOUT_MS / 1000)
 })
 
 scenario('a refresh re-checks', async ({ explorer }) => {
-  await until(() => explorer.banBlockState(), (s) => s.platformBan.state === 'checked', { timeoutMs: CHECK_TIMEOUT_MS, what: 'the platform ban to be checked' })
+  // let the last check age first, so a fresh one is told apart from it
+  const aged = await until(() => explorer.banBlockState(), (s) => s.platformBan.state === 'checked' && (s.platformBan.checkedAgoSecs ?? 0) >= 4, {
+    timeoutMs: CHECK_TIMEOUT_MS,
+    what: 'the platform ban check to be a few seconds old'
+  })
+  const before = aged.platformBan.checkedAgoSecs ?? 0
   await explorer.run('/ban_block_refresh')
-  const state = await until(() => explorer.banBlockState(), (s) => s.platformBan.checkedAgoSecs !== null && s.platformBan.checkedAgoSecs <= 2, {
+  const state = await until(() => explorer.banBlockState(), (s) => s.platformBan.checkedAgoSecs !== null && s.platformBan.checkedAgoSecs < before, {
     timeoutMs: 15_000,
     what: 'the platform ban to be re-checked'
   })

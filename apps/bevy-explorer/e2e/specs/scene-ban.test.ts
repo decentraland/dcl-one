@@ -12,8 +12,8 @@
 // The refusal scenario starts its own standalone against a loopback gatekeeper stub
 // (`--comms-gatekeeper`); on the web a service override stops the boot at the launch gate.
 import assert from 'node:assert/strict'
-import { after, before } from 'node:test'
-import { readTarget, refusal, serveGatekeeperStub, spec, until, type GatekeeperStub } from '../driver/index.ts'
+import { before } from 'node:test'
+import { readTarget, refusal, sharedGatekeeperStub, spec, until, type GatekeeperStub } from '../driver/index.ts'
 
 const scenario = spec(import.meta.url)
 
@@ -25,12 +25,10 @@ const SCENE_PARCEL: [number, number] = [0, 0]
 /** An empty parcel far from any scene room. */
 const EMPTY_PARCEL: [number, number] = [-130, 130]
 
+// The stub is shared with platform-ban.test.ts (one process for every spec) and closed by the harness.
 let stub: GatekeeperStub | undefined
 before(async () => {
-  if (native) stub = await serveGatekeeperStub(STUB_PORT)
-})
-after(async () => {
-  await stub?.close()
+  if (native) stub = await sharedGatekeeperStub(STUB_PORT)
 })
 
 scenario('a scene room reports its admission and moderation lists', async ({ explorer }) => {

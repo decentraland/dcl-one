@@ -6,6 +6,7 @@ import { after, test, type TestContext } from 'node:test'
 import path from 'node:path'
 import type { Explorer } from './explorer.ts'
 import { ScenarioReport } from './report.ts'
+import { closeGatekeeperStubs } from './gatekeeper-stub.ts'
 import { BOOT_ALLOWANCE_MS, closeSessions, openExplorer, type OpenOptions } from './session.ts'
 import { TimeoutError } from './wait.ts'
 
@@ -13,7 +14,10 @@ import { TimeoutError } from './wait.ts'
 // every spec file is done (`--test-isolation=none` keeps them in one process) and closes the
 // clients and the web server. Registered from inside a scenario it would be that scenario's, and
 // the shared client would close after the first scenario.
-after(() => closeSessions())
+after(async () => {
+  await closeSessions()
+  await closeGatekeeperStubs()
+})
 
 export interface ScenarioContext {
   explorer: Explorer

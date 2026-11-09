@@ -32,7 +32,6 @@ pub enum RoomEvent {
         metadata: String,
     },
     RoomMetadataChanged {
-        old_metadata: String,
         metadata: String,
     },
     ConnectionQualityChanged {
@@ -292,10 +291,7 @@ impl RoomEvent {
                     error!("RoomEvent::RoomMetadataChanged did not have metadata field.");
                     return None;
                 };
-                RoomEvent::RoomMetadataChanged {
-                    old_metadata: get_string(js_value, "old_metadata").unwrap_or_default(),
-                    metadata,
-                }
+                RoomEvent::RoomMetadataChanged { metadata }
             }
             Some("connectionQualityChanged") => {
                 let Some(quality) = get_connection_quality(js_value, "connection_quality") else {

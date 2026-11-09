@@ -4,6 +4,7 @@
 // explorer-automation keeps one client for a whole run. `--test-isolation=none` keeps the spec
 // files in one process.
 import { mkdir, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import path from 'node:path'
 import { chromeArgs } from './chrome.ts'
 import { type Console, ConsoleError } from './console.ts'
@@ -194,7 +195,22 @@ async function nativeConsole(target: Target, realm: string, position: string, ex
     return new NativeConsole({ port, token })
   }
   if (!bin) throw new Error('set DCL_E2E_NATIVE_BIN (an automation build to start) or DCL_E2E_NATIVE_PORT and DCL_E2E_NATIVE_TOKEN (a running one)')
-  return spawnNative({ bin, port, token, args: ['--realm', realm, '--position', position, ...args, ...extra] })
+  // an extra client runs beside the default one, so its console takes a port of its own
+  const automationPort = extra.length > 0 ? await freePort() : port
+  return spawnNative({ bin, port: automationPort, token, args: ['--realm', realm, '--position', position, ...args, ...extra] })
+}
+
+/** A loopback port nothing is listening on right now. */
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer()
+    probe.once('error', reject)
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address()
+      const port = typeof address === 'object' && address ? address.port : 0
+      probe.close(() => (port ? resolve(port) : reject(new Error('no free port'))))
+    })
+  })
 }
 
 /** Sign in and wait for the world. On the web the sign-in goes through the HUD (`/hud_login`):

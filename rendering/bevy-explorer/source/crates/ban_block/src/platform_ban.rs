@@ -9,6 +9,7 @@ use bevy::{
         change_detection::DetectChanges,
         event::EventWriter,
         resource::Resource,
+        schedule::IntoScheduleConfigs,
         system::{Local, Res, ResMut},
     },
     log::{info, warn},
@@ -29,6 +30,9 @@ use crate::BanBlockEvent;
 
 /// Seconds between two checks of a wallet that has not changed.
 pub const RECHECK_SECS: f64 = 300.0;
+/// The least a server's `Retry-After` is honoured as, so a zero or past value never re-requests
+/// every frame.
+pub const MIN_RETRY_SECS: f64 = 5.0;
 const REQUEST_TIMEOUT_SECS: u64 = 10;
 
 #[derive(Resource)]
@@ -77,6 +81,8 @@ pub enum PlatformBanSource {
     SceneAdmissionRefusal,
 }
 
+/// `GET /users/{address}/bans`: `{"data":{"isBanned":bool,"ban":{..}?,"matchedOn":"device"?}}`.
+/// The record is withheld when the ban matched the device rather than the address.
 #[derive(Deserialize)]
 struct BanStatusEnvelope {
     data: BanStatusBody,
@@ -88,18 +94,37 @@ struct BanStatusBody {
     is_banned: bool,
     #[serde(default)]
     ban: Option<PlatformBanInfo>,
+    #[serde(default)]
+    matched_on: Option<String>,
 }
 
 impl PlatformBanInfo {
-    /// Decodes `{"data":{"isBanned":bool,"ban":{..}?}}`: `Ok(None)` when not banned, whatever
-    /// else the body carries.
+    /// Decodes the ban-status body: `Ok(None)` when not banned, whatever else it carries; a ban
+    /// without its record is a ban whose record was withheld.
     pub fn from_json(body: &[u8]) -> Result<Option<Self>, String> {
         let envelope: BanStatusEnvelope =
             serde_json::from_slice(body).map_err(|e| format!("bad ban status body: {e}"))?;
-        match (envelope.data.is_banned, envelope.data.ban) {
-            (false, _) => Ok(None),
-            (true, Some(ban)) => Ok(Some(ban)),
-            (true, None) => Err("banned without a ban record".to_owned()),
+        Ok(Self::from_body(envelope.data))
+    }
+
+    fn from_body(body: BanStatusBody) -> Option<Self> {
+        if !body.is_banned {
+            return None;
+        }
+        Some(body.ban.unwrap_or_else(|| {
+            Self::withheld(body.matched_on.as_deref().unwrap_or("another match"))
+        }))
+    }
+
+    /// A ban whose record the gatekeeper withheld; `matched_on` says what the ban matched.
+    pub fn withheld(matched_on: &str) -> Self {
+        Self {
+            id: String::new(),
+            reason: format!("banned (record withheld, matched on {matched_on})"),
+            custom_message: None,
+            banned_at: String::new(),
+            expires_at: None,
+            banned_by: String::new(),
         }
     }
 
@@ -203,16 +228,6 @@ impl Default for PlatformBanStatus {
     }
 }
 
-/// Whether a check is due: never checked, the server's retry delay passed, or the recheck period
-/// passed.
-pub fn due(now: f64, last_checked: Option<f64>, retry_after: Option<f64>) -> bool {
-    match (last_checked, retry_after) {
-        (None, _) => true,
-        (Some(last), Some(wait)) => now - last >= wait,
-        (Some(last), None) => now - last >= RECHECK_SECS,
-    }
-}
-
 /// `/ban_block_refresh` asks for the platform ban to be checked again now.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/ban_block_refresh")]
@@ -240,13 +255,24 @@ pub(crate) fn register(app: &mut App) {
     app.insert_resource(PlatformBanStatus::new())
         .init_resource::<RefreshRequested>()
         .add_console_command::<BanBlockRefreshCommand, _>(ban_block_refresh)
-        .add_systems(Update, check_platform_ban);
+        // an authoritative server's identity has no ban to show anyone
+        .add_systems(
+            Update,
+            check_platform_ban.run_if(|| !common::structs::server_mode()),
+        );
+}
+
+/// Why a check gave no answer, with the delay the server asked for before the next one.
+#[derive(Debug, PartialEq)]
+pub struct CheckFailure {
+    pub error: String,
+    pub retry_after_secs: Option<f64>,
 }
 
 /// One ban-status request on its way, for the address it was sent for.
 struct InFlightBanCheck {
     address: Address,
-    task: Task<Result<Option<PlatformBanInfo>, String>>,
+    task: Task<Result<Option<PlatformBanInfo>, CheckFailure>>,
 }
 
 /// When the platform ban was last checked and when it may be checked next, for one address.
@@ -255,11 +281,56 @@ struct BanCheckSchedule {
     address: Option<Address>,
     last_checked: Option<f64>,
     retry_after: Option<f64>,
+    /// A trigger that arrived while a request was in flight.
+    retrigger: bool,
     in_flight: Option<InFlightBanCheck>,
 }
 
+impl BanCheckSchedule {
+    /// Takes the schedule to `address`, dropping everything about the previous one. True when
+    /// the address changed.
+    fn follow(&mut self, address: Option<Address>) -> bool {
+        if self.address == address {
+            return false;
+        }
+        *self = Self {
+            address,
+            ..Self::default()
+        };
+        true
+    }
+
+    /// Whether a check starts now: a trigger, or the period or the server's delay elapsed.
+    fn starts(&mut self, now: f64, triggered: bool) -> bool {
+        let start = triggered
+            || std::mem::take(&mut self.retrigger)
+            || due(now, self.last_checked, self.retry_after);
+        if start {
+            self.last_checked = Some(now);
+            self.retry_after = None;
+        }
+        start
+    }
+
+    /// Records a failed check's delay, floored so a zero never re-requests every frame.
+    fn delay(&mut self, retry_after_secs: Option<f64>) {
+        self.retry_after = retry_after_secs.map(|secs| secs.max(MIN_RETRY_SECS));
+    }
+}
+
+/// Whether a check is due: never checked, the server's retry delay passed, or the recheck period
+/// passed.
+pub fn due(now: f64, last_checked: Option<f64>, retry_after: Option<f64>) -> bool {
+    match (last_checked, retry_after) {
+        (None, _) => true,
+        (Some(last), Some(wait)) => now - last >= wait,
+        (Some(last), None) => now - last >= RECHECK_SECS,
+    }
+}
+
 /// Polls the one request in flight, dropping an answer for an address that is no longer the
-/// wallet's, and starts the next one when a check is due.
+/// wallet's, and starts the next one when a check is due. A trigger that lands while a request
+/// is in flight starts another as soon as it completes.
 fn check_platform_ban(
     mut status: ResMut<PlatformBanStatus>,
     wallet: Res<Wallet>,
@@ -270,61 +341,52 @@ fn check_platform_ban(
     mut events: EventWriter<BanBlockEvent>,
 ) {
     let now = time.elapsed_secs_f64();
-    let address = wallet.address();
-
-    if address != schedule.address {
-        schedule.address = address;
-        schedule.last_checked = None;
-        schedule.retry_after = None;
-        schedule.in_flight = None;
+    if schedule.follow(wallet.address()) {
         for event in status.reset_platform_ban() {
             events.write(event);
         }
     }
-    let Some(address) = address else {
+    let Some(address) = wallet.address() else {
         return;
     };
+    let triggered = std::mem::take(&mut refresh.0)
+        || realm.is_some_and(|realm| realm.is_changed() && realm.connected);
 
     if let Some(in_flight) = schedule.in_flight.as_mut() {
         let Some(result) = in_flight.task.complete() else {
+            schedule.retrigger |= triggered;
             return;
         };
         let for_address = in_flight.address;
         schedule.in_flight = None;
-        if for_address != address {
-            return;
-        }
-        let changed = match result {
-            Ok(ban) => {
-                info!(
-                    "[ban_block] platform ban check: {}",
-                    if ban.is_some() {
-                        "banned"
-                    } else {
-                        "not banned"
-                    }
-                );
-                status.apply_platform_ban(ban, PlatformBanSource::BanStatusEndpoint, now)
+        if for_address == address {
+            let changed = match result {
+                Ok(ban) => {
+                    info!(
+                        "[ban_block] platform ban check: {}",
+                        if ban.is_some() {
+                            "banned"
+                        } else {
+                            "not banned"
+                        }
+                    );
+                    status.apply_platform_ban(ban, PlatformBanSource::BanStatusEndpoint, now)
+                }
+                Err(failure) => {
+                    schedule.delay(failure.retry_after_secs);
+                    warn!("[ban_block] platform ban check failed: {}", failure.error);
+                    status.platform_ban_check_failed(failure.error, now)
+                }
+            };
+            for event in changed {
+                events.write(event);
             }
-            Err(error) => {
-                schedule.retry_after = retry_after_secs(&error);
-                warn!("[ban_block] platform ban check failed: {error}");
-                status.platform_ban_check_failed(error, now)
-            }
-        };
-        for event in changed {
-            events.write(event);
         }
-        return;
     }
 
-    let realm_changed = realm.is_some_and(|realm| realm.is_changed() && realm.connected);
-    let requested = std::mem::take(&mut refresh.0);
-    if !(requested || realm_changed || due(now, schedule.last_checked, schedule.retry_after)) {
+    if !schedule.starts(now, triggered) {
         return;
     }
-    schedule.last_checked = Some(now);
-    schedule.retry_after = None;
     let url = base_domain::url(
         Service::CommsGatekeeper,
         &format!("/users/{address:#x}/bans"),
@@ -339,43 +401,54 @@ fn check_platform_ban(
     });
 }
 
-/// The decoded answer, or an error naming the status and, when the answer carries one, its
-/// `Retry-After` in seconds.
+/// The decoded answer, or the failure with the server's `Retry-After` in seconds when it sent
+/// one.
 async fn fetch_ban_status(
     request: reqwest::RequestBuilder,
-) -> Result<Option<PlatformBanInfo>, String> {
+) -> Result<Option<PlatformBanInfo>, CheckFailure> {
+    let failed = |error: String| CheckFailure {
+        error,
+        retry_after_secs: None,
+    };
     let response = platform::TracedJsonResponse::send(request)
         .await
-        .map_err(|e| format!("request failed: {e}"))?;
+        .map_err(|e| failed(format!("request failed: {e}")))?;
     let status = response.status();
     if status == reqwest::StatusCode::OK {
-        let body: serde_json::Value = response
-            .json()
+        return response
+            .json::<BanStatusEnvelope>()
             .await
-            .map_err(|e| format!("bad ban status body: {e}"))?;
-        return PlatformBanInfo::from_json(body.to_string().as_bytes());
+            .map(|envelope| PlatformBanInfo::from_body(envelope.data))
+            .map_err(|e| failed(format!("bad ban status body: {e}")));
     }
-    let retry = response
+    let retry_after_secs = response
         .headers()
         .get(reqwest::header::RETRY_AFTER)
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| platform::http::parse_retry_after(value, std::time::SystemTime::now()))
-        .map(|wait| wait.min(platform::http::MAX_RETRY_AFTER).as_secs());
+        .and_then(retry_after_secs);
     response.discard();
-    match retry {
-        Some(secs) => Err(format!("status {status}, retry after {secs}s")),
-        None => Err(format!("status {status}")),
-    }
+    Err(CheckFailure {
+        error: format!("status {status}"),
+        retry_after_secs,
+    })
 }
 
-fn retry_after_secs(error: &str) -> Option<f64> {
-    let (_, tail) = error.split_once("retry after ")?;
-    tail.trim_end_matches('s').parse().ok()
+/// A `Retry-After` value as seconds from now, capped at the platform's longest honoured delay.
+fn retry_after_secs(value: &str) -> Option<f64> {
+    let since_epoch = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
+        .ok()?;
+    platform::http::parse_retry_after(value, std::time::UNIX_EPOCH + since_epoch)
+        .map(|wait| wait.min(platform::http::MAX_RETRY_AFTER).as_secs_f64())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn address(n: u8) -> Address {
+        Address::from_slice(&[n; 20])
+    }
 
     #[test]
     fn the_ban_status_body_decodes_as_served() {
@@ -393,8 +466,21 @@ mod tests {
                 .unwrap(),
             None
         );
-        assert!(PlatformBanInfo::from_json(br#"{"data":{"isBanned":true}}"#).is_err());
         assert!(PlatformBanInfo::from_json(b"not json").is_err());
+    }
+
+    #[test]
+    fn a_device_matched_ban_is_a_ban_with_its_record_withheld() {
+        let withheld =
+            PlatformBanInfo::from_json(br#"{"data":{"isBanned":true,"matchedOn":"device"}}"#)
+                .unwrap()
+                .unwrap();
+        assert_eq!(withheld, PlatformBanInfo::withheld("device"));
+        assert!(withheld.reason.contains("device"));
+        let unexplained = PlatformBanInfo::from_json(br#"{"data":{"isBanned":true}}"#)
+            .unwrap()
+            .unwrap();
+        assert_eq!(unexplained, PlatformBanInfo::withheld("another match"));
     }
 
     #[test]
@@ -464,7 +550,40 @@ mod tests {
         assert!(due(RECHECK_SECS, Some(0.0), None));
         assert!(!due(4.0, Some(0.0), Some(5.0)));
         assert!(due(5.0, Some(0.0), Some(5.0)));
-        assert_eq!(retry_after_secs("status 503, retry after 7s"), Some(7.0));
-        assert_eq!(retry_after_secs("status 500"), None);
+        assert_eq!(retry_after_secs("7"), Some(7.0));
+        assert_eq!(retry_after_secs("3600"), Some(60.0));
+        assert_eq!(retry_after_secs("soon"), None);
+    }
+
+    #[test]
+    fn the_schedule_follows_the_wallet_and_honours_triggers_and_delays() {
+        let mut schedule = BanCheckSchedule::default();
+        assert!(schedule.follow(Some(address(1))));
+        assert!(
+            schedule.starts(0.0, false),
+            "a new address is checked at once"
+        );
+        assert!(!schedule.starts(1.0, false));
+        assert!(schedule.starts(1.0, true), "a trigger starts a check");
+
+        // a trigger during a request is kept for when the request completes
+        schedule.retrigger = true;
+        assert!(schedule.starts(2.0, false));
+        assert!(!schedule.retrigger);
+        assert!(!schedule.starts(3.0, false));
+
+        // a server delay is floored and then honoured
+        schedule.delay(Some(0.0));
+        assert_eq!(schedule.retry_after, Some(MIN_RETRY_SECS));
+        assert!(!schedule.starts(2.0 + MIN_RETRY_SECS - 1.0, false));
+        assert!(schedule.starts(2.0 + MIN_RETRY_SECS, false));
+
+        // the same address is no change; another drops the schedule
+        assert!(!schedule.follow(Some(address(1))));
+        assert!(schedule.last_checked.is_some());
+        assert!(schedule.follow(Some(address(2))));
+        assert_eq!(schedule.last_checked, None);
+        assert!(schedule.follow(None));
+        assert_eq!(schedule.address, None);
     }
 }

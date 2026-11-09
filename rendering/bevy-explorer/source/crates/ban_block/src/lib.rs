@@ -21,6 +21,7 @@ use bevy::{
 };
 use serde::Serialize;
 use social::SocialClient;
+use wallet::Wallet;
 
 pub use comms::{AdmissionView, BanScope, SceneAdmission, SceneRoomModeration};
 pub use events::BanBlockEvent;
@@ -53,6 +54,7 @@ impl Plugin for BanBlockPlugin {
 #[derive(SystemParam)]
 pub struct BanBlock<'w, 's> {
     social: Option<Res<'w, SocialClient>>,
+    wallet: Res<'w, Wallet>,
     platform_ban: Res<'w, PlatformBanStatus>,
     admission: Res<'w, SceneAdmission>,
     #[cfg(feature = "livekit")]
@@ -192,8 +194,11 @@ impl BanBlock<'_, '_> {
             };
         };
         match social.0.as_ref() {
-            None => Blocks::Unavailable {
+            None if self.wallet.address().is_none() => Blocks::Unavailable {
                 reason: BlocksUnavailableReason::NotSignedIn,
+            },
+            None => Blocks::Unavailable {
+                reason: BlocksUnavailableReason::SocialNotConnected,
             },
             Some(client) => {
                 Blocks::from_client(client.has_snapshot, &client.blocked, &client.blocked_by)

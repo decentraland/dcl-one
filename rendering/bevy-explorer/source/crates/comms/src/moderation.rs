@@ -51,7 +51,8 @@ pub enum BanScope {
     Scene,
 }
 
-/// The refusal bodies the gatekeeper sends (`services/catalyst/comms/src/gatekeeper`).
+/// The refusal bodies the comms gatekeeper and the worlds server send, upstream
+/// (`comms-gatekeeper`, `worlds-content-server`) and in `services/catalyst` alike.
 const PLATFORM_BANNED: &str = "Access denied, platform-banned user";
 const SCENE_BANNED: &str = "User is banned from this scene";
 const WORLD_BANNED_PREFIX: &str = "You are banned from world";
@@ -69,8 +70,9 @@ impl SceneAdmission {
         })
     }
 
-    /// The admission a scene-adapter refusal means. A refusal that names no ban, a 503 and a 401
-    /// without the world-ban message are unknown.
+    /// The admission a scene-adapter refusal means: the gatekeeper's 403s, and the worlds
+    /// server's 401s for a platform or world ban. A refusal that names no ban and a 503 are
+    /// unknown.
     pub fn from_refusal(
         status: u16,
         message: Option<&str>,
@@ -81,6 +83,7 @@ impl SceneAdmission {
         let scope = match status {
             403 if message.starts_with(PLATFORM_BANNED) => BanScope::Platform,
             403 if message.starts_with(SCENE_BANNED) => BanScope::Scene,
+            401 if is_world && message.starts_with(PLATFORM_BANNED) => BanScope::Platform,
             401 if is_world && message.starts_with(WORLD_BANNED_PREFIX) => BanScope::World,
             _ => return Self::unknown(),
         };
@@ -189,6 +192,13 @@ mod tests {
             .view(),
             AdmissionView::Refused {
                 scope: BanScope::World,
+                ..
+            }
+        ));
+        assert!(matches!(
+            refused(401, Some("Access denied, platform-banned user."), true).view(),
+            AdmissionView::Refused {
+                scope: BanScope::Platform,
                 ..
             }
         ));
