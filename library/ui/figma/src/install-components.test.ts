@@ -50,6 +50,55 @@ describe('when planning public components from verified installer inputs', () =>
     ).toBe(false)
   })
 
+  it.each(
+    [
+      null,
+      undefined,
+      [],
+      'DemoNav',
+      { internal: ['DemoNav'] },
+      { components: [] },
+      { components: ['DemoNav'], internal: null },
+      { components: ['DemoNav'], internal: [3] }
+    ].map((registry) => ({ registry }))
+  )(
+    'should reject malformed registry containers before reading component input: %j',
+    async ({ registry }) => {
+      const read = vi.spyOn(context.source, 'getComponentPage')
+      context.registry = registry as unknown as ComponentPlanContext['registry']
+      await expect(planComponents(context)).rejects.toThrow('Component registry')
+      expect(read).not.toHaveBeenCalled()
+    }
+  )
+
+  describe('and the registry declares internal visibility', () => {
+    beforeEach(() => {
+      context.registry = { components: [], internal: ['DemoNav'] }
+    })
+    it('should install internal output without advertising a mapping or adding a public entry', async () => {
+      const plan = await planComponents(context)
+      expect(plan.files.has('DemoNav/DemoNav.tsx')).toBe(true)
+      expect(plan.files.has('DemoNav/DemoNav.figma.ts')).toBe(false)
+      expect(plan.files.has('index.ts')).toBe(false)
+      expect(JSON.parse(plan.files.get('promotion.json')!.toString())).toEqual({
+        components: [],
+        internal: ['DemoNav']
+      })
+    })
+    it('should reject a component listed with both public and internal visibility', async () => {
+      context.registry = { components: ['DemoNav'], internal: ['DemoNav'] }
+      await expect(planComponents(context)).rejects.toThrow('unique component names')
+    })
+    it('should reject an unknown internal component', async () => {
+      context.registry = { components: [], internal: ['Missing'] }
+      await expect(planComponents(context)).rejects.toThrow('Unknown component')
+    })
+    it('should reject malformed internal names instead of omitting them', async () => {
+      context.registry = { components: [], internal: 'DemoNav' as unknown as string[] }
+      await expect(planComponents(context)).rejects.toThrow('public and internal name lists')
+    })
+  })
+
   it('should relocate imports and preserve the generated sparse and suppressed-prop contracts', async () => {
     const plan = await planComponents(context)
     const component = plan.files.get('DemoNav/DemoNav.tsx')!.toString()
@@ -61,6 +110,67 @@ describe('when planning public components from verified installer inputs', () =>
       `from '../../foundations/icons'`
     )
     expect(plan.files.get('DemoNav/DemoNav.figma.ts')!.toString()).toContain('url=<DCL_FIGMA_FILE>')
+  })
+
+  describe('and runtime styles contain selectors alongside dotted non-selector content', () => {
+    beforeEach(() => {
+      context.runtime = new Map(context.runtime).set(
+        'figma-module-runtime.module.css',
+        Buffer.from(`
+          @layer reset, foundations.typography, components.controls;
+          @import url("./base.module.css");
+          /* .commented-out { color: red } */
+          @layer components.controls {
+            .node, .node:hover, .active::before {
+              composes: shared from "./shared.module.css";
+              background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'><path class='.fake' /></svg>");
+              mask: url(https://example.org/icon.svg);
+              content: ".quoted \\".escaped";
+            }
+            @media (min-width: 1.5px) {
+              .node:is(.selected, .focused):not(.disabled)[data-kind=".attribute"] > .child {
+                background-image: url('./assets/icon.svg');
+              }
+            }
+            @supports selector(.unsupported) {
+              .supported:where(.enabled) { color: red }
+            }
+          }
+        `)
+      )
+    })
+
+    it('should emit only distinct classes from qualified selectors', async () => {
+      expect(
+        (await planComponents(context)).files
+          .get('runtime/figma-module-runtime.module.css.d.ts')!
+          .toString()
+      ).toBe(
+        'declare const styles: {\n' +
+          ['node', 'active', 'selected', 'focused', 'disabled', 'child', 'supported', 'enabled']
+            .map((name) => '  readonly "' + name + '": string')
+            .join('\n') +
+          '\n}\nexport default styles\n'
+      )
+    })
+  })
+
+  describe('and runtime styles contain no class selectors', () => {
+    beforeEach(() => {
+      context.runtime = new Map(context.runtime).set(
+        'figma-module-runtime.module.css',
+        Buffer.from(
+          '@layer reset, foundations.typography; :root { --asset: url(https://example.org/icon.svg); } /* .comment */'
+        )
+      )
+    })
+    it('should emit an empty declaration without inventing layer or URL exports', async () => {
+      expect(
+        (await planComponents(context)).files
+          .get('runtime/figma-module-runtime.module.css.d.ts')!
+          .toString()
+      ).toBe('declare const styles: {\n\n}\nexport default styles\n')
+    })
   })
 
   it('should emit a mapping accepted by the existing literal parser', async () => {
@@ -81,8 +191,11 @@ describe('when planning public components from verified installer inputs', () =>
   )
 
   it('should reject a legacy seal in place of the names-only registry', async () => {
-    context.registry = { components: ['DemoNav'], files: {} } as ComponentPlanContext['registry']
-    await expect(planComponents(context)).rejects.toThrow('unique component names only')
+    context.registry = {
+      components: ['DemoNav'],
+      files: {}
+    } as ComponentPlanContext['registry']
+    await expect(planComponents(context)).rejects.toThrow('public and internal name lists only')
   })
 
   it('should consume a live source supplied by the core without selecting a fallback', async () => {

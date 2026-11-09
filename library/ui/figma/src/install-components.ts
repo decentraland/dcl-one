@@ -13,10 +13,13 @@ import { loadSpecsFromSource } from './specs.js'
 type ComponentPlanContext = {
   source: FigmaSource
   config: FigmaConfig
-  registry: { components: readonly string[] }
+  registry: { components: readonly string[]; internal?: readonly string[] }
   runtime: ReadonlyMap<string, Buffer>
 }
-type ComponentInstallPlan = { components: string[]; files: Map<string, Buffer> }
+type ComponentInstallPlan = {
+  components: string[]
+  files: Map<string, Buffer>
+}
 
 const literal = (value: unknown) => JSON.stringify(value)
 
@@ -47,8 +50,44 @@ function relocate(content: string): string {
 }
 
 function cssDeclaration(content: string): string {
-  const names = [...new Set([...content.matchAll(/\.([a-zA-Z_][\w-]*)/g)].map((m) => m[1]!))]
-  return `declare const styles: {\n${names.map((name) => `  readonly ${literal(name)}: string`).join('\n')}\n}\nexport default styles\n`
+  const names = new Set<string>()
+  let prelude = ''
+  let quote = ''
+  let parentheses = 0
+  let brackets = 0
+  // Only qualified-rule preludes contain selectors. Ignore strings, comments and
+  // declaration bodies so dots in URLs, layer names and composition paths stay out.
+  for (let index = 0; index < content.length; index++) {
+    const character = content[index]!
+    if (quote) {
+      if (character === '\\') index++
+      else if (character === quote) quote = ''
+      continue
+    }
+    if (content.startsWith('/*', index)) {
+      const end = content.indexOf('*/', index + 2)
+      if (end === -1) break
+      index = end + 1
+      prelude += ' '
+      continue
+    }
+    if (character === '"' || character === "'") {
+      quote = character
+      prelude += ' '
+      continue
+    }
+    if (character === '[') brackets++
+    else if (character === ']') brackets--
+    if (brackets) continue
+    if (character === '(') parentheses++
+    else if (character === ')') parentheses--
+    if (!parentheses && (character === '{' || character === '}' || character === ';')) {
+      if (character === '{' && !prelude.trimStart().startsWith('@'))
+        for (const match of prelude.matchAll(/\.([a-zA-Z_][\w-]*)/g)) names.add(match[1]!)
+      prelude = ''
+    } else prelude += character
+  }
+  return `declare const styles: {\n${[...names].map((name) => `  readonly ${literal(name)}: string`).join('\n')}\n}\nexport default styles\n`
 }
 
 function componentMapping(spec: ComponentSpec, raw: RawComponent, config: FigmaConfig): string {
@@ -122,14 +161,23 @@ async function planComponents(context: ComponentPlanContext): Promise<ComponentI
   if (config.imageFills !== 'placeholder')
     throw new Error('Public component installation requires the placeholder raster policy')
   if (
-    Object.keys(registry).length !== 1 ||
+    !registry ||
+    typeof registry !== 'object' ||
+    Array.isArray(registry) ||
+    Object.keys(registry).some((key) => key !== 'components' && key !== 'internal') ||
     !Array.isArray(registry.components) ||
-    !registry.components.length ||
-    registry.components.some((name) => typeof name !== 'string') ||
-    new Set(registry.components).size !== registry.components.length
+    (registry.internal !== undefined && !Array.isArray(registry.internal))
+  )
+    throw new Error('Component registry must contain public and internal name lists only')
+  const requested = [...registry.components, ...(registry.internal ?? [])]
+  if (
+    !requested.length ||
+    requested.some((name) => typeof name !== 'string') ||
+    new Set(requested).size !== requested.length
   )
     throw new Error('Component registry must contain unique component names only')
-  for (const name of registry.components) assertIdentifier(name)
+  for (const name of requested) assertIdentifier(name)
+  const publicNames = new Set(registry.components)
   for (const file of runtimeFiles)
     if (!runtime.get(file)?.length) throw new Error(`Missing locked runtime input: ${file}`)
   const loaded = await loadSpecsFromSource(source, config, 'promotion')
@@ -137,7 +185,7 @@ async function planComponents(context: ComponentPlanContext): Promise<ComponentI
     throw new Error('Ambiguous component names in the pinned source')
   const available = new Map(loaded.specs.map((spec) => [spec.name, spec]))
   const selected = new Map<string, ComponentSpec>()
-  const queue = [...registry.components]
+  const queue = [...requested]
   while (queue.length) {
     const name = queue.shift()!
     if (selected.has(name)) continue
@@ -175,6 +223,7 @@ async function planComponents(context: ComponentPlanContext): Promise<ComponentI
           assets.add(match[1]!)
       files.set(`${spec.name}/${spec.name}${extension}`, Buffer.from(relocate(content)))
     }
+    if (!publicNames.has(spec.name)) continue
     const pages = configuredPages(config).filter((page) => page.name === spec.page)
     if (pages.length !== 1) throw new Error(`Ambiguous component page: ${spec.page}`)
     const page = await loadPageSnapshot(source, pages[0]!)
@@ -205,7 +254,13 @@ async function planComponents(context: ComponentPlanContext): Promise<ComponentI
     if (file.endsWith('.module.css'))
       files.set(file + '.d.ts', Buffer.from(cssDeclaration(bytes.toString('utf8'))))
   const components = specs.map((spec) => spec.name)
-  files.set('promotion.json', Buffer.from(JSON.stringify({ components }, null, 2) + '\n'))
+  const visibility = {
+    components: components.filter((name) => publicNames.has(name)),
+    ...(components.some((name) => !publicNames.has(name))
+      ? { internal: components.filter((name) => !publicNames.has(name)) }
+      : {})
+  }
+  files.set('promotion.json', Buffer.from(JSON.stringify(visibility, null, 2) + '\n'))
   return { components, files }
 }
 

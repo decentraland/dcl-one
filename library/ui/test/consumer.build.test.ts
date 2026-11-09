@@ -5,8 +5,9 @@ import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 import { build } from 'vite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import * as publicUi from '../index'
 
-describe('when a consumer bundles the public library', () => {
+describe('when a consumer bundles public foundations and the internal NavBar preview', () => {
   let root: string
   let directory: string | undefined
   beforeEach(() => {
@@ -16,7 +17,11 @@ describe('when a consumer bundles the public library', () => {
   afterEach(async () => {
     if (directory) await rm(directory, { recursive: true, force: true })
   })
-  it('should compile drawn tuples and reject undrawn tuples and positional text through the public export', () => {
+  it('should expose foundations without exposing the internal NavBar', () => {
+    expect(publicUi).toHaveProperty('theme')
+    expect(publicUi).not.toHaveProperty('NavBar')
+  })
+  it('should compile internal tuple contracts and reject public NavBar imports', () => {
     expect(
       execFileSync(
         process.execPath,
@@ -29,7 +34,7 @@ describe('when a consumer bundles the public library', () => {
       )
     ).toBe('')
   }, 60_000)
-  it('should resolve the public component and its composed foundation CSS in a client build', async () => {
+  it('should bundle the internal preview with its composed foundation CSS', async () => {
     const result = await build({
       configFile: false,
       root,

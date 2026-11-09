@@ -1,37 +1,37 @@
 {
   "schema": 1,
-  "lockHash": "0e24c7497f2cf58ad10f006ad585512c15f4494cd508255c39668245fb5482a5",
+  "lockHash": "3bb2c85dc8a49465f0bfc4cee02276047f323b2a9e90065cf33fda437eb66ad2",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
-  "figmaTree": "48ae54bef9891e3dd6cbfdd3017870f84418488e",
+  "figmaTree": "7e1bf46247d289dadbe6ff4e38fef602eafa35b6",
   "checks": {
     "fetch-source": {
       "result": "pass",
-      "detail": "inherited parent checks: same verified 544-file cache and snapshot revision"
+      "detail": "verified existing cache: 544 files match the pinned revision and digest table"
     },
     "deviations": {
       "result": "pass",
-      "detail": "439 tooling pins and base public foundation identities verified after merging both deviation tables"
+      "detail": "439 tooling files and 39 public foundation files match pinned bytes and origins"
     },
     "diff": {
       "result": "pass",
-      "detail": "inherited base generation check: 0 added, changed or removed, generator inputs unchanged by guard merge"
+      "detail": "run on this tree: 0 added, 0 changed, 0 removed, no ledger issues"
     },
     "check-mappings": {
       "result": "pass",
-      "detail": "inherited public92eb: 1 mapping with zero diagnostics, mapping and component generator unchanged"
+      "detail": "run on this tree: 0 public mappings, internal NavBar mapping omitted"
     },
     "review-manifest": {
       "result": "pass",
-      "detail": "inherited parent checks: catalog unchanged, no catalog or component generator change in guard merge"
+      "detail": "run on this tree: 46 components, 561 variants, catalog unchanged"
     },
     "navbar-bounds": {
       "result": "pass",
-      "detail": "inherited parent checks: 19 bounds pass, NavBar output and icon runtime guard unchanged by this merge"
+      "detail": "run on this tree: 19 gallery bounds checks pass, internal source control holds remain"
     },
     "install": {
       "result": "pass",
-      "detail": "inherited base check: 39 foundations reproduced and repeat unchanged, foundation files and install core preserved"
+      "detail": "39 foundation files reproduced with no-op repeat, 9-file internal component plan is deterministic"
     }
   }
 }

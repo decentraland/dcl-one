@@ -1,17 +1,10 @@
 declare const styles: {
-  readonly "reset": string
-  readonly "foundations": string
-  readonly "components": string
   readonly "v0nroot": string
   readonly "v0n0": string
-  readonly "w3": string
-  readonly "org": string
   readonly "v0n1": string
   readonly "v0n1_0": string
   readonly "v0n1_0_0": string
   readonly "v0n1_0_0_0": string
-  readonly "module": string
-  readonly "css": string
   readonly "v1nroot": string
   readonly "v1n0": string
   readonly "v1n0_0": string
