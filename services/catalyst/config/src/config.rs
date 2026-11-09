@@ -217,8 +217,9 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 79] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 78] {
         [
+            ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
             (
                 "CATALYRST_CONTENT_ADMIN_TOKEN",
@@ -380,14 +381,6 @@ impl Config {
                 &mut self.economy.rpc_endpoint_polygon,
             ),
             ("TRADE_RPC_URLS", &mut self.marketplace.trade_rpc_urls),
-            (
-                "CATALYRST_TELEMETRY_ADMIN_TOKEN",
-                &mut self.ops.catalyrst_telemetry_admin_token,
-            ),
-            (
-                "TELEMETRY_SQL_DATABASE_URL",
-                &mut self.ops.telemetry_sql_database_url,
-            ),
             (
                 "CATALYRST_CREDITS_ADMIN_TOKEN",
                 &mut self.shop.catalyrst_credits_admin_token,
@@ -1015,8 +1008,6 @@ mod tests {
             "postgres:///catalyst",
             "--ops-writes-enabled",
             "true",
-            "--telemetry-ingest-enabled",
-            "true",
             "--credits-mock-card",
             "true",
             "--ab-cdn-enabled",
@@ -1027,12 +1018,7 @@ mod tests {
             "https://rpc.example/polygon",
         ])
         .unwrap();
-        assert!(
-            c.ops.ops_writes_enabled
-                && c.ops.telemetry_ingest_enabled
-                && c.shop.credits_mock_card
-                && !c.ab_cdn.ab_cdn_enabled
-        );
+        assert!(c.ops.ops_writes_enabled && c.shop.credits_mock_card && !c.ab_cdn.ab_cdn_enabled);
     }
 
     /// The map URLs advertise this node's own routes unless one is
@@ -1083,6 +1069,7 @@ mod tests {
         };
         for flag in [
             "--livekit-api-secret",
+            "--segment-signing-key",
             "--moderator-token",
             "--sendgrid-api-key",
             "--turnstile-secret-key",
@@ -1098,8 +1085,6 @@ mod tests {
             "--catalyrst-economy-admin-token",
             "--rpc-endpoint-polygon",
             "--trade-rpc-urls",
-            "--catalyrst-telemetry-admin-token",
-            "--telemetry-sql-database-url",
             "--catalyrst-credits-admin-token",
             "--credits-captcha-secret",
             "--stripe-secret-key",
@@ -1126,6 +1111,7 @@ mod tests {
                 && !help.contains("[env: PULSE_ROOM_AUTHORITY_KEY=")
         );
         for var in [
+            "SEGMENT_SIGNING_KEY",
             "MARKET_ADMIN_TOKEN",
             "PRICE_ADMIN_TOKEN",
             "RELAYER_PRIVATE_KEY",
@@ -1133,8 +1119,6 @@ mod tests {
             "CATALYRST_ECONOMY_ADMIN_TOKEN",
             "RPC_ENDPOINT_POLYGON",
             "TRADE_RPC_URLS",
-            "CATALYRST_TELEMETRY_ADMIN_TOKEN",
-            "TELEMETRY_SQL_DATABASE_URL",
             "CATALYRST_CREDITS_ADMIN_TOKEN",
             "CREDITS_CAPTCHA_SECRET",
             "STRIPE_SECRET_KEY",

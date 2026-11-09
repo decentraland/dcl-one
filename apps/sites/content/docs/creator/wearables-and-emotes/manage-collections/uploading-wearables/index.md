@@ -8,7 +8,7 @@ Once you export your wearable, you’ll have to upload it to the builder. This d
 
 Remember that you need to create a collection before you can upload your file. If you don’t know how to do that, check [Creating a Collection](/docs/creator/wearables-and-emotes/manage-collections/creating-a-collection/). To upload your wearable, just drag and drop the file on the _**New Item**_ window or browse your computer. It will automatically detect if the file is an emote or wearable. **Remember that the collection max file size is 3MB**.
 
-![](</docs/.gitbook/assets/01_new_item (2).webp>)
+![](</docs/creator/images/wearables-and-emotes/uploading-emotes/01_new_item.webp>)
 
 When you upload the file, you will be asked to select a body shape, enter a name and define the rarity and the category. You can also add the thumbnail for the wearable.
 
@@ -16,13 +16,13 @@ When you upload the file, you will be asked to select a body shape, enter a name
 
 To ensure that your wearables can be worn by the intended avatars, you need to upload separate GLB files for each body shape. If you have two separate versions of the wearable, one for male and one for female, you can add one of the representations during the upload process and then add the other later using the editor. If your wearable is meant to be unisex, make sure to upload a single GLB file that is designed to fit both male and female versions.
 
-![](/docs/.gitbook/assets/03_body_shape.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-wearables/03_body_shape.webp)
 
 ### **Rarity**
 
 Select the Rarity of your item.
 
-![](/docs/.gitbook/assets/04_rarity.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-wearables/04_rarity.webp)
 
 | Rarity    | Number of Items |
 | --------- | --------------- |
@@ -39,19 +39,19 @@ Select the Rarity of your item.
 
 Wearables are organized into different categories, depending on what part of an avatar they modify. Select the appropriate category for your item.
 
-![](/docs/.gitbook/assets/05_category.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-wearables/05_category.webp)
 
 ### **Custom Thumbnails**
 
 You can add your own custom thumbnail by clicking on the camera icon and browsing your computer. **The thumbnail must be 256px square .png file with transparent background.** Collections containing thumbnails without transparent backgrounds will not be accepted by the Curation Committee.
 
-![](</docs/.gitbook/assets/06_thumbnail (1).webp>)
+![](</docs/creator/images/wearables-and-emotes/uploading-wearables/06_thumbnail.webp>)
 
 
 > [!WARNING]
 > ⚠️ Having a good render of your wearable is crucial in making it more appealing to potential users in the marketplace. **It's important to avoid adding any graphics other than the wearable itself, because this may cause the curation committee to reject it.**
-> 
-> <img src="/docs/.gitbook/assets/07_thumbnail (1).webp" alt="" data-size="original">
+>
+> <img src="/docs/creator/images/wearables-and-emotes/uploading-wearables/07_thumbnail.webp" alt="" data-size="original">
 
 
 ### **Spring Bones**
@@ -62,7 +62,7 @@ If your wearable contains bones with `springbone` in their name, the Builder wil
 
 Below the thumbnail you're going to find the properties of your wearable, number of triangles of your model, number of materials and textures.
 
-![](</docs/.gitbook/assets/08_properties (1).webp>)
+![](</docs/creator/images/wearables-and-emotes/uploading-wearables/08_properties.webp>)
 
 ## **Uploading Mouth, Eyes and Eyebrows**
 
@@ -73,17 +73,17 @@ The mouth, eyes and eyebrows category have a different behaviour in the editor b
 > If you want the asset to be masked, so a part of the mouth or eyebrows is not affected by the tinting, upload a zip file with both the png and the mask files. Remeber that the mask file should have a suffix "\\\_mask" in order to work.
 
 
-![](</docs/.gitbook/assets/02_mouth_wearable (1).webp>)
+![](</docs/creator/images/media/mouth-wearable.webp>)
 
 After that uploading your wearables you will end up with a screen like this, that shows the items in your collection.
 
-![](</docs/.gitbook/assets/11_list_wearables (1).webp>)
+![](</docs/creator/images/wearables-and-emotes/uploading-wearables/11_list_wearables.webp>)
 
 ## **Setting the Price of Your Wearables**
 
 Once you publish your collection and it gets approved, you can then enable the sales on your collection.
 
-![](/docs/.gitbook/assets/25_enable_sales.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-wearables/25_enable_sales.webp)
 
 You can set the price of your wearable by clicking on _**Put up for sale**_. This can all be edited anytime, so don’t worry if you want to change it later on. Prices are set in MANA. Remember that when you mint wearables, they are minted directly on Matic/Polygon. When a user purchases your item, the transaction will be conducted in Matic/Polygon MANA.
 
@@ -91,17 +91,17 @@ You could also _**Make it Free**_, which means that the price will be set as 0 M
 
 Don’t forget to set the beneficiary address, which is the one that will receive the MANA from your sales. You can use any Ethereum address you like. To automatically fill in the address you are logged in with, click _**I’m the Beneficiary.**_
 
-![](</docs/.gitbook/assets/12_set_price (1).webp>)
+![](</docs/creator/images/wearables-and-emotes/uploading-wearables/12_set_price.webp>)
 
 Put the item up for sale and you will be back to the list of wearables in your collection. When you click on the item, you will get its general info. Click on the button _**Preview**_ to see it on the editor.
 
-![](</docs/.gitbook/assets/13_click_item (1).webp>)
+![](</docs/creator/images/wearables-and-emotes/uploading-wearables/13_click_item.webp>)
 
 ## The Editor
 
 Once you click on _**Preview**_, you will have the editor open. You can edit all the info of your wearable, as well as add new ones, such as description, tags and overrides. This also where you add other body shape representation to your wearable.
 
-![](</docs/.gitbook/assets/14_editor (1).webp>)
+![](</docs/creator/images/wearables-and-emotes/uploading-wearables/14_editor.webp>)
 
 ## **Description**
 
@@ -139,45 +139,45 @@ You should disable this option if your wearable:
 
 Most wearables work fine with the default setting (enabled). Only disable this if you notice outline-related visual issues with your wearable. Once you disable the outline, you will need to save the changes by clicking on _**Save**_.
 
-![](/docs/.gitbook/assets/26_outline.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-wearables/26_outline.webp)
 
 ## **Adding Another Representation**
 
 If your wearable has a different representation for male and female you will need to upload another file. So far, you only have one uploaded. In the example, it was the female version of the Krampus Sweater. To add the other representation, click on the three dots (_…_) at the top right, next to _**Properties**_ and select _**Add male/female**_ representation. In the example below, we needed the male version.
 
-![](/docs/.gitbook/assets/15_add_variation.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-wearables/15_add_variation.webp)
 
 Once you click on it, you will get the Add Male/Female representation window, drag and drop the other representation file to upload it. Once uploaded, another window will show up the wearable and if everything is ok, just click on Save.
 
-![](/docs/.gitbook/assets/16_add_male_representation_01.webp) ![](/docs/.gitbook/assets/17_add_male_representation_02.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-wearables/16_add_male_representation_01.webp) ![](/docs/creator/images/wearables-and-emotes/uploading-wearables/17_add_male_representation_02.webp)
 
 ## **Preview**
 
 To preview your wearable, hover your mouse over the wearable icon on the top left and click on the eye symbol.
 
-![](/docs/.gitbook/assets/18_preview_wearables_03.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-wearables/18_preview_wearables_03.webp)
 
 By clicking on the icon at the lower left you will be able to edit the avatar. This is pretty useful if you have a male and female version of your wearable, so make sure to check how both versions look like in editor, testing different emotes to identify if there are any skinning issues and mixing other wearables to see how it matches with different clothes. When you’re done editing your wearable, click on _**Save**_.
 
-![](</docs/.gitbook/assets/19_edit_avatar_wearable_03 (1).webp>)
+![](</docs/creator/images/wearables-and-emotes/uploading-wearables/19_edit_avatar_wearable_03.webp>)
 
 ## **Testing in World**
 
 Even after testing the wearable in the editor, it’s important to check how it’s actually going to look like and behave in Decentraland. To test it in world, go to the Collections tab. Select the desired collection and click the button _**See in World**_.
 
-![](</docs/.gitbook/assets/20_test_in_world_01 (1).webp>)
+![](</docs/creator/images/wearables-and-emotes/uploading-wearables/20_test_in_world_01.webp>)
 
 After clicking the following pop up is going to appear. Selecting _**Empty Parcels**_ will teleport you to a place without too much content, which will load faster. Selecting _**Genesis Plaza**_ will take you to the main plaza.
 
-![](</docs/.gitbook/assets/23_see_in_world (1).webp>)
+![](</docs/creator/images/wearables-and-emotes/uploading-wearables/23_see_in_world.webp>)
 
 Once you select See in world, a new tab will open on your browser, and you will get this message.
 
-![](/docs/.gitbook/assets/27_wearable_preview.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-emotes/13_emote_preview.webp)
 
 Click on _**TRUST PEER-TESTING.DECENTRALAND.ORG**_ and a pop-up will show up. Simply click on Open Decentraland. To test your wearable, go to the backpack and equip it.
 
-![](/docs/.gitbook/assets/28_wearable_world.webp)
+![](/docs/creator/images/wearables-and-emotes/uploading-wearables/28_wearable_world.webp)
 
 ## **Before Publishing**
 

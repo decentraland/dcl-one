@@ -32,7 +32,7 @@ The Catalyst network forms the foundation of Decentraland's content infrastructu
 * Asset Bundle Registry - Triggers asset optimization on deployment
 * Archipelago Workers - Provides island/cluster data
 
-**API Reference**: [Catalyst API](/docs/apis/catalyst/)
+**API Reference**: [Catalyst API](/docs/apis/apis/catalyst/)
 
 ### Lamb2
 
@@ -46,7 +46,7 @@ Lamb2 provides utility endpoints for content consumption and queries that comple
 
 **Architecture Role**: Acts as a convenience layer over the Content Server's raw entity access, providing higher-level query patterns commonly needed by clients.
 
-**API Reference**: [Lamb2 API](/docs/apis/lamb2/)
+**API Reference**: [Lamb2 API](/docs/apis/apis/lamb2/)
 
 ***
 
@@ -70,7 +70,7 @@ The Realm Provider is the entry point for all Decentraland clients. It implement
 * Aggregates Archipelago statistics
 * Provides unified view of distributed network
 
-**API Reference**: [Realm Provider API](/docs/apis/realm-provider/)
+**API Reference**: [Realm Provider API](/docs/apis/apis/realm-provider/)
 
 ### Comms Gatekeeper
 
@@ -90,7 +90,7 @@ The Gatekeeper manages access to LiveKit media servers for voice and video chat:
 * Worlds API - Validates world ownership for admin rights
 * Signed Fetch - Authenticates all requests via wallet signatures
 
-**API Reference**: [Comms Gatekeeper API](/docs/apis/comms-gatekeeper/)
+**API Reference**: [Comms Gatekeeper API](/docs/apis/apis/comms-gatekeeper/)
 
 ### Archipelago Workers
 
@@ -116,7 +116,7 @@ Archipelago implements the proximity-based clustering protocol that groups nearb
 * Realm Provider - Provides island statistics
 * Places API - User count data for hot scenes
 
-**API Reference**: [Archipelago Workers API](/docs/apis/archipelago-workers/)
+**API Reference**: [Archipelago Workers API](/docs/apis/apis/archipelago-workers/)
 
 ***
 
@@ -140,7 +140,7 @@ Worlds enable users to deploy scenes in isolated environments:
 * Integrates with Comms Gatekeeper for voice chat rooms
 * Triggers asset processing pipeline on deployment
 
-**API Reference**: [Worlds API](/docs/apis/worlds/)
+**API Reference**: [Worlds API](/docs/apis/apis/worlds/)
 
 ### Events
 
@@ -155,7 +155,7 @@ Manages the full lifecycle of virtual events:
 
 **Architecture Role**: Provides temporal context to the metaverse. Events drive user discovery and engagement by highlighting time-sensitive experiences.
 
-**API Reference**: [Events API](/docs/apis/events/)
+**API Reference**: [Events API](/docs/apis/apis/events/)
 
 ### Places
 
@@ -175,7 +175,7 @@ Aggregates and curates interesting locations across Decentraland:
 * Archipelago Stats - Real-time user counts per scene
 * Comms Gatekeeper - Realm availability and status
 
-**API Reference**: [Places API](/docs/apis/places/)
+**API Reference**: [Places API](/docs/apis/apis/places/)
 
 ### Atlas Server
 
@@ -190,7 +190,7 @@ Provides comprehensive world map data:
 
 **Architecture Role**: Provides the spatial index for Decentraland's LAND grid. Essential for map UIs and spatial navigation.
 
-**API Reference**: [Atlas Server API](/docs/apis/atlas-server/)
+**API Reference**: [Atlas Server API](/docs/apis/apis/atlas-server/)
 
 ### Camera Reel
 
@@ -204,7 +204,7 @@ Manages user screenshots and images:
 
 **Architecture Role**: Enables content sharing and social features around user-generated photography.
 
-**API Reference**: [Camera Reel API](/docs/apis/camera-reel/)
+**API Reference**: [Camera Reel API](/docs/apis/apis/camera-reel/)
 
 ### Exploration Games
 
@@ -218,7 +218,7 @@ Interactive quest system for new user onboarding:
 
 **Architecture Role**: Reduces friction for new users by providing structured, goal-oriented introduction to Decentraland features.
 
-**API Reference**: [Exploration Games API](/docs/apis/exploration-games/)
+**API Reference**: [Exploration Games API](/docs/apis/apis/exploration-games/)
 
 ***
 
@@ -243,7 +243,7 @@ Implements Decentraland's wallet-first authentication model:
 3. Auth Server verifies signature and issues JWT
 4. Client includes JWT in subsequent API requests
 
-**API Reference**: [Auth Server API](/docs/apis/auth-server/)
+**API Reference**: [Auth Server API](/docs/apis/apis/auth-server/)
 
 ### Social Service
 
@@ -264,7 +264,7 @@ Manages social relationships and communities:
 * NATS - Publishes friend status updates
 * Archipelago - Queries online status and locations
 
-**API Reference**: [Social Service API](/docs/contributor/social-service/overview/)
+**API Reference**: [Social Service API](/docs/apis/apis/social-service/)
 
 ### Marketplace Server
 
@@ -279,7 +279,7 @@ Backend for Decentraland's wearables and emotes marketplace:
 
 **Architecture Role**: Bridges on-chain NFT data with user-friendly marketplace UI. Indexes blockchain events for fast queries.
 
-**API Reference**: [Marketplace Server API](/docs/apis/marketplace-server/)
+**API Reference**: [Marketplace Server API](/docs/apis/apis/marketplace-server/)
 
 ***
 
@@ -295,7 +295,7 @@ Registry of platform-optimized asset bundles:
 * Versioning
 * CDN distribution
 
-**API Reference**: [Asset Bundle Registry API](/docs/apis/asset-bundle-registry/)
+**API Reference**: [Asset Bundle Registry API](/docs/apis/apis/asset-bundle-registry/)
 
 **System Components**:
 
@@ -327,7 +327,7 @@ User-generated content management:
 * Image uploads
 * Gallery organization
 
-**API Reference**: [Camera Reel API](/docs/apis/camera-reel/)
+**API Reference**: [Camera Reel API](/docs/apis/apis/camera-reel/)
 
 ### Credits Server
 
@@ -342,7 +342,7 @@ Manages Decentraland's virtual credit system:
 
 **Architecture Role**: Provides a lower-friction currency alternative to blockchain tokens for in-world purchases and features.
 
-**API Reference**: [Credits Server API](/docs/apis/credits-server/)
+**API Reference**: [Credits Server API](/docs/apis/apis/credits-server/)
 
 ### Badges
 
@@ -360,7 +360,7 @@ Event-driven badge awards:
 
 **Architecture Role**: Gamifies user engagement through achievements. Provides visibility and recognition for user activities.
 
-**API Reference**: [Badges API](/docs/apis/badges/)
+**API Reference**: [Badges API](/docs/apis/apis/badges/)
 
 ### Rewards API
 
@@ -375,7 +375,7 @@ Manages promotional NFT reward campaigns:
 
 **Architecture Role**: Enables marketing campaigns and user acquisition through NFT rewards.
 
-**API Reference**: [Rewards API](/docs/apis/rewards/)
+**API Reference**: [Rewards API](/docs/apis/apis/rewards/)
 
 ### Notifications Workers
 
@@ -394,7 +394,7 @@ Multi-channel notification infrastructure:
 
 **Architecture Role**: Keeps users engaged through timely alerts about friend activity, events, rewards, and system updates.
 
-**API Reference**: [Notifications Workers API](/docs/apis/notifications-workers/)
+**API Reference**: [Notifications Workers API](/docs/apis/apis/notifications-workers/)
 
 ### Events Notifier
 
@@ -413,7 +413,7 @@ Centralized event publishing system that triggers downstream actions:
 * Badges Processor - Grants achievement badges
 * Rewards API - Tracks campaign eligibility
 
-**API Reference**: [Events Notifier API](/docs/apis/events-notifier/)
+**API Reference**: [Events Notifier API](/docs/apis/apis/events-notifier/)
 
 ***
 
@@ -523,4 +523,4 @@ flowchart TB
 ### Development
 
 * [Contributor Guides](/docs/contributor/contributor-guides/contributor-guides/) - Development workflows
-* [Testing Guide](/docs/contributor/contributor-guides/testing-standards/) - Service testing practices
+* [Testing Guide](/docs/contributor/contributor-guides/testing-standards/testing-services-wkc/) - Service testing practices

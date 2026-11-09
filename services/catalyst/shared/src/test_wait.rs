@@ -1,9 +1,9 @@
-//! The one condition wait the node's tests share, for state that cannot signal: a row
+//! Shared condition waits and paused-clock guards. Poll state that cannot signal: a row
 //! another transaction writes, a file a child process leaves, a thread with no channel
 //! back. Anything the code under test can signal is awaited directly instead.
 //!
-//! [`HANG_GUARD`] only turns a hang into a failure; nothing is expected to come close to
-//! it, so a slow or loaded machine waits longer instead of failing.
+//! The condition waits turn hangs into failures at [`HANG_GUARD`]; nothing is
+//! expected to come close to it, so slow machines can wait longer.
 
 use std::time::Duration;
 
@@ -11,6 +11,18 @@ use std::time::Duration;
 pub const HANG_GUARD: Duration = Duration::from_secs(60);
 
 const RECHECK: Duration = Duration::from_millis(10);
+
+/// A live `spawn_blocking` task prevents an already paused clock from auto-advancing.
+/// Dropping the sender or reaching the real-time [`HANG_GUARD`] quietly releases
+/// the hold without failing; callers must assert the operation's outcome.
+#[must_use]
+pub fn hold_paused_clock() -> std::sync::mpsc::Sender<()> {
+    let (guard, finished) = std::sync::mpsc::channel::<()>();
+    drop(tokio::task::spawn_blocking(move || {
+        let _ = finished.recv_timeout(HANG_GUARD);
+    }));
+    guard
+}
 
 /// Re-checks `ready` until it holds; `false` only once [`HANG_GUARD`] has passed. Real
 /// time: a test on a paused clock advances it instead of polling.

@@ -7,6 +7,7 @@ on:
       - 'flake.*'
       - 'rendering/bevy-explorer/upstream.lock.json'
       - 'infra/dev/**'
+      - 'infra/gateway/**'
       - 'tooling/dev*'
       - 'tooling/enet-provenance.py'
       - 'tooling/*.py'
@@ -19,6 +20,14 @@ on:
       - 'schemas/**'
       - 'Makefile'
       - '.github/workflows/development.yml'
+      - '.github/workflows/bevy-explorer-benchmark.yml'
+      - '!**/*.md'
+      - '!docs/**'
+      - '!services/catalyst/docs/**'
+      - '!rendering/bevy-explorer/docs/**'
+      - 'apps/sites/content/**'
+      - 'services/catalyst/**/tests/fixtures/**'
+      - 'library/**/tests/fixtures/**'
   # Every pull request, so "CI gate" always reports and can be a required check; the `changes` plan skips the
   # heavy jobs when nothing under push.paths changed (a skipped job counts as passing for a required check).
   pull_request:
@@ -243,6 +252,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch the pinned docs integration-test diagram
+        run: git lfs pull --include='apps/sites/content/docs/creator/images/wearables-and-emotes/creating-wearables/19_skin_uv.webp' --exclude=''
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:

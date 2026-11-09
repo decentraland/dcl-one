@@ -346,6 +346,27 @@ impl InputManager<'_, '_> {
         })
     }
 
+    /// `is_down` for the action's keys, mouse buttons and pad buttons only: a wheel or stick
+    /// bound to it does not count.
+    pub fn is_button_down<T: Into<Action>>(&self, action: T, priority: InputPriority) -> bool {
+        self.inputs(action.into()).any(|item| match item {
+            InputIdentifier::Key(k) => {
+                self.key_input.pressed(*k) && self.check_priority(item, priority)
+            }
+            InputIdentifier::Mouse(mb) => {
+                self.mouse_input.pressed(*mb) && self.check_priority(item, priority)
+            }
+            InputIdentifier::Gamepad(b) => {
+                self.gamepads
+                    .iter()
+                    .flat_map(|gp| gp.get_pressed())
+                    .any(|p| p == b)
+                    && self.check_priority(item, priority)
+            }
+            InputIdentifier::Analog(..) => false,
+        })
+    }
+
     pub fn get_analog(&self, set: InputDirectionalSet, priority: InputPriority) -> Vec2 {
         let mut amts = set.actions.iter().map(|a| {
             let Some(a) = a else {

@@ -176,6 +176,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       PR_NUMBER: ${{ needs.setup.outputs.pr }}
+      EXPECTED_LABELS: ${{ needs.setup.outputs.expected_labels }}
       QUEUE_TIMEOUT_MINUTES: ${{ vars.BENCHMARK_QUEUE_TIMEOUT_MINUTES || 60 }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
@@ -188,14 +189,30 @@ jobs:
       - name: Wait for every leg to start
         id: queue
         run: |
+          source "$GITHUB_WORKSPACE/.github/actions/bevy-explorer-ci-status/retry.sh"
+          : "${EXPECTED_LABELS:?Expected benchmark legs are required}"
           deadline=$((SECONDS + 60 * QUEUE_TIMEOUT_MINUTES))
           queued=''
-          while sleep 60; do
-            if queued=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
-                --jq '[.jobs[] | select(.status == "queued") | .name] | join(", ")'); then
-              [ -z "$queued" ] && exit 0
+          QUEUE_INITIAL_DELAY_SECONDS=5
+          QUEUE_MAX_DELAY_SECONDS=60
+          attempt=1
+          while :; do
+            if jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100"); then
+              if pending=$(jq -r --arg labels "$EXPECTED_LABELS" '
+                .jobs as $jobs |
+                [$labels | split(",")[] | . as $label |
+                  select(any($jobs[]; .name == ($label + " / Chrome") and
+                    (.status == "in_progress" or .status == "completed")) | not)] |
+                join(", ")' <<< "$jobs"); then
+                queued=$pending
+                [ -z "$queued" ] && exit 0
+              fi
             fi
-            [ "$SECONDS" -ge "$deadline" ] && break
+            remaining=$((deadline - SECONDS))
+            [ "$remaining" -le 0 ] && break
+            delay=$(backoff_delay "$attempt" "$QUEUE_MAX_DELAY_SECONDS" "$QUEUE_INITIAL_DELAY_SECONDS")
+            sleep_for "$delay" "$remaining"
+            attempt=$((attempt + 1))
           done
 
           message="The benchmark [run]($RUN_URL) was cancelled: **${queued:-a leg}** had not started after $QUEUE_TIMEOUT_MINUTES minutes, so the laptop is offline, stuck or busy with another job. When it is free, use *Re-run failed jobs* on the run, which keeps the legs that finished and their results; or raise the BENCHMARK_QUEUE_TIMEOUT_MINUTES variable, or leave the laptop out of the BENCHMARK_ENABLED_RUNNERS variable."

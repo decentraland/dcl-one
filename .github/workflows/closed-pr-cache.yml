@@ -1,6 +1,6 @@
 name: Remove closed PR caches
 on:
-  pull_request_target:
+  pull_request:
     types: [closed]
   schedule:
     - cron: '17 * * * *'
@@ -13,6 +13,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   cleanup:
+    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
@@ -34,11 +35,11 @@ jobs:
           import subprocess
 
           number = os.environ.get('PR_NUMBER', '')
-          event = os.environ.get('GITHUB_EVENT_NAME', 'pull_request_target')
-          targeted = event == 'pull_request_target'
+          event = os.environ.get('GITHUB_EVENT_NAME', 'pull_request')
+          targeted = event == 'pull_request'
           if targeted and not re.fullmatch(r'[1-9][0-9]*', number):
               raise ValueError('Invalid pull request number')
-          if event not in ('pull_request_target', 'schedule', 'workflow_dispatch'):
+          if event not in ('pull_request', 'schedule', 'workflow_dispatch'):
               raise ValueError('Unsupported cleanup event')
           ref = f'refs/pull/{number}/merge' if targeted else None
           repository = os.environ['GITHUB_REPOSITORY']
@@ -52,12 +53,14 @@ jobs:
           pages = json.loads(subprocess.check_output(request, text=True))
           caches = [cache for page in pages for cache in page['actions_caches']
                     if type(cache.get('id')) is int]
-          cache_ids, closed, snapshots = set(), {}, {}
+          cache_ids, closed, snapshots, images = set(), {}, {}, {}
           # The smoke snapshots and every rust-cache key, whose prefix ends with the platform.
           # A flake hash inside a prefix folds away, so a flake update supersedes the entry.
           namespace = re.compile(r'^foundation-dev-v2-smoke-' + re.escape(repository)
                                  + r'-(Linux|macOS)-(X64|ARM64)-'
                                  r'|^v0-rust-.+?-(Linux|Darwin|Windows_NT)-(x64|arm64)-')
+          image_namespace = re.compile(
+              r'images-v2-(main|pr-[1-9][0-9]*)-(catalyst|sites|apis)-(amd64|arm64)-[0-9a-f]{64}')
           for cache in caches:
               cache_ref = cache.get('ref', '')
               if targeted:
@@ -77,17 +80,25 @@ jobs:
                       continue
               elif cache_ref != 'refs/heads/main':
                   continue
+              image = image_namespace.fullmatch(cache.get('key', ''))
+              scope = f'pr-{match[1]}' if match else 'main'
+              if image and image[1] == scope:
+                  images.setdefault((cache_ref, image[2], image[3]), []).append(cache)
               family = namespace.match(cache.get('key', ''))
               if family:
                   prefix = re.sub(r'[0-9a-f]{64}', '*', family.group())
                   snapshots.setdefault((cache_ref, prefix), []).append(cache)
           # Keep the newest entry per prefix, platform and ref. Only first attempts save, and
           # the workflows with a per-ref concurrency group run main in push order; elsewhere
-          # an older run that saves later costs one miss until the next main save. Image and
-          # other caches are outside this namespace and are never pruned.
+          # an older run that saves later costs one miss until the next main save.
           for entries in snapshots.values():
               entries.sort(key=lambda cache: (cache.get('created_at', ''), cache['id']), reverse=True)
               cache_ids.update(cache['id'] for cache in entries[1:])
+          # Preserve two image generations for overlapping builds. Delete only IDs
+          # in this listing; concurrent uploads are handled by a later sweep.
+          for entries in images.values():
+              entries.sort(key=lambda cache: (cache.get('created_at', ''), cache['id']), reverse=True)
+              cache_ids.update(cache['id'] for cache in entries[2:])
           for cache_id in sorted(cache_ids):
               subprocess.run([
                   'gh', 'api', '--method', 'DELETE',

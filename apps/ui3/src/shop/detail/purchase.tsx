@@ -45,11 +45,28 @@ export function cartLauncher(cart: CartStore = shopCart, drawer: CartDrawerStore
 }
 
 const LauncherContext = createContext<PurchaseLauncher>(cartLauncher());
+const InPlaceContext = createContext(true);
 
-export function ShopPurchaseProvider({ launcher, children }: { launcher: PurchaseLauncher; children: ReactNode }) {
-  return <LauncherContext.Provider value={launcher}>{children}</LauncherContext.Provider>;
+/**
+ * A host's own purchase flow. Buy now then goes through `launcher` rather than over the page, unless the host says the
+ * page's dialog is still the way it buys (`buysInPlace`).
+ */
+export function ShopPurchaseProvider({ launcher, buysInPlace = false, children }: { launcher: PurchaseLauncher; buysInPlace?: boolean; children: ReactNode }) {
+  return (
+    <LauncherContext.Provider value={launcher}>
+      <InPlaceContext.Provider value={buysInPlace}>{children}</InPlaceContext.Provider>
+    </LauncherContext.Provider>
+  );
 }
 
 export function usePurchaseLauncher(): PurchaseLauncher {
   return useContext(LauncherContext);
+}
+
+/**
+ * Whether Buy now buys over the page (upstream's BuyModal): the web Shop, unless a host installed a purchase flow of its
+ * own (ShopPurchaseProvider).
+ */
+export function useBuysInPlace(): boolean {
+  return useContext(InPlaceContext);
 }

@@ -71,6 +71,13 @@ describe("the creator storefront", () => {
     expect(await screen.findByTestId("collection-card")).toHaveTextContent("Nacho Collection");
   });
 
+  it("shares no class with a card's creator line, whose inline centring would shrink the page to its content", async () => {
+    mount("/shop/items/creator/:address", `/shop/items/creator/${CREATOR}`, <Creator />);
+    const [line] = await screen.findAllByTestId("creator");
+    const page = screen.getByTestId("creator-page");
+    expect([...page.classList].filter((c) => line!.classList.contains(c))).toEqual([]);
+  });
+
   it("tells a creator with no work from a filter that excludes everything", async () => {
     mount("/shop/items/creator/:address", `/shop/items/creator/${CREATOR}`, <Creator />, "empty");
     expect(await screen.findByTestId("creator-empty")).toHaveTextContent("This creator hasn't published anything yet.");

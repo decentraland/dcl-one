@@ -206,9 +206,6 @@ function ParcelCard({ x, y, chips, label, shopHref }: { x: string; y: string; ch
           <Link to={`/create/scene-analytics?scene=${scene}`} prefetch="intent" className="chm__settingsbtn" style={CARD_ACTION}>
             Analytics
           </Link>
-          <Link to={`/create/scene-errors?type=genesis&scene=${encodeURIComponent(coords)}`} prefetch="intent" className="chm__settingsbtn" style={CARD_ACTION}>
-            Errors
-          </Link>
           {shopHref ? (
             <Link to={shopHref} prefetch="intent" className="chm__settingsbtn" style={CARD_ACTION}>
               Sell or rent

@@ -120,6 +120,8 @@ pub(super) struct TakeoverTicket {
 }
 
 impl TakeoverTicket {
+    /// Only the unit model of the subscriber waits on a successor; the durable path reads the store.
+    #[cfg(test)]
     pub(super) async fn superseded(&self) -> TakeoverTarget {
         loop {
             let changed = self.attempt.changed.notified();

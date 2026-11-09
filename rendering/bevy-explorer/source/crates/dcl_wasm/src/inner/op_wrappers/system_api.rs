@@ -457,6 +457,25 @@ pub async fn op_read_proximity_stream(
 }
 
 #[wasm_bindgen]
+pub async fn op_get_photo_mode_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_photo_mode_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_photo_mode_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    let photo_mode = dcl_js::system_api::op_read_photo_mode_stream(state.rc(), rid).await;
+    photo_mode
+        .map(|v| {
+            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+                .unwrap()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
 pub async fn op_get_profile_changed_stream(state: &WorkerContext) -> u32 {
     dcl_js::system_api::op_get_profile_changed_stream(state.rc()).await
 }

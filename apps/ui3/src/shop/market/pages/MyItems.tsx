@@ -20,7 +20,7 @@ import itemsEmptyIllustration from "../../components/empty-art/items-empty.svg?u
 import salesEmptyIllustration from "../../components/empty-art/sales-empty.svg?url";
 import { shopPath } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
-import { myStoreAccess, useShopCapabilities } from "../../seller/lib/featureFlags";
+import { useMyStoreAccess } from "../../seller/lib/featureFlags";
 import { fetchImportable } from "../../seller/lib/import";
 import { fetchBidsByAddress, fetchMyAssets, type Bid, type MyAsset, type MyAssetsCategory } from "../lib/api";
 import { useArchivedBids } from "../store/archivedBids";
@@ -515,10 +515,9 @@ export function MyItemsView({
 }
 
 export default function MyItems() {
-  const { account } = useShopWallet();
-  const caps = useShopCapabilities();
+  const { account, resolving } = useShopWallet();
   const [params, setParams] = useSearchParams();
-  const storeOn = myStoreAccess(caps, account) === "on";
+  const storeOn = useMyStoreAccess(account, resolving) === "on";
   const section = params.get("section") === "creations" && !storeOn ? "creations" : sectionOf(params.get("section"));
   const onSection = (next: MyItemsSection | "creations") =>
     setParams(

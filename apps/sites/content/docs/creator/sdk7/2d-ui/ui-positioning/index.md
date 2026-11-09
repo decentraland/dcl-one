@@ -64,13 +64,13 @@ Note that these properties affect the **default** size of that item, the size of
 
 > [!WARNING]
 > **📔 Note**: In properties that support both numbers and strings, to set the value in pixels, write a number. To set these fields as a percentage of the parent's measurements, write the value as a string that ends in "%", for example `10 %`. You can also set a pixel value as a string by ending the string in `px`, for example `200px`.
-> 
+>
 > * When values are expressed as a percentage, they're always in relation to the parent's container. The top-level entity of your UI has a parent too: the renderer places it inside the area selected by [`screenInset`](/docs/creator/sdk7/2d-ui/onscreen-ui/#screen-inset-area), which by default is the device safe area. So a root-level `100%` is 100% of that area — on a phone that's narrower than the screen, on desktop the two coincide. Pass `screenInset: 'none'` if you need percentages measured against the full screen.
 > * If values are expressed in pixels, they are not affected by the parent's scale, but they are **not** raw screen pixels either: they are multiplied by the UI scale factor derived from the [virtual screen](/docs/creator/sdk7/2d-ui/onscreen-ui/#screen-virtual-scale), which is active by default. A `width: 200` means "200 px on a screen the size of the virtual screen", and grows or shrinks proportionally on any other.
 > * If values are expressed in `vh` or `vw`, they are a percentage of the full window, not affected by the parent's scale, by the virtual screen, or by `screenInset`.
-> 
+>
 > For the `auto` width/height to work, the following rules apply:
-> 
+>
 > * The UiTransform that uses width/height as “auto” should have `alignSelf`: `“center”`/`“flex-start”`/`“flex-end”` OR `positionType: “absolute”`
 > * If the UiTransform of a child use `positionType: “absolute”`, the parent won’t adapt to its size/position
 > * If the UiTransform of a child uses any position overwrite, the parent won’t adapt to its size/position
@@ -192,7 +192,7 @@ export const uiMenu = () => (
 
 > [!WARNING]
 > **📔 Note** : The `zIndex` property will only order elements relative to direct siblings, it cannot be used to render an entity on top of other parts of the layout tree. In html/CSS terms, every DCL UI element creates a new [stacking context](https://web.dev/learn/css/z-index#stacking_context). To order independent UI modules added with `addUiRenderer()` against each other, use the `zIndex` of the [renderer options](/docs/creator/sdk7/2d-ui/onscreen-ui/#stacking-order-between-ui-modules) instead.
-> 
+>
 > The default Decentraland UI, including the map, chat, etc is always rendered on top of all other UI elements.
 
 

@@ -1074,14 +1074,13 @@ pub(crate) async fn readmit_world_rooms_in_inventory(
                     }
                 }
             };
-            if remove {
-                if let Err(error) = client
+            if remove
+                && let Err(error) = client
                     .remove_participant(&room, &participant.identity)
                     .await
-                {
-                    complete = false;
-                    tracing::warn!(%error, %room, %address, "failed to evict a revoked participant");
-                }
+            {
+                complete = false;
+                tracing::warn!(%error, %room, %address, "failed to evict a revoked participant");
             }
         }
     }

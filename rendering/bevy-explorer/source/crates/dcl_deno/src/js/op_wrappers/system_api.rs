@@ -12,8 +12,9 @@ use system_bridge::{
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
     DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
     FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo,
-    PermanentPermissionItem, PermissionRequestEvent, ProfileChangedEvent, ProximityEvent,
-    SatelliteView, SceneLoadingUi, SetAvatarData, VoiceMessage, WelcomeState, WorldAccessEvent,
+    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, ProfileChangedEvent,
+    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, VoiceMessage, WelcomeState,
+    WorldAccessEvent,
 };
 
 // list of op declarations
@@ -77,6 +78,8 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_read_hover_stream(),
             op_get_proximity_stream(),
             op_read_proximity_stream(),
+            op_get_photo_mode_stream(),
+            op_read_photo_mode_stream(),
             op_get_world_access_stream(),
             op_read_world_access_stream(),
             op_set_world_password(),
@@ -537,6 +540,20 @@ pub async fn op_read_proximity_stream(
     rid: u32,
 ) -> Result<Option<ProximityEvent>, deno_core::anyhow::Error> {
     dcl_js::system_api::op_read_proximity_stream(state, rid).await
+}
+
+#[op2(async)]
+pub async fn op_get_photo_mode_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_photo_mode_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_photo_mode_stream(
+    state: Rc<RefCell<OpState>>,
+    rid: u32,
+) -> Result<Option<PhotoModeState>, deno_core::anyhow::Error> {
+    dcl_js::system_api::op_read_photo_mode_stream(state, rid).await
 }
 
 #[op2(async)]

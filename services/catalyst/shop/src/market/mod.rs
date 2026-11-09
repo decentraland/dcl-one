@@ -89,6 +89,7 @@ pub mod rentals;
 pub mod royalty_notices;
 pub mod sale_notices;
 pub mod sales;
+pub mod sales_index;
 pub mod search;
 pub mod shop;
 pub mod signed;
@@ -749,11 +750,13 @@ pub(crate) async fn ensure_chain(
     Ok(())
 }
 
-/// Attaches `nft-index` and `trade-events-index` when their switches are on:
-/// one periodic job each, a pass walking both networks in turn (the budget is
-/// per network), the nft walk of a network waiting for the collections
-/// mirror's first complete pass (its address set).
+/// Attaches `nft-index`, `trade-events-index` and `mana-transfers-index`
+/// when their switches are on: one periodic job each, a pass walking both
+/// networks in turn (the budget is per network), the nft walk of a network
+/// waiting for the collections mirror's first complete pass (its address
+/// set); then `sales-index` (`sales_index::spawn_job`, Polygon only).
 fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
+    sales_index::spawn_job(state, jobs);
     let settings = state.settings.market.indexes.clone();
     for (enabled, name) in [
         (
@@ -936,6 +939,7 @@ async fn get_index_status(
         "nft": nft_index::status(&state.pool).await,
         "tradeEvents": trade_events::status(&state.pool).await,
         "manaTransfers": mana_transfers::status(&state.pool).await,
+        "sales": sales_index::status(&state.pool).await,
         "neighbours": neighbours::status(&state.pool).await,
     }))
 }

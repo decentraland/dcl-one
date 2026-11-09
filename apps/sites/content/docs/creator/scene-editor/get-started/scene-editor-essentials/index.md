@@ -4,7 +4,7 @@
 
 The Scene Editor's UI is divided into a few different sections, with different purposes.
 
-![](/docs/creator/images/editor/editor-layout.webp)
+![](/docs/creator/images/editor/editor-layout.webp)
 
 - **Canvas**: Manipulate items directly and see what your scene looks like.
 - **Entity tree**: Contains a list of all items in the scene and their hierarchy.
@@ -24,7 +24,7 @@ To find your way around the Scene Editor:
 
 ## Preview on mobile
 
-The dropdown next to the **Preview** button has a **Show QR Code for Mobile** option. Scan the QR code with a phone on the same Wi-Fi network to open your scene in the [Decentraland mobile app](/docs/creator/build-for-mobile/mobile-client/overview/). This is the recommended way to validate UI, controls, and performance for mobile players. See [Preview on mobile](/docs/creator/build-for-mobile/develop/preview-on-mobile/) for the full guide.
+The **Play Options** menu next to the **Play** button has a **Show QR Code for Mobile** option. Scan the QR code with a phone on the same Wi-Fi network to open your scene in the [Decentraland mobile app](/docs/creator/build-for-mobile/mobile-client/overview/). This is the recommended way to validate UI, controls, and performance for mobile players. See [Preview on mobile](/docs/creator/build-for-mobile/develop/preview-on-mobile/) for the full guide.
 
 ## Set the Ground
 
@@ -32,11 +32,11 @@ The scene's ground can use various different textures. You can find these in the
 
 Items of type **Ground** have a paint bucket icon on them. If you drag one of these into your scene, it covers all of your scene's ground with copies of this item.
 
-![](/docs/creator/images/editor/ground.webp)
+![](/docs/creator/images/editor/ground.webp)
 
 You can also add a single copy of the item by holding **Shift** while you drag the ground onto the scene.
 
-![](/docs/creator/images/editor/ground-entities.webp)
+![](/docs/creator/images/editor/ground-entities.webp)
 
 The collection of ground items appear in the [entity tree](/docs/creator/scene-editor/get-started/scene-editor-essentials/#the-entity-tree) inside a folder. Each one of them is locked, to prevent accidentally selecting. [Untoggle](/docs/creator/scene-editor/get-started/scene-editor-essentials/#lock-or-hide-items) the items to move or edit them.
 
@@ -44,13 +44,13 @@ The collection of ground items appear in the [entity tree](/docs/creator/scene-e
 
 Navigate the themed asset pack categories on the menu on the bottom to find different items that you can place on your scene.
 
-![](/docs/creator/images/editor/asset-packs.webp)
+![](/docs/creator/images/editor/asset-packs.webp)
 
 You can also use the search box. Note that when you're inside an asset pack, the search only looks in that asset pack.
 
 To place an item, click and drag it in from the asset pack menu into a location on your scene in the canvas.
 
-![](/docs/creator/images/editor/drop-item.webp)
+![](/docs/creator/images/editor/drop-item.webp)
 
 
 > [!NOTE]
@@ -66,7 +66,7 @@ See [Import items](/docs/creator/scene-editor/build/import-items/) for adding yo
 
 > [!WARNING]
 > **📔 Note**: Once you dragged a 3D model into your scene, it's downloaded into your project folder and remains there even if you delete it. These unused models can increase the size of your scene.
-> 
+>
 > Open the **Local Assets** tab to delete any unused models.
 
 
@@ -83,13 +83,13 @@ Click with the **Left Mouse Button** and drag a selected item to move it freely 
 
 You can also use the tools on the top menu:
 
-![](/docs/creator/images/editor/gizmos.webp)
+![](/docs/creator/images/editor/gizmos.webp)
 
 - **Move tool**: Click and drag each arrow to move the item in a single axis at a time. With this tool you can also position things above the ground level.
 - **Rotate tool**: Click and drag each of the hoops around the item to rotate the item on one axis at a time.
 - **Scale tool**: Click on the center of the gizmo and drag in or out to enlarge. This tool also lets you stretch an item in a single axis to change its proportions, to do this click on one of the axis of the gizmo and drag.
 
-![](/docs/creator/images/editor/move-items.webp)
+![](/docs/creator/images/editor/move-items.webp)
 
 To have greater precision while moving, rotating or scaling an item, press and hold the _Shift_ key while making adjustments. This will avoid snapping to the grid.
 
@@ -136,7 +136,7 @@ A few things worth knowing:
 
 Smart items are special items that come with built-in interactive behaviors. See [Smart items](/docs/creator/scene-editor/interactivity/smart-items/) for more details.
 
-![](/docs/creator/images/editor/smart-items.webp)
+![](/docs/creator/images/editor/smart-items.webp)
 
 ## The entity tree
 
@@ -163,7 +163,7 @@ Press **Escape** or click the clear icon to remove the filter and return to the 
 
 Entities follow a hierarchy that can have as many levels as you want. Establish a parent-child relationship between two entities by dragging one item onto another on the tree. A child entity inherits the position of the parent, so when the parent moves, it carries any children with it. This can be practical while building a scene, for example you can set glasses and plates as children of a table, and then move the table without needing to readjust anything else. It can also be important when interacting with the scene, for items to move together.
 
-![](/docs/creator/images/editor/item-hierarchy.webp)
+![](/docs/creator/images/editor/item-hierarchy.webp)
 
 You can also minimize or expand the children of an entity to keep the view simple, this action has no effect on the scene.
 
@@ -181,13 +181,13 @@ You might find it handy to sometimes lock an item, to prevent accidentally selec
 
 You might also want to hide an item that could obstruct your view while placing others. This is especially useful to hide the roof or a building, while working on the interiors. Hidden items are only hidden in the Scene Editor's canvas window, not to players entering the scene. To hide an item, look for it on the entity tree on the left, hover over it, and select the eye icon. You can toggle this behavior on and off via that same icon.
 
-![](/docs/creator/images/editor/hide-lock-item.webp)
+![](/docs/creator/images/editor/hide-lock-item.webp)
 
 ## Properties panel
 
 Select an item by clicking on it on the canvas or the entity tree. You'll then see its components displayed on the properties panel, on the right of the screen. Different items have different components that each display specific settings.
 
-![](/docs/creator/images/editor/components-in-editor.webp)
+![](/docs/creator/images/editor/components-in-editor.webp)
 
 Most non-interactive items have the following components:
 
@@ -204,11 +204,11 @@ Decentraland scenes need to follow certain limitations, to be able to run them o
 
 If the content in your scene exceeds any of these limits, the Scene Editor will notify this on the bottom-left corner.
 
-![](/docs/creator/images/editor/triangle-limit1.webp)
+![](/docs/creator/images/editor/triangle-limit1.webp)
 
 You can expand this menu to view details.
 
-![](/docs/creator/images/editor/triangle-limit2.webp)
+![](/docs/creator/images/editor/triangle-limit2.webp)
 
 
 > [!NOTE]
@@ -217,7 +217,7 @@ You can expand this menu to view details.
 
 The content in a Decentraland scene must also avoid spilling onto neighbor parcels. If any part of the models in your scene extend beyond the limits, when you open the scene preview you will see these parts cut off. The Scene Editor will mark the entire model in red, but you should only really worry about the parts of the model that extend beyond the scene limits.
 
-![](/docs/creator/images/editor/out-of-bounds.webp)
+![](/docs/creator/images/editor/out-of-bounds.webp)
 
 
 > [!NOTE]
@@ -249,7 +249,7 @@ Deleting an item from the scene does not remove its files. Imported models, text
 
 Click the **Pencil icon** on the top-right of the screen. This opens a series of scene-level properties to edit.
 
-![](/docs/creator/images/editor/pencil-icon.webp)
+![](/docs/creator/images/editor/pencil-icon.webp)
 
 Here you can configure multiple properties including title and thumbnail, scene size, scene category and age rating, player spawn locations, and feature toggles.
 

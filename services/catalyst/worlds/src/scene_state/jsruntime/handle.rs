@@ -119,6 +119,7 @@ impl JsRuntimeHandle {
         }
         drop(guard);
         let deadline = std::time::Instant::now() + self.shutdown_join;
+        let mut delay = std::time::Duration::from_millis(1);
         loop {
             {
                 let guard = self.join.lock();
@@ -142,7 +143,12 @@ impl JsRuntimeHandle {
                 );
                 return;
             }
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            std::thread::sleep(
+                delay.min(deadline.saturating_duration_since(std::time::Instant::now())),
+            );
+            delay = delay
+                .saturating_mul(2)
+                .min(std::time::Duration::from_millis(50));
         }
     }
 }

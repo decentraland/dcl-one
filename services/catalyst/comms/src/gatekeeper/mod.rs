@@ -737,9 +737,8 @@ impl CommsState {
     }
 
     /// The existing island subscriber authority, without extending its process lifetime.
-    pub(crate) fn island_subscriber(
-        &self,
-    ) -> Weak<admission::cluster::subscriber::ClusterSubscriber> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn island_subscriber(&self) -> Weak<admission::cluster::subscriber::ClusterSubscriber> {
         self.island_feed.lock().unwrap().clone()
     }
 

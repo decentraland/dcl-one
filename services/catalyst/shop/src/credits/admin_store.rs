@@ -78,6 +78,14 @@ pub struct LedgerEntryRow {
     pub created_at: chrono::NaiveDateTime,
 }
 
+pub struct WalletFlagRow {
+    pub address: String,
+    pub source: String,
+    pub ip: Option<String>,
+    pub linked_addresses: Vec<String>,
+    pub flagged_at: chrono::NaiveDateTime,
+}
+
 #[derive(Debug, Clone)]
 pub struct UsageGrantRow {
     pub grantee_address: String,
@@ -437,6 +445,9 @@ impl Credits {
         })
     }
 
+    /// `user.block` and `user.unblock`. An unblock also deletes the wallet's
+    /// multi-accounting flag (`credits.wallet_flags`, in the same
+    /// transaction), so the claim opens again.
     pub async fn admin_set_blocked(
         &self,
         address: &str,
@@ -456,6 +467,12 @@ impl Credits {
         .bind(blocked)
         .execute(&mut *tx)
         .await?;
+        if !blocked {
+            sqlx::query("DELETE FROM credits.wallet_flags WHERE address = $1")
+                .bind(address)
+                .execute(&mut *tx)
+                .await?;
+        }
 
         let action = if blocked {
             "user.block"
@@ -475,6 +492,103 @@ impl Credits {
         .await?;
         tx.commit().await?;
         Ok(blocked)
+    }
+
+    /// `user.flag`: one `credits.wallet_flags` row per address, the body's
+    /// addresses as every row's linked set; a wallet already flagged keeps
+    /// its first flag's time and takes the new source, IP and links. One
+    /// audit row per wallet, in the flag's transaction.
+    pub async fn admin_flag_wallets(
+        &self,
+        addresses: &[String],
+        source: &str,
+        ip: Option<&str>,
+        actor: &str,
+        detail: &JsonValue,
+    ) -> Result<(), ApiError> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "INSERT INTO credits.wallet_flags (address, source, ip, linked_addresses) \
+             SELECT unnest($1::text[]), $2, $3, $1 \
+             ON CONFLICT (address) DO UPDATE \
+                 SET source = EXCLUDED.source, ip = EXCLUDED.ip, \
+                     linked_addresses = EXCLUDED.linked_addresses",
+        )
+        .bind(addresses)
+        .bind(source)
+        .bind(ip)
+        .execute(&mut *tx)
+        .await?;
+        for address in addresses {
+            Self::audit(
+                &mut *tx,
+                AuditEntry {
+                    action: "user.flag",
+                    actor,
+                    target: Some(address),
+                    detail,
+                },
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// `user.unflag`: deletes the wallet's flag; `false` when it had none.
+    pub async fn admin_unflag_wallet(
+        &self,
+        address: &str,
+        actor: &str,
+        detail: &JsonValue,
+    ) -> Result<bool, ApiError> {
+        let mut tx = self.pool.begin().await?;
+        let deleted = sqlx::query("DELETE FROM credits.wallet_flags WHERE address = $1")
+            .bind(address)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+            > 0;
+        Self::audit(
+            &mut *tx,
+            AuditEntry {
+                action: "user.unflag",
+                actor,
+                target: Some(address),
+                detail,
+            },
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(deleted)
+    }
+
+    pub async fn admin_list_flags(
+        &self,
+        address: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<WalletFlagRow>, ApiError> {
+        let rows = sqlx::query(
+            "SELECT address, source, ip, linked_addresses, flagged_at FROM credits.wallet_flags \
+             WHERE $1::text IS NULL OR address = $1 \
+             ORDER BY flagged_at DESC, address LIMIT $2 OFFSET $3",
+        )
+        .bind(address)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| WalletFlagRow {
+                address: r.get("address"),
+                source: r.get("source"),
+                ip: r.get("ip"),
+                linked_addresses: r.get("linked_addresses"),
+                flagged_at: r.get("flagged_at"),
+            })
+            .collect())
     }
 
     pub async fn admin_list_packs(&self) -> Result<Vec<PackAdminRow>, ApiError> {

@@ -118,10 +118,29 @@ fn capped(key: &str, values: Vec<String>) -> Result<Vec<String>, ApiError> {
     Ok(values)
 }
 
-/// `logic/places/component.ts:60-63`: the active rows busiest first, the
-/// stored order on ties, then the requested page; `total` is the size of the set.
-fn busiest_first(mut rows: Vec<PlaceRow>, (offset, limit): (usize, usize)) -> (Vec<PlaceRow>, i64) {
-    rows.sort_by_key(|row| std::cmp::Reverse(row.user_count.unwrap_or(0)));
+/// `getPlaceMostActiveList.ts:83-99`: the rows by headcount, busiest first
+/// (`order=asc`: emptiest first), the stored order on ties, then the requested
+/// page; `total` is the size of the set. An offset past the places with
+/// players answers nothing, total 0 (`:51-56`): `hot` is the hot-scenes
+/// length, the positions with players in the presence snapshot whatever the
+/// filters kept; without a snapshot the rows of the set with a mirrored
+/// headcount.
+fn busiest_first(
+    mut rows: Vec<PlaceRow>,
+    (offset, limit): (usize, usize),
+    desc: bool,
+    hot: Option<usize>,
+) -> (Vec<PlaceRow>, i64) {
+    let count = |row: &PlaceRow| row.user_count.unwrap_or(0);
+    let hot = hot.unwrap_or_else(|| rows.iter().filter(|row| count(row) > 0).count());
+    if offset > hot {
+        return (vec![], 0);
+    }
+    if desc {
+        rows.sort_by_key(|row| std::cmp::Reverse(count(row)));
+    } else {
+        rows.sort_by_key(count);
+    }
     let total = rows.len() as i64;
     (rows.into_iter().skip(offset).take(limit).collect(), total)
 }
@@ -194,9 +213,12 @@ pub async fn get_place(
 }
 
 /// `GET /api/places` as the discovery server serves it
-/// (`logic/places/component.ts:43-73`). `most_active` reads the 100 places
-/// with players, best liked first, sorts them by headcount in memory and
-/// pages that set; `total` is the size of the set.
+/// (`logic/places/component.ts:43-73`); `most_active` as the places service
+/// does (`getPlaceMostActiveList.ts:75-99`, `Place/model.ts:630`): 100 rows,
+/// the places with players first and the rest in like-score order, sorted by
+/// headcount in memory in the requested direction and paged; `total` is the
+/// size of that set, 0 with nothing once the offset passes the places with
+/// players (`:51-56`).
 pub async fn get_place_list(
     State(state): State<SharedState>,
     method: Method,
@@ -229,16 +251,17 @@ pub async fn get_place_list(
     let counts = state.live.live_user_counts().await;
     let most_active = matches!(filters.order_by, PlaceOrderBy::MostActive);
     let page = (filters.offset as usize, filters.limit as usize);
+    let mut hot = None;
     if most_active {
         filters.active = if counts.snapshot {
-            ActiveRows::Live(
-                counts
-                    .places
-                    .iter()
-                    .filter(|(_, n)| *n > 0)
-                    .map(|(position, _)| position.clone())
-                    .collect(),
-            )
+            let positions: Vec<String> = counts
+                .places
+                .iter()
+                .filter(|(_, n)| *n > 0)
+                .map(|(position, _)| position.clone())
+                .collect();
+            hot = Some(positions.len());
+            ActiveRows::Live(positions)
         } else {
             ActiveRows::Mirrored
         };
@@ -249,7 +272,7 @@ pub async fn get_place_list(
     let (mut data, mut total) = state.places.list_page(&filters).await?;
     live::fill_user_counts(&mut data, &counts);
     if most_active {
-        (data, total) = busiest_first(data, page);
+        (data, total) = busiest_first(data, page, filters.order_desc, hot);
     }
     let realms =
         (get("with_realms_detail") == Some("true")).then_some(state.settings.realm_name.as_str());
@@ -1868,12 +1891,36 @@ mod tests {
             user_count: Some(users),
             ..Default::default()
         };
-        let set = || vec![row(9.0, 1), row(1.0, 1), row(5.0, 3)];
-        let (rows, total) = busiest_first(set(), (0, 10));
-        let likes: Vec<_> = rows.iter().map(|r| r.like_score).collect();
-        assert_eq!((likes, total), (vec![Some(5.0), Some(9.0), Some(1.0)], 3));
-        let (page, total) = busiest_first(set(), (1, 1));
-        assert_eq!((page[0].like_score, page.len(), total), (Some(9.0), 1, 3));
+        let set = || vec![row(9.0, 1), row(1.0, 1), row(5.0, 3), row(2.0, 0)];
+        let likes = |rows: &[PlaceRow]| rows.iter().map(|r| r.like_score).collect::<Vec<_>>();
+        let (rows, total) = busiest_first(set(), (0, 10), true, Some(3));
+        assert_eq!(
+            (likes(&rows), total),
+            (vec![Some(5.0), Some(9.0), Some(1.0), Some(2.0)], 4)
+        );
+        let (page, total) = busiest_first(set(), (1, 1), true, Some(3));
+        assert_eq!((page[0].like_score, page.len(), total), (Some(9.0), 1, 4));
+        // `getPlaceMostActiveList.ts:51-56`: three places have players, so
+        // offset 3 still pages the set and offset 4 answers nothing.
+        let (page, total) = busiest_first(set(), (3, 1), true, Some(3));
+        assert_eq!((page[0].like_score, total), (Some(2.0), 4));
+        let (page, total) = busiest_first(set(), (4, 1), true, Some(3));
+        assert_eq!((page.len(), total), (0, 0));
+        // `order=asc`: the emptiest first, the stored order still breaking ties.
+        let (rows, total) = busiest_first(set(), (0, 10), false, Some(3));
+        assert_eq!(
+            (likes(&rows), total),
+            (vec![Some(2.0), Some(9.0), Some(1.0), Some(5.0)], 4)
+        );
+        // A search kept one of the three places with players: page 2 of the
+        // filtered set still pages it, as `offset` is held to `hotScenes.length`.
+        let filtered = || vec![row(5.0, 3), row(2.0, 0), row(1.0, 0)];
+        let (page, total) = busiest_first(filtered(), (2, 1), true, Some(3));
+        assert_eq!((page[0].like_score, page.len(), total), (Some(1.0), 1, 3));
+        // Without a presence snapshot the mirrored headcounts of the set are
+        // the only hot list there is.
+        let (page, total) = busiest_first(filtered(), (2, 1), true, None);
+        assert_eq!((page.len(), total), (0, 0));
     }
 
     #[test]

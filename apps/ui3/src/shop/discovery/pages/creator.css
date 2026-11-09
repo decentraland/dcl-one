@@ -1,13 +1,15 @@
 /* from: shop@2d3bf62:app/src/styles/index.css (.page), app/src/styles/collectionPage.styles.ts (Page, Crumbs),
-   app/src/styles/crumbs.styles.ts (crumbGutter), app/src/styles/browseLayout.styles.ts (Root, Sidebar) */
-.shop-page.shop-creator {
+   app/src/styles/crumbs.styles.ts (crumbGutter), app/src/styles/browseLayout.styles.ts (Root, Sidebar).
+   The page's root is .shop-creatorpage: .shop-creator is an asset card's creator line (assetcard.css), whose
+   inline-flex centring would otherwise shrink the hero and the grid to their content. */
+.shop-page.shop-creatorpage {
   padding: 28px var(--ui-page-pad, 54px) 80px;
   max-width: 1760px;
   gap: 0;
   overflow-x: clip;
 }
 
-.shop-creator > .shop-crumbs {
+.shop-creatorpage > .shop-crumbs {
   box-sizing: border-box;
   width: 100vw;
   margin-left: calc(-50vw + 50%);
@@ -15,32 +17,32 @@
   margin-bottom: 18px;
 }
 
-.shop-creator .shop-browse {
+.shop-creatorpage .shop-browse {
   grid-template-columns: 265px minmax(0, 1fr);
 }
-.shop-creator .shop-browse__main {
+.shop-creatorpage .shop-browse__main {
   gap: 0;
 }
-.shop-creator .shop-browse__main > .shop-grid + *,
-.shop-creator .shop-browse__main > section > .shop-grid + * {
+.shop-creatorpage .shop-browse__main > .shop-grid + *,
+.shop-creatorpage .shop-browse__main > section > .shop-grid + * {
   margin-top: 16px;
 }
-.shop-creator .shop-browse__main > .shop-page__error,
-.shop-creator .shop-browse__main > section > .shop-page__error {
+.shop-creatorpage .shop-browse__main > .shop-page__error,
+.shop-creatorpage .shop-browse__main > section > .shop-page__error {
   margin-bottom: 16px;
 }
 
 @media (max-width: 900px) {
-  .shop-creator .shop-browse {
+  .shop-creatorpage .shop-browse {
     grid-template-columns: minmax(0, 1fr);
     row-gap: 0;
   }
 }
 @media (max-width: 768px) {
-  .shop-page.shop-creator {
+  .shop-page.shop-creatorpage {
     padding: 16px 16px 56px;
   }
-  .shop-creator > .shop-crumbs {
+  .shop-creatorpage > .shop-crumbs {
     padding: 0 16px;
   }
 }

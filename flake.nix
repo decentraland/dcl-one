@@ -2,7 +2,7 @@
   description = "Foundation development environment and production images";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/7a6522c868711d06e3a520bbcdfafe9806f4337f";
+    nixpkgs.url = "github:NixOS/nixpkgs/f9a75f41be3a74eab55d3a7679d34ad6cc0da977";
     rust-overlay = {
       url = "github:oxalica/rust-overlay/42076d1c6a0fb405ed04f9a674e4a8f69de62ba3";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -23,7 +23,10 @@
           inherit pkgs;
           craneLib = (crane.mkLib pkgs).overrideToolchain rust;
           revision = self.rev or self.dirtyRev or "unversioned";
-        });
+        }) // {
+          # The tool environments alone: the macOS CI legs take ffmpeg from here.
+          aarch64-darwin = import ./infra/packages/tools.nix { pkgs = import nixpkgs { system = "aarch64-darwin"; }; };
+        };
 
       checks.x86_64-linux.dev-service = import ./infra/dev/service-test {
         pkgs = import nixpkgs { system = "x86_64-linux"; };

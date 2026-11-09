@@ -22,7 +22,7 @@ import { useStore, useStoreStats, type StorePeriod } from "../hooks";
 import { ShopSignInPanel } from "./SellerSignIn";
 import StoreDashboard from "./StoreDashboard";
 import type { PublishableItem } from "../lib/builder";
-import { myStoreAccess, useShopCapabilities } from "../lib/featureFlags";
+import { useMyStoreAccess, useShopCapabilities } from "../lib/featureFlags";
 import { fetchSalesPage } from "../lib/sales";
 import type { Delta } from "../lib/storeMetrics";
 import type { StoreCollection, StoreItem, StoreStats } from "../lib/storeStats";
@@ -346,9 +346,9 @@ function OrderFromLink({ address }: { address: string }) {
 }
 
 export default function MyStore() {
-  const { account } = useShopWallet();
-  const caps = useShopCapabilities();
-  if (myStoreAccess(caps, account) === "off") return <Navigate to={shopPath("overview")} replace />;
+  const { account, resolving } = useShopWallet();
+  // As upstream's MyStore: only an answer of "off" sends the visitor away; while it is pending the page renders.
+  if (useMyStoreAccess(account, resolving) === "off") return <Navigate to={shopPath("overview")} replace />;
   if (!account) return <ShopSignInPanel page="My Store" title="Sign in to view your store" body="See how your collections are selling, what needs attention, and the discounts you have running." />;
   return (
     <EnsureQueryClient>

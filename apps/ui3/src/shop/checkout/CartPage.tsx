@@ -2,7 +2,7 @@
 //       "Cart: N Items" + Fitting Room, the Purchase Summary card, the "Goes with your cart" / "You might also
 //       like" rails); supersedes v2 ui3/src/marketplace/pages/MkCheckout.tsx and the cart/checkout pages of
 //       sites (marketplace.cart.tsx, marketplace.checkout.tsx)
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 
 import Button from "../../atoms/Button";
@@ -14,14 +14,15 @@ import type { CatalogItem } from "../discovery/lib/catalogItem";
 import { suggestedHiddenReason } from "../discovery/lib/suggestionEvents";
 import { useShopQuery } from "../discovery/query";
 import FittingRoom from "../detail/components/FittingRoom";
-import TopUpPanel from "../credits/components/TopUpPanel";
+import { clearTopUpHandoffs } from "../credits/returns";
 import { saveReceipt, type SuccessNavState } from "../history/receipt";
-import type { ManaWei } from "../model/money";
+import { creditsCeil, creditsFloor, type ManaWei } from "../model/money";
 import { manaChainOf } from "../payment/rule";
 import { SHOP_BASE } from "../routes";
 import type { GuidanceRevalidation } from "../wallet/ManaGuidance";
 import { settlementChainId } from "./chain/config";
 import AuthorizeStep from "./components/AuthorizeStep";
+import CartCheckoutModal, { type CartCheckoutPhase, type CheckoutLine } from "./components/CartCheckoutModal";
 import CartLineRow from "./components/CartLineRow";
 import CartSummary from "./components/CartSummary";
 import CheckoutGroups from "./components/CheckoutGroups";
@@ -148,6 +149,16 @@ function CartScreen() {
   });
 
   const executorTopUp = Object.values(co.results).some((r) => r.status === "failed" && !!r.topUp);
+  // A purchase that stopped on a failure (not a short balance, which opens the packs): upstream's failure panel, once.
+  const [failure, setFailure] = useState<{ message: string | null } | null>(null);
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (wasRunning.current && !co.running) {
+      const failed = Object.values(co.results).find((r) => r.status === "failed" && !r.topUp);
+      if (failed?.status === "failed") setFailure({ message: failed.failure.message });
+    }
+    wasRunning.current = co.running;
+  }, [co.running, co.results]);
   const host = co.wallet.host;
   const guidanceProps = useMemo(
     () => ({
@@ -232,6 +243,25 @@ function CartScreen() {
   // A balance that could not be read prices no credits rail; the fallback would only guess, so it waits.
   const balanceUnknown = !signedOut && co.balanceError;
   const shownBlockers = co.blockers.filter((b) => b !== CREDITS_SHORT);
+
+  // The cart's checkout dialog (upstream's CartCheckoutModal): the progress while the purchase runs (its approval draws
+  // its own step), the failure once it stops, the packs when the Credits fall short.
+  const sent = !!co.checkout?.groups.some((g) => g.status === "submitted" || g.status === "pending");
+  const dialogPhase: CartCheckoutPhase | null =
+    co.running && !co.approval
+      ? { kind: "processing", stage: sent ? "completing" : "preparing" }
+      : failure
+        ? { kind: "error", message: failure.message }
+        : co.topUp && (topUpOpen || executorTopUp)
+          ? { kind: "nofunds", shortfall: Math.max(1, creditsCeil(co.topUp.shortCents)) }
+          : null;
+  // The lines the Credits pay, which are what the packs top up: a line paid in MANA (a LAND resale) is not short of them.
+  const checkoutLines: CheckoutLine[] = buyable.flatMap((l) => {
+    const view = co.views[l.id];
+    const credits = view?.options.find((o) => o.method === "credits");
+    if (!view || (l.method ?? view.primary) !== "credits" || credits?.charge == null) return [];
+    return [{ id: l.id, display: l.display, priceCredits: creditsFloor(credits.charge), quantity: lineUnitsOf(l) }];
+  });
 
   return (
     <main className="shop-cart" aria-labelledby="shop-cart-title">
@@ -352,17 +382,6 @@ function CartScreen() {
                     walletNeededKeys={co.walletNeededKeys}
                   />
                 )}
-                {co.topUp && (topUpOpen || executorTopUp) ? (
-                  <TopUpPanel
-                    shortCents={co.topUp.shortCents}
-                    onBeforeLeave={co.stashForTopUp}
-                    onCheckout={(s) => (s.url ? services.openExternal(s.url) : navigate(`/shop/credits?order=${encodeURIComponent(s.orderId)}`))}
-                    onCancel={() => {
-                      setTopUpOpen(false);
-                      co.dismissTopUp();
-                    }}
-                  />
-                ) : null}
                 <PaymentCtas
                   rails={signedOut ? [] : summaryRails.rails}
                   creditsLabel={summaryRails.rails.length > 1 ? (working ? "Working…" : "Buy with Credits") : ctaLabel}
@@ -405,6 +424,38 @@ function CartScreen() {
       <CartUpsell exclude={exclude} />
 
       {fitting ? <FittingRoom items={fitting} onClose={() => setFitting(null)} /> : null}
+
+      {dialogPhase ? (
+        <CartCheckoutModal
+          phase={dialogPhase}
+          lines={checkoutLines}
+          balance={co.balanceError ? "—" : (co.balance?.credits ?? 0).toLocaleString("en-US")}
+          onClose={() => {
+            if (dialogPhase.kind === "error") setFailure(null);
+            else {
+              setTopUpOpen(false);
+              co.dismissTopUp();
+            }
+          }}
+          // Nothing to run again while something else holds the cart (a wallet, a price to accept): no Try again then.
+          onRetry={
+            co.canResume
+              ? () => {
+                  setFailure(null);
+                  void co.resume();
+                }
+              : undefined
+          }
+          onLeave={co.stashForTopUp}
+          onLeaveFailed={clearTopUpHandoffs}
+          onCheckout={(s) => {
+            // The hand-off stashed before is this order's: another order's grant never pays this cart.
+            co.bindTopUp(s.orderId);
+            if (s.url) services.openExternal(s.url);
+            else navigate(`/shop/credits?order=${encodeURIComponent(s.orderId)}`);
+          }}
+        />
+      ) : null}
 
       {co.approval ? (
         <AuthorizeStep

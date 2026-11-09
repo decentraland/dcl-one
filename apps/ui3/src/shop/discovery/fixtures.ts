@@ -331,8 +331,8 @@ export type HarnessProps = {
   children: ReactNode;
   /** The route pattern the page is mounted at (e.g. `/shop/item/:contractAddress/:itemId`). */
   path?: string;
-  /** Where the memory router starts. */
-  entry?: string;
+  /** Where the memory router starts: a path, or a location with its navigation state. */
+  entry?: string | { pathname: string; search?: string; state?: unknown };
   session?: SessionKind;
   scenario?: CatalogScenario;
   overrides?: CatalogAnswers;

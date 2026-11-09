@@ -1293,6 +1293,54 @@ CREATE TABLE social.land_transfer_cursor (
     CONSTRAINT land_transfer_cursor_pkey PRIMARY KEY (id),
     CONSTRAINT land_transfer_cursor_singleton_check CHECK (id = 1)
 );
+
+-- One row per Segment webhook event the explorer (`client`) or the web
+-- (`web`) delivered to /events-notifier (social/src/segment_webhooks), the
+-- notifier's published event: keyed by Segment's messageId so a redelivery
+-- is one row; address is the owner of the auth chain a client event carried
+-- (a delegation that wallet signed once, not proof it sent this event) or
+-- traits.ethAddress (web); metadata is the sub-type part. Rows are immutable;
+-- the client-events-purge job deletes those older than
+-- CLIENT_EVENTS_RETENTION_DAYS, oldest first.
+CREATE TABLE social.client_events (
+    key text NOT NULL,
+    source text NOT NULL,
+    sub_type text NOT NULL,
+    address text NOT NULL,
+    session_id text,
+    anonymous_id text,
+    realm text,
+    ip text,
+    reported_at timestamp(3) without time zone NOT NULL,
+    received_at timestamp(3) without time zone NOT NULL,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+    CONSTRAINT client_events_pkey PRIMARY KEY (key),
+    CONSTRAINT client_events_source_check CHECK (source IN ('client', 'web')),
+    CONSTRAINT client_events_sub_type_check CHECK (sub_type IN ('move-to-parcel', 'used-emote', 'passport-opened', 'walked-distance', 'vertical-height-reached', 'logged-in', 'logged-in-cached', 'auth-identify')),
+    CONSTRAINT client_events_address_check CHECK (address ~ '^0x[0-9a-f]{40}$')
+);
+-- Consumers scan forward in insertion order; the purge deletes the oldest.
+CREATE INDEX client_events_created_idx ON social.client_events (created_at, key);
+
+-- Every stored client event is announced on the `social.client_events`
+-- channel, the row's identity columns as JSON (never the metadata: the
+-- payload is bounded), for listeners outside the request path. A
+-- redelivered key inserts no row and announces nothing.
+CREATE FUNCTION social.notify_client_event() RETURNS trigger AS $$
+BEGIN
+    PERFORM pg_notify('social.client_events', json_build_object(
+        'key', NEW.key, 'source', NEW.source, 'sub_type', NEW.sub_type,
+        'address', NEW.address, 'session_id', NEW.session_id,
+        'anonymous_id', NEW.anonymous_id, 'realm', NEW.realm, 'ip', NEW.ip,
+        'reported_at', NEW.reported_at, 'received_at', NEW.received_at)::text);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER client_events_notify_trigger
+    AFTER INSERT ON social.client_events
+    FOR EACH ROW EXECUTE FUNCTION social.notify_client_event();
 -- ==== end section: notifications ====
 
 -- ==== section: badges ====

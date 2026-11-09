@@ -8,7 +8,7 @@ import { metaTxTypedData } from '../../shop/checkout/chain/metatx'
 import { createFakeWallet, creatorTrade } from '../../shop/checkout/fakes'
 import { buildStoreUseCreditsArgs, buildUseCreditsArgs, encodeUseCredits, type SpendableCredit, type StoreItemToBuy, type UseCreditsArgs } from '../../shop/checkout/purchase/encoding'
 import { BOOK, ITEM } from '../../shop/payment/fixtures'
-import { parseBuyRequest, parseOperationEvent, SHOP_EVENT } from '../lib/shopProtocol'
+import { ADDRESS, OPERATION_STATES, parseBuyNameRequest, parseBuyRequest, parseLines, parseOperationEvent, SHOP_EVENT, SHOP_PROTOCOL } from '../lib/shopProtocol'
 import { AMOY_ADD_PARAMS } from '../../shop/wallet/chain'
 import { guardedProvider, type PurchaseIntent } from '../shell/shop/walletGuard'
 
@@ -64,6 +64,97 @@ describe('the shop.buy request', () => {
     expect(parseOperationEvent({ ...event, state: 'exploded' })).toBeNull()
     expect(parseOperationEvent({ ...event, v: 2 })).toBeNull()
     expect(parseOperationEvent({ ...event, items: [] })).toBeNull()
+  })
+})
+
+describe('the shop.buyName request', () => {
+  const ok = { v: 1, name: 'Mojito', method: 'credits', mode: 'simulation' }
+
+  it('admits the NAME as typed, the mode the shell said, and how CLAIM NAME was pressed', () => {
+    expect(parseBuyNameRequest(ok)).toEqual(ok)
+    expect(parseBuyNameRequest({ ...ok, mode: 'live' }).mode).toBe('live')
+    expect(parseBuyNameRequest({ ...ok, input: 'pointer' }).input).toBe('pointer')
+    expect(parseBuyNameRequest({ ...ok, name: 'ab' }).name).toBe('ab')
+    expect(parseBuyNameRequest({ ...ok, name: 'Abcdefghij12345' }).name).toBe('Abcdefghij12345')
+  })
+
+  it.each([
+    ['a price', { ...ok, price: 1 }],
+    ['a buyer', { ...ok, buyer: BUYER }],
+    ['a contract', { ...ok, contract: MANAGER }],
+    ['items', { ...ok, items: [] }],
+    ['a cart', { ...ok, cart: true }],
+    ['no mode', { v: 1, name: 'Mojito', method: 'credits' }],
+    ['an unknown mode', { ...ok, mode: 'dry-run' }],
+    ['one letter', { ...ok, name: 'a' }],
+    ['sixteen letters', { ...ok, name: 'Abcdefghij123456' }],
+    ['spaces around it', { ...ok, name: ' Mojito ' }],
+    ['a space in it', { ...ok, name: 'Moj ito' }],
+    ['a letter outside ASCII', { ...ok, name: 'Mojitó' }],
+    ['digits outside ASCII', { ...ok, name: 'Name١٢' }],
+    ['a dot', { ...ok, name: 'mojito.dcl.eth' }],
+    ['a NAME that isn’t text', { ...ok, name: 7 }],
+    ['another version', { ...ok, v: 2 }],
+    ['MANA', { ...ok, method: 'mana' }],
+    ['another input', { ...ok, input: 'touch' }],
+    ['nothing', null]
+  ])('refuses %s', (_, params) => {
+    expect(() => parseBuyNameRequest(params)).toThrow()
+  })
+})
+
+describe('the operations the HUD reads', () => {
+  const line = { contract: '0x' + 'ab'.repeat(20), itemId: '7', quantity: 1 }
+  const item = { type: SHOP_EVENT, v: 1, operation: 'a', buyer: BUYER, state: 'succeeded', items: [line] }
+  const name = { type: SHOP_EVENT, v: 1, operation: 'n', buyer: BUYER, state: 'succeeded', items: [], name: 'Mojito', mode: 'simulation' }
+
+  it('reads a NAME as its own variant: the NAME, no items, and its mode', () => {
+    expect(parseOperationEvent(name)).toEqual({ v: 1, operation: 'n', buyer: BUYER, state: 'succeeded', items: [], name: 'Mojito', mode: 'simulation' })
+    expect(parseOperationEvent({ ...name, next: 'previewName' })).toMatchObject({ next: 'previewName' })
+    expect(parseOperationEvent({ ...name, mode: 'live', next: 'assignName', txHash: '0xabc' })).toMatchObject({ mode: 'live', next: 'assignName', txHash: '0xabc' })
+    expect(parseOperationEvent({ ...name, txHash: null })).toMatchObject({ txHash: null })
+    expect(parseOperationEvent({ ...item, next: 'backpack' })).toMatchObject({ next: 'backpack' })
+  })
+
+  it.each([
+    ['a NAME with items', { ...name, items: [line] }],
+    ['a NAME without its empty items', { ...name, items: undefined }],
+    ['a NAME without a mode', { ...name, mode: undefined }],
+    ['a NAME in an unknown mode', { ...name, mode: 'dry-run' }],
+    ['a NAME bought from the cart', { ...name, cart: true }],
+    ['a NAME that isn’t one', { ...name, name: 'Moj ito' }],
+    ['a NAME too long', { ...name, name: 'Abcdefghij123456' }],
+    ['a simulated NAME with a transaction', { ...name, txHash: '0xabc' }],
+    ['a simulated NAME assigned to the avatar', { ...name, next: 'assignName' }],
+    ['a live NAME previewed', { ...name, mode: 'live', next: 'previewName' }],
+    ['a NAME sent to the Backpack', { ...name, next: 'backpack' }],
+    ['a NAME previewed before it succeeded', { ...name, state: 'processing', next: 'previewName' }],
+    ['a live NAME assigned before it succeeded', { ...name, mode: 'live', state: 'pending', next: 'assignName' }],
+    ['items with a mode', { ...item, mode: 'simulation' }],
+    ['items previewed as a NAME', { ...item, next: 'previewName' }],
+    ['items assigned as a NAME', { ...item, next: 'assignName' }],
+    ['items sent to the Backpack before they were bought', { ...item, state: 'pending', next: 'backpack' }],
+    ['a cart flag that isn’t true', { ...item, cart: false }],
+    ['a transaction that isn’t text', { ...item, txHash: 7 }]
+  ])('refuses %s', (_, message) => {
+    expect(parseOperationEvent(message as Record<string, unknown>)).toBeNull()
+  })
+
+  // The parser a HUD built before NAMEs runs, as it shipped: anything it can't read as items is no operation.
+  const shippedBeforeNames = (message: Record<string, unknown>): unknown => {
+    if (message.type !== SHOP_EVENT || message.v !== SHOP_PROTOCOL) return null
+    const { operation, buyer, state, items } = message
+    if (typeof operation !== 'string' || typeof state !== 'string' || !(OPERATION_STATES as readonly string[]).includes(state)) return null
+    if (buyer !== null && (typeof buyer !== 'string' || !ADDRESS.test(buyer))) return null
+    return parseLines(items) ? message : null
+  }
+
+  it('is dropped, NAME by NAME, by a HUD built before NAMEs, which still reads the items’', () => {
+    for (const state of OPERATION_STATES) {
+      expect(shippedBeforeNames({ ...name, state })).toBeNull()
+      expect(shippedBeforeNames({ ...item, state })).not.toBeNull()
+    }
+    expect(shippedBeforeNames({ ...name, next: 'previewName' })).toBeNull()
   })
 })
 

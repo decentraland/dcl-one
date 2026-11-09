@@ -10,7 +10,7 @@ import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop
 import { webNameTokenUrl, webNameUrl } from '../features/shop/itemLinks'
 import { NAMETAG_PLACEHOLDER } from '../features/shop/ui'
 import { userNameColor } from '../engine/nameColor'
-import { nameQueries } from '../features/shop/namesQuery'
+import { NAME_RESALES_KEY, nameQueries } from '../features/shop/namesQuery'
 import { NAME_CHECK_DEBOUNCE_MS } from '../../shop/names/names'
 import { CHAIN } from '../../shop/model/chain'
 import { PopupHost, resetPopups } from '../design'
@@ -43,8 +43,13 @@ interface Routes {
   /** decentraland.org's `dapps` rollout flags. */
   flags?: Record<string, boolean>
   /** The NAMEs on resale (/shop-api/v1/nfts?category=ens): their labels and MANA prices, or down; or the
-   *  answer for each page, by how many it skips. */
-  resales?: { names: { name: string; priceWei: string }[]; total?: number } | 'down' | ((skip: number) => { names: { name: string; priceWei: string }[]; total: number })
+   *  answer for each page, by how many it skips (held back while its promise is). */
+  resales?: ResalePage | 'down' | ((skip: number) => ResalePage | Promise<ResalePage>)
+}
+
+interface ResalePage {
+  names: { name: string; priceWei: string }[]
+  total?: number
 }
 
 const REGISTRAR = '0x2a187453064356c898cae034eaed119e1663acb8'
@@ -69,7 +74,7 @@ function serve(routes: Routes = {}): ReturnType<typeof vi.fn> {
     }
     if (path.endsWith('/shop-api/v1/nfts')) {
       if (routes.resales === 'down') return new Response('', { status: 503 })
-      const page = typeof routes.resales === 'function' ? routes.resales(Number(url.searchParams.get('skip') ?? 0)) : routes.resales
+      const page = typeof routes.resales === 'function' ? await routes.resales(Number(url.searchParams.get('skip') ?? 0)) : routes.resales
       const names = page?.names ?? []
       return Response.json({ data: names.map((n, i) => resaleRow(n.name, n.priceWei, String(i + 1))), total: page?.total ?? names.length })
     }
@@ -111,7 +116,7 @@ function renderShop(over: Partial<InWorldShopProps> = {}) {
     </QueryClientProvider>
   )
   const view = render(tree())
-  return { props, rerender: (next: Partial<InWorldShopProps>) => view.rerender(tree(next)) }
+  return { props, client, rerender: (next: Partial<InWorldShopProps>) => view.rerender(tree(next)) }
 }
 
 async function openNames(): Promise<HTMLInputElement> {
@@ -402,6 +407,57 @@ describe('the in-world Shop’s Names', () => {
     expect(seen.some((text) => text.includes('No NAMEs on resale right now'))).toBe(false)
   })
 
+  it('reads an emptied page anew once NAMEs listed later bring it back', async () => {
+    // Page 2's one NAME sells, then another is listed: page 2's old answer (none, 24 in all) must not send the
+    // player back again.
+    const firstPage = Array.from({ length: 24 }, (_, i) => ({ name: i === 0 ? 'Mojito' : `Name${i}`, priceWei: '1000000000000000000' }))
+    let state: 'listed' | 'sold' | 'relisted' = 'listed'
+    serve({
+      flags: MARKETPLACE_ON,
+      resales: (skip) => {
+        const total = state === 'sold' ? 24 : 25
+        if (skip === 0) return { names: firstPage, total }
+        return { names: state === 'sold' ? [] : [{ name: state === 'listed' ? 'Early' : 'Lately', priceWei: '1000000000000000000' }], total }
+      }
+    })
+    const { client } = renderShop()
+    await openNames()
+    await userEvent.click(screen.getByRole('button', { name: 'Resale name' }))
+    await screen.findByRole('button', { name: 'Mojito.dcl.eth' })
+    state = 'sold'
+    await userEvent.click(screen.getByRole('button', { name: '2' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: '2' })).not.toBeInTheDocument())
+    state = 'relisted'
+    // Page 1 is read again (its 30s are up) and counts 25 again.
+    await act(() => client.invalidateQueries({ queryKey: NAME_RESALES_KEY }))
+    await userEvent.click(await screen.findByRole('button', { name: '2' }))
+    expect(await screen.findByRole('button', { name: 'Lately.dcl.eth' })).toBeInTheDocument()
+  })
+
+  it('shows the loading cards, not the emptied page, while the page it goes back to loads', async () => {
+    // Page 3's NAME sold: 48 are left, so the player goes back to page 2, which hasn't been read yet.
+    const page = (prefix: string) => Array.from({ length: 24 }, (_, i) => ({ name: `${prefix}${i}`, priceWei: '1000000000000000000' }))
+    let release = (): void => {}
+    const second = new Promise<ResalePage>((resolve) => {
+      release = () => resolve({ names: page('Second'), total: 48 })
+    })
+    serve({ flags: MARKETPLACE_ON, resales: (skip) => (skip === 0 ? { names: page('First'), total: 49 } : skip === 24 ? second : { names: [], total: 48 }) })
+    renderShop()
+    await openNames()
+    await userEvent.click(screen.getByRole('button', { name: 'Resale name' }))
+    await screen.findByRole('button', { name: 'First0.dcl.eth' })
+    await userEvent.click(screen.getByRole('button', { name: '3' }))
+    expect(await screen.findByRole('status', { name: 'Loading the NAMEs on resale' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /\.dcl\.eth$/ })).not.toBeInTheDocument()
+    release()
+    expect(await screen.findByRole('button', { name: 'Second0.dcl.eth' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '3' })).not.toBeInTheDocument()
+  })
+
+  it('keeps a resale’s token link on its page, whatever its contract reads', () => {
+    expect(new URL(webNameTokenUrl('0xAB/../names?x=1#y', '7')).pathname).toBe('/shop/token/0xab%2F..%2Fnames%3Fx%3D1%23y/7')
+  })
+
   it('shows the player’s own name over the avatar on RESALE NAME: claimed with its badge, unclaimed with its suffix', async () => {
     serve({ flags: MARKETPLACE_ON, resales: { names: [] } })
     const { rerender, props } = renderShop()
@@ -417,6 +473,13 @@ describe('the in-world Shop’s Names', () => {
     rerender({ profile: { ...props.profile, data: { ...ME, name: 'Guest', hasClaimedName: false } } })
     expect(nametag()).toHaveTextContent(/^Guest#b47f$/)
     expect(nametag()!.querySelector('img')).toBeNull()
+    // No nametag until the profile has a name: the empty one's placeholder and badge would claim a NAME.
+    rerender({ profile: { ...props.profile, data: { ...ME, name: '', hasClaimedName: false } } })
+    expect(screen.getByRole('button', { name: 'Resale name' })).toBeInTheDocument()
+    expect(nametag()).toBeNull()
+    // Signed out, the Marketplace is gone (RESALE NAME with it), and UNIQUE NAME shows its own nametag.
+    rerender({ profile: { ...props.profile, data: null } })
+    expect(screen.queryByRole('button', { name: 'Resale name' })).toBeNull()
   })
 
   it('hides the nametag while the avatar is zoomed, and shows it once back out', async () => {
