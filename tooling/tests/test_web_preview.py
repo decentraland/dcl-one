@@ -1,4 +1,5 @@
 import importlib.util
+import base64
 import io
 import json
 from pathlib import Path
@@ -128,6 +129,112 @@ class PreviewGitHub:
 
 
 class WebPreviewTests(unittest.TestCase):
+    def test_reviewer_hydrates_only_pinned_product_fonts_before_integrity_checks(self):
+        root = Path(__file__).parents[2]
+        path = root / '.github/workflows/web-previews.yml'
+        if not path.is_file():
+            self.skipTest('Build workflow is installed by the preview feature PR')
+        job = workflow_jobs(path.read_text())['reviewer']
+        self.assertIn('          lfs: false\n', job)
+        commands = re.findall(r'^          (git lfs .+)$', job, re.M)
+        self.assertEqual(len(commands), 1)
+        args = shlex.split(commands[0])
+        self.assertEqual(args[:3], ['git', 'lfs', 'pull'])
+        self.assertEqual(len(args), 5)
+        self.assertIn('--exclude=', args)
+        includes = [arg.removeprefix('--include=') for arg in args if arg.startswith('--include=')]
+        self.assertEqual(len(includes), 1)
+        files = includes[0].split(',')
+        font_root = 'library/ui/foundations/typography'
+        manifest = json.loads((root / font_root / 'font-source.json').read_text())
+        expected = {f'{font_root}/fonts/{name}' for name in manifest['files']}
+        self.assertEqual(len(expected), 7)
+        self.assertEqual(len(files), 7)
+        self.assertEqual(set(files), expected)
+        self.assertTrue(all('*' not in name and name.endswith('.woff2') for name in files))
+        self.assertLess(job.index(commands[0]), job.index('node library/ui/figma/lock-digests.mjs'))
+        self.assertLess(job.index(commands[0]), job.index('pnpm install --frozen-lockfile'))
+
+    def test_reviewer_font_auth_is_ephemeral_masked_and_read_only(self):
+        root = Path(__file__).parents[2]
+        path = root / '.github/workflows/web-previews.yml'
+        if not path.is_file():
+            self.skipTest('Build workflow is installed by the preview feature PR')
+        workflow = path.read_text()
+        job = workflow_jobs(workflow)['reviewer']
+        self.assertIn('permissions:\n  contents: read\n', workflow.split('jobs:', 1)[0])
+        self.assertNotRegex(job, r'(?m)^    permissions:')
+        self.assertIn('persist-credentials: false', job)
+        match = re.search(
+            r'(?ms)^      - name: Fetch reviewer product fonts\n(.*?)(?=^      - |\Z)', job
+        )
+        self.assertIsNotNone(match)
+        step = match.group(1)
+        self.assertIn('READ_TOKEN: ${{ github.token }}', step)
+        self.assertEqual(job.count('READ_TOKEN: ${{ github.token }}'), 1)
+        match = re.search(r'(?s)        run: \|\n(.*)', step)
+        self.assertIsNotNone(match)
+        script = '\n'.join(line[10:] for line in match.group(1).splitlines())
+        self.assertNotIn('export GIT_CONFIG_', script)
+        self.assertNotIn('git config', script)
+        for token, git_exit in (
+            ('font-read-token-fixture', 0),
+            ('', 0),
+            (None, 0),
+            ('font-read-token-fixture', 1),
+        ):
+            with (
+                self.subTest(token_present=bool(token), git_exit=git_exit),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                directory = Path(temporary)
+                capture = directory / 'calls.jsonl'
+                git = directory / 'git'
+                git.write_text(
+                    '#!/usr/bin/env python3\nimport os, json, sys\nfrom pathlib import Path\np=Path(os.environ["AUTH_CAPTURE"])\nwith p.open("a") as f:\n f.write(json.dumps({"args":sys.argv[1:],"count":os.environ.get("GIT_CONFIG_COUNT"),"key":os.environ.get("GIT_CONFIG_KEY_0"),"value":os.environ.get("GIT_CONFIG_VALUE_0")})+"\\n")\nsys.exit(int(os.environ["GIT_EXIT"]))\n'
+                )
+                git.chmod(0o755)
+                env = {
+                    key: value
+                    for key, value in os.environ.items()
+                    if not key.startswith('GIT_CONFIG_') and key != 'READ_TOKEN'
+                }
+                env.update(
+                    PATH=str(directory) + os.pathsep + os.environ['PATH'],
+                    AUTH_CAPTURE=str(capture),
+                    GIT_EXIT=str(git_exit),
+                )
+                if token is not None:
+                    env['READ_TOKEN'] = token
+                command = (
+                    script
+                    + '\nprintf "SCOPED:%s:%s:%s\\n" "${GIT_CONFIG_COUNT-unset}" "${GIT_CONFIG_KEY_0-unset}" "${GIT_CONFIG_VALUE_0-unset}"\n'
+                )
+                result = subprocess.run(
+                    ['bash', '-e', '-o', 'pipefail', '-c', command],
+                    cwd=directory,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                )
+                if not token:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(capture.exists())
+                    continue
+                calls = [json.loads(line) for line in capture.read_text().splitlines()]
+                self.assertEqual(len(calls), 1)
+                header = base64.b64encode(f'x-access-token:{token}'.encode()).decode()
+                self.assertEqual(calls[0]['count'], '1')
+                self.assertEqual(calls[0]['key'], 'http.https://github.com/.extraheader')
+                self.assertEqual(calls[0]['value'], f'AUTHORIZATION: basic {header}')
+                self.assertEqual(calls[0]['args'][:2], ['lfs', 'pull'])
+                self.assertIn(f'::add-mask::{header}', result.stdout)
+                self.assertNotIn(token, result.stdout)
+                self.assertEqual(result.returncode, git_exit)
+                self.assertFalse((directory / '.git/config').exists())
+                if not git_exit:
+                    self.assertIn('SCOPED:unset:unset:unset', result.stdout)
+
     def test_cdn_rejects_effective_asset_path_escapes_before_fetching(self):
         version = '0.1.123-123.commit-abcdef0'
         prefix = preview.cdn_url(version)
