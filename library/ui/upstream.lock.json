@@ -39,7 +39,7 @@
         "The 58 orphaned Review assets ledgered when the Review was regenerated from the 9c6dfbe6 snapshot are drained with upstream's developer cleanup (sync --developer --apply-retirements): no consumer and no generated owner remains, the ledger is empty, and the Review promotion manifest is resealed over the remaining files. Nothing under components/ changes.",
         "Selective, partial port from figma-design-system main, not a sync to it: the revision above stays the 9c6dfbe6 pin. The ported files were selected at 8bd08165 and re-verified against bed111e8fccff64e9c63c220b5a91c44bc2747a5: rest-capture.ts and views-line-height.test.ts are unchanged there, and rest-capture.test.ts differs only by the cases of its two further commits, #100 (angular-gradient strokes) and #101 (the remaining Shop conic stroke profiles), which build on the unported conic strokes and are excluded: the conic-stroke capture is not required by the installed components or the MCP, and from 8bd08165 to bed111e8 only conic-stroke tooling, its tests and fixtures change, with no public component source. Ported on top of it, one commit each, code only: the REST capture fixes e0f7767 (a rotated leaf rectangle is exported as a drawing), f5662fb (artwork that paints outside its box is exported at its render bounds) and df568f7 (non-positive render bounds are rejected), and the text line tests of 3ad8f26 and 7d6f2d7, whose logic this tree already holds. None changes the generated output of this tree's snapshot (figma diff: no file) or the Review. Adapted: this tree keeps whole-line geometry meaningful in a fixed-height box, so upstream's fixed-height case asserts wrapping instead of a flag. Not imported from 9c6dfbe6..bed111e8, each with the reason it does not apply or what blocks it (fixes that do apply are ported, see the entries below): the component references of 5dd9b51 (a feature that needs instance constraints the capture here does not record; no installed component is a resized instance); the negative-gap fixtures of d384ab5 (they freeze captures for upstream's views-negative-gap tests, which this tree does not carry; its own overlap code is covered by views-regressions.test.ts); the guard parse cache of 06d9f64 (performance only, the guard's result is unchanged); the conic strokes of 8bd0816, 14db730 and bed111e (a gated capture feature for angular gradients that no installed component uses); the promotion identity graph, publication and page replacement guards of e730fbc (except its runtime catch and its per-side aggregate parse), 668a9a1, d882c79 and part of b7f27fb (they store the file key in promotion.json, receipts and page replacements, which this tree never stores); b5e2c5f's promotion-seal test (it asserts the fileKey field of upstream's promotion.json, which this tree's keyless schema does not have; b5e2c5f's mapper fixes and view tests are held in adapted form in views.ts and views.test.ts); the Review gallery changes b435d4e, 6868df8 and b2b2df2 (they change how the gallery presents evidence, not generated output, capture or evidence values); the evidence scoping of a7a9f62 (it changes what the Review signature covers, which re-keys every case; this tree's signature deliberately covers src/review, src/generated, src/components and references); the Shop page f6ccb5d (not in this tree's generation inventory); the workflow-only 7d1a097 and 0907988 (the sync workflows they change are not imported); and every upstream snapshot, Review render, receipt and seal, including the page refreshes 756474d and 3945ee9 (this tree regenerates and reseals its own keyless evidence).",
         "Generated components fail closed on a variant selection Figma never drew: pickView (figma/review/src/components/figma-view-state.ts) throws, naming the component and its axis values, instead of rendering the default view, in every environment and during server rendering (owner decision); interaction flags still fall back by dropping from the end, a boolean axis that is not true or false throws, and the runtime no longer takes a defaultKey. The caller's props reach FigmaView only as attributes={rest}, never spread over the generated configuration, and the runtime drops its own parameter names from them before the DOM. A component whose text overrides are not public (exposeTextSlots: false) lists them in a module constant passed as suppressed, which the runtime drops from attributes before the DOM, instead of binding them to unused aliases. The throw and the caller-prop boundary are local changes pending an upstream patch; exposeTextSlots and the suppression of private text props are a local deviation, upstream pending as FDS opt-in PR #4; the suppressed names are a frozen module constant the generator emits. Generation fails if a component's default selection is not a captured view (assertDrawnDefaults in src/generators/components.ts), so rendering with no props never throws; that guard is generic generator code, pending upstream in the FDS throw PR (step 2, after the variant contract).",
-        "Not imported, each checked against figma-design-system bed111e8 (14db730 plus #101, which changes only the conic-stroke track), because neither the installed components nor the Figma tooling here uses them: the agent skill .claude/skills/dcl-figma-to-code/SKILL.md (it drives the full sync in figma-design-system; figma/agent-kit carries this tree's skills); dcl-mcp-figma/.env.example (this tree documents FIGMA_TOKEN and FIGMA_FILE_KEY in the library README); dcl-mcp-figma/tsconfig.build.json (it emits the standalone dcl-mcp-figma package; this tree runs the tooling with tsx and typechecks with figma/tsconfig.json); figma-snapshot/page-replacements.json and its replacement-evidence/edc12197\u2026.part (inputs of the sync-only page replacement guard, added after the 9c6dfbe6 pin; no code here reads them); src/automation/pr-body.test.ts and scripts/figma-sync-pr-body.mjs (the sync pull request body, part of the sync workflows not imported); src/guard/retirement-version.cases.ts, retirement-version-absent.test.ts and retirement-version-stale.test.ts (they test the retirement publication cache of the per-PR release versioning skipped above); test/fixtures/conic-stroke-samples-rest.json and conic-stroke-samples-2-rest.json (conic strokes, #99 to #101, are not imported); dcl-ui-review references live-16517-1909.png, -1913.png and -1917.png (no Review case or reference record here uses them); dcl-ui-review/scripts/settle-motion.mjs and test/settle-motion.test.ts (later motion settling; this tree's capture keeps its own capture-animations.mjs, which already waits finite transitions out, and changing it requires a recapture and comparison; browser-args.mjs is ported, see below); dcl-ui-review/test/audit-render-model.test.ts (it tests src/review/audit-render-model.ts, the mobile audit render, which is not imported); docs/component-promotion.md, docs/figma-sync-ci.md and docs/skills-registry.md (upstream repository docs; promotion is documented in the library README, maintenance in figma/MAINTENANCE.md, and the sync CI stays in figma-design-system).",
+        "Not imported, each checked against figma-design-system bed111e8 (14db730 plus #101, which changes only the conic-stroke track), because neither the installed components nor the Figma tooling here uses them: the agent skill .claude/skills/dcl-figma-to-code/SKILL.md (it drives the full sync in figma-design-system; figma/agent-kit carries this tree's skills); dcl-mcp-figma/.env.example (this tree documents FIGMA_TOKEN and FIGMA_FILE_KEY in the library README); dcl-mcp-figma/tsconfig.build.json (it emits the standalone dcl-mcp-figma package; this tree runs the tooling with tsx and typechecks with figma/tsconfig.json); figma-snapshot/page-replacements.json and its replacement-evidence/edc12197….part (inputs of the sync-only page replacement guard, added after the 9c6dfbe6 pin; no code here reads them); src/automation/pr-body.test.ts and scripts/figma-sync-pr-body.mjs (the sync pull request body, part of the sync workflows not imported); src/guard/retirement-version.cases.ts, retirement-version-absent.test.ts and retirement-version-stale.test.ts (they test the retirement publication cache of the per-PR release versioning skipped above); test/fixtures/conic-stroke-samples-rest.json and conic-stroke-samples-2-rest.json (conic strokes, #99 to #101, are not imported); dcl-ui-review references live-16517-1909.png, -1913.png and -1917.png (no Review case or reference record here uses them); dcl-ui-review/scripts/settle-motion.mjs and test/settle-motion.test.ts (later motion settling; this tree's capture keeps its own capture-animations.mjs, which already waits finite transitions out, and changing it requires a recapture and comparison; browser-args.mjs is ported, see below); dcl-ui-review/test/audit-render-model.test.ts (it tests src/review/audit-render-model.ts, the mobile audit render, which is not imported); docs/component-promotion.md, docs/figma-sync-ci.md and docs/skills-registry.md (upstream repository docs; promotion is documented in the library README, maintenance in figma/MAINTENANCE.md, and the sync CI stays in figma-design-system).",
         "Text roles are a local addition pending an upstream patch: figma.config.json components.<name>.textRoles binds a typed public prop to captured text layers by Figma node id, checked against the configured path of layer names (src/mappers/text-roles.ts). The raw capture reader accepts an optional node id, Figma's id verbatim: a partial variant drops the ids it inherits from the base tree, so a variant node has one only through its own set.id or replace, and a node without one is unbound, not an error, unless a role points at it. The mapper copies the id to the view node only to bind roles and then drops it, so ids never reach the spec, its hash or generated code; the generator types string roles as text and count roles as a number paired with a label prop, and names the link around a role's text with the href the role declares (never derived), and the runtime validates counts and names the enclosing action with the label. The capture records no descendant text ids yet, so the mechanism is exercised only by test fixtures and no component binds a role.",
         "Generated styles use three cascade layers, a local change pending an upstream patch: dcl.reset (the runtime base styles), dcl.foundations (tokens and text styles) and dcl.components (component CSS), with the order statement repeated at the top of every generated stylesheet (src/generators/css-layers.ts). The runtime reset and the composed text styles are both zero-specificity :where() rules, so before this a bundle that loaded the runtime CSS after the text styles drew text in the inherited font. figma/review/test/runtime-cascade.test.ts checks the drawn font in Chromium under both orders. The Review renders are unchanged.",
         "Ported from ad87b8e (#88), adapted to this tree's paint order: the views mapper emits no CSS gap for a non-wrapping SPACE_BETWEEN auto-layout and no negative-spacing overlap (margins, forced layer order) for any SPACE_BETWEEN one, because Figma ignores itemSpacing there and a CSS gap acted as a minimum that pushed NavBar controls far outside a 390px or 1024px root. Wrapped SPACE_BETWEEN frames keep their gap, as upstream does, until the capture records counterAxisSpacing. views-space-between.test.ts is upstream's, unchanged; this tree keeps overlap layer order in positionDecls rather than in overlapDecls, so the same SPACE_BETWEEN condition is applied there. Against the 2a050e3c Review, 98 gap declarations leave 12 component stylesheets and 20 renders (NavBar, NavMenuDropdown, WebTheme) move closer to their Figma references on every fidelity metric. A local fix pending an upstream patch: the runtime passes React keys on their own instead of inside spread props, which React 19 reported as an error.",
@@ -71,7 +71,8 @@
         "The ui-provenance checker pins every public foundation and its origin, rejects changed, missing or extra files, and verifies materialized Inter font bytes against their Git LFS identities and npm source digests.",
         "port:9c6dfbe6 installs foundations through the installation subset of promotion/promote.ts. The seal is removed together with promotion manifests, promotion verification and release publication. The shared command generates only from the verified cache, preserves maintained files, stages a complete target, detects concurrent changes and rolls back failed publication. Dev2 extends this same command with components.",
         "Foundation review hardening regenerates source.json from the verified capture and committed generator identities while preserving the owner bindings. An uncommitted generator or edited provenance template fails before publication.",
-        "Verified installation binds lock bytes before cache verification and compares them after every verification and source initialization. Tests reject invalid cache reads through a bypass App, preserve ignored target files and retain both errors and the previous tree when rollback fails."
+        "Verified installation binds lock bytes before cache verification and compares them after every verification and source initialization. Tests reject invalid cache reads through a bypass App, preserve ignored target files and retain both errors and the previous tree when rollback fails.",
+        "Review follow-up after the capture-free port: the fetch-source cache swap moves the old cache into a fresh mkdtemp backup instead of a pid-named one, so a backup left by a killed run never blocks or is reused, and when the move back also fails it throws an FdsCacheError that keeps the original failure as cause and names the backup path; tests: base64 -d instead of base64 --decode, explicit timeouts for the census and the review server path tests, a real 302 redirect chain and an escape after the final audit render in check-build, and an own deviation code named constructor accepted by lock-digests."
       ],
       "snapshot": {
         "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
@@ -750,12 +751,13 @@
           ]
         },
         "library/ui/figma/lock-digests.test.ts": {
-          "sha256": "1c996d68702f64f992a32717371f63db6602266725d5c437fdd065140bd9d293",
+          "sha256": "53292795ad47479f19f556486bf9ccaed98fad4d8e8b0993576781f20303f7d5",
           "fds": null,
           "deviation": [
             "dcl-one-only",
             "request-scope-hardening",
-            "bot-review-279-b"
+            "bot-review-279-b",
+            "review-followup-3"
           ]
         },
         "library/ui/figma/port-verification.mjs": {
@@ -2660,9 +2662,12 @@
           "deviation": "port:30ca0608"
         },
         "library/ui/figma/src/generators/variant-contract.census.test.ts": {
-          "sha256": "7b49e1a6b1704ad2621c47f20ac60845053ee0a9148563da37a880dcf823d329",
+          "sha256": "b2e5665e18cab75cf39097cf2df0edc9f2ac4de5daabec9eaa8f9e3eb7bc4007",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "review-followup-3"
+          ]
         },
         "library/ui/figma/src/guard/aggregate-edits.ts": {
           "sha256": "da327167c96b2638e98cddab7d33f27581c03c21bbbecc72c21c2fc1a66a8ea1",
@@ -3290,9 +3295,12 @@
           ]
         },
         "library/ui/figma/src/orphan-drain.test.ts": {
-          "sha256": "b8bc5e7e3d40c092d8a64079f844919e3c4afa45679c73f859d82ac530919158",
+          "sha256": "5a266e687db1bb7a1a4a4ac450f9b93eefffb4b37eac698454010b8518d85668",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "review-followup-3"
+          ]
         },
         "library/ui/figma/src/orphan-drain.ts": {
           "sha256": "9c983fc1075c04f4992fda43f86bc6f651362684da9f93086b5452d698461438",
@@ -3452,23 +3460,25 @@
           "deviation": "predates"
         },
         "library/ui/figma/src/sources/fds-source.test.ts": {
-          "sha256": "7317fe6346f365db1e4a8957190a0078daeead8ee8f86ae17b7aaba74add2014",
+          "sha256": "4b907eeb4b894b88f5a9ccf0989bdde7d9f7b4b7bc7bb496be35522375f52929",
           "fds": null,
           "deviation": [
             "dcl-one-only",
             "bot-review-279",
-            "bot-review-279-b"
+            "bot-review-279-b",
+            "review-followup-3"
           ]
         },
         "library/ui/figma/src/sources/fds-source.ts": {
-          "sha256": "05fd5cff8c45202579477f03ab9583e6d237abbde145170eab79af923a3e9708",
+          "sha256": "27ed57e2444e4789f2285ded3758c021c35a5baa76582b50be19c80150f8baa6",
           "fds": null,
           "deviation": [
             "dcl-one-only",
             "live-read-restored",
             "cache-hardening",
             "bot-review-279",
-            "bot-review-279-b"
+            "bot-review-279-b",
+            "review-followup-3"
           ]
         },
         "library/ui/figma/src/sources/rest-assets.ts": {
@@ -3930,13 +3940,14 @@
           "deviation": "capture-removed"
         },
         "library/ui/figma/test/workflows.test.ts": {
-          "sha256": "cf36aa5011cd5f9cee769753bab73b95264d15da1ae83c93d89a0e0017e86883",
+          "sha256": "21ba2fd87ef0c72cad36d93ffffd08f1df5572125d552daa466145c809f62dc3",
           "fds": null,
           "deviation": [
             "capture-removed",
             "bot-review-279",
             "review-followup-2",
-            "bot-review-279-b"
+            "bot-review-279-b",
+            "review-followup-3"
           ]
         },
         "library/ui/figma/tsconfig.json": {
@@ -3970,7 +3981,8 @@
         "port:9c6dfbe6": 51,
         "seal-removed": 51,
         "foundation-review": 52,
-        "verified-install": 53
+        "verified-install": 53,
+        "review-followup-3": 54
       }
     }
   ],

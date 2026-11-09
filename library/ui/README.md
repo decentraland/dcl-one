@@ -62,6 +62,7 @@ The key of the Figma file never enters the repository, a generated file, a log o
 - Snapshot ingest and `fetch-source` drop `fileKey` fields and Figma file URLs; API errors and reports redact the key.
 - Mappings name the file as `<DCL_FIGMA_FILE>`; Code Connect resolves it with `documentUrlSubstitutions` at publish time only, outside this tree's code.
 - `make figma-key-guard` (or `node library/ui/figma/key-guard.mjs`) fails when the key (`key` check, needs `FIGMA_FILE_KEY`) or any Figma file URL (`url` check) is in the working tree, in a blob of `origin/main..HEAD`, or in a directory passed with `--path`. It prints paths and check IDs only. Run it before every commit and push; CI runs it on every pull request and before every artifact upload. `figma/key-guard-allow.json` pins pre-existing public URLs by path and Figma file id, so any other URL added to those files still fails; the `key` check cannot be allowlisted.
+- The privileged key scan (`ui-library-key-scan.yml`) reads the URL allowlist from the default branch, never from the scanned commits, so a pull request that adds a public Figma URL together with its `key-guard-allow.json` entry fails that scan until the entry lands on main.
 
 ## From Figma to the library
 

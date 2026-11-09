@@ -466,16 +466,31 @@ async function fetchFdsSource(options: FetchOptions): Promise<{
       ) + '\n'
     )
     const move = options.rename ?? rename
-    const previous = `${target}.previous-${process.pid}`
-    const hadCache = existsSync(target)
-    if (hadCache) await move(target, previous)
+    // A fresh folder per run, so a backup a killed run left behind is never reused or deleted.
+    const aside = existsSync(target) ? await mkdtemp(`${target}.previous-`) : null
+    const previous = aside && path.join(aside, path.basename(target))
+    let stranded = false
     try {
-      await move(staging, target)
-    } catch (error) {
-      if (hadCache) await move(previous, target)
-      throw error
+      if (previous) await move(target, previous)
+      try {
+        await move(staging, target)
+      } catch (error) {
+        if (previous)
+          await move(previous, target).catch((restoreError: unknown) => {
+            stranded = true
+            throw Object.assign(
+              new FdsCacheError(
+                `The Figma capture swap failed and the previous cache could not be moved back: it is left at ${previous} and must be moved back to ${target}`,
+                { cause: error }
+              ),
+              { restoreError }
+            )
+          })
+        throw error
+      }
+    } finally {
+      if (aside && !stranded) await rm(aside, { recursive: true, force: true })
     }
-    await rm(previous, { recursive: true, force: true })
     if (options.seal) {
       source.snapshot = { revision: pin.snapshotRevision, path: FDS_SNAPSHOT, digests }
       for (const file of Object.keys(ported)) ported[file]!.fds = counterparts[file]
