@@ -9,7 +9,7 @@ use tokio::{
 
 fn client_runtime() -> JsRuntime {
     let (mut runtime, _) =
-        crate::js::create_runtime(false, false, "test-fetch-abort", true, Default::default());
+        crate::js::create_runtime(false, false, "test-fetch-abort", Default::default());
     let state = runtime.op_state();
     let mut state = state.borrow_mut();
     state.put(CrdtContext::new(

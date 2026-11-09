@@ -22,7 +22,6 @@ deno_net = { git = "https://github.com/robtfm/deno", rev = "3ee34819c57653610521
 deno_url = { git = "https://github.com/robtfm/deno", rev = "3ee34819c57653610521dc6501ddf8e2cf0c5aaa" }
 deno_web = { git = "https://github.com/robtfm/deno", rev = "3ee34819c57653610521dc6501ddf8e2cf0c5aaa" }
 deno_webidl = { git = "https://github.com/robtfm/deno", rev = "3ee34819c57653610521dc6501ddf8e2cf0c5aaa" }
-deno_websocket = { git = "https://github.com/robtfm/deno", rev = "3ee34819c57653610521dc6501ddf8e2cf0c5aaa" }
 deno_webstorage = { git = "https://github.com/robtfm/deno", rev = "3ee34819c57653610521dc6501ddf8e2cf0c5aaa" }
 # https://github.com/robtfm/deno_core (branch 0_307_hotfix)
 deno_core = { git = "https://github.com/robtfm/deno_core", rev = "9b59a4e33f4729799409c20f85a80764f1d447e5" }
@@ -32,8 +31,6 @@ serde_v8 = { git = "https://github.com/robtfm/deno_core", rev = "9b59a4e33f47297
 draco-nd-vector = { git = "https://github.com/robtfm/draco-oxide", rev = "5acfcf680d4bd17222d910b74ff8bf76a8161575" }
 draco-oxide-core = { git = "https://github.com/robtfm/draco-oxide", rev = "5acfcf680d4bd17222d910b74ff8bf76a8161575" }
 draco-oxide-decoder = { git = "https://github.com/robtfm/draco-oxide", rev = "5acfcf680d4bd17222d910b74ff8bf76a8161575" }
-# https://github.com/robtfm/fastwebsockets (branch 0_8_hotfix)
-fastwebsockets = { git = "https://github.com/robtfm/fastwebsockets", rev = "1db2dbc2d1db519e6ba76741fd76f13519ab76f7" }
 # https://github.com/robtfm/naga_oil (branch fix/deterministic-override-emit-order)
 naga_oil = { git = "https://github.com/robtfm/naga_oil", rev = "9007b2ffe3e8f509ffc9b1481f039de78cf31699" }
 # https://github.com/robtfm/parry (branch fix-bvh-negative-scale-0.25)

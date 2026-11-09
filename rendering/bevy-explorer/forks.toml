@@ -176,7 +176,6 @@ crates = [
   "deno_url 0.168.0",
   "deno_web 0.199.0",
   "deno_webidl 0.168.0",
-  "deno_websocket 0.173.0",
   "deno_webstorage 0.163.0",
 ]
 
@@ -211,21 +210,6 @@ crates = [
   "draco-nd-vector 0.1.0-alpha.9",
   "draco-oxide-core 0.1.0-alpha.9",
   "draco-oxide-decoder 0.1.0-alpha.9",
-]
-
-[[source]]
-url = "https://github.com/robtfm/fastwebsockets"
-branch = "0_8_hotfix"
-rev = "1db2dbc2d1db519e6ba76741fd76f13519ab76f7"
-parent = "denoland/fastwebsockets"
-default_branch = "main"
-pushed_at = "2026-08-11"
-ahead_of_parent = 4
-behind_parent = 26
-branch_commits_since_pin = 0
-reason = "0.8.1 + upstream bc39c1f (fragmented-message size cap, unreleased) + 1 MiB default cap. deno_websocket's pinned API exposes no set_max_message_size hook, so the fork default is how scene websocket inbound message size is bounded."
-crates = [
-  "fastwebsockets 0.8.1",
 ]
 
 [[source]]
