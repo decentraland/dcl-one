@@ -919,6 +919,19 @@ describe('when the range holds an LFS pointer outside library/ui', () => {
     ])
   })
 
+  it('should fail a valid pointer whose own bytes carry the key or a Figma URL after the pointer lines', async () => {
+    await put(
+      'apps/sites/public/trailer.bin',
+      `${await storeObject('clean payload')}${FAKE_KEY}\n${FILE_URL}\n`
+    )
+    commit('pointer with a trailer')
+    expect(
+      guard({ worktree: false, key: FAKE_KEY })
+        .findings.map((finding) => finding.check)
+        .sort()
+    ).toEqual(['key', 'url'])
+  })
+
   it('should fail a pointer whose object is missing from the local store', async () => {
     await put('apps/sites/public/absent.bin', `${POINTER_PREFIX}${'a'.repeat(64)}\nsize 4\n`)
     commit('missing object')

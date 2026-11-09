@@ -104,5 +104,41 @@ describe('retirements', () => {
 
       await expect(loadRetirements(root)).rejects.toThrow()
     })
+
+    it('should read the committed ledger, never the cache copy under figma/figma-snapshot', async () => {
+      expect(RETIREMENTS_PATH).toBe('figma/ledger/retirements.json')
+      await mkdir(path.join(root, 'figma/figma-snapshot'), { recursive: true })
+      await writeFile(
+        path.join(root, 'figma/figma-snapshot/retirements.json'),
+        JSON.stringify(retirements)
+      )
+      expect((await loadRetirements(root)).retired).toEqual([])
+    })
+
+    // The ledger is committed: a field holds a node id, plain text or a repository path, never a link or key.
+    it.each([
+      ['a malformed entry', { pageId: '1:1' }],
+      ['a Figma URL in the reason', { reason: 'see https://www.figma' + '.com/design/abc/x' }],
+      ['a link in the name', { name: 'figma' + '.com/file/abc' }],
+      ['markup in the reason', { reason: '<img src=x>' }],
+      ['a node id that is not one', { pageId: 'https://example.com/1:1' }],
+      ['a component id with a path', { componentId: '1/2' }],
+      ['an owned path that leaves the repository', { owned: ['figma/../../secret.json'] }],
+      ['an absolute owned path', { owned: ['/etc/passwd'] }],
+      ['an owned link', { sharedExclusions: ['https://www.figma' + '.com/file/abc/x'] }]
+    ])('should reject %s', async (_, patch) => {
+      const data = {
+        schema: 1,
+        retired: [
+          'pageId' in patch && Object.keys(patch).length === 1 && patch.pageId === '1:1'
+            ? patch
+            : { ...retirements.retired[0]!, ...patch }
+        ]
+      }
+      await mkdir(path.dirname(path.join(root, RETIREMENTS_PATH)), { recursive: true })
+      await writeFile(path.join(root, RETIREMENTS_PATH), JSON.stringify(data))
+      await expect(loadRetirements(root)).rejects.toThrow()
+      expect(() => serializeRetirements(data as Retirements)).toThrow()
+    })
   })
 })

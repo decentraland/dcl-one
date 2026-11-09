@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { createApp, runSync, type App } from './app.js'
 import { GENERATED, SNAPSHOT } from './guard/ownership.js'
+import { RETIREMENTS_PATH } from './guard/retirements.js'
 import { fixtureBytes } from './guard/lifecycle-fixture.js'
 import { copySnapshot, testConfigFile } from '../test/snapshot.js'
 import { initializeFixtureGit } from './guard/git-fixture.js'
@@ -76,9 +77,10 @@ describe('runSync guard and retirements', () => {
     }
     return false
   }
-  const writeRetirements = (owned: string[], pageId: string) =>
-    writeFile(
-      path.join(root, SNAPSHOT, 'retirements.json'),
+  const writeRetirements = async (owned: string[], pageId: string) => {
+    await mkdir(path.dirname(path.join(root, RETIREMENTS_PATH)), { recursive: true })
+    await writeFile(
+      path.join(root, RETIREMENTS_PATH),
       JSON.stringify({
         schema: 1,
         retired: [
@@ -92,6 +94,7 @@ describe('runSync guard and retirements', () => {
         ]
       })
     )
+  }
 
   describe('when an automated sync finds a stale file', () => {
     it('should report it and keep it', async () => {
@@ -268,6 +271,23 @@ describe('runSync guard and retirements', () => {
         expectSameBytes(await fixtureBytes(path.join(root, GENERATED)), generatedBefore)
         expectSameBytes(await fixtureBytes(library()), libraryBefore)
       })
+    })
+  })
+
+  describe('when the config names a snapshotDir other than figma/figma-snapshot', () => {
+    it('should refuse before ownership, retirements or the guard read the hard-coded capture', async () => {
+      const other = path.join(root, 'figma/other-snapshot')
+      await cp(path.join(root, SNAPSHOT), other, { recursive: true })
+      app.config.snapshotDir = 'other-snapshot'
+      const before = await read('components/manifest.ts')
+
+      for (const options of [
+        { source: 'snapshot' as const },
+        { source: 'snapshot' as const, developer: true },
+        { source: 'snapshot' as const, developer: true, applyRetirements: true }
+      ])
+        await expect(runSync(app, options)).rejects.toThrow('names another snapshotDir')
+      expect(await read('components/manifest.ts')).toBe(before)
     })
   })
 

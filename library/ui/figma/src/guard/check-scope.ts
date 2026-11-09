@@ -3,7 +3,7 @@ import { sharedInputConflicts } from './shared-inputs.js'
 import { planRetirements, componentForArtifact } from './apply-retirements.js'
 import { isReparentingRemap, retiredArtifactPresent } from './reparented-variants.js'
 import { isRetired, loadRetirements } from './retirements.js'
-import { LEDGER } from './consumers.js'
+import { CACHED_LEDGERS, LEDGER, RETIREMENTS } from './consumers.js'
 import { checkLedger, type Ledger } from './orphaned-assets.js'
 import { publicExportSet } from './exports.js'
 import path from 'node:path'
@@ -77,7 +77,9 @@ type ScopeInput = {
 
 type ScopeResult = { ok: boolean; violations: Violation[] }
 
-const RETIREMENTS_FILE = `${SNAPSHOT}/retirements.json`
+const RETIREMENTS_FILE = RETIREMENTS
+// The committed retirement ledger and fetch-source's copy of it in the cache: automation edits neither.
+const RETIREMENT_FILES = new Set([RETIREMENTS, CACHED_LEDGERS[1]!])
 
 async function listGuarded(
   root: string,
@@ -206,9 +208,11 @@ async function checkScope(input: ScopeInput): Promise<ScopeResult> {
       ? [LIBRARY_ENTRY]
       : [])
   ]
-  // The orphaned asset ledger is validated against the base on every run that watches the snapshot.
+  // The orphaned asset ledger is validated against the base on every run that watches it or the snapshot it
+  // keeps the books for.
   const ledgerWatched =
-    watched.includes(LEDGER) || directories.some((directory) => LEDGER.startsWith(`${directory}/`))
+    watched.includes(LEDGER) ||
+    directories.some((directory) => directory === SNAPSHOT || LEDGER.startsWith(`${directory}/`))
   if (ledgerWatched) {
     const ledger = await checkLedger({
       baseDir,
@@ -275,7 +279,8 @@ async function checkScope(input: ScopeInput): Promise<ScopeResult> {
       }
     if (same(before, after)) continue
     // Checked as a whole by checkLedger above.
-    if (file === LEDGER) continue
+    // The cache's copy of the ledger is pinned by fetch-source's digest table, not by this guard.
+    if (file === LEDGER || file === CACHED_LEDGERS[0]) continue
     // Reported once by the partial-stage library check above.
     if (partial && isLibraryPath(file)) continue
     if (file === 'figma/review/src/review/promotion.json' && after)
@@ -309,7 +314,7 @@ async function checkScope(input: ScopeInput): Promise<ScopeResult> {
       continue
     }
 
-    if (file === RETIREMENTS_FILE && runKind === 'automated') {
+    if (RETIREMENT_FILES.has(file) && runKind === 'automated') {
       add({
         path: file,
         owner,

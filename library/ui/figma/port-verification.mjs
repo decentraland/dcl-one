@@ -3,8 +3,8 @@
 // (FDS), and the checks that compare generated output with the real Figma capture cannot run in this public
 // repository: the capture lives in FDS. Such a pull request must carry library/ui/port-verification.json, written
 // after those checks ran locally against the pinned capture (`pnpm figma fetch-source`). This check passes when the
-// lock is unchanged from the base, and otherwise only when the record names this exact lock, FDS commit and
-// library/ui/figma tree and every required check passed. A lock change without a matching record fails; it is never
+// lock is unchanged from the base or absent at the head, and otherwise only when the record names this exact lock,
+// FDS commit and library/ui/figma tree and every required check passed. A lock change without a matching record fails; it is never
 // skipped. Dependency-free; it needs no install, no credential and no capture.
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -90,18 +90,22 @@ export function recordProblems(record, { lockBytes, figmaTree }) {
 
 const git = (root, args) => execFileSync('git', ['-C', root, ...args], { maxBuffer: 1 << 28 })
 
-/** The lock as of `base`, or undefined when the base has none (the library's first introduction). */
-function baseLock(root, base) {
+/**
+ * The lock as of `commit`, or undefined when that commit has none: a base before the library's introduction, or a
+ * head branched before it. A name that is not a commit throws, so a typo never reads as "no lock".
+ */
+function lockAt(root, commit, role) {
   try {
-    return git(root, ['show', `${base}:${LOCK}`])
+    git(root, ['rev-parse', '--verify', '--quiet', `${commit}^{commit}`])
   } catch {
-    try {
-      git(root, ['rev-parse', '--verify', `${base}^{commit}`])
-    } catch {
-      throw new Error(`the base ${base} is not a commit in this checkout`)
-    }
+    throw new Error(`the ${role} ${commit} is not a commit in this checkout`)
+  }
+  try {
+    git(root, ['cat-file', '-e', `${commit}:${LOCK}`])
+  } catch {
     return undefined
   }
+  return git(root, ['show', `${commit}:${LOCK}`])
 }
 
 /** Command-line entry point. Returns the exit code. */
@@ -118,8 +122,15 @@ export function main(argv, root = process.cwd()) {
   }
   try {
     const top = git(root, ['rev-parse', '--show-toplevel']).toString().trim()
-    const lockBytes = git(top, ['show', `${head}:${LOCK}`])
-    const before = baseLock(top, base)
+    const before = lockAt(top, base, 'base')
+    const lockBytes = lockAt(top, head, 'head')
+    // A head without the lock (a branch cut before the library existed, or one that removes it) carries no port.
+    if (!lockBytes) {
+      process.stdout.write(
+        'port-verification: no upstream.lock.json at this head; no port to verify\n'
+      )
+      return 0
+    }
     if (before && before.equals(lockBytes)) {
       process.stdout.write(
         'port-verification: upstream.lock.json is unchanged; no port to verify\n'

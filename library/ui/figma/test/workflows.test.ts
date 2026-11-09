@@ -90,7 +90,8 @@ describe('the ui-library.yml url scan', () => {
     const prefetch = guardSteps.findIndex((step) => step.run?.includes('lfs-prefetch.mjs'))
     const scan = guardSteps.findIndex(
       (step) =>
-        step.run?.trim() === 'node library/ui/figma/key-guard.mjs --no-worktree --range "$RANGE"'
+        step.run?.trim() ===
+        'node library/ui/figma/key-guard.mjs --no-worktree --range "$RANGE" --allowlist-from "$HEAD_SHA"'
     )
     expect(prefetch).toBeGreaterThan(-1)
     expect(scan).toBeGreaterThan(prefetch)
@@ -99,6 +100,15 @@ describe('the ui-library.yml url scan', () => {
     expect(run).toContain('--endpoint "https://github.com/$REPOSITORY.git/info/lfs"')
     expect(run).not.toMatch(/--include|lfs fetch|lfs pull|ui_changed|\$changed/)
     expect(guardSteps[scan]!.env ?? {}).not.toHaveProperty('READ_TOKEN')
+  })
+
+  it('should read the url allowlist from the pull request head, as the trusted scan does, not the merge commit', () => {
+    const scan = guardSteps.find((step) =>
+      step.run?.includes('--no-worktree --range "$RANGE" --allowlist-from')
+    )
+    expect(scan?.env).toMatchObject({
+      HEAD_SHA: '${{ github.event.pull_request.head.sha || github.sha }}'
+    })
   })
 })
 

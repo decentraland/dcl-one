@@ -16,7 +16,7 @@ describe('when retirement publication is interrupted', () => {
   let shared: string
   beforeEach(async () => {
     ;({ root, app, records, shared } = await lifecycleFixture())
-    await put(root, `${SNAP}/retirements.json`, records)
+    await put(root, `figma/ledger/retirements.json`, records)
   })
   afterEach(async () => {
     vi.restoreAllMocks()
@@ -45,7 +45,7 @@ describe('when retirement publication is interrupted', () => {
       expect((await json(root, `${SNAP}/components/Page.json`)).components).toHaveLength(2)
       await cleanup.applyRetirements(root, records)
       expect(await cleanup.pendingRetirements(root, records)).toEqual([])
-      expect(await json(root, `${SNAP}/retirements.json`)).toEqual(records)
+      expect(await json(root, `figma/ledger/retirements.json`)).toEqual(records)
       expect(await readFile(path.join(root, shared), 'utf8')).toBe(before)
       expect(
         (await json(root, `${SNAP}/components/Page.json`)).components.map(
@@ -65,9 +65,9 @@ describe('when retirement publication is interrupted', () => {
     await expect(runSync(app, options)).rejects.toThrow('Interrupted publication')
     interrupt.mockRestore()
     records.retired[0]!.reason = 'Changed while pending'
-    await put(root, `${SNAP}/retirements.json`, records)
+    await put(root, `figma/ledger/retirements.json`, records)
     await runSync(app, options)
-    expect(await json(root, `${SNAP}/retirements.json`)).toEqual(records)
+    expect(await json(root, `figma/ledger/retirements.json`)).toEqual(records)
     expect(await cleanup.pendingRetirements(root, records)).toEqual([])
   })
   it('should retire a shared asset only when its last user is explicitly retired', async () => {
@@ -78,13 +78,13 @@ describe('when retirement publication is interrupted', () => {
       name: 'Second',
       ...(await cleanup.retirementArtifacts(root, { pageId: '1:1', componentId: '2:2' }))
     })
-    await put(root, `${SNAP}/retirements.json`, records)
+    await put(root, `figma/ledger/retirements.json`, records)
     await runSync(app, options)
     await expect(readFile(path.join(root, shared))).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(readFile(path.join(root, shared.replace(GEN, LIB)))).rejects.toMatchObject({
       code: 'ENOENT'
     })
-    expect(await json(root, `${SNAP}/retirements.json`)).toEqual(records)
+    expect(await json(root, `figma/ledger/retirements.json`)).toEqual(records)
     expect(records.retired.map((record) => record.componentId)).toEqual(['2:1', '2:2'])
     expect((await runDiff(app, { source: 'snapshot' })).diff).toEqual({
       added: [],

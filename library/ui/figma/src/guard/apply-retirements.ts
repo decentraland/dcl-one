@@ -55,7 +55,7 @@ async function retirementArtifacts(
       (ownerOf(ownership, file) as { pageId: string }).pageId === target.pageId
     )
       owned.add(file)
-    else if (kind && file !== `${SNAPSHOT}/retirements.json`) {
+    else if (kind && kind !== 'retirements') {
       const parsed = parseAggregate(kind, bytes.toString('utf8'), ownership)
       for (const [key, entry] of parsed?.entries ?? [])
         if (entryBelongsTo(key, entry, target, ownership)) owned.add(`${file}#${key}`)

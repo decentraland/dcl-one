@@ -17,7 +17,7 @@ let records: unknown
 
 beforeEach(async () => {
   ;({ root, records } = await lifecycleFixture())
-  await put(root, `${SNAP}/retirements.json`, records)
+  await put(root, `figma/ledger/retirements.json`, records)
   await pinTestCapture(path.join(root, 'figma'))
 })
 

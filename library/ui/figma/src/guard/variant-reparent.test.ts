@@ -53,7 +53,7 @@ describe('when a retired component reappears as a variant of a live set', () => 
   beforeEach(async () => {
     ;({ root, app, records, shared } = await lifecycleFixture())
     retired = (await json(root, PAGE)).components[0]
-    await put(root, `${SNAP}/retirements.json`, records)
+    await put(root, `figma/ledger/retirements.json`, records)
     await runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })
     await fixtureCommit(root, 'test: retire First')
     await fixtureGit(root, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
@@ -202,7 +202,7 @@ describe('when a retirement is applied before any recapture', () => {
   it('should still drain the variant that was never re-parented', async () => {
     const { root, app, records } = await lifecycleFixture()
     try {
-      await put(root, `${SNAP}/retirements.json`, records)
+      await put(root, `figma/ledger/retirements.json`, records)
       expect(await pendingRetirements(root, records)).toContain(`${PAGE}#variant:2:1`)
 
       await runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })

@@ -11,6 +11,7 @@ import type { Retirements } from './retirements.js'
 // (layout.ts), so all three are staged.
 const WORKSPACE_DIRECTORIES = [
   'figma/figma-snapshot',
+  'figma/ledger',
   'figma/review',
   'components',
   'index.ts',

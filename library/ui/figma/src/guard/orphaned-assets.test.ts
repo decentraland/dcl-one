@@ -179,7 +179,7 @@ describe('when a recapture stops generating an asset', () => {
     let staged: string
     beforeEach(async () => {
       staged = await tempDir('orphan-partial-')
-      for (const directory of [SNAP, 'figma/review'])
+      for (const directory of [SNAP, 'figma/ledger', 'figma/review'])
         await cp(path.join(head, directory), path.join(staged, directory), { recursive: true })
     })
 
@@ -577,5 +577,20 @@ describe('when cli diff checks a tree with ledgered orphans', () => {
   it('should exit 1 on removed drift beside a retained orphan', async () => {
     await put(head, `${GEN}/page/Stray.tsx`, '// not generated\n')
     expect(await cliDiff(head)).toBe(1)
+  })
+})
+
+describe('when a sync ledgers an orphan', () => {
+  it("should write the committed figma/ledger copy and leave the cache's pinned copy untouched", async () => {
+    const { root: base } = await lifecycleFixture()
+    temps.push(base)
+    const cached = `${SNAP}/orphaned-assets.json`
+    await put(base, cached, { schema: 1, orphaned: [] })
+    const before = await readFile(path.join(base, cached))
+    const { report } = await recapture(base, 'M1 1h18v18H1z')
+
+    expect(LEDGER).toBe('figma/ledger/orphaned-assets.json')
+    expect((await loadLedger(base)).orphaned.map((entry) => entry.path)).toEqual(report.orphaned)
+    expect(await readFile(path.join(base, cached))).toEqual(before)
   })
 })

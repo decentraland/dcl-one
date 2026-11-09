@@ -121,7 +121,7 @@ describe('guard and retire commands', () => {
 
       expect(result.code).toBe(0)
       const saved = JSON.parse(
-        await readFile(path.join(base, 'figma/figma-snapshot/retirements.json'), 'utf8')
+        await readFile(path.join(base, 'figma/ledger/retirements.json'), 'utf8')
       )
       expect(saved.retired[0].owned).toEqual(
         expect.arrayContaining([`${GEN}/components/places/PlaceCard.tsx`])

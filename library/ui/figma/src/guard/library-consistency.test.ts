@@ -4,7 +4,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { runSync, type App } from '../app.js'
 import { checkScope } from './check-scope.js'
-import { lifecycleFixture, put, json, SNAP } from './lifecycle-fixture.js'
+import { lifecycleFixture, put, json } from './lifecycle-fixture.js'
 import { emptyRetirements, type Retirements } from './retirements.js'
 
 describe('when the general PR guard checks library promotion entries', () => {
@@ -44,7 +44,7 @@ describe('when the general PR guard checks library promotion entries', () => {
     })
   })
   it('should accept component removal authorized by a permanent retirement', async () => {
-    await put(root, `${SNAP}/retirements.json`, records)
+    await put(root, `figma/ledger/retirements.json`, records)
     await runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })
     expect(await check(records)).toEqual({ ok: true, violations: [] })
   })

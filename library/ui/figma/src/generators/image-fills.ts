@@ -63,7 +63,8 @@ function readUrl(css: string, start: number): { end: number; value: string } {
   let value: string
   if (css[index] === '"' || css[index] === "'") {
     const end = stringEnd(css, index)
-    value = css.slice(index + 1, end - 1)
+    // A browser strips the whitespace around a quoted URL, so the anchored data: checks must see it stripped.
+    value = css.slice(index + 1, end - 1).trim()
     index = end
   } else {
     const end = css.slice(index).search(/[\s)"'(]/)
@@ -84,7 +85,8 @@ function decodeSvg(url: string, params: string | undefined): string {
   return decodeSvgPayload(params, url.slice(url.indexOf(',') + 1))
 }
 
-// Raster content decides, not size: a data image that is not SVG, or a safe SVG drawing a raster <image>.
+// Raster content decides, not size: a data image that is not SVG, or a safe SVG whose element (an <image>, a
+// <use>, any element the safe-SVG rules let carry an href) references embedded raster data.
 function isRaster(url: string): boolean {
   if (RASTER_DATA.test(url)) return true
   const svgData = SVG_DATA.exec(url)

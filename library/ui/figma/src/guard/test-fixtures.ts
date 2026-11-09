@@ -86,5 +86,5 @@ export async function writeTree(root: string) {
     files: {},
     components: ['Button', 'PlaceCard']
   })
-  await put(root, `${SNAP}/retirements.json`, emptyRetirements())
+  await put(root, `figma/ledger/retirements.json`, emptyRetirements())
 }

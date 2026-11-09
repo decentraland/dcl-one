@@ -53,7 +53,24 @@ describe('replaceRasterFills', () => {
       ['a direct PNG', 'url("data:image/png;base64,iVBORw0KGgo=")'],
       ['a direct JPEG', "url('data:image/jpeg;base64,/9j/4AAQ')"],
       ['a direct GIF', 'url(data:image/gif;base64,R0lGODlh)'],
-      ['a direct WebP', 'url( "data:image/webp;base64,UklGRg==" )']
+      ['a direct WebP', 'url( "data:image/webp;base64,UklGRg==" )'],
+      [
+        'a direct PNG behind whitespace inside the quotes',
+        'url(" data:image/png;base64,iVBORw0KGgo=")'
+      ],
+      [
+        'a direct PNG between tab and space padding',
+        "url('\tdata:image/png;base64,iVBORw0KGgo= ')"
+      ],
+      [
+        'an SVG behind whitespace inside the quotes',
+        svgUrl(raster(10)).replace('url("', 'url("  ')
+      ],
+      ['an SVG whose <use> draws a raster', svgUrl(raster(10).replace('<image', '<use'))],
+      [
+        'an SVG whose <use> draws a raster through xlink',
+        svgUrl(raster(10).replace('<image', '<use').replace(' href=', ' xlink:href='))
+      ]
     ])('should replace %s with the placeholder and publish no asset', (_, url) => {
       const { css, assets } = placeholderCss(
         `.a {\n  background: ${url} center / contain no-repeat;\n}\n`

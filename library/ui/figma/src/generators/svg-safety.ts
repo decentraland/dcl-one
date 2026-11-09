@@ -186,14 +186,15 @@ function unsafeSvgReason(svg: string): string | undefined {
 
 const RASTER_HREF = /^data:image\/(?:png|jpeg|gif|webp);base64,/
 
-// Whether an SVG that already passed unsafeSvgReason draws an embedded raster through an <image> element.
+// Whether an SVG that already passed unsafeSvgReason references an embedded raster. SAFE_HREF admits a raster
+// data: href on any element, <use> as well as <image>, so every element's href counts, not only <image>'s.
 function embedsRaster(svg: string): boolean {
   let rest = svg.trim()
   while (rest) {
     const tag = TAG.exec(rest)
     if (!tag) return false
-    const [whole, closing, name, attributes] = tag
-    if (!closing && name === 'image')
+    const [whole, closing, , attributes] = tag
+    if (!closing)
       for (const [, attribute, double, single] of attributes!.matchAll(ATTRIBUTE))
         if (
           (attribute === 'href' || attribute === 'xlink:href') &&

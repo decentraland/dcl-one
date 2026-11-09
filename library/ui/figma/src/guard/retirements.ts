@@ -6,15 +6,44 @@ import { readIfExists } from './fs-safe.js'
 // Keyless: the tool works on the one Figma file figma-design-system captures, so a record is identified by its page
 // and component ids alone and never stores the file key (it is private). The strict schemas reject a
 // record that carries one.
+// The ledger is committed, so every string is allowlisted: node ids, plain-text names and reasons with no link,
+// and repository-relative artifact paths. A Figma URL or a file key has no field it fits in.
+const nodeId = z.string().regex(/^[\w:;-]{1,64}$/, 'must be a Figma node id')
+const LINK = /:\/\/|figma\.com|www\./i
+const plainText = (max: number) =>
+  z
+    .string()
+    .min(1)
+    .max(max)
+    .refine(
+      (text) => !/[\p{Cc}<>]/u.test(text) && !LINK.test(text),
+      'must be plain text with no link'
+    )
+const artifact = z
+  .string()
+  .regex(
+    /^[\w@ .()+,=%-]+(?:\/[\w@ .()+,=%-]+)*(?:#[\w:;=., ()/%-]+)?$/,
+    'must be a repository-relative path'
+  )
+  .refine(
+    (file) =>
+      !file
+        .split('#')[0]!
+        .split('/')
+        .some((part) => part === '..' || part === '.'),
+    'must not leave the repository'
+  )
+  .refine((file) => !LINK.test(file), 'must not hold a link')
+
 const retirementSchema = z.strictObject({
-  pageId: z.string().min(1),
-  componentId: z.string().min(1).optional(),
-  name: z.string().min(1),
-  reason: z.string().min(1),
+  pageId: nodeId,
+  componentId: nodeId.optional(),
+  name: plainText(200),
+  reason: plainText(500),
   // Filled in and verified by `sync --developer --apply-retirements`.
-  owned: z.array(z.string()),
+  owned: z.array(artifact),
   // Shared artifacts remain until an explicit retirement of their last user authorizes removal.
-  sharedExclusions: z.array(z.string())
+  sharedExclusions: z.array(artifact)
 })
 
 const retirementsSchema = z
@@ -44,7 +73,9 @@ function retirementIdentity(record: Retirement): string {
   return JSON.stringify([record.pageId, record.componentId ?? null])
 }
 
-const RETIREMENTS_PATH = 'figma/figma-snapshot/retirements.json'
+// Committed, outside the gitignored capture cache: fetch-source overlays it onto the cache's retirements.json, so
+// the record `retire` writes survives a re-fetch and lands in a commit.
+const RETIREMENTS_PATH = 'figma/ledger/retirements.json'
 
 const emptyRetirements = (): Retirements => ({ schema: 1, retired: [] })
 

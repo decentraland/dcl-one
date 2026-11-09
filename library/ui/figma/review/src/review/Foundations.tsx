@@ -20,18 +20,30 @@ const sections = [
 ] as const
 type Section = (typeof sections)[number]
 
-// Icons render through the generated icon components, never through Figma's own SVG exports.
+// Icons render through the generated icon components, never through Figma's own SVG exports. An icon with an
+// active state takes `active`, so each variant tile draws its own art; no other icon is passed the prop.
 const iconComponents = new Map(
   generatedIcons.iconMeta.map((meta) => [
     meta.name,
-    (
-      generatedIcons as unknown as Record<
-        string,
-        ComponentType<generatedIcons.IconProps> | undefined
-      >
-    )[meta.component]
+    {
+      hasActiveState: meta.hasActiveState,
+      Icon: (
+        generatedIcons as unknown as Record<
+          string,
+          ComponentType<generatedIcons.ActiveIconProps> | undefined
+        >
+      )[meta.component]
+    }
   ])
 )
+
+/** The props a Foundations tile passes to draw one source variant of an icon. */
+function iconVariantProps(
+  hasActiveState: boolean,
+  variant: string | null | undefined
+): { active?: boolean } {
+  return hasActiveState ? { active: variant === 'active=true' } : {}
+}
 
 function Foundations({ section }: { section: string }) {
   const active: Section = sections.includes(section as Section) ? (section as Section) : 'colors'
@@ -273,11 +285,15 @@ function Foundations({ section }: { section: string }) {
           <h2>Icons · {foundations.icons.length} source variants</h2>
           <div className={styles.iconGrid}>
             {foundations.icons.map((icon) => {
-              const Icon = iconComponents.get(icon.name)
+              const { Icon, hasActiveState = false } = iconComponents.get(icon.name) ?? {}
               return (
                 <div className={styles.icon} key={icon.nodeId} title={`Figma node ${icon.nodeId}`}>
                   {Icon ? (
-                    <Icon size={Math.min(Math.max(icon.width, icon.height), 64)} aria-hidden />
+                    <Icon
+                      size={Math.min(Math.max(icon.width, icon.height), 64)}
+                      {...iconVariantProps(hasActiveState, icon.variant)}
+                      aria-hidden
+                    />
                   ) : (
                     <small>No generated component</small>
                   )}

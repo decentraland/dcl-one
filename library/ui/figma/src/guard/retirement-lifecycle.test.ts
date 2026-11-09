@@ -30,7 +30,7 @@ describe('when applying a component retirement in a retained page', () => {
     expect(records.retired[0]!.owned).not.toContain(shared)
   })
   it('should clean the exact component and all its value and type exports', async () => {
-    await put(root, `${SNAP}/retirements.json`, records)
+    await put(root, `figma/ledger/retirements.json`, records)
     await runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })
     expect(
       (await json(root, `${SNAP}/components/Page.json`)).components.map(
@@ -52,16 +52,16 @@ describe('when applying a component retirement in a retained page', () => {
     })
   })
   it('should be a no-op on repeated application', async () => {
-    await put(root, `${SNAP}/retirements.json`, records)
+    await put(root, `figma/ledger/retirements.json`, records)
     await runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })
     expect(
       (await runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })).retired
     ).toEqual([])
   })
   it('should retain the permanent record across an interrupted cleanup and retry', async () => {
-    await put(root, `${SNAP}/retirements.json`, records)
+    await put(root, `figma/ledger/retirements.json`, records)
     const paths = [
-      `${SNAP}/retirements.json`,
+      `figma/ledger/retirements.json`,
       `${SNAP}/components/Page.json`,
       `${GEN}/page/First.tsx`,
       `${LIB}/page/First.tsx`,
@@ -82,21 +82,21 @@ describe('when applying a component retirement in a retained page', () => {
     expect((await pendingRetirements(root, records)).length).toBeGreaterThan(0)
 
     await runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })
-    expect(await json(root, `${SNAP}/retirements.json`)).toEqual(records)
+    expect(await json(root, `figma/ledger/retirements.json`)).toEqual(records)
     expect(await pendingRetirements(root, records)).toEqual([])
     expect(
       (await runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })).retired
     ).toEqual([])
   })
   it('should resume a partial cleanup without losing its permanent identity or shared assets', async () => {
-    await put(root, `${SNAP}/retirements.json`, records)
+    await put(root, `figma/ledger/retirements.json`, records)
     const sharedBefore = await readFile(path.join(root, shared), 'utf8')
     await rm(path.join(root, `${GEN}/page/First.tsx`))
     await rm(path.join(root, `${LIB}/page/First.figma.ts`))
     expect((await pendingRetirements(root, records)).length).toBeGreaterThan(0)
 
     await runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })
-    expect(await json(root, `${SNAP}/retirements.json`)).toEqual(records)
+    expect(await json(root, `figma/ledger/retirements.json`)).toEqual(records)
     expect(await pendingRetirements(root, records)).toEqual([])
     expect(await readFile(path.join(root, shared), 'utf8')).toBe(sharedBefore)
     expect(
@@ -106,7 +106,7 @@ describe('when applying a component retirement in a retained page', () => {
     ).toEqual(['2:2'])
   })
   it('should apply the same committed record from a clean checkout', async () => {
-    await put(root, `${SNAP}/retirements.json`, records)
+    await put(root, `figma/ledger/retirements.json`, records)
     const copy = await mkdtemp(path.join(os.tmpdir(), 'retirement-checkout-'))
     try {
       await cp(root, copy, { recursive: true })
@@ -137,7 +137,7 @@ describe('when applying a component retirement in a retained page', () => {
         sharedExclusions: []
       }
     ]
-    await put(root, `${SNAP}/retirements.json`, records)
+    await put(root, `figma/ledger/retirements.json`, records)
     await runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })
     await expect(readFile(path.join(root, `${SNAP}/components/Page.json`))).rejects.toMatchObject({
       code: 'ENOENT'
@@ -152,7 +152,7 @@ describe('when applying a component retirement in a retained page', () => {
   })
   it('should reject a forged sibling claim before changing any published file', async () => {
     records.retired[0]!.owned.push(`${GEN}/page/Second.tsx`)
-    await put(root, `${SNAP}/retirements.json`, records)
+    await put(root, `figma/ledger/retirements.json`, records)
     const before = await readFile(path.join(root, `${GEN}/page/First.tsx`), 'utf8')
     await expect(
       runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })
@@ -183,7 +183,7 @@ describe('when Foo retires while its duplicate Foo2 survives', () => {
     ]
     const before = await Promise.all(siblingFiles.map((file) => readFile(path.join(root, file))))
     const sharedBefore = await readFile(path.join(root, shared))
-    await put(root, `${SNAP}/retirements.json`, records)
+    await put(root, `figma/ledger/retirements.json`, records)
     await runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })
     expect(
       (await json(root, 'figma/review/src/review/catalog.json')).components.map(
@@ -197,7 +197,7 @@ describe('when Foo retires while its duplicate Foo2 survives', () => {
     await expect(readFile(path.join(root, `${GEN}/page/Foo.tsx`))).rejects.toMatchObject({
       code: 'ENOENT'
     })
-    expect(await json(root, `${SNAP}/retirements.json`)).toEqual(records)
+    expect(await json(root, `figma/ledger/retirements.json`)).toEqual(records)
     expect((await runDiff(app, { source: 'snapshot' })).diff).toEqual({
       added: [],
       changed: [],
@@ -208,6 +208,6 @@ describe('when Foo retires while its duplicate Foo2 survives', () => {
       (await runSync(app, { source: 'snapshot', developer: true, applyRetirements: true })).retired
     ).toEqual([])
     expect(await fixtureBytes(root)).toEqual(afterCleanup)
-    expect(await json(root, `${SNAP}/retirements.json`)).toEqual(records)
+    expect(await json(root, `figma/ledger/retirements.json`)).toEqual(records)
   })
 })

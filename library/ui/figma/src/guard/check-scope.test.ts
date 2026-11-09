@@ -113,7 +113,7 @@ describe('checkScope', () => {
           }
         ]
       }
-      await put(base, `${SNAP}/retirements.json`, record)
+      await put(base, `figma/ledger/retirements.json`, record)
       expect((await run({ runKind: 'developer' })).violations).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -124,7 +124,7 @@ describe('checkScope', () => {
       )
     })
     it('should reject a newly added pending record in a developer PR', async () => {
-      await put(staged, `${SNAP}/retirements.json`, {
+      await put(staged, `figma/ledger/retirements.json`, {
         schema: 1,
         retired: [
           {
@@ -497,12 +497,12 @@ describe('checkScope', () => {
 
   describe('when automation touches retirements', () => {
     it('should reject an edit to the retirements file', async () => {
-      await put(staged, `${SNAP}/retirements.json`, {
+      await put(staged, `figma/ledger/retirements.json`, {
         ...emptyRetirements(),
         retired: [{ pageId: BUTTONS, name: 'x', reason: 'y', owned: [], sharedExclusions: [] }]
       })
 
-      expect(await kinds()).toContain(`retirement-edit:${SNAP}/retirements.json`)
+      expect(await kinds()).toContain(`retirement-edit:figma/ledger/retirements.json`)
     })
   })
 

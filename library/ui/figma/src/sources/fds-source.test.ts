@@ -8,7 +8,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { scanBuffer } from '../../key-guard.mjs'
 import {
   FDS_SNAPSHOT,
+  FdsCacheError,
   MARKER,
+  type Git,
   fetchFdsSource,
   keylessSnapshotFile,
   readFdsPin,
@@ -34,8 +36,32 @@ const files: Record<string, string> = {
   'icons/1-2.svg': `<svg xmlns="http://www.w3.org/2000/svg"><!-- https://www.figma.com/file/${FAKE_KEY}/x --></svg>\n`,
   'icons-rows.txt': `1:2 https://www.figma.com/design/${FAKE_KEY}/Demo?node-id=1-2\n`,
   'orphaned-assets.json':
-    JSON.stringify({ schema: 1, orphaned: [{ file: 'upstream-only' }] }) + '\n'
+    JSON.stringify({ schema: 1, orphaned: [{ file: 'upstream-only' }] }) + '\n',
+  'retirements.json':
+    JSON.stringify({
+      schema: 1,
+      retired: [
+        {
+          pageId: '9:9',
+          name: 'UpstreamOnly',
+          reason: 'retired in figma-design-system',
+          owned: [],
+          sharedExclusions: []
+        }
+      ]
+    }) + '\n'
 }
+
+const EMPTY_RETIREMENTS = JSON.stringify({ schema: 1, retired: [] }) + '\n'
+const retirement = (overrides: Record<string, unknown> = {}) => ({
+  pageId: '1:1',
+  componentId: '1:2',
+  name: 'Demo',
+  reason: 'replaced by the rebuilt set',
+  owned: ['figma/figma-snapshot/components/Demo%3A Page.json#component:1:2'],
+  sharedExclusions: [],
+  ...overrides
+})
 
 let scratch: string
 let remote: string
@@ -114,7 +140,8 @@ beforeEach(async () => {
   figmaRoot = path.join(scratch, 'one/library/ui/figma')
   lockFile = path.join(scratch, 'one/library/ui/upstream.lock.json')
   await writeTree(figmaRoot, {
-    'ledger/orphaned-assets.json': JSON.stringify({ schema: 1, orphaned: [] }) + '\n'
+    'ledger/orphaned-assets.json': JSON.stringify({ schema: 1, orphaned: [] }) + '\n',
+    'ledger/retirements.json': EMPTY_RETIREMENTS
   })
   await writeLock()
 })
@@ -151,7 +178,8 @@ describe('when sealing and then fetching the pinned capture', () => {
         'icons-rows.txt',
         'icons/1-2.svg',
         'orphaned-assets.json',
-        'pages.json'
+        'pages.json',
+        'retirements.json'
       ].sort()
     )
     const page = await readFile(
@@ -174,7 +202,8 @@ describe('when sealing and then fetching the pinned capture', () => {
         'icons-rows.txt',
         'icons/1-2.svg',
         'orphaned-assets.json',
-        'pages.json'
+        'pages.json',
+        'retirements.json'
       ].sort()
     )
   })
@@ -257,6 +286,61 @@ describe('when sealing and then fetching the pinned capture', () => {
     await expect(fetchCache({ seal: true })).rejects.toThrow('may hold only')
   })
 
+  it("should overlay this tree's retirement ledger over figma-design-system's, so one ledger is effective", async () => {
+    expect(
+      JSON.parse(await readFile(path.join(figmaRoot, 'figma-snapshot/retirements.json'), 'utf8'))
+    ).toEqual({ schema: 1, retired: [] })
+
+    const ledger = JSON.stringify({ schema: 1, retired: [retirement()] }, null, 2) + '\n'
+    await writeTree(figmaRoot, { 'ledger/retirements.json': ledger })
+    await fetchCache({ seal: true })
+    expect(await readFile(path.join(figmaRoot, 'figma-snapshot/retirements.json'), 'utf8')).toBe(
+      ledger
+    )
+    expect(
+      readFdsPin(JSON.parse(await readFile(lockFile, 'utf8'))).digests['retirements.json']
+    ).toBe(sha(ledger))
+  })
+
+  it.each([
+    ['a malformed entry', { schema: 1, retired: [{ pageId: '1:1' }] }],
+    ['an unknown key', { schema: 1, retired: [{ ...retirement(), fileKey: 'x' }] }],
+    ['an unknown top-level key', { schema: 1, retired: [], note: 'x' }],
+    [
+      'a Figma URL in a reason',
+      {
+        schema: 1,
+        retired: [retirement({ reason: 'see https://www.figma' + `.com/design/${FAKE_KEY}/x` })]
+      }
+    ],
+    ['a link in a name', { schema: 1, retired: [retirement({ name: 'figma.com/x' })] }],
+    ['a node id that is a URL', { schema: 1, retired: [retirement({ pageId: 'https://x' })] }],
+    [
+      'a path that leaves the repository',
+      { schema: 1, retired: [retirement({ owned: ['figma/../../etc/passwd'] })] }
+    ]
+  ])('should refuse a retirement ledger with %s and keep the previous cache', async (_, ledger) => {
+    const before = await listCache()
+    await writeTree(figmaRoot, { 'ledger/retirements.json': JSON.stringify(ledger) })
+    await expect(fetchCache({ seal: true })).rejects.toThrow('may hold only')
+    expect(await listCache()).toEqual(before)
+    await expect(
+      readFile(path.join(figmaRoot, 'figma-snapshot/retirements.json'), 'utf8')
+    ).resolves.toBe(EMPTY_RETIREMENTS)
+  })
+
+  it('should refuse a retirement ledger that is not JSON', async () => {
+    await writeTree(figmaRoot, { 'ledger/retirements.json': '{ not json' })
+    await expect(fetchCache({ seal: true })).rejects.toThrow(
+      'ledger/retirements.json is not valid JSON'
+    )
+  })
+
+  it('should fail when this tree has no retirement ledger', async () => {
+    await rm(path.join(figmaRoot, 'ledger/retirements.json'))
+    await expect(fetchCache()).rejects.toThrow()
+  })
+
   it('should fail when this tree has no ledger', async () => {
     await rm(path.join(figmaRoot, 'ledger'), { recursive: true })
     await expect(fetchCache()).rejects.toThrow()
@@ -275,7 +359,7 @@ describe('when sealing and then fetching the pinned capture', () => {
   it('should fetch again into a cache the consumer accepts', async () => {
     await rm(path.join(figmaRoot, 'figma-snapshot'), { recursive: true })
 
-    expect(await fetchCache()).toMatchObject({ revision, files: 5, ported: 3, identical: 1 })
+    expect(await fetchCache()).toMatchObject({ revision, files: 6, ported: 3, identical: 1 })
     await expect(
       verifyFdsCache(path.join(figmaRoot, 'figma-snapshot'), lockFile)
     ).resolves.toBeUndefined()
@@ -370,6 +454,56 @@ describe('when the cache or the pin is unusable', () => {
     await writeLock({ snapshot: { digests: { 'pages.json': 'a'.repeat(64) } } }, 'c'.repeat(40))
     const error = await fetchCache().catch((caught: Error) => caught)
     expect(String(error)).toMatch(/^Error: git fetch failed \(\d+\)$/)
+  })
+})
+
+describe('when the pinned tree lists a path outside the snapshot folder', () => {
+  // A real git tree cannot hold these names, so the listing is rewritten on its way out of `git ls-tree`.
+  const listing =
+    (planted: string): Git =>
+    async (args, options) => {
+      const out = execFileSync('git', args, {
+        input: options?.input,
+        maxBuffer: 1 << 30,
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
+      if (!args.includes('ls-tree') || !args.includes(FDS_SNAPSHOT)) return out
+      const first = out.toString('utf8').split('\0')[0]!
+      const meta = first.split('\t')[0]!
+      return Buffer.concat([out, Buffer.from(`${meta}\t${planted}\0`)])
+    }
+
+  it.each([
+    `${FDS_SNAPSHOT}/../../escape.json`,
+    `${FDS_SNAPSHOT}/components/../../../escape.json`,
+    `${FDS_SNAPSHOT}/./pages.json`,
+    `${FDS_SNAPSHOT}//pages.json`,
+    `${FDS_SNAPSHOT}/a\\..\\..\\escape.json`,
+    `${FDS_SNAPSHOT}/`,
+    'elsewhere/escape.json'
+  ])('should refuse %s with FdsCacheError, sealed or not, and write nothing', async (planted) => {
+    const attempt = (seal: boolean) =>
+      fetchFdsSource({
+        figmaRoot,
+        lockFile,
+        remote: `file://${remote}`,
+        runner: listing(planted),
+        seal
+      }).catch((caught: Error) => caught)
+    const refused = (error: unknown) => {
+      expect(error).toBeInstanceOf(FdsCacheError)
+      expect(String(error)).toContain('outside the snapshot folder')
+      expect(existsSync(path.join(scratch, 'one/library/escape.json'))).toBe(false)
+      expect(existsSync(path.join(scratch, 'one/escape.json'))).toBe(false)
+    }
+    // --seal skips the digest table, so it must refuse on its own.
+    refused(await attempt(true))
+    expect(existsSync(path.join(figmaRoot, 'figma-snapshot'))).toBe(false)
+    // Against a pinned table and an existing cache, the cache is kept as it was.
+    await fetchCache({ seal: true })
+    const before = await listCache()
+    refused(await attempt(false))
+    expect(await listCache()).toEqual(before)
   })
 })
 

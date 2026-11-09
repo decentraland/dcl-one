@@ -1,6 +1,6 @@
 import { componentOwner, componentOwnerById, type ComponentOwner } from './component-identity.js'
 import { assetUsers } from './asset-users.js'
-import { LEDGER } from './consumers.js'
+import { CACHED_LEDGERS, LEDGER, RETIREMENTS } from './consumers.js'
 import { exportStatements } from './exports.js'
 import { configuredPages } from '../page-identity.js'
 import type { FigmaConfig } from '../config.js'
@@ -30,6 +30,9 @@ const GUARDED_DIRECTORIES = [
 ] as const
 const GUARDED_FILES = [
   LIBRARY_PROMOTION,
+  // The committed ledgers sit outside the snapshot folder.
+  LEDGER,
+  RETIREMENTS,
   `${REVIEW}/catalog.json`,
   `${REVIEW}/promotion.json`,
   CONFIG
@@ -46,9 +49,12 @@ const AGGREGATES: Record<string, string> = {
   [`${SNAPSHOT}/live-source.json`]: 'live-source',
   [`${SNAPSHOT}/pages.json`]: 'pages',
   [`${SNAPSHOT}/generation-inventory.json`]: 'inventory',
-  [`${SNAPSHOT}/retirements.json`]: 'retirements',
-  // Validated as a whole by checkLedger; owning it keeps every managed snapshot file accounted for.
+  [RETIREMENTS]: 'retirements',
+  // Validated as a whole by checkLedger.
   [LEDGER]: 'orphan-ledger',
+  // fetch-source's copies of the two ledgers in the cache, pinned by its digest table.
+  [CACHED_LEDGERS[0]!]: 'orphan-ledger',
+  [CACHED_LEDGERS[1]!]: 'retirements',
   // Written by `pnpm figma fetch-source` next to the cache it builds: the revision and digest table it came from.
   [`${SNAPSHOT}/.fds-source.json`]: 'fds-source',
   [CONFIG]: 'config'
