@@ -17,11 +17,11 @@ LANES = ('clippy', 'test', 'headless', 'web')
 NATIVE_JOBS = {'Test Suite (ubuntu-24.04)', 'Test Suite (windows-2025)', 'Test Suite (macos-15)'}
 GATEWAY_HUD_INPUTS = ('apps/ui3/src/play/lib/baseDomain.ts',
                       'apps/ui3/src/play/engine/generated/serviceTable.ts')
+# Sources the web HUD compiles from library/ (HUD_SHARED in tooling/play-artifact.py).
+HUD_SHARED = ('library/shop/', 'library/catalyst-api/')
 # The flake's tool packages (bevy-tools: protoc, taplo and wasm-pack for the Linux lanes; bevy-ffmpeg
 # for the macOS Test Suite) and the action that delivers them; Windows, headless packaging and
 # scenes run install-protoc.py instead.
-# Sources the web HUD compiles from library/ (HUD_SHARED in tooling/play-artifact.py).
-HUD_SHARED = ('library/shop/', 'library/catalyst-api/')
 TOOLS_INPUTS = ('flake.nix', 'flake.lock', 'infra/packages/default.nix', 'infra/packages/tools.nix', '.github/actions/bevy-explorer-tools')
 INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/bevy', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
           *(path.rstrip('/') for path in HUD_SHARED),
