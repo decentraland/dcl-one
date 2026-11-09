@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { SessionProvider } from '../features/session/SessionContext'
 import { VoiceChatPanel } from '../features/voiceChat/VoiceChatPanel'
 import { SceneVoiceChatBanner } from '../features/voiceChat/SceneVoiceChatBanner'
-import { callGate, streamLive, streamPending } from '../features/voiceChat/callGate'
+import { callGate, callingAlready, streamLive, streamPending } from '../features/voiceChat/callGate'
 import { streamTarget } from '../features/notifications/summary'
 import type { ActiveCommunityVoiceChat, AppNotification, VoiceChatParticipant, VoiceChatState } from '../engine/protocol'
 import { resetProfileStore, seedProfiles } from '../features/session/profileStore'
@@ -59,7 +59,7 @@ describe('voice call panel', () => {
     const s = renderPanel({ status: 'receivedCall', kind: 'private', callId: 'c1', peer: PEER })
     expect(screen.getByRole('dialog', { name: 'Voice call' })).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('Incoming Call from')
-    expect(screen.getByRole('status')).toHaveTextContent('Mojito')
+    expect(screen.getByRole('dialog', { name: 'Voice call' })).toHaveTextContent('Mojito')
     await userEvent.click(screen.getByRole('button', { name: 'Accept' }))
     expect(vi.mocked(s.voiceChat.act)).toHaveBeenLastCalledWith({ op: 'acceptCall' })
     await userEvent.click(screen.getByRole('button', { name: 'Refuse' }))
@@ -84,8 +84,9 @@ describe('voice call panel', () => {
       localSpeaker: true,
       participants: [participant(PEER, 'Mojito', { isSpeaker: true, isSpeaking: true })]
     })
-    expect(screen.getByRole('status')).toHaveTextContent('Ongoing Call')
-    expect(screen.getByRole('status')).toHaveTextContent('Mojito talking')
+    // the live region is the call's state; the talking line beside it is not re-announced
+    expect(screen.getByRole('status')).toHaveTextContent(/^Ongoing Call$/)
+    expect(screen.getByRole('dialog', { name: 'Voice call' })).toHaveTextContent('Mojito talking')
     const mic = screen.getByRole('button', { name: 'Mute microphone' })
     expect(mic).toHaveAttribute('aria-pressed', 'true')
     await userEvent.click(mic)
@@ -125,7 +126,8 @@ describe('community stream panel', () => {
   it('a listener raises a hand and leaves', async () => {
     const s = renderPanel(inStream({ localRole: 'user', localSpeaker: false }))
     expect(screen.getByRole('dialog', { name: 'Community stream' })).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent('4 · Mojito talking')
+    expect(screen.getByRole('status')).toHaveTextContent(/^Connected$/)
+    expect(screen.getByRole('dialog', { name: 'Community stream' })).toHaveTextContent('4 · Mojito talking')
     await userEvent.click(screen.getByRole('button', { name: 'Raise hand' }))
     expect(vi.mocked(s.voiceChat.act)).toHaveBeenLastCalledWith({ op: 'requestToSpeak', raise: true })
     expect(screen.queryByRole('button', { name: 'End stream' })).toBeNull()
@@ -146,6 +148,18 @@ describe('community stream panel', () => {
     expect(vi.mocked(s.voiceChat.act)).toHaveBeenLastCalledWith({ op: 'setMic', enabled: true })
     await userEvent.click(screen.getByRole('button', { name: 'End stream' }))
     expect(vi.mocked(s.voiceChat.act)).toHaveBeenLastCalledWith({ op: 'endCommunityCall' })
+  })
+
+  it('a moderator demotes or removes a speaker from the People view', async () => {
+    const s = renderPanel(inStream({ localRole: 'owner', localSpeaker: true }))
+    await userEvent.click(screen.getByRole('button', { name: 'People' }))
+    expect(screen.queryByRole('button', { name: 'Options for Me' })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Options for Mojito' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Demote to listener' }))
+    expect(vi.mocked(s.voiceChat.act)).toHaveBeenLastCalledWith({ op: 'demoteSpeaker', address: PEER })
+    await userEvent.click(screen.getByRole('button', { name: 'Options for Mojito' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Remove from stream' }))
+    expect(vi.mocked(s.voiceChat.act)).toHaveBeenLastCalledWith({ op: 'kickPlayer', address: PEER })
   })
 
   it('a speaker who is not a moderator can leave the stage', async () => {
@@ -245,5 +259,14 @@ describe('the call gate', () => {
     expect(callGate({ ...idle, status: 'inCall', kind: 'private' }, { state: 'connected', online: true }, false).reason).toMatch(/already in a call/)
     expect(callGate({ ...idle, status: 'inCall', kind: 'community' }, { state: 'connected', online: true }, false).reason).toMatch(/community stream/)
     expect(callGate(idle, { state: 'connected', online: true }, true).reason).toMatch(/guest/)
+  })
+
+  it('a repeated call to the person being called is not refused', () => {
+    const calling = { ...idle, kind: 'private', status: 'startedCall', peer: PEER } as const
+    expect(callingAlready(calling, PEER.toUpperCase().replace('0X', '0x'))).toBe(true)
+    expect(callingAlready({ ...calling, status: 'startingCall' }, PEER)).toBe(true)
+    expect(callingAlready({ ...calling, status: 'inCall' }, PEER)).toBe(false)
+    expect(callingAlready(calling, '0x1e105bb213754519903788022b962fe2b9c4b263')).toBe(false)
+    expect(callingAlready({ ...calling, kind: 'community' }, PEER)).toBe(false)
   })
 })

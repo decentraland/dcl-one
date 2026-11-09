@@ -81,17 +81,25 @@ fn initiate_room_connection(
     mut commands: Commands,
     mut livekit_transports: Query<&mut LivekitTransport>,
     paused: Query<(), With<RoomPaused>>,
+    voice_rooms: Query<(), With<VoiceRoom>>,
     livekit_runtime: LivekitRuntimeRes,
     connection_availability: Res<State<ConnectionAvailability>>,
 ) {
-    if paused.contains(trigger.target())
-        || *connection_availability.get() == ConnectionAvailability::Unavailable
-    {
+    let entity = trigger.target();
+    if paused.contains(entity) {
+        debug!("Can't connect because the room is paused.");
+        return;
+    }
+    if *connection_availability.get() == ConnectionAvailability::Unavailable {
         debug!("Can't connect because new connections are disabled.");
+        // a call's room reports the refusal, so the call spends its re-dials and ends instead
+        // of waiting on "connecting"
+        if voice_rooms.contains(entity) {
+            commands.entity(entity).try_insert(ConnectFailed);
+        }
         return;
     }
 
-    let entity = trigger.target();
     let Ok(mut livekit_transport) = livekit_transports.get_mut(entity) else {
         error!("{entity} does not have a LivekitRuntime.");
         return;
@@ -100,7 +108,16 @@ fn initiate_room_connection(
     livekit_transport.retries += 1;
     let remote_address = &livekit_transport.address;
 
-    let url = Uri::try_from(remote_address).unwrap();
+    // the address comes from a server (a realm, a scene room, a voice reply): a bad one is a
+    // refused connection, not a crash
+    let url = match Uri::try_from(remote_address) {
+        Ok(url) => url,
+        Err(e) => {
+            error!("Failed to connect to room: bad address ({e}).");
+            commands.entity(entity).try_insert(ConnectFailed);
+            return;
+        }
+    };
     let address = format!(
         "{}://{}{}",
         url.scheme_str().unwrap_or_default(),

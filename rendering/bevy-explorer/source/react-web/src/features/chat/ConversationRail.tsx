@@ -2,6 +2,7 @@
 // open DM tabs, then the open community chats. Each tab carries its unread count; a community's
 // also whether one of those lines @-mentions the local user, and whether it is streaming.
 
+import { useId } from 'react'
 import type { ChatState, CommunityConversation, Conversation } from '../session/useEngineSession'
 import { Avatar, ControlButton, DclLogo, MaskIcon, Tooltip } from '../../design'
 import { useOptionalSession } from '../session/SessionContext'
@@ -40,14 +41,17 @@ type RailStream = 'live' | 'listening' | null
 /** One community chat on the rail: its thumbnail (the initial while it has none), unread count,
  *  mention mark and live-stream mark. */
 function CommunityRailTab({ community, active, stream, onSelect, onClose }: { community: CommunityConversation; active: boolean; stream: RailStream; onSelect: () => void; onClose: () => void }): React.JSX.Element {
+  // the button's label hides what is inside it: the stream mark is its description instead
+  const streamMark = useId()
   return (
     <Tooltip label={community.name} side="left" variant="rail">
       <div className={`${styles.railTab} ${active ? styles.railActive : ''}`.trim()}>
-        <button type="button" className={styles.railBtn} aria-label={`Chat in ${community.name}`} aria-pressed={active} onClick={onSelect}>
+        <button type="button" className={styles.railBtn} aria-label={`Chat in ${community.name}`} aria-describedby={stream != null ? streamMark : undefined} aria-pressed={active} onClick={onSelect}>
           <Avatar src={community.thumbnail || undefined} name={community.name} size={32} />
           {community.mention && <span className={styles.railMention} role="img" aria-label="Mentions you" />}
           {stream != null && (
             <img
+              id={streamMark}
               className={styles.railLive}
               src={stream === 'listening' ? streamListeningIcon : streamActiveIcon}
               alt={stream === 'listening' ? 'In this voice stream' : 'Live voice stream'}

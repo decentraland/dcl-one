@@ -1,9 +1,11 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest'
+import type { ActiveCommunityVoiceChat } from '../engine/protocol'
 
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/ecs.js', () => ({ engine: { addSystem: vi.fn(), removeSystem: vi.fn() } }))
 const player = vi.hoisted(() => ({ current: null as { userId: string; position?: undefined } | null }))
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/players/index.js', () => ({ getPlayer: () => player.current }))
-vi.mock('../../bridge-scene/src/system-helpers', () => ({ relay: vi.fn() }))
+const { relay } = vi.hoisted(() => ({ relay: vi.fn() }))
+vi.mock('../../bridge-scene/src/system-helpers', () => ({ relay }))
 vi.mock('~system/Runtime', () => ({ getRealm: vi.fn(async () => ({})) }))
 const { kernelFetch } = vi.hoisted(() => ({ kernelFetch: vi.fn() }))
 vi.mock('../../bridge-scene/src/bevy-api', () => ({
@@ -14,7 +16,7 @@ vi.mock('../../bridge-scene/src/bevy-api', () => ({
   }
 }))
 
-const { fetchActiveChats, registerVoiceChat } = await import('../../bridge-scene/src/domains/voiceChat')
+const { fetchActiveChats, patchActive, registerVoiceChat, streamHere } = await import('../../bridge-scene/src/domains/voiceChat')
 
 const chats = (...ids: string[]): { ok: true; body: string } => ({
   ok: true,
@@ -122,5 +124,99 @@ describe('active community streams', () => {
     b.frame()
     expect(lists(b.sent).at(-1)).toEqual([])
     expect(b.sent.at(-1)).toEqual({ kind: 'sceneVoiceChat', chat: null })
+  })
+})
+
+const chat = (communityId: string, places: { positions?: string[]; worlds?: string[] } = {}): ActiveCommunityVoiceChat => ({
+  communityId,
+  communityName: communityId,
+  isMember: true,
+  positions: places.positions ?? [],
+  worlds: places.worlds ?? [],
+  participantCount: 3,
+  moderatorCount: 1
+})
+
+describe('the stream where the player stands', () => {
+  const genesis = chat('g', { positions: ['0,0'] })
+  const world = chat('w', { worlds: ['Boedo.dcl.eth'] })
+
+  it('matches the parcel in Genesis City and the world inside a world', () => {
+    expect(streamHere([genesis, world], '0,0', 'main')).toBe(genesis)
+    expect(streamHere([genesis, world], '5,5', 'main')).toBeNull()
+    expect(streamHere([genesis, world], '3,3', 'boedo.dcl.eth')).toBe(world)
+  })
+
+  it("never matches a Genesis place from a world's parcels", () => {
+    expect(streamHere([genesis], '0,0', 'other.dcl.eth')).toBeNull()
+  })
+
+  it('matches nothing before the realm is known', () => {
+    expect(streamHere([genesis, world], '0,0', '')).toBeNull()
+  })
+})
+
+describe('patching the live list from a broadcast', () => {
+  const update = (communityId: string, status: 'started' | 'ended') => ({
+    communityId,
+    status,
+    positions: ['1,1'],
+    worlds: [],
+    isMember: false,
+    communityName: 'New',
+    communityImage: null
+  })
+
+  it('adds a started stream with its creator and drops an ended one', () => {
+    const list = [chat('c1')]
+    expect(patchActive(list, update('c2', 'started'))).toEqual([
+      chat('c1'),
+      { communityId: 'c2', communityName: 'New', communityImage: undefined, isMember: false, positions: ['1,1'], worlds: [], participantCount: 1, moderatorCount: 1 }
+    ])
+    expect(patchActive(list, update('c1', 'ended'))).toEqual([])
+  })
+
+  it('keeps a listed stream as read', () => {
+    const list = [chat('c1')]
+    expect(patchActive(list, update('c1', 'started'))).toBe(list)
+  })
+})
+
+describe('the scene banner', () => {
+  beforeEach(() => {
+    kernelFetch.mockReset()
+    relay.mockReset()
+  })
+
+  it('goes away when the stream here ends, without a read per broadcast', async () => {
+    player.current = { userId: '0xa', position: { x: 8, y: 0, z: 8 } } as never
+    const runtime = await import('~system/Runtime')
+    vi.mocked(runtime.getRealm).mockResolvedValue({ realmInfo: { realmName: 'main' } } as never)
+    kernelFetch.mockResolvedValueOnce({ ok: true, body: JSON.stringify({ data: { activeChats: [chat('c1', { positions: ['0,0'] })] } }) })
+    const sent: { kind: string; chat?: { communityId: string } | null }[] = []
+    let system: (dt: number) => void = () => undefined
+    registerVoiceChat({ send: (msg) => sent.push(msg as never), on: () => undefined, push: (s) => (system = s) })
+    const onUpdate = relay.mock.calls.find(([kind]) => kind === 'communityVoiceUpdate')?.[2] as (u: unknown) => void
+    const banner = (): unknown => sent.filter((m) => m.kind === 'sceneVoiceChat').at(-1)?.chat?.communityId ?? null
+
+    system(2) // sign-in read; the realm is not known yet
+    await settle()
+    system(2)
+    expect(banner()).toBe('c1')
+
+    onUpdate({ ...update('c1', 'ended'), createdAt: 0n, endedAt: 1n })
+    system(2)
+    expect(banner()).toBeNull()
+    expect(kernelFetch).toHaveBeenCalledTimes(1)
+  })
+
+  const update = (communityId: string, status: 'started' | 'ended') => ({
+    communityId,
+    status,
+    positions: [] as string[],
+    worlds: [] as string[],
+    isMember: true,
+    communityName: communityId,
+    communityImage: null
   })
 })

@@ -161,8 +161,10 @@ impl Participant {
 /// A procedure the engine must run against the social service.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Rpc {
+    /// `attempt` numbers the start so its reply can be matched to it.
     StartPrivate {
         callee: Address,
+        attempt: u64,
     },
     AcceptPrivate {
         call_id: String,
@@ -240,8 +242,12 @@ pub enum Effect {
 /// The reply of a procedure the state waits for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Reply {
-    StartPrivate(Result<String, VoiceRefusal>),
-    AcceptPrivate(Result<String, VoiceRefusal>),
+    /// With the attempt of the start it answers: a start given up on (the social link dropped,
+    /// sign-out, another call since) must not name the current call, and its call is ended.
+    StartPrivate(u64, Result<String, VoiceRefusal>),
+    /// With the call it accepts: a late reply for a call hung up since must not join (or fail)
+    /// the call being accepted now.
+    AcceptPrivate(String, Result<String, VoiceRefusal>),
     RejectPrivate(Result<(), VoiceRefusal>),
     /// With the call it ends: a hang-up returns at once, so an older call's end can answer
     /// while a newer call is ending.
@@ -448,6 +454,13 @@ impl CallState {
         let mut effects = Vec::new();
         match input {
             Input::StartPrivate(callee) => {
+                // a repeated click while this call is being set up or rings
+                if self.kind == Kind::Private
+                    && self.peer == Some(callee)
+                    && matches!(self.status, Status::StartingCall | Status::StartedCall)
+                {
+                    return effects;
+                }
                 if !self.status.is_not_connected() {
                     self.set_error("already in a call");
                     return effects;
@@ -458,7 +471,11 @@ impl CallState {
                 self.status = Status::StartingCall;
                 self.kind = Kind::Private;
                 self.peer = Some(callee);
-                effects.push(Effect::Rpc(Rpc::StartPrivate { callee }));
+                self.attempt += 1;
+                effects.push(Effect::Rpc(Rpc::StartPrivate {
+                    callee,
+                    attempt: self.attempt,
+                }));
             }
             Input::Accept => {
                 if self.status != Status::ReceivedCall {
@@ -517,6 +534,9 @@ impl CallState {
                 Kind::None => {}
             },
             Input::StartCommunity(community_id) => {
+                if self.repeats_community(&community_id) {
+                    return effects;
+                }
                 self.error = None;
                 if !self.status.is_not_connected() {
                     self.defer(Deferred::StartCommunity(community_id), now, &mut effects);
@@ -526,6 +546,9 @@ impl CallState {
                 self.start_community(community_id, &mut effects);
             }
             Input::JoinCommunity(community_id) => {
+                if self.repeats_community(&community_id) {
+                    return effects;
+                }
                 self.error = None;
                 if !self.status.is_not_connected() {
                     self.defer(Deferred::JoinCommunity(community_id), now, &mut effects);
@@ -763,6 +786,19 @@ impl CallState {
         effects.extend(self.apply(hang_up, now));
     }
 
+    /// A repeated click for the stream already being joined, already joined, or waiting for the
+    /// hang-up before it: nothing to do (another would hang up and start over).
+    fn repeats_community(&self, community_id: &str) -> bool {
+        let waiting = matches!(
+            &self.deferred,
+            Some((Deferred::StartCommunity(id) | Deferred::JoinCommunity(id), _)) if id == community_id
+        );
+        let in_it = self.kind == Kind::Community
+            && matches!(self.status, Status::StartingCall | Status::InCall)
+            && self.community_id.as_deref() == Some(community_id);
+        waiting || in_it
+    }
+
     fn in_community(&self) -> Option<String> {
         (self.kind == Kind::Community && self.status == Status::InCall)
             .then(|| self.community_id.clone())
@@ -817,8 +853,16 @@ impl CallState {
 
     fn reply(&mut self, reply: Reply, effects: &mut Vec<Effect>) {
         match reply {
-            Reply::StartPrivate(result) => {
-                if self.kind != Kind::Private {
+            Reply::StartPrivate(attempt, result) => {
+                let awaited = self.kind == Kind::Private
+                    && self.attempt == attempt
+                    && matches!(self.status, Status::StartingCall | Status::EndingCall);
+                if !awaited {
+                    // given up while in flight (or replayed after the social link came back):
+                    // the server just made a call nobody is in, ringing the callee
+                    if let Ok(call_id) = result {
+                        effects.push(Effect::Rpc(Rpc::EndPrivate { call_id }));
+                    }
                     return;
                 }
                 match (self.status, result) {
@@ -839,8 +883,11 @@ impl CallState {
                     _ => {}
                 }
             }
-            Reply::AcceptPrivate(result) => {
-                if self.kind != Kind::Private || self.status != Status::StartingCall {
+            Reply::AcceptPrivate(call_id, result) => {
+                if self.kind != Kind::Private
+                    || self.status != Status::StartingCall
+                    || self.call_id.as_deref() != Some(call_id.as_str())
+                {
                     return;
                 }
                 match result {
@@ -1043,7 +1090,7 @@ mod tests {
     fn ring(state: &mut CallState) -> Vec<Effect> {
         let mut effects = state.apply(Input::StartPrivate(addr(2)), 0.0);
         effects.extend(state.apply(
-            Input::Reply(Reply::StartPrivate(Ok("call-1".to_owned()))),
+            Input::Reply(Reply::StartPrivate(state.attempt, Ok("call-1".to_owned()))),
             0.0,
         ));
         effects
@@ -1057,11 +1104,14 @@ mod tests {
         assert_eq!(s.kind, Kind::Private);
         assert_eq!(
             effects,
-            vec![Effect::Rpc(Rpc::StartPrivate { callee: addr(2) })]
+            vec![Effect::Rpc(Rpc::StartPrivate {
+                callee: addr(2),
+                attempt: 1
+            })]
         );
 
         let effects = s.apply(
-            Input::Reply(Reply::StartPrivate(Ok("call-1".to_owned()))),
+            Input::Reply(Reply::StartPrivate(s.attempt, Ok("call-1".to_owned()))),
             0.0,
         );
         assert_eq!(s.status, Status::StartedCall);
@@ -1115,9 +1165,12 @@ mod tests {
         let mut s = state();
         s.apply(Input::StartPrivate(addr(2)), 0.0);
         s.apply(
-            Input::Reply(Reply::StartPrivate(Err(VoiceRefusal::Conflict(
-                "One of the users is busy calling someone else".to_owned(),
-            )))),
+            Input::Reply(Reply::StartPrivate(
+                s.attempt,
+                Err(VoiceRefusal::Conflict(
+                    "One of the users is busy calling someone else".to_owned(),
+                )),
+            )),
             0.0,
         );
         assert_eq!(s.status, Status::Busy);
@@ -1130,9 +1183,10 @@ mod tests {
 
         s.apply(Input::StartPrivate(addr(2)), 0.0);
         s.apply(
-            Input::Reply(Reply::StartPrivate(Err(VoiceRefusal::Internal(
-                "boom".to_owned(),
-            )))),
+            Input::Reply(Reply::StartPrivate(
+                s.attempt,
+                Err(VoiceRefusal::Internal("boom".to_owned())),
+            )),
             0.0,
         );
         assert_eq!(s.status, Status::GenericError);
@@ -1160,7 +1214,10 @@ mod tests {
             ]
         );
         let effects = s.apply(
-            Input::Reply(Reply::AcceptPrivate(Ok("livekit:u".to_owned()))),
+            Input::Reply(Reply::AcceptPrivate(
+                "call-2".to_owned(),
+                Ok("livekit:u".to_owned()),
+            )),
             0.0,
         );
         assert_eq!(s.status, Status::InCall);
@@ -1224,7 +1281,7 @@ mod tests {
         assert_eq!(s.status, Status::EndingCall);
         assert!(effects.is_empty());
         let effects = s.apply(
-            Input::Reply(Reply::StartPrivate(Ok("late".to_owned()))),
+            Input::Reply(Reply::StartPrivate(s.attempt, Ok("late".to_owned()))),
             0.0,
         );
         assert_eq!(
@@ -1273,7 +1330,7 @@ mod tests {
         assert_eq!(s.kind, Kind::Private);
 
         let effects = s.apply(
-            Input::Reply(Reply::StartPrivate(Ok("call-2".to_owned()))),
+            Input::Reply(Reply::StartPrivate(s.attempt, Ok("call-2".to_owned()))),
             0.0,
         );
         assert_eq!(
@@ -1575,7 +1632,7 @@ mod tests {
             effects,
             vec![Effect::Rpc(Rpc::JoinCommunity {
                 community_id: "c1".to_owned(),
-                attempt: 1
+                attempt: 2
             })]
         );
     }
@@ -1641,9 +1698,10 @@ mod tests {
         );
         s.apply(Input::StartPrivate(addr(4)), 10.2);
         s.apply(
-            Input::Reply(Reply::StartPrivate(Err(VoiceRefusal::Conflict(
-                "busy".to_owned(),
-            )))),
+            Input::Reply(Reply::StartPrivate(
+                s.attempt,
+                Err(VoiceRefusal::Conflict("busy".to_owned())),
+            )),
             10.3,
         );
         assert!(s.tick(20.0).is_empty());
@@ -1948,8 +2006,144 @@ mod tests {
         let effects = s.apply(Input::StartPrivate(addr(4)), 0.0);
         assert_eq!(
             effects,
-            vec![Effect::Rpc(Rpc::StartPrivate { callee: addr(4) })]
+            vec![Effect::Rpc(Rpc::StartPrivate {
+                callee: addr(4),
+                attempt: 2
+            })]
         );
+    }
+
+    #[test]
+    fn a_start_given_up_on_is_ended_when_its_reply_comes() {
+        let mut s = state();
+        s.apply(Input::StartPrivate(addr(2)), 0.0);
+        let attempt = s.attempt;
+        s.apply(Input::SocialDisconnected, 0.0);
+        assert_eq!(s.status, Status::GenericError);
+        // the start went out again on reconnect: its call rings the callee with nobody in it
+        let effects = s.apply(
+            Input::Reply(Reply::StartPrivate(attempt, Ok("lost".to_owned()))),
+            0.0,
+        );
+        assert_eq!(
+            effects,
+            vec![Effect::Rpc(Rpc::EndPrivate {
+                call_id: "lost".to_owned()
+            })]
+        );
+        assert_eq!(s.status, Status::GenericError);
+        assert_eq!(s.call_id, None);
+
+        // an older start's reply never names the call being started now
+        s.apply(Input::StartPrivate(addr(3)), 0.0);
+        let effects = s.apply(
+            Input::Reply(Reply::StartPrivate(attempt, Ok("older".to_owned()))),
+            0.0,
+        );
+        assert_eq!(
+            effects,
+            vec![Effect::Rpc(Rpc::EndPrivate {
+                call_id: "older".to_owned()
+            })]
+        );
+        assert_eq!(s.status, Status::StartingCall);
+        assert_eq!(s.call_id, None);
+    }
+
+    #[test]
+    fn a_late_accept_for_a_call_hung_up_since_is_ignored() {
+        let mut s = state();
+        let incoming = |call_id: &str| {
+            let mut requested = update(call_id, PrivateVoiceStatus::Requested);
+            requested.caller = Some(format!("{:#x}", addr(3)));
+            Input::PrivateUpdate(requested)
+        };
+        s.apply(incoming("call-a"), 0.0);
+        s.apply(Input::Accept, 0.0);
+        s.apply(Input::EndCall, 0.0);
+        assert_eq!(s.status, Status::Disconnected);
+        s.apply(incoming("call-b"), 0.0);
+        s.apply(Input::Accept, 0.0);
+
+        let effects = s.apply(
+            Input::Reply(Reply::AcceptPrivate(
+                "call-a".to_owned(),
+                Err(VoiceRefusal::Internal("gone".to_owned())),
+            )),
+            0.0,
+        );
+        assert!(effects.is_empty());
+        let effects = s.apply(
+            Input::Reply(Reply::AcceptPrivate(
+                "call-a".to_owned(),
+                Ok("livekit:a".to_owned()),
+            )),
+            0.0,
+        );
+        assert!(effects.is_empty());
+        assert_eq!(s.status, Status::StartingCall);
+
+        let effects = s.apply(
+            Input::Reply(Reply::AcceptPrivate(
+                "call-b".to_owned(),
+                Ok("livekit:b".to_owned()),
+            )),
+            0.0,
+        );
+        assert_eq!(s.status, Status::InCall);
+        assert_eq!(effects, vec![Effect::SpawnRoom("livekit:b".to_owned())]);
+    }
+
+    #[test]
+    fn a_repeated_click_does_not_start_over() {
+        let mut s = state();
+        s.apply(Input::StartPrivate(addr(2)), 0.0);
+        assert!(s.apply(Input::StartPrivate(addr(2)), 0.0).is_empty());
+        assert_eq!(s.status, Status::StartingCall);
+        assert_eq!(s.error, None);
+        s.apply(
+            Input::Reply(Reply::StartPrivate(s.attempt, Ok("call-1".to_owned()))),
+            0.0,
+        );
+        assert!(s.apply(Input::StartPrivate(addr(2)), 0.0).is_empty());
+        assert_eq!(s.status, Status::StartedCall);
+        assert_eq!(s.error, None);
+
+        let mut s = state();
+        s.apply(Input::JoinCommunity("c1".to_owned()), 0.0);
+        let attempt = s.attempt;
+        assert!(s
+            .apply(Input::JoinCommunity("c1".to_owned()), 0.0)
+            .is_empty());
+        assert_eq!(s.attempt, attempt);
+        s.apply(
+            Input::Reply(Reply::JoinCommunity(
+                "c1".to_owned(),
+                attempt,
+                Ok("livekit:c1".to_owned()),
+            )),
+            0.0,
+        );
+        assert!(s
+            .apply(Input::JoinCommunity("c1".to_owned()), 0.0)
+            .is_empty());
+        assert!(s
+            .apply(Input::StartCommunity("c1".to_owned()), 0.0)
+            .is_empty());
+        assert_eq!(s.status, Status::InCall);
+
+        // a second click while the hang-up before the join runs keeps that join's delay
+        let mut s = state();
+        ring(&mut s);
+        s.apply(Input::JoinCommunity("c1".to_owned()), 10.0);
+        assert!(s
+            .apply(Input::JoinCommunity("c1".to_owned()), 10.2)
+            .is_empty());
+        assert_eq!(s.status, Status::Disconnected);
+        assert!(s.tick(10.5).is_empty());
+        assert!(!s.tick(11.1).is_empty());
+        assert_eq!(s.status, Status::StartingCall);
+        assert_eq!(s.community_id.as_deref(), Some("c1"));
     }
 
     #[test]

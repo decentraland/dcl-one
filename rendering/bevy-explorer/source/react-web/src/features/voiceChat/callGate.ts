@@ -76,6 +76,15 @@ export function inCommunityStream(voice: VoiceChatState | null, communityId: str
   return voiceActive(voice) && voice?.kind === 'community' && voice.communityId === communityId
 }
 
+/** The local user's own call to this address is being set up or rings. */
+export function callingAlready(voice: VoiceChatState | null, address: string): boolean {
+  return (
+    voice?.kind === 'private' &&
+    (voice.status === 'startingCall' || voice.status === 'startedCall') &&
+    voice.peer?.toLowerCase() === address.toLowerCase()
+  )
+}
+
 /** What the HUD knows of a user to call: their DM tab's state, or that the local user blocked them.
  *  A user never messaged has no state yet; the social service still refuses what it must. */
 function knownPartner(session: EngineSession, address: string): { state: DmUserState | null; online: boolean } | undefined {
@@ -88,6 +97,11 @@ function knownPartner(session: EngineSession, address: string): { state: DmUserS
 /** Ring a user from a profile card, passport or the friends list: opens the DM conversation first
  *  (unity-explorer's `StartPrivateCallWithUserId`), then rings, or says why not. */
 export function startCallWith(session: EngineSession, address: string): void {
+  // a repeated click while this very call is being set up or rings: nothing to refuse
+  if (callingAlready(session.voiceChat.state, address)) {
+    session.chat.openConversation(address)
+    return
+  }
   const gate = callGate(session.voiceChat.state, knownPartner(session, address), session.profile.data?.isGuest === true)
   if (!gate.allowed) {
     showToast(gate.reason, { tone: 'error' })

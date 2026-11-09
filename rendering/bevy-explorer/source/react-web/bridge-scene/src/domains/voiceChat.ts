@@ -12,7 +12,7 @@ import { BevyApi } from '../bevy-api'
 import type { Ctx } from '../bridge'
 import { serviceBase, signed } from '../http'
 import { relay } from '../system-helpers'
-import type { ActiveCommunityVoiceChat, VoiceChatState as WireVoiceChatState } from '../../../src/engine/protocol'
+import type { ActiveCommunityVoiceChat, CommunityVoiceUpdateMessage, VoiceChatState as WireVoiceChatState } from '../../../src/engine/protocol'
 
 type ActiveChatRaw = {
   communityId?: string
@@ -49,12 +49,39 @@ export async function fetchActiveChats(): Promise<ActiveCommunityVoiceChat[] | n
     }))
 }
 
-/** The stream whose places include the parcel or the world the player is in (the first wins). */
+/** The stream whose places include where the player is (the first wins): in a world (an ENS name,
+ *  `*.eth`), a place in that world; in Genesis City, the parcel. A world's parcels are its own, so
+ *  they never match a Genesis place (unity-explorer's tracker picks by `IsWorld` the same way). With
+ *  the realm not known yet, nothing matches. */
 export function streamHere(chats: ActiveCommunityVoiceChat[], parcel: string, realm: string): ActiveCommunityVoiceChat | null {
-  const world = realm.toLowerCase()
-  return (
-    chats.find((c) => c.positions.includes(parcel) || (world !== '' && c.worlds.some((w) => w.toLowerCase() === world))) ?? null
-  )
+  const name = realm.toLowerCase()
+  if (name === '') return null
+  if (name.endsWith('.eth')) return chats.find((c) => c.worlds.some((w) => w.toLowerCase() === name)) ?? null
+  return chats.find((c) => c.positions.includes(parcel)) ?? null
+}
+
+/** The live list after a stream's start or end broadcast. The broadcast has no counts: a stream
+ *  just started has its creator, a moderator, in it. */
+export function patchActive(
+  chats: ActiveCommunityVoiceChat[],
+  update: Pick<CommunityVoiceUpdateMessage, 'communityId' | 'status' | 'positions' | 'worlds' | 'isMember' | 'communityName' | 'communityImage'>
+): ActiveCommunityVoiceChat[] {
+  const rest = chats.filter((c) => c.communityId !== update.communityId)
+  if (update.status === 'ended') return rest
+  if (rest.length < chats.length) return chats
+  return [
+    ...chats,
+    {
+      communityId: update.communityId,
+      communityName: update.communityName,
+      communityImage: update.communityImage ?? undefined,
+      isMember: update.isMember,
+      positions: update.positions,
+      worlds: update.worlds,
+      participantCount: 1,
+      moderatorCount: 1
+    }
+  ]
 }
 
 export function registerVoiceChat(ctx: Ctx): void {
@@ -68,11 +95,15 @@ export function registerVoiceChat(ctx: Ctx): void {
     api.action(msg.action)
   })
 
-  // The live streams: read on sign-in, and again whenever one starts or ends. Reads can overlap:
-  // only the latest answer counts, and a failed read keeps the last list. The read is signed, so
-  // none goes out while signed out.
+  // The live streams: read on sign-in, on hello and when the user's own stream is entered or left;
+  // other streams' starts and ends patch the list from their broadcast, which reaches every online
+  // user (a read each would be one request per user per event). Reads can overlap: only the latest
+  // answer counts, and a failed read keeps the last list. The read is signed, so none goes out
+  // while signed out.
   let active: ActiveCommunityVoiceChat[] = []
-  let publishedHere = ''
+  // The stream last pushed as `sceneVoiceChat` ('' for none); `null` after a new list, so the next
+  // tick pushes again, including `chat: null` when the stream here ended, and fresh counts.
+  let publishedHere: string | null = null
   let reads = 0
   let account: string | null = null
   const refreshActive = async (): Promise<void> => {
@@ -82,7 +113,7 @@ export function registerVoiceChat(ctx: Ctx): void {
     if (read !== reads || chats == null) return
     active = chats
     ctx.send({ kind: 'activeCommunityVoiceChats', chats: active })
-    publishedHere = ''
+    publishedHere = null
   }
   // The list is per account (`isMember`) and signed: none before sign-in, the next account's after.
   const accountChanged = (userId: string | null): void => {
@@ -90,7 +121,7 @@ export function registerVoiceChat(ctx: Ctx): void {
     account = userId
     reads++ // an answer for the previous account is dropped
     active = []
-    publishedHere = ''
+    publishedHere = null
     ctx.send({ kind: 'activeCommunityVoiceChats', chats: [], loaded: false })
     ctx.send({ kind: 'sceneVoiceChat', chat: null })
     void refreshActive()
@@ -114,7 +145,7 @@ export function registerVoiceChat(ctx: Ctx): void {
   })
 
   relay('communityVoiceUpdate', async () => api.getCommunityUpdateStream(), (update) => {
-    ctx.send({
+    const msg: CommunityVoiceUpdateMessage = {
       kind: 'communityVoiceUpdate',
       communityId: update.communityId,
       status: update.status === 'started' ? 'started' : 'ended',
@@ -126,8 +157,13 @@ export function registerVoiceChat(ctx: Ctx): void {
       isMember: update.isMember,
       communityName: update.communityName,
       communityImage: update.communityImage
-    })
-    void refreshActive()
+    }
+    ctx.send(msg)
+    if (account == null) return
+    reads++ // a read in flight predates this change
+    active = patchActive(active, msg)
+    ctx.send({ kind: 'activeCommunityVoiceChats', chats: active })
+    publishedHere = null
   })
 
   // Where the player stands, every ~2s: the stream happening in this scene, pushed on change.

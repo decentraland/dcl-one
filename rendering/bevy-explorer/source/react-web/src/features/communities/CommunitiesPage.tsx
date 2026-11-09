@@ -35,7 +35,7 @@ function CommunityCard({ c, live, onJoin, onOpen }: { c: Community; live: boolea
   return (
     <div className={styles.card} onClick={onOpen} role="button" tabIndex={0}>
       <div className={styles.cover} style={{ background: showImg ? undefined : nameColor(c.id) }}>
-        {live && <span className={styles.live} aria-label="Live stream">● LIVE</span>}
+        {live && <span className={styles.live} role="img" aria-label="Live stream">● LIVE</span>}
         {showImg ? (
           <img className={styles.coverImg} src={c.thumbnail} alt="" onError={() => setFailed(true)} />
         ) : (

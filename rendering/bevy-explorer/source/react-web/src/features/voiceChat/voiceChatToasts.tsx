@@ -1,4 +1,5 @@
-// Toasts for voice chat: a community stream starting or ending (the social service's broadcast), and
+// Toasts for voice chat: a community stream ending (the social service's broadcast; its start comes
+// as a `community_voice_chat_started` notification, toasted with the other notifications), and
 // the errors the engine reports outside the call panel's own Busy / Error views (a refused
 // moderation action, a guest trying to call).
 import { useEffect, useRef } from 'react'
@@ -21,20 +22,12 @@ export function useVoiceChatToasts(state: VoiceChatState | null): void {
     () =>
       onVoiceChatEvent((e) => {
         // a public stream is also broadcast to non-members, as the sidebar badge knows
-        if (!e.isMember) return
-        if (e.status === 'started') {
-          showToast(
-            <>
-              <b>{e.communityName || 'A community'}</b> started a voice stream.
-            </>
-          )
-        } else {
-          showToast(
-            <>
-              <b>{e.communityName || 'A community'}</b>&rsquo;s voice stream ended.
-            </>
-          )
-        }
+        if (!e.isMember || e.status !== 'ended') return
+        showToast(
+          <>
+            <b>{e.communityName || 'A community'}</b>&rsquo;s voice stream ended.
+          </>
+        )
       }),
     []
   )

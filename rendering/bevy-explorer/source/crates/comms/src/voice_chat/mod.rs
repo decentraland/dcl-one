@@ -150,8 +150,8 @@ pub struct VoiceRoomDisconnected {
 pub struct VoiceRoomTrack;
 
 enum Pending {
-    StartPrivate(oneshot::Receiver<Result<String, VoiceRefusal>>),
-    AcceptPrivate(oneshot::Receiver<Result<String, VoiceRefusal>>),
+    StartPrivate(u64, oneshot::Receiver<Result<String, VoiceRefusal>>),
+    AcceptPrivate(String, oneshot::Receiver<Result<String, VoiceRefusal>>),
     RejectPrivate(oneshot::Receiver<Result<(), VoiceRefusal>>),
     EndPrivate(String, oneshot::Receiver<Result<(), VoiceRefusal>>),
     StartCommunity(String, u64, oneshot::Receiver<Result<String, VoiceRefusal>>),
@@ -176,8 +176,8 @@ impl Pending {
             }
         }
         Some(match self {
-            Pending::StartPrivate(rx) => Reply::StartPrivate(take(rx)?),
-            Pending::AcceptPrivate(rx) => Reply::AcceptPrivate(take(rx)?),
+            Pending::StartPrivate(attempt, rx) => Reply::StartPrivate(*attempt, take(rx)?),
+            Pending::AcceptPrivate(id, rx) => Reply::AcceptPrivate(id.clone(), take(rx)?),
             Pending::RejectPrivate(rx) => Reply::RejectPrivate(take(rx)?),
             Pending::EndPrivate(id, rx) => Reply::EndPrivate(id.clone(), take(rx)?),
             Pending::StartCommunity(id, attempt, rx) => {
@@ -516,9 +516,9 @@ fn drive_voice_chat(
             Effect::Rpc(rpc) => {
                 let client = social.0.as_ref();
                 let outcome = match rpc {
-                    Rpc::StartPrivate { callee } => {
+                    Rpc::StartPrivate { callee, attempt } => {
                         let (tx, rx) = oneshot::channel();
-                        voice.pending.push(Pending::StartPrivate(rx));
+                        voice.pending.push(Pending::StartPrivate(attempt, rx));
                         client.map(|c| {
                             c.voice(VoiceQuery::StartPrivate {
                                 callee: format!("{callee:#x}"),
@@ -528,7 +528,9 @@ fn drive_voice_chat(
                     }
                     Rpc::AcceptPrivate { call_id } => {
                         let (tx, rx) = oneshot::channel();
-                        voice.pending.push(Pending::AcceptPrivate(rx));
+                        voice
+                            .pending
+                            .push(Pending::AcceptPrivate(call_id.clone(), rx));
                         client.map(|c| {
                             c.voice(VoiceQuery::AcceptPrivate {
                                 call_id,

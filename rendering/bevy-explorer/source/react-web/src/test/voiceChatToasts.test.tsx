@@ -55,11 +55,13 @@ describe('voice chat toasts', () => {
     listeners.clear()
   })
 
-  it('announces a stream to members only', () => {
+  it("announces a stream's end to members only, and leaves its start to the notification", () => {
     renderHook(() => useVoiceChatToasts(idle))
-    emit(started(false))
-    expect(showToast).not.toHaveBeenCalled()
     emit(started(true))
+    expect(showToast).not.toHaveBeenCalled()
+    emit({ ...started(false), status: 'ended' })
+    expect(showToast).not.toHaveBeenCalled()
+    emit({ ...started(true), status: 'ended' })
     expect(showToast).toHaveBeenCalledTimes(1)
   })
 

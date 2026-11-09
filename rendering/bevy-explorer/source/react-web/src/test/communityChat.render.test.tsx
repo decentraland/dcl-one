@@ -175,6 +175,9 @@ describe('community chat and its voice stream', () => {
     renderStream(chat, { active: [live()] })
     expect(screen.getByRole('img', { name: 'Live voice stream' })).toBeInTheDocument()
     expect(screen.getAllByRole('img', { name: /voice stream/i })).toHaveLength(1)
+    // the tab's label hides the mark inside it, so the mark describes the tab
+    expect(screen.getByRole('button', { name: 'Chat in Decentraland Foundation' })).toHaveAccessibleDescription('Live voice stream')
+    expect(screen.getByRole('button', { name: 'Chat in Toxic Events' })).not.toHaveAttribute('aria-describedby')
   })
 
   it('the tab of the stream the user is in shows the listening mark', () => {

@@ -182,8 +182,10 @@ function PrivateCall({ state }: { state: VoiceChatState }): React.JSX.Element {
             <Avatar src={peer.picture} name={base} color={peer.color} size={28} />
           </span>
         )}
-        <span className={styles.barText} role={failed ? 'alert' : 'status'}>
-          <span className={styles.barHead}>{head}</span>
+        {/* the live region is the call's state, not the talking line under it, which would be
+            re-announced on every speaking change; a failure is announced with its message */}
+        <span className={styles.barText} role={failed ? 'alert' : undefined}>
+          <span className={styles.barHead} role={failed ? undefined : 'status'}>{head}</span>
           {line == null ? nameLine : <span className={styles.barLine}>{line}</span>}
         </span>
       </div>
@@ -361,11 +363,11 @@ function CommunityStream({ state, collapsed, setCollapsed, people, setPeople }: 
         <Avatar src={thumbnail} name={name} color={nameColor(state.communityId ?? name)} size={30} />
         <div className={styles.headTitle}>
           <span className={styles.title}>{name}</span>
-          {status != null && (
-            <span className={styles.subtitle} role="status">
-              {status}
-            </span>
-          )}
+          {status != null && <span className={styles.subtitle}>{status}</span>}
+          {/* announces the connection only: the subtitle also names who talks, on every change */}
+          <span className={styles.srOnly} role="status">
+            {!voiceActive(state) ? '' : connected ? 'Connected' : state.connection === 'reconnecting' ? 'Reconnecting' : 'Connecting'}
+          </span>
         </div>
         <div className={styles.headActions}>
           {collapsed && controls}
@@ -417,6 +419,22 @@ function CommunityStream({ state, collapsed, setCollapsed, people, setPeople }: 
                         </ControlButton>
                       </Tooltip>
                     </div>
+                  </div>
+                ))}
+              </>
+            )}
+            {/* speakers carry the listeners' menu, so a moderator can demote or remove them */}
+            {speakers.length > 0 && (
+              <>
+                <div className={styles.sectionHead}>
+                  Speakers <span className={styles.sectionCount}>{speakers.length}</span>
+                </div>
+                {speakers.map((p) => (
+                  <div key={p.address} className={styles.row}>
+                    <Face p={p} size={30} />
+                    <span className={styles.rowName}>{shown(p)}</span>
+                    {isModerator(p.role) && <span className={styles.rowRole}>{p.role}</span>}
+                    <ParticipantMenu p={p} me={p.address.toLowerCase() === me} moderator={moderator} />
                   </div>
                 ))}
               </>
