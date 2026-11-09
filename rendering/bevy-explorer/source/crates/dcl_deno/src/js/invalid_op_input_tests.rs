@@ -542,6 +542,12 @@ fn sweep_client_ops(super_user: bool) {
         ];
         const ops = Deno.core.ops;
         const names = Object.keys(ops).sort();
+        // deno_core builtins and the overrides are swept with the extension ops
+        for (const name of ["op_timer_now", "op_now", "op_time_origin", "op_load_ext_script", "op_eval_context",
+                            "op_serialize", "op_blob_create_part", "op_blob_clone_part", "op_fetch",
+                            "op_fetch_send", "op_fetch_promise_is_settled", "op_utf8_to_byte_string"]) {{
+            if (!names.includes(name)) throw new Error(`${{name}} is not swept`);
+        }}
         globalThis.__sweep = {{ ops: 0, shapes: shapes().length, calls: 0, returned: 0, threw: 0, resolved: 0, rejected: 0, done: false }};
         const result = globalThis.__sweep;
         for (const name of names) {{

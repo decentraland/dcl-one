@@ -440,7 +440,7 @@ async fn send_request(
 
 /// Cached default client for a scene's own requests. Its connections follow the scene's
 /// private-network allowance (see [`PublicOnlyResolver`]).
-struct SceneHttpClient(reqwest::Client);
+pub(crate) struct SceneHttpClient(pub(crate) reqwest::Client);
 
 pub(super) fn allow_private_network(state: &OpState) -> bool {
     // The renderer gives this sender only to its bundled HUD or an operator-selected

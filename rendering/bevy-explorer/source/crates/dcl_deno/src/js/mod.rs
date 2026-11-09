@@ -693,6 +693,9 @@ mod tests {
     mod websocket {
         include!("websocket_tests.rs");
     }
+    mod runtime_surface {
+        include!("runtime_surface_tests.rs");
+    }
     use std::sync::Arc;
 
     use common::structs::SceneJsFile;
@@ -943,14 +946,11 @@ mod tests {
         }
     }
 
-    /// Drive one scene `fetch` against a local server that answers `/redirect` with a 302 to
-    /// `/target` on a second listener, and `/target` with a 200. Returns `"<status> <body>"`.
-    /// Loopback needs `preview`; the fetch permission request that `op_fetch_send` parks on is
-    /// granted from a plain thread, as the renderer would (`RpcResultSender::send` blocks).
-    fn fetch_redirect_outcome(is_server: bool) -> String {
+    /// A local server on two listeners: `/redirect` answers a 302 to `/target` on the second,
+    /// which answers 200 `arrived`. Returns both ports.
+    fn redirect_servers() -> [u16; 2] {
         use std::io::{Read, Write};
         use std::net::TcpListener;
-        use std::sync::mpsc;
 
         let listeners = [
             TcpListener::bind("127.0.0.1:0").unwrap(),
@@ -979,6 +979,19 @@ mod tests {
                 }
             });
         }
+        ports
+    }
+
+    /// Runs `script`, which must set `globalThis.__outcome`, in a preview scene (loopback needs
+    /// it) and returns the outcome. Fetch permission requests are granted from a plain thread,
+    /// as the renderer would (`RpcResultSender::send` blocks). `client` replaces the scene's
+    /// HTTP client.
+    pub(super) fn fetch_outcome(
+        is_server: bool,
+        client: Option<reqwest::Client>,
+        script: String,
+    ) -> String {
+        use std::sync::mpsc;
 
         let (mut runtime, _) = create_runtime(false, false, Default::default());
         {
@@ -996,6 +1009,9 @@ mod tests {
             state.put(dcl_types::RpcCalls::default());
             state.put(Vec::<dcl_types::SceneLogMessage>::default());
             state.put(dcl_types::SceneElapsedTime(0.0));
+            if let Some(client) = client {
+                state.put(super::fetch::SceneHttpClient(client));
+            }
         }
 
         let (grant_sx, grant_rx) = mpsc::channel::<common::rpc::RpcResultSender<bool>>();
@@ -1005,18 +1021,12 @@ mod tests {
             }
         });
 
-        let js = format!(
-            r#"globalThis.__outcome = fetch("http://127.0.0.1:{}/redirect")
-                .then(async (r) => `${{r.status}} ${{await r.text()}}`, (e) => `error ${{e}}`)
-                .then((s) => globalThis.__outcome = s);"#,
-            ports[0]
-        );
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
         rt.block_on(async {
-            runtime.execute_script("<test>", js).unwrap();
+            runtime.execute_script("<test>", script).unwrap();
             let op_state = runtime.op_state();
             let grant_permissions = async {
                 loop {
@@ -1046,6 +1056,21 @@ mod tests {
             .unwrap();
         deno_core::scope!(scope, runtime);
         deno_core::v8::Local::new(scope, outcome).to_rust_string_lossy(scope)
+    }
+
+    /// One scene `fetch` of `/redirect`. Returns `"<status> <body>"`.
+    fn fetch_redirect_outcome(is_server: bool) -> String {
+        let ports = redirect_servers();
+        fetch_outcome(
+            is_server,
+            None,
+            format!(
+                r#"fetch("http://127.0.0.1:{}/redirect")
+                .then(async (r) => `${{r.status}} ${{await r.text()}}`, (e) => `error ${{e}}`)
+                .then((s) => globalThis.__outcome = s);"#,
+                ports[0]
+            ),
+        )
     }
 
     /// The server never follows a redirect: the scene gets the 3xx back.
