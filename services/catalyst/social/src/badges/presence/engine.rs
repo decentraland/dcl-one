@@ -296,12 +296,13 @@ impl Flow<'_> {
         };
         let at = event.event_time_ms;
         let mut place = Place::new(event);
+        let mut matching = Vec::new();
         for badge in active_badges(conn, at, self.settings.lookahead_ms).await? {
-            if !place.matches(conn, &badge).await?
-                || has_badge(conn, &badge.badge_id, &event.wallet).await?
-            {
-                continue;
+            if place.matches(conn, &badge).await? {
+                matching.push(badge);
             }
+        }
+        for badge in unearned(conn, matching, &event.wallet).await? {
             // A visit is proven by the join itself inside the window.
             if !badge.stay && at >= badge.window.0 {
                 if self.grant_visit(conn, &badge, &event.wallet, at).await? {
@@ -482,6 +483,8 @@ impl Flow<'_> {
                 matching.push(badge);
             }
         }
+        // A wallet with nothing left to earn here keeps no pending leave.
+        let matching = unearned(conn, matching, wallet).await?;
         let rooms: Vec<String> = if event.world && !(matching.is_empty() && candidates.is_empty()) {
             vec![format!("world:{}", event.realm_name)]
         } else if !candidates.is_empty() {
@@ -504,9 +507,7 @@ impl Flow<'_> {
             if badge.stay || at < badge.window.0 || at >= badge.window.1 {
                 continue;
             }
-            if !has_badge(conn, &badge.badge_id, wallet).await?
-                && self.grant_visit(conn, badge, wallet, at).await?
-            {
+            if self.grant_visit(conn, badge, wallet, at).await? {
                 out.granted.push(badge.badge_id.clone());
             }
         }
@@ -873,6 +874,32 @@ async fn has_badge(conn: &mut PgConnection, badge_id: &str, wallet: &str) -> sql
     .bind(badge_id)
     .fetch_one(conn)
     .await
+}
+
+/// The badges the wallet has not completed, in one statement.
+async fn unearned(
+    conn: &mut PgConnection,
+    badges: Vec<BadgeConfig>,
+    wallet: &str,
+) -> sqlx::Result<Vec<BadgeConfig>> {
+    if badges.is_empty() {
+        return Ok(badges);
+    }
+    let ids: Vec<&str> = badges.iter().map(|b| b.badge_id.as_str()).collect();
+    let held: HashSet<String> = sqlx::query_scalar(
+        "SELECT badge_id FROM social.user_badge_progress \
+         WHERE address = $1 AND badge_id = ANY($2) AND completed_at IS NOT NULL",
+    )
+    .bind(wallet)
+    .bind(&ids)
+    .fetch_all(conn)
+    .await?
+    .into_iter()
+    .collect();
+    Ok(badges
+        .into_iter()
+        .filter(|b| !held.contains(&b.badge_id))
+        .collect())
 }
 
 /// False when the key was already recorded: a redelivery changes nothing.

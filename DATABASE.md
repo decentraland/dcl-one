@@ -1292,8 +1292,11 @@ tables need no per-session locks. The runtime state is upstream's
 value meets a LiveKit event time or the `intervals` document. Indexes follow
 the statements: `(wallet, realm_name)` for a leave's open visits,
 `opened_at` and `(last_checked_at, opened_at)` for the sweeper's due visits,
-and each fact table's retention column for the bounded prune (1,000 rows per
-table per pass, after the 7-day redelivery window). A scene badge resolves
+and each fact table's retention column for the bounded prune (batches of 1,000
+per table until one comes back short, at most 20 per sweep, after the 7-day
+redelivery window). Completed badges are left out in one statement per event,
+so a wallet with nothing left to earn in a place records no visit or pending
+leave there. A scene badge resolves
 the event's entity to its parcels through `content.deployments` (`entity_id`
 is unique); a world badge compares names. Progress is written through
 `apply_progress` with the progress document `{ steps, intervals }` kept as

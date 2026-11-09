@@ -577,6 +577,22 @@ async fn a_visit_joined_before_the_window_is_granted_at_its_start_by_the_leave_i
 // ── places ──────────────────────────────────────────────────────────────
 
 #[tokio::test]
+async fn a_wallet_with_nothing_left_to_earn_keeps_no_pending_leave() {
+    let Some(t) = T::new().await else { return };
+    t.badge("visit", At::Scene(PARCEL), 0).await;
+    t.join(ALICE, "s1", T0 + SEC, At::Scene(SCENE)).await;
+    assert!(t.progress("visit", ALICE).await.unwrap().2.is_some());
+    t.leave(ALICE, "s2", T0 + 2 * SEC, At::Scene(SCENE)).await;
+    t.leave(BOB, "s3", T0 + 2 * SEC, At::Scene(SCENE)).await;
+    let pending: Vec<String> =
+        sqlx::query_scalar("SELECT session_id FROM social.presence_pending_leaves")
+            .fetch_all(&t.pool)
+            .await
+            .unwrap();
+    assert_eq!(pending, ["s3"]);
+}
+
+#[tokio::test]
 async fn scenes_match_by_their_deployed_parcels_and_worlds_by_name() {
     let Some(t) = T::new().await else { return };
     t.badge("scene_visit", At::Scene(PARCEL), 0).await;
@@ -767,6 +783,25 @@ async fn connections_past_the_maximum_age_are_forgotten_and_old_facts_pruned() {
         .await
         .pruned;
     assert_eq!(pruned as i64, applied, "every key is older than the window");
+}
+
+#[tokio::test]
+async fn the_prune_continues_until_a_short_batch_up_to_its_bound() {
+    let Some(mut t) = T::new().await else { return };
+    t.settings.prune_batch = 1;
+    let passes = super::sweeper::PRUNE_PASSES as i64;
+    sqlx::query(
+        "INSERT INTO social.presence_applied_events (event_id, applied_at) \
+         SELECT 'key-' || i, $1 FROM generate_series(1, $2) i",
+    )
+    .bind(T0)
+    .bind(passes + 5)
+    .execute(&t.pool)
+    .await
+    .unwrap();
+    let at = T0 + t.settings.applied_events_ttl_ms + 1;
+    assert_eq!(t.sweep(at, None).await.pruned as i64, passes);
+    assert_eq!(t.sweep(at, None).await.pruned, 5);
 }
 
 // ── the sink ────────────────────────────────────────────────────────────

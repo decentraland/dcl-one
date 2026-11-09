@@ -16,6 +16,10 @@ use sqlx::PgConnection;
 
 use super::engine::{Flow, SELECT_VISITS, Visit, connections, drop_visit};
 
+/// Prune batches per table per sweep: with the default batch, 20,000 rows
+/// per table a minute, the bound on one sweep's transaction.
+pub(super) const PRUNE_PASSES: usize = 20;
+
 /// Who is in a scene or world now. `scene` `None` asks for any room of the
 /// world `realm`. `None` answers "unknown"; the instant is when the rooms
 /// were read, in epoch ms.
@@ -174,24 +178,32 @@ impl Flow<'_> {
         Ok(old.len())
     }
 
-    /// Deletes up to `prune_batch` rows older than `before` from each table.
+    /// Deletes rows older than `before` from each table, `prune_batch` at a
+    /// time until a batch comes back short, at most [`PRUNE_PASSES`] batches.
     async fn prune(&self, conn: &mut PgConnection, before: i64) -> sqlx::Result<u64> {
+        let batch = self.settings.prune_batch;
         let mut pruned = 0;
         for (table, column) in [
             ("presence_applied_events", "applied_at"),
             ("presence_pending_leaves", "recorded_at"),
             ("presence_absence_facts", "recorded_at"),
         ] {
-            pruned += sqlx::query(sqlx::AssertSqlSafe(format!(
-                "WITH stale AS (SELECT ctid FROM social.{table} WHERE {column} < $1 \
-                   ORDER BY {column} LIMIT $2) \
-                 DELETE FROM social.{table} t USING stale WHERE t.ctid = stale.ctid"
-            )))
-            .bind(before)
-            .bind(self.settings.prune_batch)
-            .execute(&mut *conn)
-            .await?
-            .rows_affected();
+            for _ in 0..PRUNE_PASSES {
+                let deleted = sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "WITH stale AS (SELECT ctid FROM social.{table} WHERE {column} < $1 \
+                       ORDER BY {column} LIMIT $2) \
+                     DELETE FROM social.{table} t USING stale WHERE t.ctid = stale.ctid"
+                )))
+                .bind(before)
+                .bind(batch)
+                .execute(&mut *conn)
+                .await?
+                .rows_affected();
+                pruned += deleted;
+                if (deleted as i64) < batch {
+                    break;
+                }
+            }
         }
         Ok(pruned)
     }
