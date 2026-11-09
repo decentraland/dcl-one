@@ -53,7 +53,6 @@ pub fn spawn_scene(
     crdt_component_interfaces: CrdtComponentInterfaces,
     renderer_sender: SceneResponseSender,
     global_update_receiver: tokio::sync::broadcast::Receiver<GlobalCrdtStateUpdate>,
-    storage_root: String,
     inspect: bool,
     super_user: Option<tokio::sync::mpsc::UnboundedSender<SystemApi>>,
     scene_origin: bevy::prelude::Vec3,
@@ -69,7 +68,6 @@ pub fn spawn_scene(
                 scene_thread(
                     initial_crdt_store,
                     scene_context,
-                    storage_root,
                     scene_js,
                     crdt_component_interfaces,
                     renderer_sender,

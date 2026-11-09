@@ -545,7 +545,6 @@ fn lifecycle_cleans_dead_entities_from_crdt_store() {
     let mut context = RendererSceneContext::new(
         dcl_types::SceneId::DUMMY,
         "hash".to_owned(),
-        "storage_root".to_owned(),
         false,
         0,
         "title".to_owned(),

@@ -328,7 +328,6 @@ mod tests {
                 RendererSceneContext::new(
                     SceneId::DUMMY,
                     "scene".to_owned(),
-                    String::new(),
                     false,
                     0,
                     String::new(),
