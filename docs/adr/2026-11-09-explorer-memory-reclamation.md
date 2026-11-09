@@ -33,16 +33,12 @@ flowchart LR
   H --> A
 ```
 
-## Reference and consequences
+## Consequences
 
-Unity reference revision: `333aa8826979186f1380058cc75f74b9630e4879` in
-`decentraland/unity-explorer`. Its `Explorer/Assets/DCL/ResourcesUnloading/CacheCleaner.cs` and
-`UnloadStrategies/UnloadStrategyHandler.cs`, `StandardUnloadStrategy.cs`, and
-`UnloadUnusedAssetUnloadStrategy.cs` provide the shared-cleaner model, 65/70/75%
-tiers and ten-entry wearable/profile chunks. Rust uses structural ownership in
-place of Unity's periodic `Resources.UnloadUnusedAssets` collector. The 1 ms
-allowance, 64-inspection cap and five-second inactive-profile grace are explicit
-Explorer policy choices. Collectibles retain the existing three-frame grace.
+Inactive profiles become eligible after five seconds; unresolved profiles retain
+their fetch-retry deadline so cleanup cannot accelerate retries. Collectibles retain a
+three-frame grace. Active consumers and pending loads keep their own strong
+handles, so releasing a cache pin cannot invalidate their assets.
 
 Representation caches respond to RAM or GPU pressure; metadata and profile caches
 respond to RAM. Weak lookup tables do not retain assets and require no pressure

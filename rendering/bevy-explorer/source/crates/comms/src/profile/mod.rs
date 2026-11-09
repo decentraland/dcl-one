@@ -403,7 +403,13 @@ impl ProfileCache {
                 Some(address) => self.entries.range((Excluded(address), Unbounded)).next(),
                 None => self.entries.iter().next(),
             }
-            .map(|(address, entry)| (*address, entry.evictable_after(now, PROFILE_PRESSURE_GRACE)));
+            .map(|(address, entry)| {
+                (
+                    *address,
+                    entry.evictable_after(now, PROFILE_PRESSURE_GRACE)
+                        && (entry.satisfied() || entry.due(now)),
+                )
+            });
             let Some((address, eligible)) = next else {
                 self.reclaim_cursor = None;
                 turn.complete_scan(std::mem::take(&mut self.scan_released));
@@ -2084,6 +2090,40 @@ mod tests {
             app.world().resource::<ReclaimBudget>().caches()[0].released,
             0
         );
+    }
+
+    #[test]
+    fn pressure_cleanup_preserves_a_missing_profiles_retry_deadline() {
+        use common::memory_reclaim::ReclaimTurn;
+        let address = Address::repeat_byte(0xc1);
+        let now = web_time::Instant::now();
+        let mut cache = ProfileCache::default();
+        let entry = cache.touch(address, ProfileTier::Compact);
+        entry.apply_compact(None, now);
+        entry.last_access = Some(now);
+
+        let resolved = Address::repeat_byte(0xc2);
+        let entry = cache.touch(resolved, ProfileTier::Full);
+        entry.next_fetch = Some(now + PROFILE_FETCH_RETRY);
+        entry.apply(profile(1, "resolved"), ProfileSource::Catalyst);
+        entry.last_access = Some(now);
+
+        let idle = now + PROFILE_PRESSURE_GRACE + std::time::Duration::from_secs(1);
+        cache.reclaim(idle, None, &mut ReclaimTurn::bounded(10, 64));
+        assert!(
+            cache.entries.contains_key(&address),
+            "pressure must preserve the failed fetch's retry deadline"
+        );
+        assert!(!cache.entries.contains_key(&resolved));
+        let read = cache.touch(address, ProfileTier::Compact);
+        assert!(read.missing(ProfileTier::Compact, idle));
+        assert!(!read.wants_fetch(idle));
+
+        let due = now + PROFILE_FETCH_RETRY;
+        assert!(cache.entries[&address].wants_fetch(due));
+        cache.reclaim(due, None, &mut ReclaimTurn::bounded(10, 64));
+        assert!(!cache.entries.contains_key(&address));
+        assert!(cache.touch(address, ProfileTier::Compact).wants_fetch(due));
     }
 
     #[test]

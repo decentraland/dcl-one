@@ -1084,6 +1084,7 @@ struct ResolvedPlayback<'a> {
 /// its scene's content (and registered as a dynamic collectible on first sight), a wearable emote
 /// through the collectible manager. `Err(Loading)` until everything is in, `Err(Failed)` if it
 /// never will be.
+#[allow(clippy::too_many_arguments)]
 fn resolve_playback<'a>(
     playback: &mut EmotePlayback,
     bodyshape: &str,

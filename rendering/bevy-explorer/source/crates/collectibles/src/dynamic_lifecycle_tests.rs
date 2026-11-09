@@ -98,8 +98,7 @@ fn released(world: &World) -> u64 {
         .released
 }
 
-#[test]
-fn scene_emote_is_recovered_while_owned_and_reconstructed_after_final_drop() {
+fn app_with_pressure() -> App {
     let mut app = App::new();
     app.add_plugins((
         MinimalPlugins,
@@ -128,7 +127,12 @@ fn scene_emote_is_recovered_while_owned_and_reconstructed_after_final_drop() {
     });
     app.finish();
     app.cleanup();
+    app
+}
 
+#[test]
+fn scene_emote_is_recovered_while_owned_and_reconstructed_after_final_drop() {
+    let mut app = app_with_pressure();
     let world = app.world_mut();
     let id = synthesize(world);
     let (gltf, lease) = world.run_system_once(lookup).unwrap().unwrap();
@@ -221,4 +225,50 @@ fn scene_emote_is_recovered_while_owned_and_reconstructed_after_final_drop() {
     assert_ne!(replay, id);
     assert_ne!(replayed_gltf.id(), gltf_id);
     assert_eq!(replayed.id(), replay);
+}
+
+#[test]
+fn scene_emote_recovery_survives_the_queued_final_handle_drop() {
+    let mut app = app_with_pressure();
+    let world = app.world_mut();
+    let id = synthesize(world);
+    let (_, lease) = world.run_system_once(lookup).unwrap().unwrap();
+    let Handle::Strong(original) = &lease else {
+        panic!("a graph lease must be strong");
+    };
+    let original = Arc::downgrade(original);
+    let owner = world.spawn(GraphEmoteLease(lease)).id();
+    advance_to_idle(&mut app);
+    assert_eq!(released(app.world()), 1);
+
+    let world = app.world_mut();
+    world.despawn(owner);
+    // The old handle family's drop is queued. A lookup in the same Update
+    // can recover the emote before Bevy processes that drop in PreUpdate.
+    assert!(original.upgrade().is_none());
+    assert!(world.resource::<Assets<Collectible<Emote>>>().contains(id));
+    let (_, recovered) = world.run_system_once(lookup).unwrap().unwrap();
+    assert_eq!(recovered.id(), id);
+    drop(recovered);
+    app.update();
+    app.update();
+    let (_, after_tracking) = app
+        .world_mut()
+        .run_system_once(lookup)
+        .unwrap()
+        .expect("the recovered pin must survive Bevy tracking the old family's drop");
+    assert_eq!(after_tracking.id(), id);
+    drop(after_tracking);
+
+    advance_to_idle(&mut app);
+    assert_eq!(released(app.world()), 2);
+    app.update();
+    app.update();
+    let world = app.world_mut();
+    assert!(!world.resource::<Assets<Collectible<Emote>>>().contains(id));
+    assert!(matches!(
+        world.run_system_once(lookup).unwrap(),
+        Err(CollectibleError::Missing)
+    ));
+    assert_ne!(synthesize(world), id);
 }

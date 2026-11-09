@@ -373,7 +373,8 @@ cache handles and does not force-remove assets from `Assets`.
 Collectible pins share content-hash identity across aliases. Permanent engine
 builtins remain pinned; synthesized scene emotes use idle pins and graph-node
 ownership. Profiles have a five-second pressure grace and retain local, live-peer,
-and in-flight data. Entity routing contexts and scene limits are unaffected.
+and in-flight data. Unresolved entries keep their fetch-retry deadline so pressure
+cleanup cannot accelerate retries. Entity routing contexts and scene limits are unaffected.
 
 ## Tests
 

@@ -7,9 +7,7 @@ the standalone, by `node --test`, with no browser-automation framework
 The sign-in flows
 (explorer-automation's Auth and CrossVerify fixtures) are left aside.
 
-The scenarios were copied once from `decentraland/explorer-automation` at `955b338` (2026-10-22)
-and rewritten; no Unity code moved. Nothing here compares the two clients: every visual reference
-is recorded anew in dcl-one.
+Every visual reference is recorded by dcl-one's CI against this client's rendering behavior.
 
 **Status.** The driver and the tooling are covered by unit tests, which run in CI. The scenarios
 have not yet run against the engine: that needs the Windows GPU runner and the zone accounts
@@ -90,10 +88,10 @@ as it happens.
 
 ## How a spec is written
 
-One file per explorer-automation fixture under `specs/`, headed by a table of its Unity tests
+One file per fixture under `specs/`, headed by a table of its test cases
 with the class of each: **Port** (the same scenario), **Partial** (an assertion changed, said
-in the header), **Gap** (the Bevy HUD has no such feature or control) or **Drop** (a Unity
-harness self-test). Each Unity test is one `scenario` (`driver/harness.ts`); a Gap or Drop is a
+in the header), **Gap** (the Bevy HUD has no such feature or control) or **Drop** (an unsupported
+harness self-test). Each implemented case is one `scenario` (`driver/harness.ts`); a Gap or Drop is a
 `todo` with its reason, counted apart in the report and never a pass.
 
 A scenario reaches the client only through `Explorer` (`driver/explorer.ts`): console commands
@@ -117,7 +115,7 @@ Explorer. The chat scenarios in `specs/chat.test.ts` also check that a slash key
 explorer-automation's 89 Explorer tests outside the sign-in flows, by fixture; the class of each
 test is in the spec file's header. Port 43, Partial 32, Gap 12, Drop 2.
 
-| Unity fixture (tests) | Spec | Port | Partial | Gap | Drop | What changed |
+| Fixture (tests) | Spec | Port | Partial | Gap | Drop | What changed |
 | --- | --- | --- | --- | --- | --- | --- |
 | ExplorePanel (7) | `explore-panel` | 6 | 1 | | | Pages instead of one panel; the top bar has no Communities tab |
 | Shortcuts (7) | `shortcuts` | 5 | 1 | 1 | | Gallery is `G`, not `K`; no key opens Events |
@@ -137,7 +135,7 @@ test is in the spec file's header. Port 43, Partial 32, Gap 12, Drop 2.
 | WearableVisibility (2) | `wearable-visibility` | | 2 | | | Thumbnails are not addressable; `rendered.wearables` by category instead |
 | Passport (5) | `passport` | 1 | 4 | | | Header and bio are plain text; name and address from `/get_user_data` |
 | SelfPreview (2) | `self-preview` | | | 2 | | No `--self-preview-wearables` launch option |
-| ViewSignalSmoke (2) | `view-signal` | | | | 2 | A Unity harness self-test |
+| ViewSignalSmoke (2) | `view-signal` | | | | 2 | An unsupported harness self-test |
 | Visual (17) | `visual/visual` | 17 | | | | The scenes at their own parcels; references recorded anew |
 
 Beyond explorer-automation, `specs/community-chat.test.ts` covers community text chat: a
@@ -179,7 +177,7 @@ A reference counts as approved once a reviewer has checked it against the scene'
   `tsc`, the driver's tests (the web transport against a stub page in the runner's Chrome) and
   the tooling tests. The workflow also listens to the explorer's paths, for the label below, and
   the job then passes without running them.
-- **Scenarios**, as unity-explorer runs explorer-automation: on a pull request of this repository
+- **Scenarios**: on a pull request of this repository
   when a maintainer applies the `ci:e2e` label (the label admits the commit it is applied to, and
   that alone: a push takes it off and runs nothing, and the maintainer puts it back to run the
   new commit; a draft or a fork does not run), after each Bevy Explorer / CI run of a push to
@@ -243,12 +241,17 @@ Kept from explorer-automation's guides:
 
 `specs/debug-panel.test.ts` checks every registered diagnostic field and the
 `/memory_reclaim` simulation modes, reset, budget validation and cumulative cache
-counters. A separate scenario loads wave, observes an actual idle emote pin
-release under pressure, and verifies replay. Simulation is preview-only; the
+counters. A separate scenario loads wave, waits for the emote cache to become
+empty under pressure, then verifies that replay reacquires a pin. Simulation is preview-only; the
 scenarios restore the session settings after exercising it. The control scenario
 checks mutation denial when `controlsAvailable` is false; the release scenario
 explicitly skips that non-preview session. Run mutations against a native preview client using
 `DCL_E2E_NATIVE_ARGS="--preview"` (plus the usual native transport/binary options).
+The normal browser CI session exercises mutation denial, not this preview-only
+scenario. Cache release and scene-emote recovery also run as native library
+regressions in the Explorer CI Test Suite (`cargo test --all --profile ci-test
+--locked -- --test-threads=1`), including real Bevy asset tracking and the
+collectible manager.
 
 The suite and the console surface read the code they test (the repository's `AGENTS.md`). A
 change on the left updates what is on the right in the same change, then runs the check.
