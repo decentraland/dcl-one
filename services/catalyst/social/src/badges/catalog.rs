@@ -26,6 +26,11 @@ use crate::notifications::errors::ApiError;
 
 /// The single-tier slot of upstream's layout: the badge directory itself.
 const SINGLE_TIER_SLOT: &str = "root";
+/// Tiers per badge (upstream's catalog has at most 6); each is one `INSERT`
+/// under the definition's `FOR UPDATE`.
+pub const MAX_TIERS: usize = 32;
+/// Files under `2d` or `3d` of one assets object (upstream's layout has 1 and 3).
+pub const MAX_ASSET_FILES: usize = 8;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -171,6 +176,13 @@ fn check_assets(at: &str, assets: &Value, errors: &mut Vec<String>) {
             errors.push(format!("{at}.{key} must be an object"));
             continue;
         };
+        if files.len() > MAX_ASSET_FILES {
+            errors.push(format!(
+                "{at}.{key} has {} files, at most {MAX_ASSET_FILES}",
+                files.len()
+            ));
+            continue;
+        }
         for (name, path) in files {
             match path.as_str() {
                 Some(p) if sanitize(p) == Some(p) => {}
@@ -251,6 +263,12 @@ pub fn validate(path_id: &str, body: DefinitionBody) -> Result<Definition, ApiEr
             }
             if tiers.is_empty() {
                 errors.push("tiers must not be empty".to_string());
+            }
+            if tiers.len() > MAX_TIERS {
+                return Err(ApiError::bad_request(format!(
+                    "a badge has at most {MAX_TIERS} tiers, not {}",
+                    tiers.len()
+                )));
             }
             let prefix = format!("{}-", id.replace('_', "-"));
             let mut seen = HashSet::new();

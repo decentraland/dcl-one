@@ -1505,3 +1505,60 @@ async fn tiered_updates_keep_held_tiers_and_refuse_removing_them() {
     );
     drop_badge(&pool, &id).await;
 }
+
+#[tokio::test]
+async fn catalog_writes_cap_tiers_asset_files_and_body_size() {
+    let Some(state) = admin_state().await else {
+        return;
+    };
+    let pool = state.badges.pool().clone();
+    let id = format!("adm_{}", Uuid::new_v4().simple());
+    let uri = format!("/badges/badges/{id}");
+    let too_many_tiers: Vec<Value> = (1..=super::catalog::MAX_TIERS as i32 + 1)
+        .map(|i| tier(&id, &format!("t{i}"), "T", i))
+        .collect();
+    let mut files = serde_json::Map::new();
+    for i in 0..=super::catalog::MAX_ASSET_FILES {
+        files.insert(format!("f{i}"), json!(format!("{id}/2d/f{i}.png")));
+    }
+    files.insert("normal".into(), json!(format!("{id}/2d/normal.png")));
+    let cases = [
+        (
+            json!({"name": "N", "description": "D", "category": "Explorer", "tiers": too_many_tiers}),
+            format!(
+                "a badge has at most {} tiers, not {}",
+                super::catalog::MAX_TIERS,
+                super::catalog::MAX_TIERS + 1
+            ),
+        ),
+        (
+            json!({"name": "N", "description": "D", "category": "Explorer",
+                   "criteria": {"steps": 1}, "assets": {"2d": files}}),
+            format!(
+                "assets.2d has {} files, at most {}",
+                super::catalog::MAX_ASSET_FILES + 2,
+                super::catalog::MAX_ASSET_FILES
+            ),
+        ),
+    ];
+    for (body, expected) in cases {
+        let (status, _, resp) = send(
+            app(state.clone()),
+            admin_request("PUT", &uri, Some("s3cret"), Some(body)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{resp}");
+        let message = resp["error"].as_str().unwrap();
+        assert!(message.contains(&expected), "{message}");
+    }
+    let oversized = json!({
+        "name": "N", "description": "x".repeat(super::MAX_BODY_BYTES),
+        "category": "Explorer", "criteria": {"steps": 1}
+    });
+    let resp = app(state.clone())
+        .oneshot(admin_request("PUT", &uri, Some("s3cret"), Some(oversized)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(catalog_audit(&pool, &id).await.is_empty());
+}

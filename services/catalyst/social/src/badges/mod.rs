@@ -24,6 +24,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::get;
 use sqlx::PgPool;
 
@@ -31,6 +32,9 @@ use crate::notifications::admin::AdminSecretSource;
 
 pub use progress::{Applied, ApplyOptions, Progress, ProgressChange, apply_progress};
 pub use store::{BadgesStore, DEFAULT_ASSET_BASE_URL};
+
+/// Request bodies of every route; the catalog's are far below it.
+pub const MAX_BODY_BYTES: usize = 1024 * 1024;
 
 pub const ADMIN_TOKEN_ENV: &str = "CATALYRST_BADGES_ADMIN_TOKEN";
 
@@ -111,6 +115,7 @@ pub fn router(state: SharedState) -> Router {
                 .delete(handlers::revoke_user_badge),
         )
         .route("/assets/{*path}", get(handlers::get_asset))
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(state)
 }

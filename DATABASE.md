@@ -1287,6 +1287,8 @@ catalog rows, and the bootstrap seed reaches only new databases.
    tiered, is a 409 and changes nothing; a removed tier nobody holds is
    deleted from `badge_tiers`. Player rows are never written: a lowered
    target awards on the wallet's next progress write, not retroactively.
+   A badge takes at most 32 tiers, each `2d` or `3d` at most 8 files, and
+   the badges routes refuse bodies over 1 MiB (413).
 2. Make the art reachable: upload it to the CDN that
    `BADGES_PUBLIC_ASSET_BASE_URL` names (upstream's by default), or mirror it
    into `BADGES_ASSETS_DIR` under the same relative paths when the base is
