@@ -62,7 +62,7 @@ jobs:
   reviewer:
     name: 'Publish UI reviewer: PR ${{ needs.source.outputs.pr }}'
     needs: [source, pending]
-    if: ${{ !cancelled() && needs.source.result == 'success' && vars.WEB_PREVIEW_REVIEWER_ENABLED == 'true' && needs.source.outputs.publish == 'true' && needs.source.outputs.reviewer == 'true' }}
+    if: ${{ !cancelled() && needs.source.result == 'success' && needs.pending.result == 'success' && vars.WEB_PREVIEW_REVIEWER_ENABLED == 'true' && needs.source.outputs.publish == 'true' && needs.source.outputs.reviewer == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
