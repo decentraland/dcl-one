@@ -446,7 +446,7 @@ pub async fn create_request(
         // accepted only if a competing decision has not already closed it.
         try_resp!(
             transition_request(
-                &mut *guard,
+                &mut guard,
                 community_id,
                 *opp_id,
                 &member_address,
@@ -694,7 +694,7 @@ pub async fn update_request_status(
             );
         }
     }
-    try_resp!(transition_request(&mut *guard, uuid, req_uuid, &member_address, status).await);
+    try_resp!(transition_request(&mut guard, uuid, req_uuid, &member_address, status).await);
     drop(guard);
     if status == "rejected" || status == "cancelled" {
         let event = if status == "rejected" {

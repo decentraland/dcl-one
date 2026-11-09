@@ -5,8 +5,8 @@
 //! the scene-signer gate that answers before any signature work) lives in
 //! `comms::signed_fetch`, shared with the world comms mints in comms, and is
 //! re-exported here; this module keeps the permissions route's key list and
-//! the operator bearer. The `AuthChainError` of the old crate is
-//! `SignedFetchError`; its variants and 400/401 split are the same.
+//! the operator bearer. A refusal is a `SignedFetchRefusal`: the shared
+//! `SignedFetchError` (the 400/401/503 split) and the crypto-middleware text.
 
 use axum::http::HeaderMap;
 
@@ -27,14 +27,14 @@ pub(crate) fn admin_authorized(expected: Option<&str>, headers: &HeaderMap) -> b
     crate::auth::admin_bearer::matches(expected, headers)
 }
 
-/// `CATALYRST_WORLDS_ADMIN_TOKEN`: unset fails closed, as the old routes did.
+/// `CATALYRST_WORLDS_ADMIN_TOKEN`: unset fails closed. 401 with upstream's bearer-middleware messages.
 pub fn authorize_admin(expected: Option<&str>, headers: &HeaderMap) -> Result<(), ApiError> {
     if admin_authorized(expected, headers) {
         Ok(())
+    } else if headers.contains_key(axum::http::header::AUTHORIZATION) {
+        Err(ApiError::unauthorized("Invalid authorization header"))
     } else {
-        Err(ApiError::forbidden(
-            "You are not authorized to access this resource",
-        ))
+        Err(ApiError::unauthorized("Authorization header is missing"))
     }
 }
 
@@ -140,6 +140,7 @@ mod tests {
     use super::test_support::*;
     use super::*;
     use crate::comms::signed_fetch::SIGNED_FETCH_EXPIRATION_SECS;
+    use crate::comms::signed_fetch::SignedFetchRefusal;
     use crate::shared::signed_fetch::{
         AUTH_TIMESTAMP_HEADER, ORIGINAL_PATH_HEADER, SCENE_SIGNER as KERNEL_SCENE_SIGNER,
         SignedFetchError, SignedPath, build_legacy_payload, build_payload_v6, is_refused_signer,
@@ -156,8 +157,8 @@ mod tests {
         !is_refused_signer(&metadata)
     }
 
-    fn message(err: &SignedFetchError) -> String {
-        err.http_status_and_message().1
+    fn message(err: &SignedFetchRefusal) -> String {
+        err.message.clone()
     }
 
     /// The handshake metadata the bevy, unity and godot explorers send: camelCase,
@@ -176,7 +177,7 @@ mod tests {
         headers: &HeaderMap,
         path: &str,
         keys: &[&str],
-    ) -> Result<VerifiedAuth, SignedFetchError> {
+    ) -> Result<VerifiedAuth, SignedFetchRefusal> {
         require_verified(headers, METHOD, &SignedPath::local(path), keys, None).await
     }
 
@@ -265,9 +266,17 @@ mod tests {
     #[tokio::test]
     async fn refuses_a_legacy_handshake_that_respells_a_declared_key() {
         for (declared, respelled, guard) in [
-            ("signer", "Signer", "invalid metadata content"),
-            ("intent", "Intent", "expected \"intent\""),
-            ("secret", "Secret", "expected \"secret\""),
+            ("signer", "Signer", "Invalid metadata content: {"),
+            (
+                "intent",
+                "Intent",
+                "Invalid chain metadata: expected \"intent\", got \"Intent\"",
+            ),
+            (
+                "secret",
+                "Secret",
+                "Invalid chain metadata: expected \"secret\", got \"Secret\"",
+            ),
         ] {
             let wallet = Wallet::from_hex(EXPLORER_KEY);
             let ts = now_ms();
@@ -285,7 +294,7 @@ mod tests {
             .await
             .expect_err("a re-spelled declared key must not be served");
             assert!(
-                matches!(err, SignedFetchError::MalformedChain { .. }),
+                matches!(err.cause, SignedFetchError::MalformedChain { .. }),
                 "{respelled:?} produced {err:?}"
             );
             assert!(
@@ -340,8 +349,8 @@ mod tests {
             .await
             .expect_err("a key folding to signer must not read as having no signer");
             assert!(
-                matches!(err, SignedFetchError::MalformedChain { .. })
-                    && message(&err).contains("invalid metadata content"),
+                matches!(err.cause, SignedFetchError::MalformedChain { .. })
+                    && message(&err).contains("Invalid metadata content: {"),
                 "{key:?} produced {err:?}"
             );
         }
@@ -367,7 +376,7 @@ mod tests {
         )
         .await
         .expect_err("a folded duplicate must not be authorized on the exact key");
-        assert!(message(&err).contains("invalid metadata content"));
+        assert!(message(&err).contains("Invalid metadata content: {"));
     }
 
     #[tokio::test]
@@ -391,7 +400,7 @@ mod tests {
             .await
             .expect_err("a scene-signed request must never mint a comms token");
             assert!(
-                message(&err).contains("invalid metadata content"),
+                message(&err).contains("Invalid metadata content: {"),
                 "signer {spelling:?} produced {err:?}"
             );
         }
@@ -410,7 +419,7 @@ mod tests {
         .await
         .expect_err("a scene-signed request must be refused");
         assert!(
-            matches!(err, SignedFetchError::MalformedChain { .. }),
+            matches!(err.cause, SignedFetchError::MalformedChain { .. }),
             "the gate must win over the signature check, got {err:?}"
         );
     }
@@ -428,7 +437,10 @@ mod tests {
         )
         .await
         .expect_err("a ten-minute-old handshake must not be served");
-        assert!(matches!(err, SignedFetchError::Expired { .. }), "{err:?}");
+        assert!(
+            matches!(err.cause, SignedFetchError::Expired { .. }),
+            "{err:?}"
+        );
     }
 
     #[tokio::test]
@@ -442,8 +454,14 @@ mod tests {
             .await
             .expect_err("a request with no timestamp must not be served");
         assert!(
-            matches!(err, SignedFetchError::Expired { signed_at: 0, .. }),
+            matches!(err.cause, SignedFetchError::Expired { signed_at: 0, .. }),
             "an absent timestamp produced {err:?}"
+        );
+        assert!(
+            message(&err).starts_with(
+                "Expired signature: signature timestamp: 0, timestamp expiration: 60000, local timestamp: "
+            ),
+            "{err}"
         );
     }
 
@@ -460,7 +478,7 @@ mod tests {
         .await
         .expect_err("an empty timestamp must not be served");
         assert!(
-            matches!(err, SignedFetchError::Expired { signed_at: 0, .. }),
+            matches!(err.cause, SignedFetchError::Expired { signed_at: 0, .. }),
             "an empty timestamp produced {err:?}"
         );
     }
@@ -496,11 +514,26 @@ mod tests {
     #[tokio::test]
     async fn refuses_a_legacy_permissions_request_that_respells_a_declared_key() {
         for (respelled, guard) in [
-            ("Type", "expected \"type\""),
-            ("Secret", "expected \"secret\""),
-            ("Wallets", "expected \"wallets\""),
-            ("Communities", "expected \"communities\""),
-            ("Nft", "expected \"nft\""),
+            (
+                "Type",
+                "Invalid chain metadata: expected \"type\", got \"Type\"",
+            ),
+            (
+                "Secret",
+                "Invalid chain metadata: expected \"secret\", got \"Secret\"",
+            ),
+            (
+                "Wallets",
+                "Invalid chain metadata: expected \"wallets\", got \"Wallets\"",
+            ),
+            (
+                "Communities",
+                "Invalid chain metadata: expected \"communities\", got \"Communities\"",
+            ),
+            (
+                "Nft",
+                "Invalid chain metadata: expected \"nft\", got \"Nft\"",
+            ),
         ] {
             let wallet = Wallet::from_hex(EXPLORER_KEY);
             let ts = now_ms();
@@ -538,7 +571,7 @@ mod tests {
         .await
         .expect_err("a folded signature over cased metadata has no fallback here");
         assert!(
-            matches!(err, SignedFetchError::InvalidSignature(_)),
+            matches!(err.cause, SignedFetchError::InvalidSignature(_)),
             "the strict route must answer 401, got {err:?}"
         );
 
@@ -553,7 +586,7 @@ mod tests {
         )
         .await
         .expect_err("a re-spelled signer must be refused on every route");
-        assert!(message(&err).contains("invalid metadata content"));
+        assert!(message(&err).contains("Invalid metadata content: {"));
 
         let payload = build_legacy_payload("put", SETTINGS_PATH, &ts, "{}");
         let auth = require_verified(
@@ -621,7 +654,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(matches!(err, SignedFetchError::InvalidSignature(_)));
+        assert!(matches!(err.cause, SignedFetchError::InvalidSignature(_)));
     }
 
     fn with_auth(value: &str) -> HeaderMap {
@@ -659,7 +692,7 @@ mod tests {
             authorize_admin(None, &HeaderMap::new())
                 .unwrap_err()
                 .status(),
-            403
+            401
         );
     }
 }

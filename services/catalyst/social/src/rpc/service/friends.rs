@@ -179,33 +179,6 @@ async fn notify_friendship_action(
     {
         metadata["message"] = serde_json::json!(message);
     }
-    if let Some(publisher) = ctx
-        .communities()
-        .and_then(|state| state.referral.publisher())
-        .cloned()
-    {
-        let metadata = metadata.clone();
-        // Source dispatch is detached after commit. Each attempt creates its
-        // event again, preserving the action key and refreshing its timestamp.
-        tokio::spawn(async move {
-            for attempt in 1..=3 {
-                let event = serde_json::json!({
-                    "type":"social-service", "subType":if action==Action::Request {"friendship-request"} else {"friendship-accepted"},
-                    "key":action_id.to_string(), "timestamp":chrono::Utc::now().timestamp_millis(),
-                    "metadata":metadata,
-                });
-                match publisher.publish(&event).await {
-                    Ok(()) => break,
-                    Err(error) => {
-                        tracing::warn!(%error, attempt, kind, "friendship SNS publication failed");
-                        if attempt < 3 {
-                            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                        }
-                    }
-                }
-            }
-        });
-    }
     let notification = NewNotification {
         id: action_id,
         ..NewNotification::now(address, kind, metadata)

@@ -11,12 +11,17 @@ const TIMEOUT_MS = 1_500;
 export async function primeDappsFlags(): Promise<void> {
   if (remoteFlagsPrimed()) return;
   try {
-    const res = await fetch("/internal/dapps-flags", { signal: AbortSignal.timeout(TIMEOUT_MS) });
+    const res = await fetch("/internal/dapps-flags?variants=1", { signal: AbortSignal.timeout(TIMEOUT_MS) });
     if (!res.ok) {
       await res.body?.cancel().catch(() => {});
       return;
     }
-    primeRemoteFlags((await res.json()) as Record<string, boolean>);
+    const body = (await res.json()) as { flags?: Record<string, boolean>; variants?: Record<string, string> } | Record<string, boolean>;
+    // `{ flags, variants }`; a bare flags map is what a server from before the variants answers.
+    if (body && typeof body.flags === "object" && body.flags !== null) {
+      const answer = body as { flags: Record<string, boolean>; variants?: Record<string, string> };
+      primeRemoteFlags(answer.flags, answer.variants ?? {});
+    } else primeRemoteFlags(body as Record<string, boolean>);
   } catch {
     // Off, as before any answer.
   }

@@ -873,7 +873,7 @@ impl ClusterSubscriber {
         }
         #[cfg(test)]
         {
-            return self.receipts.safe_to_mint(&stamp.wallet);
+            self.receipts.safe_to_mint(&stamp.wallet)
         }
         #[cfg(not(test))]
         {
@@ -887,7 +887,7 @@ impl ClusterSubscriber {
         }
         #[cfg(test)]
         {
-            return self.receipts.safe_to_mint(wallet);
+            self.receipts.safe_to_mint(wallet)
         }
         #[cfg(not(test))]
         {
@@ -909,7 +909,7 @@ impl ClusterSubscriber {
         #[cfg(test)]
         {
             self.receipts.acknowledge(snapshot);
-            return true;
+            true
         }
         #[cfg(not(test))]
         {
@@ -929,9 +929,7 @@ impl ClusterSubscriber {
             None
         };
         #[cfg(not(test))]
-        if safety.is_none() {
-            return None;
-        }
+        safety?;
         if let Some(safety) = safety {
             not_before = not_before.max(safety.token_floor);
         }

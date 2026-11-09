@@ -95,11 +95,6 @@ impl Drop for Mapping {
 /// host allocates inside the render event, so an absurd pair must be
 /// refused as a protocol error rather than reach `vec!`.
 const MAX_DIMENSION: u32 = 16_384;
-/// Pixels a generation may announce: 4096 x 4096, DCI 4K and a little more.
-/// The helper is the untrusted side of this channel and its dimensions size
-/// what this side allocates or wraps per slot, so a frame past this is
-/// refused before anything is allocated.
-const MAX_PIXELS: u64 = 4096 * 4096;
 
 /// A generation being assembled: mappings arrive over the fd channel,
 /// dimensions over the control channel (`TextureSet`), in either order.
@@ -159,10 +154,9 @@ pub struct PlayerVideo {
     /// Newest (generation, slot) the helper finished writing.
     published: Option<(u32, u8)>,
     presented: Option<(u32, u8)>,
+    pub(crate) presented_frames: u64,
     /// Ack the render event owes the helper after mapping a generation.
     ack_due: Option<u32>,
-    /// Frames copied into the presentation buffers.
-    frames: u64,
 }
 
 impl PlayerVideo {
@@ -279,23 +273,8 @@ impl PlayerVideo {
             .uv
             .copy_from_slice(sources[1].bytes(planes.uv.len())?);
         self.presented = Some((generation, slot));
-        self.frames = self.frames.wrapping_add(1);
+        self.presented_frames = self.presented_frames.saturating_add(1);
         Ok(ack)
-    }
-
-    /// The size the presentation planes were created for, once the first
-    /// frame was presented: the decoded frame's (even-rounded), which the
-    /// stream header behind the state update need not match.
-    pub fn presented_size(&self) -> Option<(u32, u32)> {
-        self.presentation
-            .as_ref()
-            .map(|planes| (planes.width, planes.height))
-    }
-
-    /// Frames copied into the presentation planes so far; unchanged while
-    /// nothing new was published.
-    pub const fn frames(&self) -> u64 {
-        self.frames
     }
 
     fn ensure_presentation(&mut self, width: u32, height: u32) -> Result<()> {
@@ -335,10 +314,6 @@ fn activate(pending: PendingGen) -> Result<ActiveGen> {
     ensure!(
         width % 2 == 0 && height % 2 == 0,
         "helper announced odd NV12 dimensions {width}x{height}"
-    );
-    ensure!(
-        u64::from(width).saturating_mul(u64::from(height)) <= MAX_PIXELS,
-        "helper announced {width}x{height}, past the {MAX_PIXELS} pixel cap"
     );
     let y_len = (width as usize)
         .checked_mul(height as usize)

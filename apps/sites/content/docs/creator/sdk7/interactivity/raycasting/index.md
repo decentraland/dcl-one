@@ -132,9 +132,9 @@ raycastSystem.registerTargetEntityRaycast(
 
 > [!WARNING]
 > **📔 Note**: `raycastSystem`, `RaycastQueryType` and `ColliderLayer` must be imported via
-> 
+>
 > > `import { raycastSystem, RaycastQueryType, ColliderLayer } from "@dcl/sdk/ecs"`
-> 
+>
 > See [Imports](/docs/creator/sdk7/getting-started/coding-scenes/#imports) for how to handle these easily.
 
 

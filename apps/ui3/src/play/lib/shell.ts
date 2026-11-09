@@ -12,13 +12,16 @@ export function postToShell(message: { type: string; [key: string]: unknown }): 
   window.parent.postMessage(message, location.origin)
 }
 
-/** A message the shell posts on its own rather than as an answer to a request, by type. */
-export function onShellMessage(type: string, handler: (message: Record<string, unknown>) => void): void {
-  window.addEventListener('message', (e: MessageEvent) => {
+/** A message the shell posts on its own rather than as an answer to a request, by type. Returns the
+ *  unsubscribe. */
+export function onShellMessage(type: string, handler: (message: Record<string, unknown>) => void): () => void {
+  const listener = (e: MessageEvent): void => {
     if (e.source !== window.parent || e.origin !== location.origin) return
     const m = e.data as Record<string, unknown> | null
     if (m?.type === type) handler(m)
-  })
+  }
+  window.addEventListener('message', listener)
+  return () => window.removeEventListener('message', listener)
 }
 
 const REQUEST_TIMEOUT_MS = 10_000

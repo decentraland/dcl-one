@@ -32,18 +32,16 @@ LINUX_ONLY = ('apps/sites/**', 'apps/ui3/**', 'rendering/bevy-explorer/upstream.
 
 
 def load_ci_local():
-    spec = importlib.util.spec_from_file_location('ci_local', ROOT / 'tooling/ci-local.py')
+    spec = importlib.util.spec_from_file_location('ci_local', Path(__file__).with_name('ci-local.py'))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
 def needs_macos(changed, ci):
-    triggers = ci.workflow_paths(WORKFLOW, event='push', source=ROOT)
-    watched = [ci.glob_regex(p) for p in triggers] if triggers is not None else None
     macos = [ci.glob_regex(p) for p in MACOS]
     linux = [ci.glob_regex(p) for p in LINUX_ONLY]
-    relevant = [path for path in changed if watched is None or any(r.match(path) for r in watched)]
+    relevant = watched_changes(changed, ci)
     for path in relevant:
         if any(r.match(path) for r in macos) or not any(r.match(path) for r in linux):
             return True, f'macOS input changed: {path}'
@@ -52,11 +50,9 @@ def needs_macos(changed, ci):
 
 def watched_changes(changed, ci):
     """The changed paths the workflow tests: its push.paths, which pull requests no longer filter on."""
+    changed = ci.non_documentation(changed)
     triggers = ci.workflow_paths(WORKFLOW, event='push', source=ROOT)
-    if triggers is None:
-        return list(changed)
-    watched = [ci.glob_regex(p) for p in triggers]
-    return [path for path in changed if any(r.match(path) for r in watched)]
+    return ci.matching_paths(changed, triggers)
 
 
 def plan(event, base, head):
@@ -84,7 +80,6 @@ BACKEND_CRATES = frozenset({
     'builder', 'camera-reel', 'chain-index', 'comms', 'content', 'db', 'explore',
     'fed', 'jobs', 'land-authz', 'price', 'shop', 'social', 'storage', 'testing', 'worlds',
 })
-COMPANION_DOCS = frozenset({'DATABASE.md', 'METRICS.md', 'docs/readiness.md'})
 FRONTEND_ROOTS = ('apps/ui3', 'apps/sites', 'library')
 SOURCE_EXTENSIONS = ('ts', 'tsx', 'js', 'jsx', 'mts', 'mjs', 'cts', 'cjs', 'json')
 BACKEND_REFERENCE = re.compile(r'services/catalyst(?:/[A-Za-z0-9_.@+-]+)*')
@@ -164,9 +159,12 @@ def web_plan(event, base, head):
             ['git', 'diff', '--name-only', '--no-renames', '-z', base, head, '--'],
             cwd=ROOT, text=True, timeout=60,
         )
-        paths = set(filter(None, changed.split('\0')))
-        backend_only = (any(backend_source(path) for path in paths)
-                        and all(backend_source(path) or path in COMPANION_DOCS for path in paths))
+        changed = set(filter(None, changed.split('\0')))
+        paths = set(load_ci_local().non_documentation(changed))
+        if not paths:
+            return {'run-web-unit-tests': False,
+                    'reason': 'Documentation-only changes' if changed else 'No changed files'}
+        backend_only = all(backend_source(path) for path in paths)
         if backend_only:
             references = frontend_backend_references(head)
             if any(path == reference or path.startswith(reference + '/')

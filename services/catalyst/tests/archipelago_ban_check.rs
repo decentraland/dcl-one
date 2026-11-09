@@ -191,7 +191,6 @@ async fn deny_list_refetches_after_ttl_and_fails_open_on_outage() {
         deny.is_denied("0xbad0000000000000000000000000000000000bad")
             .await
     );
-    tokio::time::sleep(Duration::from_millis(5)).await;
     assert!(
         deny.is_denied("0xbad0000000000000000000000000000000000bad")
             .await

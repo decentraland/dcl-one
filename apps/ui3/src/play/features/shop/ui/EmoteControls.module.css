@@ -1,0 +1,36 @@
+/* STOP EMOTE (146×42) and the sound (42×42), 16px apart, on 30% black. */
+.controls {
+  display: flex;
+  gap: 16px;
+}
+.stop,
+.sound {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 42px;
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--black-30);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--type-16);
+  font-weight: var(--fw-semibold);
+  line-height: normal;
+  cursor: pointer;
+}
+.stop {
+  gap: 6px;
+  width: 146px;
+  padding: 4px 8px 4px 4px;
+}
+.stop:hover {
+  background: var(--black-40);
+}
+.sound {
+  width: 42px;
+  padding: 4px;
+}
+.sound:disabled {
+  cursor: default;
+}

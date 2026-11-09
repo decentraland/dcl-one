@@ -57,8 +57,8 @@ use crate::shared::rpc::ws::{IdleAction, IdleTimer, SocketClose, close_message};
 
 /// The route upstream signs and serves (`src/adapters/stream-sessions/constants.ts`).
 pub const STREAM_PATH: &str = "/v1/stream";
-/// How long a closing socket may take to write what is queued before its
-/// close frame; past it the connection is dropped.
+/// How long a closing socket may take to flush queued frames and complete
+/// its close handshake; past it the connection is dropped.
 const CLOSE_BUDGET: Duration = Duration::from_secs(10);
 /// A flushed close may drain in-flight client frames without holding a pool
 /// slot through the much longer stalled-writer deadline.
@@ -314,6 +314,12 @@ struct Outbox {
     writer: JoinHandle<()>,
 }
 
+impl Drop for Outbox {
+    fn drop(&mut self) {
+        self.writer.abort();
+    }
+}
+
 impl Outbox {
     fn spawn(
         mut sink: SplitSink<WebSocket, Message>,
@@ -371,15 +377,43 @@ impl Outbox {
             .map_err(|_| Dropped::Gone)
     }
 
-    /// Sends the close frame after whatever is queued, then waits for the
-    /// writer to finish.
-    async fn close(mut self, frame: Option<(u16, &'static str)>) {
+    /// Sends the close frame after whatever is queued and drains inbound
+    /// frames until the peer closes. Dropping unread inbound data immediately
+    /// after flushing the close frame can reset the transport instead.
+    async fn close(
+        mut self,
+        frame: Option<(u16, &'static str)>,
+        mut incoming: SplitStream<WebSocket>,
+    ) {
         if let (Some(tx), Some(frame)) = (self.tx.take(), frame) {
             let _ = tx.send(close_message(frame));
         }
         self.tx = None;
-        let _ = tokio::time::timeout(CLOSE_BUDGET, &mut self.writer).await;
-        self.writer.abort();
+        let _ = tokio::time::timeout(CLOSE_BUDGET, async {
+            if frame.is_some() {
+                let drain = async {
+                    while let Some(Ok(message)) = incoming.next().await {
+                        if matches!(message, Message::Close(_)) {
+                            break;
+                        }
+                    }
+                };
+                tokio::pin!(drain);
+                tokio::select! {
+                    _ = &mut self.writer => {
+                        let _ = tokio::time::timeout(CLOSE_HANDSHAKE_BUDGET, &mut drain).await;
+                    }
+                    _ = &mut drain => {
+                        let _ = (&mut self.writer).await;
+                    }
+                }
+            } else {
+                let _ = (&mut self.writer).await;
+            }
+        })
+        .await;
+        // Drop aborts a writer that outlived the single overall close budget,
+        // including when the close future itself is cancelled.
     }
 }
 
@@ -517,21 +551,7 @@ impl Session {
         if let Some((code, _)) = frame {
             self.code = code;
         }
-        self.outbox.close(frame).await;
-        if frame.is_some() {
-            // Preserve the close frame while the peer still has application data
-            // in flight. Dropping a TCP socket with unread data can reset it and
-            // discard the close we just flushed. Only drain the closing handshake;
-            // no further client command is processed.
-            let _ = tokio::time::timeout(CLOSE_HANDSHAKE_BUDGET, async {
-                while let Some(Ok(message)) = self.incoming.next().await {
-                    if matches!(message, Message::Close(_)) {
-                        break;
-                    }
-                }
-            })
-            .await;
-        }
+        self.outbox.close(frame, self.incoming).await;
         self.code
     }
 
@@ -1071,6 +1091,29 @@ async fn event_data(ctx: &Context, me: &str, stream: Stream, event: &SocialEvent
     }
 }
 
+/// Exercise the production mapper through the captured source channel names.
+#[cfg(test)]
+pub(crate) async fn captured_event_data(
+    ctx: &Context,
+    me: &str,
+    id: &str,
+    event: &SocialEvent,
+) -> Option<Value> {
+    let stream = match id {
+        "friendship" => Stream::Friendships,
+        "friend-connectivity" => Stream::FriendConnectivity,
+        "block" => Stream::Blocks,
+        "private-voice" => Stream::PrivateVoiceChats,
+        "community-member" => Stream::CommunityMemberConnectivity,
+        "community-voice" => Stream::CommunityVoiceChats,
+        _ => return None,
+    };
+    if !stream.carries(event) {
+        return None;
+    }
+    event_data(ctx, me, stream, event).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1139,27 +1182,4 @@ mod tests {
         let astral = "\u{1F600}".repeat(33);
         assert!(parse(&format!(r#"{{"type":"unsubscribe","id":"{astral}"}}"#)).is_err());
     }
-}
-
-/// Exercise the production mapper through the captured source channel names.
-#[cfg(test)]
-pub(crate) async fn captured_event_data(
-    ctx: &Context,
-    me: &str,
-    id: &str,
-    event: &SocialEvent,
-) -> Option<Value> {
-    let stream = match id {
-        "friendship" => Stream::Friendships,
-        "friend-connectivity" => Stream::FriendConnectivity,
-        "block" => Stream::Blocks,
-        "private-voice" => Stream::PrivateVoiceChats,
-        "community-member" => Stream::CommunityMemberConnectivity,
-        "community-voice" => Stream::CommunityVoiceChats,
-        _ => return None,
-    };
-    if !stream.carries(event) {
-        return None;
-    }
-    event_data(ctx, me, stream, event).await
 }

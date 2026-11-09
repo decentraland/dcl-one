@@ -1,7 +1,6 @@
 //! Ranking contracts from social-service-ea b6b2cef, logic/community/ranking.ts,
-//! communities-db.ts and its three SQS ranking handlers. Local lifecycle events
-//! use durable receipts; external delivery retains the source's at-least-once
-//! contribution semantics. Mirrored rankings are never recalculated here.
+//! communities-db.ts. Local lifecycle events use durable receipts. Mirrored
+//! rankings are never recalculated here.
 use std::{sync::Arc, time::Duration};
 
 use chrono::{NaiveDateTime, Utc};
@@ -164,72 +163,6 @@ pub(crate) async fn record_stream(
     Ok(())
 }
 
-/// Called by the shared event ingress after it has decoded the SNS/SQS event.
-/// Source event/stream database failures are returned; photo lookup and each
-/// photo counter failure are logged and acknowledged, as the source handler does.
-/// The ingress owns acknowledgement (the pinned queue consumer deletes messages
-/// even after a handler error); a returned error does not promise queue retries.
-pub async fn apply_external_event(pool: &PgPool, event: &Value) -> sqlx::Result<bool> {
-    let metadata = &event["metadata"];
-    let (kind, subtype) = (event["type"].as_str(), event["subType"].as_str());
-    if (kind, subtype) == (Some("camera"), Some("photo-taken")) {
-        let Some(place) = metadata["placeId"].as_str().filter(|s| !s.is_empty()) else {
-            return Ok(true);
-        };
-        let communities: Vec<Uuid> = match sqlx::query_scalar(
-            "SELECT DISTINCT community_id FROM social.community_places WHERE place_id=$1",
-        )
-        .bind(place)
-        .fetch_all(pool)
-        .await
-        {
-            Ok(ids) => ids,
-            Err(error) => {
-                tracing::error!(%error, "photo ranking lookup failed");
-                return Ok(true);
-            }
-        };
-        for community in communities {
-            let result = async {
-                let mut tx = pool.begin().await?;
-                add(&mut tx, community, [0, 1, 0, 0, 0]).await?;
-                tx.commit().await
-            }
-            .await;
-            if let Err(error) = result {
-                tracing::error!(%error, %community, "photo ranking update failed");
-            }
-        }
-        return Ok(true);
-    }
-    let delta = match (kind, subtype) {
-        (Some("event"), Some("event-ended")) => [
-            1,
-            0,
-            0,
-            contribution(metadata["totalAttendees"].as_f64(), 1000),
-            0,
-        ],
-        (Some("streaming"), Some("community-streaming-ended")) => {
-            let participants = metadata["totalParticipants"].as_f64().unwrap_or(0.0);
-            if participants <= 1.0 {
-                return Ok(true);
-            }
-            [0, 0, 1, 0, contribution(Some(participants), 500)]
-        }
-        _ => return Ok(false),
-    };
-    let Some(community) = metadata["communityId"].as_str().filter(|s| !s.is_empty()) else {
-        return Ok(true);
-    };
-    let community = Uuid::parse_str(community)
-        .map_err(|_| sqlx::Error::Protocol("invalid community UUID".into()))?;
-    let mut tx = pool.begin().await?;
-    add(&mut tx, community, delta).await?;
-    tx.commit().await?;
-    Ok(true)
-}
-
 const METRICS_SQL: &str = "SELECT c.ranking_events_count::bigint AS events_count,
     c.ranking_photos_count::bigint AS photos_count,c.ranking_streams_count::bigint AS streams_count,
     (SELECT count(*) FROM social.community_places p WHERE p.community_id=c.id) AS places_count,
@@ -333,6 +266,11 @@ const ENDED_OCCURRENCES_SQL: &str = "WITH schedules AS MATERIALIZED (
         (SELECT count(*) FROM explore.event_attendance_local a WHERE a.event_id=candidates.event_id AND a.action='going')
     FROM candidates";
 
+#[cfg(test)]
+tokio::task_local! {
+    static DISABLE_ENDED_STATEMENT_TIMEOUT: ();
+}
+
 async fn scan_ended_page(
     pool: &PgPool,
     now: NaiveDateTime,
@@ -343,6 +281,12 @@ async fn scan_ended_page(
     sqlx::query("SET LOCAL statement_timeout='2s'")
         .execute(&mut *tx)
         .await?;
+    #[cfg(test)]
+    if DISABLE_ENDED_STATEMENT_TIMEOUT.try_with(|()| ()).is_ok() {
+        sqlx::query("SET LOCAL statement_timeout=0")
+            .execute(&mut *tx)
+            .await?;
+    }
     // Bound source keys before reading schedules, probing receipts or counting
     // attendance. Completed history cannot grow the work of this page.
     let page: Vec<(String, i32)> = sqlx::query_as(ENDED_EVENT_PAGE_SQL)
@@ -419,7 +363,18 @@ pub async fn scan_ended(
         )
         .await
         {
-            Ok(result) => collected += result?,
+            Ok(Ok(count)) => collected += count,
+            Ok(Err(error))
+                if error.downcast_ref::<sqlx::Error>().is_some_and(|error| {
+                    error.as_database_error().is_some_and(|error| {
+                        error.code().as_deref() == Some("57014")
+                            && error.message() == "canceling statement due to statement timeout"
+                    })
+                }) =>
+            {
+                break;
+            }
+            Ok(Err(error)) => return Err(error),
             Err(_) => break,
         }
         if collected == 100 || (cursor.after_event.is_empty() && cursor.occurrence_offset == 0) {
@@ -457,7 +412,6 @@ pub fn spawn_jobs(state: &Arc<super::State>, jobs: &crate::jobs::Jobs) {
     });
     let pool = state.pool.clone();
     jobs.spawn_leased("community-ranking", move |ctx| { let pool = pool.clone(); async move {
-        tokio::select! { _=ctx.cancel.cancelled()=>return Ok(()), _=tokio::time::sleep(Duration::from_secs(1800))=>{} }
         loop {
             match recalculate(&pool,Utc::now().naive_utc()).await {
                 Ok(count)=>ctx.progress(format!("{count} community scores calculated")),

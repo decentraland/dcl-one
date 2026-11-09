@@ -7,12 +7,11 @@
 //! `communities` (social-api REST), `rpc` (the friends/presence/voice
 //! WebSocket), `messaging` (the old gatekeeper's MLS delivery service, on
 //! its own state), `notifications`, `badges`, `media`
-//! (autotranslate) and `profile_images`; domain readers share the default outbound
+//! (autotranslate), `profile_images` and `segment_webhooks` (the
+//! events-notifier's Segment routes); domain readers share the default outbound
 //! client, SQL pool and blob store. Configured AI compliance, analytics and
 //! referral Slack each lazily retain one Outbound provider profile with its
-//! own HTTP transport pools; no profile is built per request. Optional legacy
-//! SQS/SNS transports use the official AWS SDK clients
-//! inside the existing job lifecycle (`legacy_events`). The
+//! own HTTP transport pools; no profile is built per request. The
 //! LiveKit gatekeeper itself is `comms::gatekeeper`; its state is the RPC's
 //! voice runtime and the communities' voice eviction. [`router`] composes
 //! them the way the old gateway's location table did, behind the [`writes`]
@@ -42,13 +41,13 @@ pub mod chat;
 pub mod comms_directory;
 pub mod communities;
 
-pub mod legacy_events;
 pub mod media;
 pub mod messaging;
 mod mls;
 pub mod notifications;
 pub mod profile_images;
 pub mod rpc;
+pub mod segment_webhooks;
 #[cfg(test)]
 mod test_fixtures;
 pub mod writes;
@@ -58,7 +57,7 @@ pub use crate::shared::identity::{
     CommunityPermission, CommunityRole, CommunityStanding, PermissionDecision,
 };
 
-/// The eight social states `serve` builds; [`router`] owns their routes
+/// The nine social states `serve` builds; [`router`] owns their routes
 /// but the MLS delivery service's, which `serve` mounts under
 /// `/comms-gatekeeper` with [`messaging::router`].
 pub struct States {
@@ -70,6 +69,7 @@ pub struct States {
     pub media: media::SharedState,
     pub profile_images: profile_images::SharedState,
     pub rpc: Arc<rpc::State>,
+    pub segment_webhooks: segment_webhooks::SharedState,
 }
 
 /// The social API host's unmatched paths and preflights apply to its entire
@@ -158,6 +158,10 @@ pub fn router(states: &States, writes_enabled: bool) -> Router {
             guard(notifications::router(states.notifications.clone())),
         )
         .nest("/badges", guard(badges::router(states.badges.clone())))
+        .nest(
+            "/events-notifier",
+            guard(segment_webhooks::router(states.segment_webhooks.clone())),
+        )
         .merge(guard(media::router(states.media.clone())))
         .nest(
             "/autotranslate-server",

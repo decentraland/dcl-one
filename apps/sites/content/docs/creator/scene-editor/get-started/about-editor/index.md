@@ -67,9 +67,21 @@ Click and drag a selected item to move it freely around the scene at ground leve
 
 ![](/docs/creator/images/editor/smart-items.webp)
 
+To give the 3D view the full height of the window, collapse the asset panel with the chevron button at the right end of its tab bar. The panel shrinks to just its tabs, and the same button brings it back at the height you had. Clicking any tab while it's collapsed also reopens it.
+
+### Avatar animations
+
+The **Avatar Animations** pack holds animations for the player's avatar rather than items to place: sitting poses, fishing, carrying a box, dancing, and more. They're sorted into the same **Actions**, **Sitting** and **Expressions** groups as the rest.
+
+Hover over a card to see the animation play. Drag one onto the 3D view to copy its file into your scene's local assets. No entity is added, because an animation isn't something that sits in the scene: you play it from code. See [Avatar Animations](/docs/creator/sdk7/interactivity/avatars/avatar-animations/).
+
+Cards marked with a **Built-in** badge work differently. Those animations already ship with Decentraland, so every scene can play them with no file to add. You can't drag them in. Instead, right-click a card and choose **Copy name** to get the name to use in your code.
+
+In the **Local Assets** tab, the **Avatar Animations** filter gathers the animation files in your project, along with a read-only **Built-in animations** folder listing the ones that need no file.
+
 ## Preview
 
-To test your scene and experience it like a player, click the _Preview_ button on the top-right corner. This will open a new window with the Decentraland Desktop Explorer, running just your scene. There you can move around the scene and interact with interactive items.
+To test your scene and experience it like a player, click the **Play** button on the top-right corner. This will open a new window with the Decentraland Desktop Explorer, running just your scene. There you can move around the scene and interact with interactive items.
 
 
 > [!WARNING]
@@ -78,7 +90,7 @@ To test your scene and experience it like a player, click the _Preview_ button o
 
 ![](/docs/creator/images/editor/preview-button.webp)
 
-Configure different preview options from the dropdown menu next to the **Preview** button. See [Preview your scene](/docs/creator/sdk7/getting-started/preview-scene/) for a full list of all available options.
+Click the arrow next to the **Play** button to open the **Play Options** menu, where you choose whether to preview on the desktop client, in a browser, or on a phone. See [Preview your scene](/docs/creator/sdk7/getting-started/preview-scene/) for a full list of all available options.
 
 ## Scene renderer
 
@@ -94,11 +106,13 @@ To change the renderer:
 
 The Bevy renderer is an alternative engine for the editing canvas. It affects how your scene looks while editing, not how it looks to players after publishing.
 
-When using the Bevy renderer, the toolbar gains a camera mode dropdown, play and stop buttons to run the scene in the canvas, and an **Interact** toggle (the gamepad icon).
+When using the Bevy renderer, the toolbar gains a camera mode dropdown, play and stop buttons to run the scene in the canvas, an **Interact** toggle (the gamepad icon), and a **Mute scene audio** toggle (the speaker icon).
 
 ![The editor toolbar under the Bevy renderer: undo and redo, the gizmo tools, a camera dropdown reading Free, play and stop buttons, the Interact gamepad toggle, the Preferences gear and the Inspector button.](/docs/creator/images/editor/editor-toolbar-bevy.webp)
 
 Use the **Interact** toggle to test a running scene directly in the editor canvas without opening a separate preview window. This lets you quickly check interactions without stopping the scene. While interacting, smart items show their hover hints, such as the key to press, right in the canvas.
+
+Click the speaker button, labeled **Mute scene audio**, to silence the scene while you work. It silences every [Audio Source](/docs/creator/sdk7/3d-essentials/sounds/) and audio stream in the scene, both while you edit and while the scene runs in the canvas, and the scene stays muted if it reloads. Click it again, now labeled **Unmute scene audio**, to bring the sound back. The button only appears under the Bevy renderer, because the Babylon renderer does not play the scene's audio.
 
 The Bevy editor also loads [custom items](/docs/creator/scene-editor/interactivity/custom-items/), shows placeholder markers for broken or missing assets, and provides friendly error messages with fix actions when your scene's SDK dependencies are outdated. The camera toggle in the toolbar reads **Free** or **Player**, depending on the mode you're in.
 

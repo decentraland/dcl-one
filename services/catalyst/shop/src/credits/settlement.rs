@@ -397,7 +397,7 @@ impl Credits {
             format!("credit-used:{}:{}:{}", c.salt, c.block_number, c.log_index)
         };
         let spent = match self
-            .spend_in_tx(&mut tx, &address, &amount, &key, Some(&key))
+            .settle_in_tx(&mut tx, &address, &amount, &key, Some(&key))
             .await
         {
             Ok(spent) => spent,

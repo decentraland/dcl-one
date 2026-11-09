@@ -28,4 +28,13 @@ describe('avatarPreview domain', () => {
       rect: null
     })
   })
+
+  it('turns the preview avatar and zooms its camera as the page asks', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    act(() => h.session().backpack.rotate(-20))
+    expect(h.driver.last('previewRotate')).toEqual({ kind: 'previewRotate', degrees: -20 })
+    act(() => h.session().backpack.zoom(1.5, 0.25))
+    expect(h.driver.last('previewZoom')).toEqual({ kind: 'previewZoom', zoom: 1.5, anchor: 0.25 })
+  })
 })

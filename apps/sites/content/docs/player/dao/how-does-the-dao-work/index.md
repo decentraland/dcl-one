@@ -60,7 +60,7 @@ The Curation Committee is responsible for reviewing and approving wearables and 
 
 The Revocations Committee is responsible for reviewing cases raised by the community regarding Grants Program and has the responsibility to provide a resolution, which may be to revoke a vesting contract as a final action.
 
-[Revocations Committee](https://github.com/lordlikedao/documentation/blob/main/static/images/DAO%20Organizational%20Chart/Revocation.png?raw=true)
+![Revocations Committee](/docs/player/images/DAO%20Organizational%20Chart/Revocation.webp)
 
 ## Governance Squad
 

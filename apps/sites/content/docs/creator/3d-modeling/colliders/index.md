@@ -17,7 +17,7 @@ For an object to be recognized by a Decentraland scene as a collider, all it nee
 
 For example, to create a collider for a lamp post you can create a simple box object surrounding its trunk. Players in the scene won’t see this box, but it will block their path.
 
-![](/docs/.gitbook/assets/25-collider.webp)
+![](/docs/creator/images/3d-models-and-animations/3d-essentials/25-collider.webp)
 
 In this case, we can name the box “LampPos&#x74;_&#x63;ollider” and export both the tree and the box as a single \_\_gltf model. The \*\_\_collider_\* tag alerts the Decentraland world engine that the box object belongs to the collection of colliders, making the collider mesh invisible.
 
@@ -27,10 +27,11 @@ Whenever a player views the lamp post model in your scene, they will see the com
 
 When you design models that are meant for players to walk around in, you need to keep in mind the following reference measurements:
 
-* Players can walk up a step of up to 30 centimeters in height without jumping
-* Players can walk up slopes of an angle of up to 45 degrees without jumping
+* Players can walk up a step of up to about 40 centimeters without jumping. A step of 45 centimeters or more needs a jump. For stairs that feel comfortable, keep each step at 25 centimeters high or less, and at least 30 centimeters deep.
+* Players can walk up slopes of up to 46 degrees without jumping. On steeper surfaces the avatar slides off. For easy walking, keep ramps at 30 degrees or less. A ramp collider over stairs is the exception: it follows the slope of the stairs, about 40 degrees for steps 25 centimeters high and 30 centimeters deep (see [Add a collider to a staircase](#add-a-collider-to-a-staircase)).
 * Players can jump up to 1,8 meters in height
 * Avatars measure around 1.9 meters in height, but consider that they might have hats or other wearables on their head.
+* The avatar's collider is a capsule 0.6 meters wide (a radius of 0.3 meters). A beam or ceiling lower than about 1.85 meters stops the avatar. Leave at least 2 meters of clear height anywhere players walk under. Indoors, leave much more room for the camera, see [Build interiors larger than real life](/docs/creator/sdk7/design-experience/design-games/#build-interiors-larger-than-real-life).
 
 Whenever a player views the tree model in your scene, they will see the complex model for your tree. However, when they walk into your tree, they will collide with the box, not the tree.
 
@@ -44,12 +45,12 @@ Using a ramp object also avoids creating unnecessary geometry, saving room for o
 
 1. Create a new object in the shape of a ramp that resembles the size and proportions of the original stairs.
 
-![](/docs/.gitbook/assets/26-collider-2.webp)
+![](/docs/creator/images/3d-models-and-animations/3d-essentials/26-collider-2.webp)
 
 2. Name the ramp object something similar to &#x53;_&#x74;air\_collider_. It must end in \__collider_.
 3. Overlay the ramp object to the stairs so that they occupy the same space.
 
-![](/docs/.gitbook/assets/27-collider.webp)
+![](/docs/creator/images/3d-models-and-animations/3d-essentials/27-collider.webp)
 
 4. Export both objects together as a single _glTF_ model.
 
@@ -60,7 +61,7 @@ Now when players view the stairs in your scene, they’ll see the more elaborate
 * Prefer using **Box**, **Sphere** and **Capsule** collision meshes, because it will be more performant on loading and at runtime.
 * Consider approximating complex collision mesh by several Primitive collision meshes (**Box**/**Sphere**/**Capsule**)
 
-![](/docs/.gitbook/assets/28-optimizing-colliders.webp)
+![](/docs/creator/images/3d-models-and-animations/3d-essentials/28-optimizing-colliders.webp)
 
 _Example: Collider for Ring can be composed as several Capsule or Box colliders_
 
@@ -70,7 +71,7 @@ _Example: Collider for Ring can be composed as several Capsule or Box colliders_
 
 If using arbitrary mesh collider is the only possibility, then make collision mesh Convex (not Concave). It will prevent strange physics situations, like stuttering, stuckings inside the collider or clipping through it. Note, that it is often possible to mimic concave mesh by several convex meshes.
 
-![](/docs/.gitbook/assets/29-convex-collider.webp)
+![](/docs/creator/images/3d-models-and-animations/3d-essentials/29-convex-collider.webp)
 
 ## Collision Naming
 
@@ -85,9 +86,9 @@ Collision Mesh is the mesh which is used as reference for creating a collider in
 
 > [!WARNING]
 > **🔥Optimization Tip🔥**
-> 
+>
 > If a collider can be approximated by a Box, Sphere or Capsule shape then use additional suffix with one of these 3 possible variations \_box, \_sphere or \_capsule. Using these 3 shapes instead of arbitrary mesh for collision detection will increase your scene performance and loading time 💪🚀
-> 
+>
 > Examples: 🟢 Teater\_MainWall\_North\_collider\_box, Fountain\_Statue\_collider\_sphere
 
 

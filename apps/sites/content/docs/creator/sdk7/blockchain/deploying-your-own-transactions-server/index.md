@@ -14,7 +14,7 @@ All restrictions are per-transaction the user tries to send. Which, in practice,
 
 The configurable restrictions the server has are:
 
-* Checks for a quota of max transactions per day. See [the collections section](/docs/creator/sdk7/blockchain/deploying-your-own-transactions-server/#collections) for more info.
+* Checks for a quota of max transactions per day. See [the transactions section](/docs/creator/sdk7/blockchain/deploying-your-own-transactions-server/#transactions) for more info.
 * Checks for whitelisted contracts, so if a transaction is trying to interact with a contract that's not recognized it'll fail. To do this it uses
   * The deployed contracts and collections. See [the contracts and collections section](/docs/creator/sdk7/blockchain/deploying-your-own-transactions-server/#contracts-and-collections) for more info
 * The price of sales, restricting it if it's below a threshold. See [min sale value section](/docs/creator/sdk7/blockchain/deploying-your-own-transactions-server/#min-sale-value) for more info

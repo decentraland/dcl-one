@@ -117,6 +117,15 @@
   height: 942px;
   transform: translate(-50%, -50%);
 }
+/* Where a drag turns the avatar and the wheel zooms it: the column it stands in, centred on the preview's
+   middle (260px). The hints and the randomize bar sit over it. */
+.avatarDrag {
+  position: absolute;
+  left: 20px;
+  top: 0;
+  width: 480px;
+  height: 942px;
+}
 .hints {
   position: absolute;
   left: 20px;

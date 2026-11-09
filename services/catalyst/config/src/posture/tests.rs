@@ -91,6 +91,70 @@ fn a_mirror_reads_the_subgraphs_lamb2_defaults_to() {
     );
 }
 
+/// lamb2's defaults for a mirror's profile snapshots and /about parcel
+/// view; island and journey leave both to the node's own routes.
+#[test]
+fn a_mirror_names_lamb2_snapshot_and_parcel_view_hosts() {
+    let mirror = expanded(Posture::Mirror, &[]);
+    assert_eq!(
+        mirror["PROFILE_CDN_BASE_URL"],
+        "https://profile-images.decentraland.org"
+    );
+    assert_eq!(
+        mirror["MAP_PARCEL_VIEW_URL"],
+        "https://api.decentraland.org/v1/minimap.png"
+    );
+    for posture in [Posture::Island, Posture::Journey] {
+        let got = expanded(posture, &[]);
+        assert!(!got.contains_key("PROFILE_CDN_BASE_URL"), "{posture:?}");
+        assert!(!got.contains_key("MAP_PARCEL_VIEW_URL"), "{posture:?}");
+    }
+    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
+    assert_eq!(
+        c.market_upstreams.profile_cdn_base_url.as_deref(),
+        Some("https://profile-images.decentraland.org")
+    );
+    assert_eq!(
+        c.map_urls().parcel_view,
+        "https://api.decentraland.org/v1/minimap.png"
+    );
+    let island = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "island")]);
+    assert!(island.market_upstreams.profile_cdn_base_url.is_none());
+}
+
+/// A mirror may not blank the readers that filter its profiles; an island
+/// has none and serves the items as deployed.
+#[test]
+fn a_mirror_refuses_blank_profile_ownership_readers() {
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    let check_of = |pairs: &[(&str, &str)]| {
+        let c = parsed(pairs);
+        let map = env(pairs);
+        check(&c, &lookup(&map))
+    };
+    check_of(&[db, (ENV, "mirror")]).unwrap();
+    let err = check_of(&[db, (ENV, "mirror"), ("MARKETPLACE_SUBGRAPH_URL", "")])
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("MARKETPLACE_SUBGRAPH_URL is empty: unset it"),
+        "{err}"
+    );
+    let err = check_of(&[
+        db,
+        (ENV, "mirror"),
+        ("ETH_COLLECTIONS_SUBGRAPH_URL", " "),
+        ("MATIC_COLLECTIONS_SUBGRAPH_URL", ""),
+    ])
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("ETH_COLLECTIONS_SUBGRAPH_URL, MATIC_COLLECTIONS_SUBGRAPH_URL are empty"),
+        "{err}"
+    );
+    check_of(&[db, (ENV, "island")]).unwrap();
+}
+
 #[test]
 fn a_mirror_reads_third_party_holdings_from_the_nft_worker() {
     assert_eq!(
@@ -105,6 +169,129 @@ fn a_mirror_reads_third_party_holdings_from_the_nft_worker() {
         c.market_upstreams.nft_worker_base_url.as_deref(),
         Some("https://nfts.decentraland.org")
     );
+}
+
+/// LI-9: a mirror's third-party routes are public, so it may not fall back
+/// to the chain path; island and journey keep it without a worker.
+#[test]
+fn a_mirror_refuses_a_blank_nft_worker() {
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    let check_of = |pairs: &[(&str, &str)]| {
+        let c = parsed(pairs);
+        let map = env(pairs);
+        check(&c, &lookup(&map))
+    };
+    check_of(&[db, (ENV, "mirror")]).unwrap();
+    for blank in ["", " "] {
+        let err = check_of(&[db, (ENV, "mirror"), ("NFT_WORKER_BASE_URL", blank)])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("NFT_WORKER_BASE_URL is empty: unset it"),
+            "{err}"
+        );
+    }
+    check_of(&[db, (ENV, "island")]).unwrap();
+    check_of(&[db, (ENV, "journey")]).unwrap();
+}
+
+/// O-1: a mirror lists the approved third-party providers from lamb2's
+/// default registry and may not blank it; island and journey name none.
+#[test]
+fn a_mirror_reads_the_third_party_registry() {
+    const KEY: &str = "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL";
+    const TPR: &str = "https://subgraph.decentraland.org/tpr-matic-mainnet";
+    assert_eq!(expanded(Posture::Mirror, &[])[KEY], TPR);
+    for posture in [Posture::Island, Posture::Journey] {
+        assert_eq!(expanded(posture, &[])[KEY], "");
+    }
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    let c = parsed(&[db, (ENV, "mirror")]);
+    assert_eq!(
+        c.validator.third_party_registry_l2_subgraph_url.as_deref(),
+        Some(TPR)
+    );
+    let check_of = |pairs: &[(&str, &str)]| {
+        let c = parsed(pairs);
+        let map = env(pairs);
+        check(&c, &lookup(&map))
+    };
+    for blank in ["", " "] {
+        let err = check_of(&[db, (ENV, "mirror"), (KEY, blank)])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(&format!("{KEY} is empty: unset it")), "{err}");
+    }
+    check_of(&[db, (ENV, "island")]).unwrap();
+
+    // Held in its credential file, the URL is out of the expansion's and the
+    // check's sight; it is checked once `resolve_secret_files` reads it.
+    let file = (
+        "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL_FILE",
+        "/run/credentials/tpr",
+    );
+    let pairs = [db, (ENV, "mirror"), file];
+    let mut c = parsed_with_files(&pairs);
+    assert_eq!(c.validator.third_party_registry_l2_subgraph_url, None);
+    check(&c, &lookup(&env(&pairs))).unwrap();
+    let err = refuse_remote_secrets(&mut c).unwrap_err().to_string();
+    assert!(err.contains(&format!("{KEY}_FILE holds no URL")), "{err}");
+    c.validator.third_party_registry_l2_subgraph_url =
+        Some("https://tpr.example.org/subgraph".into());
+    refuse_remote_secrets(&mut c).unwrap();
+}
+
+#[test]
+fn a_mirror_explorer_lists_chain_owned_items_only() {
+    assert_eq!(
+        expanded(Posture::Mirror, &[])["EXPLORER_ESCROW_GRANTS_ENABLED"],
+        "false"
+    );
+    for posture in [Posture::Island, Posture::Journey] {
+        assert_eq!(
+            expanded(posture, &[])["EXPLORER_ESCROW_GRANTS_ENABLED"],
+            "true"
+        );
+    }
+    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
+    assert!(!c.market_upstreams.explorer_escrow_grants_enabled);
+    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "island")]);
+    assert!(c.market_upstreams.explorer_escrow_grants_enabled);
+    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst")]);
+    assert!(
+        c.market_upstreams.explorer_escrow_grants_enabled,
+        "without a posture the binary default lists them"
+    );
+}
+
+#[test]
+fn a_mirror_catalog_takes_the_upstream_filters_only() {
+    assert_eq!(
+        expanded(Posture::Mirror, &[])["LAMBDAS_CATALOG_EXTENSIONS_ENABLED"],
+        "false"
+    );
+    for posture in [Posture::Island, Posture::Journey] {
+        assert_eq!(
+            expanded(posture, &[])["LAMBDAS_CATALOG_EXTENSIONS_ENABLED"],
+            "true"
+        );
+    }
+    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
+    assert!(!c.market_upstreams.lambdas_catalog_extensions_enabled);
+    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst")]);
+    assert!(c.market_upstreams.lambdas_catalog_extensions_enabled);
+}
+
+/// CS-25: a mirror syncs from the DAO catalyst list, `SYNC_SOURCE` its fallback.
+#[test]
+fn a_mirror_syncs_from_the_dao_list() {
+    assert_eq!(expanded(Posture::Mirror, &[])["SYNC_FROM_DAO"], "true");
+    for posture in [Posture::Island, Posture::Journey] {
+        assert_eq!(expanded(posture, &[])["SYNC_FROM_DAO"], "false");
+    }
+    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
+    assert!(c.content.sync_from_dao);
+    assert!(!c.content.sync_source.is_empty());
 }
 
 #[test]
@@ -127,13 +314,62 @@ fn read_through_copies_a_miss_on_a_mirror_only() {
     }
 }
 
+/// A mirror hides what Decentraland's moderation list names, as the upstream
+/// catalyst does by default; island and journey ask no one, and a list
+/// naming an outside host is refused there.
+#[test]
+fn a_mirror_reads_decentralands_moderation_denylist() {
+    const ABR: &str = "https://asset-bundle-registry.decentraland.org/denylist";
+    assert_eq!(expanded(Posture::Mirror, &[])["DENYLIST_URLS"], ABR);
+    let mirror = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
+    assert_eq!(mirror.content.denylist_urls, ABR);
+    let unset = parsed(&[("DATABASE_URL", "postgres:///catalyst")]);
+    assert_eq!(unset.content.denylist_urls, "", "no posture, no list");
+    for posture in [Posture::Island, Posture::Journey] {
+        assert_eq!(expanded(posture, &[])["DENYLIST_URLS"], "");
+        let pairs = [
+            ("DATABASE_URL", "postgres:///catalyst"),
+            (ENV, posture.name()),
+        ];
+        assert_eq!(parsed(&pairs).content.denylist_urls, "");
+        let pairs = [
+            ("DATABASE_URL", "postgres:///catalyst"),
+            (ENV, posture.name()),
+            ("DENYLIST_URLS", ABR),
+        ];
+        let err = check(&parsed(&pairs), &lookup(&env(&pairs)))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("DENYLIST_URLS names"), "{err}");
+    }
+    // A value that is not an http(s) URL fails the startup check, posture or
+    // not, before serve spawns anything.
+    for posture in [None, Some("mirror")] {
+        let mut pairs = vec![
+            ("DATABASE_URL", "postgres:///catalyst"),
+            ("DENYLIST_URLS", "ftp://registry.example/denylist"),
+        ];
+        pairs.extend(posture.map(|p| (ENV, p)));
+        let err = check(&parsed(&pairs), &lookup(&env(&pairs)))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("only http(s)"), "{posture:?}: {err}");
+    }
+}
+
 #[test]
 fn island_sets_every_upstream_empty_and_every_follower_switch_off() {
     let got = expanded(Posture::Island, &[]);
     for (key, value) in &got {
         let switch = value == "true" || value == "false";
         if switch {
-            let allowed = ["SERVE_UNSYNCED", "PHASED_SYNC"];
+            // Local switches that dial no host.
+            let allowed = [
+                "SERVE_UNSYNCED",
+                "PHASED_SYNC",
+                "EXPLORER_ESCROW_GRANTS_ENABLED",
+                "LAMBDAS_CATALOG_EXTENSIONS_ENABLED",
+            ];
             assert!(
                 value == "false" || allowed.contains(key),
                 "island turns {key} on"
@@ -248,7 +484,7 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
     assert!(c.content.sync_source.contains("peer.decentraland.org"));
     assert!(c.explore.explorer_mirrors_enabled && c.social.communities_mirror_upstream);
     assert!(c.marketplace.marketplace_nft_index_enabled && c.land_authz.land_authz_index_enabled);
-    assert!(c.shop.credits_usage_index_enabled);
+    assert!(c.shop.credits_usage_index_enabled && c.shop.shop_rentals_index_enabled);
     assert_eq!(
         c.shop.credits_manager_contract.as_deref(),
         Some(CREDITS_MANAGER_MAINNET)
@@ -266,6 +502,11 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
     assert_eq!(
         c.map_urls().satellite_base.as_deref(),
         Some("https://genesis.city/map/latest")
+    );
+    assert_eq!(
+        c.map_urls().land_image_base,
+        "https://api.decentraland.org",
+        "the base of the marketplace subgraph's LAND images"
     );
 
     // The site's own endpoints feed the trade list; a satellite mirror
@@ -886,4 +1127,17 @@ fn the_chain_rpcs_default_by_network_outside_island_and_journey() {
     let mut c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "journey")]);
     c.default_rpc_urls();
     refuse_remote_secrets(&mut c).unwrap();
+}
+
+/// lamb2's /about CPU and memory check is opt-in: off under every posture
+/// and with none, on only when `ABOUT_RESOURCE_CHECK` says so.
+#[test]
+fn about_resource_check_is_off_unless_set() {
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    assert!(!parsed(&[db]).node.about_resource_check);
+    for posture in ["mirror", "island", "journey"] {
+        assert!(!parsed(&[db, (ENV, posture)]).node.about_resource_check);
+        let on = parsed(&[db, (ENV, posture), ("ABOUT_RESOURCE_CHECK", "true")]);
+        assert!(on.node.about_resource_check, "{posture}");
+    }
 }

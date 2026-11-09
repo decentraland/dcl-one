@@ -1,0 +1,13 @@
+/* Over the engine's avatar, which shows through: transparent, and the one part of its page that takes the
+   pointer there (the page around it lets it through to the engine). The page sizes and places it. */
+.surface {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+}
+.surface:active {
+  cursor: grabbing;
+}

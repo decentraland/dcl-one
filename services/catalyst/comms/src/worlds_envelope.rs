@@ -1,8 +1,11 @@
-//! The worlds content server's error envelope: `{ok: false, error, message}`
-//! (the lambdas-style `ApiErrorBody` the old service answered on every
-//! non-deploy route), with the two upload-limit shapes (`{error, message}`
-//! with 503 + `Retry-After` and 408) the multipart routes share with
-//! `POST /entities`. Internal detail never reaches the wire. Shared by
+//! The worlds content server's error envelope: `{error: <label>, message}`
+//! as @dcl/http-commons' error handler answers (`Bad request`, `Not
+//! Authorized`, `Not Found`; a 403 carries its message as `error`, like the
+//! old handlers' own 403s; a 500 is `{error: "Internal Server Error"}`), with
+//! the two upload-limit shapes (503 + `Retry-After` and 408) the multipart
+//! routes share with `POST /entities`, and a refused signed fetch as the
+//! crypto-middleware's `onError` answers it (`{error: <its message>, message:
+//! SIGNED_FETCH_MESSAGE}`). Internal detail never reaches the wire. Shared by
 //! worlds (its routes, through `worlds::core::http`) and the world comms
 //! mints in comms, which answer in the worlds service's envelope.
 
@@ -30,7 +33,15 @@ pub enum ApiError {
     /// 408: multipart receive or processing deadline exceeded.
     #[error("{0}")]
     RequestTimeout(String),
+
+    /// A refused signed fetch, answered as upstream's signed-fetch `onError`:
+    /// `{error: <crypto-middleware message>, message: SIGNED_FETCH_MESSAGE}`.
+    #[error("{error}")]
+    SignedFetch { status: u16, error: String },
 }
+
+/// The `message` of every signed-fetch refusal on the worlds routes.
+pub const SIGNED_FETCH_MESSAGE: &str = "This endpoint requires a signed fetch request. See ADR-44.";
 
 impl ApiError {
     pub fn http(status: u16, msg: impl Into<String>) -> Self {
@@ -65,6 +76,12 @@ impl ApiError {
     pub fn internal(msg: impl Into<String>) -> Self {
         Self::Internal(msg.into())
     }
+    pub fn signed_fetch(status: u16, error: impl Into<String>) -> Self {
+        Self::SignedFetch {
+            status,
+            error: error.into(),
+        }
+    }
     pub fn service_unavailable(msg: impl Into<String>) -> Self {
         Self::http(503, msg)
     }
@@ -79,7 +96,7 @@ impl ApiError {
     }
     pub fn status(&self) -> u16 {
         match self {
-            ApiError::Http { status, .. } => *status,
+            ApiError::Http { status, .. } | ApiError::SignedFetch { status, .. } => *status,
             ApiError::Internal(_) => 500,
             ApiError::TooManyRequests { .. } => 429,
             ApiError::UploadShed(_) => 503,
@@ -90,6 +107,7 @@ impl ApiError {
     pub fn public_message(&self) -> String {
         match self {
             ApiError::Http { message, .. } => message.clone(),
+            ApiError::SignedFetch { error, .. } => error.clone(),
             ApiError::Internal(_) => "internal error".to_string(),
             ApiError::TooManyRequests { message, .. } => message.clone(),
             ApiError::UploadShed(m) | ApiError::RequestTimeout(m) => m.clone(),
@@ -119,16 +137,27 @@ impl From<crate::shared::identity::AuthorityNotEstablished> for ApiError {
     }
 }
 
-pub fn envelope(status: StatusCode, message: &str) -> Response {
-    (
-        status,
-        Json(json!({ "ok": false, "error": message, "message": message })),
-    )
-        .into_response()
+/// The `error` label of a status (http-commons spells 400 `Bad request`).
+pub fn error_label(status: StatusCode) -> &'static str {
+    match status.as_u16() {
+        400 => "Bad request",
+        401 => "Not Authorized",
+        404 => "Not Found",
+        _ => status.canonical_reason().unwrap_or("Error"),
+    }
 }
 
-/// The `{error, message}` body of the shed and timeout answers (the deploy
-/// route's rejection shape, not the worlds envelope).
+pub fn envelope(status: StatusCode, message: &str) -> Response {
+    let body = match status.as_u16() {
+        403 => json!({ "error": message, "message": message }),
+        500 => json!({ "error": "Internal Server Error" }),
+        _ => json!({ "error": error_label(status), "message": message }),
+    };
+    (status, Json(body)).into_response()
+}
+
+/// The `{error, message}` body of every refused deploy, and of the shed and
+/// timeout answers (not the worlds envelope).
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "worlds/"))]
 pub struct DeployRejection {
@@ -176,11 +205,16 @@ impl IntoResponse for ApiError {
             } => (
                 StatusCode::TOO_MANY_REQUESTS,
                 [("Retry-After", retry_after.to_string())],
-                Json(json!({ "ok": false, "error": message, "message": message })),
+                Json(json!({ "error": "Too Many Requests", "message": message })),
             )
                 .into_response(),
             ApiError::UploadShed(m) => shed_response(&m),
             ApiError::RequestTimeout(m) => timeout_response(&m),
+            ApiError::SignedFetch { status, error } => (
+                StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                Json(json!({ "error": error, "message": SIGNED_FETCH_MESSAGE })),
+            )
+                .into_response(),
         };
         if response.status() == StatusCode::SERVICE_UNAVAILABLE
             && !response.headers().contains_key(RETRY_AFTER)
@@ -218,7 +252,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
-            json!({"ok": false, "error": expected, "message": expected})
+            json!({"error": "Service Unavailable", "message": expected})
         );
         assert!(
             !ApiError::forbidden("denied")
@@ -246,8 +280,30 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             v,
-            json!({ "ok": false, "error": "world not found", "message": "world not found" })
+            json!({ "error": "Not Found", "message": "world not found" })
         );
+        for (error, wire) in [
+            (
+                ApiError::bad_request("bad"),
+                json!({ "error": "Bad request", "message": "bad" }),
+            ),
+            (
+                ApiError::unauthorized("who"),
+                json!({ "error": "Not Authorized", "message": "who" }),
+            ),
+            (
+                ApiError::forbidden("no"),
+                json!({ "error": "no", "message": "no" }),
+            ),
+        ] {
+            let bytes = axum::body::to_bytes(error.into_response().into_body(), 1024)
+                .await
+                .unwrap();
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+                wire
+            );
+        }
     }
 
     #[tokio::test]
@@ -256,10 +312,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
         let bytes = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
         let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(
-            v,
-            json!({ "ok": false, "error": "internal error", "message": "internal error" })
-        );
+        assert_eq!(v, json!({ "error": "Internal Server Error" }));
     }
 
     #[test]

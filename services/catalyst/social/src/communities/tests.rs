@@ -36,6 +36,7 @@ mod full_http_parity;
 mod gateway_auth;
 mod membership_concurrency;
 mod mute_body;
+mod native_notifications;
 mod owner_parity;
 mod post_create;
 mod post_edit;
@@ -45,7 +46,6 @@ mod referral_lifecycle;
 mod registry_errors;
 mod request_lifecycle;
 mod selected_community;
-mod sns_parity;
 mod social_api_parity;
 mod upstream_rules;
 mod upstream_writes;
@@ -408,32 +408,32 @@ impl Rig {
         .unwrap();
     }
 
-    /// A world place in the catalogue, attached to the community; returns
-    /// the world name (`clear_world_place` removes the catalogue row).
-    async fn world_place(&self, id: CommunityId, owner: &Wallet) -> (Uuid, String) {
-        let place = Uuid::new_v4();
-        let world = format!("w{}.dcl.eth", &place.simple().to_string()[..12]);
-        social_api_parity::seed_destination(
-            &self.pool,
-            &place.to_string(),
-            "a world",
-            false,
-            Some(&world),
-        )
-        .await;
+    /// A world of the catalogue, attached to the community by its name as
+    /// `PlacesComponent::owns_places` keys a world and as production stores
+    /// one (`community_places.place_id` = the `*.eth` name). The catalogue
+    /// keys the row by the lowercased name (places `World/model.ts:466-469`),
+    /// which is what the destinations lookup answers for a world
+    /// (`World/model.ts:132-135`): a world scene's UUID row of the places
+    /// table is not a destination (`Place/model.ts:149`). Returns the world
+    /// name (`clear_world_place` removes the catalogue row).
+    async fn world_place(&self, id: CommunityId, owner: &Wallet) -> String {
+        let tag = Uuid::new_v4().simple().to_string();
+        let world = format!("w{}.dcl.eth", &tag[..12]);
+        social_api_parity::seed_destination(&self.pool, &world, "a world", false, Some(&world))
+            .await;
         sqlx::query("INSERT INTO social.community_places (place_id, community_id, added_by) VALUES ($1, $2, $3)")
-            .bind(place.to_string())
+            .bind(&world)
             .bind(id)
             .bind(&owner.address)
             .execute(&self.pool)
             .await
             .unwrap();
-        (place, world)
+        world
     }
 
-    async fn clear_world_place(&self, place: Uuid) {
+    async fn clear_world_place(&self, world: &str) {
         sqlx::query("DELETE FROM explore.place WHERE id = $1")
-            .bind(place.to_string())
+            .bind(world)
             .execute(&self.pool)
             .await
             .unwrap();
@@ -2387,7 +2387,7 @@ async fn voice_status_derives_from_the_presence_rows() {
     let (owner, a, b, gone, viewer) = (wallet(), wallet(), wallet(), wallet(), wallet());
     let c = rig.community(&owner, false).await;
     // a non-member sees the room through the community's places
-    let (place, world) = rig.world_place(c, &owner).await;
+    let world = rig.world_place(c, &owner).await;
     rig.voice(c, &owner, "connected", true).await;
     rig.voice(c, &a, "connected", false).await;
     rig.voice(c, &b, "connection_interrupted", false).await;
@@ -2440,7 +2440,7 @@ async fn voice_status_derives_from_the_presence_rows() {
         v["data"]["voiceChatStatus"],
         json!({"isActive":false,"participantCount":0,"moderatorCount":0})
     );
-    rig.clear_world_place(place).await;
+    rig.clear_world_place(&world).await;
     rig.finish();
 }
 
@@ -2456,7 +2456,7 @@ async fn an_unlisted_room_is_listed_only_for_members() {
     let app = &rig.app;
     let (owner, member, viewer) = (wallet(), wallet(), wallet());
     let c = rig.community(&owner, false).await;
-    let (place, _) = rig.world_place(c, &owner).await;
+    let world = rig.world_place(c, &owner).await;
     rig.member(c, &member, "member").await;
     rig.voice(c, &owner, "connected", true).await;
     let listed = |v: &serde_json::Value| {
@@ -2496,7 +2496,7 @@ async fn an_unlisted_room_is_listed_only_for_members() {
     )
     .await;
     assert!(listed(&v), "{v}");
-    rig.clear_world_place(place).await;
+    rig.clear_world_place(&world).await;
     rig.finish();
 }
 

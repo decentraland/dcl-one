@@ -17,7 +17,7 @@ _.wav_ files are also supported but not generally recommended as they are signif
 
 The easiest way to play a sound is to add an **Audio Source** component visually on the [Scene Editor in Creator Hub](/docs/creator/scene-editor/get-started/about-editor/) and set it to **Start Playing** and **Loop**. See [Add Components](/docs/creator/scene-editor/build/components/#add-components).
 
-![](/docs/creator/images/editor/AudioSource-component.webp)
+![](/docs/creator/images/editor/AudioSource-component.webp)
 
 You can also trigger the playing of a sound in a no-code way via **Actions**, see [Make any item smart](/docs/creator/scene-editor/interactivity/make-any-item-smart/).
 
@@ -26,19 +26,25 @@ To play a sound via code, use the `AudioSource.playSound` function.
 ```ts
 // Create entity
 const sourceEntity = engine.addEntity()
+Transform.create(sourceEntity, { position: Vector3.create(8, 1, 8) })
 
 // Play sound
 AudioSource.playSound(sourceEntity, 'assets/sounds/sound-effect.mp3')
 ```
+
+
+> [!WARNING]
+> **📔 Note**: Every entity with an `AudioSource` also needs a `Transform`, including global sounds. Without one, nothing plays and no error is logged, which makes this a hard problem to spot. Items placed in the Scene Editor always have a `Transform`, so this only affects entities you create in code.
+
 
 The sound file must be inside the project folder. In the example above, the audio file is located in an `assets/sounds` folder, which is located at root level of the scene project folder.
 
 
 > [!WARNING]
 > **📔 Note**: The `AudioSource` component must be imported via
-> 
+>
 > > `import { AudioSource } from "@dcl/sdk/ecs"`
-> 
+>
 > See [Imports](/docs/creator/sdk7/getting-started/coding-scenes/#imports) for how to handle these easily.
 
 
@@ -54,11 +60,14 @@ The `AudioSource.playSound()` function takes the following arguments:
 
 * `resetCursor`: _(optional)_ If true, the sound always starts from the beginning. Otherwise it continues from the current cursor position. Useful for pausing and resuming.
 
+`playSound()` creates the `AudioSource` component if the entity doesn't have one yet. If it already has one, `playSound()` keeps its other values, like `volume`, `pitch`, `loop` and `global`, so you can set those once and then call `playSound()` every time you want to play the sound. Calling it again with the same file plays the sound again. It always returns `true`.
+
 Another way to play sounds is to manually create an `AudioSource` component on an entity. Use this approach to have more control over the sound, for example to make it loop or set the volume.
 
 ```ts
 // Create entity
 const sourceEntity = engine.addEntity()
+Transform.create(sourceEntity, { position: Vector3.create(8, 1, 8) })
 
 // Create AudioSource component
 AudioSource.create(sourceEntity, {
@@ -112,6 +121,8 @@ To stop an entity from playing its sound, use the `AudioSource.stopSound()` func
 AudioSource.stopSound(sourceEntity)
 ```
 
+`stopSound()` returns `false` if the entity has no `AudioSource` component.
+
 Another way to stop a sound is to set the `playing` property to false.
 
 ```ts
@@ -160,7 +171,7 @@ engine.addSystem(() => {
 
 > [!WARNING]
 > **📔 Note**: When polling the component every frame, always read it with `AudioSource.get()` (read-only). Using `AudioSource.getMutable()` would mark the component as changed on every frame, causing unnecessary synchronization work.
-> 
+>
 > The `playing` property is only flipped by the engine when the sound ends by itself. If the scene stops the sound explicitly (via `AudioSource.stopSound()` or by setting `playing` to _false_), that change comes from your own code, and looping sounds play until stopped, so they never flip the property on their own.
 
 
@@ -255,6 +266,8 @@ AudioSource.create(sourceEntity, {
 	global: true,
 })
 ```
+
+A global sound still needs a `Transform` on its entity, even though its position no longer affects what the player hears. Any position will do.
 
 ## Play a segment of a sound
 

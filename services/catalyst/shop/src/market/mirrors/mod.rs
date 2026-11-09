@@ -621,8 +621,12 @@ fn note_copy(state: &MarketplaceState, mirror: Mirror, at: NaiveDateTime) {
 /// Router middleware: an answer whose handler read a mirror through
 /// [`require_ready`] carries that copy's `as_of` (the oldest, when it read
 /// both) and `stale_after_secs`; every other answer passes as it came. A
-/// HEAD runs as its GET so its length is the stamped answer's.
+/// `/lambdas/*` answer carries them as the `x-as-of` and
+/// `x-stale-after-secs` headers only: its body is lamb2's, which has no such
+/// keys (decentraland/lamb2:src/controllers/handlers/all-collections-handler.ts:50-53).
+/// A HEAD runs as its GET so its length is the stamped answer's.
 pub async fn stamp_copies(request: Request, next: Next) -> Response {
+    let headers_only = request.uri().path().starts_with("/lambdas/");
     let (request, head) = as_of::as_get(request);
     let (response, read) = COPY_AS_OF
         .scope(Cell::new(None), async move {
@@ -633,7 +637,11 @@ pub async fn stamp_copies(request: Request, next: Next) -> Response {
     let response = match read {
         Some(Read { as_of, stale_at }) => {
             let stale_after = (stale_at - as_of).to_std().unwrap_or_default();
-            as_of::stamp(response, as_of.and_utc(), stale_after).await
+            if headers_only {
+                as_of::stamp_headers(response, as_of.and_utc(), stale_after)
+            } else {
+                as_of::stamp(response, as_of.and_utc(), stale_after).await
+            }
         }
         None => response,
     };

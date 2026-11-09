@@ -57,6 +57,10 @@ impl SocialClientHandler {
         _connectivity_callback: impl Fn(Address, ConnectivityStatus) + Send + Sync + 'static,
         _block_update_callback: impl Fn(&str, bool) + Send + Sync + 'static,
         _chat_callback: impl Fn(DirectChatMessage) + Send + Sync + 'static,
+        _community_connectivity_callback: impl Fn(&str, Address, ConnectivityStatus)
+            + Send
+            + Sync
+            + 'static,
     ) -> Option<Self> {
         Some(Self::default())
     }

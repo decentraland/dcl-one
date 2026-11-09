@@ -24,7 +24,7 @@
 //! (its store could not be read, a source is unset or failed, a
 //! contract-wallet signature could not be asked about) and the write path
 //! answers 503 with `Retry-After`. The old validator rejected on a checker
-//! failure ("Error checking ...: ..."); the same text is now `Unavailable`.
+//! failure; it is now `Unavailable` with a fixed sentence, the cause logged.
 //!
 //! Not carried: `squid_checker.rs` (replaced as above), the squid root
 //! source of third-party wearables and its refresh job, `land_rights.rs`
@@ -69,6 +69,7 @@ use crate::storage::{Storage, StorageError};
 
 pub use chain::DECENTRALAND_ADDRESS;
 pub use error::{ValidationError, ValidationResponse, ValidatorError};
+pub use metadata_schema::validate_scene_metadata;
 pub use rules::{ContentValidator, ExternalCalls};
 pub use spring_bones::validate_spring_bones_metadata;
 pub use synced::{SyncedContent, validate_synced};

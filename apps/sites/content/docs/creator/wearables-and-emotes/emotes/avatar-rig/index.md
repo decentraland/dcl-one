@@ -35,7 +35,7 @@ _The axes are the directions in which the bone will rotate._
 
 Deforming bones are the ones that will deform the mesh, they are responsible for the way the model moves. That’s the base skeleton and it **should not be edited at all**. Changing it in any way can break the rig and the animation won’t work when exported. For this reason, this base rig was moved to its own layer (the last one at the bottom). These bones are the armature that’s exported with the mesh.
 
-Non-deforming bones are the ones that won’t deform the mesh, but they are still necessary in a robust rig and are used for the setup for [IKs, FKs](/docs/creator/wearables-and-emotes/emotes/avatar-rig/#what’s-FK-and-IK-in-a-rig) and other custom properties. Examples for non-deforming bones are controls, IK and FK bones, foot setup bones. These shouldn’t be exported, they are only used for animation purposes.
+Non-deforming bones are the ones that won’t deform the mesh, but they are still necessary in a robust rig and are used for the setup for [IKs, FKs](/docs/creator/wearables-and-emotes/emotes/avatar-rig/#whats-fk-and-ik-in-a-rig) and other custom properties. Examples for non-deforming bones are controls, IK and FK bones, foot setup bones. These shouldn’t be exported, they are only used for animation purposes.
 
 ![](/docs/creator/images/emotes/DeformationBones.webp)
 

@@ -32,6 +32,9 @@ describe("normalizeReport", () => {
     expect(r!.name).toBe("TypeError");
     expect(r!.stack.length).toBeLessThan(20000);
     expect(r!.url).toBe("https://example.org/marketplace");
+    expect(
+      normalizeReport({ message: "x", url: "https://example.org/landings/cast-stream?token=k&utm_source=x" })!.url,
+    ).toBe("https://example.org/landings/cast-stream?utm_source=x");
     expect(r!.correlationId).toBe("4ef97fa3-9dcf-4630-9bc4-5f742706e87a");
     expect(r!.engineBuild).toBe("22d73274c");
     expect(r!.source).toBe("panic");
@@ -55,7 +58,7 @@ describe("action (client-error ingest)", () => {
   });
   afterEach(() => {
     errSpy.mockRestore();
-    delete process.env.TELEMETRY_URL;
+    delete process.env.SEGMENT_WRITE_KEY;
   });
 
   it("records a valid report with a 202 and never throws to the client", async () => {
@@ -70,6 +73,27 @@ describe("action (client-error ingest)", () => {
     const logged = JSON.parse(errSpy.mock.calls[0][1] as string);
     expect(logged.name).toBe("TypeError");
     expect(logged.message).toBe("boom");
+  });
+
+  it("drops credential parameters from the url before the log and Segment", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(null, { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+    process.env.SEGMENT_WRITE_KEY = "key-1";
+    try {
+      const res = await call(
+        post(JSON.stringify({ message: "boom", url: "https://example.org/landings/cast-stream?token=k&utm_source=x" })),
+      );
+      expect(res.status).toBe(202);
+      const logged = JSON.parse(errSpy.mock.calls[0][1] as string);
+      expect(logged.url).toBe("https://example.org/landings/cast-stream?utm_source=x");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+      expect(JSON.parse(init.body as string).properties.url).toBe(
+        "https://example.org/landings/cast-stream?utm_source=x",
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("answers non-POST 405, a signal-less body 204, an oversized body 413 and bad JSON 400, recording nothing", async () => {
