@@ -124,6 +124,37 @@ describe('bridge service URLs', () => {
   })
 })
 
+describe('communities list', () => {
+  it("adds the user's own communities the browse page left out, after it, and keeps the browse list when that read fails", async () => {
+    const { registerCommunities } = await import('../../bridge-scene/src/domains/communities')
+    const { BevyApi } = await import('../../bridge-scene/src/bevy-api')
+    const { ctx, req, sent } = fakeCtx()
+    registerCommunities(ctx)
+    const raw = (id: string, role: string) => ({ id, name: `Community ${id}`, description: '', membersCount: 1, role, privacy: 'public', thumbnailUrl: `https://img.example/${id}.png` })
+    let memberOfAnswers = true
+    vi.mocked(BevyApi.kernelFetch).mockImplementation(async ({ url }: { url: string }) => {
+      if (url.includes('onlyMemberOf=true')) {
+        return memberOfAnswers
+          ? ({ ok: true, status: 200, body: JSON.stringify({ results: [raw('a', 'member'), raw('z', 'owner')], total: 2 }) } as never)
+          : ({ ok: false, status: 500, body: 'down' } as never)
+      }
+      return { ok: true, status: 200, body: JSON.stringify({ results: [raw('a', 'member'), raw('b', 'none')] }) } as never
+    })
+    try {
+      await req({ kind: 'getCommunities' })
+      memberOfAnswers = false
+      await req({ kind: 'getCommunities' })
+    } finally {
+      vi.mocked(BevyApi.kernelFetch).mockReset()
+    }
+    const lists = sent.flatMap((m) => (m.kind === 'communities' ? [m.communities.map((c) => `${c.id}:${c.role}`)] : []))
+    expect(lists).toEqual([
+      ['a:member', 'b:none', 'z:owner'],
+      ['a:member', 'b:none']
+    ])
+  })
+})
+
 describe('member-of list', () => {
   it('sends nothing for an answer without a results list, and an empty list only for an empty one', async () => {
     const { registerCommunities } = await import('../../bridge-scene/src/domains/communities')

@@ -189,7 +189,8 @@ Beyond explorer-automation, `specs/community-chat.test.ts` covers community text
 member's community card opens its chat (`Open chat`), the rail shows a
 pressed `Chat in <name>` tab and the title bar its `Conversation options`, and a message typed there
 counts in `/community_state` and lands in `/dm_history community:<id>`. It needs an automation
-account that is a member of a community in the browse grid, and fails saying so otherwise.
+account that is a member of a community, whose card it finds under My Communities (VIEW ALL), and
+fails saying so otherwise.
 
 What the HUD would need for more Ports, found while porting: roles or labels on the minimap's
 name and coordinates, the chat message text, the communities titles and counts, the passport
@@ -201,8 +202,9 @@ header and bio, the skybox slider and switch; `aria-selected` and `aria-pressed`
 `scenes/` holds the 17 SDK7 scenes, each at its own parcels ([scenes/README.md](scenes/README.md)).
 `specs/visual/visual.test.ts` builds their entities, serves them as a realm on loopback
 (`driver/realm.ts`: `/about`, `/content/contents/<hash>`), boots the client on it as a guest in a
-960x540 window, teleports to each scene, waits for its entities and its settle time, and compares
-the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
+960x540 window, turns the nametags off (`/nametags false`: the scenes hide avatars, not the nametag
+over the hidden guest, whose name changes every run), teleports to each scene, waits for its
+entities and its settle time, and compares the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
 differs when any RGB channel differs by more than 8, and the scene passes when at most 0.3% of the
 pixels differ (1.5% for `avatar-shape`), as explorer-automation compared.
 

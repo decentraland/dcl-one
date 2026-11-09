@@ -2,8 +2,9 @@
 // a community the player is a member of opens its chat from the community card, the chat shows
 // the community's tab and title bar, and a message typed there goes to the engine as a community
 // message (`/community_state` counts it; the router's fan-out to other members is not observable
-// from one client). The automation account must be a member of a community whose card is in the
-// browse grid (a card ending in `View`); otherwise the scenario reports that and stops.
+// from one client). The automation account must be a member of a community, whose card (ending
+// in `View`) the scenario finds under My Communities (VIEW ALL), wherever the browse order puts
+// it; otherwise the scenario reports that and stops.
 import assert from 'node:assert/strict'
 import { spec, until, type Explorer } from '../driver/index.ts'
 import { cardSelector, closePage, openWithKey, withoutInitial } from './pages.ts'
@@ -22,6 +23,10 @@ const CONVERSATIONS = { name: 'Conversations', role: 'navigation' } as const
 const OPTIONS = { name: 'Conversation options', role: 'button' } as const
 const INPUT_FOCUSED = { name: 'Write a message', role: 'textbox' } as const
 const INPUT_IDLE = { name: 'Press Enter to chat', role: 'textbox' } as const
+/** The left column's toggle between the browse grid and My Communities, shown once the user is a
+ *  member of one: My Communities lists only the user's own, wherever the browse order puts them. */
+const VIEW_ALL = { name: 'VIEW ALL ›', role: 'button' } as const
+const BACK_TO_BROWSE = { name: '‹ BACK', role: 'button' } as const
 /** A member's card ends in View; a card the player could join ends in Join. */
 const MEMBER_CARD = /\s*Public\s*·\s*\d+\s*Members\s+View$/
 
@@ -32,9 +37,13 @@ async function memberCards(explorer: Explorer): Promise<string[]> {
 }
 
 /** The member cards once the communities list has arrived (the engine sends it whole, in one
- *  message); none when the account is in no listed community. */
+ *  message), from My Communities; none when the account is a member of no community. */
 async function waitForMemberCards(explorer: Explorer): Promise<string[]> {
   await until(() => explorer.hud.list('button'), (buttons) => buttons.some((b) => /Members\s+(?:Join|View)$/.test(b.name)), { timeoutMs: CONTROL_TIMEOUT_MS, what: 'the community cards to load' })
+  if (await explorer.hud.isVisible(VIEW_ALL)) {
+    await explorer.hud.click(VIEW_ALL)
+    await explorer.hud.wait(BACK_TO_BROWSE, { timeoutMs: TEXT_TIMEOUT_MS })
+  }
   return memberCards(explorer)
 }
 
@@ -43,7 +52,7 @@ scenario("a member's community card opens its chat, whose tab and title bar name
   const cards = await waitForMemberCards(explorer)
   if (cards.length === 0) {
     await closePage(explorer, 'communities')
-    assert.fail('the automation account is a member of no community in the browse grid (no card ends in View), so community chat cannot be exercised')
+    assert.fail('the automation account is a member of no community (My Communities is empty), so community chat cannot be exercised')
   }
   const card = cards[0]!
   const target = await explorer.hud.wait(cardSelector(card), { state: 'actionable', timeoutMs: TEXT_TIMEOUT_MS })

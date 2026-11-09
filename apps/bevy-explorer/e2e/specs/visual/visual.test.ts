@@ -64,8 +64,15 @@ function isLfsPointer(file: Buffer): boolean {
 for (const scene of SCENES) {
   scenario(
     `${scene.id} matches its reference`,
-    async ({ explorer, t, report }) => {
+    async ({ explorer, t, report, restore }) => {
       const [x, y] = scene.base
+      // The scene hides avatars, not the HUD's nametag over the hidden player, whose name is the
+      // session's fresh guest's: off for the frame, so the frame is the scene's alone.
+      restore(async () => {
+        await explorer.json('/nametags true')
+      })
+      const nametags = await explorer.json<{ visible: boolean }>('/nametags false')
+      assert.equal(nametags.visible, false, 'the nametags should be off for the frame')
       await explorer.teleport(x, y)
       await until(() => explorer.sceneEntities(), (entities) => entities.length > RESERVED_ENTITIES, {
         timeoutMs: SCENE_LIVE_TIMEOUT_MS,
