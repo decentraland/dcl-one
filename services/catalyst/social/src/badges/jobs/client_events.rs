@@ -22,7 +22,7 @@ use crate::identity::Address;
 
 pub const SOURCE: &str = "client_events";
 
-const READ: IdSource = IdSource {
+pub(crate) const READ: IdSource = IdSource {
     name: SOURCE,
     select: "SELECT e.seq, e.source, e.sub_type, e.address, e.session_id, e.reported_at, e.metadata \
              FROM social.client_events e",
@@ -71,6 +71,7 @@ pub(super) async fn run(pass: &Pass) -> anyhow::Result<u64> {
             break;
         }
     }
+    super::report_id_lag(&pass.pool, &READ).await;
     Ok(passed)
 }
 

@@ -1374,7 +1374,12 @@ are processed as soon as they are visible. A source holds at most 5,000 gap
 ranges; at the cap its cursor passes no row that would open another until
 gaps resolve (it holds, it does not skip). The first pass starts at the
 head, so a row still uncommitted below the head when a cursor is created is
-history and not read. A deployment stored
+history and not read. Each tick publishes, per source,
+`badges_processor_cursor_lag` (ids behind the head; blocks behind the
+published block for the sales logs), and for the id cursors
+`badges_processor_cursor_gaps` and `badges_processor_cursor_oldest_gap_seconds`:
+a cursor that stops advancing shows as a growing lag, and a horizon held by a
+transaction left open on the cluster as gaps that keep ageing. A deployment stored
 more than `BADGES_DEPLOYMENT_MAX_LAG_SECS` (default a day) after its entity
 timestamp is history a syncing node caught up on and is passed without
 effect; `BADGES_EVENT_MAX_AGE_SECS` (default off) is upstream's

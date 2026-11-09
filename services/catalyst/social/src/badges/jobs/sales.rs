@@ -231,6 +231,7 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
         tx.commit().await?;
         return Ok((0, false));
     };
+    super::report_lag(log.source(), until - block);
     let limit = pass.batch();
     let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(log.rows_sql()))
         .bind(block)
@@ -352,6 +353,7 @@ pub(crate) async fn batch(pass: &Pass, log: Log) -> Result<(u64, bool), sqlx::Er
     }
     super::advance(&mut tx, log.source(), last.0, last.1).await?;
     tx.commit().await?;
+    super::report_lag(log.source(), until - last.0);
     Ok((
         passed as u64,
         passed == rows.len() && rows.len() as i64 == limit,

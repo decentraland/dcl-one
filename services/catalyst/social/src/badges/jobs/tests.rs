@@ -623,6 +623,12 @@ async fn a_younger_transaction_holding_a_lower_id_is_read_when_it_commits() {
     assert_eq!(deployments::batch(&p).await.unwrap(), (1, false));
     let (at, _) = cursor(&pool, deployments::SOURCE).await.unwrap();
     assert_eq!(gaps(&pool, deployments::SOURCE).await, [(at - 1, at - 1)]);
+    let (lag, open, oldest) = super::id_lag(&pool, &deployments::READ)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((lag, open), (0, 1), "the lag metric counts the open gap");
+    assert!(oldest.is_some());
     assert!(
         progress(&pool, a.as_str(), "land_architect")
             .await

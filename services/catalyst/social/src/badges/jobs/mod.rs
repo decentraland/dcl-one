@@ -375,7 +375,10 @@ where
     .fetch_optional(&mut *conn)
     .await?;
     if locked != Some((position, stamp)) {
-        tracing::warn!(source = source.name, "badge cursor moved during the batch: retried");
+        tracing::warn!(
+            source = source.name,
+            "badge cursor moved during the batch: retried"
+        );
         return Ok(Some(IdBatch {
             rows: Vec::new(),
             source: source.name,
@@ -407,6 +410,49 @@ where
         loaded,
         more,
     }))
+}
+
+/// Publishes how far `source`'s id cursor is behind its head
+/// (`badges_processor_cursor_lag`, in ids), its open gaps
+/// (`badges_processor_cursor_gaps`) and the oldest one's age
+/// (`badges_processor_cursor_oldest_gap_seconds`): a gap that never expires
+/// is a transaction held open on the cluster. A failed read only logs.
+pub(crate) async fn report_id_lag(pool: &PgPool, source: &IdSource) {
+    match id_lag(pool, source).await {
+        Ok(Some((lag, gaps, oldest))) => {
+            report_lag(source.name, lag);
+            metrics::gauge!("badges_processor_cursor_gaps", "source" => source.name)
+                .set(gaps as f64);
+            metrics::gauge!("badges_processor_cursor_oldest_gap_seconds", "source" => source.name)
+                .set(oldest.unwrap_or(0.0).max(0.0));
+        }
+        Ok(None) => {}
+        Err(e) => tracing::debug!(source = source.name, error = %e, "badge cursor lag not read"),
+    }
+}
+
+/// (ids behind the head, open gaps, the oldest gap's age in seconds) of
+/// `source`'s cursor; `None` before its first pass.
+pub(crate) async fn id_lag(
+    pool: &PgPool,
+    source: &IdSource,
+) -> Result<Option<(i64, i64, Option<f64>)>, sqlx::Error> {
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT ({head}) - c.position, count(g.lo), \
+                extract(epoch FROM timezone('UTC', now()) - min(g.seen_at))::float8 \
+         FROM social.badge_cursors c \
+         LEFT JOIN social.badge_cursor_gaps g ON g.source = c.source \
+         WHERE c.source = $1 GROUP BY c.position",
+        head = source.head
+    )))
+    .bind(source.name)
+    .fetch_optional(pool)
+    .await
+}
+
+/// `badges_processor_cursor_lag` of `source`, in its own unit (ids, blocks).
+pub(crate) fn report_lag(source: &'static str, lag: i64) {
+    metrics::gauge!("badges_processor_cursor_lag", "source" => source).set(lag.max(0) as f64);
 }
 
 /// The cursor of `source`, locked for this transaction; `None` when the

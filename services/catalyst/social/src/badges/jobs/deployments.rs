@@ -17,7 +17,7 @@ use crate::identity::Address;
 
 pub const SOURCE: &str = "deployments";
 
-const READ: IdSource = IdSource {
+pub(crate) const READ: IdSource = IdSource {
     name: SOURCE,
     select: "SELECT d.id, d.entity_type, lower(d.deployer_address) AS deployer, \
                     d.entity_pointers AS pointers, d.entity_timestamp, d.local_timestamp, \
@@ -83,6 +83,7 @@ pub(super) async fn run(pass: &Pass) -> anyhow::Result<u64> {
             break;
         }
     }
+    super::report_id_lag(&pass.pool, &READ).await;
     Ok(passed)
 }
 
